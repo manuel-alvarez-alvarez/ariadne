@@ -13,7 +13,7 @@ use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{AgentAssignment, UpdateTaskRequest};
 use ariadne_client::Client;
 
-use ariadne_core::Seat;
+use ariadne_core::{Landing, Seat};
 
 use crate::commands::{parse_effort, parse_model, resolve};
 
@@ -122,21 +122,43 @@ fn accepted() -> String {
         .to_string()
 }
 
+/// The flags of `task update`, as clap parsed them: one field per flag, in
+/// the order the help screen lists them.
+///
+/// A struct rather than nine positional arguments, because five of them are
+/// an `Option` or a `bool` and a caller that swapped two would still compile.
+#[derive(Debug, Default)]
+pub struct Edits {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub reviewers: Vec<AgentAssignment>,
+    pub no_reviewer: bool,
+    pub depends_on: Vec<String>,
+    pub clear_depends_on: bool,
+    pub landing: Option<Landing>,
+}
+
 /// The PATCH body of `task update`, or the reason there is nothing to send.
 ///
 /// A flag that was not given is `None` — the field keeps what the task has.
 /// The two list flags are all-or-nothing by design: they replace the list they
-/// name, and `--clear-depends-on` is how an empty one is spelled, since a
-/// repeatable flag cannot be given zero times on purpose.
-pub fn update_request(
-    title: Option<String>,
-    description: Option<String>,
-    model: Option<String>,
-    effort: Option<String>,
-    reviewers: Vec<AgentAssignment>,
-    depends_on: Vec<String>,
-    clear_depends_on: bool,
-) -> Result<UpdateTaskRequest> {
+/// name, and each has a flag of its own for the empty list — `--no-reviewer`
+/// and `--clear-depends-on` — since a repeatable flag cannot be given zero
+/// times on purpose.
+pub fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
+    let Edits {
+        title,
+        description,
+        model,
+        effort,
+        reviewers,
+        no_reviewer,
+        depends_on,
+        clear_depends_on,
+        landing,
+    } = edits;
     let req = UpdateTaskRequest {
         title,
         description,
@@ -146,12 +168,17 @@ pub fn update_request(
         // The same three answers the model has, about how deeply it reasons:
         // nothing said, `default` for the CLI's own, or one effort of it.
         effort,
-        reviewers: (!reviewers.is_empty()).then_some(reviewers),
+        reviewers: match (no_reviewer, reviewers.is_empty()) {
+            (true, _) => Some(Vec::new()),
+            (false, true) => None,
+            (false, false) => Some(reviewers),
+        },
         depends_on: match (clear_depends_on, depends_on.is_empty()) {
             (true, _) => Some(Vec::new()),
             (false, true) => None,
             (false, false) => Some(depends_on),
         },
+        landing,
     };
     // An empty PATCH would still reach the daemon and still be refused on a
     // started task, which reads as a failure the caller never asked for.
@@ -161,10 +188,11 @@ pub fn update_request(
         && req.effort.is_none()
         && req.reviewers.is_none()
         && req.depends_on.is_none()
+        && req.landing.is_none()
     {
         bail!(
             "nothing to update — pass --title, --description, --model, \
-             --effort, --reviewer or --depends-on"
+             --effort, --reviewer, --no-reviewer, --landing or --depends-on"
         );
     }
     Ok(req)
@@ -365,26 +393,26 @@ mod tests {
     /// flag cannot say on its own is spelled `--clear-depends-on`.
     #[test]
     fn only_the_flags_that_were_given_reach_the_daemon() {
-        let req = update_request(Some("new".into()), None, None, None, vec![], vec![], false)
-            .expect("body");
+        let req = update_request(Edits {
+            title: Some("new".into()),
+            ..Edits::default()
+        })
+        .expect("body");
         assert_eq!(req.title.as_deref(), Some("new"));
         assert!(req.description.is_none());
         assert!(req.model.is_none(), "and the pin is left alone");
         assert!(req.reviewers.is_none());
         assert!(req.depends_on.is_none());
+        assert!(req.landing.is_none(), "and so is how the task ends");
 
-        let req = update_request(
-            None,
-            None,
-            None,
-            None,
-            vec![
+        let req = update_request(Edits {
+            reviewers: vec![
                 parse_reviewer("code-review").expect("skills alone"),
                 parse_reviewer("security-review=codex:gpt-5.6-luna@high").expect("a model"),
             ],
-            vec!["01TASK".into()],
-            false,
-        )
+            depends_on: vec!["01TASK".into()],
+            ..Edits::default()
+        })
         .expect("body");
         assert_eq!(
             req.reviewers.as_ref().map(|r| r
@@ -405,55 +433,52 @@ mod tests {
             Some(["01TASK".to_string()].as_slice())
         );
 
-        let req = update_request(None, None, None, None, vec![], vec![], true).expect("body");
+        let req = update_request(Edits {
+            clear_depends_on: true,
+            ..Edits::default()
+        })
+        .expect("body");
         assert_eq!(req.depends_on.as_deref(), Some([].as_slice()));
+
+        // And the reviewers have their own way of saying the empty list, for
+        // the same reason: a task with nothing to review is staffed with none.
+        let req = update_request(Edits {
+            no_reviewer: true,
+            ..Edits::default()
+        })
+        .expect("body");
+        assert_eq!(req.reviewers.as_ref().map(Vec::len), Some(0));
+        assert!(req.depends_on.is_none(), "and nothing else was touched");
+    }
+
+    /// How a task ends is an edit like any other, while it has not started.
+    #[test]
+    fn how_the_task_ends_travels_as_the_three_endings_there_are() {
+        for landing in [Landing::Merge, Landing::PullRequest, Landing::None] {
+            let req = update_request(Edits {
+                landing: Some(landing),
+                ..Edits::default()
+            })
+            .expect("body");
+            assert_eq!(req.landing, Some(landing));
+            assert!(req.title.is_none(), "and nothing else was touched");
+        }
     }
 
     /// What the author runs on is three answers, and the one field carries
-    /// each of them: nothing said at all, back to the profile's own, or an
-    /// agent CLI — with a model of it after the `:` where one was named.
+    /// each of them: nothing said at all, back to auto, or an agent CLI —
+    /// with a model of it after the `:` where one was named.
     #[test]
     fn the_pin_travels_as_the_three_things_it_can_say() {
-        let req = update_request(
-            None,
-            None,
-            Some("default".into()),
-            None,
-            vec![],
-            vec![],
-            false,
-        )
-        .expect("body");
-        assert_eq!(req.model.as_deref(), Some("default"));
-        assert!(req.title.is_none(), "and nothing else was touched");
-
-        let req = update_request(
-            None,
-            None,
-            Some("codex".into()),
-            None,
-            vec![],
-            vec![],
-            false,
-        )
-        .expect("body");
-        assert_eq!(
-            req.model.as_deref(),
-            Some("codex"),
-            "codex on its own default model"
-        );
-
-        let req = update_request(
-            None,
-            None,
-            Some("codex:gpt-5.3-codex".into()),
-            None,
-            vec![],
-            vec![],
-            false,
-        )
-        .expect("body");
-        assert_eq!(req.model.as_deref(), Some("codex:gpt-5.3-codex"));
+        for model in ["default", "codex", "codex:gpt-5.3-codex"] {
+            let req = update_request(Edits {
+                model: Some(model.into()),
+                ..Edits::default()
+            })
+            .expect("body");
+            assert_eq!(req.model.as_deref(), Some(model));
+            assert!(req.title.is_none(), "and nothing else was touched");
+        }
     }
 
     /// The effort travels beside the model and says the same three things:
@@ -461,40 +486,21 @@ mod tests {
     /// and an effort on its own is an edit like any other.
     #[test]
     fn the_effort_travels_the_way_the_pin_does() {
-        let req = update_request(
-            None,
-            None,
-            None,
-            Some("xhigh".into()),
-            vec![],
-            vec![],
-            false,
-        )
-        .expect("body");
-        assert_eq!(req.effort.as_deref(), Some("xhigh"));
-        assert!(req.model.is_none(), "the model it runs at is left alone");
+        for effort in ["xhigh", "default"] {
+            let req = update_request(Edits {
+                effort: Some(effort.into()),
+                ..Edits::default()
+            })
+            .expect("body");
+            assert_eq!(req.effort.as_deref(), Some(effort));
+            assert!(req.model.is_none(), "the model it runs at is left alone");
+        }
 
-        let req = update_request(
-            None,
-            None,
-            None,
-            Some("default".into()),
-            vec![],
-            vec![],
-            false,
-        )
-        .expect("body");
-        assert_eq!(req.effort.as_deref(), Some("default"));
-
-        let req = update_request(
-            None,
-            None,
-            Some("claude_code:claude-opus-5".into()),
-            Some("xhigh".into()),
-            vec![],
-            vec![],
-            false,
-        )
+        let req = update_request(Edits {
+            model: Some("claude_code:claude-opus-5".into()),
+            effort: Some("xhigh".into()),
+            ..Edits::default()
+        })
         .expect("body");
         assert_eq!(req.model.as_deref(), Some("claude_code:claude-opus-5"));
         assert_eq!(req.effort.as_deref(), Some("xhigh"));
@@ -502,9 +508,10 @@ mod tests {
 
     #[test]
     fn an_update_with_no_flags_is_refused_before_it_is_sent() {
-        let err = update_request(None, None, None, None, vec![], vec![], false).expect_err("no-op");
+        let err = update_request(Edits::default()).expect_err("no-op");
         assert!(err.to_string().starts_with("nothing to update"), "{err}");
         assert!(err.to_string().contains("--model"), "{err}");
         assert!(err.to_string().contains("--effort"), "{err}");
+        assert!(err.to_string().contains("--landing"), "{err}");
     }
 }

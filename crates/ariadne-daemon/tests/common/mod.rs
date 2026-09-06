@@ -626,29 +626,17 @@ impl Harness {
 
     /// A goal still in planning, on a repository of its own.
     pub async fn goal(&self) -> (Goal, Repository) {
-        self.goal_needing(1).await
-    }
-
-    /// The same, for a goal that wants `approvals` of them: a round that one
-    /// verdict does not close is where a reviewer sits with its work done.
-    async fn goal_needing(&self, approvals: i64) -> (Goal, Repository) {
         let repo = self.repository(&self.at("repo")).await;
-        let goal = self.goal_on(&repo, approvals, None).await;
+        let goal = self.goal_on(&repo, None).await;
         (goal, repo)
     }
 
-    pub async fn goal_on(
-        &self,
-        repo: &Repository,
-        approvals: i64,
-        pin: Option<AgentPin>,
-    ) -> Goal {
+    pub async fn goal_on(&self, repo: &Repository, pin: Option<AgentPin>) -> Goal {
         self.store
             .create_goal(NewGoal {
                 title: "Ship the UI".into(),
                 description: "desc".into(),
                 max_tasks: None,
-                required_approvals: approvals,
                 repository_ids: vec![repo.id.clone()],
                 pin,
             })
@@ -680,6 +668,7 @@ impl Harness {
                 description: "do things".into(),
                 agents,
                 depends_on: vec![],
+                landing: None,
             })
             .await
             .unwrap()
@@ -695,7 +684,7 @@ impl Harness {
     /// A goal in planning with one task on it, and the agents staffed on that
     /// task: the shape most tests start from.
     pub async fn cast(&self) -> Cast {
-        self.cast_needing(1).await
+        self.cast_reviewed_by(1).await
     }
 
     /// The same on another agent CLI, or on a model: what a goal and a task's
@@ -704,8 +693,11 @@ impl Harness {
         self.cast_pinned(Some(agent_kind), None, 1).await
     }
 
-    pub async fn cast_needing(&self, approvals: i64) -> Cast {
-        self.cast_pinned(Some(AgentKind::ClaudeCode), None, approvals)
+    /// The same, with `reviewers` reviewers on the task. A task is approved
+    /// when every one of them has approved, so two of them is where a round
+    /// one verdict does not close — a reviewer sitting with its work done.
+    pub async fn cast_reviewed_by(&self, reviewers: usize) -> Cast {
+        self.cast_pinned(Some(AgentKind::ClaudeCode), None, reviewers)
             .await
     }
 
@@ -713,7 +705,7 @@ impl Harness {
         &self,
         agent_kind: Option<AgentKind>,
         model: Option<&str>,
-        approvals: i64,
+        reviewers: usize,
     ) -> Cast {
         let pin = agent_kind.map(|agent_kind| AgentPin {
             agent_kind,
@@ -721,8 +713,8 @@ impl Harness {
             effort: None,
         });
         let repo = self.repository(&self.at("repo")).await;
-        let goal = self.goal_on(&repo, approvals, pin.clone()).await;
-        let task = self.task_on(&goal, &repo, "task", 1, pin).await;
+        let goal = self.goal_on(&repo, pin.clone()).await;
+        let task = self.task_on(&goal, &repo, "task", reviewers, pin).await;
         let author = self.store.task_author(&task.id).await.unwrap();
         let reviewer = self
             .store
@@ -809,7 +801,7 @@ impl Harness {
         let repo = self
             .repository(&self.at(&format!("repo-{tmux_name}")))
             .await;
-        let goal = self.goal_on(&repo, 1, None).await;
+        let goal = self.goal_on(&repo, None).await;
         // An orchestrator is staffed on no task, so its session carries no
         // agent: the pane name is what tells this one apart.
         self.orchestrator_session(&goal, tmux_name).await

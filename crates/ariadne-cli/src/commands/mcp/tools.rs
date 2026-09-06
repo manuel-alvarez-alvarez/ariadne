@@ -19,7 +19,7 @@ use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, RecordPullRequestRequest, TransitionRequest,
     UpdateTaskRequest,
 };
-use ariadne_core::{ReviewVerdict, Seat, TaskStatus};
+use ariadne_core::{Landing, ReviewVerdict, Seat, TaskStatus};
 
 use super::{AriadneMcp, json_result, to_mcp_err};
 
@@ -62,12 +62,19 @@ pub struct CreateTaskReq {
     pub description: String,
     /// The one agent that writes the task. It owns the task to the end.
     pub author: AgentReq,
-    /// The agents that review the task, in review order. Staff at least one.
+    /// The agents that review the task, in review order. Staff at least one
+    /// wherever the work can be judged. Leave it empty only where there is
+    /// nothing to review, such as a release: the task is then approved as
+    /// soon as its author asks.
     pub reviewers: Vec<AgentReq>,
     /// Ids of the tasks that must merge before this one starts.
     pub depends_on: Option<Vec<String>>,
     /// Repository id. Pass it only where the goal works in several.
     pub repo_id: Option<String>,
+    /// How the task ends, as the user agreed it: `merge` puts the change on
+    /// the base branch, `pull_request` leaves a request for a person, `none`
+    /// lands nothing. Omit it for the way the repository takes a change.
+    pub landing: Option<LandingReq>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -82,11 +89,14 @@ pub struct UpdateTaskReq {
     /// An `efforts[].id` for that model. `default` puts it back on the
     /// default effort.
     pub author_effort: Option<String>,
-    /// The reviewers, in review order. This list replaces the whole list.
+    /// The reviewers, in review order. This list replaces the whole list, and
+    /// an empty list takes every reviewer off the task.
     pub reviewers: Option<Vec<AgentReq>>,
     /// The ids of the tasks that must merge first. This list replaces the
     /// whole list.
     pub depends_on: Option<Vec<String>>,
+    /// How the task ends: `merge`, `pull_request` or `none`.
+    pub landing: Option<LandingReq>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -113,9 +123,10 @@ pub struct FailTaskReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct MarkMergedReq {
-    /// The sha of the merge commit on the base branch.
-    pub merge_commit: String,
+pub struct FinishTaskReq {
+    /// The sha of the merge commit on the base branch. Omit it only where
+    /// the task lands nothing.
+    pub merge_commit: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -124,6 +135,31 @@ pub struct RecordPullRequestReq {
     /// The URL of the pull request, as `gh pr create` or `glab mr create`
     /// printed it.
     pub url: String,
+}
+
+/// The three ways a task can end, as the two task tools take them. A local
+/// spelling of [`Landing`], because the schema an agent reads is derived from
+/// the parameter types here.
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "snake_case")]
+pub enum LandingReq {
+    /// The author puts the change on the base branch itself.
+    Merge,
+    /// The author publishes a request and somebody else merges it.
+    PullRequest,
+    /// Nothing is landed: what the task produced is the whole of it.
+    None,
+}
+
+impl From<LandingReq> for Landing {
+    fn from(req: LandingReq) -> Landing {
+        match req {
+            LandingReq::Merge => Landing::Merge,
+            LandingReq::PullRequest => Landing::PullRequest,
+            LandingReq::None => Landing::None,
+        }
+    }
 }
 
 /// The two verdicts a review round ends in, as the one verdict tool takes
@@ -210,7 +246,7 @@ impl AriadneMcp {
     // ---- orchestrator ----
 
     #[tool(
-        description = "Create one task in the goal. Staff one author and at least one reviewer. Give each agent the skills its work needs, from `list_skills`, and the model and the effort this task deserves, from `list_models`. The user can change an agent until the task starts."
+        description = "Create one task in the goal. Staff one author, and the reviewers the user agreed it needs. Give each agent the skills its work needs (`list_skills`) and the model and effort it deserves (`list_models`). Say how it ends with `landing`."
     )]
     async fn create_task(
         &self,
@@ -229,12 +265,13 @@ impl AriadneMcp {
                 )
                 .collect(),
             depends_on: req.depends_on.unwrap_or_default(),
+            landing: req.landing.map(Into::into),
         };
         json_result(self.post(&path, &body).await?)
     }
 
     #[tool(
-        description = "Edit a task that has not started: the title, the description, the reviewers, the dependencies, or the model and effort of the author. `reviewers` replaces the whole list. `default` puts the author back on the first installed agent CLI."
+        description = "Edit a task that has not started: its title, description, reviewers, dependencies, ending, or the model and effort of its author. `reviewers` replaces the whole list. `default` puts the author back on the first installed agent CLI."
     )]
     async fn update_task(
         &self,
@@ -252,6 +289,7 @@ impl AriadneMcp {
                     .collect()
             }),
             depends_on: req.depends_on,
+            landing: req.landing.map(Into::into),
         };
         let path = format!("/v1/tasks/{}", req.task_id);
         let value = self.client.patch_json(&path, &body).await;
@@ -328,14 +366,14 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the sha your branch landed on its base branch as. This call ends the task."
+        description = "End the task. Report the sha your branch landed on its base branch as, or nothing at all where the task lands nothing."
     )]
     async fn finish_task(
         &self,
-        Parameters(req): Parameters<MarkMergedReq>,
+        Parameters(req): Parameters<FinishTaskReq>,
     ) -> Result<CallToolResult, McpError> {
         json_result(
-            self.transition(TaskStatus::Finished, None, Some(req.merge_commit))
+            self.transition(TaskStatus::Finished, None, req.merge_commit)
                 .await?,
         )
     }
@@ -657,6 +695,7 @@ mod tests {
                 }],
                 depends_on: None,
                 repo_id: None,
+                landing: None,
             }))
             .await
             .expect("create the task");
@@ -707,6 +746,7 @@ mod tests {
                     brief: None,
                 }]),
                 depends_on: None,
+                landing: None,
             }))
             .await
             .expect("edit the task");

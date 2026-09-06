@@ -226,7 +226,6 @@ async fn an_orchestrator_respawn_stays_on_the_goals_pin() {
     let goal = h
         .goal_on(
             &repo,
-            1,
             Some(ariadne_store::AgentPin {
                 agent_kind: AgentKind::ClaudeCode,
                 model: Some("opus".into()),

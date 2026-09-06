@@ -57,13 +57,15 @@ impl World {
         World::build(harness(), 1).await
     }
 
-    async fn needing(approvals: i64) -> World {
-        World::build(harness(), approvals).await
+    /// A world whose task has `reviewers` reviewers: a round two of them
+    /// open is one a single verdict does not close.
+    async fn reviewed_by(reviewers: usize) -> World {
+        World::build(harness(), reviewers).await
     }
 
-    async fn build(builder: HarnessBuilder, approvals: i64) -> World {
+    async fn build(builder: HarnessBuilder, reviewers: usize) -> World {
         let h = builder.await;
-        let cast = h.cast_needing(approvals).await;
+        let cast = h.cast_reviewed_by(reviewers).await;
         let goal = h.activate(&cast.goal).await;
         World {
             h,
@@ -265,7 +267,7 @@ async fn a_hand_off_is_paid_once_however_many_passes_see_it() {
 /// its work done, which is exactly when the compaction goes in.
 #[tokio::test]
 async fn a_verdict_given_owes_the_reviewer_a_compaction() {
-    let w = World::needing(2).await;
+    let w = World::reviewed_by(2).await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
     let reviewer = w.reviewer_that_voted(ReviewVerdict::Approve).await;
 

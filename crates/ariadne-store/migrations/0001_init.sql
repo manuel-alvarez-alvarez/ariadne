@@ -80,7 +80,6 @@ CREATE TABLE goals (
     status              TEXT NOT NULL DEFAULT 'planning'
                         CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
     max_tasks           INTEGER,                -- NULL = unbounded
-    required_approvals  INTEGER NOT NULL DEFAULT 1 CHECK (required_approvals >= 1),
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
     agent_kind          TEXT
@@ -109,6 +108,11 @@ CREATE TABLE tasks (
                                           'changes_requested', 'approved', 'finished',
                                           'cancelled', 'failed')),
     branch              TEXT NOT NULL,
+    -- How this task ends: a change on the base branch, a request somebody
+    -- else merges, or nothing at all. Taken from the repository's merge
+    -- strategy unless whoever wrote the task said otherwise.
+    landing             TEXT NOT NULL DEFAULT 'merge'
+                        CHECK (landing IN ('merge', 'pull_request', 'none')),
     worktree_path       TEXT,
     review_round        INTEGER NOT NULL DEFAULT 0,
     stalled             INTEGER NOT NULL DEFAULT 0,

@@ -10,7 +10,6 @@ pub struct NewGoal {
     pub title: String,
     pub description: String,
     pub max_tasks: Option<i64>,
-    pub required_approvals: i64,
     /// Ids of registered repositories the goal works in; each must exist.
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
@@ -23,11 +22,6 @@ impl Store {
     pub async fn create_goal(&self, new: NewGoal) -> Result<Goal> {
         if new.repository_ids.is_empty() {
             return Err(StoreError::Invalid("a goal needs at least one repo".into()));
-        }
-        if new.required_approvals < 1 {
-            return Err(StoreError::Invalid(
-                "required_approvals must be >= 1".into(),
-            ));
         }
         // Validated before the goal row is written, so an unknown id leaves
         // nothing behind. The same repository named twice is one reference.
@@ -43,15 +37,14 @@ impl Store {
         let mut tx = self.w().begin().await?;
         let (agent_kind, model, effort) = AgentPin::columns(new.pin.as_ref());
         sqlx::query(
-            "INSERT INTO goals (id, title, description, status, max_tasks, required_approvals,
+            "INSERT INTO goals (id, title, description, status, max_tasks,
                                 agent_kind, model, effort, created_at, updated_at)
-             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
         .bind(&new.description)
         .bind(new.max_tasks)
-        .bind(new.required_approvals)
         .bind(&agent_kind)
         .bind(&model)
         .bind(&effort)

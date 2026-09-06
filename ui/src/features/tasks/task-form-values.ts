@@ -72,15 +72,17 @@ export function makeTaskFormSchema(opts: { creating: boolean; requireRepo: boole
     // model beside it, so there is nothing here the daemon has not already
     // checked — and the empty string, which is that CLI's own effort.
     author_effort: z.string(),
-    reviewers: z
-      .array(
-        z.object({
-          skills: skillsField("Give the reviewer at least one skill."),
-          model: modelRefField(),
-          effort: z.string(),
-        }),
-      )
-      .min(1, "A task needs at least one reviewer."),
+    // No minimum: most work is worth a second pair of eyes, and a task
+    // starts with one reviewer for that reason, but some has nothing to
+    // review — a release, a dependency bump the suite already judged — and
+    // such a task is approved as soon as its author asks.
+    reviewers: z.array(
+      z.object({
+        skills: skillsField("Give the reviewer at least one skill."),
+        model: modelRefField(),
+        effort: z.string(),
+      }),
+    ),
     repo_id: opts.requireRepo ? z.string().min(1, "Choose a repository.") : z.string(),
     // Blank rows are dropped on submit.
     depends_on: z.array(z.object({ task: z.string() })),

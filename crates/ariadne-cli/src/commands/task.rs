@@ -13,7 +13,7 @@ use ariadne_api::tasks::{
 };
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::{Client, SseEvent};
-use ariadne_core::{Seat, TaskStatus};
+use ariadne_core::{Landing, Seat, TaskStatus};
 
 use super::follow;
 use super::resolve::{self, Kind};
@@ -26,7 +26,7 @@ use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, dash, local_time, moment, note, ok_id_line, pager,
     print, print_json, print_kv, print_list, status_line, usage_block, usage_cell, view, yes_no,
 };
-use edit::{parse_author, parse_reviewer, resolve_repo, update_request};
+use edit::{Edits, parse_author, parse_reviewer, resolve_repo, update_request};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
 /// title runs to a paragraph would otherwise push status and round off-screen.
@@ -69,9 +69,13 @@ const CREATE_EXAMPLES: &str = "\
 Examples:
   ariadne task create <goal-id> --title \"Add the rate limiter middleware\"
 
-  # after another task, on a model and a reviewer of your own
+  # after another task, with an author and a reviewer of your own
   ariadne task create <goal-id> --title \"Wire it up\" --depends-on <task-id> \\
-      --model codex:gpt-5.6-sol --effort xhigh --reviewer Reviewer=claude_code@high
+      --author coding,testing=codex:gpt-5.6-sol@xhigh \\
+      --reviewer code-review=claude_code@high
+
+  # nothing to review: approved as soon as the author asks
+  ariadne task create <goal-id> --title \"Cut 0.6.0\" --author release --no-reviewer
 
   # in one of the goal's repositories, when it has several
   ariadne task create <goal-id> --title \"Document it\" --repo ~/projects/ui
@@ -82,8 +86,9 @@ const UPDATE_EXAMPLES: &str = "\
 Examples:
   ariadne task update <task-id> --title \"Add the rate limiter middleware\"
   ariadne task update <task-id> --model claude_code:claude-opus-5 --effort xhigh
-  ariadne task update <task-id> --reviewer Reviewer=codex:gpt-5.6-luna@high
-  ariadne task update <task-id> --model default        # back to the profile's own
+  ariadne task update <task-id> --reviewer code-review=codex:gpt-5.6-luna@high
+  ariadne task update <task-id> --no-reviewer          # nothing left to review
+  ariadne task update <task-id> --model default        # back to the first installed CLI
   ariadne task update <task-id> --effort default       # at whatever the CLI reasons it at
   ariadne task update <task-id> --clear-depends-on     # free it to start now
 ";
@@ -113,8 +118,12 @@ pub enum TaskCommand {
         author: AgentAssignment,
         /// One reviewer's skills, in review order; repeatable. Spelled the
         /// same way as `--author` (`--reviewer code-review=codex@xhigh`)
-        #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", default_value = "code-review", value_parser = parse_reviewer)]
+        #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", default_value = "code-review", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
         reviewers: Vec<AgentAssignment>,
+        /// Staff no reviewer: the task is approved as soon as its author asks
+        /// for review. For work with nothing to review, such as a release
+        #[arg(long)]
+        no_reviewer: bool,
         /// Id of a task that must finish before this one starts; repeatable
         #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         depends_on: Vec<String>,
@@ -122,6 +131,11 @@ pub enum TaskCommand {
         /// its registered path (only needed when the goal has several)
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_repositories))]
         repo: Option<String>,
+        /// How the task ends: merge on the base branch, pull-request for
+        /// somebody else to merge, or none where there is nothing to land.
+        /// Default: the way the repository takes a change
+        #[arg(long, value_enum)]
+        landing: Option<Landing>,
     },
     /// Edit a task that has not started yet
     ///
@@ -155,8 +169,12 @@ pub enum TaskCommand {
         /// One reviewer's skills, optionally `=MODEL` and `@EFFORT`, in
         /// review order; repeatable, and replaces the task's reviewers rather
         /// than adding to them
-        #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", value_parser = parse_reviewer)]
+        #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
         reviewers: Vec<AgentAssignment>,
+        /// Take every reviewer off the task, leaving it approved as soon as
+        /// its author asks for review
+        #[arg(long)]
+        no_reviewer: bool,
         /// Id of a task that must finish first; repeatable, and replaces the
         /// task's dependencies rather than adding to them
         #[arg(long = "depends-on", conflicts_with = "clear_depends_on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -164,6 +182,9 @@ pub enum TaskCommand {
         /// Drop every dependency, leaving the task free to start
         #[arg(long)]
         clear_depends_on: bool,
+        /// How the task ends: merge, pull-request or none
+        #[arg(long, value_enum)]
+        landing: Option<Landing>,
     },
     /// List tasks: the unfinished ones, newest first (--all includes the rest)
     Ls {
@@ -253,9 +274,12 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             description,
             author,
             reviewers,
+            no_reviewer,
             depends_on,
             repo,
+            landing,
         } => {
+            let reviewers = if no_reviewer { Vec::new() } else { reviewers };
             let goal = resolve::id(client, Kind::Goal, &goal).await?;
             let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
             // The author first, then the reviewers in review order: that is
@@ -275,6 +299,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         repo_id,
                         agents,
                         depends_on,
+                        landing,
                     },
                 )
                 .await?;
@@ -287,20 +312,24 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             model,
             effort,
             reviewers,
+            no_reviewer,
             depends_on,
             clear_depends_on,
+            landing,
         } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
-            let body = update_request(
+            let body = update_request(Edits {
                 title,
                 description,
                 model,
                 effort,
                 reviewers,
+                no_reviewer,
                 depends_on,
                 clear_depends_on,
-            )?;
+                landing,
+            })?;
             let t: TaskDto = client.patch_json(&task_path(&id), &body).await?;
             print(format, &t, || {
                 println!("{}", ok_id_line(view().color, "updated", &t.id))

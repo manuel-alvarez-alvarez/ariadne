@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use ariadne_core::id::new_id;
-use ariadne_core::{Actor, AttentionReason, Seat, TaskStatus, check_transition};
+use ariadne_core::{Actor, AttentionReason, Landing, Seat, TaskStatus, check_transition};
 
 use crate::query::Filtered;
 use crate::{
@@ -22,6 +22,8 @@ pub struct NewTask {
     /// order. What each one can do is the skills it carries.
     pub agents: Vec<NewTaskAgent>,
     pub depends_on: Vec<String>,
+    /// How this task ends. None = the way its repository takes a change.
+    pub landing: Option<Landing>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -39,6 +41,8 @@ pub struct TaskUpdate {
     /// The whole reviewer list, replaced: every reviewer is staffed afresh,
     /// with the skills and the pin the caller gave it.
     pub reviewers: Option<Vec<NewTaskAgent>>,
+    /// How the task ends. None leaves it where it is.
+    pub landing: Option<Landing>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -160,8 +164,8 @@ impl Store {
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,
-                                created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+                                landing, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -169,6 +173,13 @@ impl Store {
         .bind(&new.title)
         .bind(&new.description)
         .bind(&branch)
+        // The repository's way of taking a change is what a task ends with
+        // unless whoever wrote it said otherwise.
+        .bind(
+            new.landing
+                .unwrap_or_else(|| Landing::of(repo.merge_strategy()))
+                .as_str(),
+        )
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
@@ -315,15 +326,20 @@ impl Store {
                 task.status
             )));
         }
+        let landing = update.landing.unwrap_or_else(|| task.landing());
         let title = update.title.unwrap_or(task.title);
         let description = update.description.unwrap_or(task.description);
-        sqlx::query("UPDATE tasks SET title = ?, description = ?, updated_at = ? WHERE id = ?")
-            .bind(&title)
-            .bind(&description)
-            .bind(now())
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE tasks SET title = ?, description = ?, landing = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&title)
+        .bind(&description)
+        .bind(landing.as_str())
+        .bind(now())
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
         // The pins live on the author, which is the agent the task's own
         // `--model` and `--effort` have always meant.
         let author: TaskAgent =
@@ -353,11 +369,6 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         if let Some(reviewers) = update.reviewers {
-            if reviewers.is_empty() {
-                return Err(StoreError::Invalid(
-                    "a task needs at least one reviewer".into(),
-                ));
-            }
             sqlx::query("DELETE FROM task_agents WHERE task_id = ? AND seat = 'reviewer'")
                 .bind(id)
                 .execute(&mut *tx)
@@ -416,7 +427,10 @@ impl Store {
         let from = task.status();
         check_transition(from, to, actor)?;
 
-        if to == TaskStatus::Finished && merge_commit.is_none() {
+        // A task that lands something is finished by the sha it landed as.
+        // One that lands nothing has no sha to give, and demanding one would
+        // make a filed report or a cut release impossible to finish.
+        if to == TaskStatus::Finished && task.landing() != Landing::None && merge_commit.is_none() {
             return Err(StoreError::Invalid(
                 "finished transition requires a merge commit".into(),
             ));
@@ -673,17 +687,19 @@ impl Store {
     }
 }
 
-/// A task takes exactly one author and at least one reviewer: the author
-/// carries it from its first commit to the end, and an approval is what lets
-/// it finish.
+/// A task takes exactly one author. The author carries it from its first
+/// commit to the end, and nothing else about the staffing is the store's to
+/// insist on.
+///
+/// Reviewers are not required. Most work is worth a second pair of eyes, and
+/// the orchestrator is told so; some has nothing to review — a release, a
+/// dependency bump the suite already judged — and a task staffed with no
+/// reviewer is approved as soon as its author asks, since there is nobody to
+/// ask (`scheduler::tasks`, `approvals_needed`).
 fn check_staffing(agents: &[NewTaskAgent]) -> Result<()> {
-    let count = |seat: Seat| agents.iter().filter(|a| a.seat == seat).count();
-    match (count(Seat::Author), count(Seat::Reviewer)) {
-        (1, 0) => Err(StoreError::Invalid(
-            "a task needs at least one reviewer".into(),
-        )),
-        (1, _) => Ok(()),
-        (authors, _) => Err(StoreError::Invalid(format!(
+    match agents.iter().filter(|a| a.seat == Seat::Author).count() {
+        1 => Ok(()),
+        authors => Err(StoreError::Invalid(format!(
             "a task takes exactly one author, not {authors}"
         ))),
     }

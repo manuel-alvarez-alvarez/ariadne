@@ -126,6 +126,57 @@ impl MergeStrategy {
     }
 }
 
+/// How one task ends.
+///
+/// A repository's [`MergeStrategy`] says how *it* takes a change, and most
+/// tasks end that way. This says how *this* task ends, which the orchestrator
+/// agrees with the user task by task: some work lands on the base branch,
+/// some leaves a request for a person who is not in this system at all, and
+/// some has nothing to land — a report filed, a document published, a release
+/// cut. All three reach [`TaskStatus::Finished`]; landing is one way of
+/// getting there rather than the meaning of being there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(
+    feature = "clap",
+    derive(clap::ValueEnum),
+    value(rename_all = "kebab-case")
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Landing {
+    /// The author puts the change on the base branch itself.
+    Merge,
+    /// The author publishes a request and somebody else merges it.
+    PullRequest,
+    /// Nothing is landed: what the task produced is the whole of it.
+    None,
+}
+
+wire_enum! { Landing, "landing", [
+    Merge = "merge", PullRequest = "pull_request", None = "none",
+]}
+
+impl Landing {
+    /// How a task in a repository on `strategy` ends unless somebody says
+    /// otherwise: the way that repository takes a change.
+    pub fn of(strategy: MergeStrategy) -> Landing {
+        match strategy {
+            MergeStrategy::Direct => Landing::Merge,
+            MergeStrategy::PullRequest => Landing::PullRequest,
+        }
+    }
+
+    /// The merge strategy whose landing briefing this landing is run with, or
+    /// `None` where there is nothing to land.
+    pub fn strategy(&self) -> Option<MergeStrategy> {
+        match self {
+            Landing::Merge => Some(MergeStrategy::Direct),
+            Landing::PullRequest => Some(MergeStrategy::PullRequest),
+            Landing::None => Option::None,
+        }
+    }
+}
+
 /// A lifecycle briefing of Ariadne's own: one of the texts an agent is
 /// started, resumed or nudged with. Each kind belongs to the seat that
 /// receives it (see [`PromptKind::seats`]), and its text is a constant of the
@@ -206,12 +257,6 @@ impl PromptKind {
                 "goal_description",
                 "repositories",
                 "max_tasks",
-                "required_approvals",
-                // The procedure that puts the approved spec on the base
-                // branch, rendered from the merge strategy of the repository
-                // the orchestrator works in: the two strategies share no
-                // step, so the briefing carries the one that repository runs.
-                "spec_landing",
             ],
             // A nudge says what is waiting and nothing else: the orchestrator
             // it reaches has read the goal already.

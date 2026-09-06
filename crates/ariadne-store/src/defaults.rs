@@ -170,58 +170,48 @@ pub fn default_landing_prompt(strategy: MergeStrategy) -> &'static str {
     }
 }
 
-/// How the orchestrator puts the approved spec on the base branch of a
-/// repository on `strategy`: the procedure its briefing carries, which is the
-/// landing an author runs, written for the one thing the orchestrator lands.
+/// What the author of a task that lands nothing is briefed with instead.
 ///
-/// The spec reaches the repository the same way every other change does, so a
-/// repository that takes changes through a request takes the spec through one
-/// too. What differs from [`default_landing_prompt`] is who runs it and what
-/// it lands. The orchestrator holds no task, so no `finish_task` and no
-/// `fail_task` end it; it works in the primary checkout rather than a
-/// worktree of its own, so a published spec gets a throwaway worktree and the
-/// checkout it was started in stays on the base branch — another goal may be
-/// landing a task in that same checkout meanwhile.
-///
-/// This text is the code's, not the repository's: a repository holds one
-/// landing text, and it is the one its authors run. A repository that
-/// rewrote that text still lands its spec the way its merge strategy says.
-pub fn default_spec_landing_prompt(strategy: MergeStrategy) -> &'static str {
-    match strategy {
-        MergeStrategy::Direct => SPEC_LANDING_DIRECT,
-        MergeStrategy::PullRequest => SPEC_LANDING_PULL_REQUEST,
-    }
+/// No repository holds a text for this: the two landing texts a repository
+/// may rewrite are the two procedures it takes a change by, and a task that
+/// lands nothing runs neither of them.
+pub fn default_no_landing_prompt() -> &'static str {
+    LANDING_NONE
 }
 
 /// Orchestrator persona and playbook, and the one place `finalize_plan` is
 /// explained: it starts every task at once, and the orchestrator makes that
-/// call itself once the plan is written.
+/// call itself once the user has agreed the plan.
 ///
-/// The playbook is spec-driven: the goal becomes a written spec the user
-/// approves, and only then a plan. A repository that already keeps specs says
-/// what one looks like, and the orchestrator writes the next one the same
-/// way; a repository with none has that settled with the user once, beside
-/// the path they go in, so the format is the user's choice rather than
-/// whatever this orchestrator happened to write. So the orchestrator talks to
-/// the user, which no other seat does — it writes one question in its turn
+/// The orchestrator's whole job is the plan, and it gets there by talking to
+/// the user — which no other seat does. It writes one question in its turn
 /// text and waits for the answer in the terminal, and the daemon holds its
-/// quiet nudge back while a session waits on an answer. The orchestrator then
-/// lands the approved spec itself, with the procedure its briefing carries,
-/// so the spec is on the base branch before the first author branches off it:
-/// every task can name the merged path, and none of them waits on a task that
-/// writes it.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into an approved spec, then into a few small tasks. Never write code.
+/// quiet nudge back while a session waits on an answer.
+///
+/// Three things are settled with the user rather than decided alone, because
+/// each of them is a judgement about the work rather than about the code: what
+/// the goal actually asks for, which tasks are worth a review, and how each
+/// task ends. The last one is why a task carries its own way of finishing
+/// (`Landing`): a change that lands on the base branch, a request somebody
+/// else takes over, and a piece of work with nothing to land at all are three
+/// different endings, and only the user knows which one this goal wants.
+///
+/// It writes no specification of its own. Where a goal wants one, that is a
+/// task like any other, staffed with the `spec-writing` skill and reviewed
+/// with `spec-review` — which is what makes "write the specification" a goal
+/// Ariadne can be given rather than a phase every goal pays for.
+const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You turn an Ariadne goal into a plan of small tasks, with the user. Never write code.
 
 1. Read the goal. Explore its repositories.
-2. Draft a spec: scope, behavior, acceptance criteria.
-3. Ask the user about each unclear point. Write one question in your turn text. Wait for the answer in the terminal.
-4. Revise the spec after each answer. Ask again until the user writes an explicit yes. Create no task before it.
-5. Find the folder the repository keeps specs or docs in. Follow the format of the specs there. Where the repository has none, agree a path and a format with the user.
-6. Land the spec with the landing procedure in your briefing. Create no task before it merges.
-7. Call `create_task` per task: small, mergeable alone, one repository. Write the ticket in STE: context, what to do, what not to touch, acceptance criteria. Name the spec path in each ticket. Add `depends_on` only for a real dependency. The rest run together: keep them off the same code.
-8. Staff each task: one author, one or more reviewers. Give each agent the skills its work needs (`list_skills`). It knows only its task and its skills.
-9. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Keep a reviewer under its author.
-10. Call `finalize_plan` once you write the whole plan. It starts every task and ends planning. Call it no earlier."#;
+2. Ask the user about every unclear point, until nothing about the goal is open. Write one question in your turn text. Wait for the answer in the terminal.
+3. Split the goal into tasks: small, finishable alone, one repository. Write each ticket in STE: context, what to do, what not to touch, acceptance criteria. Add `depends_on` only for a real dependency. The rest run together: keep them off the same code.
+4. Staff one author per task with `create_task`. Give each agent the skills its work needs (`list_skills`). It knows only its task and its skills.
+5. Ask the user which tasks are worth a review, and what each review is for. Staff those reviewers. Staff none on the rest.
+6. Ask the user how each task ends. `merge` lands it on the base branch. `pull_request` leaves a request for somebody. `none` lands nothing.
+7. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request.
+8. Show the user the whole plan. Revise it until they write an explicit yes.
+9. Call `finalize_plan`. It starts every task and ends planning. Call it no earlier.
+10. Stay up for the rest of the goal. Answer what the user asks. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
 
 /// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -243,14 +233,8 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task
 3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and name it.
 4. Call `submit_verdict` once per round. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
 
-/// Initial briefing of an orchestrator session: the goal, the numbers a plan
-/// has to fit inside, and the procedure that puts the approved spec on the
-/// base branch.
-///
-/// The landing is rendered from the merge strategy of the goal's first
-/// repository, which is the checkout the orchestrator is started in and where
-/// its spec lands ([`default_spec_landing_prompt`]). It is a value the daemon
-/// fills in rather than prose here, because the two strategies share no step.
+/// Initial briefing of an orchestrator session: the goal, the repositories it
+/// works in, and the one number a plan has to fit inside.
 const ORCHESTRATOR_BRIEFING: &str = r#"# Goal: {goal_title}
 
 {goal_description}
@@ -259,23 +243,22 @@ const ORCHESTRATOR_BRIEFING: &str = r#"# Goal: {goal_title}
 {repositories}
 
 ## Constraints
-- At most {max_tasks} tasks
-- {required_approvals} approvals per task
+- At most {max_tasks} tasks"#;
 
-{spec_landing}"#;
-
-/// What an orchestrator that has gone quiet is picked up with. The goal is
-/// still in planning, so it stands in one of the phases of planning, and the
-/// nudge fits them all: a spec the user has not approved yet wants that
-/// conversation carried on — a revision, the next question, an answer waited
-/// for — and an approved one wants the landing and then the tasks. Which of
-/// them the orchestrator owes is the playbook's to say, and only the
-/// orchestrator knows where it got to: a spec already on the base branch is
-/// one `git log` away. A nudge that named `finalize_plan` alone would push it
-/// to plan a spec nobody agreed to; one that named a question alone would
-/// push it to ask again over an answer it has. The goal itself the session
-/// has read already.
-const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}" where it stands. Without an explicit yes on the spec, stay in the spec conversation. With one, land the spec and create the tasks that are left, then call `finalize_plan`."#;
+/// What an orchestrator that has gone quiet is picked up with, in both
+/// situations there are.
+///
+/// While the goal is in planning it stands somewhere in the conversation —
+/// a question waited on, a revision, a plan the user has not said yes to —
+/// and only the orchestrator knows where. So the nudge names the shape of
+/// the work rather than one step of it: a nudge that named `finalize_plan`
+/// alone would push it to start a plan nobody agreed to, and one that named
+/// a question alone would push it to ask again over an answer it has.
+///
+/// Once the goal is active the orchestrator is the one agent that outlives
+/// its own hand-off, and what it is woken for is on the tasks: one that
+/// failed, one that has gone quiet, or a goal with nothing left to do.
+const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}" where it stands. Without an explicit yes on the plan, stay in the conversation that gets one. With one, call `finalize_plan`. Once the goal is under way, read `list_tasks`."#;
 
 /// Initial briefing of an author session: the task, and the values its
 /// commands act on.
@@ -358,52 +341,23 @@ Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {re
 4. Answer every comment. Commit a change on {branch}. Put it through `request_review`. Push it once approved. A published branch only grows: no `commit --amend`, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
 5. Finished: `gh pr merge --squash` or `glab mr merge --squash`. In {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then `finish_task` with `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
 
-/// What the orchestrator of an approved spec runs in a `direct` repository:
-/// the spec is a commit on the base branch of the checkout the orchestrator
-/// works in, and a push where that checkout has a remote.
+/// What the author of an approved task that lands nothing is briefed with.
 ///
-/// No branch, no rebase and no squash, which is the whole of what the
-/// author's `direct` landing does before it commits: one file lands, on a
-/// checkout nothing else is writing to while the goal is in planning.
+/// Not every task ends in a commit on a base branch. A release ends in a
+/// published tag, an audit in a filed report, a piece of research in a
+/// document somewhere else entirely. Ariadne calls all of those `finished`
+/// (`Landing::None`), and what this text has to do is the one thing the two
+/// landing briefings do for free: make sure nothing the task produced is left
+/// only in a worktree, which is thrown away with the task.
 ///
-/// It opens on a check the author's landing has no use for. That checkout
-/// is the user's own, and the commit goes on whatever branch it is standing
-/// on: a checkout parked somewhere else would take the spec with it, quietly.
-/// The author never runs that risk — every commit of a task is made in a
-/// worktree of its own, and its `--ff-only` merge fails loudly instead.
-const SPEC_LANDING_DIRECT: &str = r#"## Land the spec
+/// It names no forge and no merge command, because there is nothing to merge.
+const LANDING_NONE: &str = r#"# Finish task: {task_title}
 
-Commit it on {base_branch} in {repo_path}, your cwd. `<remote>` is what `git remote -v` names, if anything.
+Approved. This task lands nothing: {branch} is thrown away when the task ends, and so is your worktree.
 
-1. `git status`. Not on {base_branch}: ask the user how to land the spec.
-2. `git fetch <remote> {base_branch}`. Then `git merge --ff-only <remote>/{base_branch}`. Skip both without a remote.
-3. Write the spec file. Add it and commit it. Give the commit a Conventional Commits subject and a body: what the spec covers.
-4. `git push <remote> {base_branch}`, where there is a remote. Leave {repo_path} on {base_branch}."#;
-
-/// What the orchestrator of an approved spec runs in a `pull_request`
-/// repository: the same request the authors open, seen through in this
-/// session, since nothing plans further until the spec is on the base branch.
-///
-/// The branch lives in a throwaway worktree rather than in the checkout the
-/// orchestrator stands in. That checkout is the repository's primary one:
-/// another goal's author fast-forwards its base branch there, and a checkout
-/// parked on a spec branch refuses that merge. `git worktree` is what lets
-/// the orchestrator hold a branch without moving it.
-///
-/// The waiting is a poll and sleep loop, and the sleep is capped at five
-/// minutes for the daemon's sake, as the author's is: a session that has
-/// reported nothing for `QUIET_FLAG_SECS` (600 s) is flagged as stalled, while
-/// every poll counts as activity.
-const SPEC_LANDING_PULL_REQUEST: &str = r#"## Land the spec
-
-Publish it against {base_branch} from {repo_path}, your cwd. `<remote>` is what `git remote -v` names. github.com takes `gh`, GitLab `glab`. Neither: ask the user how to land it.
-
-1. `git fetch <remote> {base_branch}`. Then `git worktree add "$(mktemp -d)/spec" -b <spec-branch> <remote>/{base_branch}`.
-2. Write and commit the spec in that worktree. Keep {repo_path} on {base_branch}.
-3. `git push -u <remote> <spec-branch>`. Then `gh pr create --base {base_branch}` or `glab mr create --target-branch {base_branch}`. Give the user its URL.
-4. Poll it with `gh pr view` or `glab mr view`. `sleep 300` between polls, never longer in one call. Answer every comment. Push each change on <spec-branch>, and never force push.
-5. Approved and green: `gh pr merge --squash` or `glab mr merge --squash`.
-6. In {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then remove the spec worktree."#;
+1. Check what the task asked for is done, and is where the task said to put it.
+2. Anything still only in this worktree is lost. Put it where it belongs now.
+3. Call `finish_task`. It takes no merge commit, because nothing was merged."#;
 
 /// Initial briefing of a reviewer session: the task, the round, and the branch
 /// its worktree is pinned to.
@@ -519,12 +473,6 @@ mod tests {
                     .into_iter()
                     .map(|strategy| (landing_name(strategy), default_landing_prompt(strategy))),
             )
-            .chain(MergeStrategy::ALL.into_iter().map(|strategy| {
-                (
-                    spec_landing_name(strategy),
-                    default_spec_landing_prompt(strategy),
-                )
-            }))
             .collect()
     }
 
@@ -539,11 +487,6 @@ mod tests {
     /// How a strategy's landing briefing is named in a failure.
     fn landing_name(strategy: MergeStrategy) -> String {
         format!("{} landing briefing", strategy.as_str())
-    }
-
-    /// And how the spec landing of the same strategy is named beside it.
-    fn spec_landing_name(strategy: MergeStrategy) -> String {
-        format!("{} spec landing briefing", strategy.as_str())
     }
 
     /// The size a prompt may grow back to, per kind, and in total.
@@ -627,7 +570,6 @@ mod tests {
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 1200;
         const LANDING_TOTAL: usize = 2150;
-        const SPEC_LANDING_TOTAL: usize = 1500;
         const GRAND_TOTAL: usize = 8000;
 
         // A cap per seat, not one for the three: the orchestrator alone
@@ -649,10 +591,6 @@ mod tests {
         let landing_cap = |strategy: MergeStrategy| match strategy {
             MergeStrategy::Direct => 880,
             MergeStrategy::PullRequest => 1300,
-        };
-        let spec_landing_cap = |strategy: MergeStrategy| match strategy {
-            MergeStrategy::Direct => 560,
-            MergeStrategy::PullRequest => 950,
         };
 
         for (name, text) in all_defaults() {
@@ -704,27 +642,9 @@ mod tests {
             "the landing briefings total {landings} characters, over {LANDING_TOTAL}"
         );
 
-        let mut spec_landings = 0;
-        for strategy in MergeStrategy::ALL {
-            let text = default_spec_landing_prompt(strategy);
-            spec_landings += text.len();
-            assert!(
-                text.len() <= spec_landing_cap(strategy),
-                "the {} is {} characters, over its {}",
-                spec_landing_name(strategy),
-                text.len(),
-                spec_landing_cap(strategy)
-            );
-        }
-        assert!(
-            spec_landings <= SPEC_LANDING_TOTAL,
-            "the spec landing briefings total {spec_landings} characters, over {SPEC_LANDING_TOTAL}"
-        );
-
         let grand: usize = all_defaults().iter().map(|(_, text)| text.len()).sum();
         println!(
             "{kinds:5}  every briefing template\n{landings:5}  every landing briefing\n\
-             {spec_landings:5}  every spec landing briefing\n\
              {grand:5}  every default text"
         );
         assert!(
@@ -1011,49 +931,32 @@ mod tests {
                 landing_name(strategy)
             );
         }
-
-        // A spec landing is nobody's to edit, so no save-time check reads it.
-        // What it may name is what the orchestrator briefing puts in: the
-        // checkout and the base branch, and neither of the values a task has.
-        for strategy in MergeStrategy::ALL {
-            let text = default_spec_landing_prompt(strategy);
-            for name in ["task_title", "branch"] {
-                assert!(
-                    !text.contains(&format!("{{{name}}}")),
-                    "the {} names {{{name}}}, which an orchestrator has no value for",
-                    spec_landing_name(strategy)
-                );
-            }
-        }
     }
 
-    /// The orchestrator playbook is spec-driven, and the order of its phases is
-    /// the playbook: the goal is read, a spec is drafted from it, every
-    /// unclear point is asked about one question at a time, the user says an
-    /// explicit yes, a folder and a format are found for the spec, the spec
-    /// is written and landed, and
-    /// only then are the tasks written. A phase out of order is an orchestrator
-    /// that writes tickets off a spec nobody agreed to, or tickets that name
-    /// a path no author will find on its base branch.
+    /// The orchestrator playbook is a conversation, and the order of its
+    /// phases is the playbook: the goal is read, every unclear point is asked
+    /// about one question at a time, the goal is split into tasks, each task
+    /// is staffed, the review and the ending of each are agreed with the user,
+    /// and only an explicit yes starts any of it.
+    ///
+    /// A phase out of order is an orchestrator that staffs reviewers nobody
+    /// asked for, or that starts a plan the user has not seen.
     #[test]
-    fn the_orchestrator_playbook_orders_the_spec_phases_before_the_tasks() {
+    fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
         let prompt = default_system_prompt(Seat::Orchestrator);
         let mut at = 0;
         for phase in [
             "Read the goal. Explore its repositories.",
-            "Draft a spec: scope, behavior, acceptance criteria.",
-            "Ask the user about each unclear point.",
+            "Ask the user about every unclear point",
             "Write one question in your turn text.",
             "Wait for the answer in the terminal.",
-            "Ask again until the user writes an explicit yes.",
-            "Find the folder the repository keeps specs or docs in.",
-            "Follow the format of the specs there.",
-            "Where the repository has none, agree a path and a format with the user.",
-            "Land the spec with the landing procedure in your briefing.",
-            "Create no task before it merges.",
-            "Call `create_task` per task",
-            "Name the spec path in each ticket.",
-            "`finalize_plan`",
+            "Split the goal into tasks",
+            "Staff one author per task with `create_task`",
+            "Ask the user which tasks are worth a review",
+            "Ask the user how each task ends",
+            "Revise it until they write an explicit yes.",
+            "Call `finalize_plan`",
+            "Stay up for the rest of the goal.",
         ] {
             let found = prompt[at..]
                 .find(phase)
@@ -1061,20 +964,22 @@ mod tests {
             at += found + phase.len();
         }
 
-        // And the yes gates the tasks, in as many words.
-        assert!(prompt.contains("Create no task before it."), "{prompt}");
+        // And the yes gates the start, in as many words.
+        assert!(prompt.contains("Call it no earlier."), "{prompt}");
     }
 
-    /// An orchestrator is nudged in the phase its goal stands in. Planning is a
-    /// spec conversation and then a breakdown, so the nudge names what each
-    /// phase wants: a resume that asked for tasks and `finalize_plan` alone
-    /// would push an orchestrator past a spec the user never approved.
+    /// An orchestrator is nudged in the situation its goal stands in, and
+    /// there are two: a plan being agreed, and a goal under way. A resume
+    /// that asked for `finalize_plan` alone would push an orchestrator past a
+    /// plan the user never saw; one that named the conversation alone would
+    /// leave a running goal unattended.
     #[test]
-    fn the_orchestrator_nudge_fits_the_spec_conversation_and_the_breakdown() {
+    fn the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way() {
         let resume = default_prompt_text(PromptKind::OrchestratorResume);
         for phase in [
-            "Without an explicit yes on the spec, stay in the spec conversation",
-            "land the spec and create the tasks that are left, then call `finalize_plan`",
+            "Without an explicit yes on the plan, stay in the conversation that gets one",
+            "With one, call `finalize_plan`",
+            "Once the goal is under way, read `list_tasks`",
         ] {
             assert!(resume.contains(phase), "the orchestrator resume and \"{phase}\"");
         }
@@ -1137,63 +1042,6 @@ mod tests {
             "merge_strategy",
         ] {
             assert!(!orchestrator.contains(forge), "the orchestrator prompts name {forge}");
-        }
-    }
-
-    /// The orchestrator lands the spec the way its repository takes any change,
-    /// and no further: a `direct` repository takes a commit on its base
-    /// branch, a `pull_request` one takes a published request the orchestrator
-    /// then merges. Both leave the primary checkout on the base branch, which
-    /// another goal's author fast-forwards there.
-    #[test]
-    fn the_spec_lands_the_way_its_repository_takes_a_change() {
-        let direct = default_spec_landing_prompt(MergeStrategy::Direct);
-        assert!(direct.contains("Commit it on {base_branch}"), "{direct}");
-        assert!(
-            direct.contains("git push <remote> {base_branch}"),
-            "{direct}"
-        );
-        assert!(!direct.contains("gh pr"), "{direct}");
-
-        let published = default_spec_landing_prompt(MergeStrategy::PullRequest);
-        assert!(published.contains("gh pr create --base"), "{published}");
-        assert!(
-            published.contains("glab mr create --target-branch"),
-            "{published}"
-        );
-        // The branch it publishes is held by a worktree of its own: the
-        // checkout the orchestrator stands in is the repository's primary one.
-        assert!(published.contains("git worktree add"), "{published}");
-
-        for text in [direct, published] {
-            assert!(
-                text.contains("{repo_path}") && text.contains("{base_branch}"),
-                "a spec landing names the checkout and the base branch: {text}"
-            );
-            assert!(text.contains("Land the spec"), "{text}");
-        }
-    }
-
-    /// Nothing in a spec landing is a call: the orchestrator holds no task,
-    /// so the tools that move one along are not its to make. An author ends
-    /// its landing with `finish_task`; the orchestrator ends its own by going
-    /// on to write the tasks.
-    #[test]
-    fn a_spec_landing_names_no_task_tool() {
-        for strategy in MergeStrategy::ALL {
-            let text = default_spec_landing_prompt(strategy);
-            for call in [
-                "finish_task",
-                "record_pull_request",
-                "request_review",
-                "fail_task",
-            ] {
-                assert!(
-                    !text.contains(call),
-                    "the {} names {call}",
-                    spec_landing_name(strategy)
-                );
-            }
         }
     }
 

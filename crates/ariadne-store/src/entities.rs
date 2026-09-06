@@ -5,11 +5,13 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    AgentKind, AttentionReason, GoalStatus, MergeStrategy, ReviewVerdict, Seat, SessionStatus,
-    TaskStatus,
+    AgentKind, AttentionReason, GoalStatus, Landing, MergeStrategy, ReviewVerdict, Seat,
+    SessionStatus, TaskStatus,
 };
 
-use crate::defaults::{default_landing_prompt, default_skill_document, skill_summary};
+use crate::defaults::{
+    default_landing_prompt, default_no_landing_prompt, default_skill_document, skill_summary,
+};
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
 /// and the column share a name; brackets mark a nullable column, which reads
@@ -210,7 +212,6 @@ pub struct Goal {
     pub description: String,
     pub status: String,
     pub max_tasks: Option<i64>,
-    pub required_approvals: i64,
     /// Agent CLI this goal's orchestrator runs on. None = auto, resolved at
     /// spawn time to the first installed CLI.
     pub agent_kind: Option<String>,
@@ -232,6 +233,9 @@ pub struct Task {
     pub description: String,
     pub status: String,
     pub branch: String,
+    /// How this task ends, as [`Landing`] spells it. Read through
+    /// [`Task::landing`].
+    pub landing: String,
     pub worktree_path: Option<String>,
     pub review_round: i64,
     pub stalled: i64,
@@ -246,6 +250,35 @@ pub struct Task {
 impl Task {
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
+    }
+
+    /// How this task ends. A row written by a future build that spells it
+    /// some other way reads as a task with nothing to land, which is the one
+    /// answer that asks nothing of git.
+    pub fn landing(&self) -> Landing {
+        self.landing.parse().unwrap_or(Landing::None)
+    }
+
+    /// The procedure the author of this task is briefed to end it with.
+    ///
+    /// The task says which of the three it runs. Where it ends the way its
+    /// repository takes a change, that repository's own text is what it runs
+    /// — the one a user may have rewritten. Where it ends the other way, the
+    /// built-in procedure for that way is what it runs instead: a text
+    /// written for direct commits is not one to hand somebody publishing a
+    /// request. A task that lands nothing runs neither.
+    pub fn landing_prompt_text<'a>(&self, repo: &'a Repository) -> &'a str
+    where
+        Self: 'a,
+    {
+        match self.landing() {
+            Landing::None => default_no_landing_prompt(),
+            landing => match landing.strategy() {
+                Some(strategy) if strategy == repo.merge_strategy() => repo.landing_prompt_text(),
+                Some(strategy) => default_landing_prompt(strategy),
+                None => default_no_landing_prompt(),
+            },
+        }
     }
 }
 

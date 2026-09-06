@@ -14,7 +14,9 @@ use ariadne_api::skills::SkillDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::{TaskAgentDto, TaskDto};
-use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{
+    AgentKind, GoalStatus, Landing, MergeStrategy, Seat, SessionStatus, TaskStatus,
+};
 
 /// A stamp every fixture is created and updated at, so a rendered row is
 /// reproducible.
@@ -27,7 +29,6 @@ pub fn goal(id: &str, title: &str) -> GoalDto {
         description: String::new(),
         status: GoalStatus::Active,
         max_tasks: None,
-        required_approvals: 1,
         model: None,
         effort: None,
         repos: Vec::new(),
@@ -49,6 +50,7 @@ pub fn task(id: &str, goal_id: &str) -> TaskDto {
         agents: vec![agent("01AUTHOR", Seat::Author, &["coding"])],
         depends_on: Vec::new(),
         branch: format!("a-task-{id}"),
+        landing: Landing::Merge,
         worktree_path: None,
         review_round: 0,
         stalled: false,

@@ -24,7 +24,9 @@ use axum::http::StatusCode;
 
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{Actor, AttentionReason, MergeStrategy, ReviewVerdict, Seat, TaskStatus};
+use ariadne_core::{
+    Actor, AttentionReason, Landing, MergeStrategy, ReviewVerdict, Seat, TaskStatus,
+};
 use ariadne_store::{AgentSession, NewReview, RepositoryUpdate, Repository, NewTaskAgent, Task};
 
 use common::{Cast, Harness, as_session, eventually, get, harness, sh};
@@ -40,13 +42,27 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 async fn seeded(strategy: MergeStrategy) -> (Harness, Cast) {
     let h = harness().scheduler().await;
     h.git_repo("repo");
-    let cast = h.active_cast().await;
+    let mut cast = h.active_cast().await;
     if strategy != MergeStrategy::Direct {
         h.store
             .update_repository(
                 &cast.repo.id,
                 RepositoryUpdate {
                     merge_strategy: Some(strategy),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        // How a task ends is the task's own, decided when it is written. A
+        // repository that changes strategy afterwards does not move a task
+        // already planned, so this moves it the way an orchestrator would.
+        cast.task = h
+            .store
+            .update_task(
+                &cast.task.id,
+                ariadne_store::TaskUpdate {
+                    landing: Some(Landing::of(strategy)),
                     ..Default::default()
                 },
             )
@@ -173,6 +189,7 @@ async fn an_approved_task_is_landed_by_its_own_author() {
                 },
             ],
             depends_on: vec![task.id.clone()],
+            landing: None,
         })
         .await
         .unwrap();

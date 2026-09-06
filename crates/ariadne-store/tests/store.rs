@@ -35,7 +35,6 @@ async fn seed_goal(store: &Store, max_tasks: Option<i64>) -> (Goal, Repository) 
             title: "Test goal".into(),
             description: "desc".into(),
             max_tasks,
-            required_approvals: 1,
             repository_ids: vec![repo.id.clone()],
             pin: None,
         })
@@ -165,6 +164,7 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
                 },
             ],
             depends_on: deps,
+            landing: None,
         })
         .await
         .unwrap()
@@ -546,7 +546,6 @@ async fn a_goal_reads_its_repositories_live() {
             title: "Two repos".into(),
             description: "desc".into(),
             max_tasks: None,
-            required_approvals: 1,
             // The same repository named twice is one reference.
             repository_ids: vec![api.id.clone(), ui.id.clone(), api.id.clone()],
             pin: None,
@@ -588,7 +587,6 @@ async fn a_goal_needs_repositories_that_exist() {
         title: "Goal".into(),
         description: "desc".into(),
         max_tasks: None,
-        required_approvals: 1,
         repository_ids,
         pin: None,
     };
@@ -626,6 +624,7 @@ async fn a_goal_needs_repositories_that_exist() {
                     },
                 ],
                 depends_on: vec![],
+                landing: None,
             })
             .await,
         Err(StoreError::Invalid(_))
@@ -672,6 +671,7 @@ async fn task_branch_is_named_after_the_title() {
                 },
             ],
             depends_on: vec![],
+            landing: None,
         })
         .await
         .unwrap();
@@ -761,6 +761,7 @@ async fn max_tasks_is_enforced() {
                 },
             ],
             depends_on: vec![],
+            landing: None,
         })
         .await;
     assert!(matches!(t2, Err(StoreError::Conflict(_))));
@@ -2065,6 +2066,7 @@ async fn an_agent_is_written_on_the_pin_it_was_given_and_auto_where_it_was_given
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
             ],
             depends_on: vec![],
+            landing: None,
         })
         .await
         .unwrap();
@@ -2489,6 +2491,7 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
             ],
             depends_on: vec![],
+            landing: None,
         })
         .await
         .unwrap();
@@ -2515,6 +2518,7 @@ async fn an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to() {
                 NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
             ],
             depends_on: vec![],
+            landing: None,
         })
         .await;
     let message = format!("{:?}", refused.expect_err("no such skill"));

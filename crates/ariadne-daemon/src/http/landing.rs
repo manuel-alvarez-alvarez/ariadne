@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::reviews::{CreateReviewRequest, ReviewDto};
 use ariadne_api::tasks::{RecordPullRequestRequest, TaskDto};
-use ariadne_core::{AttentionReason, MergeStrategy, Seat, TaskStatus};
+use ariadne_core::{AttentionReason, Landing, Seat, TaskStatus};
 use ariadne_store::{NewReview, Repository, Task};
 
 use super::AppState;
@@ -24,7 +24,9 @@ fn unresolved(e: impl std::fmt::Display) -> ApiError {
 /// Prove the task really was landed, in the primary checkout and with git
 /// alone.
 ///
-/// What "landed" leaves behind depends on the strategy, so the check does too.
+/// What "landed" leaves behind depends on how the task ends, so the check
+/// does too — and a task that lands nothing leaves nothing to check, which is
+/// the whole of what makes a release or a filed report finishable.
 ///
 /// `direct` rebases, squashes and fast-forwards, which leaves the base tip *as*
 /// the branch tip: the branch being an ancestor of the base is the whole of it,
@@ -53,8 +55,12 @@ pub(super) async fn verify_merged(
             .await
             .map_err(unresolved)
     };
-    match repo.merge_strategy() {
-        MergeStrategy::Direct => {
+    match task.landing() {
+        // Nothing was landed, so there is nothing git can be asked about.
+        // What the task produced is the task's own to have put where it
+        // belongs, and no check here can see it.
+        Landing::None => {}
+        Landing::Merge => {
             if !on_the_base(&task.branch).await? {
                 return Err(ApiError::conflict(format!(
                     "merge not verified: {} is not an ancestor of {} in {}",
@@ -62,7 +68,7 @@ pub(super) async fn verify_merged(
                 )));
             }
         }
-        MergeStrategy::PullRequest => {
+        Landing::PullRequest => {
             let Some(sha) = reported else {
                 return Err(ApiError::conflict(
                     "merge not verified: a published request is squashed by the forge, \

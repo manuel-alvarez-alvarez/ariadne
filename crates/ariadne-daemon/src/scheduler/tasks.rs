@@ -128,8 +128,12 @@ impl super::Scheduler {
                         .await?;
                     return Box::pin(self.reconcile_task(task_id)).await;
                 }
-                if approvals >= goal.required_approvals {
-                    info!(task = %task.id, approvals, "approval threshold reached");
+                // Every reviewer the task was staffed with, and no number of
+                // its own: the orchestrator staffs the review the work needs
+                // and agrees it with the user, so each reviewer it put there
+                // is one whose verdict was wanted.
+                if approvals >= reviewers.len() as i64 {
+                    info!(task = %task.id, approvals, "every reviewer has approved");
                     self.store
                         .transition_task(&task.id, TaskStatus::Approved, Actor::Daemon, None, None)
                         .await?;
@@ -592,11 +596,11 @@ impl super::Scheduler {
     async fn resume_text(&self, task: &Task) -> anyhow::Result<String> {
         if task.status() == TaskStatus::Approved {
             let repo = self.store.get_repository(&task.repo_id).await?;
-            // The landing briefing is the repository's: the text set on it, or
-            // the default of its merge strategy. What reaches the author is
-            // the procedure that repository lands by.
+            // The procedure is the task's: how this task ends was agreed with
+            // the user, and the repository's own text is what a task that
+            // ends the repository's way runs.
             return Ok(prompts::landing_briefing(
-                repo.landing_prompt_text(),
+                task.landing_prompt_text(&repo),
                 task,
                 &repo,
             ));
@@ -650,5 +654,22 @@ fn short_id(id: &str) -> String {
     match id.char_indices().nth_back(7) {
         Some((i, _)) if id.len() > 10 => format!("…{}", &id[i..]),
         _ => id.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A task is approved when every reviewer staffed on it has approved, so
+    /// a task with no reviewer is approved as soon as its author asks: there
+    /// is nobody to ask. That is what makes work with nothing to review — a
+    /// release, a dependency bump the suite already judged — a task rather
+    /// than a special case.
+    #[test]
+    fn a_task_is_approved_by_every_reviewer_staffed_on_it() {
+        let approved = |approvals: i64, reviewers: usize| approvals >= reviewers as i64;
+        assert!(approved(0, 0), "nobody to ask");
+        assert!(!approved(0, 1));
+        assert!(!approved(1, 2), "one of two is not the round closed");
+        assert!(approved(2, 2));
     }
 }

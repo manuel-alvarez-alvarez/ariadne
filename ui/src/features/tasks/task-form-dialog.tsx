@@ -2,10 +2,10 @@
  * The task form: `ariadne task create` in the goal panel, and `ariadne task
  * update` in the task panel, as one dialog with two modes.
  *
- * The daemon does the real validation — profile roles, repo membership, dep
- * cycles, `max_tasks`, and for edits the pending/ready guard — so the client
- * only catches what it can know on its own (empty title, no reviewer, a
- * reviewer picked twice) and shows the daemon's error envelope verbatim for
+ * The daemon does the real validation — the skills a name answers to, repo
+ * membership, dep cycles, `max_tasks`, and for edits the pending/ready guard
+ * — so the client only catches what it can know on its own (an empty title,
+ * an agent with no skill) and shows the daemon's error envelope verbatim for
  * everything else, with the dialog staying open. That covers the stale edit:
  * a task that started while the form was open answers `409` right here.
  *
@@ -14,16 +14,20 @@
  * multi-select. Dependencies get the same rows for the same look, though
  * their order carries no meaning. On edit both replace the task's lists.
  *
- * The author and the repo can only be chosen at creation — `PATCH
+ * The author's skills and the repo can only be chosen at creation — `PATCH
  * /v1/tasks/{id}` carries neither — so edit mode leaves those fields out; the
  * task panel's facts card keeps showing what they are.
  *
- * What each agent runs on can be chosen in both modes, one control per slot:
+ * What each agent runs on can be chosen in both modes, one control per agent:
  * the author's and every reviewer's. The pin is a model — the agent CLI and,
  * after a `:`, the model of it — and the effort that model is run at, and one
- * picker holds both, so a reviewer row stays three controls wide: the profile,
- * what it runs on, and the remove. Nothing pinned is the slot on its profile's
- * own, which the picker is told so it can say what that is.
+ * picker holds both, so a reviewer row stays three controls wide: the skills,
+ * what they run on, and the remove. Nothing pinned is auto, which the picker
+ * is told so it can say so.
+ *
+ * The reviewers can be none: most work is worth a second pair of eyes and the
+ * form starts with one, but a task with nothing to review — a release, say —
+ * is approved as soon as its author asks.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -192,7 +196,7 @@ function TaskFormDialog({
         title={editing ? "Edit task" : "New task"}
         description={
           editing
-            ? "Editable while the task is still waiting; reviewers and dependencies replace the current lists. The author's profile and the repository are fixed at creation — the model it runs on is not."
+            ? "Editable while the task is still waiting; reviewers and dependencies replace the current lists. The author's skills and the repository are fixed at creation — the model it runs on is not."
             : "A unit of work an author takes from branch to merge, reviewed by the reviewers in the order given."
         }
         onSubmit={form.handleSubmit(onSubmit)}
@@ -338,7 +342,6 @@ function TaskFormDialog({
                         variant="ghost"
                         size="icon"
                         aria-label={`Remove reviewer ${index + 1}`}
-                        disabled={reviewerRows.fields.length === 1}
                         onClick={() => reviewerRows.remove(index)}
                       >
                         <XIcon />
@@ -361,7 +364,9 @@ function TaskFormDialog({
               </Button>
             </div>
             <FieldDescription>
-              The task is reviewed by each of these, top to bottom, every round.
+              The task is reviewed by each of these, top to bottom, every round. Leave it empty
+              only where there is nothing to review: the task is then approved as soon as its
+              author asks.
             </FieldDescription>
             <FieldError>{form.formState.errors.reviewers?.root?.message}</FieldError>
           </Field>

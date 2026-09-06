@@ -425,6 +425,27 @@ describe("what the task's agents run on", () => {
     await closePin(user)
   })
 
+  /**
+   * Most work is worth a second pair of eyes, and the form starts with one
+   * reviewer for that reason. Some work has nothing to review — a release,
+   * a dependency bump the suite already judged — and that task is staffed
+   * with an author alone.
+   */
+  it("takes every reviewer off, for a task with nothing to review", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Cut 0.6.0")
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
+    await user.click(screen.getByRole("button", { name: "Remove reviewer 1" }))
+
+    expect(screen.queryByLabelText("Reviewer 1 skills")).toBeNull()
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({ agents: [{ seat: "author", skills: ["coding"] }] })
+  })
+
   it("is three controls on a reviewer row: the skills, what it runs on, and the remove", async () => {
     renderDialog(vi.fn())
 

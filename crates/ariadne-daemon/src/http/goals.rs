@@ -87,7 +87,6 @@ pub async fn create(
             title: req.title,
             description: req.description,
             max_tasks: req.max_tasks,
-            required_approvals: req.required_approvals.unwrap_or(1),
             repository_ids: req.repository_ids,
             pin,
         })

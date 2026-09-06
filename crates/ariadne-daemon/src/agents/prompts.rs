@@ -21,10 +21,8 @@
 
 use std::path::Path;
 
-use ariadne_core::{MergeStrategy, PromptKind, Seat};
-use ariadne_store::defaults::{
-    default_prompt_text, default_spec_landing_prompt, default_system_prompt,
-};
+use ariadne_core::{PromptKind, Seat};
+use ariadne_store::defaults::{default_prompt_text, default_system_prompt};
 use ariadne_store::{Goal, Repository, Skill, Task};
 
 /// The template `kind` is rendered from: the built-in text of that kind,
@@ -132,8 +130,6 @@ pub fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) 
     let max = goal
         .max_tasks
         .map_or("unbounded".to_string(), |m| m.to_string());
-    let approvals = goal.required_approvals.to_string();
-    let spec_landing = spec_landing_briefing(repos.first());
     render(
         template,
         &[
@@ -141,31 +137,7 @@ pub fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) 
             ("goal_description", &goal.description),
             ("repositories", &repo_lines),
             ("max_tasks", &max),
-            ("required_approvals", &approvals),
-            ("spec_landing", &spec_landing),
         ],
-    )
-}
-
-/// How the orchestrator lands the approved spec in `repo`: the procedure of
-/// that repository's merge strategy, with the checkout and the base branch
-/// its commands act on put in.
-///
-/// The text is the code's rather than the repository's
-/// ([`default_spec_landing_prompt`] says why), so nothing is read from the
-/// store here — only which of the two strategies the repository is on.
-fn spec_landing_briefing(repo: Option<&Repository>) -> String {
-    let (strategy, path, base) = match repo {
-        Some(repo) => (
-            repo.merge_strategy(),
-            repo.path.as_str(),
-            repo.base_branch.as_str(),
-        ),
-        None => (MergeStrategy::default(), "<repo>", "<base branch>"),
-    };
-    render(
-        default_spec_landing_prompt(strategy),
-        &[("repo_path", path), ("base_branch", base)],
     )
 }
 
@@ -299,6 +271,8 @@ pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> Strin
 mod tests {
     use super::*;
 
+    use ariadne_core::MergeStrategy;
+
     use ariadne_store::defaults::default_landing_prompt;
 
     fn goal() -> Goal {
@@ -308,7 +282,6 @@ mod tests {
             description: "The board needs swimlanes.".into(),
             status: "planning".into(),
             max_tasks: Some(4),
-            required_approvals: 2,
             agent_kind: None,
             model: None,
             effort: None,
@@ -339,6 +312,7 @@ mod tests {
             description: "Read them from the store.".into(),
             status: "in_progress".into(),
             branch: "render-prompts-from-the-database-xxxxxx".into(),
+            landing: "merge".into(),
             worktree_path: Some("/worktrees/task-eng".into()),
             review_round: 3,
             stalled: 0,
@@ -491,7 +465,6 @@ mod tests {
             repo.merge_strategy().as_str()
         );
         let round = task.review_round.to_string();
-        let spec_landing = spec_landing_briefing(Some(&repo));
 
         // The values every kind is rendered with, and what the briefing that
         // owns it renders.
@@ -515,8 +488,6 @@ mod tests {
                     ("goal_description", &goal.description),
                     ("repositories", &repo_line),
                     ("max_tasks", "4"),
-                    ("required_approvals", "2"),
-                    ("spec_landing", &spec_landing),
                 ],
             ),
             (
@@ -767,16 +738,22 @@ mod tests {
         );
     }
 
-    /// The orchestrator is briefed to land the approved spec the way the
-    /// repository it works in takes any change: the procedure of that
-    /// repository's merge strategy, with its checkout and base branch put in.
-    ///
-    /// The repository is the goal's first, which is the checkout the
-    /// orchestrator is started in. A goal that works in several is planned
-    /// from that one, so the spec lands there and the commands name it.
+    /// A goal is never planned without a repository, and a briefing built for
+    /// one all the same reads as a briefing rather than as a broken template.
     #[test]
-    fn the_orchestrator_lands_the_spec_the_way_its_repository_takes_a_change() {
-        let goal = goal();
+    fn a_goal_without_a_repository_still_briefs() {
+        let briefing =
+            orchestrator_briefing(default(PromptKind::OrchestratorBriefing), &goal(), &[]);
+        assert!(briefing.contains("# Goal: Ship the UI"), "{briefing}");
+        assert!(!briefing.contains('{'), "{briefing}");
+    }
+
+    /// The orchestrator is briefed with every repository the goal works in,
+    /// each with the base branch and the way it takes a change: what a task
+    /// ends with is the orchestrator's to agree with the user, so it has to
+    /// know what each repository does by default.
+    #[test]
+    fn the_orchestrator_is_briefed_with_every_repository_and_how_each_takes_a_change() {
         let direct = repo();
         let published = Repository {
             path: "/repos/web".into(),
@@ -784,53 +761,17 @@ mod tests {
             merge_strategy: "pull_request".into(),
             ..repo()
         };
-        let template = default(PromptKind::OrchestratorBriefing);
-
-        let briefing = orchestrator_briefing(template, &goal, std::slice::from_ref(&direct));
-        assert!(
-            briefing.contains("Commit it on main in /repos/ariadne"),
-            "{briefing}"
-        );
-        assert!(!briefing.contains("gh pr create"), "{briefing}");
-
-        // The first repository is the one the spec lands in, whatever the
-        // rest of the goal works in.
-        let briefing = orchestrator_briefing(template, &goal, &[published, direct]);
-        assert!(briefing.contains("gh pr create --base trunk"), "{briefing}");
-        assert!(briefing.contains("from /repos/web, your cwd"), "{briefing}");
-        assert!(!briefing.contains("Commit it on"), "{briefing}");
-        assert!(!briefing.contains('{'), "{briefing}");
-    }
-
-    /// A repository's own landing text is its authors' to run, and it says
-    /// nothing about how the spec lands: the spec landing is the code's, off
-    /// the merge strategy alone.
-    #[test]
-    fn a_rewritten_landing_briefing_does_not_change_how_the_spec_lands() {
-        let rewritten = Repository {
-            landing_prompt: Some("Land {branch} onto {base_branch} however you like.".into()),
-            ..repo()
-        };
         let briefing = orchestrator_briefing(
             default(PromptKind::OrchestratorBriefing),
             &goal(),
-            std::slice::from_ref(&rewritten),
+            &[direct, published],
         );
-        assert!(!briefing.contains("however you like"), "{briefing}");
         assert!(
-            briefing.contains("Commit it on main in /repos/ariadne"),
+            briefing.contains("- /repos/ariadne (base branch: main, merge strategy: direct)"),
             "{briefing}"
         );
-    }
-
-    /// A goal is never planned without a repository, and a briefing built for
-    /// one all the same reads as a briefing rather than as a broken template.
-    #[test]
-    fn a_goal_without_a_repository_still_briefs() {
-        let briefing =
-            orchestrator_briefing(default(PromptKind::OrchestratorBriefing), &goal(), &[]);
         assert!(
-            briefing.contains("Commit it on <base branch> in <repo>"),
+            briefing.contains("- /repos/web (base branch: trunk, merge strategy: pull_request)"),
             "{briefing}"
         );
         assert!(!briefing.contains('{'), "{briefing}");

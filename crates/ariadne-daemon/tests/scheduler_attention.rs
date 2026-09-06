@@ -86,10 +86,10 @@ impl World {
         World::build(harness().await, 1).await
     }
 
-    /// The same on a goal that wants two approvals: a round one verdict does
-    /// not close is where a reviewer sits with its work done.
-    async fn needing(approvals: i64) -> World {
-        World::build(harness().await, approvals).await
+    /// The same with two reviewers on the task: a round one verdict does not
+    /// close is where a reviewer sits with its work done.
+    async fn reviewed_by(reviewers: usize) -> World {
+        World::build(harness().await, reviewers).await
     }
 
     /// A daemon that cannot start anything: `cli_bin` names no executable, so
@@ -104,8 +104,8 @@ impl World {
         World::build(harness().cannot_spawn().await, 1).await
     }
 
-    async fn build(h: Harness, approvals: i64) -> World {
-        let cast = h.cast_needing(approvals).await;
+    async fn build(h: Harness, reviewers: usize) -> World {
+        let cast = h.cast_reviewed_by(reviewers).await;
         let goal = h.activate(&cast.goal).await;
         World {
             h,
@@ -134,6 +134,7 @@ impl World {
                     },
                 ],
                 depends_on: vec![],
+                landing: None,
             })
             .await
             .unwrap()
@@ -642,7 +643,7 @@ async fn an_author_that_cannot_be_resumed_is_flagged_disconnected() {
 async fn a_vanished_pane_nobody_is_waiting_on_is_not_raised() {
     // Two approvals wanted, one given: the round stays open around a reviewer
     // that has nothing left to do, so the status is not what makes it quiet.
-    let w = World::needing(2).await;
+    let w = World::reviewed_by(2).await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
     // Entering review opens a round: the verdict belongs to that one.
     let under_review = w.store.get_task(&w.task.id).await.unwrap();

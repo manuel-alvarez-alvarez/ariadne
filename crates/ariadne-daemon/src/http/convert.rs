@@ -80,7 +80,7 @@ dto! {
         model: spelled(g.agent_kind(), g.model.as_deref()),
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
-        .. id, title, description, max_tasks, required_approvals, effort,
+        .. id, title, description, max_tasks, effort,
            created_at, updated_at
     }
 
@@ -104,6 +104,7 @@ dto! {
         reason: Option<String>,
     ) -> TaskDto {
         status: t.status(),
+        landing: t.landing(),
         stalled: t.is_stalled(),
         agents: agents
             .into_iter()

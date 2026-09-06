@@ -31,8 +31,7 @@ const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 48).title(),
     col("status", UNCAPPED).status(),
-    col("age", UNCAPPED).rank(3),
-    col("approvals", UNCAPPED).rank(2),
+    col("age", UNCAPPED).rank(2),
     col("tokens", UNCAPPED).rank(1),
     col("repos", 40).rank(0),
 ];
@@ -46,16 +45,16 @@ const INDENT: &str = "\n             ";
 /// most often said on the same line.
 const CREATE_EXAMPLES: &str = "\
 Examples:
-  # a goal in one registered repository, planned on the Orchestrator profile's own model
+  # a goal in one registered repository, planned on the first installed agent CLI
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
 
-  # an orchestrator of your own, on one model of one agent CLI, reasoned deeply
+  # an orchestrator on one model of one agent CLI, reasoned deeply
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
-      --orchestrator Architect --model codex:gpt-5.6-sol --effort xhigh
+      --model codex:gpt-5.6-sol --effort xhigh
 
-  # two repositories, and two reviewer approvals before a task may merge
+  # two repositories, and at most four tasks between them
   ariadne goal create --title \"Split the API\" --repo ~/projects/api \\
-      --repo ~/projects/ui --approvals 2
+      --repo ~/projects/ui --max-tasks 4
 ";
 
 #[derive(Subcommand)]
@@ -89,9 +88,6 @@ pub enum GoalCommand {
         /// runs it at
         #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
         effort: Option<String>,
-        /// Reviewer approvals required to merge a task
-        #[arg(long)]
-        approvals: Option<i64>,
         /// Maximum number of tasks (default: unbounded)
         #[arg(long)]
         max_tasks: Option<i64>,
@@ -153,7 +149,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             repos,
             model,
             effort,
-            approvals,
             max_tasks,
         } => {
             let goal: GoalDto = client
@@ -164,7 +159,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         description,
                         repository_ids: resolve_repositories(client, &repos).await?,
                         max_tasks,
-                        required_approvals: approvals,
                         model,
                         effort,
                     },
@@ -186,7 +180,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         g.title.clone(),
                         g.status.as_str().into(),
                         age(&g.created_at, now),
-                        g.required_approvals.to_string(),
                         usage_cell(&g.usage.total),
                         g.repos
                             .iter()
@@ -217,7 +210,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         "orchestrator",
                         pin_label(g.model.as_deref(), g.effort.as_deref()).into(),
                     ),
-                    ("approvals", g.required_approvals.to_string().into()),
                     (
                         "max_tasks",
                         g.max_tasks
