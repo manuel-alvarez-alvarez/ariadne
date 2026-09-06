@@ -30,7 +30,6 @@ function message(over: Partial<MessageDto>): MessageDto {
     id: "01MSG0000000000000000000A",
     goal_id: TASK.goal_id,
     task_id: TASK.id,
-    round: 1,
     kind: "note",
     from_actor: "reviewer",
     from_agent_id: "01REVIEWER",
@@ -59,14 +58,16 @@ describe("the channel", () => {
     expect(screen.getByText("The agents have said nothing yet")).toBeDefined()
   })
 
-  it("groups by round, newest round first", () => {
+  it("reads as one list, in the order it was said", () => {
     render([
-      message({ id: "01MSGROUND1", round: 1, body: "first round" }),
-      message({ id: "01MSGROUND2", round: 2, body: "second round" }),
+      message({ id: "01MSGONE", body: "asked first" }),
+      message({ id: "01MSGTWO", body: "answered after" }),
     ])
 
-    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)
-    expect(headings).toEqual(["Round 21 message", "Round 11 message"])
+    const bodies = screen.getAllByRole("article").map((card) => card.textContent ?? "")
+    expect(bodies[0]).toContain("asked first")
+    expect(bodies[1]).toContain("answered after")
+    expect(screen.getByText("2 messages")).toBeDefined()
   })
 
   it("names both ends by the skills they work with", () => {

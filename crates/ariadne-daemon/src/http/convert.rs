@@ -111,7 +111,7 @@ dto! {
         usage: usage,
         reason: reason,
         .. id, goal_id, repo_id, title, description, branch, worktree_path,
-           review_round, merge_commit, pr_url, created_at, updated_at
+           merge_commit, pr_url, created_at, updated_at
     }
 
     pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
@@ -125,7 +125,7 @@ dto! {
         kind: m.kind().unwrap_or(MessageKind::Note),
         from_actor: m.from_actor().unwrap_or(Actor::Daemon),
         to_actor: m.to_actor().unwrap_or(Actor::Daemon),
-        .. id, goal_id, task_id, round, from_agent_id, from_session, to_agent_id,
+        .. id, goal_id, task_id, from_agent_id, from_session, to_agent_id,
            in_reply_to, body, delivered_at, created_at
     }
 
@@ -137,7 +137,7 @@ dto! {
         attention_reason: s.attention_reason(),
         usage: usage,
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
-           tmux_session, worktree_path, review_round, attention_since,
+           tmux_session, worktree_path, attention_since,
            last_activity_at, created_at, ended_at
     }
 

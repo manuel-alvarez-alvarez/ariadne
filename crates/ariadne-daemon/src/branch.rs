@@ -341,7 +341,6 @@ mod tests {
             branch: "work".into(),
             landing: "merge".into(),
             worktree_path: Some(repo.display().to_string()),
-            review_round: 0,
             stalled: 0,
             merge_commit: None,
             pr_url: None,

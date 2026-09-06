@@ -377,8 +377,7 @@ impl Store {
     /// The one and only way to change a task's status.
     ///
     /// Validates against the core state machine, applies side-column updates
-    /// (review round bump, merge commit) and writes the audit row — all in
-    /// one transaction.
+    /// (the merge commit) and writes the audit row — all in one transaction.
     pub async fn transition_task(
         &self,
         id: &str,
@@ -424,22 +423,15 @@ impl Store {
             ));
         }
 
-        let review_round = if to == TaskStatus::UnderReview {
-            task.review_round + 1
-        } else {
-            task.review_round
-        };
-
         // The stall is not reset here: it belongs to the agent that stopped
         // working and comes down when that agent's own flag does
         // (`sync_task_stall`).
         sqlx::query(
-            "UPDATE tasks SET status = ?, review_round = ?, merge_commit = COALESCE(?, merge_commit),
+            "UPDATE tasks SET status = ?, merge_commit = COALESCE(?, merge_commit),
                               updated_at = ?
              WHERE id = ?",
         )
         .bind(to.as_str())
-        .bind(review_round)
         .bind(merge_commit)
         .bind(now())
         .bind(&task.id)
@@ -481,12 +473,12 @@ impl Store {
         .await?)
     }
 
-    /// The summary the author asked for review with, for the round that is
+    /// The summary the author asked for review with, for the review that is
     /// open now: the reason of the most recent `under_review` transition.
     ///
-    /// The round records it because the round is what it belongs to. Read off
-    /// the conversation it would be whatever the author happened to write
-    /// last, and what the reviewers are handed has to be what it submitted.
+    /// Read off the conversation it would be whatever the author happened to
+    /// write last, and what the reviewers are handed has to be what it
+    /// submitted.
     pub async fn review_summary(&self, task_id: &str) -> Result<Option<String>> {
         Ok(sqlx::query_scalar::<_, Option<String>>(
             "SELECT reason FROM task_transitions

@@ -20,9 +20,11 @@ use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_
 /// it, and so has one that was just put back on its feet.
 #[derive(Debug, Default)]
 pub(super) struct Quiet {
-    /// The status and round the two steps below were taken in: the task's for
-    /// an author or a reviewer, the goal's for an orchestrator.
-    pub(super) situation: (String, i64),
+    /// What the two steps below were taken in: the status of the task for an
+    /// author or a reviewer, of the goal for an orchestrator — and, for a
+    /// task under review, the review it is under, since two reviews of one
+    /// task read as the same status and are not the same situation.
+    pub(super) situation: String,
     /// Whether the one nudge for that situation has been spent.
     pub(super) nudged: bool,
     /// Whether the user has been told about it.
@@ -58,13 +60,13 @@ impl super::Scheduler {
     /// gets interrupted: it is left alone until the thresholds behind the
     /// nudge, which is where a turn that never ends is answered for.
     ///
-    /// `situation` is what the nudge and the flag are spent on — the status
-    /// and round the agent went quiet in — so moving on earns fresh ones, and
-    /// `resume` is both what it is nudged with and what it is revived with.
+    /// `situation` is what the nudge and the flag are spent on — what the
+    /// agent went quiet in — so moving on earns fresh ones, and `resume` is
+    /// both what it is nudged with and what it is revived with.
     pub(super) async fn check_session_quiet(
         &mut self,
         session: &AgentSession,
-        situation: (String, i64),
+        situation: String,
         resume: &str,
     ) -> anyhow::Result<()> {
         if !matches!(

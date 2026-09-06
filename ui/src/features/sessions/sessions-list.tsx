@@ -406,15 +406,6 @@ function SessionRole({ session, onSelect }: { session: SessionDto; onSelect: () 
       >
         {SEAT_LABELS[session.seat]}
       </button>
-      {session.review_round != null ? (
-        <Tooltip>
-          <TooltipTrigger render={<span className="text-muted-foreground" />}>
-            {" "}
-            · R{session.review_round}
-          </TooltipTrigger>
-          <TooltipContent>Review round {session.review_round}</TooltipContent>
-        </Tooltip>
-      ) : null}
     </span>
   )
 }

@@ -61,7 +61,7 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
    disagree with.
 10. Token usage is reported per session and per source, and a source replaces
     its own totals rather than adding to them. Usage rolls up to the task and
-    the goal; every round of one reviewer groups together; a session that has
+    the goal; every session of one reviewer groups together; a session that has
     reported nothing reads as zeros; and usage goes when its session does.
 11. The daemon's own log is served both as a snapshot (with a tail limit) and
     as a stream that opens with a snapshot and follows with deltas, from a

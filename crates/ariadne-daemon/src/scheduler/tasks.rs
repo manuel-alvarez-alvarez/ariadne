@@ -1,5 +1,5 @@
 //! What a task wants, by status: an author from `ready` to the merge, the
-//! reviewers a round is waiting on, and the cleanup its ending owes.
+//! reviewers a review is waiting on, and the cleanup its ending owes.
 
 use tracing::{info, warn};
 
@@ -12,6 +12,22 @@ use crate::agents::prompts;
 use crate::launcher;
 
 use super::SPAWN_RETRY_BUDGET;
+
+/// What a task's agent is in, as the watchdog spends its one nudge and its one
+/// flag per situation.
+///
+/// The status alone is not enough while a task is under review: a task sent
+/// back for changes and sent for review again reads as `under_review` both
+/// times, and a reviewer that went quiet in the first one would have spent the
+/// nudge it is owed in the second. So the review it is under is named too — by
+/// the request that opened it, which is what a round number used to stand for.
+async fn review_situation(task: &Task, store: &ariadne_store::Store) -> anyhow::Result<String> {
+    if task.status() != TaskStatus::UnderReview {
+        return Ok(task.status.clone());
+    }
+    let review = store.open_review_request(&task.id).await?;
+    Ok(format!("{}:{}", task.status, review.unwrap_or_default()))
+}
 
 impl super::Scheduler {
     pub(super) async fn reconcile_task(&mut self, task_id: &str) -> anyhow::Result<()> {
@@ -41,7 +57,7 @@ impl super::Scheduler {
         // that has voted is not done with the task — the author may have
         // something to ask it, and it may have something to ask the author —
         // so it sits idle instead of being killed and started again for the
-        // next round. What ends them is the task ending, which the terminal
+        // next review. What ends them is the task ending, which the terminal
         // arms below do through `cleanup_task`.
         
         // A task that has left `approved` — landed, or sent back to the
@@ -102,12 +118,13 @@ impl super::Scheduler {
             }
             TaskStatus::UnderReview => {
                 let reviewers = self.store.list_task_reviewers(&task.id).await?;
-                let verdicts = self
-                    .store
-                    .round_verdicts(&task.id, task.review_round)
-                    .await?;
+                let verdicts = self.store.open_verdicts(&task.id).await?;
+                // What "this review" is, for the watchdog: two reviews of one
+                // task read as the same status, and are not the same thing to
+                // have gone quiet in.
+                let situation = review_situation(&task, &self.store).await?;
 
-                // Verdicts first: they may close the round.
+                // Verdicts first: they may settle the review.
                 let changes_requested = verdicts
                     .iter()
                     .any(|m| m.kind() == Some(MessageKind::RequestChanges));
@@ -142,9 +159,9 @@ impl super::Scheduler {
 
                 // Start the reviewers that have no verdict and no live
                 // session. A reviewer keeps one session for the whole task,
-                // so what runs for round two onwards is that same session
-                // resumed — its round is not part of its identity, only of
-                // the briefing it is woken with.
+                // so what runs for a second review is that same session
+                // resumed — which review it is on is not part of its
+                // identity, only of the briefing it is woken with.
                 let verdict_by: std::collections::HashSet<_> = verdicts
                     .iter()
                     .filter_map(|m| m.from_agent_id.clone())
@@ -169,7 +186,7 @@ impl super::Scheduler {
                         .await?;
                     // As in `live_sessions`: a pane tmux would not answer for
                     // counts as one, so an outage cannot put a second reviewer
-                    // on a round that already has one.
+                    // on a review that already has one.
                     let mut running = None;
                     for s in &live {
                         if s.seat() == Seat::Reviewer
@@ -185,13 +202,13 @@ impl super::Scheduler {
                         }
                     }
                     // One text for either way this reviewer is picked up:
-                    // the verdict the round is waiting on and the diff that
+                    // the verdict the review is waiting on and the diff that
                     // may have moved under it are what it is told whether its
                     // session is being started again or merely nudged.
                     let template = prompts::template_for(PromptKind::ReviewerResume);
                     let resume =
                         prompts::reviewer_resume_briefing(template, &task, summary.as_deref());
-                    // A reviewer with no verdict yet is the round's only
+                    // A reviewer with no verdict yet is the review's only
                     // reason to still be open, so an idle one is watched the
                     // same way an author is. Reviewers that already voted
                     // are not in `pending` and are left to sit: waiting for
@@ -202,17 +219,13 @@ impl super::Scheduler {
                         // this reviewer spent of the task's budget comes back
                         // here rather than at the launch that started it.
                         self.spent_on_a_dead_launch(&reviewer.id, &task.id, &reviewer);
-                        self.check_session_quiet(
-                            &reviewer,
-                            (task.status.clone(), task.review_round),
-                            &resume,
-                        )
-                        .await?;
+                        self.check_session_quiet(&reviewer, situation.clone(), &resume)
+                            .await?;
                     } else {
                         // A reviewer that came up and was never heard from
                         // spends an attempt of the task's, like its author
-                        // does: a round whose reviewer exits the moment it
-                        // starts is not a round to start one for every tick.
+                        // does: a review whose reviewer exits the moment it
+                        // starts is not one to start a reviewer for every tick.
                         if let Some(last) = self
                             .last_session(&task.id, |s| {
                                 s.task_agent_id.as_deref() == Some(agent_id.as_str())
@@ -231,7 +244,7 @@ impl super::Scheduler {
                                 return Ok(());
                             }
                         }
-                        info!(task = %task.id, reviewer = %agent_id, round = task.review_round, "starting reviewer");
+                        info!(task = %task.id, reviewer = %agent_id, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
                         // one, spawns a first for it otherwise.
                         self.launcher
@@ -241,10 +254,7 @@ impl super::Scheduler {
                 }
             }
             TaskStatus::ChangesRequested => {
-                let verdicts = self
-                    .store
-                    .round_verdicts(&task.id, task.review_round)
-                    .await?;
+                let verdicts = self.store.open_verdicts(&task.id).await?;
                 // Who asked, as the author reads it. An agent has no name of
                 // its own, so it is named by the skills it reviewed with, and
                 // by its id where it is staffed no longer.
@@ -408,7 +418,7 @@ impl super::Scheduler {
     /// so the author is the only seat this asks about.
     /// A task with no live author gets one started; one that has
     /// reported nothing for too long goes under [`Self::check_session_quiet`],
-    /// which is one nudge per (status, round), then the user, then a relaunch.
+    /// which is one nudge per situation, then the user, then a relaunch.
     /// The task shows that stall too, but nothing here writes it: the flag on
     /// the session is the record of it, and the task's own column is the
     /// store's projection of that (`sync_task_stall`).
@@ -458,7 +468,7 @@ impl super::Scheduler {
         // gone quiet with the work still in front of it and one whose session
         // ended are in the same situation, and there is one text for it.
         let nudge = self.resume_text(task).await?;
-        self.check_session_quiet(agent, (task.status.clone(), task.review_round), &nudge)
+        self.check_session_quiet(agent, review_situation(task, &self.store).await?, &nudge)
             .await
     }
 

@@ -318,7 +318,6 @@ pub async fn list_goal_messages(
         .store
         .list_messages(MessageFilter {
             goal_id: Some(id),
-            round: q.round,
             to_agent_id: q.to_agent_id,
             undelivered_only: q.undelivered,
             ..Default::default()

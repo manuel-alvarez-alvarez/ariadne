@@ -21,19 +21,19 @@ In: what a message is, who it can be for, what the six kinds mean, how a
 message reaches the agent it was sent to, and how long an agent stays around
 to receive one.
 
-Out: what a round is (004), the states a verdict moves a task through (001),
+Out: what a review is (004), the states a verdict moves a task through (001),
 and the wording of the text a message arrives in (006).
 
 ## Behavior
 
 1. Everything one agent says to another is a **message**. There is no second
-   table for verdicts: a verdict is a message whose kind closes a round, which
+   table for verdicts: a verdict is a message whose kind settles a review, which
    is what makes "the reviewer asked the author something" possible at all.
 2. Six kinds, and the kind is what the daemon reads:
    - `question` — the sender needs it answered before it can go on;
    - `answer` — the answer to one;
    - `review_request` — the author asking a reviewer to look;
-   - `approve`, `request_changes` — a reviewer's verdict on the round;
+   - `approve`, `request_changes` — a reviewer's verdict on the review;
    - `note` — anything worth saying that nobody has to answer.
 3. A message has exactly one recipient, so a review request that goes to three
    reviewers is three messages: whether it has been seen is a question about
@@ -51,7 +51,8 @@ and the wording of the text a message arrives in (006).
    conversation, and the daemon is not in it:
    - a recipient that the task does not staff is refused;
    - a verdict comes from a reviewer of that task, on a task that is
-     `under_review`, and one reviewer votes once a round.
+     `under_review`, and one reviewer votes once on each review it is asked
+     for (004).
 8. The daemon delivers a message by typing it into the recipient's pane and
    submitting it, so it arrives as a turn. There is no inbox to poll.
    `delivered_at` says which have gone; a pane that is busy is not typed into,
@@ -71,7 +72,7 @@ and the wording of the text a message arrives in (006).
 ## Acceptance criteria
 
 - A reviewer asks the author and the author answers, without either leaving
-  the task and without the round moving
+  the task and without the review moving
   (`agent_messages.rs::a_reviewer_asks_the_author_and_the_author_answers_it`).
 - The message is typed into the recipient's pane, names the sender by its
   skills, carries the id an answer names, and is stamped delivered
@@ -82,10 +83,12 @@ and the wording of the text a message arrives in (006).
   (`agent_messages.rs::a_message_to_an_agent_the_task_does_not_staff_is_refused`).
 - Only a reviewer of the task can send a verdict
   (`agent_messages.rs::only_a_reviewer_of_the_task_can_send_a_verdict`), only
-  while a round is open (`::a_verdict_outside_a_round_is_refused`), and one
-  per reviewer per round
-  (`store.rs::one_verdict_per_reviewer_per_round`) — a question in the same
-  round is not a second one (same test).
+  while a review is open (`::a_verdict_outside_a_review_is_refused`), and one
+  per reviewer per review asked for
+  (`::only_one_verdict_per_reviewer_per_review_is_taken`); what a verdict
+  belongs to is that request
+  (`store.rs::a_verdict_belongs_to_the_review_that_was_asked_for`), and a
+  question in between is not a second one (same test).
 - A review request reaches every reviewer with the author's summary
   (`agent_messages.rs::a_review_request_reaches_every_reviewer_as_a_message`).
 - A message is delivered once, and the stamp says which have gone
@@ -98,7 +101,7 @@ and the wording of the text a message arrives in (006).
   (`::the_orchestrator_is_addressed_by_name_and_needs_no_agent_id`), and a
   message to nobody is refused with the addresses that would work
   (`::a_message_to_nobody_is_refused_with_the_addresses_that_would_work`).
-- A verdict is a message to the author of the kind that closes a round
+- A verdict is a message to the author of the kind that settles a review
   (`tools.rs::a_verdict_is_a_message_to_the_author_of_the_kind_that_closes_a_round`).
 
 ## Sources

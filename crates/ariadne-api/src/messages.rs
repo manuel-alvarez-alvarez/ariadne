@@ -10,9 +10,6 @@ pub struct MessageDto {
     pub goal_id: String,
     /// The task it is about, or None for a message about the goal itself.
     pub task_id: Option<String>,
-    /// The review round it belongs to, read for a verdict and ignored
-    /// otherwise.
-    pub round: i64,
     pub kind: MessageKind,
     pub from_actor: Actor,
     /// The staffed agent that sent it, or None for the orchestrator, the
@@ -58,8 +55,6 @@ pub struct SendMessageRequest {
 /// by.
 #[derive(Debug, Clone, Default, Deserialize, utoipa::IntoParams)]
 pub struct MessageListQuery {
-    /// Only the messages of this review round.
-    pub round: Option<i64>,
     /// Only the messages for this staffed agent.
     pub to_agent_id: Option<String>,
     /// Only the ones that have not reached a pane yet.

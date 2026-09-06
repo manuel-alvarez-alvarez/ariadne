@@ -3,9 +3,10 @@
  * equivalent.
  *
  * One channel carries all of it: the questions and their answers, the author's
- * review requests, and the verdicts that close a round. So the tab is grouped
- * by round rather than by kind — a round is the unit of work the conversation
- * happened inside — newest first, and inside a round in the order it was said.
+ * review requests, and the verdicts on them. It reads as one list in the order
+ * it was said, which is what it is — a review used to be numbered, and the
+ * tab used to be grouped by that number, but what a verdict answers is the
+ * request above it rather than a round it belongs to.
  *
  * An agent has no name of its own, so both ends of a message are named by the
  * skills they work with: "code-review" said this to "coding". The orchestrator
@@ -21,7 +22,6 @@ import {
   MessageSquareIcon,
   MessageSquareWarningIcon,
 } from "lucide-react"
-import { useMemo } from "react"
 
 import type { Actor, MessageDto, MessageKind, TaskAgentDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
@@ -82,7 +82,7 @@ export function TaskMessages({ taskId }: { taskId: string }) {
   // Already in the cache: the panel around this read it first.
   const task = useQuery(taskQueryOptions(taskId))
   const agents = task.data?.agents ?? []
-  const rounds = useMemo(() => groupByRound(messages.data ?? []), [messages.data])
+  const entries = messages.data ?? []
 
   if (messages.isPending) {
     return (
@@ -103,24 +103,15 @@ export function TaskMessages({ taskId }: { taskId: string }) {
     )
   }
 
-  if (rounds.length === 0) {
+  if (entries.length === 0) {
     return <EmptyState emphasis="quiet" title="The agents have said nothing yet" />
   }
 
   return (
-    <div className="space-y-5">
-      {rounds.map(([round, entries]) => (
-        <section key={round} className="space-y-2">
-          <h3 className="font-heading font-medium text-sm">
-            Round {round}
-            <span className="ml-2 font-normal text-muted-foreground text-xs">
-              {plural(entries.length, "message")}
-            </span>
-          </h3>
-          {entries.map((message) => (
-            <MessageCard key={message.id} message={message} agents={agents} />
-          ))}
-        </section>
+    <div className="space-y-2">
+      <p className="text-muted-foreground text-xs">{plural(entries.length, "message")}</p>
+      {entries.map((message) => (
+        <MessageCard key={message.id} message={message} agents={agents} />
       ))}
     </div>
   )
@@ -160,15 +151,4 @@ function partyLabel(
   if (!agentId) return actor
   const agent = agents.find((one) => one.id === agentId)
   return agent?.skills.join(", ") || agentId
-}
-
-/** Newest round first; within a round, in the order it was said. */
-function groupByRound(messages: MessageDto[]): [number, MessageDto[]][] {
-  const rounds = new Map<number, MessageDto[]>()
-  for (const message of messages) {
-    const entries = rounds.get(message.round)
-    if (entries) entries.push(message)
-    else rounds.set(message.round, [message])
-  }
-  return [...rounds.entries()].sort(([a], [b]) => b - a)
 }

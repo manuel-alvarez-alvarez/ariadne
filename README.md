@@ -84,7 +84,7 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    agent of the task, or to the orchestrator; `reply` answers on the id a
    message arrived with. There is no inbox to check: Ariadne types the message
    into the recipient's pane and submits it, so it lands as a turn. A verdict
-   is a message of the kind that closes a round, and it all reads back as one
+   is a message of the kind that settles a review, and it all reads back as one
    channel — `ariadne task messages <task-id>`, or the Messages tab of the
    task panel. Every agent of a task stays up until the task is over, so a
    reviewer that has voted is still there to be asked something.
@@ -149,7 +149,7 @@ session/tool event back to the daemon, and each agent's internal session id is
 tracked so sessions can be resumed and attached.
 
 Sessions are long-lived — one author per task, one reviewer per task across
-its rounds, one orchestrator per goal — and every resume replays the whole
+every review of it, one orchestrator per goal — and every resume replays the whole
 transcript as its first prompt. Shortening that transcript is the agent's own
 business: compact a session by typing `/compact` in its pane, or leave it to
 the CLI near its context limit. The daemon asks for none, and types into a

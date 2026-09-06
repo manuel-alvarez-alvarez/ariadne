@@ -622,7 +622,6 @@ impl Launcher {
                 effort: goal.effort.clone(),
                 tmux_session,
                 worktree_path: None,
-                review_round: None,
             })
             .await?;
 
@@ -662,7 +661,6 @@ impl Launcher {
                 effort: author.effort.clone(),
                 tmux_session,
                 worktree_path: Some(worktree.display().to_string()),
-                review_round: None,
             })
             .await?;
 
@@ -799,7 +797,6 @@ impl Launcher {
                 effort: reviewer.effort.clone(),
                 tmux_session,
                 worktree_path: Some(worktree.display().to_string()),
-                review_round: Some(task.review_round),
             })
             .await?;
 
@@ -845,11 +842,7 @@ impl Launcher {
         }
         let session = self
             .store
-            .restart_session(
-                &previous.id,
-                Some(&worktree.display().to_string()),
-                Some(task.review_round),
-            )
+            .restart_session(&previous.id, Some(&worktree.display().to_string()))
             .await?;
 
         self.launch_resumed(&session, worktree, &internal, instruction)
@@ -886,7 +879,7 @@ impl Launcher {
         // agent actually produced.
         let session = self
             .store
-            .restart_session(&previous.id, Some(&worktree.display().to_string()), None)
+            .restart_session(&previous.id, Some(&worktree.display().to_string()))
             .await?;
 
         self.launch_resumed(&session, worktree, &internal, instruction)
@@ -960,7 +953,7 @@ impl Launcher {
 
         // Neither the worktree nor (for a reviewer) the round changes: this is
         // the same session put back on its feet, not a new round of work.
-        let session = self.store.restart_session(&previous.id, None, None).await?;
+        let session = self.store.restart_session(&previous.id, None).await?;
         self.launch_resumed(&session, cwd, &internal, instruction.unwrap_or(""))
             .await
     }

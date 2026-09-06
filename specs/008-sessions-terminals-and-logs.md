@@ -33,7 +33,7 @@ Out: when the daemon decides to type something (009, 010), and what it types
    task, and holds the tmux session name, the worktree, the agent kind, the
    model and effort it runs on, and its internal agent id.
 2. Sessions are long-lived: one author per task, one reviewer per task
-   across its rounds, one orchestrator per goal. Restarting one reopens the same
+   across every review of it, one orchestrator per goal. Restarting one reopens the same
    row, and every launch of it is dated and named.
 3. A launch is refused rather than duplicated: a spawn asks first whether the
    seat already has a live session, and counts "tmux could not be asked" as a

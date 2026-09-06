@@ -15,7 +15,7 @@ test that proves it.
 | 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, the transition table, dependencies, failure and retry |
 | 002 | [Repositories, branches and worktrees](002-repositories-branches-and-worktrees.md) | checkouts, base branches, branch naming, the worktree per seat |
 | 003 | [Planning a goal](003-planning-a-goal.md) | the conversation, the plan, and the orchestrator's whole life |
-| 004 | [Authoring and review rounds](004-authoring-and-review-rounds.md) | the author, the reviewers, verdicts and rounds |
+| 004 | [Authoring and review](004-authoring-and-review.md) | the author, the reviewers, and the verdicts on a review |
 | 005 | [How a task ends](005-how-a-task-ends.md) | `merge`, `pull_request` and `none`, and merge verification |
 | 006 | [Prompts and Simplified Technical English](006-prompts-and-simplified-technical-english.md) | the layers of text, who owns each, the English all of it is in |
 | 007 | [Agent CLI adapters](007-agent-cli-adapters.md) | Claude Code, Codex, OpenCode: argv, env, hooks, resume |

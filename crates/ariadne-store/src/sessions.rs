@@ -40,7 +40,6 @@ pub struct NewSession {
     pub effort: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,
-    pub review_round: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -60,9 +59,9 @@ impl Store {
         let id = new_id();
         sqlx::query(
             "INSERT INTO agent_sessions (id, goal_id, task_id, seat, task_agent_id, agent_kind, model,
-                                         effort, tmux_session, worktree_path, review_round, status,
+                                         effort, tmux_session, worktree_path, status,
                                          created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
         )
         .bind(&id)
         .bind(&new.goal_id)
@@ -74,7 +73,6 @@ impl Store {
         .bind(&new.effort)
         .bind(&new.tmux_session)
         .bind(&new.worktree_path)
-        .bind(new.review_round)
         .bind(now())
         .execute(self.w())
         .await?;
@@ -266,9 +264,9 @@ impl Store {
     /// Put a finished session back into its pre-spawn state so it can be
     /// relaunched under its own id: resuming a conversation in a fresh tmux
     /// keeps the one row — same id, same console log — instead of leaving a
-    /// sibling behind per review round. `worktree_path` and `review_round`
-    /// overwrite the stored ones when given, since the relaunch is what
-    /// decides them.
+    /// sibling behind for every review it sat through. `worktree_path`
+    /// overwrites the stored one when given, since the relaunch is what
+    /// decides it.
     ///
     /// Whatever the session needed the user for is dropped too: a relaunch is
     /// the recovery, so an agent put back on its feet does not carry the
@@ -277,7 +275,6 @@ impl Store {
         &self,
         id: &str,
         worktree_path: Option<&str>,
-        review_round: Option<i64>,
     ) -> Result<AgentSession> {
         self.write_session(
             id,
@@ -285,13 +282,11 @@ impl Store {
                 "UPDATE agent_sessions
                 SET status = 'starting', ended_at = NULL, last_activity_at = ?,
                     attention_reason = NULL, attention_since = NULL,
-                    worktree_path = COALESCE(?, worktree_path),
-                    review_round = COALESCE(?, review_round)
+                    worktree_path = COALESCE(?, worktree_path)
               WHERE id = ?",
             )
             .bind(now())
             .bind(worktree_path)
-            .bind(review_round)
             .bind(id),
         )
         .await?;

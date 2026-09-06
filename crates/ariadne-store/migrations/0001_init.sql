@@ -119,7 +119,6 @@ CREATE TABLE tasks (
     landing             TEXT NOT NULL DEFAULT 'merge'
                         CHECK (landing IN ('merge', 'pull_request', 'none')),
     worktree_path       TEXT,
-    review_round        INTEGER NOT NULL DEFAULT 0,
     stalled             INTEGER NOT NULL DEFAULT 0,
     merge_commit        TEXT,
     -- The pull or merge request the author published, where it published one.
@@ -200,7 +199,6 @@ CREATE TABLE agent_sessions (
     internal_session_id TEXT,                   -- claude session uuid / codex thread_id / opencode session id
     tmux_session        TEXT NOT NULL,
     worktree_path       TEXT,
-    review_round        INTEGER,
     status              TEXT NOT NULL DEFAULT 'starting'
                         CHECK (status IN ('starting', 'running', 'idle', 'exited', 'failed')),
     last_activity_at    TEXT,
@@ -252,6 +250,10 @@ CREATE TABLE session_usage (
 -- verdict used to be a table of its own, which is why the only thing a
 -- reviewer could ever say was approve or request changes.
 --
+-- A review is bounded by its own request rather than by a round number: the
+-- verdicts that count are the ones sent after the last `review_request`, and
+-- asking for a review again supersedes what came before it.
+--
 -- Every message has exactly one recipient, so a request that goes to three
 -- reviewers is three rows: `delivered_at` is per recipient, and one row with
 -- three readers could not say which of them has seen it.
@@ -264,8 +266,6 @@ CREATE TABLE messages (
     goal_id       TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
     -- NULL for a message about the goal rather than about one task.
     task_id       TEXT REFERENCES tasks (id) ON DELETE CASCADE,
-    -- The review round this belongs to, so a verdict is counted in its own.
-    round         INTEGER NOT NULL DEFAULT 0,
     kind          TEXT NOT NULL
                   CHECK (kind IN ('question', 'answer', 'review_request',
                                   'approve', 'request_changes', 'note')),
@@ -288,10 +288,10 @@ CREATE TABLE messages (
 );
 CREATE INDEX idx_messages_task ON messages (task_id, id);
 CREATE INDEX idx_messages_goal ON messages (goal_id, id);
--- One verdict per reviewer per round, which is what closes a round.
-CREATE UNIQUE INDEX idx_messages_one_verdict
-    ON messages (task_id, round, from_agent_id)
-    WHERE kind IN ('approve', 'request_changes');
+-- One verdict per reviewer per review request. Not an index: what a verdict
+-- belongs to is "the review asked for last", which is a row of this same table
+-- rather than a column, so the rule is read where a verdict is written
+-- (`http::landing::send`).
 
 CREATE TABLE agent_events (
     id         TEXT PRIMARY KEY,

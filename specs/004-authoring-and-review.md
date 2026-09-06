@@ -1,5 +1,5 @@
 ---
-id: authoring-and-review-rounds
+id: authoring-and-review
 status: current
 updated: 2026-09-06
 areas: [daemon, store, prompts]
@@ -11,16 +11,16 @@ tests:
   - crates/ariadne-store/tests/store.rs
 ---
 
-# Authoring and review rounds
+# Authoring and review
 
 What happens between a task becoming `ready` and being `approved`: one
-author, one or more reviewers, and as many rounds as the change needs.
+author, one or more reviewers, and as many reviews as the change needs.
 
 ## Scope
 
 In: the author session and what it owns, `request_review`, reviewer
-sessions, the verdict per round, how a round closes, and how the two sides
-are resumed between rounds.
+sessions, the verdict each reviewer owes, how a review settles, and how the
+two sides are resumed between reviews.
 
 Out: the transition table itself (001), the landing that follows approval
 (005), and the briefings' wording (006).
@@ -30,7 +30,7 @@ Out: the transition table itself (001), the landing that follows approval
 1. A `ready` task gets one author session, in its own worktree on its own
    branch, and moves to `in_progress`.
 2. The task never leaves that author: the same session and worktree carry it
-   from the first commit through every review round to the merge.
+   from the first commit through every review to the merge.
 3. The author implements only its task, obeys the repository's conventions
    files, keeps tests and linters green, and writes no authorship or tool
    trailer in its commits.
@@ -40,28 +40,33 @@ Out: the transition table itself (001), the landing that follows approval
    summary — what changed, why, and how it was verified. That summary is what
    the reviewers read first.
 6. Each reviewer the task staffs (017) gets one session for the whole task, in
-   a detached read-only worktree (002). A round is not part of a reviewer's
-   identity, only of the briefing it is woken with.
+   a detached read-only worktree (002). Which review it is on is not part of a
+   reviewer's identity, only of the briefing it is woken with.
 7. A reviewer verifies the change in its own worktree — installing what it
    needs, building, testing and linting there — and gives exactly one verdict
-   per round through `submit_verdict`. Nothing else counts as a verdict.
-   Anything it cannot judge from the change it asks the author about instead
-   (018); a question is not a verdict, and asking one closes no round.
-8. Verdicts close a round before anything else is done with it: any request
-   for changes moves the task to `changes_requested`, whatever else the round
-   holds. Otherwise, approvals of the round are counted and the task is
-   `approved` once every reviewer staffed on it has approved. A task staffed
-   with none is approved the moment its author asks: there is nobody to ask
-   (017).
-9. A `changes_requested` task resumes its author with the round's feedback,
-   under a heading naming who wrote each point — the Ariadne reviewers, or the
-   people on a published request (005). The author answers every point and
-   says why where the code stays.
-10. A reviewer that has already voted this round is nobody's blocker: no
-    attention is raised on it and no session is started for it. It stays up
+   through `submit_verdict` on each review it is asked for. Nothing else
+   counts as a verdict. Anything it cannot judge from the change it asks the
+   author about instead (018); a question is not a verdict, and asking one
+   settles nothing.
+8. There are no numbered rounds. A review is bounded by the request that
+   opened it: the verdicts that count are the ones sent since the author last
+   asked, and asking again supersedes everything said about the change before
+   it. That boundary is a row of the channel (018) rather than a counter, so
+   nothing has to be reset.
+9. Verdicts settle a review before anything else is done with it: any request
+   for changes moves the task to `changes_requested`, whatever else the review
+   holds. Otherwise the approvals are counted and the task is `approved` once
+   every reviewer staffed on it has approved. A task staffed with none is
+   approved the moment its author asks: there is nobody to ask (017).
+10. A `changes_requested` task resumes its author with the feedback, under a
+    heading naming who wrote each point — the Ariadne reviewers, or the people
+    on a published request (005). The author answers every point and says why
+    where the code stays.
+11. A reviewer that has already voted on the open review is nobody's blocker:
+    no attention is raised on it and no session is started for it. It stays up
     all the same, until the task is over, because the author may still have
     something to ask it (018).
-11. An author whose task is under review is likewise not the agent the work
+12. An author whose task is under review is likewise not the agent the work
     is waiting on (009).
 
 ## Acceptance criteria
@@ -69,18 +74,20 @@ Out: the transition table itself (001), the landing that follows approval
 - A spawned author is briefed from the built-in template, word for word
   (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`,
   `::a_spawn_assembles_the_default_briefing_word_for_word`).
-- A resume and a review round assemble word for word
-  (`prompts.rs::a_resume_and_a_review_round_assemble_word_for_word`), and the
+- A resume and a review assemble word for word
+  (`prompts.rs::a_resume_and_a_review_assemble_word_for_word`), and the
   reviewer is briefed with the summary review was requested with
   (`::a_reviewer_is_briefed_with_the_summary_review_was_requested_with`).
-- The author keeps one session across review rounds
-  (`resume.rs::resuming_the_author_reuses_its_session_across_review_rounds`),
-  and so does each reviewer
-  (`::a_reviewer_reuses_its_session_across_review_rounds`); a reviewer with no
-  agent id is spawned afresh
+- The author keeps one session across reviews
+  (`resume.rs::resuming_the_author_reuses_its_session_across_reviews`),
+  and so does each reviewer (`::a_reviewer_reuses_its_session_across_reviews`);
+  a reviewer with no agent id is spawned afresh
   (`::a_reviewer_without_an_agent_id_is_spawned_afresh`).
-- One verdict per reviewer per round is recorded
-  (`store.rs::one_verdict_per_reviewer_per_round`).
+- A verdict belongs to the review that was asked for, and asking again
+  supersedes what came before it
+  (`store.rs::a_verdict_belongs_to_the_review_that_was_asked_for`); a second
+  verdict on the open review is refused by name
+  (`agent_messages.rs::only_one_verdict_per_reviewer_per_review_is_taken`).
 - The review summary is the reason of the latest review request
   (`store.rs::the_review_summary_is_the_reason_of_the_latest_review_request`).
 - A reviewer that already voted raises no attention

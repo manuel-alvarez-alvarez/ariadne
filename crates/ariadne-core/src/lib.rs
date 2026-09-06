@@ -172,7 +172,7 @@ pub enum PromptKind {
     /// What an author with unfinished work is picked up with, whether its
     /// session ended or is merely sitting idle.
     AuthorResume,
-    /// Author resume briefing carrying a round of requested changes, from
+    /// Author resume briefing carrying the changes a review asked for, from
     /// the reviewers or from the people on a published request.
     ChangesRequested,
     /// Initial briefing of a reviewer session.
@@ -269,7 +269,6 @@ impl PromptKind {
             PromptKind::ChangesRequested => &["feedback"],
             PromptKind::ReviewerBriefing => &[
                 "task_title",
-                "review_round",
                 "task_description",
                 "goal_title",
                 "branch",
@@ -279,8 +278,8 @@ impl PromptKind {
             ],
             // Fewer than the initial briefing: a resumed reviewer is told what
             // moved under it, and the goal and the repository are things it
-            // already read last round.
-            PromptKind::ReviewerResume => &["review_round", "task_title", "branch", "summary"],
+            // read when it was briefed.
+            PromptKind::ReviewerResume => &["task_title", "branch", "summary"],
         }
     }
 
@@ -644,7 +643,7 @@ pub enum MessageKind {
     Answer,
     /// The author asking a reviewer to look at what it wrote.
     ReviewRequest,
-    /// A reviewer's verdict: the round is closed for that reviewer.
+    /// A reviewer's verdict on the review it was asked for.
     Approve,
     /// A reviewer's verdict: the author starts again on this feedback.
     RequestChanges,
@@ -662,11 +661,11 @@ wire_enum! { MessageKind, "message kind", [
 ]}
 
 impl MessageKind {
-    /// Whether this kind is a reviewer's verdict on a round.
+    /// Whether this kind is a reviewer's verdict.
     ///
     /// The two that are is what the daemon counts when it decides whether a
-    /// round is closed, and one verdict per reviewer per round is what the
-    /// store holds them to.
+    /// review is settled, and one verdict per reviewer per review request is
+    /// what the daemon holds them to.
     pub fn is_verdict(&self) -> bool {
         matches!(self, MessageKind::Approve | MessageKind::RequestChanges)
     }
@@ -765,15 +764,15 @@ mod tests {
                 .validate_template("Plan {goal_title} for {task_title}.")
                 .is_err()
         );
-        // The reviewer's resume is briefed with less than its first round.
+        // A resumed reviewer is briefed with less than a fresh one.
         assert!(
             PromptKind::ReviewerResume
-                .validate_template("Round {review_round} of {task_title} in {repo_path}.")
+                .validate_template("{task_title} in {repo_path} needs your verdict.")
                 .is_err()
         );
         assert_eq!(
             PromptKind::ReviewerBriefing
-                .validate_template("Round {review_round} of {task_title} in {repo_path}."),
+                .validate_template("{task_title} in {repo_path} needs your verdict."),
             Ok(())
         );
     }

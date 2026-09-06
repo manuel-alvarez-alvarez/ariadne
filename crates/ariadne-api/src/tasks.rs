@@ -25,7 +25,6 @@ pub struct TaskDto {
     /// else merges, or nothing at all.
     pub landing: Landing,
     pub worktree_path: Option<String>,
-    pub review_round: i64,
     /// Set when the agent went idle without advancing the task.
     pub stalled: bool,
     pub merge_commit: Option<String>,

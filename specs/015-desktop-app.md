@@ -60,7 +60,7 @@ Out: the daemon endpoints themselves (012).
 
 - 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
-- The task's channel is grouped by round, every kind is told apart, and both
+- The task's channel reads as one list, every kind is told apart, and both
   ends of a message are named by the skills they work with
   (`ui/src/features/tasks/task-messages.test.tsx`).
 - Every judgement the orchestrator makes about a task can be made here too:

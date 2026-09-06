@@ -367,7 +367,6 @@ async fn announce_review(state: &AppState, ctx: &CallCtx, task: &Task, summary: 
             .send_message(ariadne_store::NewMessage {
                 goal_id: task.goal_id.clone(),
                 task_id: Some(task.id.clone()),
-                round: task.review_round,
                 kind: MessageKind::ReviewRequest,
                 from_actor: ctx.actor,
                 from_agent_id: ctx.session.as_ref().and_then(|s| s.task_agent_id.clone()),

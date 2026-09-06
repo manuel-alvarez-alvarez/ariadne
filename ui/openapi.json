@@ -565,19 +565,6 @@
             }
           },
           {
-            "name": "round",
-            "in": "query",
-            "description": "Only the messages of this review round.",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64"
-            }
-          },
-          {
             "name": "to_agent_id",
             "in": "query",
             "description": "Only the messages for this staffed agent.",
@@ -1750,19 +1737,6 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "round",
-            "in": "query",
-            "description": "Only the messages of this review round.",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64"
             }
           },
           {
@@ -3001,7 +2975,6 @@
         "required": [
           "id",
           "goal_id",
-          "round",
           "kind",
           "from_actor",
           "to_actor",
@@ -3053,11 +3026,6 @@
           },
           "kind": {
             "$ref": "#/components/schemas/MessageKind"
-          },
-          "round": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The review round it belongs to, read for a verdict and ignored\notherwise."
           },
           "task_id": {
             "type": [
@@ -3394,13 +3362,6 @@
             ],
             "description": "Model requested at launch; null = the agent CLI's default."
           },
-          "review_round": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
           "seat": {
             "$ref": "#/components/schemas/Seat"
           },
@@ -3699,7 +3660,6 @@
           "depends_on",
           "branch",
           "landing",
-          "review_round",
           "stalled",
           "usage",
           "created_at",
@@ -3762,10 +3722,6 @@
           "repo_id": {
             "type": "string",
             "description": "Id of the repository the task works in, one of its goal's."
-          },
-          "review_round": {
-            "type": "integer",
-            "format": "int64"
           },
           "stalled": {
             "type": "boolean",

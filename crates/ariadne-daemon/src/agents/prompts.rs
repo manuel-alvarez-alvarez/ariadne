@@ -209,12 +209,10 @@ pub fn reviewer_briefing(
     repo: &Repository,
     summary: Option<&str>,
 ) -> String {
-    let round = task.review_round.to_string();
     render(
         template,
         &[
             ("task_title", &task.title),
-            ("review_round", &round),
             ("task_description", &task.description),
             ("goal_title", &goal.title),
             ("branch", &task.branch),
@@ -225,18 +223,15 @@ pub fn reviewer_briefing(
     )
 }
 
-/// What a reviewer that owes a verdict is picked up with: a later round of a
-/// task it already reviewed, and a round it has gone quiet in.
+/// What a reviewer that owes a verdict is picked up with: a task it already
+/// reviewed and was asked to review again, and a review it has gone quiet in.
 ///
 /// Its worktree may have moved under it while it was away, so what it is told
-/// is that the diff it read may be stale — and which round the verdict it now
-/// owes belongs to, since reviews are recorded per round.
+/// is that the diff it read may be stale.
 pub fn reviewer_resume_briefing(template: &str, task: &Task, summary: Option<&str>) -> String {
-    let round = task.review_round.to_string();
     render(
         template,
         &[
-            ("review_round", &round),
             ("task_title", &task.title),
             ("branch", &task.branch),
             ("summary", summary.unwrap_or("(none provided)")),
@@ -315,7 +310,6 @@ mod tests {
             id: "01msgxxxxxxxxxxxxxxxxxxxxx".into(),
             goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
-            round: 1,
             kind: "question".into(),
             from_actor: "reviewer".into(),
             from_agent_id: Some("01agentxxxxxxxxxxxxxxxxxxx".into()),
@@ -340,7 +334,6 @@ mod tests {
             branch: "render-prompts-from-the-database-xxxxxx".into(),
             landing: "merge".into(),
             worktree_path: Some("/worktrees/task-eng".into()),
-            review_round: 3,
             stalled: 0,
             merge_commit: None,
             pr_url: None,
@@ -491,7 +484,6 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n\n");
         let repo_line = format!("- {} (base branch: {})", repo.path, repo.base_branch);
-        let round = task.review_round.to_string();
         let attention = "- Render prompts (01task) failed".to_string();
 
         // The values every kind is rendered with, and what the briefing that
@@ -569,7 +561,6 @@ mod tests {
                 ),
                 vec![
                     ("task_title", &task.title),
-                    ("review_round", &round),
                     ("task_description", &task.description),
                     ("goal_title", &goal.title),
                     ("branch", &task.branch),
@@ -586,7 +577,6 @@ mod tests {
                     Some("I rewrote the thing."),
                 ),
                 vec![
-                    ("review_round", &round),
                     ("task_title", &task.title),
                     ("branch", &task.branch),
                     ("summary", "I rewrote the thing."),
@@ -673,10 +663,7 @@ mod tests {
             &repo,
             None,
         );
-        assert!(reviewer.starts_with(&format!(
-            "# Review task: {} (round {})",
-            task.title, task.review_round
-        )));
+        assert!(reviewer.starts_with(&format!("# Review task: {}", task.title)));
         assert!(reviewer.contains("- Author's summary: (none provided)"));
 
         let feedback = vec![("reviewer 01a".to_string(), "Split it.".to_string())];

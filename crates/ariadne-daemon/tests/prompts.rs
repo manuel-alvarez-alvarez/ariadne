@@ -157,7 +157,7 @@ async fn a_spawn_assembles_the_default_briefing_word_for_word() {
 /// author holding unfinished work is picked up with, and what a reviewer
 /// owing a verdict is.
 #[tokio::test]
-async fn a_resume_and_a_review_round_assemble_word_for_word() {
+async fn a_resume_and_a_review_assemble_word_for_word() {
     let h = harness().await;
     let cast = seeded(&h).await;
     let task = h.store.get_task(&cast.task.id).await.unwrap();
@@ -173,7 +173,6 @@ async fn a_resume_and_a_review_round_assemble_word_for_word() {
         )
     );
 
-    let round = task.review_round.to_string();
     assert_eq!(
         prompts::reviewer_resume_briefing(
             &default_for(PromptKind::ReviewerResume),
@@ -183,14 +182,13 @@ async fn a_resume_and_a_review_round_assemble_word_for_word() {
         fill(
             &default_for(PromptKind::ReviewerResume),
             &[
-                ("review_round", &round),
                 ("task_title", &task.title),
                 ("branch", &task.branch),
                 ("summary", SUMMARY),
             ],
         )
     );
-    // A round nobody wrote a summary for still says so in words.
+    // A review nobody wrote a summary for still says so in words.
     assert!(
         prompts::reviewer_resume_briefing(
             &default_for(PromptKind::ReviewerResume),
@@ -244,7 +242,6 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
         &default_for(PromptKind::ReviewerBriefing),
         &[
             ("task_title", &reviewed.title),
-            ("review_round", &reviewed.review_round.to_string()),
             ("task_description", &reviewed.description),
             ("goal_title", &cast.goal.title),
             ("branch", &reviewed.branch),

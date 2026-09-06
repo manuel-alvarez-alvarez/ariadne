@@ -99,15 +99,8 @@ async fn a_reviewer_asks_the_author_and_the_author_answers_it() {
     );
     assert_eq!(answered.in_reply_to.as_deref(), Some(asked.id.as_str()));
 
-    // And the round is untouched: a question is not a vote.
-    assert_eq!(
-        h.store
-            .round_verdicts(&cast.task.id, cast.task.review_round + 1)
-            .await
-            .unwrap()
-            .len(),
-        0
-    );
+    // And the review is untouched: a question is not a vote.
+    assert_eq!(h.store.open_verdicts(&cast.task.id).await.unwrap().len(), 0);
 }
 
 /// The transport: the daemon types the message into the recipient's pane and
@@ -233,7 +226,7 @@ async fn only_a_reviewer_of_the_task_can_send_a_verdict() {
 /// And a verdict on a task nobody asked to have reviewed is refused too: a
 /// round has to be open for one to close it.
 #[tokio::test]
-async fn a_verdict_outside_a_round_is_refused() {
+async fn a_verdict_outside_a_review_is_refused() {
     let h = harness().await;
     let cast = h.active_cast().await;
     let reviewer = h
@@ -423,5 +416,81 @@ async fn a_reviewer_that_voted_is_left_where_it_is() {
         h.session_status(&reviewer).await,
         SessionStatus::Idle,
         "and it sits idle, ready for anything the author asks it"
+    );
+}
+
+/// A reviewer votes once on each review it is asked for.
+///
+/// This used to be a unique index over the round a verdict carried. A review
+/// is bounded by its own request now — a row rather than a column — so the
+/// rule is read where a verdict is written, and it has to hold in both
+/// directions: a second verdict on the open review is refused, and the same
+/// reviewer votes again as soon as the author asks again.
+#[tokio::test]
+async fn only_one_verdict_per_reviewer_per_review_is_taken() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let reviewer = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
+        .await;
+    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    let verdict = |kind: &str, body: &str| {
+        as_session(
+            &messages_uri(&cast),
+            &reviewer.id,
+            serde_json::json!({
+                "kind": kind,
+                "to_actor": "author",
+                "to_agent_id": cast.author.id,
+                "body": body,
+            }),
+        )
+    };
+
+    let first: MessageDto = h.json(verdict("approve", "looks right"), StatusCode::CREATED).await;
+    assert_eq!(first.kind, MessageKind::Approve);
+
+    let envelope: ErrorBody = h
+        .json(
+            verdict("request_changes", "on second thoughts"),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(
+        envelope.error.message.contains("already given its verdict"),
+        "{}",
+        envelope.error.message
+    );
+
+    // Asked again, and the same reviewer has a verdict to give again.
+    h.store
+        .send_message(ariadne_store::NewMessage {
+            goal_id: cast.goal.id.clone(),
+            task_id: Some(cast.task.id.clone()),
+            kind: MessageKind::ReviewRequest,
+            from_actor: Actor::Author,
+            from_agent_id: Some(cast.author.id.clone()),
+            from_session: None,
+            to_actor: Actor::Reviewer,
+            to_agent_id: Some(cast.reviewer.id.clone()),
+            in_reply_to: None,
+            body: "revised".into(),
+        })
+        .await
+        .unwrap();
+
+    let again: MessageDto = h
+        .json(verdict("approve", "fixed now"), StatusCode::CREATED)
+        .await;
+    assert_eq!(again.kind, MessageKind::Approve);
+    assert_eq!(
+        h.store.open_verdicts(&cast.task.id).await.unwrap().len(),
+        1,
+        "and the verdict before the request is not counted in this review"
     );
 }

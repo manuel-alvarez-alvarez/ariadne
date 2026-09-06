@@ -28,7 +28,6 @@ pub struct SessionDto {
     pub internal_session_id: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,
-    pub review_round: Option<i64>,
     pub status: SessionStatus,
     /// Why this session needs the user's attention, if it does. Orthogonal to
     /// `status`: an agent blocked on a permission prompt is still running.

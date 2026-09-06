@@ -38,7 +38,7 @@ Out: what a resumed agent is told (006).
    decision: a task that failed, a task that has gone quiet, or a goal with
    nothing left to do, said once per situation on its own pane. Running work
    is what it delegated, and it is not woken for that. A task wants an author from `ready`
-   to the merge, the reviewers a round is waiting on, and the cleanup its
+   to the merge, the reviewers a review is waiting on, and the cleanup its
    ending owes (001, 004).
 4. One clock governs a quiet agent: how long since the session was heard from
    at all. On that clock sit a nudge, then the user, then the pane killed and

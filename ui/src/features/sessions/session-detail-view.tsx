@@ -178,7 +178,6 @@ export function SessionDetailView({
             <Dash />
           )}
         </Fact>
-        <Fact label="Review round">{session.review_round ?? <Dash />}</Fact>
         {/* Every transcript this agent reported under, summed — so a session
             resumed into the same agent conversation reads as one figure. Zeros
             until it reports anything, which is a number and not a blank: an

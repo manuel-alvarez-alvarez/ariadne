@@ -40,10 +40,10 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
             ),
             None => false,
         },
-        // A reviewer is only owed to a round it has not voted in.
+        // A reviewer is only owed to a review it has not voted on.
         Seat::Reviewer => match task_of(store, session).await {
             Some(task) if task.status() == TaskStatus::UnderReview => store
-                .round_verdicts(&task.id, task.review_round)
+                .open_verdicts(&task.id)
                 .await
                 .is_ok_and(|verdicts| {
                     !verdicts

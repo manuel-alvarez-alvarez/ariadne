@@ -61,8 +61,8 @@ async fn under_review(h: &Harness, model: Option<&str>) -> Cast {
 }
 
 /// The reviewer bounces the task back and the author pushes another commit:
-/// the task returns to review one round on, one commit ahead.
-async fn next_round(h: &Harness, task: &Task) -> Task {
+/// the task returns to review one commit ahead.
+async fn reviewed_again(h: &Harness, task: &Task) -> Task {
     let repo_path = PathBuf::from(&h.store.get_repository(&task.repo_id).await.unwrap().path);
     sh(
         &repo_path,
@@ -152,13 +152,13 @@ async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
     // Round two relaunches the same session, on the same agent and model it
     // was launched with — the agent itself now says codex/sonnet.
     h.launcher.kill_session(&first.id).await.unwrap();
-    let task = next_round(&h, &task).await;
+    let task = reviewed_again(&h, &task).await;
     let second = h
         .launcher
-        .resume_reviewer(&task.id, &reviewer, "Round 2: have another look.")
+        .resume_reviewer(&task.id, &reviewer, "Have another look.")
         .await
         .unwrap();
-    assert_eq!(second.id, first.id, "round 2 reused the session");
+    assert_eq!(second.id, first.id, "the second review reused the session");
     assert_eq!(second.agent_kind(), AgentKind::ClaudeCode);
     assert_eq!(second.model.as_deref(), Some("opus"));
     let argv = argv_of(&h, &second.id);
@@ -360,7 +360,7 @@ async fn a_pin_of_no_model_stays_the_agents_own_default() {
 /// The changes-requested bounce, twice over: the task panel's Sessions tab
 /// must still list one author, live again, on the same conversation.
 #[tokio::test]
-async fn resuming_the_author_reuses_its_session_across_review_rounds() {
+async fn resuming_the_author_reuses_its_session_across_reviews() {
     let h = harness().await;
     let (cast, first) = h.resumable_author().await;
     let task = cast.task.clone();
@@ -474,27 +474,25 @@ async fn a_launch_hands_tmux_nothing_that_can_outgrow_it() {
     assert_eq!(mode & 0o777, 0o600, "plan mode: {mode:o}");
 }
 
-/// A reviewer that sees a task through two rounds is one reviewer with one
-/// memory of it: round two wakes the session it already has — same row, same
-/// tmux name, same conversation — in a worktree moved to the new tip, and is
-/// told which round it is now judging.
+/// A reviewer asked to look at a task twice is one reviewer with one memory
+/// of it: the second review wakes the session it already has — same row, same
+/// tmux name, same conversation — in a worktree moved to the new tip.
 #[tokio::test]
-async fn a_reviewer_reuses_its_session_across_review_rounds() {
+async fn a_reviewer_reuses_its_session_across_reviews() {
     let h = harness().await;
     let cast = under_review(&h, None).await;
     let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
 
-    // Round one: nothing to resume, so this is the reviewer's first spawn.
+    // Nothing to resume, so this is the reviewer's first spawn.
     let first = h
         .launcher
         .resume_reviewer(&task.id, &reviewer, "(unused: no session yet)")
         .await
         .unwrap();
     assert_eq!(first.seat(), Seat::Reviewer);
-    assert_eq!(first.review_round, Some(1));
     assert!(
         !first.tmux_session.ends_with("-r1"),
-        "the round is no part of the session's name: {}",
+        "which review it is on is no part of the session's name: {}",
         first.tmux_session
     );
     let internal = first
@@ -503,10 +501,9 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
         .expect("claude picks its session uuid at spawn");
 
     // The task leaves review, so the daemon tears the reviewer's tmux down;
-    // then the author revises and it comes back for round two.
+    // then the author revises and asks for a review again.
     h.launcher.kill_session(&first.id).await.unwrap();
-    let task = next_round(&h, &task).await;
-    assert_eq!(task.review_round, 2);
+    let task = reviewed_again(&h, &task).await;
 
     // The briefing is the built-in resume template, rendered — the same path
     // the scheduler takes.
@@ -520,7 +517,7 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
         )
         .await
         .unwrap();
-    assert_eq!(second.id, first.id, "round 2 reused the session");
+    assert_eq!(second.id, first.id, "the second review reused the session");
     assert_eq!(
         second.tmux_session, first.tmux_session,
         "and keeps its tmux name"
@@ -532,11 +529,6 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
     );
     assert_eq!(second.status(), SessionStatus::Running);
     assert_eq!(second.ended_at, None, "the session is live again");
-    assert_eq!(
-        second.review_round,
-        Some(2),
-        "and its row says which round it is on"
-    );
     let sessions: Vec<AgentSession> = h
         .sessions_of(&task.id)
         .await
@@ -560,13 +552,13 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
     let argv = argv_of(&h, &second.id);
     assert!(
         argv.contains(&format!("--resume {internal}")),
-        "round 2 resumed the stored conversation: {argv}"
+        "the second review resumed the stored conversation: {argv}"
     );
     assert!(
-        argv.contains("Round 2 of"),
-        "and was told which round it is reviewing: {argv}"
+        argv.contains("needs your verdict"),
+        "and was told what it is being woken for: {argv}"
     );
-    // One console log, appended to across both rounds.
+    // One console log, appended to across both reviews.
     let expected = format!("cat >> '{}'", h.console_log(&first.id).display());
     let pipes = pipes(&h);
     assert_eq!(pipes.len(), 2, "one pipe-pane per launch: {pipes:?}");

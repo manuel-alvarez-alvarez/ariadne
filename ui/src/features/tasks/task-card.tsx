@@ -131,14 +131,6 @@ export function TaskCard({
               <TooltipContent>{sub.hint}</TooltipContent>
             </Tooltip>
           )}
-          {task.review_round > 0 && (
-            <Tooltip>
-              <TooltipTrigger tabIndex={NOT_A_STOP} render={<span className="font-mono" />}>
-                R{task.review_round}
-              </TooltipTrigger>
-              <TooltipContent>{reviewRoundHint(task)}</TooltipContent>
-            </Tooltip>
-          )}
           {task.depends_on.length > 0 && (
             <Tooltip>
               <TooltipTrigger
@@ -253,15 +245,10 @@ function cardHints(
   if (status) hints.push(status)
   const sub = subStatus(task.status)
   if (sub) hints.push(sub.hint)
-  if (task.review_round > 0) hints.push(reviewRoundHint(task))
   if (task.depends_on.length > 0) hints.push(dependencyHint(task))
   if (task.stalled) hints.push(STALLED_META.hint)
   hints.push(whenHint(task.updated_at, "updated"))
   return hints
-}
-
-function reviewRoundHint(task: TaskDto): string {
-  return `Review round ${task.review_round}`
 }
 
 function dependencyHint(task: TaskDto): string {

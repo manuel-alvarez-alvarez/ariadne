@@ -259,9 +259,6 @@ function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boole
         <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
         {sub && <StatusBadge label={sub.label} tone={sub.badge} hint={sub.hint} />}
         {task.stalled && <StalledBadge />}
-        <span className="text-muted-foreground">
-          review round <span className="font-mono">{task.review_round}</span>
-        </span>
         <CopyableIdMenu
           value={task.id}
           label="task id"

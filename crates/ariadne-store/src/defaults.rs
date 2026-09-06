@@ -13,8 +13,8 @@
 //! turn, and says nothing about the work itself — what an agent can do comes
 //! from its skills. A skill states how one kind of work is done, and nothing
 //! about Ariadne. A briefing template carries the values of one goal, task or
-//! round and whatever is only true of this moment — a new round's feedback,
-//! the landing procedure — and nothing of the playbook that already reached
+//! task and whatever is only true of this moment — the changes a review
+//! asked for, the landing procedure — and nothing of the playbook that reached
 //! the agent. A resume is a nudge: where the work stands and what ends it.
 //! What every session is told alike — that Ariadne is reached through its MCP
 //! tools, whom a question reaches, and how few turns to take — is the MCP
@@ -224,14 +224,14 @@ const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first c
 6. Every reviewer approves, and Ariadne briefs you to end the task."#;
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
-/// stated: one per round, through `submit_verdict`.
-const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task. An approval gates the merge: approve only what you would merge yourself. Your detached worktree holds the branch, read-only: do not edit, commit, amend or branch.
+/// stated: one per review asked for, through `submit_verdict`.
+const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval gates the merge: approve only what you would merge yourself. Your detached worktree holds the branch, read-only: do not edit, commit, amend or branch.
 
 1. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
 2. Verify the change here. Install what it needs. Build, test and lint in this worktree, never another.
 3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and name it.
 4. `ask` the author what the change does not answer. `reply` to what it asks you. A question is not a verdict.
-5. Call `submit_verdict` once per round. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
+5. Call `submit_verdict` once per review you are asked for. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
 
 /// Initial briefing of an orchestrator session: the goal, and the
 /// repositories it works in.
@@ -314,15 +314,15 @@ const AUTHOR_BRIEFING: &str = r#"# Task: {task_title}
 /// task read out to it again — it is in the worktree it is standing in.
 const AUTHOR_RESUME: &str = r#"Continue "{task_title}" on {branch}. `git status` and `git log` say what the last session left. Work until the task is complete and verified."#;
 
-/// Resume briefing of an author with a round of requested changes, wherever
-/// they were written.
+/// Resume briefing of an author whose review asked for changes, wherever they
+/// were written.
 ///
-/// One round can come from the reviewers Ariadne started, and one from the
-/// people reading a published pull or merge request; `{feedback}` carries
-/// whichever it is, each entry under a heading naming who wrote it. What to do
-/// with a verdict is the author's playbook to say, not this text's; what
-/// this text says is what this round asks of the author, and a point it
-/// will not act on is answered as surely as one it will.
+/// They can come from the reviewers Ariadne started, or from the people
+/// reading a published pull or merge request; `{feedback}` carries whichever
+/// it is, each entry under a heading naming who wrote it. What to do with a
+/// verdict is the author's playbook to say, not this text's; what this text
+/// says is what the review asks of the author, and a point it will not act on
+/// is answered as surely as one it will.
 const CHANGES_REQUESTED: &str = r#"A review requests changes.
 
 {feedback}
@@ -393,9 +393,9 @@ Approved. This task lands nothing: {branch} is thrown away when the task ends, a
 2. Anything still only in this worktree is lost. Put it where it belongs now.
 3. Call `finish_task`. It takes no merge commit, because nothing was merged."#;
 
-/// Initial briefing of a reviewer session: the task, the round, and the branch
-/// its worktree is pinned to.
-const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_round})
+/// Initial briefing of a reviewer session: the task and the branch its
+/// worktree is pinned to.
+const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title}
 
 {task_description}
 
@@ -406,10 +406,10 @@ const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_ro
 - Author's summary: {summary}"#;
 
 /// What a reviewer that owes a verdict is picked up with, in both situations
-/// there are: a later round, where the author revised the change under its
-/// worktree, and a round it has simply gone quiet in. Either way the diff it
-/// last read may be stale and the verdict is still outstanding.
-const REVIEWER_RESUME: &str = r#"Round {review_round} of "{task_title}" needs your verdict. {branch} can carry new commits: read it again with `get_diff`.
+/// there are: an author that revised the change under its worktree, and a
+/// review it has simply gone quiet in. Either way the diff it last read may
+/// be stale and the verdict is still outstanding.
+const REVIEWER_RESUME: &str = r#""{task_title}" needs your verdict. {branch} can carry new commits: read it again with `get_diff`.
 
 Summary: {summary}"#;
 
@@ -790,7 +790,7 @@ mod tests {
         }
     }
 
-    /// A round of requested changes asks the author for two things, and
+    /// A review that requests changes asks the author for two things, and
     /// the briefing that carries the feedback is where both are asked: every
     /// point answered, and, for a point the author will not act on, why the
     /// code stays as it is. A briefing that asked only for the answers would
@@ -934,7 +934,7 @@ mod tests {
             "push plainly",
             "--ff-only",
             "Call `request_review` with one short summary",
-            "Call `submit_verdict` once per round",
+            "Call `submit_verdict` once per review you are asked for",
             "It starts every task and ends planning",
         ] {
             let places = all_defaults()

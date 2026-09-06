@@ -639,8 +639,9 @@ impl Harness {
             .await
     }
 
-    /// The round is read off the task as it stands, not as the caller last
-    /// saw it: asking for review is what opens one.
+    /// A verdict on the review that is open now, whichever that is: what a
+    /// verdict belongs to is the request it answers, and the store reads that
+    /// off the channel rather than off anything the caller holds.
     async fn write_verdict(
         &self,
         task: &Task,
@@ -655,7 +656,6 @@ impl Harness {
             .send_message(NewMessage {
                 goal_id: task.goal_id.clone(),
                 task_id: Some(task.id.clone()),
-                round: task.review_round,
                 kind,
                 from_actor: Actor::Reviewer,
                 from_agent_id: Some(reviewer_agent_id.to_string()),
@@ -932,7 +932,6 @@ impl Harness {
                 effort: None,
                 tmux_session: tmux_session.to_string(),
                 worktree_path: Some(worktree.display().to_string()),
-                review_round: task.map(|t| t.review_round),
             })
             .await
             .unwrap()

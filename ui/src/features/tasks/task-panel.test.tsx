@@ -69,7 +69,6 @@ const TASK: TaskDto = {
     // and it takes that CLI's default. A pin like any other.
     { id: "01AGENTAUTO", seat: "reviewer", skills: ["security-review"] },
   ],
-  review_round: 0,
   stalled: false,
   usage: {
     total: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },

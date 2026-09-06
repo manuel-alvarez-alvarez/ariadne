@@ -49,7 +49,6 @@ const TASK: TaskDto = aTask({
   status: "changes_requested",
   branch: "make-the-hints-reachable-000001",
   depends_on: ["01JTASK0000000000000000002"],
-  review_round: 2,
   stalled: true,
   goal_id: "01JGOAL0000000000000000001",
 })
@@ -74,9 +73,8 @@ function card(): HTMLElement {
 }
 
 /**
- * The busiest card there is: a sub-status, a review round, a dependency, a
- * stall and a blocked agent — so a stop count taken on it is a stop count for
- * every card.
+ * The busiest card there is: a sub-status, a dependency, a stall and a blocked
+ * agent — so a stop count taken on it is a stop count for every card.
  */
 const LOADED: TaskDto = {
   ...TASK,
@@ -94,7 +92,6 @@ function description(): string {
 
 it.each([
   ["the sub-status", /A reviewer asked for changes/],
-  ["the review round", /Review round 2/],
   ["the dependency count", /Waits for 1 task/],
   ["the stall", /idle without advancing/],
   // The stamp behind "2 hours ago", which is the whole reason the relative

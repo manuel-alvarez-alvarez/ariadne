@@ -24,7 +24,6 @@ function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): Tas
     repo_id: "r1",
     depends_on: [],
     agents: [],
-    review_round: 0,
     stalled: false,
     usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [] },
     created_at: "2026-01-01T00:00:00Z",

@@ -1343,12 +1343,6 @@ export interface components {
             /** @description The message this answers, where it answers one. */
             in_reply_to?: string | null;
             kind: components["schemas"]["MessageKind"];
-            /**
-             * Format: int64
-             * @description The review round it belongs to, read for a verdict and ignored
-             *     otherwise.
-             */
-            round: number;
             /** @description The task it is about, or None for a message about the goal itself. */
             task_id?: string | null;
             to_actor: components["schemas"]["Actor"];
@@ -1551,8 +1545,6 @@ export interface components {
             last_activity_at?: string | null;
             /** @description Model requested at launch; null = the agent CLI's default. */
             model?: string | null;
-            /** Format: int64 */
-            review_round?: number | null;
             seat: components["schemas"]["Seat"];
             status: components["schemas"]["SessionStatus"];
             /**
@@ -1770,8 +1762,6 @@ export interface components {
             reason?: string | null;
             /** @description Id of the repository the task works in, one of its goal's. */
             repo_id: string;
-            /** Format: int64 */
-            review_round: number;
             /** @description Set when the agent went idle without advancing the task. */
             stalled: boolean;
             status: components["schemas"]["TaskStatus"];
@@ -2312,8 +2302,6 @@ export interface operations {
     goals_list_goal_messages: {
         parameters: {
             query?: {
-                /** @description Only the messages of this review round. */
-                round?: number | null;
                 /** @description Only the messages for this staffed agent. */
                 to_agent_id?: string | null;
                 /** @description Only the ones that have not reached a pane yet. */
@@ -3247,8 +3235,6 @@ export interface operations {
     tasks_list_task_messages: {
         parameters: {
             query?: {
-                /** @description Only the messages of this review round. */
-                round?: number | null;
                 /** @description Only the messages for this staffed agent. */
                 to_agent_id?: string | null;
                 /** @description Only the ones that have not reached a pane yet. */

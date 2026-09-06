@@ -208,7 +208,6 @@ pub struct Task {
     /// [`Task::landing`].
     pub landing: String,
     pub worktree_path: Option<String>,
-    pub review_round: i64,
     pub stalled: i64,
     pub merge_commit: Option<String>,
     /// URL of the pull or merge request this task was published as, once its
@@ -288,10 +287,6 @@ pub struct AgentSession {
     pub internal_session_id: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,
-    /// Reviewer sessions only: the review round the session is working on.
-    /// One session serves every round, so this moves with the task rather
-    /// than recording the round the row was created in.
-    pub review_round: Option<i64>,
     pub status: String,
     /// Why this session needs the user's attention, if it does. Orthogonal to
     /// `status`: an agent blocked on a permission prompt is still running.
@@ -317,9 +312,6 @@ pub struct Message {
     pub goal_id: String,
     /// The task it is about, or None for a message about the goal itself.
     pub task_id: Option<String>,
-    /// The review round it belongs to, read for a verdict and ignored
-    /// otherwise.
-    pub round: i64,
     /// [`MessageKind`], as the wire spells it. Read through [`Message::kind`].
     pub kind: String,
     pub from_actor: String,

@@ -164,7 +164,6 @@ pub async fn list_task_messages(
         .store
         .list_messages(MessageFilter {
             task_id: Some(id),
-            round: q.round,
             to_agent_id: q.to_agent_id,
             undelivered_only: q.undelivered,
             ..Default::default()
@@ -280,6 +279,22 @@ pub(super) async fn send(
                 task.id
             )));
         }
+        // One verdict per reviewer per review asked for. This used to be a
+        // unique index over the round the row carried; a review is bounded by
+        // its own request now, which is a row rather than a column, so the
+        // rule is read here.
+        if state
+            .store
+            .open_verdicts(&task.id)
+            .await?
+            .iter()
+            .any(|m| m.from_agent_id.as_deref() == Some(agent_id.as_str()))
+        {
+            return Err(ApiError::conflict(format!(
+                "agent {agent_id} has already given its verdict on this review of task {}",
+                task.id
+            )));
+        }
     }
 
     Ok(state
@@ -287,7 +302,6 @@ pub(super) async fn send(
         .send_message(NewMessage {
             goal_id: goal_id.to_string(),
             task_id: task.map(|t| t.id.clone()),
-            round: task.map_or(0, |t| t.review_round),
             kind: req.kind,
             from_actor: ctx.actor,
             from_agent_id,

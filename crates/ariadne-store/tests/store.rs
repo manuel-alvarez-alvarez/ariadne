@@ -85,7 +85,6 @@ impl World {
                 effort: None,
                 tmux_session: tmux.into(),
                 worktree_path: Some("/tmp/wt".into()),
-                review_round: None,
             })
             .await
             .unwrap()
@@ -532,8 +531,7 @@ async fn task_happy_path_to_merged() {
     let w = World::new().await;
     assert_eq!(w.task.status(), TaskStatus::Pending);
 
-    let t = walk_to(&w.store, &w.task.id, TaskStatus::UnderReview).await;
-    assert_eq!(t.review_round, 1, "review round bumps on under_review");
+    walk_to(&w.store, &w.task.id, TaskStatus::UnderReview).await;
 
     let t = walk_to(&w.store, &w.task.id, TaskStatus::Finished).await;
     assert_eq!(t.status(), TaskStatus::Finished);
@@ -735,59 +733,88 @@ async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
     );
 }
 
-/// One channel carries everything the agents say, and the one uniqueness in
-/// it is the verdict: a reviewer votes once a round, and a question it asks
-/// in between is not a vote.
+/// What a verdict belongs to is the review that was asked for, and asking
+/// again is what supersedes the verdicts before it.
+///
+/// There is no round number any more, so the boundary is the `review_request`
+/// row itself: the verdicts that count are the ones after the last one. A
+/// question asked in between is not a verdict, and a verdict from the review
+/// before is not counted in this one.
 #[tokio::test]
-async fn one_verdict_per_reviewer_per_round() {
+async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
     let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0).id;
     let author = store.task_author(&task.id).await.unwrap().id;
-    let verdict = |round: i64, kind: MessageKind, body: &str| NewMessage {
+    let message = |kind: MessageKind, from: Actor, body: &str| NewMessage {
         goal_id: task.goal_id.clone(),
         task_id: Some(task.id.clone()),
-        round,
         kind,
-        from_actor: Actor::Reviewer,
-        from_agent_id: Some(reviewer.clone()),
+        from_actor: from,
+        from_agent_id: Some(match from {
+            Actor::Author => author.clone(),
+            _ => reviewer.clone(),
+        }),
         from_session: None,
-        to_actor: Actor::Author,
-        to_agent_id: Some(author.clone()),
+        to_actor: match from {
+            Actor::Author => Actor::Reviewer,
+            _ => Actor::Author,
+        },
+        to_agent_id: Some(match from {
+            Actor::Author => reviewer.clone(),
+            _ => author.clone(),
+        }),
         in_reply_to: None,
         body: body.into(),
     };
 
+    // Nothing asked for yet, and nothing to read.
+    assert!(store.open_review_request(&task.id).await.unwrap().is_none());
+    assert!(store.open_verdicts(&task.id).await.unwrap().is_empty());
+
     store
-        .send_message(verdict(1, MessageKind::RequestChanges, "please fix"))
+        .send_message(message(MessageKind::ReviewRequest, Actor::Author, "have a look"))
         .await
         .unwrap();
-
-    let dup = store
-        .send_message(verdict(1, MessageKind::Approve, "on second thoughts"))
-        .await;
-    assert!(matches!(dup, Err(StoreError::Conflict(_))));
-
-    // A question in the same round is not a second verdict.
-    store
-        .send_message(NewMessage {
-            kind: MessageKind::Question,
-            ..verdict(1, MessageKind::Question, "what is the flag for?")
-        })
+    let first = store
+        .open_review_request(&task.id)
         .await
-        .expect("a question is not a vote");
+        .unwrap()
+        .expect("the review that was asked for");
 
-    // And the next round takes a verdict of its own.
     store
-        .send_message(verdict(2, MessageKind::Approve, "looks right now"))
+        .send_message(message(MessageKind::RequestChanges, Actor::Reviewer, "please fix"))
         .await
         .unwrap();
-    assert_eq!(store.round_verdicts(&task.id, 2).await.unwrap().len(), 1);
+    store
+        .send_message(message(MessageKind::Question, Actor::Reviewer, "what is the flag for?"))
+        .await
+        .unwrap();
     assert_eq!(
-        store.round_verdicts(&task.id, 1).await.unwrap().len(),
+        store.open_verdicts(&task.id).await.unwrap().len(),
         1,
-        "the question is not counted as one"
+        "the question is not counted as a verdict"
     );
+
+    // Asked for again: the verdict before it belongs to the review before it.
+    store
+        .send_message(message(MessageKind::ReviewRequest, Actor::Author, "fixed"))
+        .await
+        .unwrap();
+    let second = store.open_review_request(&task.id).await.unwrap().unwrap();
+    assert_ne!(second, first, "a second request is a second review");
+    assert!(
+        store.open_verdicts(&task.id).await.unwrap().is_empty(),
+        "asking again supersedes what was said about the change before it"
+    );
+
+    store
+        .send_message(message(MessageKind::Approve, Actor::Reviewer, "looks right now"))
+        .await
+        .unwrap();
+    let open = store.open_verdicts(&task.id).await.unwrap();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].kind(), Some(MessageKind::Approve));
 }
 
 /// A message goes to exactly one recipient and is delivered once: the stamp is
@@ -802,7 +829,6 @@ async fn a_message_is_delivered_once_and_the_stamp_says_so() {
         .send_message(NewMessage {
             goal_id: task.goal_id.clone(),
             task_id: Some(task.id.clone()),
-            round: 0,
             kind: MessageKind::Question,
             from_actor: Actor::Reviewer,
             from_agent_id: Some(store.list_task_reviewers(&task.id).await.unwrap()[0].id.clone()),
@@ -1027,7 +1053,7 @@ async fn restarting_a_session_reopens_the_same_row() {
     );
 
     let restarted = store
-        .restart_session(&session.id, Some("/tmp/wt2"), Some(2))
+        .restart_session(&session.id, Some("/tmp/wt2"))
         .await
         .unwrap();
     assert_eq!(
@@ -1041,11 +1067,6 @@ async fn restarting_a_session_reopens_the_same_row() {
     assert_eq!(restarted.ended_at, None, "it has not ended after all");
     assert!(restarted.last_activity_at.is_some());
     assert_eq!(restarted.worktree_path.as_deref(), Some("/tmp/wt2"));
-    assert_eq!(
-        restarted.review_round,
-        Some(2),
-        "a reviewer's row names the round it is being relaunched for"
-    );
     assert_eq!(
         restarted.internal_session_id.as_deref(),
         Some("uuid-1234"),
@@ -1064,16 +1085,12 @@ async fn restarting_a_session_reopens_the_same_row() {
         1
     );
     // Omitted values leave the stored ones alone.
-    let again = store
-        .restart_session(&session.id, None, None)
-        .await
-        .unwrap();
+    let again = store.restart_session(&session.id, None).await.unwrap();
     assert_eq!(again.worktree_path.as_deref(), Some("/tmp/wt2"));
-    assert_eq!(again.review_round, Some(2));
 
     assert!(
         store
-            .restart_session("01ARZ3NDEKTSV4RRFFQ69G5FAV", None, None)
+            .restart_session("01ARZ3NDEKTSV4RRFFQ69G5FAV", None)
             .await
             .is_err()
     );
@@ -1627,7 +1644,7 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
         .unwrap();
     assert!(store.get_task(&task.id).await.unwrap().is_stalled());
     store
-        .restart_session(&author.id, None, None)
+        .restart_session(&author.id, None)
         .await
         .unwrap();
     assert!(!store.get_task(&task.id).await.unwrap().is_stalled());

@@ -51,8 +51,8 @@ agent is briefed with in its worktree (006).
    starts from, so it has no first parent either. Cutting orphan needs
    git 2.42, which is the floor `ariadne doctor` warns below (014).
 8. A reviewer gets a **detached, read-only** worktree pinned to the branch
-   under review, and it is refreshed between rounds so each round reads the
-   commits that round added. A branch with no commits on it has nothing to
+   under review, and it is refreshed between reviews so each review reads the
+   commits it was asked about. A branch with no commits on it has nothing to
    pin at, and spawning a reviewer there says so.
 9. An orchestrator works in the repository's primary checkout, not a worktree
    of its own: it is the first repository of its goal.
@@ -84,7 +84,7 @@ agent is briefed with in its worktree (006).
 - A branch is named after the task's title
   (`store.rs::task_branch_is_named_after_the_title`).
 - Worktrees are created, verified and removed, and a reviewer's is refreshed
-  between rounds (`managers.rs::git_worktree_lifecycle_and_merge_verification`,
+  between reviews (`managers.rs::git_worktree_lifecycle_and_merge_verification`,
   `::reviewer_worktree_refresh_between_rounds`); a base branch with no commits
   gives an orphan worktree that has nothing to review until it commits, and
   then diffs, lands, and diffs again as a landed task

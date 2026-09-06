@@ -29,7 +29,7 @@ impl super::Scheduler {
                 {
                     let template = prompts::template_for(PromptKind::OrchestratorResume);
                     let nudge = prompts::orchestrator_resume_briefing(template, &goal);
-                    self.check_session_quiet(&orchestrator, (goal.status.clone(), 0), &nudge)
+                    self.check_session_quiet(&orchestrator, goal.status.clone(), &nudge)
                         .await?;
                 }
             }
@@ -359,7 +359,6 @@ mod tests {
             branch: title.into(),
             landing: "merge".into(),
             worktree_path: None,
-            review_round: 0,
             stalled: stalled as i64,
             merge_commit: None,
             pr_url: None,

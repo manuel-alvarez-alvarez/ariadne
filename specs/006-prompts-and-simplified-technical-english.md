@@ -38,7 +38,7 @@ they describe (003, 004, 005) — and what a skill is (017).
      to the call that ends its turn, and then indexes the skills this agent
      was staffed with (017);
    - the **lifecycle briefing**, which carries the values of one goal, task or
-     round and whatever is only true of this moment;
+     task and whatever is only true of this moment;
    - the **landing briefing**, which carries the procedure that ends a task,
      one per ending (005).
 2. The system prompt is the code's, one text per seat. Nothing an agent runs

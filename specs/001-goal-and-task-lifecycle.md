@@ -52,7 +52,7 @@ Out: how each state is *worked* — planning (003), engineering and review
    - `under_review → changes_requested` (daemon), on a change request
    - `under_review → approved` (daemon), once every reviewer staffed on the
      task has approved — none of them, for a task staffed with no reviewer.
-     A verdict is a message of the kind that closes a round (018)
+     A verdict is a message of the kind that settles a review (018)
    - `changes_requested → in_progress` (daemon), when the author resumes
    - `approved → finished` (author), through `finish_task`
    - `approved → under_review` (author), when a published request is revised

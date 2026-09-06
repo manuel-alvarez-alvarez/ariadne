@@ -482,10 +482,6 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
         ),
         ("tmux", s.tmux_session.clone().into()),
         ("worktree", dash(s.worktree_path.as_deref()).into()),
-        (
-            "round",
-            s.review_round.map_or("-".into(), |r| r.to_string()).into(),
-        ),
         ("internal id", dash(s.internal_session_id.as_deref()).into()),
         ("tokens", usage_block(&s.usage, &[], INDENT).into()),
         ("activity", Kv::meta(at(s.last_activity_at.as_deref()))),

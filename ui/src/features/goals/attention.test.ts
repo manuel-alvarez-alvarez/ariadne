@@ -41,7 +41,6 @@ function task(overrides: Partial<TaskDto>): TaskDto {
     goal_id: "g1",
     id: "t1",
     repo_id: "r1",
-    review_round: 0,
     agents: [],
     stalled: false,
     status: "in_progress",

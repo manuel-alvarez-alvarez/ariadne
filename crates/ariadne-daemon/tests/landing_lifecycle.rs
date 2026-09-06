@@ -313,8 +313,7 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
     let refusal = String::from_utf8_lossy(&refusal);
     assert!(refusal.contains("only the author"), "{refusal}");
 
-    // And the revision it made for them is reviewed like any other round.
-    let round = h.store.get_task(&task.id).await.unwrap().review_round;
+    // And the revision it made for them is reviewed like any other change.
     let revised: TaskDto = h
         .json(
             as_session(
@@ -329,7 +328,6 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
         )
         .await;
     assert_eq!(revised.status, TaskStatus::UnderReview);
-    assert_eq!(revised.review_round, round + 1);
     assert_eq!(
         revised.pr_url.as_deref(),
         Some(URL),

@@ -29,7 +29,7 @@ use crate::output::{
 use edit::{Edits, parse_author, parse_reviewer, resolve_repo, update_request};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
-/// title runs to a paragraph would otherwise push status and round off-screen.
+/// title runs to a paragraph would otherwise push the status off-screen.
 ///
 /// `pr` says whether the task has been published yet rather than where: a
 /// table is for scanning, and `task inspect` and `--format json` carry the
@@ -42,8 +42,7 @@ const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 48).title(),
     col("status", UNCAPPED).status(),
-    col("age", UNCAPPED).rank(5),
-    col("round", UNCAPPED).rank(4),
+    col("age", UNCAPPED).rank(4),
     col("stalled", UNCAPPED).rank(3),
     col("pr", UNCAPPED).rank(2),
     col("tokens", UNCAPPED).rank(1),
@@ -60,8 +59,7 @@ const INDENT: &str = "\n              ";
 const MESSAGES: &[Column] = &[
     col("kind", UNCAPPED),
     col("from", 20).title(),
-    col("to", 20).rank(2),
-    col("round", UNCAPPED).rank(1),
+    col("to", 20).rank(1),
     col("body", 60).rank(0),
 ];
 
@@ -366,7 +364,6 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         m.kind.as_str().into(),
                         party_label(&t, m.from_actor, m.from_agent_id.as_deref()),
                         party_label(&t, m.to_actor, m.to_agent_id.as_deref()),
-                        m.round.to_string(),
                         m.body.clone(),
                     ]
                 },
@@ -522,7 +519,6 @@ fn ls_row(t: &TaskDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
         t.title.clone(),
         t.status.as_str().into(),
         age(&t.created_at, now),
-        t.review_round.to_string(),
         yes_no(t.stalled, "-"),
         yes_no(t.pr_url.is_some(), "-"),
         usage_cell(&t.usage.total),
@@ -589,7 +585,6 @@ fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
         ("branch", t.branch.clone().into()),
         ("worktree", dash(t.worktree_path.as_deref()).into()),
         ("tokens", usage_lines(t).into()),
-        ("round", t.review_round.to_string().into()),
         ("stalled", yes_no(t.stalled, "no").into()),
         ("merge", dash(t.merge_commit.as_deref()).into()),
         // Why a failed or cancelled task ended, which is the whole of what
@@ -722,7 +717,7 @@ mod tests {
     /// know".
     #[test]
     fn a_task_that_has_spent_nothing_says_zero() {
-        assert_eq!(ls_row(&dto(), now())[7], "↑0 0% ↓0");
+        assert_eq!(ls_row(&dto(), now())[6], "↑0 0% ↓0");
         let block = usage_lines(&dto());
         assert_eq!(block.lines().next().unwrap(), "input   0  0%");
         assert!(block.contains("output  0"), "{block}");
@@ -762,7 +757,7 @@ mod tests {
             .join("\n")
         );
         assert_eq!(
-            ls_row(&t, now())[7],
+            ls_row(&t, now())[6],
             "↑1.2M 91% ↓45k",
             "the row carries the total, and the same share"
         );
@@ -828,7 +823,7 @@ mod tests {
     /// bold, the status carrying its glyph inside its colour. Colour is
     /// escapes and nothing else — strip them and the block reads exactly as
     /// it does with `--color never`, and everything this task leaves plain
-    /// (branch, tokens, round, …) is untouched either way.
+    /// (branch, tokens, …) is untouched either way.
     #[test]
     fn the_inspect_block_types_its_id_title_and_status() {
         let t = TaskDto {
@@ -901,7 +896,6 @@ mod tests {
                 "Add the frobnicator",
                 "approved",
                 "3h",
-                "0",
                 "-",
                 "yes",
                 "↑0 0% ↓0",
@@ -909,7 +903,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            ls_row(&dto(), now())[6],
+            ls_row(&dto(), now())[5],
             "-",
             "and a task nobody published says nothing"
         );
