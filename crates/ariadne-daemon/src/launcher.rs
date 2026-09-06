@@ -32,16 +32,11 @@ use crate::tmux::{TmuxManager, TmuxSpawn, session_name, tail};
 /// latency it adds to whatever comes next — a fifth of a second of it, where
 /// half of one was two and a half times the wait for nothing.
 const PANE_POLL: Duration = Duration::from_millis(200);
-/// How long the directory-trust watcher watches for the dialog before giving
-/// up. Generous (two minutes): a slow CLI start renders the dialog well after
-/// the spawn, and a watcher that has already stopped leaves the agent waiting
-/// on it for ever.
-const TRUST_WATCH: Duration = Duration::from_secs(120);
-/// And how long it leaves the pane alone after accepting one, before reading
-/// it again. Unshortened on purpose: what this waits for is the dialog to go,
-/// and every capture taken before it has is another Enter into a pane that
-/// has already answered.
-const TRUST_ACCEPTED: Duration = Duration::from_millis(700);
+/// How long a freshly launched pane is watched for a dialog before the watch
+/// gives up. Generous (two minutes): a slow CLI start draws the dialog well
+/// after the spawn, and a watcher that has already stopped leaves the agent
+/// sitting on a question nobody is told about.
+const DIALOG_WATCH: Duration = Duration::from_secs(120);
 /// The beat between a TUI drawing its first frame and the resume instruction
 /// being typed into it, for the one CLI that takes its instruction that way
 /// (opencode; see [`SpawnPlan::post_launch_input`]).
@@ -197,25 +192,44 @@ impl Launcher {
             .with_context(|| format!("claiming the tmux session {name}"))
     }
 
-    /// Coding-agent TUIs show a one-time directory-trust dialog for unknown
-    /// folders — and every worktree is a fresh folder. Watch the pane and
-    /// accept the (pre-selected "yes") dialog with Enter.
-    ///
-    /// The window is [`TRUST_WATCH`], and a single failed capture is no
-    /// reason to stop watching — only the session going away is.
-    /// What the trust dialog looks like in a pane, lowercased. Shared with
-    /// the typed-input deliverer, which must not paste into that dialog.
-    const TRUST_PATTERNS: [&'static str; 4] = [
+    /// What a dialog only a person can answer looks like in a pane,
+    /// lowercased. Read through [`dialog_on_the_pane`], which is what both the
+    /// watcher below and the typed-input deliverer ask: one must not paste
+    /// into such a dialog, and the other must not answer it.
+    const DIALOG_PATTERNS: [&'static str; 4] = [
         "do you trust",
         "trust this folder",
         "trust the contents",
         "press enter to continue",
     ];
 
-    fn auto_accept_trust(&self, tmux_session: String) {
+    /// Coding-agent TUIs open a one-time directory-trust dialog over a folder
+    /// they do not know — and every worktree is a fresh folder. Watch the
+    /// pane for one, and raise the session for the user.
+    ///
+    /// Watched rather than answered. The daemon used to press Enter on
+    /// whatever answer the dialog highlighted, and which answer that is
+    /// belongs to the CLI: Claude Code 2.1 highlights "No, exit", so every
+    /// Enter closed the agent that had just been started and the next tick
+    /// started another — a goal spawning an orchestrator every five seconds
+    /// and nobody being told, because the alarm each death raised was cleared
+    /// by the launch that replaced it.
+    ///
+    /// A question on an agent's terminal is the user's to answer, so the
+    /// session says it is waiting on one and the dialog is left standing.
+    /// Nothing takes that pane away in the meantime: an agent waiting on a
+    /// person is never nudged and never relaunched (009), and typing into the
+    /// pane is what takes the flag down (008) — which is exactly answering the
+    /// question.
+    ///
+    /// The window is [`DIALOG_WATCH`], and a single failed capture is no
+    /// reason to stop watching — only the session going away, or the dialog
+    /// being found, is.
+    fn watch_for_a_dialog(&self, session_id: String, tmux_session: String) {
         let tmux = self.tmux.clone();
+        let store = self.store.clone();
         tokio::spawn(async move {
-            let deadline = std::time::Instant::now() + TRUST_WATCH;
+            let deadline = std::time::Instant::now() + DIALOG_WATCH;
             while std::time::Instant::now() < deadline {
                 tokio::time::sleep(PANE_POLL).await;
                 if !tmux.has_session(&tmux_session).await {
@@ -224,12 +238,12 @@ impl Launcher {
                 let Ok(pane) = tmux.capture_pane(&tmux_session, 50).await else {
                     continue;
                 };
-                let lower = pane.to_lowercase();
-                if Self::TRUST_PATTERNS.iter().any(|p| lower.contains(p)) {
-                    tracing::info!(session = %tmux_session, "accepting directory-trust dialog");
-                    let _ = tmux.send_enter(&tmux_session).await;
-                    tokio::time::sleep(TRUST_ACCEPTED).await;
+                if !dialog_on_the_pane(&pane) {
+                    continue;
                 }
+                tracing::info!(session = %tmux_session, "a dialog nobody but the user can answer is on this pane; flagging it");
+                raise_waiting_input(&store, &session_id).await;
+                return;
             }
         });
     }
@@ -264,9 +278,7 @@ impl Launcher {
                 let Ok(pane) = tmux.capture_pane(&tmux_session, 50).await else {
                     continue;
                 };
-                let lower = pane.to_lowercase();
-                if lower.trim().is_empty() || Self::TRUST_PATTERNS.iter().any(|p| lower.contains(p))
-                {
+                if pane.trim().is_empty() || dialog_on_the_pane(&pane) {
                     continue;
                 }
                 // One more beat: a TUI that just painted its first frame may
@@ -394,7 +406,7 @@ impl Launcher {
         self.store
             .set_session_status(&session.id, SessionStatus::Running)
             .await?;
-        self.auto_accept_trust(session.tmux_session.clone());
+        self.watch_for_a_dialog(session.id.clone(), session.tmux_session.clone());
         if let Some(input) = plan.post_launch_input {
             self.deliver_typed_input(session.id.clone(), session.tmux_session.clone(), input);
         }
@@ -1115,4 +1127,111 @@ fn write_spawn_plan(path: &Path, plan: &SpawnPlanFile) -> Result<()> {
 /// Whether a bare name is an executable on the daemon's own `PATH`.
 fn on_path(name: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| probe::which(&path, name).is_some())
+}
+
+/// Raise a session for the user over a question on its own terminal. The
+/// answer is theirs to give: the daemon presses nothing into a dialog, and
+/// the flag is what tells them there is one.
+async fn raise_waiting_input(store: &Store, session_id: &str) {
+    if let Err(e) = store
+        .set_session_attention(session_id, AttentionReason::WaitingInput)
+        .await
+    {
+        tracing::warn!(session = %session_id, error = %e, "flagging the session failed");
+    }
+}
+
+/// Whether this pane is sitting on a dialog only a person can answer.
+///
+/// Read off the screen as it is drawn: a CLI colours the words of its dialog,
+/// and a pattern is no use against a line with an escape sequence through the
+/// middle of it.
+fn dialog_on_the_pane(pane: &str) -> bool {
+    let screen = plain(pane).to_lowercase();
+    Launcher::DIALOG_PATTERNS
+        .iter()
+        .any(|pattern| screen.contains(pattern))
+}
+
+/// A pane without the escape sequences `capture-pane -e` carries: the colours
+/// a dialog highlights its selection with, and the hyperlinks its help text is
+/// wrapped in. What is left is what a person reads off the screen.
+fn plain(pane: &str) -> String {
+    let mut out = String::with_capacity(pane.len());
+    let mut chars = pane.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            // A control sequence runs to its final byte.
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // An operating-system command (a hyperlink, here) runs to a BEL or
+            // a string terminator, whose ESC this loop sees as the next one.
+            Some(']') => {
+                for c in chars.by_ref() {
+                    if c == '\x07' || c == '\x1b' {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dialog_on_the_pane, plain};
+
+    /// What Claude Code 2.1 draws over a folder it does not know, colours and
+    /// hyperlink included, with the answer that closes the agent highlighted.
+    /// The daemon that pressed Enter on it spawned an orchestrator every five
+    /// seconds for as long as its goal wanted one.
+    const CLAUDE: &str = "\u{1b}[38;5;220m────────\u{1b}[39m\n\
+        \u{1b}[38;5;220m\u{1b}[1mAccessing workspace:\u{1b}[22m\u{1b}[39m\n\
+        \u{1b}[1m/Users/me/dev/test\u{1b}[22m\n\
+        Quick safety check: Is this a project you created or one you trust?\n\
+        \u{1b}]8;id=zaxmda;https://code.claude.com/docs/en/security\u{1b}\\\u{1b}[38;5;246mSecurity guide\u{1b}[39m\u{1b}]8;;\u{1b}\\\n\
+        \u{1b}[38;5;153m❯ No, exit\u{1b}[39m\n\
+        \x20 Yes, I trust this folder\n\
+        \u{1b}[38;5;246mEnter to confirm · Esc to cancel\u{1b}[39m\n";
+
+    /// The escape sequences go, the words stay — including the ones inside a
+    /// hyperlink, which is where the OSC form of them shows up.
+    #[test]
+    fn a_pane_reads_as_what_is_on_the_screen() {
+        let screen = plain(CLAUDE);
+        assert!(screen.contains("❯ No, exit"), "{screen}");
+        assert!(screen.contains("Security guide"), "{screen}");
+        assert!(!screen.contains('\u{1b}'), "{screen}");
+    }
+
+    /// A dialog is recognised through the colours it is drawn in, which is
+    /// what a pattern read off the raw capture would miss.
+    #[test]
+    fn a_trust_dialog_is_recognised_on_a_pane() {
+        assert!(dialog_on_the_pane(CLAUDE));
+        assert!(dialog_on_the_pane(
+            "Do you trust the files in this folder?\n> 1. Yes, allow it\n  2. No, exit\n"
+        ));
+    }
+
+    /// And an agent at work is not a question: nothing is flagged for a pane
+    /// the user has nothing to answer on.
+    #[test]
+    fn a_working_pane_is_not_a_question() {
+        assert!(!dialog_on_the_pane(
+            "\u{1b}[2m> Try \"how does this work?\"\u{1b}[22m\n  auto mode on\n"
+        ));
+        assert!(!dialog_on_the_pane(""));
+    }
 }

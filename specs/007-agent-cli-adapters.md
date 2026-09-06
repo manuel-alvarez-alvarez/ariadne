@@ -5,6 +5,7 @@ updated: 2026-09-06
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
+  - crates/ariadne-daemon/src/launcher.rs
   - crates/ariadne-daemon/tests/adapters.rs
   - crates/ariadne-daemon/tests/agents.rs
   - crates/ariadne-daemon/tests/resume.rs
@@ -69,6 +70,14 @@ what a skill says (017).
 13. The index in the system prompt names every document by its run-directory
     path (006), which is the floor under all three: a CLI with no skill
     loading of its own still has a file the agent can open.
+14. A CLI that opens a directory-trust dialog over the folder it was launched
+    in has it answered by the user, never by the daemon: a freshly launched
+    pane is watched for one, and the session says it is waiting on a person.
+    The dialog stands until they answer it — typing into the pane is what
+    takes the flag down (008), and an agent waiting on a person is neither
+    nudged nor relaunched (009). Nothing is pressed on the daemon's own
+    account: which answer such a dialog highlights belongs to the CLI and
+    moves between its releases, and one of them closes the agent.
 
 ## Acceptance criteria
 
@@ -101,6 +110,10 @@ what a skill says (017).
 - A session without an agent id is not revived
   (`resume.rs::a_session_without_an_agent_id_is_not_revived`), nor is one of a
   finished goal (`::a_session_of_a_finished_goal_is_not_revived`).
+- A trust dialog is recognised on a pane through the colours it is drawn in
+  (`launcher.rs::a_trust_dialog_is_recognised_on_a_pane`,
+  `::a_pane_reads_as_what_is_on_the_screen`), and an agent at work is not
+  mistaken for one (`::a_working_pane_is_not_a_question`).
 
 ## Sources
 
