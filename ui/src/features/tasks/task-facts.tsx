@@ -18,7 +18,7 @@ import { Fact, FactList } from "@/components/fact-list"
 import { TokenFigure, taskUsageRows } from "@/components/token-figure"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AgentSummary } from "@/features/models/agent-summary"
-import { cn, shortSha } from "@/lib/format"
+import { cn, LANDING_LABELS, shortSha } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
 import { taskAuthor, taskReviewers } from "./agents"
 
@@ -91,6 +91,12 @@ export function TaskFacts({ task }: { task: TaskDto }) {
       <Fact label="Depends on">
         <Dependencies ids={task.depends_on} />
       </Fact>
+      <Fact label="Ends with">
+        {/* Agreed with the user when the task was written, so it says what
+            will happen rather than what happened: the merge commit and the
+            request below are the record of what did. */}
+        <span className="text-xs">{LANDING_LABELS[task.landing]}</span>
+      </Fact>
       <Fact label="Merge commit">
         {task.merge_commit ? (
           <span className="flex items-center gap-1.5">
@@ -103,7 +109,7 @@ export function TaskFacts({ task }: { task: TaskDto }) {
             />
           </span>
         ) : (
-          <Muted>not merged</Muted>
+          <Muted>{task.landing === "none" ? "nothing to merge" : "not merged"}</Muted>
         )}
       </Fact>
       {/* Only a task its author published has one, and only then is the

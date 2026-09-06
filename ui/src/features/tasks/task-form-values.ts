@@ -83,6 +83,9 @@ export function makeTaskFormSchema(opts: { creating: boolean; requireRepo: boole
         effort: z.string(),
       }),
     ),
+    // How the task ends, agreed with the user when it is written: a closed
+    // list, since the daemon takes exactly these three.
+    landing: z.enum(["merge", "pull_request", "none"]),
     repo_id: opts.requireRepo ? z.string().min(1, "Choose a repository.") : z.string(),
     // Blank rows are dropped on submit.
     depends_on: z.array(z.object({ task: z.string() })),
@@ -101,6 +104,9 @@ const CREATE_DEFAULTS: TaskFormValues = {
   author_model: NO_PIN,
   author_effort: NO_PIN,
   reviewers: [{ skills: "code-review", model: NO_PIN, effort: NO_PIN }],
+  // The way most repositories take a change, and the way the daemon defaults
+  // a task nobody said otherwise about.
+  landing: "merge",
   repo_id: "",
   depends_on: [],
 }
@@ -120,6 +126,7 @@ export function taskToFormValues(task: TaskDto | undefined): TaskFormValues {
       model: reviewer.model ?? NO_PIN,
       effort: reviewer.effort ?? NO_PIN,
     })),
+    landing: task.landing,
     repo_id: "",
     depends_on: task.depends_on.map((dependency) => ({ task: dependency })),
   }
@@ -172,6 +179,7 @@ export function toUpdateTaskRequest(
     description: values.description,
     reviewers: reviewers(values),
     depends_on: dependsOn(values),
+    landing: values.landing,
   }
   const movedModel = pin !== initial.model.trim()
   const movedEffort = at !== initial.effort.trim()
@@ -206,5 +214,6 @@ export function toCreateTaskRequest(
     ],
     repo_id: repoId,
     depends_on: dependsOn(values),
+    landing: values.landing,
   }
 }

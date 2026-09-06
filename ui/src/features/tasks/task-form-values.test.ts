@@ -40,6 +40,7 @@ const BLANK: TaskFormValues = {
   author_model: "",
   author_effort: "",
   reviewers: [{ skills: "code-review", model: "", effort: "" }],
+  landing: "merge",
   repo_id: "",
   depends_on: [],
 }

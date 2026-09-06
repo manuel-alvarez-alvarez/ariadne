@@ -301,12 +301,9 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
     <FactList>
       <Fact label="Orchestrator">
-        {/* The goal's pin: what the orchestrator runs on, which a later edit to its
-            profile leaves alone. */}
+        {/* The goal's pin: what its orchestrator runs on, frozen when the goal
+            was created. */}
         <span className="text-xs">{pinLabel(goal.model, goal.effort)}</span>
-      </Fact>
-      <Fact label="Approvals">
-        <span className="tabular-nums">{goal.required_approvals}</span>
       </Fact>
       <Fact label="Max tasks">
         <span className="tabular-nums">{goal.max_tasks ?? "unbounded"}</span>

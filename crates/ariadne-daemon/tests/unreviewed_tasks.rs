@@ -30,7 +30,9 @@ async fn a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks() {
     h.advance(&task, TaskStatus::UnderReview).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
-    sched.send(SchedEvent::TaskChanged(task.id.clone())).unwrap();
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
 
     eventually(TIMEOUT, "the task to be approved", || async {
         h.store.get_task(&task.id).await.unwrap().status() == TaskStatus::Approved
@@ -40,7 +42,11 @@ async fn a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks() {
     // And no review was invented to get it there: an approval nobody gave is
     // not one the history should carry.
     assert!(
-        h.store.list_reviews(&task.id, None).await.unwrap().is_empty(),
+        h.store
+            .list_reviews(&task.id, None)
+            .await
+            .unwrap()
+            .is_empty(),
         "a task with no reviewer collected a review"
     );
 }
@@ -78,7 +84,9 @@ async fn a_task_needs_no_more_approvals_than_it_has_reviewers_to_give() {
         .unwrap();
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
-    sched.send(SchedEvent::TaskChanged(task.id.clone())).unwrap();
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
 
     eventually(TIMEOUT, "the task to be approved", || async {
         h.store.get_task(&task.id).await.unwrap().status() == TaskStatus::Approved

@@ -95,6 +95,7 @@ const CREATED = {
   description: "",
   status: "pending",
   branch: "wire-the-strip-000001",
+  landing: "merge",
   depends_on: [],
   reviewers: [],
   review_round: 0,
@@ -444,6 +445,24 @@ describe("what the task's agents run on", () => {
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
     expect(posted[0]).toMatchObject({ agents: [{ seat: "author", skills: ["coding"] }] })
+  })
+
+  /**
+   * How a task ends is agreed with the user when the task is written, so it
+   * is a field of the form rather than a property of the repository.
+   */
+  it("sends how the task ends, and starts on the ordinary one", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Cut 0.6.0")
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
+    await user.click(screen.getByRole("combobox", { name: "Ends with" }))
+    await user.click(await screen.findByRole("option", { name: "Land nothing" }))
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({ landing: "none" })
   })
 
   it("is three controls on a reviewer row: the skills, what it runs on, and the remove", async () => {

@@ -34,6 +34,7 @@ const NO_TOKENS = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
 function task(overrides: Partial<TaskDto>): TaskDto {
   return {
     branch: "a-task-aaa111",
+    landing: "merge",
     created_at: "2026-08-16T10:00:00Z",
     depends_on: [],
     description: "",
@@ -78,7 +79,6 @@ function goal(overrides: Partial<GoalDto>): GoalDto {
     description: "",
     id: "g1",
     repos: [],
-    required_approvals: 1,
     status: "active",
     title: "A goal",
     usage: {

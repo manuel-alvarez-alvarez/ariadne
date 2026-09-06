@@ -111,6 +111,17 @@ pub enum GoalCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         id: String,
     },
+    /// Close a goal whose tasks are all done
+    ///
+    /// The orchestrator calls this itself once the plan did what the goal
+    /// asked for. This is the same call from the terminal, for a goal whose
+    /// orchestrator is gone or will not start. Refused while any task is
+    /// still going — `ariadne goal cancel` is what ends one of those.
+    Complete {
+        /// Goal id
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        id: String,
+    },
     /// Cancel a goal and every task under it
     Cancel {
         /// Goal id
@@ -230,6 +241,13 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     ("description", format!("\n---\n{}", g.description).into()),
                 ])
             })?;
+        }
+        GoalCommand::Complete { id } => {
+            let id = resolve::id(client, Kind::Goal, &id).await?;
+            let g: GoalDto = client
+                .post_json(&format!("/v1/goals/{id}/complete"), &serde_json::json!({}))
+                .await?;
+            print_status(&g, format)?;
         }
         GoalCommand::Cancel { id, yes } => {
             let id = resolve::id(client, Kind::Goal, &id).await?;

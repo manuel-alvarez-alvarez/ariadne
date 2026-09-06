@@ -146,6 +146,7 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     match kind {
         PromptKind::OrchestratorBriefing => ORCHESTRATOR_BRIEFING,
         PromptKind::OrchestratorResume => ORCHESTRATOR_RESUME,
+        PromptKind::GoalAttention => GOAL_ATTENTION,
         PromptKind::AuthorBriefing => AUTHOR_BRIEFING,
         PromptKind::AuthorResume => AUTHOR_RESUME,
         PromptKind::ChangesRequested => CHANGES_REQUESTED,
@@ -259,6 +260,23 @@ const ORCHESTRATOR_BRIEFING: &str = r#"# Goal: {goal_title}
 /// its own hand-off, and what it is woken for is on the tasks: one that
 /// failed, one that has gone quiet, or a goal with nothing left to do.
 const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}" where it stands. Without an explicit yes on the plan, stay in the conversation that gets one. With one, call `finalize_plan`. Once the goal is under way, read `list_tasks`."#;
+
+/// What the orchestrator of a goal under way is woken with.
+///
+/// The orchestrator outlives its own hand-off: it stays up for the whole
+/// goal, so the user can ask it anything and so the daemon has somebody to
+/// tell when a task needs a decision. That decision is the point of this
+/// text — a task that failed can be retried, rewritten or given up on, and
+/// only the orchestrator holds the plan those choices are made against.
+///
+/// The tasks are rendered by the scheduler that noticed them, one line each,
+/// because what happened is the daemon's to say and what to do about it is
+/// not.
+const GOAL_ATTENTION: &str = r#"The tasks of "{goal_title}" need you:
+
+{tasks}
+
+Read them with `list_tasks`. Retry, cancel or rewrite what you must. Call `complete_goal` once every task is done."#;
 
 /// Initial briefing of an author session: the task, and the values its
 /// commands act on.
@@ -534,47 +552,30 @@ mod tests {
     /// back at 1067 for 1078. The caps came down to what the rewrite fits
     /// in, the published landing's excepted.
     ///
-    /// Then the orchestrator became spec-driven, and its playbook grew five
-    /// phases no other seat has: a spec drafted from the goal, a question
-    /// asked of the user, an explicit yes waited for, a folder found for the
-    /// spec file, and a first task that commits it. That is 1409 characters
-    /// for 922, and the one cap of the three system prompts became one per
-    /// seat — 1450 for the orchestrator, and the 950 the author and the
-    /// reviewer already fit in, which a shared cap of 1450 would have let
-    /// them creep into. The orchestrator resume grew with it, from 90 to 178:
-    /// a nudge that fits both phases names what each one wants, so the
-    /// briefing kinds are 1160 for 1080.
+    /// Then the orchestrator's playbook grew the phases no other seat has:
+    /// a goal clarified with the user, the tasks split out of it, an author
+    /// staffed on each, the review agreed task by task, the ending agreed the
+    /// same way, and an explicit yes waited for. The one cap of the three
+    /// system prompts became one per seat — the orchestrator's own, and the
+    /// 950 the author and the reviewer already fit in, which a shared cap
+    /// would have let them creep into.
     ///
-    /// Then the orchestrator landed that spec itself, and the task that used
-    /// to commit it went. Its playbook paid almost nothing for the trade — a
-    /// step that lands the spec for a step that created a task for it — and
-    /// the cost is a second pair of landing texts, one per merge strategy,
-    /// which the orchestrator briefing carries as a value. They are the
-    /// shorter pair, at 1464 for the authors' 2123: the orchestrator holds no
-    /// task, so no tool call ends either one, and the `direct` spec landing
-    /// is a commit and a push with no branch to rebase or squash. They are
-    /// capped apart from the authors', since the two pairs grow for different
-    /// reasons. The templates paid 33 characters for them: the token the
-    /// orchestrator briefing carries the procedure in, and the landing the
-    /// nudge names beside the tasks, which is 1188 for 1155.
-    ///
-    /// The orchestrator's own cap then went to 1500, for one rule stated
-    /// nowhere else: a repository that keeps no specs has the format of the
-    /// first one agreed with the user, beside the path it goes in. A spec the
-    /// orchestrator lands is a file the repository keeps, so what it looks
-    /// like is the user's call once rather than this orchestrator's each
-    /// time. That is 1451 characters for 1409, and the step that used to say
-    /// where the spec file is written paid part of it back: the landing
-    /// writes that file, so the playbook stopped saying it twice.
+    /// The briefing kinds then grew a third orchestrator text. The
+    /// orchestrator outlives its own hand-off now, so there are two ways to
+    /// pick it up rather than one: a nudge for the one that went quiet mid
+    /// conversation, and a wake for the one whose tasks need a decision. That
+    /// is 1293 characters for 1155, and no other kind paid for it — the total
+    /// went to 1350 for the second text, which is a situation the daemon
+    /// could not report before rather than a rewording of one it could.
     #[test]
     fn size_caps_hold() {
-        const KIND_TOTAL: usize = 1200;
+        const KIND_TOTAL: usize = 1350;
         const LANDING_TOTAL: usize = 2150;
         const GRAND_TOTAL: usize = 8000;
 
         // A cap per seat, not one for the three: the orchestrator alone
-        // carries the spec conversation, and the two that never grew stay
-        // where they were. It was raised from 1500 to 1600 when staffing
+        // carries the conversation with the user, and the two that never grew
+        // stay where they were. It was raised from 1500 to 1600 when staffing
         // arrived: the orchestrator now picks the skills of every agent it
         // creates, which is a step of the playbook and not a rewording of
         // one.

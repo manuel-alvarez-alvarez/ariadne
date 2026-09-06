@@ -192,8 +192,12 @@ impl Landing {
 pub enum PromptKind {
     /// Initial briefing of an orchestrator session.
     OrchestratorBriefing,
-    /// What an orchestrator that has stopped planning is nudged with.
+    /// What an orchestrator that has gone quiet is nudged with.
     OrchestratorResume,
+    /// What the orchestrator of a goal under way is woken with when its
+    /// tasks need it: one that failed, one that has gone quiet, or a goal
+    /// with nothing left to do.
+    GoalAttention,
     /// Initial briefing of an author session.
     AuthorBriefing,
     /// What an author with unfinished work is picked up with, whether its
@@ -211,6 +215,7 @@ pub enum PromptKind {
 wire_enum! { PromptKind, "prompt kind", [
     OrchestratorBriefing = "orchestrator_briefing",
     OrchestratorResume = "orchestrator_resume",
+    GoalAttention = "goal_attention",
     AuthorBriefing = "author_briefing",
     AuthorResume = "author_resume",
     ChangesRequested = "changes_requested",
@@ -222,7 +227,9 @@ impl PromptKind {
     /// The seats briefed with this prompt.
     pub fn seats(&self) -> &'static [Seat] {
         match self {
-            PromptKind::OrchestratorBriefing | PromptKind::OrchestratorResume => &[Seat::Orchestrator],
+            PromptKind::OrchestratorBriefing
+            | PromptKind::OrchestratorResume
+            | PromptKind::GoalAttention => &[Seat::Orchestrator],
             PromptKind::AuthorBriefing
             | PromptKind::AuthorResume
             | PromptKind::ChangesRequested => &[Seat::Author],
@@ -233,7 +240,11 @@ impl PromptKind {
     /// The prompts a session of `seat` is briefed with, in briefing order.
     pub fn for_seat(seat: Seat) -> &'static [PromptKind] {
         match seat {
-            Seat::Orchestrator => &[PromptKind::OrchestratorBriefing, PromptKind::OrchestratorResume],
+            Seat::Orchestrator => &[
+                PromptKind::OrchestratorBriefing,
+                PromptKind::OrchestratorResume,
+                PromptKind::GoalAttention,
+            ],
             Seat::Author => &[
                 PromptKind::AuthorBriefing,
                 PromptKind::AuthorResume,
@@ -261,6 +272,9 @@ impl PromptKind {
             // A nudge says what is waiting and nothing else: the orchestrator
             // it reaches has read the goal already.
             PromptKind::OrchestratorResume => &["goal_title"],
+            // What the tasks of this goal need: one line each, rendered by
+            // the scheduler that noticed.
+            PromptKind::GoalAttention => &["goal_title", "tasks"],
             PromptKind::AuthorBriefing => &[
                 "task_title",
                 "task_description",

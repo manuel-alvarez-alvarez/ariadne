@@ -20,6 +20,7 @@ function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): Tas
     description: "",
     status,
     branch: `a-task-${id}`,
+    landing: "merge",
     repo_id: "r1",
     depends_on: [],
     agents: [],

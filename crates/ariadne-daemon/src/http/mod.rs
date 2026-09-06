@@ -111,7 +111,7 @@ impl AppState {
         repositories::update, repositories::delete,
         repositories::list_merge_strategies,
         goals::create, goals::list, goals::get, goals::delete,
-        goals::cancel, goals::finalize,
+        goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         landing::list_reviews, landing::post_review, landing::diff,
@@ -185,6 +185,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/goals/{id}", get(goals::get).delete(goals::delete))
         .route("/v1/goals/{id}/cancel", post(goals::cancel))
         .route("/v1/goals/{id}/finalize", post(goals::finalize))
+        .route("/v1/goals/{id}/complete", post(goals::complete))
         .route("/v1/goals/{goal_id}/tasks", post(tasks::create))
         // tasks
         .route("/v1/tasks", get(tasks::list))

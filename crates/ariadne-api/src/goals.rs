@@ -56,6 +56,14 @@ pub struct GoalUsageDto {
 #[serde(deny_unknown_fields)]
 pub struct FinalizePlanRequest {}
 
+/// Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is
+/// done. Its call, not the user's, and it carries nothing — every task being
+/// finished or cancelled is the whole of the argument, and the daemon checks
+/// that itself.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompleteGoalRequest {}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateGoalRequest {

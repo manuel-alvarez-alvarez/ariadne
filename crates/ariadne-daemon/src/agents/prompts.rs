@@ -141,9 +141,15 @@ pub fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) 
     )
 }
 
-/// What an orchestrator that has stopped planning is nudged with.
+/// What an orchestrator that has gone quiet is nudged with.
 pub fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> String {
     render(template, &[("goal_title", &goal.title)])
+}
+
+/// What the orchestrator of a goal under way is woken with: the goal, and the
+/// lines the scheduler wrote about the tasks that need it.
+pub fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) -> String {
+    render(template, &[("goal_title", &goal.title), ("tasks", tasks)])
 }
 
 /// Initial prompt for an author session.
@@ -392,6 +398,9 @@ mod tests {
                     orchestrator_briefing(&template, &goal, std::slice::from_ref(&repo))
                 }
                 PromptKind::OrchestratorResume => orchestrator_resume_briefing(&template, &goal),
+                PromptKind::GoalAttention => {
+                    goal_attention_briefing(&template, &goal, "- one task failed")
+                }
                 PromptKind::AuthorBriefing => author_briefing(&template, &task, &goal, &repo, &[]),
                 PromptKind::AuthorResume => author_resume_briefing(&template, &task),
                 PromptKind::ChangesRequested => changes_requested_briefing(&template, &feedback),
@@ -465,6 +474,7 @@ mod tests {
             repo.merge_strategy().as_str()
         );
         let round = task.review_round.to_string();
+        let attention = "- Render prompts (01task) failed".to_string();
 
         // The values every kind is rendered with, and what the briefing that
         // owns it renders.
@@ -494,6 +504,11 @@ mod tests {
                 PromptKind::OrchestratorResume,
                 orchestrator_resume_briefing(default(PromptKind::OrchestratorResume), &goal),
                 vec![("goal_title", &goal.title)],
+            ),
+            (
+                PromptKind::GoalAttention,
+                goal_attention_briefing(default(PromptKind::GoalAttention), &goal, &attention),
+                vec![("goal_title", &goal.title), ("tasks", &attention)],
             ),
             (
                 PromptKind::AuthorBriefing,

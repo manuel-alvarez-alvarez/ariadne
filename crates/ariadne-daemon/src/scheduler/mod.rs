@@ -141,6 +141,13 @@ pub struct Scheduler {
     /// What the quiet-clock watchdog has done about each session it has had
     /// to act on, by session id (in memory like the map above).
     quiet: HashMap<String, Quiet>,
+    /// What each goal's orchestrator was last told its tasks needed, by goal
+    /// id, so a situation that has not changed is not typed into its pane
+    /// every tick. In memory like the maps below: a daemon that restarts over
+    /// a failed task tells the orchestrator once more, which is the right way
+    /// round — a wake too many costs a turn, one too few leaves a goal with
+    /// nobody deciding.
+    goal_told: HashMap<String, String>,
     /// Tasks whose author has been handed the landing briefing, by task id.
     /// In memory like the maps above: what it prevents is briefing the same
     /// approved task twice while the daemon that approved it is running, and
@@ -193,6 +200,7 @@ pub fn start(
         launcher,
         spawn_failures: HashMap::new(),
         quiet: HashMap::new(),
+        goal_told: HashMap::new(),
         landing_briefed: HashSet::new(),
         typing: HashSet::new(),
         reports,

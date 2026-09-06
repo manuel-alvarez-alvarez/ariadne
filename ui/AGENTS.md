@@ -27,7 +27,8 @@ src/
                    and the attention count the shell shows everywhere else
     tasks/         the task panel: facts, diff, reviews, history
     sessions/      the sessions screen, the session panel and the terminal
-    profiles/      profiles screen and the prompts a profile overrides
+    models/        the pin picker, the model catalog and the agent summary
+    skills/        skills screen: the catalog, and the document each one is
     repositories/  the registered checkouts goals are created against
     agents/        agent-kind screen: the flags each CLI is launched with
     system/        the daemon-logs drawer and the log stream behind it
@@ -72,15 +73,15 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["goals",        "list", filters]   ["goals",    "detail", id]
 ["tasks",        "list", filters]   ["tasks",    "detail", id]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
-["profiles",     "list", filters]   ["profiles", "detail", id]
+["skills",       "list", {}]        ["skills",   "detail", name]
 ["repositories", "list", filters]   ["repositories", "detail", id]
 ["agents",       "list", {}]        ["models",   "list", {}]
 ["agent-events", "list", filters]
 ```
 
 Sub-resources hang off their detail key: `["tasks", "detail", id, "reviews"]`,
-`… "transitions"`, `… "diff"`, `["sessions", "detail", id, "logs"]`,
-`["profiles", "detail", id, "prompts"]`. Two consequences the event dispatcher
+`… "transitions"`, `… "diff"`, `["sessions", "detail", id, "logs"]`. Two
+consequences the event dispatcher
 depends on: invalidating `qk.tasks.lists()` refetches every task list without
 disturbing an open detail view, and invalidating a detail key also invalidates
 that entity's sub-resources.
@@ -113,8 +114,8 @@ the query cache and it stays live.
 | `review_created` | invalidate `tasks.reviews` |
 | `session_created`, `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |
-| `profile_created`, `profile_updated` | patch `profiles.detail`, invalidate `profiles.lists` |
-| `profile_deleted` | remove `profiles.detail`, invalidate `profiles.lists` |
+| `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |
+| `skill_deleted` | remove `skills.detail`, invalidate `skills.lists` |
 | `repository_created` | patch `repositories.detail`, invalidate `repositories.lists` |
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
@@ -164,7 +165,7 @@ There is no per-feature route file: there are a handful of routes, half of them
 one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
-Five screens have URLs of their own — `#/goals`, `#/sessions`, `#/profiles`,
+Five screens have URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
 `#/agents`, `#/repositories` — and `#/` redirects onto the board. Goals, tasks
 and sessions have no pages: their details open as **side panels** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
@@ -223,7 +224,7 @@ ask, so a prompt opens the pane it is waiting in and anything else opens
 wherever it is otherwise read — and then the actions, including the ones that only
 exist for what the screen underneath has open: a new task in the goal whose
 panel is up, `ariadne attach <id>` for the task or session that is. It searches
-the goal, task, session and profile lists that are **already in the query
+the goal, task, session and skill lists that are **already in the query
 cache** — the same keys their own screens read, fetched only while it is open —
 and its rows navigate through `src/routes/paths.ts`, so a task stacks its panel
 on whatever screen it was opened over. Two notes on the matching, both in

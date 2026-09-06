@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * Deleting a goal, against a stubbed daemon.
+ * Completing and deleting a goal, against a stubbed daemon.
  *
  * What is worth pinning is the gate and the wire. The gate: a goal that has
  * not stopped is never offered the delete, because the daemon would refuse it
@@ -35,7 +35,6 @@ function goal(status: GoalStatus): GoalDto {
     title: "Ship the board",
     description: "",
     repos: [],
-    required_approvals: 1,
     status,
     usage: {
       total: NO_TOKENS,
@@ -48,16 +47,22 @@ function goal(status: GoalStatus): GoalDto {
   }
 }
 
-/** `DELETE /v1/goals/{id}` answers this instead of 204, when set. */
+/** A write answers this instead of its 2xx, when set. */
 let deleteFailure: { status: number; code: string; message: string } | null = null
 
 function stubDaemon() {
   deleteFailure = null
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
-    if (request.method === "DELETE" && deleteFailure) {
+    if (deleteFailure) {
       const { status, code, message } = deleteFailure
       return errorResponse(status, code, message)
+    }
+    if (request.method === "POST") {
+      return new Response(JSON.stringify(goal("completed")), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
     }
     return new Response(null, { status: 204 })
   })
@@ -147,5 +152,57 @@ describe("deleting a goal", () => {
     // The dialog stays up, and re-confirming would only ask the same question.
     expect((await confirmDelete()).hasAttribute("disabled")).toBe(true)
     expect(onDeleted).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Completing is normally the orchestrator's own call. It is offered here for
+ * the goal whose orchestrator is gone or will not start, which is otherwise
+ * one nothing can close — and only for a goal that is actually under way: one
+ * still being planned has no plan to have done anything.
+ */
+describe("completing a goal", () => {
+  it("is offered only while the goal is active", () => {
+    renderActions("active")
+    expect(screen.getByRole("button", { name: "Complete goal" })).toBeDefined()
+
+    for (const status of ["planning", "completed", "cancelled"] as const) {
+      renderScreen(<GoalActions goal={goal(status)} onDeleted={vi.fn()} />)
+    }
+    expect(screen.getAllByRole("button", { name: "Complete goal" }).length).toBe(1)
+  })
+
+  it("asks first, and only the confirm sends the POST", async () => {
+    const user = userEvent.setup()
+    renderActions("active")
+
+    await user.click(screen.getByRole("button", { name: "Complete goal" }))
+    expect(wire()).toEqual([])
+
+    const dialog = await screen.findByRole("dialog", { name: "Complete this goal?" })
+    await user.click(within(dialog).getByRole("button", { name: "Complete goal" }))
+
+    await waitFor(() => {
+      expect(wire()).toEqual([
+        { method: "POST", path: "/v1/goals/01JGOAL0000000000000000001/complete" },
+      ])
+    })
+  })
+
+  it("keeps the daemon's refusal on screen, with the tasks it named", async () => {
+    const user = userEvent.setup()
+    deleteFailure = {
+      status: 409,
+      code: "conflict",
+      message: "the goal still has unfinished tasks: Wire the strip (in_progress)",
+    }
+    renderActions("active")
+
+    await user.click(screen.getByRole("button", { name: "Complete goal" }))
+    const dialog = await screen.findByRole("dialog", { name: "Complete this goal?" })
+    await user.click(within(dialog).getByRole("button", { name: "Complete goal" }))
+
+    expect(await screen.findByText(/Wire the strip \(in_progress\)/)).toBeDefined()
+    expect(screen.getByRole("dialog", { name: "Complete this goal?" })).toBeDefined()
   })
 })

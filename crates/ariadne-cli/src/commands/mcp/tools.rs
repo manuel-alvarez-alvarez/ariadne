@@ -13,7 +13,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
-use ariadne_api::goals::FinalizePlanRequest;
+use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, RecordPullRequestRequest, TransitionRequest,
@@ -97,6 +97,14 @@ pub struct UpdateTaskReq {
     pub depends_on: Option<Vec<String>>,
     /// How the task ends: `merge`, `pull_request` or `none`.
     pub landing: Option<LandingReq>,
+}
+
+/// The one task a supervising tool acts on, by id.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct TaskId {
+    /// Task id, as `list_tasks` gives it.
+    pub task_id: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -328,6 +336,50 @@ impl AriadneMcp {
     ) -> Result<CallToolResult, McpError> {
         let path = format!("/v1/goals/{}/finalize", self.goal_id);
         json_result(self.post(&path, &FinalizePlanRequest {}).await?)
+    }
+
+    #[tool(
+        description = "List every task of the goal, with its status, how it ends, and the agents staffed on it. This is how you see where the goal stands."
+    )]
+    async fn list_tasks(
+        &self,
+        Parameters(_): Parameters<Empty>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = format!("/v1/tasks?goal_id={}", self.goal_id);
+        json_result(self.get::<serde_json::Value>(&path).await?)
+    }
+
+    #[tool(
+        description = "Start a failed task again, from the beginning. Rewrite it with `update_task` first where it failed on how it was written."
+    )]
+    async fn retry_task(
+        &self,
+        Parameters(req): Parameters<TaskId>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = format!("/v1/tasks/{}/retry", req.task_id);
+        json_result(self.post(&path, &serde_json::json!({})).await?)
+    }
+
+    #[tool(
+        description = "Give a task up for good. Use it where the goal no longer needs the task, or where nothing you can rewrite would make it work."
+    )]
+    async fn cancel_task(
+        &self,
+        Parameters(req): Parameters<TaskId>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = format!("/v1/tasks/{}/cancel", req.task_id);
+        json_result(self.post(&path, &serde_json::json!({})).await?)
+    }
+
+    #[tool(
+        description = "End the goal. Call it once every task is finished or cancelled and the goal is met. Ariadne refuses it while any task is still going."
+    )]
+    async fn complete_goal(
+        &self,
+        Parameters(_): Parameters<Empty>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = format!("/v1/goals/{}/complete", self.goal_id);
+        json_result(self.post(&path, &CompleteGoalRequest {}).await?)
     }
 
     // ---- author ----

@@ -4,9 +4,8 @@
 //! while the work the session was started for is still its own to do. Both
 //! detectors ask the same question: the sweep that flags a vanished pane, and
 //! the event ingestion that flags a permission prompt. A reviewer that has
-//! voted, an author whose task is under review and an orchestrator whose goal
-//! has left planning are all agents nobody is waiting on, whatever their pane
-//! puts on the screen.
+//! voted and an author whose task is under review are agents nobody is
+//! waiting on, whatever their pane puts on the screen.
 
 use ariadne_core::{GoalStatus, Seat, TaskStatus};
 use ariadne_store::{AgentSession, Store, Task};
@@ -19,11 +18,14 @@ use ariadne_store::{AgentSession, Store, Task};
 /// that has already voted is done however long the round runs on.
 pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
     match session.seat() {
-        // The goal being planned is the orchestrator's whole job, and
-        // finalizing the plan is what ends it.
+        // The goal is the orchestrator's whole job, and it holds that job
+        // for the whole goal: the plan is a hand-off, not an ending. It is
+        // the agent the user talks to about work already running, and the
+        // one the daemon tells when a task needs a decision, so a pane of
+        // its own that vanishes under a goal still going is news.
         Seat::Orchestrator => matches!(
             store.get_goal(&session.goal_id).await.map(|g| g.status()),
-            Ok(GoalStatus::Planning)
+            Ok(GoalStatus::Planning | GoalStatus::Active)
         ),
         // Every status the author is working in or about to be woken for;
         // `pending` has no author yet and `under_review` is not its turn.

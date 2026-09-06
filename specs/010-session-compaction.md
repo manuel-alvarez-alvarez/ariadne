@@ -1,9 +1,9 @@
 ---
 id: session-compaction
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 areas: [daemon]
-commits: [ab689148]
+commits: [ab689148, 23d191a5]
 tests:
   - crates/ariadne-daemon/tests/compaction.rs
   - crates/ariadne-store/tests/store.rs
@@ -51,9 +51,10 @@ watchdog's own timeline (009).
    longer than that, nor for a debt that never got to run
    (`COMPACTION_OWED_FOR_SECS`, 600 s): anything else is written off and the
    work goes on.
-8. A session that owes a compaction is not ended until the debt is paid — an
-   idle orchestrator past `finalize_plan` and a reviewer that has voted are both
-   kept up for it.
+8. A session that owes a compaction is not ended until the debt is paid — a
+   reviewer that has voted is kept up for it. The orchestrator's own hand-off
+   ends nothing: it stays up for the whole goal (003), and what the compaction
+   buys is a shorter conversation for the rest of it.
 9. Each compaction is written to the session's event log as the daemon's own
    `compaction` event, and one that ended any other way as `compaction_failed`
    naming why.
@@ -64,7 +65,7 @@ watchdog's own timeline (009).
 - Each hand-off owes its session a compaction
   (`compaction.rs::a_review_requested_owes_the_author_a_compaction`,
   `::a_verdict_given_owes_the_reviewer_a_compaction`,
-  `::a_plan_finalized_owes_the_orchestrator_a_compaction_before_it_is_let_go`),
+  `::a_plan_finalized_owes_the_orchestrator_a_compaction_and_it_stays_up`),
   and is paid once however many passes see it
   (`::a_hand_off_is_paid_once_however_many_passes_see_it`).
 - A session mid-turn or waiting on a person owes the debt but is not typed into

@@ -1,12 +1,12 @@
 //! What a goal wants, by status: an orchestrator while it is being planned, its
 //! tasks while it is active, and nothing running once it is over.
 
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use ariadne_core::{
     Actor, AttentionReason, GoalStatus, PromptKind, Seat, SessionStatus, TaskStatus,
 };
-use ariadne_store::{AgentSession, Goal, SessionFilter, TaskFilter};
+use ariadne_store::{AgentSession, Goal, SessionFilter, Task, TaskFilter};
 
 use crate::agents::prompts;
 
@@ -18,35 +18,33 @@ impl super::Scheduler {
         match goal.status() {
             // A goal in planning wants a live orchestrator session.
             GoalStatus::Planning => {
-                let orchestrators = self.live_sessions(goal_id, None, Seat::Orchestrator).await?;
-                if !orchestrators.is_empty() {
-                    // The goal has the orchestrator it wants, however it came
-                    // by one: whatever earlier attempts spent is given back.
-                    self.spawn_failures.remove(goal_id);
-                } else if self.orchestrator_wanted(&goal).await {
-                    info!(goal = %goal.id, "spawning orchestrator");
-                    if let Err(e) = self.launcher.spawn_orchestrator(goal_id).await {
-                        self.orchestrator_could_not_start(&goal).await;
-                        return Err(e);
-                    }
-                    self.spawn_failures.remove(goal_id);
-                }
+                self.keep_orchestrator(&goal).await?;
                 // An orchestrator has no task to flag: its session carries the
                 // stall, which is the only place a goal still in planning has
                 // to say that nothing is happening.
-                for orchestrator in orchestrators {
+                for orchestrator in self
+                    .live_sessions(goal_id, None, Seat::Orchestrator)
+                    .await?
+                {
                     let template = prompts::template_for(PromptKind::OrchestratorResume);
                     let nudge = prompts::orchestrator_resume_briefing(template, &goal);
                     self.check_session_quiet(&orchestrator, (goal.status.clone(), 0), &nudge)
                         .await?;
                 }
             }
+            // A goal under way wants its orchestrator too. It is the one agent
+            // that outlives its own hand-off: the user talks to it about work
+            // already running, and the daemon has somebody to tell when a task
+            // needs a decision no author can make. What it is *not* under way
+            // is quiet — an orchestrator with every task running has nothing
+            // to do — so no watchdog nudges it here. It is woken by what
+            // happened, and by nothing else.
             GoalStatus::Active => {
-                // The plan is finalized, which is the orchestrator's hand-off:
-                // what it is owed before it is let go is the compaction of
-                // everything it said and read getting there.
+                // Finalizing the plan is a hand-off, and what the orchestrator
+                // is owed for it is the compaction of everything it said and
+                // read getting there.
                 self.owe_orchestrator_compaction(&goal).await;
-                self.end_idle_orchestrator(&goal.id).await;
+                self.keep_orchestrator(&goal).await?;
                 let tasks = self
                     .store
                     .list_tasks(TaskFilter {
@@ -54,18 +52,7 @@ impl super::Scheduler {
                         status: None,
                     })
                     .await?;
-                let all_merged = !tasks.is_empty()
-                    && tasks
-                        .iter()
-                        .all(|t| matches!(t.status(), TaskStatus::Finished | TaskStatus::Cancelled))
-                    && tasks.iter().any(|t| t.status() == TaskStatus::Finished);
-                if all_merged {
-                    info!(goal = %goal.id, "all tasks finished, goal completed");
-                    self.store
-                        .set_goal_status(&goal.id, GoalStatus::Completed)
-                        .await?;
-                    self.kill_goal_sessions(&goal.id).await;
-                }
+                self.tell_orchestrator(&goal, &tasks).await?;
             }
             // Cancelled: tear everything down; tasks are cancelled on behalf
             // of the user who cancelled the goal.
@@ -209,48 +196,74 @@ impl super::Scheduler {
         )
     }
 
-    /// The orchestrator's work ends with the plan: an idle one is let go once
-    /// the goal it planned is being worked on.
+    /// Make sure this goal has an orchestrator, whatever it is doing.
     ///
-    /// Nothing waits on an orchestrator outside `planning` —
-    /// `attention::work_is_active` says so, which is why an orchestrator pane
-    /// that vanishes under an active goal is not reported as a disconnect
-    /// either — and a session nobody waits on that is left running is an
-    /// agent holding a pane, a tmux process and the machine's sleep inhibitor
-    /// open until the goal completes.
-    ///
-    /// Ended, not unreachable: what the agent CLI holds is its own history,
-    /// not the pane, so a session ended here is one `session resume` puts
-    /// back where it was. What is not ended is an orchestrator mid-turn:
-    /// whatever it is writing is finished first, and the next tick finds it
-    /// idle. Nor one still owed its compaction: that history is exactly what
-    /// the compaction shortens, and a pane killed under a running one leaves
-    /// the conversation as it was.
-    async fn end_idle_orchestrator(&self, goal_id: &str) {
-        let Ok(sessions) = self
-            .store
-            .list_sessions(SessionFilter {
-                goal_id: Some(goal_id.to_string()),
-                live_only: true,
-                ..Default::default()
-            })
-            .await
-        else {
-            return;
-        };
-        for orchestrator in sessions
-            .iter()
-            .filter(|s| s.seat() == Seat::Orchestrator && s.status() == SessionStatus::Idle)
+    /// One per goal, for the whole goal: the agent the user talks to, and the
+    /// only one that holds the plan. A goal that has one gives back whatever
+    /// earlier attempts spent; one that has none gets another go, until
+    /// [`Self::orchestrator_wanted`] says the budget is out.
+    async fn keep_orchestrator(&mut self, goal: &Goal) -> anyhow::Result<()> {
+        if !self
+            .live_sessions(&goal.id, None, Seat::Orchestrator)
+            .await?
+            .is_empty()
         {
-            if self.compaction_pending(orchestrator) {
-                debug!(goal = %goal_id, session = %orchestrator.id, "the idle orchestrator is left up until the compaction it owes is done");
-                continue;
-            }
-            info!(goal = %goal_id, session = %orchestrator.id, "the goal is past planning; ending its idle orchestrator");
-            if let Err(e) = self.launcher.kill_session(&orchestrator.id).await {
-                warn!(goal = %goal_id, session = %orchestrator.id, error = %e, "ending the orchestrator failed");
-            }
+            self.spawn_failures.remove(&goal.id);
+            return Ok(());
         }
+        if !self.orchestrator_wanted(goal).await {
+            return Ok(());
+        }
+        info!(goal = %goal.id, "spawning orchestrator");
+        if let Err(e) = self.launcher.spawn_orchestrator(&goal.id).await {
+            self.orchestrator_could_not_start(goal).await;
+            return Err(e);
+        }
+        self.spawn_failures.remove(&goal.id);
+        Ok(())
+    }
+
+    /// Tell the orchestrator what its tasks need, once per situation.
+    ///
+    /// Three things it is woken for, and the text names whichever of them is
+    /// true: a task that failed, a task that has gone quiet, and a goal with
+    /// nothing left to do. Everything else is work in progress, which is
+    /// exactly what the orchestrator delegated and has no business
+    /// interrupting.
+    ///
+    /// Once per situation rather than once per pass: the line the tasks render
+    /// to is the key, so a second task failing is news and the same one still
+    /// failed is not. Typed into the pane rather than sent as a resume, since
+    /// the session is up and the user may be mid-conversation with it.
+    async fn tell_orchestrator(&mut self, goal: &Goal, tasks: &[Task]) -> anyhow::Result<()> {
+        let Some(situation) = goal_attention(tasks) else {
+            self.goal_told.remove(&goal.id);
+            return Ok(());
+        };
+        if self.goal_told.get(&goal.id) == Some(&situation) {
+            return Ok(());
+        }
+        let orchestrators = self
+            .live_sessions(&goal.id, None, Seat::Orchestrator)
+            .await?;
+        let Some(orchestrator) = orchestrators
+            .iter()
+            .find(|s| s.status() == SessionStatus::Idle)
+        else {
+            // Nothing to type into: an orchestrator still starting, or one
+            // mid-turn. The situation is not written down, so the pass that
+            // finds it idle says it then.
+            return Ok(());
+        };
+        if self.pane_busy(&orchestrator.id) {
+            return Ok(());
+        }
+        info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");
+        self.goal_told.insert(goal.id.clone(), situation.clone());
+        let template = prompts::template_for(PromptKind::GoalAttention);
+        let text = prompts::goal_attention_briefing(template, goal, &situation);
+        self.spawn_delivery(orchestrator, text);
+        Ok(())
     }
 
     /// Owe the goal's live orchestrators the compaction their hand-off earns,
@@ -290,4 +303,117 @@ fn alarm_row(orchestrators: &[AgentSession]) -> Option<&AgentSession> {
         .iter()
         .find(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
         .or_else(|| orchestrators.last())
+}
+
+/// What the tasks of a goal need from its orchestrator, one line each, or
+/// `None` where they need nothing.
+///
+/// Three situations, and a goal can be in more than one. A failed task and a
+/// stalled task are both decisions somebody has to make and no author can:
+/// retry it, rewrite it, staff it differently, or give it up. A goal whose
+/// tasks are all done is the one moment `complete_goal` is called.
+///
+/// Work in progress is not in here. The orchestrator delegated it, and a
+/// running task is the delegation working.
+fn goal_attention(tasks: &[Task]) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for task in tasks {
+        match task.status() {
+            TaskStatus::Failed => lines.push(format!("- {} ({}) failed", task.title, task.id)),
+            _ if task.is_stalled() => {
+                lines.push(format!("- {} ({}) has gone quiet", task.title, task.id));
+            }
+            _ => {}
+        }
+    }
+    // Every task done is the end of the goal, and it is worth saying on its
+    // own line: a goal that ends with a task cancelled and the rest finished
+    // is still a goal that is over.
+    let done = !tasks.is_empty()
+        && tasks
+            .iter()
+            .all(|t| matches!(t.status(), TaskStatus::Finished | TaskStatus::Cancelled));
+    if done {
+        lines.push("- Every task is done.".to_string());
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::goal_attention;
+
+    use ariadne_store::Task;
+
+    fn task(title: &str, status: &str, stalled: bool) -> Task {
+        Task {
+            id: format!("01{title}"),
+            goal_id: "01goal".into(),
+            repo_id: "01repo".into(),
+            title: title.into(),
+            description: String::new(),
+            status: status.into(),
+            branch: title.into(),
+            landing: "merge".into(),
+            worktree_path: None,
+            review_round: 0,
+            stalled: stalled as i64,
+            merge_commit: None,
+            pr_url: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    /// Work in progress is what the orchestrator delegated, so it is not
+    /// woken for it.
+    #[test]
+    fn a_goal_whose_tasks_are_running_needs_nothing() {
+        assert_eq!(
+            goal_attention(&[
+                task("a", "in_progress", false),
+                task("b", "under_review", false)
+            ]),
+            None
+        );
+        // Nor is a goal with no tasks at all, which is a plan being written.
+        assert_eq!(goal_attention(&[]), None);
+    }
+
+    /// The two decisions no author can make, each named with the task it is
+    /// about: the orchestrator has to know which one to act on.
+    #[test]
+    fn a_failed_task_and_a_quiet_one_are_each_named() {
+        let lines = goal_attention(&[
+            task("Build it", "failed", false),
+            task("Wire it", "in_progress", true),
+            task("Ship it", "in_progress", false),
+        ])
+        .expect("two tasks need it");
+        assert!(lines.contains("Build it (01Build it) failed"), "{lines}");
+        assert!(
+            lines.contains("Wire it (01Wire it) has gone quiet"),
+            "{lines}"
+        );
+        assert!(!lines.contains("Ship it"), "{lines}");
+    }
+
+    /// Every task done is the goal over, whether they were finished or
+    /// cancelled, and it is the one moment `complete_goal` is called.
+    #[test]
+    fn a_goal_with_nothing_left_to_do_says_so() {
+        let lines = goal_attention(&[task("a", "finished", false), task("b", "cancelled", false)])
+            .expect("the goal is over");
+        assert_eq!(lines, "- Every task is done.");
+
+        // One task still running and the goal is not over, whatever the rest
+        // did.
+        assert_eq!(
+            goal_attention(&[
+                task("a", "finished", false),
+                task("b", "in_progress", false)
+            ]),
+            None
+        );
+    }
 }

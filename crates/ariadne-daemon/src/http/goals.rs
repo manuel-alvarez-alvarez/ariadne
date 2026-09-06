@@ -5,8 +5,8 @@ use axum::http::{HeaderMap, StatusCode};
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
-use ariadne_core::GoalStatus;
+use ariadne_api::goals::{CompleteGoalRequest, CreateGoalRequest, FinalizePlanRequest, GoalDto};
+use ariadne_core::{GoalStatus, TaskStatus};
 use ariadne_store::{Goal, NewGoal, SessionFilter, Store, TaskFilter};
 
 use super::AppState;
@@ -235,6 +235,68 @@ pub async fn finalize(
     for task in tasks {
         state.notify_scheduler(&task.id);
     }
+    to_dto(&state.store, goal).await
+}
+
+/// Complete the goal: it moves active -> completed and every session of it
+/// is torn down.
+///
+/// The orchestrator's call, because it is the only agent that knows whether
+/// the plan did what the goal asked for — the daemon can see that every task
+/// ended, and not whether the goal is met. The user's too: it is their goal,
+/// and a goal whose orchestrator will not start is otherwise one nothing can
+/// close.
+///
+/// What the daemon checks is the part it can see. A goal with a task still
+/// going is not one anybody may declare finished, however sure they are.
+#[utoipa::path(post, path = "/v1/goals/{id}/complete", tag = "goals",
+    request_body = CompleteGoalRequest,
+    params(("id" = String, Path, description = "goal id")),
+    responses((status = 200, body = GoalDto), (status = 403), (status = 409)))]
+pub async fn complete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(_req): Json<CompleteGoalRequest>,
+) -> ApiResult<Json<GoalDto>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    if !matches!(
+        ctx.actor,
+        ariadne_core::Actor::Orchestrator | ariadne_core::Actor::User
+    ) {
+        return Err(ApiError::forbidden(
+            "only the orchestrator or the user may complete the goal",
+        ));
+    }
+    let goal = state.store.get_goal(&id).await?;
+    if goal.status() != GoalStatus::Active {
+        return Err(ApiError::conflict(format!(
+            "goal is {}, expected active",
+            goal.status
+        )));
+    }
+    let unfinished: Vec<String> = state
+        .store
+        .list_tasks(TaskFilter {
+            goal_id: Some(id.clone()),
+            status: None,
+        })
+        .await?
+        .into_iter()
+        .filter(|t| !matches!(t.status(), TaskStatus::Finished | TaskStatus::Cancelled))
+        .map(|t| format!("{} ({})", t.title, t.status))
+        .collect();
+    if !unfinished.is_empty() {
+        return Err(ApiError::conflict(format!(
+            "the goal still has unfinished tasks: {}",
+            unfinished.join(", ")
+        )));
+    }
+    let goal = state
+        .store
+        .set_goal_status(&id, GoalStatus::Completed)
+        .await?;
+    state.notify_scheduler_goal(&id);
     to_dto(&state.store, goal).await
 }
 

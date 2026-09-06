@@ -3,7 +3,7 @@ id: command-line-interface
 status: current
 updated: 2026-09-06
 areas: [cli]
-commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe]
+commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 23d191a5]
 tests:
   - crates/ariadne-cli/src/cli/tests.rs
   - crates/ariadne-cli/src/error.rs
@@ -47,19 +47,27 @@ same binary also serves (013).
    it; a model naming no agent, a model on an agent that is no CLI, an effort
    with no meaning and a reviewer naming no real agent are usage errors,
    refused before anything is sent.
-8. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
+8. The empty list is a flag of its own wherever a repeatable flag names one,
+   since a repeatable flag cannot be given zero times on purpose:
+   `--no-reviewer` for a task with nothing to review, `--clear-depends-on` for
+   one with nothing to wait for.
+9. Every judgement the orchestrator makes about a task can be made from here
+   too: how it ends (`task create|update --landing`), whether it is reviewed
+   (`--reviewer`, `--no-reviewer`), and whether the goal is over
+   (`goal complete`).
+10. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
    block, no transport detail, no repeated envelope. `--format json` prints
    the daemon's envelope instead, so a script keeps the status and code the
    human line drops.
-9. The exit code says what kind of failure it was, and every kind has one of
+11. The exit code says what kind of failure it was, and every kind has one of
    its own; it is documented in `ariadne --help`.
-10. Completions are generated for bash and zsh and complete against live data:
+12. Completions are generated for bash and zsh and complete against live data:
     candidates newest first, live sessions before ended ones when attaching,
     the efforts an entry lists and no others.
-11. `ariadne doctor` answers why the daemon will not start — including a
+13. `ariadne doctor` answers why the daemon will not start — including a
     database written by a release whose migrations this one no longer ships,
     which it names along with the file to delete (016).
-12. A tool is checked for its version as well as its presence where a version
+14. A tool is checked for its version as well as its presence where a version
     is what decides: git below 2.42 has no `worktree add --orphan` and so
     cannot start a task in a repository with no commits (002), which is a
     warning naming that one case, on this PATH and on the daemon's alike.

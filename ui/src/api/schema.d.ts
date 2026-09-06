@@ -202,6 +202,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/goals/{id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete the goal: it moves active -> completed and every session of it
+         *     is torn down.
+         * @description The orchestrator's call, because it is the only agent that knows whether
+         *     the plan did what the goal asked for — the daemon can see that every task
+         *     ended, and not whether the goal is met. The user's too: it is their goal,
+         *     and a goal whose orchestrator will not start is otherwise one nothing can
+         *     close.
+         *
+         *     What the daemon checks is the part it can see. A goal with a task still
+         *     going is not one anybody may declare finished, however sure they are.
+         */
+        post: operations["goals_complete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/goals/{id}/finalize": {
         parameters: {
             query?: never;
@@ -673,7 +701,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Cancel a task (user). */
+        /**
+         * Cancel a task: the user's, or the orchestrator's, which holds the plan
+         *     the task belongs to.
+         * @description Who called it is read from the session header rather than assumed, so the
+         *     transition log says which of the two it was — and so the state machine
+         *     refuses an author or a reviewer reaching for it.
+         */
         post: operations["tasks_cancel"];
         delete?: never;
         options?: never;
@@ -746,7 +780,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Retry a failed task (user): failed -> ready. */
+        /**
+         * Retry a failed task: failed -> ready. The user's call, and the
+         *     orchestrator's — the daemon wakes it when a task fails, and retrying is
+         *     one of the three answers it has.
+         */
         post: operations["tasks_retry"];
         delete?: never;
         options?: never;
@@ -927,6 +965,13 @@ export interface components {
              */
             version?: string | null;
         };
+        /**
+         * @description Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is
+         *     done. Its call, not the user's, and it carries nothing — every task being
+         *     finished or cancelled is the whole of the argument, and the daemon checks
+         *     that itself.
+         */
+        CompleteGoalRequest: Record<string, never>;
         CreateGoalRequest: {
             description?: string;
             /**
@@ -955,11 +1000,6 @@ export interface components {
             model?: string | null;
             /** @description Ids of registered repositories (`POST /v1/repositories`); at least one. */
             repository_ids: string[];
-            /**
-             * Format: int64
-             * @description Approvals required to merge a task (default 1).
-             */
-            required_approvals?: number | null;
             title: string;
         };
         CreateRepositoryRequest: {
@@ -1012,6 +1052,7 @@ export interface components {
             /** @description Task ids this task depends on. */
             depends_on?: string[];
             description?: string;
+            landing?: null | components["schemas"]["Landing"];
             /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
@@ -1179,8 +1220,6 @@ export interface components {
              *     goal references them, so an edit to one shows up here.
              */
             repos: components["schemas"]["RepositoryDto"][];
-            /** Format: int64 */
-            required_approvals: number;
             status: components["schemas"]["GoalStatus"];
             title: string;
             updated_at: string;
@@ -1234,6 +1273,19 @@ export interface components {
             /** @description The daemon's version, as `GET /v1/version` reports it. */
             version: string;
         };
+        /**
+         * @description How one task ends.
+         *
+         *     A repository's [`MergeStrategy`] says how *it* takes a change, and most
+         *     tasks end that way. This says how *this* task ends, which the orchestrator
+         *     agrees with the user task by task: some work lands on the base branch,
+         *     some leaves a request for a person who is not in this system at all, and
+         *     some has nothing to land — a report filed, a document published, a release
+         *     cut. All three reach [`TaskStatus::Finished`]; landing is one way of
+         *     getting there rather than the meaning of being there.
+         * @enum {string}
+         */
+        Landing: "merge" | "pull_request" | "none";
         /** @description One captured daemon log line. */
         LogLineDto: {
             /**
@@ -1642,6 +1694,11 @@ export interface components {
             description: string;
             goal_id: string;
             id: string;
+            /**
+             * @description How the task ends: a change on the base branch, a request somebody
+             *     else merges, or nothing at all.
+             */
+            landing: components["schemas"]["Landing"];
             merge_commit?: string | null;
             /**
              * @description URL of the pull or merge request the task was published as, once its
@@ -1730,7 +1787,7 @@ export interface components {
             output_tokens: number;
         };
         TransitionRequest: {
-            /** @description Required when `to` is `finished`. */
+            /** @description Required when `to` is `finished`, unless the task lands nothing. */
             merge_commit?: string | null;
             reason?: string | null;
             to: components["schemas"]["TaskStatus"];
@@ -1780,6 +1837,7 @@ export interface components {
              * @example xhigh
              */
             effort?: string | null;
+            landing?: null | components["schemas"]["Landing"];
             /**
              * @description What the author runs on, `<agent_kind>[:<model>]`: absent leaves the
              *     author's pins alone, "default" (or the empty string) puts them back on
@@ -2117,6 +2175,44 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    goals_complete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description goal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteGoalRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalDto"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2970,6 +3066,12 @@ export interface operations {
                     "application/json": components["schemas"]["TaskDto"];
                 };
             };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3078,6 +3180,12 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["TaskDto"];
                 };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             409: {
                 headers: {

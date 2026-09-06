@@ -1201,11 +1201,16 @@ async fn a_cancelled_goal_records_why_on_every_task_it_took_with_it() {
     }
 }
 
-/// And a goal whose tasks all landed is completed, with nothing of it left
-/// running.
+/// A goal whose tasks all landed is not completed by the daemon: whether the
+/// goal is *met* is a judgement about the work, and only its orchestrator can
+/// make it. What the daemon does is say that there is nothing left running,
+/// on the orchestrator's own pane, and `complete_goal` is the answer.
 #[tokio::test]
-async fn a_goal_whose_tasks_all_landed_is_completed() {
+async fn a_goal_whose_tasks_all_landed_wakes_its_orchestrator() {
     let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal, "orc").await;
+    w.pane_exists(&orchestrator);
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
     for (status, actor) in [
         (TaskStatus::Approved, Actor::Daemon),
@@ -1227,22 +1232,15 @@ async fn a_goal_whose_tasks_all_landed_is_completed() {
     for _ in 0..3 {
         sched.goal(&w.goal);
     }
-    eventually(TIMEOUT, "the goal to be completed", async || {
-        w.store.get_goal(&w.goal.id).await.unwrap().status() == GoalStatus::Completed
+    eventually(TIMEOUT, "the orchestrator to be woken", async || {
+        w.pasted(&orchestrator).contains("Every task is done.")
     })
     .await;
-    eventually(TIMEOUT, "its sessions to be let go", async || {
-        w.store
-            .list_sessions(SessionFilter {
-                goal_id: Some(w.goal.id.clone()),
-                live_only: true,
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .is_empty()
-    })
-    .await;
+    assert_eq!(
+        w.store.get_goal(&w.goal.id).await.unwrap().status(),
+        GoalStatus::Active,
+        "the daemon does not decide the goal is met"
+    );
 }
 
 // -- deliveries and relaunches ----------------------------------------------
@@ -1519,19 +1517,16 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
     );
 }
 
-/// The orchestrator's work ends with the plan. Once the goal it planned is
-/// being worked on, an idle orchestrator is an agent nobody is waiting on
-/// holding a pane and the machine's sleep inhibitor open until the last task
-/// lands, so it is let go — and being gone is what is expected of it, not a
-/// disconnect.
+/// The orchestrator outlives the plan. Once the goal it planned is being
+/// worked on it stays up — it is what the user talks to about work already
+/// running, and what the daemon tells when a task needs a decision — so the
+/// compaction it is owed shortens its conversation rather than ending it.
 #[tokio::test]
-async fn an_idle_orchestrator_is_let_go_once_the_goal_leaves_planning() {
+async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
     let w = World::active().await;
     // The orchestrator's own cwd, which a revive needs to be there.
     std::fs::create_dir_all(w.dir.path().join("repo")).unwrap();
-    let orchestrator = w
-        .orchestrator_session(&w.goal, "orc")
-        .await;
+    let orchestrator = w.orchestrator_session(&w.goal, "orc").await;
     w.pane_exists(&orchestrator);
     w.store
         .set_session_internal_id(&orchestrator.id, "uuid-orchestrator")
@@ -1539,9 +1534,6 @@ async fn an_idle_orchestrator_is_let_go_once_the_goal_leaves_planning() {
         .unwrap();
     w.set_status(&orchestrator, SessionStatus::Idle).await;
 
-    // The first tick is immediate, and one reconciliation of the goal is all
-    // it takes — once the orchestrator has compacted the conversation the
-    // finalized plan earned it, which its CLI reports done.
     let _sched = w.scheduler();
     eventually(TIMEOUT, "the orchestrator to be told to compact", async || {
         w.pasted(&orchestrator).contains("/compact")
@@ -1553,18 +1545,19 @@ async fn an_idle_orchestrator_is_let_go_once_the_goal_leaves_planning() {
         serde_json::json!({"hook_event_name": "SessionStart", "source": "compact"}),
     )
     .await;
-    eventually(TIMEOUT, "the orchestrator to be let go", async || {
-        w.session_status(&orchestrator).await == SessionStatus::Exited
-    })
-    .await;
-    // Whatever the sweep beside it had to say would have been said by now.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Whatever the passes and the sweep beside them had to say would have
+    // been said by now.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(
+        w.session_status(&orchestrator).await,
+        SessionStatus::Idle,
+        "the orchestrator was let go once its plan was under way"
+    );
     assert_eq!(
         w.attention(&orchestrator).await,
         None,
-        "an orchestrator that is done is expected to be gone, not reported disconnected"
+        "an orchestrator with nothing to do is not one the user is called for"
     );
-
 }
 
 /// A pane with a delivery going into it is not a pane to kill, wedged or not:
@@ -1725,5 +1718,75 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
     assert!(
         !w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
         "and what the user is owed is not the task stalling"
+    );
+}
+
+/// A task that failed is a decision no author can make: retry it, rewrite it,
+/// staff it differently or give it up. So the daemon wakes the orchestrator,
+/// on the pane the user is also talking to, and says which task it is.
+///
+/// Once per situation, not once per pass: a second task failing is news, and
+/// the same one still failed is not.
+#[tokio::test]
+async fn a_failed_task_wakes_the_orchestrator_once() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal, "orc").await;
+    w.pane_exists(&orchestrator);
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Author,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(TIMEOUT, "the orchestrator to be woken", async || {
+        w.pasted(&orchestrator).contains("failed")
+    })
+    .await;
+    let woken = w.pasted(&orchestrator);
+    assert!(woken.contains(&w.task.title), "{woken}");
+    assert!(woken.contains("`list_tasks`"), "{woken}");
+
+    // Every pass after it says the same thing, so nothing is said again.
+    let said = w.pasted(&orchestrator).matches("`list_tasks`").count();
+    for _ in 0..3 {
+        sched.goal(&w.goal);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert_eq!(
+        w.pasted(&orchestrator).matches("`list_tasks`").count(),
+        said,
+        "the orchestrator was woken again for the same situation"
+    );
+}
+
+/// Work in progress is what the orchestrator delegated, so it is not woken
+/// for it: a task being written and a task under review are the delegation
+/// working.
+#[tokio::test]
+async fn a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal, "orc").await;
+    w.pane_exists(&orchestrator);
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::UnderReview).await;
+
+    let sched = w.scheduler();
+    for _ in 0..3 {
+        sched.goal(&w.goal);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert!(
+        !w.pasted(&orchestrator).contains("`list_tasks`"),
+        "{:?}",
+        w.pasted(&orchestrator)
     );
 }

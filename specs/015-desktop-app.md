@@ -59,6 +59,11 @@ Out: the daemon endpoints themselves (012).
 
 - 69 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
+- Every judgement the orchestrator makes about a task can be made here too:
+  how a task ends
+  (`ui/src/features/tasks/task-form-dialog.test.tsx::sends how the task ends`),
+  whether it is reviewed (`::takes every reviewer off`), and whether the goal
+  is over (`ui/src/features/goals/goal-actions.test.tsx::completing a goal`).
 - The skills screen groups the shipped skills apart from the user's own
   (`ui/src/features/skills/skills-page.test.tsx`), and offers reset for the
   first and delete for the second and never the other way round

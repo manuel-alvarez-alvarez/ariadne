@@ -3,7 +3,7 @@ id: authoring-and-review-rounds
 status: current
 updated: 2026-09-06
 areas: [daemon, store, prompts]
-commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e]
+commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e, 23d191a5]
 tests:
   - crates/ariadne-daemon/tests/prompts.rs
   - crates/ariadne-daemon/tests/resume.rs
@@ -48,7 +48,9 @@ Out: the transition table itself (001), the landing that follows approval
 8. Verdicts close a round before anything else is done with it: any request
    for changes moves the task to `changes_requested`, whatever else the round
    holds. Otherwise, approvals of the round are counted and the task is
-   `approved` once they reach the goal's `required_approvals`.
+   `approved` once every reviewer staffed on it has approved. A task staffed
+   with none is approved the moment its author asks: there is nobody to ask
+   (017).
 9. A `changes_requested` task resumes its author with the round's feedback,
    under a heading naming who wrote each point — the Ariadne reviewers, or the
    people on a published request (005). The author answers every point and

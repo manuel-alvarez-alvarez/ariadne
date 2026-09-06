@@ -262,22 +262,29 @@ pub(crate) async fn apply_transition(
     Ok(task)
 }
 
-/// Cancel a task (user).
+/// Cancel a task: the user's, or the orchestrator's, which holds the plan
+/// the task belongs to.
+///
+/// Who called it is read from the session header rather than assumed, so the
+/// transition log says which of the two it was — and so the state machine
+/// refuses an author or a reviewer reaching for it.
 #[utoipa::path(post, path = "/v1/tasks/{id}/cancel", tag = "tasks",
     params(("id" = String, Path, description = "task id")),
-    responses((status = 200, body = TaskDto), (status = 409)))]
+    responses((status = 200, body = TaskDto), (status = 403), (status = 409)))]
 pub async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
 ) -> ApiResult<Json<TaskDto>> {
-    let ctx = CallCtx::user();
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let reason = format!("cancelled by {}", ctx.actor.as_str());
     let task = apply_transition(
         &state,
         &ctx,
         &id,
         TransitionRequest {
             to: TaskStatus::Cancelled,
-            reason: Some("cancelled by user".into()),
+            reason: Some(reason),
             merge_commit: None,
         },
     )
@@ -285,22 +292,26 @@ pub async fn cancel(
     Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
-/// Retry a failed task (user): failed -> ready.
+/// Retry a failed task: failed -> ready. The user's call, and the
+/// orchestrator's — the daemon wakes it when a task fails, and retrying is
+/// one of the three answers it has.
 #[utoipa::path(post, path = "/v1/tasks/{id}/retry", tag = "tasks",
     params(("id" = String, Path, description = "task id")),
-    responses((status = 200, body = TaskDto), (status = 409)))]
+    responses((status = 200, body = TaskDto), (status = 403), (status = 409)))]
 pub async fn retry(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
 ) -> ApiResult<Json<TaskDto>> {
-    let ctx = CallCtx::user();
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let reason = format!("retried by {}", ctx.actor.as_str());
     let task = apply_transition(
         &state,
         &ctx,
         &id,
         TransitionRequest {
             to: TaskStatus::Ready,
-            reason: Some("retried by user".into()),
+            reason: Some(reason),
             merge_commit: None,
         },
     )

@@ -141,10 +141,12 @@ async fn a_plan_is_finalized_only_out_of_planning() {
     assert_eq!(envelope.error.message, "goal is active, expected planning");
 }
 
-/// The plan is the orchestrator's whole job: while the goal is being planned
-/// its session is the agent work waits on, and finalizing is what ends that.
+/// The orchestrator is the agent work waits on for the whole goal, not only
+/// while the plan is being written: it is what the user talks to about work
+/// already running, and what the daemon tells when a task needs a decision.
+/// The goal ending is what ends that.
 #[tokio::test]
-async fn an_orchestrator_is_the_agent_work_waits_on_until_it_finalizes() {
+async fn an_orchestrator_is_the_agent_work_waits_on_until_the_goal_is_over() {
     let h = harness().await;
     let cast = h.cast().await;
     let orchestrator = orchestrator_session(&h, &cast).await;
@@ -152,15 +154,24 @@ async fn an_orchestrator_is_the_agent_work_waits_on_until_it_finalizes() {
     assert!(work_is_active(&h.store, &orchestrator).await);
 
     finalize(&h, &cast, &orchestrator.id).await;
+    assert!(
+        work_is_active(&h.store, &orchestrator).await,
+        "the plan is a hand-off, not an ending"
+    );
+
+    h.store
+        .set_goal_status(&cast.goal.id, GoalStatus::Completed)
+        .await
+        .unwrap();
     assert!(!work_is_active(&h.store, &orchestrator).await);
 }
 
 /// What a reconciliation pass makes of a finalized goal: the plan it was
-/// started for is being worked on, so an idle orchestrator under it is let go —
-/// once the compaction the finalized plan earned it is done, which the CLI
-/// reports as a session start from `compact`.
+/// started for is being worked on, so its orchestrator is owed the compaction
+/// of the conversation that wrote the plan — and is then left up, because the
+/// goal is not over.
 #[tokio::test]
-async fn a_scheduler_pass_ends_the_idle_orchestrator_of_an_active_goal() {
+async fn a_scheduler_pass_compacts_the_orchestrator_of_an_active_goal_and_keeps_it() {
     let h = harness().scheduler().await;
     let cast = h.cast().await;
     let orchestrator = orchestrator_session(&h, &cast).await;
@@ -174,18 +185,18 @@ async fn a_scheduler_pass_ends_the_idle_orchestrator_of_an_active_goal() {
         h.pasted(&orchestrator).contains("/compact")
     })
     .await;
-    assert!(
-        !h.killed_panes().contains(&orchestrator.tmux_session),
-        "the orchestrator is not let go under its compaction"
-    );
     h.ingest(
         &orchestrator,
         "session_start",
         serde_json::json!({"hook_event_name": "SessionStart", "source": "compact"}),
     )
     .await;
-    eventually(TIMEOUT, "the idle orchestrator to be let go", async || {
-        h.killed_panes().contains(&orchestrator.tmux_session)
-    })
-    .await;
+    for _ in 0..3 {
+        h.notify_goal(&cast.goal.id);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    assert!(
+        !h.killed_panes().contains(&orchestrator.tmux_session),
+        "the orchestrator was let go once its plan was under way"
+    );
 }

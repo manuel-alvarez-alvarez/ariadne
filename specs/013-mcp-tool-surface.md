@@ -3,7 +3,7 @@ id: mcp-tool-surface
 status: current
 updated: 2026-09-06
 areas: [mcp, cli]
-commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb]
+commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, 23d191a5]
 tests:
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
@@ -37,7 +37,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees:
    - **orchestrator**: `get_task`, `create_task`, `update_task`, `list_models`,
-     `list_skills`, `finalize_plan`
+     `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
+     `cancel_task`, `complete_goal` — the last four are what it supervises the
+     goal with once the plan is under way (003)
    - **author**: `get_task`, `request_review`, `fail_task`, `finish_task`,
      `record_pull_request`
    - **reviewer**: `get_task`, `get_diff`, `submit_verdict`

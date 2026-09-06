@@ -69,7 +69,6 @@ const formSchema = z.object({
   // The effort that model is run at, scoped by the box beside it; empty is
   // whatever the agent CLI runs it at.
   effort: z.string(),
-  required_approvals: optionalCount("Approvals"),
   max_tasks: optionalCount("Max tasks"),
   repository_ids: z.array(z.string()).min(1, "Pick at least one repository."),
 })
@@ -81,7 +80,6 @@ const DEFAULT_VALUES: CreateGoalForm = {
   description: "",
   model: "",
   effort: "",
-  required_approvals: "1",
   max_tasks: "",
   repository_ids: [],
 }
@@ -118,12 +116,11 @@ export function CreateGoalDialog({
     const body: CreateGoalRequest = {
       title: values.title.trim(),
       description: values.description,
-      // No field at all where a box was left empty: that is the orchestrator on its
-      // profile's own model, at its profile's own effort.
+      // No field at all where a box was left empty: that is the orchestrator
+      // on the first installed agent CLI, at that CLI's own effort.
       ...(model.length > 0 ? { model } : {}),
       ...(effort.length > 0 ? { effort } : {}),
       repository_ids: values.repository_ids,
-      required_approvals: values.required_approvals ? Number(values.required_approvals) : null,
       max_tasks: values.max_tasks ? Number(values.max_tasks) : null,
     }
     try {
@@ -220,18 +217,6 @@ export function CreateGoalDialog({
           />
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field data-invalid={errors.required_approvals ? "" : undefined}>
-              <FieldLabel htmlFor="goal-approvals">Approvals</FieldLabel>
-              <Input
-                id="goal-approvals"
-                inputMode="numeric"
-                autoComplete="off"
-                aria-invalid={errors.required_approvals ? true : undefined}
-                {...form.register("required_approvals")}
-              />
-              <FieldError>{errors.required_approvals?.message}</FieldError>
-            </Field>
-
             <Field data-invalid={errors.max_tasks ? "" : undefined}>
               <FieldLabel htmlFor="goal-max-tasks">Max tasks</FieldLabel>
               <Input

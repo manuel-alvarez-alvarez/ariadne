@@ -48,6 +48,7 @@ const TASK: TaskDto = {
   description: "",
   status: "in_progress",
   branch: "surface-the-pins-000001",
+  landing: "merge",
   depends_on: [],
   agents: [
     {

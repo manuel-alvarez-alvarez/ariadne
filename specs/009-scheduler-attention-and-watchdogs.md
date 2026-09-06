@@ -1,9 +1,9 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-05
+updated: 2026-09-06
 areas: [daemon]
-commits: [f68b8ec1, 506e9d76, 7add2a61]
+commits: [f68b8ec1, 506e9d76, 7add2a61, 23d191a5]
 tests:
   - crates/ariadne-daemon/tests/scheduler_attention.rs
   - crates/ariadne-daemon/tests/scheduler_tmux_outage.rs
@@ -32,8 +32,13 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
 2. Every rule is idempotent — read the state, compare with what is wanted, act
    — so a pass that arrives late does what the state says now, never a replay
    of what it missed.
-3. A goal in `planning` wants one live orchestrator; a goal past it wants that
-   orchestrator compacted and then let go. A task wants an author from `ready`
+3. A goal wants one live orchestrator for its whole life, `planning` and
+   `active` alike; finalizing the plan is a hand-off that earns it a
+   compaction (010), not an ending. It is the agent the user talks to about
+   work already running, and the one the daemon tells when a task needs a
+   decision: a task that failed, a task that has gone quiet, or a goal with
+   nothing left to do, said once per situation on its own pane. Running work
+   is what it delegated, and it is not woken for that. A task wants an author from `ready`
    to the merge, the reviewers a round is waiting on, and the cleanup its
    ending owes (001, 004).
 4. One clock governs a quiet agent: how long since the session was heard from
@@ -50,9 +55,9 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
    pass.
 7. Attention on a session means a human must act, and it is raised only while
    the work that session was started for is still its own to do. A reviewer
-   that has voted, an author whose task is under review and an orchestrator
-   whose goal has left planning are agents nobody is waiting on, whatever their
-   pane shows.
+   that has voted and an author whose task is under review are agents nobody
+   is waiting on, whatever their pane shows. An orchestrator is waited on
+   until its goal is over.
 8. A session waiting on a person is never nudged and never relaunched: the
    quiet is the point.
 9. An agent that reported an error is left alone rather than nudged over it.
@@ -73,6 +78,13 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
 
 ## Acceptance criteria
 
+- The orchestrator of a goal under way stays up
+  (`scheduler_attention.rs::an_idle_orchestrator_stays_up_for_the_whole_goal`),
+  is woken once for a failed task
+  (`::a_failed_task_wakes_the_orchestrator_once`) and for a goal with nothing
+  left to do (`::a_goal_whose_tasks_all_landed_wakes_its_orchestrator`), and
+  is left alone while its tasks run
+  (`::a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone`).
 - An idle orchestrator, reviewer or author past the threshold is raised on its
   session
   (`scheduler_attention.rs::an_orchestrator_idle_past_the_threshold_is_raised_on_its_session`,

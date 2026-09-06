@@ -99,6 +99,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("events", true),
     ("goal attach", false),
     ("goal cancel", true),
+    ("goal complete", true),
     ("goal create", true),
     ("goal inspect", true),
     ("goal ls", true),

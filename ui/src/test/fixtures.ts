@@ -43,7 +43,6 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     title: "Ship the board",
     description: "",
     repos: [],
-    required_approvals: 1,
     status: "active",
     usage: {
       total: NO_TOKENS,
@@ -65,6 +64,7 @@ export function aTask(overrides: Partial<TaskDto> = {}): TaskDto {
     description: "",
     status: "in_progress",
     branch: "wire-the-sessions-screen-000001",
+    landing: "merge",
     repo_id: REPO_ID,
     stalled: false,
     agents: [

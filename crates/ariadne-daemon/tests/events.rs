@@ -982,17 +982,32 @@ async fn a_question_comes_down_when_the_turn_or_the_user_moves_on() {
 }
 
 /// A question is a raise like any other, so it asks the same thing first:
-/// whether anybody is still waiting on this agent. An orchestrator whose goal
-/// has left planning is asking about work that is already being done.
+/// whether anybody is still waiting on this agent. The orchestrator is the
+/// one agent that stays waited-on for the whole goal — it is what the user
+/// talks to about work already running — so a question from it is theirs to
+/// answer while the goal is going, and nobody's once it is over.
 #[tokio::test]
-async fn a_question_from_an_orchestrator_past_planning_raises_nothing() {
+async fn a_question_from_an_orchestrator_is_the_users_until_the_goal_is_over() {
     let h = harness().await;
     // `active_cast` finalizes the plan: the goal is already active.
     let cast = h.active_cast().await;
-    let session = h
-        .orchestrator_session(&cast.goal, "orc")
-        .await;
+    let session = h.orchestrator_session(&cast.goal, "orc").await;
 
+    h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
+        .await;
+    assert_eq!(
+        h.attention(&session).await,
+        Some(AttentionReason::WaitingInput),
+        "the goal is under way, and its orchestrator is who the user talks to"
+    );
+
+    // A goal that is over is one nobody is waiting on, whatever its
+    // orchestrator's pane still puts on the screen.
+    h.store.clear_session_attention(&session.id).await.unwrap();
+    h.store
+        .set_goal_status(&cast.goal.id, GoalStatus::Completed)
+        .await
+        .unwrap();
     h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
         .await;
     let quiet = h.store.get_session(&session.id).await.unwrap();
@@ -1001,18 +1016,6 @@ async fn a_question_from_an_orchestrator_past_planning_raises_nothing() {
         quiet.status(),
         SessionStatus::Running,
         "withholding the flag changes nothing else about the ingestion"
-    );
-
-    // Back in planning, the very same call is the user's to answer.
-    h.store
-        .set_goal_status(&cast.goal.id, GoalStatus::Planning)
-        .await
-        .unwrap();
-    h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
-        .await;
-    assert_eq!(
-        h.attention(&session).await,
-        Some(AttentionReason::WaitingInput)
     );
 }
 
@@ -1086,35 +1089,32 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
     );
 }
 
-/// Same for an orchestrator once it has finalized its plan: the goal is being
-/// worked on, so whatever its session asks for is not work anybody is waiting
-/// on.
+/// Same for a permission prompt: the orchestrator's pane is the user's for as
+/// long as the goal runs, and nobody's afterwards.
 #[tokio::test]
-async fn an_orchestrator_past_the_approval_raises_no_attention() {
+async fn an_orchestrator_of_a_finished_goal_raises_no_attention() {
     let h = harness().await;
     // `active_cast` finalizes the plan: the goal is already active.
     let cast = h.active_cast().await;
-    let session = h
-        .orchestrator_session(&cast.goal, "orc")
-        .await;
+    let session = h.orchestrator_session(&cast.goal, "orc").await;
 
     h.ingest(&session, "notification", permission_prompt()).await;
     assert_eq!(
         h.attention(&session).await,
-        None,
-        "the plan is finalized and running, so its orchestrator is owed nothing"
+        Some(AttentionReason::WaitingPermission),
+        "the goal is under way, so its orchestrator is still owed an answer"
     );
 
-    // And the goal status is what makes the difference: back in planning, the
-    // very same prompt is the user's to answer.
+    h.store.clear_session_attention(&session.id).await.unwrap();
     h.store
-        .set_goal_status(&cast.goal.id, GoalStatus::Planning)
+        .set_goal_status(&cast.goal.id, GoalStatus::Completed)
         .await
         .unwrap();
     h.ingest(&session, "notification", permission_prompt()).await;
     assert_eq!(
         h.attention(&session).await,
-        Some(AttentionReason::WaitingPermission)
+        None,
+        "the goal is over, so nothing its orchestrator asks for is owed"
     );
 }
 

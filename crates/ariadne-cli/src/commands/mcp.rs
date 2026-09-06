@@ -44,6 +44,10 @@ impl McpSeat {
                 "list_models",
                 "list_skills",
                 "finalize_plan",
+                "list_tasks",
+                "retry_task",
+                "cancel_task",
+                "complete_goal",
             ],
             McpSeat::Author => &[
                 "get_task",
@@ -310,6 +314,10 @@ pub(crate) mod tests {
                     "list_models",
                     "list_skills",
                     "finalize_plan",
+                    "list_tasks",
+                    "retry_task",
+                    "cancel_task",
+                    "complete_goal",
                 ][..],
             ),
             (
@@ -333,6 +341,8 @@ pub(crate) mod tests {
         /// Every tool the three seats are allowed between them, in one list,
         /// so a tool added or dropped is a line of this file.
         const EVERY_TOOL: &[&str] = &[
+            "cancel_task",
+            "complete_goal",
             "create_task",
             "fail_task",
             "finalize_plan",
@@ -341,8 +351,10 @@ pub(crate) mod tests {
             "get_task",
             "list_models",
             "list_skills",
+            "list_tasks",
             "record_pull_request",
             "request_review",
+            "retry_task",
             "submit_verdict",
             "update_task",
         ];

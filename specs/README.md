@@ -14,7 +14,7 @@ test that proves it.
 | --- | --- | --- |
 | 001 | [Goal and task lifecycle](001-goal-and-task-lifecycle.md) | statuses, the transition table, dependencies, failure and retry |
 | 002 | [Repositories, branches and worktrees](002-repositories-branches-and-worktrees.md) | checkouts, base branches, branch naming, the worktree per seat |
-| 003 | [Spec-driven planning](003-spec-driven-planning.md) | the spec conversation, landing the spec, writing the plan |
+| 003 | [Planning a goal](003-planning-a-goal.md) | the conversation, the plan, and the orchestrator's whole life |
 | 004 | [Authoring and review rounds](004-authoring-and-review-rounds.md) | the author, the reviewers, verdicts and rounds |
 | 005 | [Landing strategies](005-landing-strategies.md) | `direct` and `pull_request`, the landing briefing, merge verification |
 | 006 | [Prompts and Simplified Technical English](006-prompts-and-simplified-technical-english.md) | the layers of text, who owns each, the English all of it is in |

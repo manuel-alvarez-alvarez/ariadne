@@ -15,7 +15,14 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 
-import { type AgentKind, ApiError, HTTP_ERROR_CODE, type Seat, type TokenUsage } from "@/api"
+import {
+  type AgentKind,
+  ApiError,
+  HTTP_ERROR_CODE,
+  type Landing,
+  type Seat,
+  type TokenUsage,
+} from "@/api"
 
 /**
  * The language every formatted value is spelled in, pinned rather than taken
@@ -211,6 +218,19 @@ export const AGENT_KIND_LABELS: Record<AgentKind, string> = {
   claude_code: "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
+}
+
+/**
+ * How a task ends, named for a reader rather than for the wire.
+ *
+ * Each says what happens to the change, because that is what the reader is
+ * deciding between: `none` is the one people misread, and "lands nothing" is
+ * the whole of it.
+ */
+export const LANDING_LABELS: Record<Landing, string> = {
+  merge: "Merge onto the base branch",
+  pull_request: "Open a request for a person",
+  none: "Land nothing",
 }
 
 // ── Failures ──────────────────────────────────────────────────────────────

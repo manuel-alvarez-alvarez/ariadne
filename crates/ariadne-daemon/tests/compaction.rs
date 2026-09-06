@@ -326,15 +326,19 @@ async fn a_reviewer_that_voted_is_ended_only_once_its_compaction_is_done() {
     .await;
 }
 
-/// A plan finalized is the orchestrator's hand-off: it owes a compaction, is
-/// left up through it, and is let go once it is done.
+/// A plan finalized is the orchestrator's hand-off: it owes a compaction of
+/// everything the conversation that wrote the plan put in front of it.
+///
+/// And then it stays. The orchestrator is the one agent that outlives its own
+/// hand-off — it is what the user talks to about work already running, and
+/// what the daemon tells when a task needs a decision — so what the
+/// compaction buys is a shorter conversation for the rest of the goal rather
+/// than a tidy ending.
 #[tokio::test]
-async fn a_plan_finalized_owes_the_orchestrator_a_compaction_before_it_is_let_go() {
+async fn a_plan_finalized_owes_the_orchestrator_a_compaction_and_it_stays_up() {
     let h = harness().await;
     let goal = h.planning_goal().await;
-    let orchestrator = h
-        .orchestrator_session(&goal, "orc")
-        .await;
+    let orchestrator = h.orchestrator_session(&goal, "orc").await;
     h.pane_exists(&orchestrator);
     h.set_status(&orchestrator, SessionStatus::Idle).await;
     let goal = h.activate(&goal).await;
@@ -351,18 +355,21 @@ async fn a_plan_finalized_owes_the_orchestrator_a_compaction_before_it_is_let_go
         "{:?}",
         h.pasted(&orchestrator)
     );
-    assert!(
-        h.pane_is_alive(&orchestrator),
-        "an idle orchestrator is not ended while it owes a compaction"
-    );
 
     h.ingest(&orchestrator, "session_start", compacted()).await;
-    eventually(
-        TIMEOUT,
-        "the orchestrator to be ended after its compaction",
-        async || !h.pane_is_alive(&orchestrator),
-    )
-    .await;
+    // Several passes over the compacted orchestrator, and it is still there.
+    for _ in 0..3 {
+        sched.goal(&goal);
+    }
+    assert!(
+        h.pane_is_alive(&orchestrator),
+        "the orchestrator was let go once its compaction was done"
+    );
+    assert_eq!(
+        h.session_status(&orchestrator).await,
+        SessionStatus::Idle,
+        "and its session is idle rather than retired"
+    );
 }
 
 // -- when the pane is not free ----------------------------------------------
@@ -582,7 +589,15 @@ async fn a_resume_due_during_a_compaction_goes_out_after_it() {
     let sched = w.scheduler();
     sched.task(&w.task);
     w.compaction_typed(&author).await;
-    let launches_before = w.tmux_calls_of("new-session").len();
+    // The author's own launches: the goal has an orchestrator up for its
+    // whole life now, and its pane is started here too.
+    let author_launches = |w: &World| {
+        w.tmux_calls_of("new-session")
+            .into_iter()
+            .filter(|call| call.contains(&author.tmux_session))
+            .count()
+    };
+    let launches_before = author_launches(&w);
 
     // The reviewer asks for changes while the compaction runs.
     let round = w.store.get_task(&w.task.id).await.unwrap().review_round;
@@ -611,7 +626,7 @@ async fn a_resume_due_during_a_compaction_goes_out_after_it() {
         "the author's pane is not killed under its compaction"
     );
     assert_eq!(
-        w.tmux_calls_of("new-session").len(),
+        author_launches(&w),
         launches_before,
         "and it is not relaunched with the feedback yet"
     );
@@ -629,7 +644,7 @@ async fn a_resume_due_during_a_compaction_goes_out_after_it() {
     )
     .await;
     assert_eq!(
-        w.tmux_calls_of("new-session").len(),
+        author_launches(&w),
         launches_before + 1,
         "resumed once, after the compaction"
     );

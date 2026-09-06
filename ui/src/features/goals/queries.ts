@@ -92,6 +92,30 @@ export function useCancelGoal(goalId: string) {
 }
 
 /**
+ * `POST /v1/goals/{id}/complete` — the goal is met and nothing of it is left
+ * running.
+ *
+ * The orchestrator normally makes this call itself once its plan did what the
+ * goal asked for. This is the same call from here, for a goal whose
+ * orchestrator is gone or will not start. The daemon refuses it while any task
+ * is still going, so nothing is optimistic: what comes back is the answer.
+ */
+export function useCompleteGoal(goalId: string) {
+  return useRowAction(
+    qk.goals,
+    goalId,
+    () =>
+      unwrap(api().POST("/v1/goals/{id}/complete", { params: { path: { id: goalId } }, body: {} })),
+    {
+      alsoInvalidates: (queryClient) => {
+        // Completing tears the goal's sessions down.
+        void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+      },
+    },
+  )
+}
+
+/**
  * `DELETE /v1/goals/{id}` — the goal and its tasks, in one write that nothing
  * undoes.
  *

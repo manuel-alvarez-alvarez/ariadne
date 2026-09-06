@@ -449,6 +449,55 @@
         }
       }
     },
+    "/v1/goals/{id}/complete": {
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Complete the goal: it moves active -> completed and every session of it\nis torn down.",
+        "description": "The orchestrator's call, because it is the only agent that knows whether\nthe plan did what the goal asked for — the daemon can see that every task\nended, and not whether the goal is met. The user's too: it is their goal,\nand a goal whose orchestrator will not start is otherwise one nothing can\nclose.\n\nWhat the daemon checks is the part it can see. A goal with a task still\ngoing is not one anybody may declare finished, however sure they are.",
+        "operationId": "complete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteGoalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/goals/{id}/finalize": {
       "post": {
         "tags": [
@@ -1485,7 +1534,8 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Cancel a task (user).",
+        "summary": "Cancel a task: the user's, or the orchestrator's, which holds the plan\nthe task belongs to.",
+        "description": "Who called it is read from the session header rather than assumed, so the\ntransition log says which of the two it was — and so the state machine\nrefuses an author or a reviewer reaching for it.",
         "operationId": "cancel",
         "parameters": [
           {
@@ -1508,6 +1558,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": ""
           },
           "409": {
             "description": ""
@@ -1610,7 +1663,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Retry a failed task (user): failed -> ready.",
+        "summary": "Retry a failed task: failed -> ready. The user's call, and the\norchestrator's — the daemon wakes it when a task fails, and retrying is\none of the three answers it has.",
         "operationId": "retry",
         "parameters": [
           {
@@ -1633,6 +1686,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": ""
           },
           "409": {
             "description": ""
@@ -2030,6 +2086,11 @@
           }
         }
       },
+      "CompleteGoalRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is\ndone. Its call, not the user's, and it carries nothing — every task being\nfinished or cancelled is the whole of the argument, and the daemon checks\nthat itself.",
+        "additionalProperties": false
+      },
       "CreateGoalRequest": {
         "type": "object",
         "required": [
@@ -2070,14 +2131,6 @@
               "type": "string"
             },
             "description": "Ids of registered repositories (`POST /v1/repositories`); at least one."
-          },
-          "required_approvals": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Approvals required to merge a task (default 1)."
           },
           "title": {
             "type": "string"
@@ -2197,6 +2250,17 @@
           },
           "description": {
             "type": "string"
+          },
+          "landing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Landing",
+                "description": "How the task ends. Omitted = the way its repository takes a change."
+              }
+            ]
           },
           "repo_id": {
             "type": [
@@ -2618,7 +2682,6 @@
           "title",
           "description",
           "status",
-          "required_approvals",
           "repos",
           "usage",
           "created_at",
@@ -2664,10 +2727,6 @@
               "$ref": "#/components/schemas/RepositoryDto"
             },
             "description": "The registered repositories the goal works in, as they stand now: a\ngoal references them, so an edit to one shows up here."
-          },
-          "required_approvals": {
-            "type": "integer",
-            "format": "int64"
           },
           "status": {
             "$ref": "#/components/schemas/GoalStatus"
@@ -2760,6 +2819,15 @@
             "description": "The daemon's version, as `GET /v1/version` reports it."
           }
         }
+      },
+      "Landing": {
+        "type": "string",
+        "description": "How one task ends.\n\nA repository's [`MergeStrategy`] says how *it* takes a change, and most\ntasks end that way. This says how *this* task ends, which the orchestrator\nagrees with the user task by task: some work lands on the base branch,\nsome leaves a request for a person who is not in this system at all, and\nsome has nothing to land — a report filed, a document published, a release\ncut. All three reach [`TaskStatus::Finished`]; landing is one way of\ngetting there rather than the meaning of being there.",
+        "enum": [
+          "merge",
+          "pull_request",
+          "none"
+        ]
       },
       "LogLineDto": {
         "type": "object",
@@ -3448,6 +3516,7 @@
           "agents",
           "depends_on",
           "branch",
+          "landing",
           "review_round",
           "stalled",
           "usage",
@@ -3483,6 +3552,10 @@
           },
           "id": {
             "type": "string"
+          },
+          "landing": {
+            "$ref": "#/components/schemas/Landing",
+            "description": "How the task ends: a change on the base branch, a request somebody\nelse merges, or nothing at all."
           },
           "merge_commit": {
             "type": [
@@ -3674,7 +3747,7 @@
               "string",
               "null"
             ],
-            "description": "Required when `to` is `finished`."
+            "description": "Required when `to` is `finished`, unless the task lands nothing."
           },
           "reason": {
             "type": [
@@ -3787,6 +3860,17 @@
             ],
             "description": "The reasoning effort to run the model at: absent leaves it alone,\n\"default\" (or the empty string) puts it back on whatever the agent CLI\nruns the model at, and anything else is checked against the model it\nwill run at — the one this request names, or the task's own where it\nnames none — and refused where that model does not take it. A `model`\nwritten without an effort runs at the CLI's own default: the effort\nbelonged to the model that was left behind.",
             "example": "xhigh"
+          },
+          "landing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Landing",
+                "description": "How the task ends. Absent leaves it where it is."
+              }
+            ]
           },
           "model": {
             "type": [

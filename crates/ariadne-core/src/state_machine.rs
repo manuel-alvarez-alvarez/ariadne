@@ -102,7 +102,10 @@ fn explain(from: TaskStatus, to: TaskStatus, actor: Option<Actor>) -> String {
     }
     match to {
         S::Cancelled => match actor {
-            Some(a) => format!("only the user can cancel a task, not the {}", a.as_str()),
+            Some(a) => format!(
+                "only the user or the orchestrator can cancel a task, not the {}",
+                a.as_str()
+            ),
             None => format!("a {f} task can no longer be cancelled"),
         },
         S::Ready if from != S::Failed => format!("only failed tasks can be retried (task is {f})"),
@@ -159,8 +162,11 @@ pub fn check_transition(
 
     // Blanket rules first.
     match to {
+        // The user cancels a task, and so does the orchestrator: it holds
+        // the plan the task belongs to, and a task that the plan has moved
+        // past is one it is the only agent able to see.
         S::Cancelled if !from.is_terminal() && from != S::Cancelled => {
-            return if actor == A::User {
+            return if matches!(actor, A::User | A::Orchestrator) {
                 Ok(())
             } else {
                 Err(TransitionError::Forbidden { from, to, actor })
@@ -194,7 +200,10 @@ pub fn check_transition(
         // And back to the reviewers when the people on a published request
         // ask for changes: that revision is reviewed like any other round.
         (S::Approved, S::UnderReview) => &[A::Author],
-        (S::Failed, S::Ready) => &[A::User],
+        // Retrying is the same judgement as cancelling, made the other way:
+        // the user's, and the orchestrator's, which the daemon wakes when a
+        // task fails.
+        (S::Failed, S::Ready) => &[A::User, A::Orchestrator],
         _ => return Err(TransitionError::IllegalTransition { from, to }),
     };
 
@@ -226,6 +235,7 @@ mod tests {
         (S::Approved, S::Finished, A::Author),
         (S::Approved, S::UnderReview, A::Author),
         (S::Failed, S::Ready, A::User),
+        (S::Failed, S::Ready, A::Orchestrator),
     ];
 
     fn is_legal(from: S, to: S, actor: A) -> bool {
@@ -233,7 +243,10 @@ mod tests {
             return true;
         }
         // Blanket cancel / fail rules.
-        (to == S::Cancelled && actor == A::User && !from.is_terminal() && from != S::Cancelled)
+        (to == S::Cancelled
+            && matches!(actor, A::User | A::Orchestrator)
+            && !from.is_terminal()
+            && from != S::Cancelled)
             || (to == S::Failed
                 && matches!(actor, A::Daemon | A::Author)
                 && !from.is_terminal()
@@ -326,10 +339,10 @@ mod tests {
             human(S::Finished, S::Cancelled, A::User),
             "a finished task can no longer be cancelled"
         );
-        // An agent reaching for the user's cancel.
+        // An agent reaching for a cancel that is not its to make.
         assert_eq!(
-            human(S::InProgress, S::Cancelled, A::Orchestrator),
-            "only the user can cancel a task, not the orchestrator"
+            human(S::InProgress, S::Cancelled, A::Author),
+            "only the user or the orchestrator can cancel a task, not the author"
         );
         // Agent-side verbs get the same treatment.
         assert_eq!(

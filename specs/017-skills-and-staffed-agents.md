@@ -36,8 +36,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
    of a specification, of a fix and of a release are all `author`, and differ
    only in the skills they hold.
 3. There are three seats. `orchestrator` belongs to a goal; `author` and
-   `reviewer` belong to a task. A task takes exactly one author and any number
-   of reviewers, and the schema holds it to that.
+   `reviewer` belong to a task. A task takes exactly one author, and the
+   schema holds it to that. Reviewers are not required: the orchestrator
+   agrees the review with the user task by task (003), and a task with
+   nothing to review — a release, a dependency bump the suite already judged —
+   is staffed with none and approved as soon as its author asks (001).
 4. Ariadne ships a catalog of sixteen skills, in three scopes:
    - **produce** — `spec-writing`, `coding`, `debugging`, `refactoring`,
      `testing`, `documentation`, `research`;
@@ -59,7 +62,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
    same as every other default text.
 10. The orchestrator staffs each task: it names the skills of each agent, and
     may size the model and effort per agent (011) and add a brief that the
-    task itself does not carry.
+    task itself does not carry. How the task ends is agreed the same way
+    (005).
 11. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
 
@@ -79,6 +83,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`store.rs::a_skill_an_agent_still_loads_cannot_be_deleted`), and an agent
   cannot be staffed on a skill nothing answers to
   (`store.rs::an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to`).
+- A task staffed with no reviewer is approved as soon as its author asks
+  (`unreviewed_tasks.rs::a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks`).
 - Every shipped skill is named once and describes itself
   (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`), and
   every document is within its cap (`defaults.rs::skill_size_caps_hold`).

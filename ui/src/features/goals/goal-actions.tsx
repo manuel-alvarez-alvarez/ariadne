@@ -1,21 +1,25 @@
 /**
- * The two things a user can do to a goal.
+ * The three things a user can do to a goal.
  *
- * Each is confirmed first — cancelling tears the goal's sessions and worktrees
- * down, deleting drops the goal and every trace of it — and each surfaces the
- * daemon's 409 in the dialog rather than closing on a failure ("this goal is
- * running again" is the one a user will actually hit).
+ * Each is confirmed first — completing tears the goal's sessions down,
+ * cancelling tears those and its worktrees down, deleting drops the goal and
+ * every trace of it — and each surfaces the daemon's 409 in the dialog rather
+ * than closing on a failure ("this goal is running again" is the one a user
+ * will actually hit).
  *
  * They divide the lifecycle between them, the way `ariadne goal` does:
- * cancelling belongs to a goal that has not stopped, deleting to one that has.
- * They are therefore exact opposites — every goal offers one of them and never
- * both — which is why this row always has something to show and both dialogs
- * are always mounted. A trigger that goes away mid-flow (cancelling is
- * optimistic, so the goal is terminal by the time the request leaves) leaves
- * its dialog behind to finish, spinner, refusal and all.
+ * completing and cancelling belong to a goal that has not stopped, deleting to
+ * one that has. So the row always has something to show and every dialog is
+ * always mounted. A trigger that goes away mid-flow (cancelling is optimistic,
+ * so the goal is terminal by the time the request leaves) leaves its dialog
+ * behind to finish, spinner, refusal and all.
+ *
+ * Completing is normally the orchestrator's own call, once its plan did what
+ * the goal asked for. It is here for the goal whose orchestrator is gone or
+ * will not start, which is otherwise one nothing can close.
  */
 
-import { BanIcon, Trash2Icon } from "lucide-react"
+import { BanIcon, CircleCheckIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
@@ -23,7 +27,7 @@ import type { GoalDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { DeleteDialog } from "@/components/delete-dialog"
 import { Button } from "@/components/ui/button"
-import { useCancelGoal, useDeleteGoal } from "./queries"
+import { useCancelGoal, useCompleteGoal, useDeleteGoal } from "./queries"
 import { isTerminalGoalStatus } from "./status"
 
 export function GoalActions({
@@ -38,9 +42,11 @@ export function GoalActions({
    */
   onDeleted?: () => void
 }) {
+  const [completeOpen, setCompleteOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const cancel = useCancelGoal(goal.id)
+  const complete = useCompleteGoal(goal.id)
 
   const terminal = isTerminalGoalStatus(goal.status)
   const canCancel = !terminal
@@ -51,6 +57,14 @@ export function GoalActions({
 
   return (
     <div className="flex items-center gap-2">
+      {/* Only an active goal can be completed: one still being planned has no
+          plan to have done anything. */}
+      {goal.status === "active" ? (
+        <Button variant="ghost" size="sm" onClick={() => setCompleteOpen(true)}>
+          <CircleCheckIcon />
+          Complete goal
+        </Button>
+      ) : null}
       {canCancel ? (
         // Only opens the confirm; the solid red is on the click inside it.
         <Button variant="destructive-ghost" size="sm" onClick={() => setCancelOpen(true)}>
@@ -66,6 +80,12 @@ export function GoalActions({
         </Button>
       ) : null}
 
+      <CompleteGoalDialog
+        goal={goal}
+        open={completeOpen}
+        onOpenChange={setCompleteOpen}
+        complete={complete}
+      />
       <CancelGoalDialog
         goal={goal}
         open={cancelOpen}
@@ -79,6 +99,58 @@ export function GoalActions({
         onDeleted={onDeleted}
       />
     </div>
+  )
+}
+
+/**
+ * Completing is the ordinary ending, so it is not destructive — but it is not
+ * undoable either, and the daemon refuses it while a task is still going. The
+ * refusal names those tasks, and it is shown here rather than swallowed.
+ */
+function CompleteGoalDialog({
+  goal,
+  open,
+  onOpenChange,
+  complete,
+}: {
+  goal: GoalDto
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  complete: ReturnType<typeof useCompleteGoal>
+}) {
+  useEffect(() => {
+    if (open) complete.reset()
+  }, [open, complete.reset])
+
+  async function confirm() {
+    try {
+      await complete.mutateAsync()
+      toast.success("Goal completed", { description: goal.title })
+      onOpenChange(false)
+    } catch {
+      // Shown in the dialog.
+    }
+  }
+
+  return (
+    <ConfirmDialog
+      open={open}
+      onClose={() => onOpenChange(false)}
+      className="sm:max-w-lg"
+      title="Complete this goal?"
+      description={
+        <>
+          <span className="font-medium text-foreground">{goal.title}</span> is done: its remaining
+          sessions are torn down and nothing of it is picked up again. Ariadne refuses this while
+          any task is still going.
+        </>
+      }
+      confirmLabel="Complete goal"
+      pending={complete.isPending}
+      error={complete.error}
+      errorTitle="Could not complete the goal"
+      onConfirm={() => void confirm()}
+    />
   )
 }
 
