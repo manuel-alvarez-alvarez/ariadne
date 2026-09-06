@@ -175,6 +175,12 @@ pub fn default_landing_prompt(landing: Landing) -> &'static str {
 /// explained: it starts every task at once, and the orchestrator makes that
 /// call itself once the user has agreed the plan.
 ///
+/// The tasks are written before that yes, not after it. A task created while
+/// the goal is in `planning` runs nothing — the scheduler reconciles the
+/// tasks of active goals alone — so the plan the user is shown is the tasks
+/// themselves, in Ariadne, to read and to edit. What the yes buys is
+/// `finalize_plan`.
+///
 /// The orchestrator's whole job is the plan, and it gets there by talking to
 /// the user — which no other seat does. It writes one question in its turn
 /// text and waits for the answer in the terminal, and the daemon holds its
@@ -201,7 +207,7 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You turn an Ariadne goal into a plan
 5. Ask the user which tasks are worth a review, and what each review is for. Staff those reviewers. Staff none on the rest.
 6. Ask the user how each task ends. `merge` puts it on the base branch. `pull_request` opens a request and sees it through. `none` lands nothing.
 7. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Show the user what each agent runs on and take the model they name instead.
-8. Show the user the whole plan. Revise it until they write an explicit yes.
+8. Show the user the tasks you wrote. Revise them until they write an explicit yes.
 9. Call `finalize_plan`. It starts every task and ends planning. Call it no earlier.
 10. Stay up for the rest of the goal. Answer the user, and `reply` to every agent that writes to you. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
 
@@ -967,6 +973,11 @@ mod tests {
     /// is staffed, the review and the ending of each are agreed with the user,
     /// and only an explicit yes starts any of it.
     ///
+    /// Staffing stands before the yes and the start stands after it, which is
+    /// the whole of the arrangement: the user agrees to tasks that already
+    /// exist, and agreeing is what starts them
+    /// (`plan_finalize.rs::the_tasks_of_a_plan_wait_for_the_yes_that_finalizes_it`).
+    ///
     /// A phase out of order is an orchestrator that staffs reviewers nobody
     /// asked for, or that starts a plan the user has not seen.
     #[test]
@@ -982,7 +993,7 @@ mod tests {
             "Staff one author per task with `create_task`",
             "Ask the user which tasks are worth a review",
             "Ask the user how each task ends",
-            "Revise it until they write an explicit yes.",
+            "Revise them until they write an explicit yes.",
             "Call `finalize_plan`",
             "Stay up for the rest of the goal.",
         ] {

@@ -55,16 +55,20 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
    - what each agent runs on. The orchestrator sizes every one of them from
      the catalog (011) and shows the user what it chose; the model the user
      names instead is the one that is staffed.
-8. It shows the user the whole plan and revises it until they write an
-   explicit yes. Nothing starts before that yes.
+8. It writes the tasks into Ariadne before it asks for the yes, not after.
+   So what the user is shown is the tasks themselves — to read, and to edit —
+   and the yes is given to a plan that already exists. It revises them until
+   that yes is explicit.
 9. It writes no specification of its own. Where a goal wants one, that is a
    task like any other, staffed with `spec-writing` and reviewed with
    `spec-review`.
 10. `finalize_plan` ends planning: it moves the goal to `active` and starts
     every task at once. Only the goal's orchestrator may call it, only out of
     `planning`, and never on a plan with no tasks.
-11. Nothing runs while the goal is in `planning`, so the user can read the
-    tasks and edit them before the work starts.
+11. Nothing runs while the goal is in `planning`. A task created there stays
+    `pending` however often the scheduler is woken about it: the daemon
+    reconciles the tasks of active goals alone. That is what makes 8 safe —
+    the plan can be written in full, and read, before anybody agrees to it.
 12. The plan is a hand-off, not an ending. The orchestrator stays up for the
     rest of the goal: it is what the user talks to about work already running,
     and the compaction the hand-off earns it (010) shortens that conversation
@@ -97,6 +101,8 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
   (`defaults.rs::the_orchestrator_is_told_nothing_of_forges_or_landing`), and
   its briefing names every repository with its base branch
   (`prompts.rs::the_orchestrator_is_briefed_with_every_repository_and_its_base_branch`).
+- The tasks are written before the yes and start only with it
+  (`plan_finalize.rs::the_tasks_of_a_plan_wait_for_the_yes_that_finalizes_it`).
 - `finalize_plan` starts every task
   (`plan_finalize.rs::the_orchestrator_finalizes_the_plan_and_its_tasks_start`),
   only the orchestrator may call it
@@ -128,5 +134,6 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 `ORCHESTRATOR_BRIEFING`, `ORCHESTRATOR_RESUME`, `GOAL_ATTENTION`),
 `crates/ariadne-daemon/src/agents/prompts.rs`,
 `crates/ariadne-daemon/src/scheduler/goals.rs`,
+`crates/ariadne-daemon/src/scheduler/tasks.rs` (the guard behind 11),
 `crates/ariadne-daemon/src/http/goals.rs`,
 `crates/ariadne-cli/src/commands/mcp.rs`.

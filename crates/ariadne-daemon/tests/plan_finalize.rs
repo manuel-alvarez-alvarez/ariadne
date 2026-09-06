@@ -70,6 +70,55 @@ async fn the_orchestrator_finalizes_the_plan_and_its_tasks_start() {
     .await;
 }
 
+/// The plan is written into Ariadne before the user agrees to it, and none of
+/// it starts there.
+///
+/// The orchestrator creates every task while the goal is still in `planning`,
+/// so the user reads and edits the real tasks rather than a description of
+/// them, and says yes to what is already there. What the yes buys is
+/// `finalize_plan` and nothing else.
+///
+/// So the wait here is on the scheduler *having reconciled this goal* — the
+/// orchestrator it keeps up is the proof of that — and on the task not having
+/// moved with it. Notifying the task directly is the path `create_task` takes,
+/// and the one that would start a task the user has not seen.
+#[tokio::test]
+async fn the_tasks_of_a_plan_wait_for_the_yes_that_finalizes_it() {
+    let h = harness().scheduler().await;
+    let cast = h.cast().await;
+
+    // A pass over the goal, and as many over the task as a plan being written
+    // sends: every one of them finds a goal still in planning.
+    for _ in 0..3 {
+        h.notify_goal(&cast.goal.id);
+        h.notify(&cast.task.id);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    eventually(TIMEOUT, "the goal's orchestrator to be up", async || {
+        !h.sessions_of_goal(&cast.goal.id).await.is_empty()
+    })
+    .await;
+
+    assert_eq!(
+        h.status(&cast.task.id).await,
+        TaskStatus::Pending,
+        "a task of a plan nobody has agreed to was started"
+    );
+    assert!(
+        h.sessions_of(&cast.task.id).await.is_empty(),
+        "an agent was staffed on a task the user has not seen"
+    );
+
+    // And the same task, on the same passes, once the plan is agreed.
+    let orchestrator = orchestrator_session(&h, &cast).await;
+    finalize(&h, &cast, &orchestrator.id).await;
+
+    eventually(TIMEOUT, "the agreed plan's task to start", async || {
+        h.status(&cast.task.id).await != TaskStatus::Pending
+    })
+    .await;
+}
+
 /// The orchestrator's call and nobody else's: the user has nothing to press.
 #[tokio::test]
 async fn only_the_orchestrator_may_finalize_the_plan() {
