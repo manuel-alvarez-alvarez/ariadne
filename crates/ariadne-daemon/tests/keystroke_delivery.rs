@@ -79,8 +79,19 @@ while True:
     redraw()
 "#;
 
-/// Start the swallowing TUI in a real tmux session, and give it a moment to
-/// draw its first frame.
+/// How long the TUI is given to draw its first frame before the test gives up.
+///
+/// Generous because what is being waited for is `python3` starting on a
+/// machine that may be running fifteen other tests: a fixed pause of half a
+/// second was enough on a developer's laptop and not on a CI runner, and what
+/// that looked like was not a slow test but a wrong one — the keystrokes
+/// reached the pane before anything was there to swallow them, so a message
+/// that should have sat unsubmitted was reported delivered.
+const TUI_READY: Duration = Duration::from_secs(15);
+
+/// Start the swallowing TUI in a real tmux session, and wait until it has
+/// drawn its first frame — the composer prompt — rather than guessing at how
+/// long that takes.
 async fn start_tui(dir: &Path, session: &str, mode: &str) -> TmuxManager {
     let script = dir.join("swallowing-tui.py");
     std::fs::write(&script, SWALLOWING_TUI).unwrap();
@@ -94,8 +105,22 @@ async fn start_tui(dir: &Path, session: &str, mode: &str) -> TmuxManager {
     })
     .await
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    tmux
+
+    // The pane runs the script as its own command, so nothing but the TUI ever
+    // writes here: the prompt appearing is the TUI having reached its read
+    // loop, which is the thing the test needs to be true.
+    let deadline = std::time::Instant::now() + TUI_READY;
+    loop {
+        let pane = tmux.capture_pane(session, 100).await.unwrap_or_default();
+        if pane.contains('>') {
+            return tmux;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the TUI never drew its first frame: {pane:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// The pane swallows the Enter that should have submitted, exactly as Codex
