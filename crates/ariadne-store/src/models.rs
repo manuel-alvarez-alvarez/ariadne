@@ -43,14 +43,14 @@ impl Store {
                 .execute(self.w())
                 .await?
                 .rows_affected(),
-            false => sqlx::query(
-                "INSERT OR IGNORE INTO disabled_models (id, disabled_at) VALUES (?, ?)",
-            )
-            .bind(id)
-            .bind(now())
-            .execute(self.w())
-            .await?
-            .rows_affected(),
+            false => {
+                sqlx::query("INSERT OR IGNORE INTO disabled_models (id, disabled_at) VALUES (?, ?)")
+                    .bind(id)
+                    .bind(now())
+                    .execute(self.w())
+                    .await?
+                    .rows_affected()
+            }
         };
         Ok(n > 0)
     }

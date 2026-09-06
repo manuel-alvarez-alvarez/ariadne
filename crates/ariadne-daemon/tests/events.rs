@@ -397,12 +397,7 @@ async fn launcher_session_writes_emit_session_events() {
     let mut rx = h.bus.subscribe();
 
     let session = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Author,
-            &cast.author.id,
-        )
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
 
     let event = next_event(&mut rx, |e| e.event.kind() == "session_created").await;
@@ -436,12 +431,7 @@ async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
     let cast = h.active_cast().await;
     hand_to_author(&h, &cast.task).await;
     let session = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Author,
-            &cast.author.id,
-        )
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     h.store
         .set_session_launch(&session.id, "01launchtwoxxxxxxxxxxxxxxx")
@@ -782,12 +772,7 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
     let cast = h.active_cast().await;
     hand_to_author(&h, &cast.task).await;
     let session = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Author,
-            &cast.author.id,
-        )
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     let notification = |notification_type: &str, message: &str| {
         serde_json::json!({
@@ -833,7 +818,10 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
     h.ingest(
         &session,
         "notification",
-        notification("agent_needs_input", "docs-writer needs your input: a heading"),
+        notification(
+            "agent_needs_input",
+            "docs-writer needs your input: a heading",
+        ),
     )
     .await;
     assert_eq!(
@@ -887,9 +875,7 @@ async fn a_pending_question_holds_the_strip_until_it_is_answered() {
     // An orchestrator is asking, and its goal is still being planned: exactly
     // the work the user is waiting on.
     let cast = h.cast().await;
-    let session = h
-        .orchestrator_session(&cast.goal, "orc")
-        .await;
+    let session = h.orchestrator_session(&cast.goal, "orc").await;
 
     // The `pre_tool_use` of the call is the first and only word of the ask.
     h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
@@ -1045,7 +1031,8 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
         .await;
 
     // The round is still waiting on this reviewer: the prompt is raised.
-    h.ingest(&session, "notification", permission_prompt()).await;
+    h.ingest(&session, "notification", permission_prompt())
+        .await;
     assert_eq!(
         h.attention(&session).await,
         Some(AttentionReason::WaitingPermission)
@@ -1061,7 +1048,8 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
     // ...and once the verdict is in, the same prompt raises nothing.
     h.verdict_from(&task, &session, MessageKind::Approve, "looks right")
         .await;
-    h.ingest(&session, "notification", permission_prompt()).await;
+    h.ingest(&session, "notification", permission_prompt())
+        .await;
     let quiet = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(
         quiet.attention_reason(),
@@ -1089,7 +1077,8 @@ async fn an_orchestrator_of_a_finished_goal_raises_no_attention() {
     let cast = h.active_cast().await;
     let session = h.orchestrator_session(&cast.goal, "orc").await;
 
-    h.ingest(&session, "notification", permission_prompt()).await;
+    h.ingest(&session, "notification", permission_prompt())
+        .await;
     assert_eq!(
         h.attention(&session).await,
         Some(AttentionReason::WaitingPermission),
@@ -1101,7 +1090,8 @@ async fn an_orchestrator_of_a_finished_goal_raises_no_attention() {
         .set_goal_status(&cast.goal.id, GoalStatus::Completed)
         .await
         .unwrap();
-    h.ingest(&session, "notification", permission_prompt()).await;
+    h.ingest(&session, "notification", permission_prompt())
+        .await;
     assert_eq!(
         h.attention(&session).await,
         None,
@@ -1145,11 +1135,14 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
         .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     let reviewer = h
-        .session(&cast.goal, Some(&cast.task), Seat::Reviewer, &cast.reviewer.id)
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
         .await;
-    let orchestrator = h
-        .orchestrator_session(&cast.goal, "orc")
-        .await;
+    let orchestrator = h.orchestrator_session(&cast.goal, "orc").await;
     let mut rx = h.bus.subscribe();
 
     h.ingest(&author, "stop", reports("/x.jsonl", tokens(100, 80, 10)))
@@ -1188,8 +1181,12 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
 
     h.ingest(&reviewer, "stop", reports("/r.jsonl", tokens(20, 10, 4)))
         .await;
-    h.ingest(&orchestrator, "stop", reports("/p.jsonl", tokens(40, 30, 8)))
-        .await;
+    h.ingest(
+        &orchestrator,
+        "stop",
+        reports("/p.jsonl", tokens(40, 30, 8)),
+    )
+    .await;
 
     let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
     assert_eq!(task.usage.author, tokens(160, 120, 35));

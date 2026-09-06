@@ -389,7 +389,11 @@ pub(crate) mod tests {
 
     /// The tools of the three seats together, deduplicated and sorted.
     fn distinct_tools() -> Vec<&'static str> {
-        let mut tools: Vec<&str> = SEATS.iter().flat_map(|seat| seat.tools()).copied().collect();
+        let mut tools: Vec<&str> = SEATS
+            .iter()
+            .flat_map(|seat| seat.tools())
+            .copied()
+            .collect();
         tools.sort_unstable();
         tools.dedup();
         tools
@@ -471,7 +475,10 @@ pub(crate) mod tests {
     #[test]
     fn no_session_is_told_of_a_conversation() {
         for seat in SEATS {
-            let mcp = server_at(seat.clone(), Client::resolve(Some("http://127.0.0.1:1"), None));
+            let mcp = server_at(
+                seat.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
             let instructions = mcp.get_info().instructions.expect("instructions");
             for gone in ["thread", "message", "conversation"] {
                 assert!(!instructions.contains(gone), "{seat:?}: {instructions}");
@@ -604,7 +611,8 @@ pub(crate) mod tests {
     /// A daemon that records what reaches it and answers every call with an
     /// empty JSON object: enough to count the requests one tool call makes and
     /// to read what it sent.
-    pub(crate) async fn recording_daemon() -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
+    pub(crate) async fn recording_daemon() -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>)
+    {
         recording_daemon_answering("{}").await
     }
 

@@ -60,10 +60,16 @@ pub struct BuiltinSkill {
 /// adding a kind of work Ariadne knows how to staff.
 pub const BUILTIN_SKILLS: [BuiltinSkill; 16] = [
     // Producing.
-    builtin("spec-writing", include_str!("../skills/spec-writing/SKILL.md")),
+    builtin(
+        "spec-writing",
+        include_str!("../skills/spec-writing/SKILL.md"),
+    ),
     builtin("coding", include_str!("../skills/coding/SKILL.md")),
     builtin("debugging", include_str!("../skills/debugging/SKILL.md")),
-    builtin("refactoring", include_str!("../skills/refactoring/SKILL.md")),
+    builtin(
+        "refactoring",
+        include_str!("../skills/refactoring/SKILL.md"),
+    ),
     builtin("testing", include_str!("../skills/testing/SKILL.md")),
     builtin(
         "documentation",
@@ -71,8 +77,14 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 16] = [
     ),
     builtin("research", include_str!("../skills/research/SKILL.md")),
     // Reviewing.
-    builtin("code-review", include_str!("../skills/code-review/SKILL.md")),
-    builtin("spec-review", include_str!("../skills/spec-review/SKILL.md")),
+    builtin(
+        "code-review",
+        include_str!("../skills/code-review/SKILL.md"),
+    ),
+    builtin(
+        "spec-review",
+        include_str!("../skills/spec-review/SKILL.md"),
+    ),
     builtin(
         "security-review",
         include_str!("../skills/security-review/SKILL.md"),
@@ -631,9 +643,9 @@ mod tests {
             Seat::Author | Seat::Reviewer => 1060,
         };
         let cap = |kind: PromptKind| match kind {
-            PromptKind::OrchestratorResume | PromptKind::AuthorResume | PromptKind::ReviewerResume => {
-                200
-            }
+            PromptKind::OrchestratorResume
+            | PromptKind::AuthorResume
+            | PromptKind::ReviewerResume => 200,
             _ => 300,
         };
         let landing_cap = |landing: Landing| match landing {
@@ -1064,7 +1076,10 @@ mod tests {
             "With one, call `finalize_plan`",
             "Once the goal is under way, read `list_tasks`",
         ] {
-            assert!(resume.contains(phase), "the orchestrator resume and \"{phase}\"");
+            assert!(
+                resume.contains(phase),
+                "the orchestrator resume and \"{phase}\""
+            );
         }
     }
 
@@ -1124,7 +1139,10 @@ mod tests {
             "merge request",
             "merge_strategy",
         ] {
-            assert!(!orchestrator.contains(forge), "the orchestrator prompts name {forge}");
+            assert!(
+                !orchestrator.contains(forge),
+                "the orchestrator prompts name {forge}"
+            );
         }
     }
 
@@ -1141,7 +1159,10 @@ mod tests {
 
         for skill in &BUILTIN_SKILLS {
             assert!(
-                skill.name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                skill
+                    .name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '-'),
                 "{} is not kebab-case",
                 skill.name
             );

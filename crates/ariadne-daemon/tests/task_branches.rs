@@ -37,7 +37,10 @@ async fn at_work(h: &Harness) -> (Task, PathBuf, PathBuf) {
     let cast = h.active_cast().await;
     h.launcher.spawn_author(&cast.task.id).await.unwrap();
     let task = h.store.get_task(&cast.task.id).await.unwrap();
-    let worktree = task.worktree_path.clone().expect("the author has a worktree");
+    let worktree = task
+        .worktree_path
+        .clone()
+        .expect("the author has a worktree");
     (task, repo, PathBuf::from(worktree))
 }
 
@@ -189,9 +192,11 @@ async fn a_failed_task_stops_being_followed() {
         .await
         .unwrap();
     h.notify(&task.id);
-    eventually(TIMEOUT, "the failed task's branch watch to be dropped", async || {
-        !h.launcher.branches.is_watching(&task.id)
-    })
+    eventually(
+        TIMEOUT,
+        "the failed task's branch watch to be dropped",
+        async || !h.launcher.branches.is_watching(&task.id),
+    )
     .await;
     // The worktree is still there: a retry puts the author back in it.
     assert!(worktree.is_dir());

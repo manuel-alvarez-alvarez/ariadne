@@ -405,9 +405,11 @@ async fn a_reviewer_that_voted_is_left_where_it_is() {
         .await;
 
     h.notify(&cast.task.id);
-    eventually(TIMEOUT, "the reviewer's verdict to close the round", async || {
-        h.status(&cast.task.id).await == TaskStatus::Approved
-    })
+    eventually(
+        TIMEOUT,
+        "the reviewer's verdict to close the round",
+        async || h.status(&cast.task.id).await == TaskStatus::Approved,
+    )
     .await;
 
     // Several passes past the verdict, and the reviewer is still where it was.
@@ -459,7 +461,9 @@ async fn only_one_verdict_per_reviewer_per_review_is_taken() {
         )
     };
 
-    let first: MessageDto = h.json(verdict("approve", "looks right"), StatusCode::CREATED).await;
+    let first: MessageDto = h
+        .json(verdict("approve", "looks right"), StatusCode::CREATED)
+        .await;
     assert_eq!(first.kind, MessageKind::Approve);
 
     let envelope: ErrorBody = h
@@ -485,7 +489,7 @@ async fn only_one_verdict_per_reviewer_per_review_is_taken() {
             from_session: None,
             to_actor: Actor::Reviewer,
             to_agent_id: Some(cast.reviewer.id.clone()),
-                body: "revised".into(),
+            body: "revised".into(),
         })
         .await
         .unwrap();

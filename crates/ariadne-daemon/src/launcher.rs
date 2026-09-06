@@ -530,10 +530,7 @@ impl Launcher {
                     && s.internal_session_id.is_some()
             });
         Ok(found.map(|session| {
-            let internal = session
-                .internal_session_id
-                .clone()
-                .expect("filtered above");
+            let internal = session.internal_session_id.clone().expect("filtered above");
             (session, internal)
         }))
     }
@@ -855,9 +852,8 @@ impl Launcher {
     /// than one per round (spawn afresh if there is nothing to resume).
     pub async fn resume_author(&self, task_id: &str, instruction: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
-            let Some((previous, internal)) = self
-            .resumable_session(&task.id, Seat::Author, None)
-            .await?
+        let Some((previous, internal)) =
+            self.resumable_session(&task.id, Seat::Author, None).await?
         else {
             return self.spawn_author(task_id).await;
         };

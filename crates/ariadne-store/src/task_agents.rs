@@ -162,15 +162,13 @@ impl Store {
     pub async fn set_agent_pin(&self, agent_id: &str, pin: Option<&AgentPin>) -> Result<TaskAgent> {
         self.get_task_agent(agent_id).await?;
         let (agent_kind, model, effort) = AgentPin::columns(pin);
-        sqlx::query(
-            "UPDATE task_agents SET agent_kind = ?, model = ?, effort = ? WHERE id = ?",
-        )
-        .bind(&agent_kind)
-        .bind(&model)
-        .bind(&effort)
-        .bind(agent_id)
-        .execute(self.w())
-        .await?;
+        sqlx::query("UPDATE task_agents SET agent_kind = ?, model = ?, effort = ? WHERE id = ?")
+            .bind(&agent_kind)
+            .bind(&model)
+            .bind(&effort)
+            .bind(agent_id)
+            .execute(self.w())
+            .await?;
         self.get_task_agent(agent_id).await
     }
 

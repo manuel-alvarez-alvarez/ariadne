@@ -12,10 +12,10 @@ mod landing;
 mod logs;
 mod pane;
 mod pins;
-mod skills;
 mod repositories;
 mod session_logs;
 mod sessions;
+mod skills;
 mod sse;
 mod stream;
 mod tasks;
@@ -109,7 +109,7 @@ impl AppState {
         skills::reset_document,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
-       
+
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,

@@ -5,7 +5,6 @@
 //! enum, a derived flag, a name the caller loaded. Only the second kind is
 //! worth reading, so [`dto!`] is what writes the first.
 
-
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
@@ -13,9 +12,7 @@ use ariadne_api::messages::MessageDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::skills::SkillDto;
-use ariadne_api::tasks::{
-    AgentUsageDto, TaskAgentDto, TaskDto, TaskTransitionDto, TaskUsageDto,
-};
+use ariadne_api::tasks::{AgentUsageDto, TaskAgentDto, TaskDto, TaskTransitionDto, TaskUsageDto};
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
 use ariadne_store::{self as store, AgentUsage, Store, StoreError};
@@ -260,4 +257,3 @@ async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreE
         reviewers: of(Seat::Reviewer),
     })
 }
-

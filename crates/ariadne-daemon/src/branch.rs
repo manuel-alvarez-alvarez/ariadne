@@ -99,7 +99,10 @@ impl BranchWatchers {
     /// this moment — only for where it moves next.
     pub fn watch(&self, task: &Task, repo: &Path) {
         let mut watches = self.lock();
-        if watches.get(&task.id).is_some_and(|w| w.branch == task.branch) {
+        if watches
+            .get(&task.id)
+            .is_some_and(|w| w.branch == task.branch)
+        {
             return;
         }
         debug!(task = %task.id, branch = %task.branch, "following the task branch");
@@ -274,7 +277,9 @@ impl Refs {
     /// Silent on failure: there is nothing to watch until a `git gc` writes
     /// one, and until then every ref the repository has is loose.
     fn rearm_packed(&mut self) {
-        let _ = self.watcher.watch(&self.packed, RecursiveMode::NonRecursive);
+        let _ = self
+            .watcher
+            .watch(&self.packed, RecursiveMode::NonRecursive);
     }
 }
 

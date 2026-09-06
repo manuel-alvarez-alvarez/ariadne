@@ -11,9 +11,9 @@ use ariadne_core::{Actor, AttentionReason, Landing, Seat, TaskStatus};
 use ariadne_store::{MessageFilter, NewMessage, Repository, Task};
 
 use super::AppState;
+use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 use super::convert::{message_dto, task_dto_of};
 use super::error::{ApiError, ApiResult, Json};
-use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 
 /// Git could not answer about the task's branch: a conflict, since what the
 /// caller asked for cannot be established rather than being wrong.
@@ -229,9 +229,8 @@ pub(super) async fn send(
                     to_actor.as_str()
                 )));
             };
-            let task = task.ok_or_else(|| {
-                ApiError::bad_request("a message to a task's agent needs a task")
-            })?;
+            let task = task
+                .ok_or_else(|| ApiError::bad_request("a message to a task's agent needs a task"))?;
             let staffed = state.store.list_task_agents(&task.id).await?;
             if !staffed.iter().any(|a| a.id == *agent_id) {
                 return Err(ApiError::bad_request(format!(

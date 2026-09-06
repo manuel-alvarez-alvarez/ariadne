@@ -33,8 +33,7 @@ fn finalize_uri(cast: &Cast) -> String {
 /// A live orchestrator session on the goal, which is what an orchestrator's
 /// calls come in as.
 async fn orchestrator_session(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
-    h.orchestrator_session(&cast.goal, "orc")
-        .await
+    h.orchestrator_session(&cast.goal, "orc").await
 }
 
 /// The plan finalized by its orchestrator, as the MCP tool finalizes it.
@@ -163,7 +162,10 @@ async fn a_plan_with_no_tasks_cannot_be_finalized() {
         )
         .await;
 
-    assert_eq!(envelope.error.message, "cannot finalize a plan with no tasks");
+    assert_eq!(
+        envelope.error.message,
+        "cannot finalize a plan with no tasks"
+    );
     assert_eq!(
         h.store.get_goal(&goal.id).await.unwrap().status(),
         GoalStatus::Planning,
@@ -182,7 +184,11 @@ async fn a_plan_is_finalized_only_out_of_planning() {
 
     let envelope: ErrorBody = h
         .json(
-            as_session(&finalize_uri(&cast), &orchestrator.id, serde_json::json!({})),
+            as_session(
+                &finalize_uri(&cast),
+                &orchestrator.id,
+                serde_json::json!({}),
+            ),
             StatusCode::CONFLICT,
         )
         .await;

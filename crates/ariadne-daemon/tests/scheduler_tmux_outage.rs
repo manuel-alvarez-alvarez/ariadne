@@ -31,12 +31,7 @@ async fn world() -> (Harness, Cast, AgentSession) {
     let h = harness().tmux(common::Tmux::Missing).await;
     let cast = h.active_cast().await;
     let session = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Author,
-            &cast.author.id,
-        )
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     (h, cast, session)
 }

@@ -475,11 +475,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         Some("codex"),
         "an agent CLI on its own runs it on its own default model"
     );
-    assert_eq!(
-        orchestrator(&[]),
-        None,
-        "and nothing at all is auto"
-    );
+    assert_eq!(orchestrator(&[]), None, "and nothing at all is auto");
     assert_eq!(
         orchestrator(&["--model", "claude-code"]).as_deref(),
         Some("claude_code"),

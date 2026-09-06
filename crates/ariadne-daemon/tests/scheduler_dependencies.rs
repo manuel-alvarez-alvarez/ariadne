@@ -46,9 +46,7 @@ impl World {
 
     async fn on(h: Harness) -> World {
         let (goal, repo) = h.goal().await;
-        let first = h
-            .task_on(&goal, &repo, "Build the engine", 1, None)
-            .await;
+        let first = h.task_on(&goal, &repo, "Build the engine", 1, None).await;
         let second = h
             .store
             .create_task(NewTask {

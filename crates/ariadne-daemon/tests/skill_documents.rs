@@ -65,7 +65,11 @@ async fn every_shipped_skill_is_seeded_and_describes_itself() {
             .find(|s| s.name == shipped.name)
             .unwrap_or_else(|| panic!("{} was not seeded", shipped.name));
         assert!(found.builtin);
-        assert!(!found.summary.is_empty(), "{} describes itself nowhere", found.name);
+        assert!(
+            !found.summary.is_empty(),
+            "{} describes itself nowhere",
+            found.name
+        );
     }
 }
 

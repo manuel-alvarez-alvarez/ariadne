@@ -117,7 +117,6 @@ fn codex_hooks(trust: &Trust) -> Check {
     })
 }
 
-
 /// The daemon's own environment, or the absence of one.
 pub fn daemon_environment(
     daemon: Option<&DaemonReportDto>,
@@ -210,7 +209,7 @@ mod tests {
     }
 
     /// Availability as the daemon reports it, whatever this shell has.
-        /// A trust verdict with `trusted` of the declared events granted.
+    /// A trust verdict with `trusted` of the declared events granted.
     fn trust_for(trusted: &[&'static str]) -> Trust {
         let (trusted, untrusted) = ariadne_core::codex_hooks::EVENTS
             .into_iter()

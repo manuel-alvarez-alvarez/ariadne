@@ -207,7 +207,10 @@ mod tests {
             attention.goals[0].goal.as_ref().map(|g| g.title.as_str()),
             Some("newer")
         );
-        assert_eq!(attention.goals[0].sessions[0].session.seat, Seat::Orchestrator);
+        assert_eq!(
+            attention.goals[0].sessions[0].session.seat,
+            Seat::Orchestrator
+        );
         assert!(attention.goals[2].goal.is_none());
 
         let quiet = group(vec![goal("01GA", "A")], Vec::new(), Vec::new());

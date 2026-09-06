@@ -10,13 +10,11 @@
 //! ```
 
 use ariadne_api::goals::GoalDto;
-use ariadne_api::skills::SkillDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
+use ariadne_api::skills::SkillDto;
 use ariadne_api::tasks::{TaskAgentDto, TaskDto};
-use ariadne_core::{
-    AgentKind, GoalStatus, Landing, Seat, SessionStatus, TaskStatus,
-};
+use ariadne_core::{AgentKind, GoalStatus, Landing, Seat, SessionStatus, TaskStatus};
 
 /// A stamp every fixture is created and updated at, so a rendered row is
 /// reproducible.

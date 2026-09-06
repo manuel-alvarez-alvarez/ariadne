@@ -21,13 +21,8 @@ use common::{Cast, Harness, as_session, harness};
 /// An author session on the goal's one task, which is what its calls come in
 /// as.
 async fn author_session(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
-    h.session(
-        &cast.goal,
-        Some(&cast.task),
-        Seat::Author,
-        &cast.author.id,
-    )
-    .await
+    h.session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await
 }
 
 fn transitions_uri(cast: &Cast) -> String {

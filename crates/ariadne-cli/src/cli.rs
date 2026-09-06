@@ -10,9 +10,9 @@ use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
 use crate::commands::models::ModelsCommand;
-use crate::commands::skill::SkillCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
+use crate::commands::skill::SkillCommand;
 use crate::commands::task::TaskCommand;
 use crate::output::{ColorChoice, Format};
 

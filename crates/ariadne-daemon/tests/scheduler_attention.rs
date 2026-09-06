@@ -44,9 +44,7 @@ use ariadne_daemon::scheduler::{
     self, QUIET_FLAG_SECS as FLAG_SECS, QUIET_NUDGE_SECS as NUDGE_SECS,
     QUIET_RELAUNCH_SECS as RELAUNCH_SECS, START_GRACE_SECS, SchedEvent,
 };
-use ariadne_store::{
-    AgentSession, Goal, NewTaskAgent, SessionFilter, Task,
-};
+use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
 use common::{Harness, eventually, harness};
 
@@ -58,7 +56,6 @@ const SPAWN_RETRY_BUDGET: usize = ariadne_daemon::scheduler::SPAWN_RETRY_BUDGET 
 /// composer will let go of spends several seconds of widening backoff before
 /// anybody hears about it, and every test here runs beside the others.
 const TIMEOUT: Duration = Duration::from_secs(30);
-
 
 /// One daemon, one goal, and the agents a test puts under it.
 ///
@@ -118,7 +115,12 @@ impl World {
 
     /// Another task on the same goal, with the same agents behind it.
     async fn extra_task(&self, title: &str) -> Task {
-        let repo = self.store.list_goal_repositories(&self.goal.id).await.unwrap()[0].clone();
+        let repo = self
+            .store
+            .list_goal_repositories(&self.goal.id)
+            .await
+            .unwrap()[0]
+            .clone();
         self.store
             .create_task(ariadne_store::NewTask {
                 goal_id: self.goal.id.clone(),
@@ -178,7 +180,6 @@ impl Sched {
             .send(SchedEvent::GoalChanged(goal.id.clone()))
             .unwrap();
     }
-
 }
 
 /// The author's resume template, as its profile has it: the words the daemon
@@ -199,11 +200,7 @@ async fn an_orchestrator_idle_past_the_threshold_is_raised_on_its_session() {
     h.idle_for(&session, NUDGE_SECS + 60).await;
 
     // One pass per threshold: the nudge, and then the escalation behind it.
-    let sched = Sched(scheduler::start(
-        h.store.clone(),
-        h.launcher.clone(),
-        false,
-    ));
+    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     sched.goal(&goal);
     eventually(TIMEOUT, "the orchestrator to be nudged", async || {
         h.keystrokes(&session) > 0
@@ -462,9 +459,11 @@ async fn a_composer_still_holding_its_instruction_gets_the_enter_alone() {
     // answer: only a person can say why.
     w.launched_ago(&session, FLAG_SECS + 60).await;
     sched.task(&w.task);
-    eventually(TIMEOUT, "the agent that never started to be raised", async || {
-        w.attention(&session).await == Some(AttentionReason::Stalled)
-    })
+    eventually(
+        TIMEOUT,
+        "the agent that never started to be raised",
+        async || w.attention(&session).await == Some(AttentionReason::Stalled),
+    )
     .await;
     assert_eq!(
         w.keystrokes(&session),
@@ -577,18 +576,13 @@ async fn a_vanished_pane_with_work_still_active_is_flagged_disconnected() {
     let session = h.orchestrator_session(&goal, "orc").await;
     h.launched_ago(&session, 60).await;
     // And a second one that was sitting on a dialog that died with it.
-    let on_a_prompt = h
-        .orchestrator_session(&goal, "vanished-prompt")
-        .await;
+    let on_a_prompt = h.orchestrator_session(&goal, "vanished-prompt").await;
     h.launched_ago(&on_a_prompt, 60).await;
-    h.raise(&on_a_prompt, AttentionReason::WaitingPermission).await;
+    h.raise(&on_a_prompt, AttentionReason::WaitingPermission)
+        .await;
 
     // The sweep runs on the tick, and the first tick is immediate.
-    let sched = Sched(scheduler::start(
-        h.store.clone(),
-        h.launcher.clone(),
-        false,
-    ));
+    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     for vanished in [&session, &on_a_prompt] {
         eventually(TIMEOUT, "the vanished session to be swept", async || {
             h.attention(vanished).await == Some(AttentionReason::Disconnected)
@@ -715,24 +709,24 @@ async fn a_superseded_session_drops_its_attention_when_the_replacement_starts() 
     h.raise(&session, AttentionReason::Disconnected).await;
 
     // Nothing live for the goal, so reconciliation starts a new orchestrator.
-    let sched = Sched(scheduler::start(
-        h.store.clone(),
-        h.launcher.clone(),
-        false,
-    ));
+    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     sched.goal(&goal);
-    eventually(TIMEOUT, "the replacement orchestrator to be running", async || {
-        h.store
-            .list_sessions(ariadne_store::SessionFilter {
-                goal_id: Some(goal.id.clone()),
-                live_only: true,
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .iter()
-            .any(|s| s.id != session.id)
-    })
+    eventually(
+        TIMEOUT,
+        "the replacement orchestrator to be running",
+        async || {
+            h.store
+                .list_sessions(ariadne_store::SessionFilter {
+                    goal_id: Some(goal.id.clone()),
+                    live_only: true,
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .iter()
+                .any(|s| s.id != session.id)
+        },
+    )
     .await;
     eventually(TIMEOUT, "the superseded session to be let go", async || {
         h.attention(&session).await.is_none()
@@ -836,9 +830,7 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
     // the state its own work is still going in.
     let h = harness().await;
     let cast = h.cast().await;
-    let orchestrator_session = h
-        .orchestrator_session(&cast.goal, "orc")
-        .await;
+    let orchestrator_session = h.orchestrator_session(&cast.goal, "orc").await;
     assert_eq!(
         retire_on(&h, &orchestrator_session, AttentionReason::WaitingInput).await,
         None,
@@ -850,9 +842,7 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
     let author_session = h
         .session(&goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
-    let review = h
-        .task_on(&goal, &cast.repo, "under review", 1, None)
-        .await;
+    let review = h.task_on(&goal, &cast.repo, "under review", 1, None).await;
     h.advance(&review, TaskStatus::UnderReview).await;
     let reviewer_session = h
         .session(&goal, Some(&review), Seat::Reviewer, &cast.reviewer.id)
@@ -940,9 +930,11 @@ async fn a_starting_session_is_swept_only_once_its_grace_window_has_run_out() {
 
     // The sweep runs on the tick, and the first tick is immediate.
     let _sched = w.scheduler();
-    eventually(TIMEOUT, "the launch that never arrived to be swept", async || {
-        w.attention(&never_came_up).await == Some(AttentionReason::Disconnected)
-    })
+    eventually(
+        TIMEOUT,
+        "the launch that never arrived to be swept",
+        async || w.attention(&never_came_up).await == Some(AttentionReason::Disconnected),
+    )
     .await;
     assert_eq!(
         w.session_status(&never_came_up).await,
@@ -985,16 +977,13 @@ async fn a_session_that_outlived_its_completed_goal_is_killed() {
     let session = h.orchestrator_session(&goal, "orc").await;
     h.pane_exists(&session);
 
-    let sched = Sched(scheduler::start(
-        h.store.clone(),
-        h.launcher.clone(),
-        false,
-    ));
+    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     sched.goal(&goal);
-    eventually(TIMEOUT, "the leftover orchestrator to be killed", async || {
-        !h.session_status(&session).await
-            .is_live()
-    })
+    eventually(
+        TIMEOUT,
+        "the leftover orchestrator to be killed",
+        async || !h.session_status(&session).await.is_live(),
+    )
     .await;
 
     // And the passes after it do nothing at all. The sends are ordered on one
@@ -1012,10 +1001,7 @@ async fn a_session_that_outlived_its_completed_goal_is_killed() {
         keystrokes,
         "a finished session is not typed into"
     );
-    assert_eq!(
-        h.session_status(&session).await,
-        SessionStatus::Exited
-    );
+    assert_eq!(h.session_status(&session).await, SessionStatus::Exited);
 }
 
 /// A task nothing could be started for is a task nobody is coming back to:
@@ -1084,20 +1070,20 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
     // too.
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
 
-    let sched = Sched(scheduler::start(
-        h.store.clone(),
-        h.launcher.clone(),
-        false,
-    ));
+    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     for _ in 0..SPAWN_RETRY_BUDGET + 2 {
         sched.goal(&goal);
     }
-    eventually(TIMEOUT, "the orchestrator's spawn budget to run out", async || {
-        orchestrators(&h, &goal)
-            .await
-            .iter()
-            .any(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
-    })
+    eventually(
+        TIMEOUT,
+        "the orchestrator's spawn budget to run out",
+        async || {
+            orchestrators(&h, &goal)
+                .await
+                .iter()
+                .any(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
+        },
+    )
     .await;
 
     let rows = orchestrators(&h, &goal).await;
@@ -1133,9 +1119,11 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
     assert_eq!(h.attention(&alarm).await, None, "the alarm is down");
 
     sched.goal(&goal);
-    eventually(TIMEOUT, "the daemon to try starting one again", async || {
-        orchestrators(&h, &goal).await.len() > rows.len()
-    })
+    eventually(
+        TIMEOUT,
+        "the daemon to try starting one again",
+        async || orchestrators(&h, &goal).await.len() > rows.len(),
+    )
     .await;
 }
 
@@ -1224,9 +1212,11 @@ async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_i
     let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     sched.goal(&goal);
     sched.task(&cast.task);
-    eventually(TIMEOUT, "the deaths to run the task's budget out", async || {
-        h.store.get_task(&cast.task.id).await.unwrap().status() == TaskStatus::Failed
-    })
+    eventually(
+        TIMEOUT,
+        "the deaths to run the task's budget out",
+        async || h.store.get_task(&cast.task.id).await.unwrap().status() == TaskStatus::Failed,
+    )
     .await;
 
     let ended: Vec<_> = h
@@ -1774,12 +1764,16 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
     // the disconnect, and the task's own reconciliation puts an author back
     // on it.
     let _sched = w.scheduler();
-    eventually(TIMEOUT, "the author to be put back on the task", async || {
-        // Launched at all, and running now: the row it comes back in is the
-        // one that went down, since the conversation was there to resume.
-        w.launched_at(&session).await.is_some()
-            && w.session_status(&session).await == SessionStatus::Running
-    })
+    eventually(
+        TIMEOUT,
+        "the author to be put back on the task",
+        async || {
+            // Launched at all, and running now: the row it comes back in is the
+            // one that went down, since the conversation was there to resume.
+            w.launched_at(&session).await.is_some()
+                && w.session_status(&session).await == SessionStatus::Running
+        },
+    )
     .await;
     eventually(
         TIMEOUT,

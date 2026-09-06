@@ -65,7 +65,10 @@ async fn a_finished_session_refuses_a_resize() {
     h.set_status(&session, SessionStatus::Exited).await;
 
     let envelope: ErrorBody = h
-        .error(post_resize(&session.id, size(120, 40)), StatusCode::CONFLICT)
+        .error(
+            post_resize(&session.id, size(120, 40)),
+            StatusCode::CONFLICT,
+        )
         .await;
     assert_eq!(envelope.error.code, "conflict");
     assert!(

@@ -42,14 +42,13 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
         },
         // A reviewer is only owed to a review it has not voted on.
         Seat::Reviewer => match task_of(store, session).await {
-            Some(task) if task.status() == TaskStatus::UnderReview => store
-                .open_verdicts(&task.id)
-                .await
-                .is_ok_and(|verdicts| {
+            Some(task) if task.status() == TaskStatus::UnderReview => {
+                store.open_verdicts(&task.id).await.is_ok_and(|verdicts| {
                     !verdicts
                         .iter()
                         .any(|m| m.from_agent_id.as_ref() == session.task_agent_id.as_ref())
-                }),
+                })
+            }
             _ => false,
         },
     }

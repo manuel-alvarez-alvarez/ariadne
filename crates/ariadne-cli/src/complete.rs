@@ -393,8 +393,9 @@ pub fn models() -> Vec<CompletionCandidate> {
 pub fn models_or_default() -> Vec<CompletionCandidate> {
     let mut out = models();
     out.push(
-        CompletionCandidate::new(crate::commands::DEFAULT)
-            .help(Some("pin nothing: run on whatever the profile is on".into())),
+        CompletionCandidate::new(crate::commands::DEFAULT).help(Some(
+            "pin nothing: run on whatever the profile is on".into(),
+        )),
     );
     out
 }

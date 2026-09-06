@@ -658,7 +658,11 @@ mod tests {
             "{painted}"
         );
         assert!(
-            painted.contains(&style::paint(true, style::status("finished").0, "✓ finished")),
+            painted.contains(&style::paint(
+                true,
+                style::status("finished").0,
+                "✓ finished"
+            )),
             "{painted}"
         );
     }

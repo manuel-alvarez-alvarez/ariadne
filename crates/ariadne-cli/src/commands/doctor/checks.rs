@@ -37,7 +37,13 @@ pub async fn agent(kind: AgentKind) -> BinaryDto {
 /// A binary on this shell's PATH, asked for its version — and, for a forge
 /// CLI, whether it is signed in.
 pub async fn tool(name: &str, version_flag: &str, authenticates: bool) -> BinaryDto {
-    found(name, crate::commands::on_path(name), version_flag, authenticates).await
+    found(
+        name,
+        crate::commands::on_path(name),
+        version_flag,
+        authenticates,
+    )
+    .await
 }
 
 /// `ariadned` as `daemon start` would find it: next to this binary, else on PATH.
@@ -129,7 +135,13 @@ pub async fn home(
         .unwrap_or_else(|| home.join("ariadne.db"));
 
     vec![
-        there("home", home, home.is_dir(), "does not exist yet", FIRST_START),
+        there(
+            "home",
+            home,
+            home.is_dir(),
+            "does not exist yet",
+            FIRST_START,
+        ),
         match &config {
             Ok(None) => Check::ok("config.toml", "none — built-in defaults"),
             Ok(Some(_)) => Check::ok(

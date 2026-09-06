@@ -1,10 +1,10 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, Landing, MessageKind, Seat,
-    SessionStatus, TaskStatus, TokenUsage,
+    Actor, AgentKind, AttentionReason, GoalStatus, Landing, MessageKind, Seat, SessionStatus,
+    TaskStatus, TokenUsage,
 };
-use ariadne_store::defaults::{default_landing_prompt};
+use ariadne_store::defaults::default_landing_prompt;
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
@@ -744,7 +744,12 @@ async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
 async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
-    let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0).id;
+    let reviewer = store
+        .list_task_reviewers(&task.id)
+        .await
+        .unwrap()
+        .remove(0)
+        .id;
     let author = store.task_author(&task.id).await.unwrap().id;
     let message = |kind: MessageKind, from: Actor, body: &str| NewMessage {
         goal_id: task.goal_id.clone(),
@@ -772,7 +777,11 @@ async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
     assert!(store.open_verdicts(&task.id).await.unwrap().is_empty());
 
     store
-        .send_message(message(MessageKind::ReviewRequest, Actor::Author, "have a look"))
+        .send_message(message(
+            MessageKind::ReviewRequest,
+            Actor::Author,
+            "have a look",
+        ))
         .await
         .unwrap();
     let first = store
@@ -782,11 +791,19 @@ async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
         .expect("the review that was asked for");
 
     store
-        .send_message(message(MessageKind::RequestChanges, Actor::Reviewer, "please fix"))
+        .send_message(message(
+            MessageKind::RequestChanges,
+            Actor::Reviewer,
+            "please fix",
+        ))
         .await
         .unwrap();
     store
-        .send_message(message(MessageKind::Message, Actor::Reviewer, "the flag is read here too"))
+        .send_message(message(
+            MessageKind::Message,
+            Actor::Reviewer,
+            "the flag is read here too",
+        ))
         .await
         .unwrap();
     assert_eq!(
@@ -808,7 +825,11 @@ async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
     );
 
     store
-        .send_message(message(MessageKind::Approve, Actor::Reviewer, "looks right now"))
+        .send_message(message(
+            MessageKind::Approve,
+            Actor::Reviewer,
+            "looks right now",
+        ))
         .await
         .unwrap();
     let open = store.open_verdicts(&task.id).await.unwrap();
@@ -830,11 +851,15 @@ async fn a_message_is_delivered_once_and_the_stamp_says_so() {
             task_id: Some(task.id.clone()),
             kind: MessageKind::Message,
             from_actor: Actor::Reviewer,
-            from_agent_id: Some(store.list_task_reviewers(&task.id).await.unwrap()[0].id.clone()),
+            from_agent_id: Some(
+                store.list_task_reviewers(&task.id).await.unwrap()[0]
+                    .id
+                    .clone(),
+            ),
             from_session: None,
             to_actor: Actor::Author,
             to_agent_id: Some(author.clone()),
-                body: "why the retry?".into(),
+            body: "why the retry?".into(),
         })
         .await
         .unwrap();
@@ -857,7 +882,10 @@ async fn a_message_is_delivered_once_and_the_stamp_says_so() {
     // Stamping twice keeps the first time: a message typed twice is a bug in
     // the caller, and overwriting the stamp would hide it.
     store.mark_message_delivered(&asked.id).await.unwrap();
-    assert_eq!(store.get_message(&asked.id).await.unwrap().delivered_at, Some(at));
+    assert_eq!(
+        store.get_message(&asked.id).await.unwrap().delivered_at,
+        Some(at)
+    );
     assert!(
         store
             .list_messages(MessageFilter {
@@ -1012,7 +1040,12 @@ async fn a_model_is_available_until_it_is_turned_off() {
     // An id with a `/` in it round-trips whole: that is how opencode names
     // the models it discovers, and it is the id a pin is refused by.
     assert_eq!(
-        store.disabled_models().await.unwrap().into_iter().collect::<Vec<_>>(),
+        store
+            .disabled_models()
+            .await
+            .unwrap()
+            .into_iter()
+            .collect::<Vec<_>>(),
         vec![id.to_string()]
     );
 
@@ -1641,10 +1674,7 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
         .await
         .unwrap();
     assert!(store.get_task(&task.id).await.unwrap().is_stalled());
-    store
-        .restart_session(&author.id, None)
-        .await
-        .unwrap();
+    store.restart_session(&author.id, None).await.unwrap();
     assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
 
     // An orchestrator has no task to project onto, and says so on its own row.
@@ -2118,7 +2148,9 @@ async fn a_source_replaces_its_own_totals_and_sources_add_up() {
 async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
     let w = World::new().await;
     let author = w.author_session().await;
-    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].id.clone();
+    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0]
+        .id
+        .clone();
     let first_round = w
         .session(
             "rev-round-1",
@@ -2191,7 +2223,9 @@ async fn a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator() {
     let w = World::new().await;
     let orchestrator = w.session("plan", Seat::Orchestrator, None, None).await;
     let author = w.author_session().await;
-    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].id.clone();
+    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0]
+        .id
+        .clone();
     let reviewer = w
         .session("rev", Seat::Reviewer, Some(&reviewer_id), Some(&w.task.id))
         .await;
@@ -2312,7 +2346,9 @@ async fn a_fresh_database_is_seeded_with_every_shipped_skill_on_its_own_text() {
     let skills = store.list_skills().await.unwrap();
     assert_eq!(skills.len(), ariadne_store::defaults::BUILTIN_SKILLS.len());
     assert!(
-        skills.iter().all(|s| s.is_builtin() && s.document_is_default()),
+        skills
+            .iter()
+            .all(|s| s.is_builtin() && s.document_is_default()),
         "every seeded skill runs on the shipped text"
     );
 
@@ -2364,7 +2400,10 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
         .unwrap();
 
     let refused = store.delete_skill("api-design").await;
-    assert!(matches!(refused, Err(StoreError::Conflict(_))), "{refused:?}");
+    assert!(
+        matches!(refused, Err(StoreError::Conflict(_))),
+        "{refused:?}"
+    );
 }
 
 /// An agent can only be staffed on a skill that exists: the name is a

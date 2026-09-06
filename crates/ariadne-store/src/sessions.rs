@@ -218,7 +218,9 @@ impl Store {
             AttentionReason::Stalled.as_str(),
             AttentionReason::AgentError.as_str(),
         ];
-        let cleared = self.clear_attention(id, SILENCE_AND_ERROR, &reasons).await?;
+        let cleared = self
+            .clear_attention(id, SILENCE_AND_ERROR, &reasons)
+            .await?;
         self.announce_attention(id, cleared).await
     }
 
@@ -343,7 +345,6 @@ impl Store {
         .await?;
         self.publish_session_update(id).await
     }
-
 
     pub async fn touch_session(&self, id: &str) -> Result<()> {
         let n = sqlx::query("UPDATE agent_sessions SET last_activity_at = ? WHERE id = ?")

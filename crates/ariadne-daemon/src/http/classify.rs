@@ -227,8 +227,8 @@ fn attention_for_notification(
 #[cfg(test)]
 mod tests {
     use super::{
-        QUESTION_TOOL, Question, attention_for_event, extract_internal_id,
-        question_for_event, status_for_event, usage_for_event,
+        QUESTION_TOOL, Question, attention_for_event, extract_internal_id, question_for_event,
+        status_for_event, usage_for_event,
     };
 
     use ariadne_core::{AgentKind, AttentionReason, SessionStatus, TokenUsage};

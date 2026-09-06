@@ -32,8 +32,7 @@ use ariadne_api::SESSION_HEADER;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus,
-    TaskStatus,
+    Actor, AgentKind, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::branch::BranchWatchers;
 use ariadne_daemon::bus::{BusEvent, EventBus};
@@ -662,7 +661,7 @@ impl Harness {
                 from_session: session_id.map(str::to_string),
                 to_actor: Actor::Author,
                 to_agent_id: Some(author.id),
-                        body: body.to_string(),
+                body: body.to_string(),
             })
             .await
             .unwrap()
@@ -851,11 +850,7 @@ impl Harness {
     }
 
     /// An orchestrator session on `goal`, in the pane named `tmux_session`.
-    pub async fn orchestrator_session(
-        &self,
-        goal: &Goal,
-        tmux_session: &str,
-    ) -> AgentSession {
+    pub async fn orchestrator_session(&self, goal: &Goal, tmux_session: &str) -> AgentSession {
         self.new_session(
             goal,
             None,
@@ -969,12 +964,7 @@ impl Harness {
     pub async fn resumable_author(&self) -> (Cast, AgentSession) {
         let cast = self.cast().await;
         let session = self
-            .session(
-                &cast.goal,
-                Some(&cast.task),
-                Seat::Author,
-                &cast.author.id,
-            )
+            .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
             .await;
         self.make_resumable(&cast.task, &session).await;
         self.set_status(&session, SessionStatus::Exited).await;

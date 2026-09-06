@@ -14,11 +14,11 @@ pub mod follow;
 pub mod goal;
 pub mod mcp;
 pub mod models;
-pub mod skill;
 pub mod repo;
 pub mod resolve;
 pub mod session;
 pub mod setup;
+pub mod skill;
 pub mod spawn;
 pub mod task;
 
@@ -441,7 +441,10 @@ mod tests {
             "code-review, security-review · auto @ max",
             "an effort stands on its own: auto, run deeper"
         );
-        assert_eq!(agent_pin_label(&skills, None, None), "code-review, security-review · auto");
+        assert_eq!(
+            agent_pin_label(&skills, None, None),
+            "code-review, security-review · auto"
+        );
 
         // An agent with no skills is legal, and rarely what anybody wanted.
         assert_eq!(agent_label(&[]), "no skills");

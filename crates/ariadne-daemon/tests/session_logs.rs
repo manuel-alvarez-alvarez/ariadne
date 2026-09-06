@@ -477,8 +477,7 @@ async fn tmux_being_unreachable_does_not_end_a_session() {
         }
     }
     assert!(
-        h.session_status(&session).await
-            .is_live(),
+        h.session_status(&session).await.is_live(),
         "a session is not over because tmux could not be run"
     );
 

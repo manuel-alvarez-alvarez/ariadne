@@ -24,16 +24,13 @@ use axum::http::StatusCode;
 
 use ariadne_api::messages::MessageDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{
-    Actor, AttentionReason, Landing, MessageKind, Seat, TaskStatus,
-};
+use ariadne_core::{Actor, AttentionReason, Landing, MessageKind, Seat, TaskStatus};
 use ariadne_store::{AgentSession, NewTaskAgent, Repository, Task};
 
 use common::{Cast, Harness, as_session, eventually, get, harness, sh};
 
 /// How long a test waits for the scheduler to reach a state.
 const TIMEOUT: Duration = Duration::from_secs(20);
-
 
 /// A goal on a real repository, active, with one task on it ending in
 /// `landing`. The agents are pinned to an agent kind: the internal session id
@@ -69,13 +66,7 @@ fn repo_path(repo: &Repository) -> PathBuf {
 async fn approve(h: &Harness, task: &Task, reviewer: &str) {
     let task = h
         .store
-        .transition_task(
-            &task.id,
-            TaskStatus::UnderReview,
-            Actor::Author,
-            None,
-            None,
-        )
+        .transition_task(&task.id, TaskStatus::UnderReview, Actor::Author, None, None)
         .await
         .unwrap();
     h.verdict(&task, reviewer, MessageKind::Approve, "looks right")
@@ -187,7 +178,10 @@ async fn an_approved_task_is_landed_by_its_own_author() {
             .as_deref(),
         Some(worktree.display().to_string().as_str())
     );
-    assert_eq!(sh(&worktree, "git rev-parse --abbrev-ref HEAD"), task.branch);
+    assert_eq!(
+        sh(&worktree, "git rev-parse --abbrev-ref HEAD"),
+        task.branch
+    );
 
     // And the briefing it was picked up with is this repository's procedure,
     // whole: the squash it is about to run, and not a word of the forge half
@@ -305,11 +299,7 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
             serde_json::json!({"url": URL}),
         ))
         .await;
-    assert_eq!(
-        status,
-        StatusCode::FORBIDDEN,
-        "only its author records it"
-    );
+    assert_eq!(status, StatusCode::FORBIDDEN, "only its author records it");
     let refusal = String::from_utf8_lossy(&refusal);
     assert!(refusal.contains("only the author"), "{refusal}");
 

@@ -146,13 +146,7 @@ pub fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) -> Stri
 /// What one agent said to another, as the recipient reads it: who wrote it,
 /// the id an answer names, and what it says.
 pub fn incoming_message_briefing(template: &str, message: &Message, from: &str) -> String {
-    render(
-        template,
-        &[
-            ("from", from),
-            ("body", &message.body),
-        ],
-    )
+    render(template, &[("from", from), ("body", &message.body)])
 }
 
 /// Initial prompt for an author session.

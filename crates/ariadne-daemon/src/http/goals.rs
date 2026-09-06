@@ -11,10 +11,10 @@ use ariadne_core::{GoalStatus, TaskStatus};
 use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, Store, TaskFilter};
 
 use super::AppState;
+use super::caller::call_ctx;
 use super::convert::{goal_dto_of, message_dto};
 use super::error::{ApiError, ApiResult, Json};
 use super::pins::{self, Standing};
-use super::caller::call_ctx;
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct GoalListQuery {

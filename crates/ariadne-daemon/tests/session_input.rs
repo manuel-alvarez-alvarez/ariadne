@@ -143,9 +143,14 @@ async fn a_long_paste_is_split_into_ordered_batches() {
 /// showing the flag is a viewer of it.
 #[tokio::test]
 async fn typing_into_a_pane_takes_down_what_the_session_was_flagged_for() {
-    for reason in [AttentionReason::WaitingPermission, AttentionReason::WaitingUser] {
+    for reason in [
+        AttentionReason::WaitingPermission,
+        AttentionReason::WaitingUser,
+    ] {
         let h = harness().await;
-        let session = h.lone_session(&format!("ariadne-{}", reason.as_str())).await;
+        let session = h
+            .lone_session(&format!("ariadne-{}", reason.as_str()))
+            .await;
         h.every_pane_exists();
         h.raise(&session, reason).await;
 

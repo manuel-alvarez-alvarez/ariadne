@@ -82,7 +82,9 @@ async fn a_spawned_author_is_briefed_from_the_builtin_template() {
     let run_dir = h.launcher.cfg.run_dir.join(&session.id);
     let system = std::fs::read_to_string(run_dir.join("system-prompt.md")).unwrap();
     let (owed, index) = system
-        .split_once("\n\nYour skills. Read the document of a skill before you do the work it covers:")
+        .split_once(
+            "\n\nYour skills. Read the document of a skill before you do the work it covers:",
+        )
         .expect("a skill index");
     assert_eq!(
         owed,
@@ -163,10 +165,7 @@ async fn a_resume_and_a_review_assemble_word_for_word() {
     let task = h.store.get_task(&cast.task.id).await.unwrap();
 
     assert_eq!(
-        prompts::author_resume_briefing(
-            &default_for(PromptKind::AuthorResume),
-            &task,
-        ),
+        prompts::author_resume_briefing(&default_for(PromptKind::AuthorResume), &task,),
         fill(
             &default_for(PromptKind::AuthorResume),
             &[("task_title", &task.title), ("branch", &task.branch)],
@@ -190,12 +189,8 @@ async fn a_resume_and_a_review_assemble_word_for_word() {
     );
     // A review nobody wrote a summary for still says so in words.
     assert!(
-        prompts::reviewer_resume_briefing(
-            &default_for(PromptKind::ReviewerResume),
-            &task,
-            None,
-        )
-        .contains("(none provided)")
+        prompts::reviewer_resume_briefing(&default_for(PromptKind::ReviewerResume), &task, None,)
+            .contains("(none provided)")
     );
 }
 

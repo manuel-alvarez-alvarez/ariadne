@@ -92,7 +92,10 @@ async fn a_task_branches_from_the_repository_its_goal_references() {
     let session = h.launcher.spawn_author(&task.id).await.unwrap();
     let worktree = PathBuf::from(session.worktree_path.unwrap());
     assert!(worktree.is_dir(), "the worktree was created");
-    assert_eq!(sh(&worktree, "git rev-parse --abbrev-ref HEAD"), task.branch);
+    assert_eq!(
+        sh(&worktree, "git rev-parse --abbrev-ref HEAD"),
+        task.branch
+    );
     assert_eq!(
         sh(&worktree, "git rev-parse HEAD"),
         sh(&repo, "git rev-parse next"),

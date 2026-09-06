@@ -90,9 +90,7 @@ pub async fn chosen(
             "model is empty — write the agent CLI it runs on, `<agent_kind>[:<model>]`, \
              or leave the field out to choose nothing at all",
         )),
-        Some(model) if !CLEAR.contains(&model) => {
-            Ok(Some(pin(store, model, named(effort)).await?))
-        }
+        Some(model) if !CLEAR.contains(&model) => Ok(Some(pin(store, model, named(effort)).await?)),
         // No model chosen, so the row is on auto — at the effort it was
         // given, where it was given one, and at the CLI's own where it was
         // not.

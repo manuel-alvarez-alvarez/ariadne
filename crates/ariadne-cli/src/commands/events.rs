@@ -422,7 +422,6 @@ fn task_line(kind: String, t: &TaskDto, state: String) -> Line {
     }
 }
 
-
 fn session_line(kind: String, s: &SessionDto) -> Line {
     let mut detail = format!(
         "{} {} [{}]",

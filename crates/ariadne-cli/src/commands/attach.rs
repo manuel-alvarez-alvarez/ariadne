@@ -52,10 +52,7 @@ async fn candidates(
 }
 
 /// What a GET on `path` answers with, or nothing at all when it 404s.
-async fn found<T: serde::de::DeserializeOwned>(
-    client: &Client,
-    path: &str,
-) -> Result<Option<T>> {
+async fn found<T: serde::de::DeserializeOwned>(client: &Client, path: &str) -> Result<Option<T>> {
     match client.get_json::<T>(path).await {
         Ok(value) => Ok(Some(value)),
         Err(ClientError::Api { status, .. }) if status == http::StatusCode::NOT_FOUND => Ok(None),

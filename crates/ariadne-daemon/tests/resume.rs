@@ -31,12 +31,7 @@ use common::{Cast, Harness, harness, next_event, sh};
 async fn author_session(h: &Harness) -> (Cast, AgentSession) {
     let cast = h.cast().await;
     let session = h
-        .session(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Author,
-            &cast.author.id,
-        )
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     h.store
         .set_task_worktree(&cast.task.id, session.worktree_path.as_deref())
@@ -51,9 +46,7 @@ async fn author_session(h: &Harness) -> (Cast, AgentSession) {
 /// that is what the task and the reviewer slot are pinned to.
 async fn under_review(h: &Harness, model: Option<&str>) -> Cast {
     let repo_path = h.git_repo("repo");
-    let cast = h
-        .cast_pinned(Some(AgentKind::ClaudeCode), model, 1)
-        .await;
+    let cast = h.cast_pinned(Some(AgentKind::ClaudeCode), model, 1).await;
     sh(&repo_path, &format!("git branch {}", cast.task.branch));
     h.advance(&cast.task, TaskStatus::UnderReview).await;
     let task = h.store.get_task(&cast.task.id).await.unwrap();
@@ -128,15 +121,13 @@ async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
         .unwrap();
     assert_eq!(first.model.as_deref(), Some("opus"));
     assert!(
-        argv_of(&h, &first.id)
-            .contains("--model opus"),
+        argv_of(&h, &first.id).contains("--model opus"),
         "the launch asked for the pinned model"
     );
 
     // The agent is re-pinned to another CLI and another model while the
     // session is alive. The row is not rewritten behind it.
-    h.move_agent(
-        &reviewer, Some(AgentKind::Codex), Some("sonnet"))
+    h.move_agent(&reviewer, Some(AgentKind::Codex), Some("sonnet"))
         .await;
     assert_eq!(
         h.store
@@ -241,12 +232,14 @@ async fn an_orchestrator_respawn_stays_on_the_goals_pin() {
     h.launcher.kill_session(&first.id).await.unwrap();
 
     let second = h.launcher.spawn_orchestrator(&goal).await.unwrap();
-    assert_ne!(second.id, first.id, "an orchestrator respawn is a fresh session");
+    assert_ne!(
+        second.id, first.id,
+        "an orchestrator respawn is a fresh session"
+    );
     assert_eq!(second.agent_kind(), AgentKind::ClaudeCode);
     assert_eq!(second.model.as_deref(), Some("opus"));
     assert!(
-        argv_of(&h, &second.id)
-            .contains("--model opus"),
+        argv_of(&h, &second.id).contains("--model opus"),
         "the respawn read the profile instead of the goal's pin"
     );
 }
@@ -432,11 +425,7 @@ async fn a_launch_hands_tmux_nothing_that_can_outgrow_it() {
     let task = cast.task.clone();
     let briefing = "B".repeat(100_000);
 
-    let session = h
-        .launcher
-        .resume_author(&task.id, &briefing)
-        .await
-        .unwrap();
+    let session = h.launcher.resume_author(&task.id, &briefing).await.unwrap();
     let worktree = session.worktree_path.clone().unwrap();
 
     // What tmux was asked to run, in full: the plan file and nothing else.

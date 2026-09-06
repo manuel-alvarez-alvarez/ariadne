@@ -301,7 +301,12 @@ fn addressee(to: &str, agents: &[serde_json::Value]) -> Result<(Actor, Option<St
     let actor = match agent["seat"].as_str() {
         Some("author") => Actor::Author,
         Some("reviewer") => Actor::Reviewer,
-        _ => return Err(McpError::invalid_params(format!("agent {to} sits nowhere"), None)),
+        _ => {
+            return Err(McpError::invalid_params(
+                format!("agent {to} sits nowhere"),
+                None,
+            ));
+        }
     };
     Ok((actor, Some(to.to_string())))
 }
@@ -990,7 +995,10 @@ mod tests {
         let update = tool_schema("update_task");
         assert!(update["properties"].get("author").is_none());
         for pin in ["author_model", "author_effort"] {
-            assert!(update["properties"].get(pin).is_some(), "no {pin} on an edit");
+            assert!(
+                update["properties"].get(pin).is_some(),
+                "no {pin} on an edit"
+            );
         }
     }
 

@@ -3,9 +3,7 @@
 
 use tracing::{info, warn};
 
-use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, PromptKind, Seat, TaskStatus,
-};
+use ariadne_core::{Actor, AttentionReason, GoalStatus, MessageKind, PromptKind, Seat, TaskStatus};
 use ariadne_store::{AgentSession, SessionFilter, Task, TaskFilter};
 
 use crate::agents::prompts;
@@ -59,7 +57,7 @@ impl super::Scheduler {
         // so it sits idle instead of being killed and started again for the
         // next review. What ends them is the task ending, which the terminal
         // arms below do through `cleanup_task`.
-        
+
         // A task that has left `approved` — landed, or sent back to the
         // reviewers with a revision — is one whose author wants briefing
         // again the next time it is approved.
@@ -481,10 +479,7 @@ impl super::Scheduler {
     /// a request to merge.
     pub(super) async fn start_author(&mut self, task: &Task) -> anyhow::Result<()> {
         let instruction = self.resume_text(task).await?;
-        let session = self
-            .launcher
-            .resume_author(&task.id, &instruction)
-            .await?;
+        let session = self.launcher.resume_author(&task.id, &instruction).await?;
         self.keep_waiting_user(&session, None).await
     }
 

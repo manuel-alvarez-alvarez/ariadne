@@ -420,7 +420,16 @@ mod tests {
         );
         assert_eq!(
             row(&fixture()[1]),
-            ["opencode", "opencode:llama3", "no", "unknown", "-", "-", "-", "-"]
+            [
+                "opencode",
+                "opencode:llama3",
+                "no",
+                "unknown",
+                "-",
+                "-",
+                "-",
+                "-"
+            ]
         );
     }
 

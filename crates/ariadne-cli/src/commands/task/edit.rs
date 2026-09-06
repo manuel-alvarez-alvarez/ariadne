@@ -247,7 +247,10 @@ mod tests {
             repository("01REPOUI", "/home/me/ui", "main"),
         ];
         assert_eq!(pick_repo(&repos, "01REPOUI").as_deref(), Some("01REPOUI"));
-        assert_eq!(pick_repo(&repos, "/home/me/api").as_deref(), Some("01REPOAPI"));
+        assert_eq!(
+            pick_repo(&repos, "/home/me/api").as_deref(),
+            Some("01REPOAPI")
+        );
         assert_eq!(pick_repo(&repos, "/home/me/other"), None);
         // And by the tail of an id, which is all a table of them shows.
         assert_eq!(pick_repo(&repos, "REPOUI").as_deref(), Some("01REPOUI"));
@@ -262,8 +265,9 @@ mod tests {
         assert_eq!(plain.model, None);
         assert_eq!(plain.effort, None);
 
-        let pinned = parse_reviewer("code-review,security-review=opencode:ollama/llama3:8b@thinking")
-            .expect("skills, a model and an effort");
+        let pinned =
+            parse_reviewer("code-review,security-review=opencode:ollama/llama3:8b@thinking")
+                .expect("skills, a model and an effort");
         assert_eq!(pinned.skills, ["code-review", "security-review"]);
         assert_eq!(pinned.model.as_deref(), Some("opencode:ollama/llama3:8b"));
         assert_eq!(pinned.effort.as_deref(), Some("thinking"));
@@ -274,9 +278,11 @@ mod tests {
         assert_eq!(deeper.effort.as_deref(), Some("high"));
 
         assert!(parse_reviewer("=codex").is_err(), "no skills at all");
-        assert!(parse_reviewer("code-review=").is_err(), "no model after the =");
+        assert!(
+            parse_reviewer("code-review=").is_err(),
+            "no model after the ="
+        );
     }
-
 
     /// A reviewer is its skills, and after an `=` what it runs on: an agent
     /// CLI, or one model of that CLI after the colon — the three forms
@@ -300,8 +306,7 @@ mod tests {
 
         // An opencode id is `provider/model` and may carry a tag of its own,
         // so what splits the model off is the `=` and the id arrives whole.
-        let opencode =
-            parse_reviewer("security-review=opencode:ollama/llama3:8b").expect("an id");
+        let opencode = parse_reviewer("security-review=opencode:ollama/llama3:8b").expect("an id");
         assert_eq!(opencode.skills, ["security-review"]);
         assert_eq!(opencode.model.as_deref(), Some("opencode:ollama/llama3:8b"));
 
