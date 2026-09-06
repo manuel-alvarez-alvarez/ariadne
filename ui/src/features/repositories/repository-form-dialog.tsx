@@ -60,7 +60,7 @@ const EMPTY_VALUES: RepositoryFormValues = {
 
 /**
  * How an approved task reaches the base branch: the name of each strategy, and
- * what it means for the engineer that has to act on it.
+ * what it means for the author that has to act on it.
  *
  * The name is the short one, and it is the *only* one — the repositories table
  * shows the same word for the same stored value, which it could not do while
@@ -72,12 +72,12 @@ export const MERGE_STRATEGY_META: Record<MergeStrategy, { label: string; descrip
   direct: {
     label: "Direct",
     description:
-      "The engineer rebases, squashes the task into one commit and fast-forwards the base branch itself.",
+      "The author rebases, squashes the task into one commit and fast-forwards the base branch itself.",
   },
   pull_request: {
     label: "Pull request",
     description:
-      "The engineer opens a request with `gh` or `glab`, answers what is written on it, and finishes the task once it is merged.",
+      "The author opens a request with `gh` or `glab`, answers what is written on it, and finishes the task once it is merged.",
   },
 }
 
@@ -368,7 +368,7 @@ export function RepositoryFormDialog({
                 {landingPromptIsDefault
                   ? `The default briefing of the ${MERGE_STRATEGY_META[selectedStrategy].label.toLowerCase()} strategy.`
                   : "Customized for this repository."}{" "}
-                Handed to the engineer of an approved task; may use {"{task_title}"}, {"{branch}"},{" "}
+                Handed to the author of an approved task; may use {"{task_title}"}, {"{branch}"},{" "}
                 {"{base_branch}"} and {"{repo_path}"}.
               </FieldDescription>
             )}

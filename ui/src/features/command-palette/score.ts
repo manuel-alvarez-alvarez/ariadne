@@ -5,7 +5,7 @@
  * anywhere in the row. That is what makes `kybrd` find "Keyboard support" and
  * is worth keeping — but the rows here carry 26-character ulids and branch
  * names, and a long enough string of random letters answers to almost anything.
- * `planner` finding a task called "Keyboard support" (through its id) is the
+ * `orchestrator` finding a task called "Keyboard support" (through its id) is the
  * everyday version of that.
  *
  * So the matching happens in three tiers, strongest first:
@@ -41,7 +41,7 @@ const FUZZY_WEIGHT = 0.5
  * distance between the letters it matched, so a real abbreviation of a name
  * lands two orders of magnitude above the letters it happened to find scattered
  * across a row — `kybrd` scores ~0.03 against "Keyboard support", where
- * `planner` scores ~0.002 against the same row's id.
+ * `orchestrator` scores ~0.002 against the same row's id.
  */
 const FUZZY_FLOOR = 0.01
 
@@ -61,7 +61,7 @@ export function preferLiteralMatches(fuzzy: PaletteScore): PaletteScore {
       else if (at > 0) total += isWordStart(value, at) ? WORD_START : ANYWHERE
       else if (searchableBy.includes(term)) total += IN_KEYWORDS
       // One word unaccounted for and the row is a fuzzy hit at best:
-      // `planner ux` is not asking for every row with a planner in it.
+      // `orchestrator ux` is not asking for every row with an orchestrator in it.
       else return fuzzyScore(fuzzy, value, search)
     }
     return total / terms.length

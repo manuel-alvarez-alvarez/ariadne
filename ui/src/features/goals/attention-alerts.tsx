@@ -95,7 +95,7 @@ export function AttentionBadge() {
  * One toast per item that has newly become stuck, and none for an item that
  * was already on the list.
  *
- * What counts as "the same item" is the row *and its reasons*: an engineer
+ * What counts as "the same item" is the row *and its reasons*: an author
  * that gets blocked on a permission prompt while its task was already failed
  * is news on a row that was already there, and the row folds the two together
  * (see `attention.ts`) — keying on the id alone would swallow it.

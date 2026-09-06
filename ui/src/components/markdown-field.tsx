@@ -2,8 +2,8 @@
  * The brief: the one field in a form that holds paragraphs rather than a line,
  * and the Markdown they will be read as.
  *
- * A goal's description is what the planner works from and a task's is what the
- * engineer builds from — headings, lists, fenced code, the longest prose the
+ * A goal's description is what the orchestrator works from and a task's is what the
+ * author builds from — headings, lists, fenced code, the longest prose the
  * app ever asks anyone for — so it gets a box of that size. Ten lines to start
  * on, a grip to drag it taller, and the rendered text beside it through the
  * app's one renderer (`@/components/markdown`), which is exactly what the

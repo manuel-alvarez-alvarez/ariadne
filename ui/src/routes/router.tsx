@@ -24,9 +24,9 @@ import { createHashRouter, Navigate, type RouteObject, useParams } from "react-r
 import { AppShell, type PageHandle } from "@/components/app-shell"
 import { AgentsPage } from "@/features/agents/agents-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
-import { ProfilesPage } from "@/features/profiles/profiles-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
+import { SkillsPage } from "@/features/skills/skills-page"
 import { RouteErrorPage } from "@/routes/error-page"
 import { NotFoundPage } from "@/routes/not-found-page"
 import { paths } from "@/routes/paths"
@@ -48,7 +48,7 @@ const routes: RouteObject[] = [
   { path: "tasks", element: <Navigate to={paths.goals()} replace /> },
   { path: "tasks/:taskId", element: <TaskPanelRedirect /> },
   { path: "sessions", element: <SessionsPage />, handle: { title: "Sessions" } },
-  { path: "profiles", element: <ProfilesPage />, handle: { title: "Profiles" } },
+  { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
   { path: "agents", element: <AgentsPage />, handle: { title: "Agents" } },
   { path: "repositories", element: <RepositoriesPage />, handle: { title: "Repositories" } },
   { path: "*", element: <NotFoundPage /> },

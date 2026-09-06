@@ -7,7 +7,7 @@
       "name": "MIT OR Apache-2.0",
       "identifier": "MIT OR Apache-2.0"
     },
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "paths": {
     "/v1/agents": {
@@ -266,7 +266,7 @@
         "tags": [
           "goals"
         ],
-        "summary": "Create a goal on registered repositories; the planner session is spawned\nby the scheduler once agent execution lands.",
+        "summary": "Create a goal on registered repositories; the orchestrator session is\nspawned by the scheduler once agent execution lands.",
         "description": "The repos are referenced, not copied: whatever `POST /v1/repositories`\nvalidated about a checkout holds for every goal that names it, and an edit\nthere moves this goal too.",
         "operationId": "create",
         "requestBody": {
@@ -294,7 +294,7 @@
             "description": ""
           },
           "404": {
-            "description": "no such repository or planner profile"
+            "description": "no such repository or orchestrator profile"
           }
         }
       }
@@ -304,7 +304,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Create a task in a goal (planner via MCP, or the user).",
+        "summary": "Create a task in a goal (orchestrator via MCP, or the user).",
         "operationId": "create",
         "parameters": [
           {
@@ -454,7 +454,7 @@
         "tags": [
           "goals"
         ],
-        "summary": "Finalize the plan: goal moves planning -> active and its tasks start. The\nplanner's call alone, and there is nothing left for the user to approve.",
+        "summary": "Finalize the plan: goal moves planning -> active and its tasks start. The\norchestrator's call alone, and there is nothing left for the user to\napprove.",
         "operationId": "finalize",
         "parameters": [
           {
@@ -622,223 +622,6 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/v1/profiles": {
-      "get": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "List profiles.",
-        "operationId": "list",
-        "parameters": [
-          {
-            "name": "role",
-            "in": "query",
-            "description": "Filter by role.",
-            "required": false,
-            "schema": {
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/components/schemas/Role"
-                }
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ProfileDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Create a profile.",
-        "description": "It starts on the system prompt of its role, and it owns no other prompt:\nthe briefings that start, resume and nudge a session are Ariadne's own.",
-        "operationId": "create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateProfileRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "name already exists"
-          }
-        }
-      }
-    },
-    "/v1/profiles/{id}": {
-      "get": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Get a profile by id or unique name.",
-        "operationId": "get",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "profile id or name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Update a profile.",
-        "operationId": "update",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "profile id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateProfileRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Delete a profile (409 while referenced).",
-        "operationId": "delete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "profile id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/profiles/{id}/system-prompt/reset": {
-      "post": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Put the profile's system prompt back on the default of its role.",
-        "operationId": "reset_system_prompt",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "profile id or name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
           }
         }
       }
@@ -1360,6 +1143,208 @@
         }
       }
     },
+    "/v1/skills": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "List every skill, shipped and written, by name.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SkillDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Create a skill of the user's own.",
+        "description": "It carries its own document: nothing Ariadne ships answers to its name, so\nthere is nothing behind it to fall back to.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "name already exists"
+          }
+        }
+      }
+    },
+    "/v1/skills/{name}": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Get one skill by name.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "skill name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Write a new document over a skill's.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "skill name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Delete a skill of the user's own (409 for a built-in, or while loaded).",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "skill name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/skills/{name}/document/reset": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Put a built-in skill back on the document Ariadne ships.",
+        "operationId": "reset_document",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "skill name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/tasks": {
       "get": {
         "tags": [
@@ -1452,7 +1437,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Edit a pending/ready task (planner or user).",
+        "summary": "Edit a pending/ready task (orchestrator or user).",
         "operationId": "update",
         "parameters": [
           {
@@ -1573,8 +1558,8 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Record the pull or merge request the engineer opened for a task.",
-        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported.\n\nAnd this is the moment the task becomes the user's: a request nobody can\nmerge but a human is exactly what `waiting_user` says, so it goes up here,\non the session that opened it — the pane they answer in, and the one place\nthe request can be traced back to. It used to be raised by the message the\nlanding briefing told the engineer to write, and a published task with\nnothing on the strip is one nobody knows to go and merge.\n\nIt stays up until the user acts: an agent's own events never take\n`waiting_user` down (`clear_agent_attention`), and the engineer polling its\nrequest is exactly such an agent. `Scheduler::keep_waiting_user` puts it\nback on whatever comes up when that engineer is restarted, which is what\nmakes the two halves one flag rather than two.",
+        "summary": "Record the pull or merge request the author opened for a task.",
+        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported.\n\nAnd this is the moment the task becomes the user's: a request nobody can\nmerge but a human is exactly what `waiting_user` says, so it goes up here,\non the session that opened it — the pane they answer in, and the one place\nthe request can be traced back to. It used to be raised by the message the\nlanding briefing told the author to write, and a published task with\nnothing on the strip is one nobody knows to go and merge.\n\nIt stays up until the user acts: an agent's own events never take\n`waiting_user` down (`clear_agent_attention`), and the author polling its\nrequest is exactly such an agent. `Scheduler::keep_waiting_user` puts it\nback on whatever comes up when that author is restarted, which is what\nmakes the two halves one flag rather than two.",
         "operationId": "record_pull_request",
         "parameters": [
           {
@@ -1612,7 +1597,7 @@
             "description": "empty URL"
           },
           "403": {
-            "description": "not an engineer session"
+            "description": "not an author session"
           },
           "409": {
             "description": "the task is not approved"
@@ -1838,9 +1823,57 @@
   },
   "components": {
     "schemas": {
+      "AgentAssignment": {
+        "type": "object",
+        "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent_kind>[:<model>]`: the agent CLI on its own\nruns it on its own default model, an agent with a model after the `:` pins\nboth, and a string naming no agent CLI is refused — nothing here derives\none from the other. Omitted, the agent runs on the first installed CLI at\nspawn time, on that CLI's own default model.",
+        "required": [
+          "seat"
+        ],
+        "properties": {
+          "brief": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to tell this agent beyond the task itself. Omitted = the task is\nthe whole of it."
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reasoning effort to run that model at, one of the efforts\n`GET /v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at.",
+            "example": "high"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this agent runs on, `<agent_kind>[:<model>]`; omitted (or\n\"default\") = auto.",
+            "example": "codex:o3"
+          },
+          "seat": {
+            "$ref": "#/components/schemas/Seat",
+            "description": "`author` or `reviewer`. A task takes exactly one author."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of the skills this agent loads, in the order they reach it.\nA name no skill answers to is refused.",
+            "example": [
+              "coding",
+              "testing"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "AgentConfigDto": {
         "type": "object",
-        "description": "How one agent CLI is launched, shared by every profile that runs on it.",
+        "description": "How one agent CLI is launched, shared by every agent that runs on it.",
         "required": [
           "agent_kind",
           "extra_flags",
@@ -1915,6 +1948,30 @@
           "opencode"
         ]
       },
+      "AgentUsageDto": {
+        "type": "object",
+        "description": "What one staffed agent spent on a task, named the way a reader addresses\nit: an agent has no name of its own, so its skills are what identify it.",
+        "required": [
+          "agent_id",
+          "skills",
+          "usage"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The skills the agent loads; empty only if the agent is gone."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsageDto"
+          }
+        }
+      },
       "AttentionReason": {
         "type": "string",
         "description": "Why a live agent session needs the user's attention.\n\nOrthogonal to [`SessionStatus`]: a session waiting on a permission prompt\nis still `running` as far as its lifecycle goes, it just cannot make\nprogress until someone looks at it.",
@@ -1977,8 +2034,7 @@
         "type": "object",
         "required": [
           "title",
-          "repository_ids",
-          "planner_profile"
+          "repository_ids"
         ],
         "properties": {
           "description": {
@@ -1989,7 +2045,7 @@
               "string",
               "null"
             ],
-            "description": "The reasoning effort to run that model at, one of the efforts\n`GET /v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at, and where\n`model` is omitted too, the planner profile's own effort. Named where\n`model` is omitted, the goal takes the planner profile's own model at\nthis effort.",
+            "description": "The reasoning effort to run that model at, one of the efforts `GET\n/v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at. An effort is\nrun at a model, so an effort written where `model` names none is\nrefused.",
             "example": "high"
           },
           "max_tasks": {
@@ -1998,19 +2054,15 @@
               "null"
             ],
             "format": "int64",
-            "description": "Max tasks the planner may create (default: unbounded)."
+            "description": "Max tasks the orchestrator may create (default: unbounded)."
           },
           "model": {
             "type": [
               "string",
               "null"
             ],
-            "description": "What the planner runs on, `<agent_kind>[:<model>]` — the agent CLI and,\nafter a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,\n`opencode:ollama/llama3:8b`. The model half is free text, handed to\nthat CLI as typed; an agent CLI on its own runs it on its own default\nmodel, and a string naming no agent CLI is refused. Omitted (or\n\"default\") = the planner profile's own model, as it stands now.",
+            "description": "What the orchestrator runs on, `<agent_kind>[:<model>]` — the agent\nCLI and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,\n`opencode:ollama/llama3:8b`. The model half is free text, handed to\nthat CLI as typed; an agent CLI on its own runs it on its own default\nmodel, and a string naming no agent CLI is refused. Omitted (or\n\"default\") = auto: the first installed CLI, on its own default model.",
             "example": "codex:gpt-5.3-codex"
-          },
-          "planner_profile": {
-            "type": "string",
-            "description": "Planner profile id or unique name."
           },
           "repository_ids": {
             "type": "array",
@@ -2029,46 +2081,6 @@
           },
           "title": {
             "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "CreateProfileRequest": {
-        "type": "object",
-        "required": [
-          "name",
-          "role"
-        ],
-        "properties": {
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The reasoning effort to run that model at, one of the efforts\n`GET /v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at on its own. An\neffort is run at a model, and a profile created on auto has none of its\nown, so an effort written where `model` names none is refused.",
-            "example": "high"
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What this profile runs on, `<agent_kind>[:<model>]` — the agent CLI\nand, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,\n`opencode:ollama/llama3:8b`. A string naming no agent CLI is refused.\nOmitted (or \"default\") = auto: the first installed agent CLI at spawn\ntime, on its own default model.",
-            "example": "codex:gpt-5.3-codex"
-          },
-          "name": {
-            "type": "string",
-            "example": "rust-engineer"
-          },
-          "role": {
-            "$ref": "#/components/schemas/Role"
-          },
-          "system_prompt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Absent or null = the default of the role, which the profile then\nfollows. It is the one prompt a profile owns: the briefings that\nstart, resume and nudge a session are Ariadne's own."
           }
         },
         "additionalProperties": false
@@ -2097,7 +2109,7 @@
               "string",
               "null"
             ],
-            "description": "The landing briefing this repository hands its engineer. Omitted or\nempty = the built-in default of `merge_strategy`, which\n`GET /v1/merge-strategies` hands out for prefilling. A briefing may\nuse only the placeholders a landing text is rendered with\n(`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that\nnames another is refused."
+            "description": "The landing briefing this repository hands its author. Omitted or\nempty = the built-in default of `merge_strategy`, which\n`GET /v1/merge-strategies` hands out for prefilling. A briefing may\nuse only the placeholders a landing text is rendered with\n(`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that\nnames another is refused."
           },
           "merge_strategy": {
             "oneOf": [
@@ -2130,15 +2142,34 @@
               "null"
             ]
           },
-          "reviewer_profile": {
+          "reviewer_agent_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Reviewer profile id or name. Derived from the session context when the\ncall comes from an agent; required for user-submitted reviews."
+            "description": "Id of the reviewing task agent. Derived from the session context when\nthe call comes from an agent; required for user-submitted reviews."
           },
           "verdict": {
             "$ref": "#/components/schemas/ReviewVerdict"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateSkillRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "document"
+        ],
+        "properties": {
+          "document": {
+            "type": "string",
+            "description": "The whole `SKILL.md`, frontmatter included. A skill of the user's own\nhas no shipped text behind it, so it carries its own."
+          },
+          "name": {
+            "type": "string",
+            "description": "Kebab-case, and free: a name Ariadne already ships is refused.",
+            "example": "api-design"
           }
         },
         "additionalProperties": false
@@ -2147,10 +2178,16 @@
         "type": "object",
         "required": [
           "title",
-          "engineer_profile",
-          "reviewers"
+          "agents"
         ],
         "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentAssignment"
+            },
+            "description": "The agents to staff: exactly one author, then the reviewers in review\norder, at least one."
+          },
           "depends_on": {
             "type": "array",
             "items": {
@@ -2161,39 +2198,12 @@
           "description": {
             "type": "string"
           },
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The reasoning effort to run that model at, resolved and refused the\nway [`ReviewerAssignment::effort`] is.",
-            "example": "xhigh"
-          },
-          "engineer_profile": {
-            "type": "string",
-            "description": "Engineer profile id or unique name."
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What the engineer runs on, `<agent_kind>[:<model>]`; omitted (or\n\"default\") = the engineer profile's own model. Resolved the way\n[`ReviewerAssignment::model`] is.",
-            "example": "codex:gpt-5.3-codex"
-          },
           "repo_id": {
             "type": [
               "string",
               "null"
             ],
             "description": "Id of one of the goal's repositories; may be omitted when the goal\nworks in exactly one."
-          },
-          "reviewers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReviewerAssignment"
-            },
-            "description": "The reviewers of the task, in review order. At least one."
           },
           "title": {
             "type": "string"
@@ -2468,12 +2478,12 @@
             ],
             "properties": {
               "data": {
-                "$ref": "#/components/schemas/ProfileDto"
+                "$ref": "#/components/schemas/SkillDto"
               },
               "event": {
                 "type": "string",
                 "enum": [
-                  "profile_created"
+                  "skill_created"
                 ]
               }
             }
@@ -2486,12 +2496,12 @@
             ],
             "properties": {
               "data": {
-                "$ref": "#/components/schemas/ProfileDto"
+                "$ref": "#/components/schemas/SkillDto"
               },
               "event": {
                 "type": "string",
                 "enum": [
-                  "profile_updated"
+                  "skill_updated"
                 ]
               }
             }
@@ -2509,7 +2519,7 @@
               "event": {
                 "type": "string",
                 "enum": [
-                  "profile_deleted"
+                  "skill_deleted"
                 ]
               }
             }
@@ -2598,7 +2608,7 @@
       },
       "FinalizePlanRequest": {
         "type": "object",
-        "description": "Body of `POST /v1/goals/{id}/finalize`: the planner ends planning and\nexecution starts. The planner's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote.",
+        "description": "Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and\nexecution starts. The orchestrator's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote.",
         "additionalProperties": false
       },
       "GoalDto": {
@@ -2609,7 +2619,6 @@
           "description",
           "status",
           "required_approvals",
-          "planner_profile_id",
           "repos",
           "usage",
           "created_at",
@@ -2646,11 +2655,8 @@
               "string",
               "null"
             ],
-            "description": "What the planner runs on, `<agent_kind>[:<model>]`: the agent CLI and,\nafter a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).\nPinned when the goal was created, from the model chosen for it or,\nwhere none was, from the planner profile — editing the profile\nafterwards leaves it alone. None = auto: the first installed CLI,\nresolved at spawn time, on its own default model.",
+            "description": "What the orchestrator runs on, `<agent_kind>[:<model>]`: the agent CLI\nand, after a `:`, the model of it (`codex`,\n`claude_code:claude-opus-5`). None = auto: the first installed CLI,\nresolved at spawn time, on its own default model.",
             "example": "claude_code:claude-opus-5"
-          },
-          "planner_profile_id": {
-            "type": "string"
           },
           "repos": {
             "type": "array",
@@ -2690,21 +2696,21 @@
       },
       "GoalUsageDto": {
         "type": "object",
-        "description": "What a goal cost, by the role that spent it. Grouped by role rather than\nby profile: a goal's engineers are as many as it has tasks, and what is\nread at this height is where the tokens went, not which agent went there.",
+        "description": "What a goal cost, by the seat that spent it. Grouped by seat rather than\nby agent: a goal's authors are as many as it has tasks, and what is\nread at this height is where the tokens went, not which agent went there.",
         "required": [
           "total",
-          "planner",
-          "engineers",
+          "orchestrator",
+          "authors",
           "reviewers"
         ],
         "properties": {
-          "engineers": {
+          "authors": {
             "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "Every engineer session of every task of the goal."
+            "description": "Every author session of every task of the goal."
           },
-          "planner": {
+          "orchestrator": {
             "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "The planner's sessions, which belong to no task."
+            "description": "The orchestrator's sessions, which belong to no task."
           },
           "reviewers": {
             "$ref": "#/components/schemas/TokenUsageDto",
@@ -2712,7 +2718,7 @@
           },
           "total": {
             "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "Every session of the goal summed, the planner's included."
+            "description": "Every session of the goal summed, the orchestrator's included."
           }
         }
       },
@@ -2803,7 +2809,7 @@
       },
       "MergeStrategy": {
         "type": "string",
-        "description": "How a repository takes the change a task lands on its base branch: the one\nthing about a repository the engineer that finishes a task has to be told,\nsince the commands it runs at the end differ entirely between the two.\n\nWhich forge a published request goes to is *not* here: `origin` says\nwhether it is GitHub or GitLab, and asking the remote at landing time\ncannot go stale the way a second copy of the answer would.",
+        "description": "How a repository takes the change a task lands on its base branch: the one\nthing about a repository the author that finishes a task has to be told,\nsince the commands it runs at the end differ entirely between the two.\n\nWhich forge a published request goes to is *not* here: `origin` says\nwhether it is GitHub or GitLab, and asking the remote at landing time\ncannot go stale the way a second copy of the answer would.",
         "enum": [
           "direct",
           "pull_request"
@@ -2828,7 +2834,7 @@
       },
       "ModelDto": {
         "type": "object",
-        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI\non its own, which is that CLI on its own default model.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything. The rest is what a planner sizes a task from: what this\nmodel is, what it costs and how fast it answers next to every other entry,\nthe work it is and is not the choice for, and what each of its efforts\nbuys.",
+        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI\non its own, which is that CLI on its own default model.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything. The rest is what an orchestrator sizes a task from: what\nthis model is, what it costs and how fast it answers next to every other\nentry, the work it is and is not the choice for, and what each of its\nefforts buys.",
         "required": [
           "id",
           "agent_kind",
@@ -2910,7 +2916,7 @@
       },
       "ModelTier": {
         "type": "string",
-        "description": "Roughly what a model is, as a picker and a planner compare models: the\ncapability class it belongs to, across every agent CLI at once.\n\nOne ladder for the whole catalog, so a claude_code entry and a codex entry\nthat sit at the same rung really are alternatives for the same work.\n`Unknown` is what an entry nothing has been written about says — a model\ndiscovered at runtime, or an agent CLI on whatever model it defaults to —\nand it is a genuine answer rather than a missing one.",
+        "description": "Roughly what a model is, as a picker and an orchestrator compare models: the\ncapability class it belongs to, across every agent CLI at once.\n\nOne ladder for the whole catalog, so a claude_code entry and a codex entry\nthat sit at the same rung really are alternatives for the same work.\n`Unknown` is what an entry nothing has been written about says — a model\ndiscovered at runtime, or an agent CLI on whatever model it defaults to —\nand it is a genuine answer rather than a missing one.",
         "enum": [
           "frontier",
           "strong",
@@ -2940,85 +2946,9 @@
           }
         }
       },
-      "ProfileDto": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "role",
-          "system_prompt",
-          "system_prompt_is_default",
-          "created_at",
-          "updated_at"
-        ],
-        "properties": {
-          "created_at": {
-            "type": "string"
-          },
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The reasoning effort that model is run at, one of the efforts\n`GET /v1/models` lists for it. None = whatever the agent CLI runs it\nat on its own.",
-            "example": "high"
-          },
-          "id": {
-            "type": "string"
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What this profile runs on, `<agent_kind>[:<model>]`: the agent CLI and,\nafter a `:`, the model of it. None = auto: the first installed agent\nCLI (claude_code, then codex, then opencode), resolved at spawn time,\non its own default model.",
-            "example": "claude_code:claude-opus-5"
-          },
-          "name": {
-            "type": "string"
-          },
-          "role": {
-            "$ref": "#/components/schemas/Role"
-          },
-          "system_prompt": {
-            "type": "string",
-            "description": "The system prompt this profile is spawned with: the one set on it, or\nthe default of its role while it has none of its own."
-          },
-          "system_prompt_is_default": {
-            "type": "boolean",
-            "description": "Whether `system_prompt` is that role default rather than a text set on\nthis profile."
-          },
-          "updated_at": {
-            "type": "string"
-          }
-        }
-      },
-      "ProfileUsageDto": {
-        "type": "object",
-        "description": "What one profile spent on a task, named the way a reader addresses it.",
-        "required": [
-          "profile_id",
-          "usage"
-        ],
-        "properties": {
-          "profile_id": {
-            "type": "string"
-          },
-          "profile_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The profile's name; None only if that profile is gone."
-          },
-          "usage": {
-            "$ref": "#/components/schemas/TokenUsageDto"
-          }
-        }
-      },
       "RecordPullRequestRequest": {
         "type": "object",
-        "description": "The engineer reporting the pull or merge request it opened for a task, so\nthe user has somewhere to go and read it: taken off `gh pr create`'s output\nand recorded on the task.",
+        "description": "The author reporting the pull or merge request it opened for a task, so\nthe user has somewhere to go and read it: taken off `gh pr create`'s output\nand recorded on the task.",
         "required": [
           "url"
         ],
@@ -3060,7 +2990,7 @@
           },
           "landing_prompt": {
             "type": "string",
-            "description": "The landing briefing the engineer of an approved task is handed here:\nthe text set on this repository, or the built-in default of its merge\nstrategy while it has none of its own."
+            "description": "The landing briefing the author of an approved task is handed here:\nthe text set on this repository, or the built-in default of its merge\nstrategy while it has none of its own."
           },
           "landing_prompt_is_default": {
             "type": "boolean",
@@ -3100,7 +3030,7 @@
           "id",
           "task_id",
           "round",
-          "reviewer_profile_id",
+          "reviewer_agent_id",
           "verdict",
           "created_at"
         ],
@@ -3117,9 +3047,9 @@
           "id": {
             "type": "string"
           },
-          "reviewer_profile_id": {
+          "reviewer_agent_id": {
             "type": "string",
-            "description": "The reviewer of the round whose verdict this is."
+            "description": "The task agent whose verdict this is."
           },
           "round": {
             "type": "integer",
@@ -3147,42 +3077,12 @@
           "request_changes"
         ]
       },
-      "ReviewerAssignment": {
-        "type": "object",
-        "description": "One reviewer of a task: the profile that reviews, and what it is to run on.\n\nThe model is written `<agent_kind>[:<model>]`: the agent CLI on its own\nruns it on its own default model, an agent with a model after the `:` pins\nboth, and a string naming no agent CLI is refused — nothing here derives\none from the other. Omitted, the slot takes the profile's own model as it\nstands when the slot is assigned.",
-        "required": [
-          "profile"
-        ],
-        "properties": {
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The reasoning effort to run that model at, one of the efforts\n`GET /v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at, and where\n`model` is omitted too, the profile's own effort. Named where `model`\nis omitted, the slot takes the profile's own model at this effort.",
-            "example": "high"
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What this reviewer runs on, `<agent_kind>[:<model>]`; omitted (or\n\"default\") = the profile's own.",
-            "example": "codex:o3"
-          },
-          "profile": {
-            "type": "string",
-            "description": "Reviewer profile id or unique name."
-          }
-        },
-        "additionalProperties": false
-      },
-      "Role": {
+      "Seat": {
         "type": "string",
-        "description": "The role an agent plays in the orchestration.",
+        "description": "Where an agent sits: the orchestrator of a goal, or the author or a\nreviewer of one task.\n\nA seat is a position, not an identity. Every agent below the orchestrator\nis generic, and what it can do comes from the skills it loads; the seat is\nonly what the state machine and the launcher need to know about it.",
         "enum": [
-          "planner",
-          "engineer",
+          "orchestrator",
+          "author",
           "reviewer"
         ]
       },
@@ -3191,8 +3091,7 @@
         "required": [
           "id",
           "goal_id",
-          "role",
-          "profile_id",
+          "seat",
           "agent_kind",
           "tmux_session",
           "status",
@@ -3249,7 +3148,7 @@
               "string",
               "null"
             ],
-            "description": "Agent-internal id: claude session uuid / codex thread id / opencode session id."
+            "description": "Agent-internal id: claude session uuid / codex thread id / opencode\nsession id."
           },
           "last_activity_at": {
             "type": [
@@ -3264,9 +3163,6 @@
             ],
             "description": "Model requested at launch; null = the agent CLI's default."
           },
-          "profile_id": {
-            "type": "string"
-          },
           "review_round": {
             "type": [
               "integer",
@@ -3274,18 +3170,25 @@
             ],
             "format": "int64"
           },
-          "role": {
-            "$ref": "#/components/schemas/Role"
+          "seat": {
+            "$ref": "#/components/schemas/Seat"
           },
           "status": {
             "$ref": "#/components/schemas/SessionStatus"
+          },
+          "task_agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The staffed agent this session runs; None for an orchestrator,\nwhich no task staffs."
           },
           "task_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "None = planner session."
+            "description": "None = orchestrator session."
           },
           "tmux_session": {
             "type": "string"
@@ -3414,9 +3317,102 @@
           "failed"
         ]
       },
+      "SkillDto": {
+        "type": "object",
+        "required": [
+          "name",
+          "summary",
+          "document",
+          "document_is_default",
+          "builtin",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "builtin": {
+            "type": "boolean",
+            "description": "Whether Ariadne ships this skill. A built-in is reset rather than\ndeleted; a skill of the user's own is deleted rather than reset."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "document": {
+            "type": "string",
+            "description": "The whole `SKILL.md`: YAML frontmatter naming the skill and describing\nit, then the body. This is the text set on the skill, or the one\nAriadne ships while a built-in has none of its own."
+          },
+          "document_is_default": {
+            "type": "boolean",
+            "description": "Whether `document` is the shipped text rather than one somebody wrote."
+          },
+          "name": {
+            "type": "string",
+            "description": "Kebab-case; how an agent loads the skill and how a task names it.",
+            "example": "code-review"
+          },
+          "summary": {
+            "type": "string",
+            "description": "The one line the skill says about itself, read off the `description`\nof its frontmatter. It is what an agent sees before it opens the\ndocument, and what a listing shows."
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "TaskAgentDto": {
+        "type": "object",
+        "description": "One agent staffed on a task: where it sits, what it knows, and what it\nruns on.\n\nThe agent has no identity of its own. `seat` says only whether it authors\nthe task or reviews it; the skills are what it can do. What it runs on was\nsized by the orchestrator when it staffed the task, or chosen by the user\nsince — either way it is what this agent runs on, and nothing behind it\nchanges that.",
+        "required": [
+          "id",
+          "seat",
+          "skills"
+        ],
+        "properties": {
+          "brief": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the orchestrator told this agent beyond the task itself. None =\nthe task is the whole of it."
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reasoning effort that model is run at. None = whatever the agent\nCLI runs it at on its own.",
+            "example": "high"
+          },
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this agent runs on, `<agent_kind>[:<model>]`. None = auto: the\nfirst installed CLI, resolved at spawn time, on its own default model.",
+            "example": "codex:o3"
+          },
+          "seat": {
+            "$ref": "#/components/schemas/Seat",
+            "description": "`author` or `reviewer`."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The skills this agent loads, in the order they reach it.",
+            "example": [
+              "coding",
+              "testing"
+            ]
+          }
+        }
+      },
       "TaskBranchDto": {
         "type": "object",
-        "description": "Payload of `task_branch_updated`: where a task's branch points now.\n\nA commit in the engineer's worktree changes nothing in the store, so no\nother event says the task's diff is no longer the one a client fetched.",
+        "description": "Payload of `task_branch_updated`: where a task's branch points now.\n\nA commit in the author's worktree changes nothing in the store, so no\nother event says the task's diff is no longer the one a client fetched.",
         "required": [
           "task_id",
           "goal_id",
@@ -3449,8 +3445,7 @@
           "title",
           "description",
           "status",
-          "engineer_profile_id",
-          "reviewers",
+          "agents",
           "depends_on",
           "branch",
           "review_round",
@@ -3460,6 +3455,13 @@
           "updated_at"
         ],
         "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskAgentDto"
+            },
+            "description": "The agents staffed on the task: the author first, then the reviewers\nin review order. What each one can do is the skills it carries."
+          },
           "branch": {
             "type": "string"
           },
@@ -3476,24 +3478,6 @@
           "description": {
             "type": "string"
           },
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The reasoning effort that model is run at, pinned like `model`. None =\nwhatever the agent CLI runs it at on its own.",
-            "example": "xhigh"
-          },
-          "engineer_profile_id": {
-            "type": "string"
-          },
-          "engineer_profile_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Name of the engineer's profile; None only if that profile is gone."
-          },
           "goal_id": {
             "type": "string"
           },
@@ -3506,34 +3490,19 @@
               "null"
             ]
           },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What the engineer runs on, `<agent_kind>[:<model>]`: the agent CLI and,\nafter a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).\nPinned when the task was created, from the model chosen for it at\ncreation or on an edit or, where none was, from the engineer profile —\nediting the profile afterwards leaves it alone. None = auto: the first\ninstalled CLI, resolved at spawn time, on its own default model.",
-            "example": "claude_code:claude-opus-5"
-          },
-          "planner_profile_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Name of the planner profile of the task's goal, which wrote the task\nwithout being a field of it."
-          },
           "pr_url": {
             "type": [
               "string",
               "null"
             ],
-            "description": "URL of the pull or merge request the task was published as, once its\nengineer has reported one; None for a task landed directly."
+            "description": "URL of the pull or merge request the task was published as, once its\nauthor has reported one; None for a task landed directly."
           },
           "reason": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Why a `failed` or `cancelled` task ended — the engineer's own\n`fail_task` reason, a dependency that never landed, a cancelled goal.\nNone for every other status, and for an ending nobody gave a reason\nfor."
+            "description": "Why a `failed` or `cancelled` task ended — the author's own\n`fail_task` reason, a dependency that never landed, a cancelled goal.\nNone for every other status, and for an ending nobody gave a reason\nfor."
           },
           "repo_id": {
             "type": "string",
@@ -3542,13 +3511,6 @@
           "review_round": {
             "type": "integer",
             "format": "int64"
-          },
-          "reviewers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskReviewerDto"
-            },
-            "description": "Reviewer slots in planner-assigned order, each carrying its own pin."
           },
           "stalled": {
             "type": "boolean",
@@ -3575,41 +3537,6 @@
           }
         }
       },
-      "TaskReviewerDto": {
-        "type": "object",
-        "description": "One reviewer slot of a task: which profile reviews it, and what that\nreviewer was pinned to run on when the slot was assigned — the profile's\nown model, or the one chosen for the slot. Pinned the same way the engineer\nis, and read the same way: what a reviewer of this task runs on, not what\nits profile says today.",
-        "required": [
-          "profile_id"
-        ],
-        "properties": {
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The reasoning effort that model is run at, pinned like `model`. None =\nwhatever the agent CLI runs it at on its own.",
-            "example": "high"
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What this reviewer runs on, `<agent_kind>[:<model>]`. None = auto: the\nfirst installed CLI, resolved at spawn time, on its own default model.",
-            "example": "codex:o3"
-          },
-          "profile_id": {
-            "type": "string"
-          },
-          "profile_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Name of the reviewer's profile; None\nonly if that profile is gone."
-          }
-        }
-      },
       "TaskStatus": {
         "type": "string",
         "description": "Task lifecycle status.",
@@ -3620,7 +3547,7 @@
           "under_review",
           "changes_requested",
           "approved",
-          "merged",
+          "finished",
           "cancelled",
           "failed"
         ]
@@ -3683,27 +3610,27 @@
       },
       "TaskUsageDto": {
         "type": "object",
-        "description": "What a task cost, by who spent it: its engineer, its reviewers one entry\neach, and the total of every session on the task.",
+        "description": "What a task cost, by who spent it: its author, its reviewers one entry\neach, and the total of every session on the task.",
         "required": [
           "total",
-          "engineer",
+          "author",
           "reviewers"
         ],
         "properties": {
-          "engineer": {
+          "author": {
             "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "The engineer's own, across every run of it."
+            "description": "The author's own, across every run of it."
           },
           "reviewers": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ProfileUsageDto"
+              "$ref": "#/components/schemas/AgentUsageDto"
             },
-            "description": "One entry per reviewer profile that has a session on the task, every\nreview round of it summed, ordered like `reviewers`. A reviewer whose\nsession has yet to report anything is listed with zeros; one that has\nnever been spawned is not listed at all."
+            "description": "One entry per reviewer that has a session on the task, every review\nround of it summed, in review order. A reviewer whose session has yet\nto report anything is listed with zeros; one that has never been\nspawned is not listed at all."
           },
           "total": {
             "$ref": "#/components/schemas/TokenUsageDto",
-            "description": "Every session on the task summed, whatever its role."
+            "description": "Every session on the task summed, whatever its seat."
           }
         }
       },
@@ -3747,7 +3674,7 @@
               "string",
               "null"
             ],
-            "description": "Required when `to` is `merged`."
+            "description": "Required when `to` is `finished`."
           },
           "reason": {
             "type": [
@@ -3773,42 +3700,6 @@
             "items": {
               "type": "string"
             }
-          }
-        },
-        "additionalProperties": false
-      },
-      "UpdateProfileRequest": {
-        "type": "object",
-        "description": "Partial update; absent fields stay unchanged.",
-        "properties": {
-          "effort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The reasoning effort to run the model at: absent leaves it alone,\n\"default\" (or the empty string) puts it back on whatever the agent CLI\nruns the model at, and anything else is checked against the model it\nwill run at — the one this request names, or the profile's own where it\nnames none — and refused where that model does not take it. A `model`\nwritten without an effort runs at the CLI's own default: the effort\nbelonged to the model that was left behind.",
-            "example": "high"
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What this profile runs on, `<agent_kind>[:<model>]`, or \"default\" (or\nthe empty string) to clear it back to auto — the first installed CLI at\nspawn time, on its own default model. Absent = unchanged.",
-            "example": "codex:gpt-5.3-codex"
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "system_prompt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "New system prompt. Absent = unchanged; putting it back on the role\ndefault is `POST /v1/profiles/{id}/system-prompt/reset`."
           }
         },
         "additionalProperties": false
@@ -3856,6 +3747,20 @@
         },
         "additionalProperties": false
       },
+      "UpdateSkillRequest": {
+        "type": "object",
+        "description": "Partial update; absent fields stay unchanged.",
+        "properties": {
+          "document": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The new document. Absent = unchanged; putting a built-in back on the\ntext Ariadne ships is `POST /v1/skills/{name}/document/reset`."
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateTaskRequest": {
         "type": "object",
         "description": "Partial update; only allowed while the task is pending/ready.",
@@ -3888,7 +3793,7 @@
               "string",
               "null"
             ],
-            "description": "What the engineer runs on, `<agent_kind>[:<model>]`: absent leaves the\ntask's pins alone, \"default\" (or the empty string) puts them back on\nthe engineer profile's own model as it stands now, and anything else\npins what it spells. The same clearing word\n[`crate::profiles::UpdateProfileRequest::model`] takes.",
+            "description": "What the author runs on, `<agent_kind>[:<model>]`: absent leaves the\nauthor's pins alone, \"default\" (or the empty string) puts them back on\nauto, and anything else pins what it spells.",
             "example": "codex:gpt-5.3-codex"
           },
           "reviewers": {
@@ -3897,9 +3802,9 @@
               "null"
             ],
             "items": {
-              "$ref": "#/components/schemas/ReviewerAssignment"
+              "$ref": "#/components/schemas/AgentAssignment"
             },
-            "description": "The whole reviewer list, replaced: each slot is cut afresh and pinned\nto the model it names or, where it names none, to its profile's."
+            "description": "The whole reviewer list, replaced: every reviewer is staffed afresh,\nwith the skills and the model it names."
           },
           "title": {
             "type": [
@@ -3940,8 +3845,8 @@
       "description": "Per-agent-CLI launch configuration"
     },
     {
-      "name": "profiles",
-      "description": "Agent profiles (role + system prompt + agent CLI)"
+      "name": "skills",
+      "description": "The documents an agent loads to do one kind of work"
     },
     {
       "name": "repositories",

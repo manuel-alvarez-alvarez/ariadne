@@ -25,7 +25,7 @@ interface GoalStatusMeta {
    * carries dark mode, so the tint is never a light one left on a dark screen.
    *
    * The steps are the goal's counterparts of the task ones: planning is the
-   * planner's violet, an active goal is the accent, completed is done.
+   * orchestrator's violet, an active goal is the accent, completed is done.
    */
   badge: string
 }
@@ -50,7 +50,7 @@ export const GOAL_STATUS_META: Record<GoalStatus, GoalStatusMeta> = {
 }
 
 /**
- * Whether the planner is still writing the plan — its tasks are held back
+ * Whether the orchestrator is still writing the plan — its tasks are held back
  * until it finalizes it, whether they are `pending` or `ready`, and the board
  * keeps them all in its first column to say so.
  */

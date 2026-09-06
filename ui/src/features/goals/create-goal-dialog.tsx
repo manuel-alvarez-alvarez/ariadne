@@ -7,10 +7,10 @@
  * them, not on every form that needs one. With none registered the field is an
  * empty state pointing there.
  *
- * What the planner runs on is one choice made in one control: a model, written
+ * What the orchestrator runs on is one choice made in one control: a model, written
  * `<agent_kind>[:<model>]` — the agent CLI and, after a `:`, the model of it —
  * and the effort that model is run at. Nothing pinned carries a meaning of its
- * own, the planner on its profile's own, so it is left out of the request
+ * own, the orchestrator on its profile's own, so it is left out of the request
  * rather than sent empty.
  *
  * Everything else the daemon still validates: the client only catches what it
@@ -20,7 +20,6 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useMemo } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
@@ -36,20 +35,19 @@ import {
   useClearErrorOnEdit,
   useResetOnOpen,
 } from "@/components/form-dialog"
-import { FormSelect, profilePlaceholder } from "@/components/form-select"
 import { MarkdownField } from "@/components/markdown-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { modelRefField, pinLabel } from "@/features/profiles/model-ref"
-import { PinPicker } from "@/features/profiles/pin-picker"
-import { modelsQueryOptions } from "@/features/profiles/queries"
+import { modelRefField } from "@/features/models/model-ref"
+import { PinPicker } from "@/features/models/pin-picker"
+import { modelsQueryOptions } from "@/features/models/queries"
 import { NoRepositories as SharedNoRepositories } from "@/features/repositories/no-repositories"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { paths } from "@/routes/paths"
 
-import { plannerProfilesQueryOptions, useCreateGoal } from "./queries"
+import { useCreateGoal } from "./queries"
 import { RepositoryCombobox } from "./repository-combobox"
 
 /** Optional positive integer, kept as the string the input holds. */
@@ -65,7 +63,6 @@ function optionalCount(label: string) {
 const formSchema = z.object({
   title: z.string().trim().min(1, "Give the goal a title."),
   description: z.string(),
-  planner_profile: z.string().min(1, "Choose a planner profile."),
   // Free text: the catalog only suggests, and a model it does not carry is
   // handed to the CLI named before the `:` as typed.
   model: modelRefField(),
@@ -82,7 +79,6 @@ type CreateGoalForm = z.infer<typeof formSchema>
 const DEFAULT_VALUES: CreateGoalForm = {
   title: "",
   description: "",
-  planner_profile: "",
   model: "",
   effort: "",
   required_approvals: "1",
@@ -99,7 +95,6 @@ export function CreateGoalDialog({
   onOpenChange: (open: boolean) => void
   onCreated?: (goal: GoalDto) => void
 }) {
-  const planners = useQuery({ ...plannerProfilesQueryOptions(), enabled: open })
   const repositories = useQuery({ ...repositoriesQueryOptions(), enabled: open })
   const models = useQuery({ ...modelsQueryOptions(), enabled: open })
   const createGoal = useCreateGoal()
@@ -113,24 +108,9 @@ export function CreateGoalDialog({
   useResetOnOpen(open, form, DEFAULT_VALUES, createGoal)
   useClearErrorOnEdit(form, createGoal)
 
-  // The daemon's own default is the built-in "Planner" profile; match it so the
-  // common case is one click.
-  const plannerOptions = planners.data
-  const plannerItems = useMemo(
-    () => (plannerOptions ?? []).map((profile) => ({ label: profile.name, value: profile.id })),
-    [plannerOptions],
-  )
-  const selectedPlanner = form.watch("planner_profile")
-  const plannerProfile = plannerOptions?.find((profile) => profile.id === selectedPlanner)
-  // The effort the planner is pinned at, which the picker holds beside the
-  // model: one control, two fields.
+  // The effort the orchestrator is pinned at, which the picker holds beside
+  // the model: one control, two fields.
   const chosenEffort = form.watch("effort")
-  useEffect(() => {
-    if (!open || !plannerOptions?.length || selectedPlanner) return
-    const preferred =
-      plannerOptions.find((profile) => profile.name === "Planner") ?? plannerOptions[0]
-    if (preferred) form.setValue("planner_profile", preferred.id)
-  }, [open, plannerOptions, selectedPlanner, form.setValue])
 
   async function onSubmit(values: CreateGoalForm) {
     const model = values.model.trim()
@@ -138,8 +118,7 @@ export function CreateGoalDialog({
     const body: CreateGoalRequest = {
       title: values.title.trim(),
       description: values.description,
-      planner_profile: values.planner_profile,
-      // No field at all where a box was left empty: that is the planner on its
+      // No field at all where a box was left empty: that is the orchestrator on its
       // profile's own model, at its profile's own effort.
       ...(model.length > 0 ? { model } : {}),
       ...(effort.length > 0 ? { effort } : {}),
@@ -162,7 +141,7 @@ export function CreateGoalDialog({
       <FormDialogContent
         className="sm:max-w-2xl"
         title="New goal"
-        description="The planner reads the description, then proposes the tasks in the goal thread."
+        description="The orchestrator reads the description, then proposes the tasks in the goal thread."
         onSubmit={form.handleSubmit(onSubmit)}
         error={
           ApiError.is(createGoal.error)
@@ -192,8 +171,8 @@ export function CreateGoalDialog({
               <MarkdownField
                 id="goal-description"
                 label="Description"
-                description="Markdown. This is the planner's brief."
-                placeholder="What should be achieved, and anything the planner needs to know."
+                description="Markdown. This is the orchestrator's brief."
+                placeholder="What should be achieved, and anything the orchestrator needs to know."
                 value={field.value}
                 onChange={field.onChange}
                 onBlur={field.onBlur}
@@ -232,28 +211,15 @@ export function CreateGoalDialog({
                   />
                 )}
                 <FieldDescription>
-                  The checkouts the planner splits this goal across. Task worktrees are branched off
-                  each one's base branch.
+                  The checkouts the orchestrator splits this goal across. Task worktrees are
+                  branched off each one's base branch.
                 </FieldDescription>
                 <FieldError>{errors.repository_ids?.message}</FieldError>
               </Field>
             )}
           />
 
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field data-invalid={errors.planner_profile ? "" : undefined}>
-              <FieldLabel htmlFor="goal-planner">Planner profile</FieldLabel>
-              <FormSelect
-                control={form.control}
-                name="planner_profile"
-                id="goal-planner"
-                options={plannerItems}
-                disabled={!plannerOptions?.length}
-                placeholder={profilePlaceholder(planners, "planner")}
-              />
-              <FieldError>{errors.planner_profile?.message}</FieldError>
-            </Field>
-
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field data-invalid={errors.required_approvals ? "" : undefined}>
               <FieldLabel htmlFor="goal-approvals">Approvals</FieldLabel>
               <Input
@@ -281,14 +247,14 @@ export function CreateGoalDialog({
           </div>
 
           <Field data-invalid={errors.model ? "" : undefined}>
-            <FieldLabel htmlFor="goal-pin">Planner runs on</FieldLabel>
+            <FieldLabel htmlFor="goal-pin">Orchestrator runs on</FieldLabel>
             <Controller
               control={form.control}
               name="model"
               render={({ field }) => (
                 <PinPicker
                   id="goal-pin"
-                  label="Planner runs on"
+                  label="Orchestrator runs on"
                   model={field.value}
                   effort={chosenEffort}
                   onChange={(pin) => {
@@ -296,15 +262,8 @@ export function CreateGoalDialog({
                     form.setValue("effort", pin.effort, { shouldDirty: true })
                   }}
                   models={models.data}
-                  fallback={
-                    plannerProfile
-                      ? {
-                          model: plannerProfile.model ?? null,
-                          effort: plannerProfile.effort ?? null,
-                        }
-                      : null
-                  }
                   invalid={errors.model ? true : undefined}
+                  unpinnedLabel="auto — first installed CLI, on its own default model"
                 />
               )}
             />
@@ -312,8 +271,8 @@ export function CreateGoalDialog({
               <FieldError>{errors.model.message}</FieldError>
             ) : (
               <FieldDescription>
-                Nothing pinned runs the planner on its profile's own:{" "}
-                {pinLabel(plannerProfile?.model, plannerProfile?.effort)}.
+                The agent CLI and, after a <code>:</code>, the model of it. Empty is auto: the first
+                installed CLI, on its own default model.
               </FieldDescription>
             )}
           </Field>

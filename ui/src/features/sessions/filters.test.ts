@@ -12,8 +12,8 @@ import {
 } from "./filters"
 
 /** What the screen was last left with; a test only spells the part it is about. */
-function remembered(overrides: Partial<Record<"status" | "role" | "goal" | "task", string>> = {}) {
-  return { status: "", role: "", goal: "", task: "", ...overrides }
+function remembered(overrides: Partial<Record<"status" | "seat" | "goal" | "task", string>> = {}) {
+  return { status: "", seat: "", goal: "", task: "", ...overrides }
 }
 
 describe("readStatusFilter", () => {
@@ -30,21 +30,21 @@ describe("readStatusFilter", () => {
 })
 
 describe("readRoleFilter", () => {
-  it("reads a role the daemon defines", () => {
-    expect(readRoleFilter(new URLSearchParams("role=engineer"))).toBe("engineer")
+  it("reads a seat the daemon defines", () => {
+    expect(readRoleFilter(new URLSearchParams("seat=author"))).toBe("author")
   })
 
-  it("falls back to no filter for a missing or unknown role", () => {
+  it("falls back to no filter for a missing or unknown seat", () => {
     expect(readRoleFilter(new URLSearchParams(""))).toBeNull()
-    expect(readRoleFilter(new URLSearchParams("role=nobody"))).toBeNull()
+    expect(readRoleFilter(new URLSearchParams("seat=nobody"))).toBeNull()
   })
 })
 
 describe("withFilter", () => {
   it("sets one filter and keeps every other param", () => {
-    const next = withFilter(new URLSearchParams("session=s1&role=planner"), "status", "failed")
+    const next = withFilter(new URLSearchParams("session=s1&seat=orchestrator"), "status", "failed")
     expect(next.get("session")).toBe("s1")
-    expect(next.get("role")).toBe("planner")
+    expect(next.get("seat")).toBe("orchestrator")
     expect(next.get("status")).toBe("failed")
   })
 
@@ -61,11 +61,11 @@ describe("restoreSessionFilters", () => {
       new URLSearchParams(""),
       remembered({
         status: "live",
-        role: "engineer",
+        seat: "author",
       }),
     )
     expect(next?.get("status")).toBe("live")
-    expect(next?.get("role")).toBe("engineer")
+    expect(next?.get("seat")).toBe("author")
   })
 
   it("keeps a panel the entry was opened on", () => {
@@ -79,8 +79,8 @@ describe("restoreSessionFilters", () => {
 
   it("leaves an explicit filter alone, whatever is remembered", () => {
     const next = restoreSessionFilters(
-      new URLSearchParams("status=failed&role=planner"),
-      remembered({ status: "live", role: "engineer" }),
+      new URLSearchParams("status=failed&seat=orchestrator"),
+      remembered({ status: "live", seat: "author" }),
     )
     expect(next).toBeNull()
   })
@@ -88,8 +88,8 @@ describe("restoreSessionFilters", () => {
   it("leaves an explicitly empty filter alone", () => {
     expect(
       restoreSessionFilters(
-        new URLSearchParams("status=&role="),
-        remembered({ status: "live", role: "engineer" }),
+        new URLSearchParams("status=&seat="),
+        remembered({ status: "live", seat: "author" }),
       ),
     ).toBeNull()
   })
@@ -97,10 +97,10 @@ describe("restoreSessionFilters", () => {
   it("restores each filter on its own", () => {
     const next = restoreSessionFilters(
       new URLSearchParams("status=failed"),
-      remembered({ status: "live", role: "engineer" }),
+      remembered({ status: "live", seat: "author" }),
     )
     expect(next?.get("status")).toBe("failed")
-    expect(next?.get("role")).toBe("engineer")
+    expect(next?.get("seat")).toBe("author")
   })
 
   it("restores nothing when both filters were cleared", () => {
@@ -111,7 +111,7 @@ describe("restoreSessionFilters", () => {
     expect(
       restoreSessionFilters(
         new URLSearchParams(""),
-        remembered({ status: "nonsense", role: "nobody" }),
+        remembered({ status: "nonsense", seat: "nobody" }),
       ),
     ).toBeNull()
   })

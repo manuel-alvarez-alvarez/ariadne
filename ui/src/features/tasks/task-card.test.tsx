@@ -49,7 +49,6 @@ const TASK: TaskDto = aTask({
   status: "changes_requested",
   branch: "make-the-hints-reachable-000001",
   depends_on: ["01JTASK0000000000000000002"],
-  engineer_profile_id: "01JPROF0000000000000000ENG",
   review_round: 2,
   stalled: true,
   goal_id: "01JGOAL0000000000000000001",
@@ -79,7 +78,12 @@ function card(): HTMLElement {
  * stall and a blocked agent — so a stop count taken on it is a stop count for
  * every card.
  */
-const LOADED: TaskDto = { ...TASK, model: "codex:gpt-5.3-codex" }
+const LOADED: TaskDto = {
+  ...TASK,
+  agents: [
+    { id: "01AGENTAUTHOR", seat: "author", skills: ["coding"], model: "codex:gpt-5.3-codex" },
+  ],
+}
 
 /** What the link says about itself past its own text: its `aria-describedby`. */
 function description(): string {
@@ -177,7 +181,18 @@ it("keeps its timestamp true as the clock moves", () => {
  * narrow cards ended up with pills painted across their own borders.
  */
 it("says nothing about what the task runs on, however it is pinned", () => {
-  mountCard(undefined, { ...TASK, model: "claude_code:claude-fable-5", effort: "high" })
+  mountCard(undefined, {
+    ...TASK,
+    agents: [
+      {
+        id: "01AGENTAUTHOR",
+        seat: "author",
+        skills: ["coding"],
+        model: "claude_code:claude-fable-5",
+        effort: "high",
+      },
+    ],
+  })
 
   expect(screen.queryByText(/claude-fable-5/)).toBeNull()
   expect(description()).not.toContain("overrides")

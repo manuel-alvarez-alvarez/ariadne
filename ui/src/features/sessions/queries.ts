@@ -25,8 +25,8 @@ import {
   cacheRow,
   optimisticStatus,
   qk,
-  type Role,
   restoreCache,
+  type Seat,
   type SessionDto,
   type SessionStatus,
   unwrap,
@@ -41,14 +41,14 @@ export interface SessionListFilters {
   task?: string
   status?: SessionStatus
   /**
-   * Applied here rather than by the daemon: `GET /v1/sessions` takes no role.
+   * Applied here rather than by the daemon: `GET /v1/sessions` takes no seat.
    * The request — and so the cache entry — is the same one an unfiltered list
-   * makes, and the role is a per-observer `select` over it.
+   * makes, and the seat is a per-observer `select` over it.
    */
-  role?: Role
+  seat?: Seat
   /**
    * Only the sessions with a pane that may still produce output. Client-side
-   * for the same reason the role is, and for one more: the daemon's filter
+   * for the same reason the seat is, and for one more: the daemon's filter
    * takes *one* status, and being live is three of them (see
    * {@link isLiveStatus}). Set alongside `status` it would only narrow it
    * further, so the two are never used together.
@@ -64,16 +64,16 @@ export interface SessionListFilters {
   attention?: boolean
 }
 
-export function sessionsQueryOptions({ role, live, attention, ...query }: SessionListFilters = {}) {
+export function sessionsQueryOptions({ seat, live, attention, ...query }: SessionListFilters = {}) {
   const narrowed = (session: SessionDto) =>
-    (!role || session.role === role) &&
+    (!seat || session.seat === seat) &&
     (!live || isLiveStatus(session.status)) &&
     (!attention || sessionAttention(session) !== null)
   return queryOptions({
     queryKey: qk.sessions.list(query),
     queryFn: () => unwrap(api().GET("/v1/sessions", { params: { query } })),
     select:
-      role || live || attention ? (sessions: SessionDto[]) => sessions.filter(narrowed) : undefined,
+      seat || live || attention ? (sessions: SessionDto[]) => sessions.filter(narrowed) : undefined,
   })
 }
 

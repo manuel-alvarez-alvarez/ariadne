@@ -32,10 +32,10 @@ describe("taskPanelTo", () => {
 
 describe("sessionPanelFrom", () => {
   it("keeps the filters of the screen it opens over", () => {
-    const to = sessionPanelFrom(OVER, new URLSearchParams("status=failed&role=reviewer"), "s1")
+    const to = sessionPanelFrom(OVER, new URLSearchParams("status=failed&seat=reviewer"), "s1")
     const params = new URLSearchParams(to.search)
     expect(params.get("status")).toBe("failed")
-    expect(params.get("role")).toBe("reviewer")
+    expect(params.get("seat")).toBe("reviewer")
     expect(params.get("session")).toBe("s1")
   })
 
@@ -89,14 +89,14 @@ describe("taskSessionPanelFrom", () => {
   it("opens the task's panel on the session, keeping the screen's filters", () => {
     const to = taskSessionPanelFrom(
       OVER,
-      new URLSearchParams("status=failed&role=reviewer"),
+      new URLSearchParams("status=failed&seat=reviewer"),
       "t1",
       "s1",
     )
     const params = new URLSearchParams(to.search)
     expect(to.pathname).toBeUndefined()
     expect(params.get("status")).toBe("failed")
-    expect(params.get("role")).toBe("reviewer")
+    expect(params.get("seat")).toBe("reviewer")
     expect(params.get("task")).toBe("t1")
     expect(params.get("tab")).toBe("sessions")
     expect(params.get("session")).toBe("s1")

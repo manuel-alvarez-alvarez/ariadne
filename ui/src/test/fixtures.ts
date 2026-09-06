@@ -18,9 +18,9 @@ import type {
   GoalDto,
   MergeStrategyDto,
   ModelDto,
-  ProfileDto,
   RepositoryDto,
   SessionDto,
+  SkillDto,
   TaskDto,
 } from "@/api"
 
@@ -30,7 +30,8 @@ const STAMP = "2026-01-01T00:00:00Z"
 const GOAL_ID = "01JGOAL0000000000000000001"
 const TASK_ID = "01JTASK0000000000000000001"
 const SESSION_ID = "01JSESS0000000000000000001"
-const PROFILE_ID = "01JPROF00000000000000ENGI"
+const AUTHOR_ID = "01JAGENT0000000000000AUTH"
+const REVIEWER_ID = "01JAGENT0000000000000REVW"
 const REPO_ID = "01JREPO0000000000000000001"
 
 /** A row nobody has reported tokens for, which is how every fixture starts. */
@@ -41,14 +42,13 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     id: GOAL_ID,
     title: "Ship the board",
     description: "",
-    planner_profile_id: "01JPROF00000000000000PLAN",
     repos: [],
     required_approvals: 1,
     status: "active",
     usage: {
       total: NO_TOKENS,
-      planner: NO_TOKENS,
-      engineers: NO_TOKENS,
+      orchestrator: NO_TOKENS,
+      authors: NO_TOKENS,
       reviewers: NO_TOKENS,
     },
     created_at: STAMP,
@@ -67,11 +67,13 @@ export function aTask(overrides: Partial<TaskDto> = {}): TaskDto {
     branch: "wire-the-sessions-screen-000001",
     repo_id: REPO_ID,
     stalled: false,
-    engineer_profile_id: PROFILE_ID,
-    reviewers: [],
+    agents: [
+      { id: AUTHOR_ID, seat: "author", skills: ["coding"] },
+      { id: REVIEWER_ID, seat: "reviewer", skills: ["code-review"] },
+    ],
     depends_on: [],
     review_round: 0,
-    usage: { total: NO_TOKENS, engineer: NO_TOKENS, reviewers: [] },
+    usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [] },
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,
@@ -84,8 +86,8 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     id,
     goal_id: GOAL_ID,
     task_id: TASK_ID,
-    role: "engineer",
-    profile_id: PROFILE_ID,
+    seat: "author",
+    task_agent_id: AUTHOR_ID,
     agent_kind: "claude_code",
     model: null,
     internal_session_id: null,
@@ -103,14 +105,13 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
   }
 }
 
-export function aProfile(overrides: Partial<ProfileDto> = {}): ProfileDto {
+export function aSkill(overrides: Partial<SkillDto> = {}): SkillDto {
   return {
-    id: PROFILE_ID,
-    name: "Engineer",
-    role: "engineer",
-    model: null,
-    system_prompt: "",
-    system_prompt_is_default: false,
+    name: "coding",
+    summary: "Implement a task from its specification.",
+    document: "---\nname: coding\ndescription: Implement a task from its specification.\n---\n",
+    document_is_default: true,
+    builtin: true,
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,

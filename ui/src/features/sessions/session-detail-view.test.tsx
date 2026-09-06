@@ -17,7 +17,7 @@
  * has to read as the terminal rather than as nothing.
  *
  * And two things a session says about itself that are neither: what it runs
- * on, which is the tail of the Profile fact and no longer a Model row saying
+ * on, which is the tail of the Agent fact and no longer a Model row saying
  * the same thing again — including the `auto` a session launched without one
  * reads as, which means the agent CLI chose and is a fact rather than a blank —
  * and what it has spent, which is zero rather than blank for an agent that has
@@ -32,8 +32,8 @@ import userEvent from "@testing-library/user-event"
 import { useLocation } from "react-router-dom"
 import { beforeEach, expect, it, vi } from "vitest"
 
-import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
-import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
+import type { GoalDto, SessionDto, TaskDto } from "@/api"
+import { aGoal, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { SessionDetailView } from "./session-detail-view"
 
@@ -42,15 +42,7 @@ const GOAL: GoalDto = aGoal()
 const TASK: TaskDto = aTask({
   title: "Wire the tabs",
   branch: "wire-the-tabs-000001",
-  engineer_profile_id: "01JPROF0000000000000000ENG",
   goal_id: GOAL.id,
-})
-
-/** Pinned to a model of its own, which the session below did not launch with. */
-const PROFILE: ProfileDto = aProfile({
-  id: TASK.engineer_profile_id,
-  name: "engineer-default",
-  model: "claude_code:claude-sonnet-5",
 })
 
 const SESSION: SessionDto = aSession({
@@ -61,7 +53,7 @@ const SESSION: SessionDto = aSession({
   last_activity_at: "2026-01-01T00:10:00Z",
   goal_id: GOAL.id,
   task_id: TASK.id,
-  profile_id: PROFILE.id,
+  task_agent_id: "01JAGENT0000000000000AUTH",
   tmux_session: "ariadne-01JSESS0000000000000000001",
 })
 
@@ -104,9 +96,7 @@ beforeEach(() => {
       ? GOAL
       : url.pathname.startsWith("/v1/tasks")
         ? TASK
-        : url.pathname.startsWith("/v1/profiles")
-          ? [PROFILE]
-          : []
+        : []
     return Promise.resolve(jsonResponse(body))
   })
   vi.stubGlobal("EventSource", StubEventSource)
@@ -211,8 +201,8 @@ it("shows the model the session was launched with, once", async () => {
   // The profile has `claude_code:claude-sonnet-5` pinned today; what this agent
   // runs is the snapshot taken when it started, not the profile as edited
   // since — and the fact spells that snapshot's two fields as one id.
-  await waitFor(() => expect(detail("Profile")).toContain("engineer-default"))
-  expect(detail("Profile")).toContain("claude_code:claude-opus-5 @ xhigh")
+  await waitFor(() => expect(detail("Agent")).toContain("Author"))
+  expect(detail("Agent")).toContain("claude_code:claude-opus-5 @ xhigh")
   // And it says it once: a Model row under this one carried the same tail with
   // the agent CLI taken off it.
   expect(screen.queryByText("Model")).toBeNull()
@@ -223,8 +213,8 @@ it("names the agent CLI's own choice where no model was recorded", async () => {
 
   // `claude_code` on its own is that CLI on its own default model, which is
   // what the session was launched with — not the profile's pin.
-  await waitFor(() => expect(detail("Profile")).toContain("claude_code"))
-  expect(detail("Profile")).not.toContain("claude-sonnet-5")
+  await waitFor(() => expect(detail("Agent")).toContain("claude_code"))
+  expect(detail("Agent")).not.toContain("claude-sonnet-5")
 })
 
 it("shows what the session's agent has spent, as the pair it is", () => {

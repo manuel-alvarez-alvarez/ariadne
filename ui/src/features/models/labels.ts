@@ -12,11 +12,11 @@
  * read too.
  */
 
-import type { AgentKind, Role } from "@/api"
-import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/format"
+import type { AgentKind, Seat } from "@/api"
+import { AGENT_KIND_LABELS, SEAT_LABELS } from "@/lib/format"
 
 /** Roles, in the order the orchestration runs them. */
-export const ROLES = ["planner", "engineer", "reviewer"] as const satisfies readonly Role[]
+export const ROLES = ["orchestrator", "author", "reviewer"] as const satisfies readonly Seat[]
 
 /** Agent CLIs, in the order the daemon probes them when resolving `auto`. */
 export const AGENT_KINDS = [
@@ -27,8 +27,8 @@ export const AGENT_KINDS = [
 
 /** Shown where a profile has no agent kind pinned. */
 const AUTO_AGENT_LABEL = "auto"
-export function roleLabel(role: Role): string {
-  return ROLE_LABELS[role]
+export function roleLabel(seat: Seat): string {
+  return SEAT_LABELS[seat]
 }
 
 export function agentKindLabel(kind: AgentKind | null | undefined): string {

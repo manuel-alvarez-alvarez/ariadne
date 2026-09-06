@@ -24,7 +24,7 @@
  * The last two are about the panel fitting in 48rem: its header keeps the
  * actions on the title row whatever the status offers, and its sessions tab is
  * the folded four-column table rather than the screen's seven — the id on the
- * role's own line, and what the session spent behind its last activity.
+ * seat's own line, and what the session spent behind its last activity.
  *
  * Everything is seeded into the query cache: what the daemon returns is
  * `queries.ts`'s story, and the tabs are `task-panel.tsx`'s own.
@@ -34,49 +34,11 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
-import { type ProfileDto, qk, type ReviewDto, type SessionDto, type TaskDto } from "@/api"
+import { qk, type ReviewDto, type SessionDto, type TaskDto } from "@/api"
 import { shortId } from "@/lib/format"
 import { aSession } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
-
-const ENGINEER = "01JPROF0000000000000000ENG"
-const STRICT = "01JPROF0000000000000STRICT"
-const AUTO = "01JPROF00000000000000AUTO"
-
-/** Every profile as it stands *today* — all three edited since the task. */
-const PROFILES: ProfileDto[] = [
-  {
-    id: ENGINEER,
-    name: "Builder",
-    role: "engineer",
-    model: "opencode:grok-4",
-    system_prompt: "",
-    system_prompt_is_default: false,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-  },
-  {
-    id: STRICT,
-    name: "Strict",
-    role: "reviewer",
-    model: "opencode:grok-4",
-    system_prompt: "",
-    system_prompt_is_default: false,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-  },
-  {
-    id: AUTO,
-    name: "Second",
-    role: "reviewer",
-    model: "opencode:grok-4",
-    system_prompt: "",
-    system_prompt_is_default: false,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-  },
-]
 
 const TASK: TaskDto = {
   id: "01JTASK0000000000000000001",
@@ -87,26 +49,36 @@ const TASK: TaskDto = {
   status: "in_progress",
   branch: "surface-the-pins-000001",
   depends_on: [],
-  engineer_profile_id: ENGINEER,
-  model: "codex:gpt-5",
-  effort: "xhigh",
-  reviewers: [
-    { profile_id: STRICT, model: "claude_code:claude-sonnet-5", effort: "high" },
-    // Assigned with no model at all: the agent CLI is resolved at spawn time
+  agents: [
+    {
+      id: "01AGENTAUTHOR",
+      seat: "author",
+      skills: ["coding"],
+      model: "codex:gpt-5",
+      effort: "xhigh",
+    },
+    {
+      id: "01AGENTSTRICT",
+      seat: "reviewer",
+      skills: ["code-review"],
+      model: "claude_code:claude-sonnet-5",
+      effort: "high",
+    },
+    // Staffed with no model at all: the agent CLI is resolved at spawn time
     // and it takes that CLI's default. A pin like any other.
-    { profile_id: AUTO, model: null },
+    { id: "01AGENTAUTO", seat: "reviewer", skills: ["security-review"] },
   ],
   review_round: 0,
   stalled: false,
   usage: {
     total: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
-    engineer: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },
+    author: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },
     // Only the reviewer that has actually been spawned: the second slot has
     // never run, and the daemon lists no row for it.
     reviewers: [
       {
-        profile_id: STRICT,
-        profile_name: "Strict",
+        agent_id: "01AGENTSTRICT",
+        skills: ["code-review"],
         usage: { input_tokens: 234_567, cached_input_tokens: 200_000, output_tokens: 5_300 },
       },
     ],
@@ -120,7 +92,7 @@ const SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000ENG",
   task_id: TASK.id,
   goal_id: TASK.goal_id,
-  profile_id: ENGINEER,
+  task_agent_id: "01AGENTAUTHOR",
   usage: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },
 })
 
@@ -128,7 +100,6 @@ function mount(task: TaskDto = TASK) {
   return renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
     seed: (client) => {
       client.setQueryData(qk.tasks.detail(task.id), task)
-      client.setQueryData(qk.profiles.list({}), PROFILES)
     },
   })
 }
@@ -139,10 +110,10 @@ function tab(name: RegExp | string): HTMLElement {
 }
 
 /** Two verdicts in one round: what the Reviews tab lists, and so what it counts. */
-const REVIEWS: ReviewDto[] = [STRICT, AUTO].map((reviewer, index) => ({
+const REVIEWS: ReviewDto[] = ["01AGENTSTRICT", "01AGENTAUTO"].map((reviewer, index) => ({
   id: `01JREVW00000000000000000${index}`,
   task_id: TASK.id,
-  reviewer_profile_id: reviewer,
+  reviewer_agent_id: reviewer,
   round: 0,
   verdict: "approve",
   created_at: "2026-01-01T00:00:00Z",
@@ -204,39 +175,43 @@ async function hint(label: string): Promise<HTMLElement> {
   return popup
 }
 
-it("shows the engineer's pin, not what its profile says today", () => {
+it("shows the author's pin as it was staffed", () => {
   mount()
 
-  expect(fact("Engineer")).toContain("Builder")
+  expect(fact("Author")).toContain("coding")
   // The model and, after an `@`, the effort it is run at: one pin, one line.
-  expect(fact("Engineer")).toContain("codex:gpt-5 @ xhigh")
-  expect(fact("Engineer")).not.toContain("grok-4")
+  expect(fact("Author")).toContain("codex:gpt-5 @ xhigh")
 })
 
 it("leaves the effort off a pin that names none, which is the CLI's own", () => {
-  mount({ ...TASK, effort: null })
+  mount({
+    ...TASK,
+    agents: [{ id: "01AGENTAUTHOR", seat: "author", skills: ["coding"], model: "codex:gpt-5" }],
+  })
 
-  expect(fact("Engineer")).toContain("codex:gpt-5")
-  expect(fact("Engineer")).not.toContain("@")
+  expect(fact("Author")).toContain("codex:gpt-5")
+  expect(fact("Author")).not.toContain("@")
 })
 
 it("shows each reviewer slot's own pin, in review order", () => {
   mount()
 
   const reviewers = fact("Reviewers")
-  expect(reviewers).toContain("Strict · claude_code:claude-sonnet-5 @ high")
-  // Both reviewer profiles now say `opencode:grok-4`; the slots do not.
-  expect(reviewers).toContain("Second · auto")
-  expect(reviewers).not.toContain("grok-4")
+  expect(reviewers).toContain("code-review · claude_code:claude-sonnet-5 @ high")
+  // The second reviewer was staffed on nothing in particular: auto.
+  expect(reviewers).toContain("security-review · auto")
 })
 
 it("says a task has no reviewers rather than showing an empty list", () => {
-  mount({ ...TASK, reviewers: [] })
+  mount({
+    ...TASK,
+    agents: [{ id: "01AGENTAUTHOR", seat: "author", skills: ["coding"] }],
+  })
 
-  expect(fact("Reviewers")).toBe("none assigned")
+  expect(fact("Reviewers")).toBe("none staffed")
 })
 
-it("links the pull request its engineer published", () => {
+it("links the pull request its author published", () => {
   mount({
     ...TASK,
     status: "approved",
@@ -266,7 +241,7 @@ it("says zero for a task whose agents have reported nothing", () => {
     ...TASK,
     usage: {
       total: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
-      engineer: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+      author: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
       reviewers: [],
     },
   })
@@ -280,12 +255,12 @@ it("breaks the total down by the agent that spent it, reviewers named", async ()
   mount()
   const popup = await hint("Tokens")
 
-  // The engineer first, then the one reviewer that has actually run — named
+  // The author first, then the one reviewer that has actually run — named
   // by the daemon, since the figures are its own. The second slot has never
   // been spawned and is not a line at all.
   const who = [...popup.querySelectorAll("dt")].map((agent) => agent.textContent)
-  expect(who).toEqual(["Engineer", "Strict"])
-  expect(popup.textContent).not.toContain("Second")
+  expect(who).toEqual(["Author", "code-review"])
+  expect(popup.textContent).not.toContain("security-review")
 
   const figures = [...popup.querySelectorAll("dd")].map((figure) => figure.textContent)
   expect(figures).toEqual(["1M in, 90% cached, 40k out", "235k in, 85% cached, 5.3k out"])
@@ -333,20 +308,20 @@ it("folds the sessions table down to what a panel holds", async () => {
   mount()
   await userEvent.setup().click(screen.getByRole("tab", { name: /^Sessions/ }))
 
-  const open = await screen.findByRole("button", { name: "Open Engineer session" })
+  const open = await screen.findByRole("button", { name: "Open Author session" })
   const row = open.closest("tr")
   if (!row) throw new Error("no row around the session")
 
-  // Four cells, not the screen's seven: the id shares the role's cell rather
+  // Four cells, not the screen's seven: the id shares the seat's cell rather
   // than taking one of its own, and the tokens have none at all.
   const cells = within(row).getAllByRole("cell")
   expect(cells).toHaveLength(4)
   const session = cells[0]
   if (!session) throw new Error("no session cell in the row")
-  expect(session.textContent).toContain("Engineer")
+  expect(session.textContent).toContain("Author")
   expect(session.textContent).toContain(shortId(SESSION.id))
 
-  // And it shares it on one line: a single flex row holds the role and the id
+  // And it shares it on one line: a single flex row holds the seat and the id
   // both, with nothing block-level between them to push the id underneath.
   const line = session.firstElementChild
   const id = within(session).getByText(shortId(SESSION.id))
@@ -383,7 +358,7 @@ it("keeps the way back from a session to one line", async () => {
   mount()
   const user = userEvent.setup()
   await user.click(screen.getByRole("tab", { name: /^Sessions/ }))
-  await user.click(await screen.findByRole("button", { name: "Open Engineer session" }))
+  await user.click(await screen.findByRole("button", { name: "Open Author session" }))
 
   const back = await screen.findByRole("button", { name: `Back to ${TASK.title}` })
   expect(back.className).toContain("max-w-full")

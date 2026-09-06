@@ -9,16 +9,16 @@ import { useQuery } from "@tanstack/react-query"
 import { CheckCircle2Icon, MessageSquareWarningIcon } from "lucide-react"
 import { useMemo } from "react"
 
-import type { ReviewDto, ReviewVerdict } from "@/api"
+import type { ReviewDto, ReviewVerdict, TaskAgentDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
-import { ProfileName } from "@/features/profiles/profile-name"
+
 import { plural } from "@/lib/format"
-import { taskReviewsQueryOptions } from "./queries"
+import { taskQueryOptions, taskReviewsQueryOptions } from "./queries"
 import { SessionLink } from "./task-sessions"
 
 const VERDICT_META: Record<
@@ -39,6 +39,10 @@ const VERDICT_META: Record<
 
 export function TaskReviews({ taskId }: { taskId: string }) {
   const reviews = useQuery(taskReviewsQueryOptions(taskId))
+  // The task the reviews belong to, for the skills each verdict was given
+  // with. Already in the cache: the panel around this read it first.
+  const task = useQuery(taskQueryOptions(taskId))
+  const agents = task.data?.agents ?? []
   const rounds = useMemo(() => groupByRound(reviews.data ?? []), [reviews.data])
 
   if (reviews.isPending) {
@@ -75,7 +79,7 @@ export function TaskReviews({ taskId }: { taskId: string }) {
             </span>
           </h3>
           {entries.map((review) => (
-            <ReviewCard key={review.id} review={review} />
+            <ReviewCard key={review.id} review={review} agents={agents} />
           ))}
         </section>
       ))}
@@ -83,18 +87,19 @@ export function TaskReviews({ taskId }: { taskId: string }) {
   )
 }
 
-function ReviewCard({ review }: { review: ReviewDto }) {
+function ReviewCard({ review, agents }: { review: ReviewDto; agents: TaskAgentDto[] }) {
+  const reviewer = agents.find((agent) => agent.id === review.reviewer_agent_id)
+  const reviewerLabel = reviewer?.skills.join(", ") || review.reviewer_agent_id
   const { label, badge, icon: Icon } = VERDICT_META[review.verdict]
   return (
     <article className="rounded-lg border bg-card px-3 py-2">
+      {/* Who said it: an agent has no name, so it is named by the skills it
+          reviewed with, and by its id where the task staffs it no longer. */}
       <header className="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
         <StatusBadge size="sm" label={label} tone={badge} icon={<Icon className="size-3" />} />
         {/* Who said it: a round can hold several verdicts, and two ULIDs are
             the same string to a reader. */}
-        <ProfileName
-          profileId={review.reviewer_profile_id}
-          className="font-medium text-foreground"
-        />
+        <span className="font-medium text-foreground">{reviewerLabel}</span>
         {review.session_id && <SessionLink sessionId={review.session_id} />}
         <When at={review.created_at} className="ml-auto text-muted-foreground" />
       </header>

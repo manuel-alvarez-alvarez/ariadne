@@ -8,8 +8,8 @@
  * `useRowAction` — and what is left here is what only a goal knows: which
  * endpoint, and what else it moved.
  *
- * Two lists here are filtered server-side (`?status=`, `?role=planner`) but the
- * shared filter types carry no `status` / `role` field, so their filter segment
+ * Two lists here are filtered server-side (`?status=`, `?seat=orchestrator`) but the
+ * shared filter types carry no `status` / `seat` field, so their filter segment
  * is appended to `qk.<entity>.lists()` rather than produced by
  * `qk.<entity>.list()`. Same shape, same prefix.
  */
@@ -23,7 +23,6 @@ import {
   dropRow,
   type GoalDto,
   type GoalStatus,
-  type ProfileDto,
   qk,
   unwrap,
   useRowAction,
@@ -60,16 +59,7 @@ export function goalQueryOptions(goalId: string) {
   })
 }
 
-/** Planner profiles, for the planner picker on the create form. */
-export function plannerProfilesQueryOptions() {
-  return queryOptions({
-    // `?role=planner` is the daemon's filter; the segment sits under
-    // `qk.profiles.lists()` like any other.
-    queryKey: [...qk.profiles.lists(), { role: "planner" }] as const,
-    queryFn: () => unwrap(api().GET("/v1/profiles", { params: { query: { role: "planner" } } })),
-    select: (profiles: ProfileDto[]) => [...profiles].sort((a, b) => a.name.localeCompare(b.name)),
-  })
-}
+/** Orchestrator profiles, for the orchestrator picker on the create form. */
 
 export function useCreateGoal() {
   const queryClient = useQueryClient()

@@ -64,7 +64,7 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       break
     }
     case "task_branch_updated": {
-      // A commit in the engineer's worktree. Nothing about the task row itself
+      // A commit in the author's worktree. Nothing about the task row itself
       // changed — only the diff it would answer with.
       void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(event.data.task_id) })
       break
@@ -87,19 +87,19 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.agentEvents.lists() })
       break
     }
-    case "profile_created": {
-      queryClient.setQueryData(qk.profiles.detail(event.data.id), event.data)
-      void queryClient.invalidateQueries({ queryKey: qk.profiles.lists() })
+    case "skill_created": {
+      queryClient.setQueryData(qk.skills.detail(event.data.name), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.skills.lists() })
       break
     }
-    case "profile_updated": {
-      queryClient.setQueryData(qk.profiles.detail(event.data.id), event.data)
-      void queryClient.invalidateQueries({ queryKey: qk.profiles.lists() })
+    case "skill_updated": {
+      queryClient.setQueryData(qk.skills.detail(event.data.name), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.skills.lists() })
       break
     }
-    case "profile_deleted": {
-      queryClient.removeQueries({ queryKey: qk.profiles.detail(event.data.id) })
-      void queryClient.invalidateQueries({ queryKey: qk.profiles.lists() })
+    case "skill_deleted": {
+      queryClient.removeQueries({ queryKey: qk.skills.detail(event.data.id) })
+      void queryClient.invalidateQueries({ queryKey: qk.skills.lists() })
       break
     }
     case "repository_created": {

@@ -4,7 +4,7 @@
  * They live in the URL for the reason the goals board's does: every other bit
  * of screen state is already there, a reload is routine in a hash-router
  * desktop app, and a narrowed screen is worth linking to. Each is one value —
- * `?status=failed`, `?role=engineer`, `?goal=<id>`, `?task=<id>` — and an
+ * `?status=failed`, `?seat=author`, `?goal=<id>`, `?task=<id>` — and an
  * absent param is no filter.
  *
  * The last two are the daemon's own list filters, and on this screen they are
@@ -20,15 +20,15 @@
  * goals board's `filters.ts` / `use-status-filter.ts` pair.
  */
 
-import type { Role, SessionStatus } from "@/api"
-import { ROLE_LABELS } from "@/lib/format"
+import type { Seat, SessionStatus } from "@/api"
+import { SEAT_LABELS } from "@/lib/format"
 
 import type { SessionListFilters } from "./queries"
 import { SESSION_STATUS_META } from "./session-display"
 
 /** The params the filters travel in, alongside `?session=`. */
 export const STATUS_PARAM = "status"
-export const ROLE_PARAM = "role"
+export const ROLE_PARAM = "seat"
 /** The two the daemon answers itself, and the ones a chip stands for. */
 export const GOAL_PARAM = "goal"
 export const TASK_PARAM = "task"
@@ -69,7 +69,7 @@ export const ATTENTION = "attention"
 /** Every status, in the order the badge ramp declares them (live ones first). */
 export const STATUSES = Object.keys(SESSION_STATUS_META) as SessionStatus[]
 
-export const ROLES = Object.keys(ROLE_LABELS) as Role[]
+export const ROLES = Object.keys(SEAT_LABELS) as Seat[]
 
 /** A `?status=` this screen understands: a daemon status, `live`, or `attention`. */
 export type StatusValue = SessionStatus | typeof LIVE | typeof ATTENTION
@@ -85,8 +85,8 @@ export function parseStatusFilter(value: string | null): StatusValue | null {
   return STATUSES.find((known) => known === value) ?? null
 }
 
-/** The same, for a role: one of the daemon's, or no filter. */
-function parseRoleFilter(value: string | null): Role | null {
+/** The same, for a seat: one of the daemon's, or no filter. */
+function parseRoleFilter(value: string | null): Seat | null {
   return ROLES.find((known) => known === value) ?? null
 }
 
@@ -95,15 +95,15 @@ export function readStatusFilter(params: URLSearchParams): StatusValue | null {
   return parseStatusFilter(params.get(STATUS_PARAM))
 }
 
-/** What a `?role=` asks for, or `null` for no filter. */
-export function readRoleFilter(params: URLSearchParams): Role | null {
+/** What a `?seat=` asks for, or `null` for no filter. */
+export function readRoleFilter(params: URLSearchParams): Seat | null {
   return parseRoleFilter(params.get(ROLE_PARAM))
 }
 
 /**
  * The id a `?goal=` or `?task=` narrows the list to, or `null`.
  *
- * There is no vocabulary to check it against the way a status or a role is
+ * There is no vocabulary to check it against the way a status or a seat is
  * checked — it is an id, and only the daemon knows which ones exist. An id
  * nothing answers for is a list with nothing in it and a chip that clears it,
  * which is a better answer than silently dropping what the URL asked for.
@@ -154,15 +154,15 @@ export function statusLabel(value: StatusValue | null): string {
   return value ? SESSION_STATUS_META[value].label : "All statuses"
 }
 
-/** What the role trigger says. */
-export function roleLabel(value: Role | null): string {
-  return value ? ROLE_LABELS[value] : "All roles"
+/** What the seat trigger says. */
+export function roleLabel(value: Seat | null): string {
+  return value ? SEAT_LABELS[value] : "All roles"
 }
 
 /** The selections the screen was last left with, spelled as their params. */
 interface RememberedFilters {
   status: string
-  role: string
+  seat: string
   goal: string
   task: string
 }
@@ -175,7 +175,7 @@ interface RememberedFilters {
  * a filter the user just set — is the answer, and the remembered value is only
  * consulted for the params it carries none of, which is what a sidebar link to
  * bare `/sessions` is. The two are restored independently, so an explicit
- * `?status=` still lets the remembered role back in. Whatever else the URL
+ * `?status=` still lets the remembered seat back in. Whatever else the URL
  * carries (an open `?session=` panel) is kept, so restoring a filter never
  * closes a panel.
  *
@@ -193,8 +193,8 @@ export function restoreSessionFilters(
     if (status) next = withFilter(next, STATUS_PARAM, status)
   }
   if (!params.has(ROLE_PARAM)) {
-    const role = parseRoleFilter(remembered.role)
-    if (role) next = withFilter(next, ROLE_PARAM, role)
+    const seat = parseRoleFilter(remembered.seat)
+    if (seat) next = withFilter(next, ROLE_PARAM, seat)
   }
   for (const param of SCOPE_PARAMS) {
     if (params.has(param)) continue

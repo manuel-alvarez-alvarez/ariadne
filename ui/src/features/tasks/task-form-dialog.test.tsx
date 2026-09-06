@@ -27,8 +27,8 @@ import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { GoalDto, ModelDto, ProfileDto } from "@/api"
-import { aGoal, aModel, anEffort, aProfile } from "@/test/fixtures"
+import type { GoalDto, ModelDto, SkillDto } from "@/api"
+import { aGoal, aModel, anEffort, aSkill } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateTaskDialog, EditTaskDialog } from "./task-form-dialog"
 
@@ -36,27 +36,15 @@ const STAMP = "2026-01-01T00:00:00Z"
 
 const GOAL: GoalDto = aGoal()
 
-const ENGINEER: ProfileDto = aProfile({
-  id: "01JPROF000000000000000ENG",
-})
+const CODING: SkillDto = aSkill({ name: "coding" })
 
-const REVIEWER: ProfileDto = {
-  ...ENGINEER,
-  id: "01JPROF000000000000000REV",
-  name: "Reviewer",
-  role: "reviewer",
-  // Pinned, so a row with nothing of its own has something to name as what it
-  // will actually run on.
-  model: "codex:gpt-5.6-luna",
+const REVIEWING: SkillDto = {
+  ...CODING,
+  name: "code-review",
 }
 
 /** A second one, for the edit that replaces the task's reviewer list. */
-const STRICT_REVIEWER: ProfileDto = {
-  ...ENGINEER,
-  id: "01JPROF00000000000000REV2",
-  name: "Strict Reviewer",
-  role: "reviewer",
-}
+const STRICT_REVIEWING: SkillDto = { ...CODING, name: "security-review" }
 
 /** The catalog every model box offers, whole, with the efforts of each entry. */
 const CATALOG: ModelDto[] = [
@@ -108,7 +96,6 @@ const CREATED = {
   status: "pending",
   branch: "wire-the-strip-000001",
   depends_on: [],
-  engineer_profile_id: ENGINEER.id,
   reviewers: [],
   review_round: 0,
   stalled: false,
@@ -130,12 +117,12 @@ function stubDaemon() {
 
     const answer = (payload: unknown) => jsonResponse(payload)
 
-    if (url.pathname === "/v1/profiles") {
-      switch (url.searchParams.get("role")) {
+    if (url.pathname === "/v1/skills") {
+      switch (url.searchParams.get("seat")) {
         case "reviewer":
-          return answer([REVIEWER])
+          return answer([REVIEWING])
         default:
-          return answer([ENGINEER])
+          return answer([CODING])
       }
     }
     if (url.pathname === "/v1/models") return answer(CATALOG)
@@ -218,14 +205,13 @@ async function pickEffort(
 }
 
 describe("dismissing the dialog", () => {
-  it("closes an untouched form straight away, preselected profiles and all", async () => {
+  it("closes an untouched form straight away", async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     renderDialog(onOpenChange)
 
     // The preselects are what this is about: wait until they have happened.
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    expect(await screen.findByText("Reviewer")).toBeDefined()
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
 
     await user.click(screen.getByRole("button", { name: "Cancel" }))
 
@@ -269,20 +255,37 @@ describe("dismissing the dialog", () => {
 describe("editing a task that has not started", () => {
   const TASK = {
     ...CREATED,
-    reviewers: [{ profile_id: REVIEWER.id, model: null }],
+    agents: [
+      { id: "01AGENTAUTHOR", seat: "author", skills: ["coding"] },
+      { id: "01AGENTREVIEW", seat: "reviewer", skills: ["code-review"] },
+    ],
   }
 
-  /** An engineer profile that runs on a model, for the pin to agree with. */
-  const PINNED_ENGINEER: ProfileDto = { ...ENGINEER, model: "claude_code:claude-opus-5" }
-
-  /** The same task, pinned to exactly what that profile runs on. */
-  const PINNED_TASK = { ...TASK, model: PINNED_ENGINEER.model }
+  /** The same task, with its author pinned. */
+  const PINNED_TASK = {
+    ...TASK,
+    agents: [
+      {
+        id: "01AGENTAUTHOR",
+        seat: "author" as const,
+        skills: ["coding"],
+        model: "claude_code:claude-opus-5",
+      },
+      { id: "01AGENTREVIEW", seat: "reviewer" as const, skills: ["code-review"] },
+    ],
+  }
 
   /**
-   * The same task on another CLI than its engineer profile's, and on that
+   * The same task on another CLI than its author profile's, and on that
    * CLI's own default model rather than a named one.
    */
-  const CODEX_TASK = { ...TASK, model: "codex" }
+  const CODEX_TASK = {
+    ...TASK,
+    agents: [
+      { id: "01AGENTAUTHOR", seat: "author" as const, skills: ["coding"], model: "codex" },
+      { id: "01AGENTREVIEW", seat: "reviewer" as const, skills: ["code-review"] },
+    ],
+  }
 
   function renderEdit(task: unknown = TASK) {
     return renderScreen(<EditTaskDialog task={task as never} open onOpenChange={vi.fn()} />)
@@ -299,21 +302,24 @@ describe("editing a task that has not started", () => {
         posted.push(await request.clone().json())
         return answer(TASK)
       }
-      if (url.pathname === "/v1/profiles") return answer([REVIEWER, STRICT_REVIEWER])
+      if (url.pathname === "/v1/skills") return answer([REVIEWING, STRICT_REVIEWING])
       if (url.pathname === "/v1/tasks") return answer([])
       return new Response("not stubbed", { status: 404 })
     })
     renderEdit()
 
     // The task's own reviewer is what the row starts on, not a default.
-    expect(await screen.findByText("Reviewer")).toBeDefined()
+    expect(await screen.findByLabelText("Reviewer 1 skills")).toBeDefined()
 
-    await user.click(await screen.findByLabelText("Reviewer 1"))
-    await user.click(await screen.findByRole("option", { name: "Strict Reviewer" }))
+    const box = await screen.findByLabelText("Reviewer 1 skills")
+    await user.clear(box)
+    await user.type(box, "security-review")
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
-    expect(posted[0]).toMatchObject({ reviewers: [{ profile: STRICT_REVIEWER.id }] })
+    expect(posted[0]).toMatchObject({
+      reviewers: [{ seat: "reviewer", skills: ["security-review"] }],
+    })
   })
 
   /**
@@ -327,7 +333,7 @@ describe("editing a task that has not started", () => {
    * to a model the user never chose, and freeze it against a later edit of the
    * profile.
    */
-  it("says nothing about a model box nobody touched, though the profiles landed late", async () => {
+  it("says nothing about a model box nobody touched", async () => {
     const user = userEvent.setup()
     let landProfiles = () => {}
     const profiles = new Promise<void>((resolve) => {
@@ -341,11 +347,9 @@ describe("editing a task that has not started", () => {
         posted.push(await request.clone().json())
         return jsonResponse(PINNED_TASK)
       }
-      if (url.pathname === "/v1/profiles") {
+      if (url.pathname === "/v1/skills") {
         await profiles
-        return jsonResponse(
-          url.searchParams.get("role") === "reviewer" ? [REVIEWER] : [PINNED_ENGINEER],
-        )
+        return jsonResponse([CODING, REVIEWING])
       }
       if (url.pathname === "/v1/models") return jsonResponse(CATALOG)
       if (url.pathname === "/v1/tasks") return jsonResponse([])
@@ -354,15 +358,15 @@ describe("editing a task that has not started", () => {
     renderScreen(<EditTaskDialog task={PINNED_TASK as never} open onOpenChange={vi.fn()} />)
 
     // Nothing to read the pin against yet, so the pin is what the trigger says.
-    expect(await pinReads("Engineer")).toBe("Claude Code claude-opus-5")
+    expect(await pinReads("Author")).toBe("Claude Code claude-opus-5")
 
     await user.type(screen.getByLabelText("Title"), "!")
     landProfiles()
 
     // A reviewer row shows its profile's name only once the profiles are in,
     // so it is the signal — and the pin is still what the user saw.
-    expect(await screen.findByText("Reviewer")).toBeDefined()
-    expect(await pinReads("Engineer")).toBe("Claude Code claude-opus-5")
+    expect(await screen.findByLabelText("Reviewer 1 skills")).toBeDefined()
+    expect(await pinReads("Author")).toBe("Claude Code claude-opus-5")
 
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
@@ -373,17 +377,17 @@ describe("editing a task that has not started", () => {
   it("opens on the pinned agent CLI alone, which is that CLI's default model", async () => {
     renderEdit(CODEX_TASK)
 
-    // The engineer profile runs on claude_code, so the pin is an override and
+    // The author profile runs on claude_code, so the pin is an override and
     // shows as itself — the CLI on its own, with no model after it.
-    expect(await pinReads("Engineer")).toBe("Codex default model")
+    expect(await pinReads("Author")).toBe("Codex default model")
   })
 
-  it("sends the daemon's sentinel when a pin is emptied back to the profile's own", async () => {
+  it("sends the daemon's sentinel when a pin is emptied back to auto", async () => {
     const user = userEvent.setup()
     renderEdit(CODEX_TASK)
 
-    const models = await openPin(user, "Engineer")
-    await user.click(within(models).getByText("Profile's own"))
+    const models = await openPin(user, "Author")
+    await user.click(within(models).getByText(/^auto/))
     await closePin(user)
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
@@ -395,7 +399,7 @@ describe("editing a task that has not started", () => {
     const user = userEvent.setup()
     renderEdit(CODEX_TASK)
 
-    expect(await pinReads("Engineer")).toBe("Codex default model")
+    expect(await pinReads("Author")).toBe("Codex default model")
     await user.type(screen.getByLabelText("Title"), "!")
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
@@ -421,33 +425,33 @@ describe("what the task's agents run on", () => {
     await closePin(user)
   })
 
-  it("is three controls on a reviewer row: the profile, what it runs on, and the remove", async () => {
+  it("is three controls on a reviewer row: the skills, what it runs on, and the remove", async () => {
     renderDialog(vi.fn())
 
     // The built-in Reviewer with nothing of its own pinned: the row says what
     // it will actually run on rather than leaving the choice blank.
-    expect(await screen.findByLabelText("Reviewer 1")).toBeDefined()
-    await vi.waitFor(async () =>
-      expect(await pinReads("Reviewer 1")).toBe(`Profile's own — ${REVIEWER.model}`),
-    )
+    expect(await screen.findByLabelText("Reviewer 1 skills")).toBeDefined()
+    await vi.waitFor(async () => expect(await pinReads("Reviewer 1")).toContain("auto"))
     expect(screen.getByRole("button", { name: "Remove reviewer 1" })).toBeDefined()
   })
 
-  it("sends the engineer's model, and each reviewer's, from its own box", async () => {
+  it("sends the author's model, and each reviewer's, from its own box", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    await pickModel(user, "Engineer", "codex:gpt-5.3-codex")
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
+    await pickModel(user, "Author", "codex:gpt-5.3-codex")
     await pickModel(user, "Reviewer 1", "claude_code:claude-opus-5")
 
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
     expect(posted[0]).toMatchObject({
-      model: "codex:gpt-5.3-codex",
-      reviewers: [{ profile: REVIEWER.id, model: "claude_code:claude-opus-5" }],
+      agents: [
+        { seat: "author", skills: ["coding"], model: "codex:gpt-5.3-codex" },
+        { seat: "reviewer", skills: ["code-review"], model: "claude_code:claude-opus-5" },
+      ],
     })
   })
 
@@ -456,12 +460,17 @@ describe("what the task's agents run on", () => {
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    await typeModel(user, "Engineer", "codex")
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
+    await typeModel(user, "Author", "codex")
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
-    expect(posted[0]).toMatchObject({ model: "codex" })
+    expect(posted[0]).toMatchObject({
+      agents: [
+        { seat: "author", skills: ["coding"], model: "codex" },
+        { seat: "reviewer", skills: ["code-review"] },
+      ],
+    })
   })
 
   it("keeps an id whose model half carries colons of its own", async () => {
@@ -469,12 +478,17 @@ describe("what the task's agents run on", () => {
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    await typeModel(user, "Engineer", "opencode:ollama/llama3:8b")
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
+    await typeModel(user, "Author", "opencode:ollama/llama3:8b")
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
-    expect(posted[0]).toMatchObject({ model: "opencode:ollama/llama3:8b" })
+    expect(posted[0]).toMatchObject({
+      agents: [
+        { seat: "author", skills: ["coding"], model: "opencode:ollama/llama3:8b" },
+        { seat: "reviewer", skills: ["code-review"] },
+      ],
+    })
   })
 
   it("refuses a model naming no agent CLI, on the row it was typed in", async () => {
@@ -482,7 +496,7 @@ describe("what the task's agents run on", () => {
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
     await typeModel(user, "Reviewer 1", "claude-opus-5")
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
@@ -490,17 +504,23 @@ describe("what the task's agents run on", () => {
     expect(writes).toEqual([])
   })
 
-  it("leaves an untouched slot out, which runs it on its profile's own", async () => {
+  it("leaves an untouched agent out, which runs it on auto", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
-    expect(posted[0]).not.toHaveProperty("model")
-    expect(posted[0]).toMatchObject({ reviewers: [{ profile: REVIEWER.id }] })
+    expect(posted[0]).toMatchObject({
+      agents: [
+        { seat: "author", skills: ["coding"] },
+        { seat: "reviewer", skills: ["code-review"] },
+      ],
+    })
+    const staffed = (posted[0] as { agents: Record<string, unknown>[] }).agents
+    expect(staffed[0]).not.toHaveProperty("model")
   })
 })
 
@@ -510,14 +530,14 @@ describe("what the task's agents run on", () => {
  * to one that does not take it — which is what the daemon does with it.
  */
 describe("what each agent is run at", () => {
-  it("sends the engineer's effort, and each reviewer's, from its own box", async () => {
+  it("sends the author's effort, and each reviewer's, from its own box", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    await pickModel(user, "Engineer", "codex:gpt-5.3-codex")
-    await pickEffort(user, "Engineer", "ultra")
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
+    await pickModel(user, "Author", "codex:gpt-5.3-codex")
+    await pickEffort(user, "Author", "ultra")
     await pickModel(user, "Reviewer 1", "claude_code:claude-opus-5")
     await pickEffort(user, "Reviewer 1", "max")
 
@@ -525,9 +545,15 @@ describe("what each agent is run at", () => {
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
     expect(posted[0]).toMatchObject({
-      model: "codex:gpt-5.3-codex",
-      effort: "ultra",
-      reviewers: [{ profile: REVIEWER.id, model: "claude_code:claude-opus-5", effort: "max" }],
+      agents: [
+        { seat: "author", skills: ["coding"], model: "codex:gpt-5.3-codex", effort: "ultra" },
+        {
+          seat: "reviewer",
+          skills: ["code-review"],
+          model: "claude_code:claude-opus-5",
+          effort: "max",
+        },
+      ],
     })
   })
 
@@ -536,29 +562,25 @@ describe("what each agent is run at", () => {
    * model the slot would have run on anyway — the profile's — at that effort
    * (`http/pins.rs`, `chosen`), which is what `pinFields` sends it as.
    */
-  it("sends an effort with no model, which runs the slot's own model at it", async () => {
+  it("offers no effort until a model is chosen, since an effort belongs to one", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    // Nothing pinned on the row: the strip is offered against what that
-    // reviewer's profile runs on, and the trigger says so.
-    await pickEffort(user, "Reviewer 1", "high")
-    expect(await pinReads("Reviewer 1")).toBe(`Profile's own — ${REVIEWER.model} · high`)
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
 
-    await user.click(screen.getByRole("button", { name: "Create task" }))
-
-    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
-    const row = (posted[0] as { reviewers: Record<string, unknown>[] }).reviewers[0]
-    expect(row).toEqual({ profile: REVIEWER.id, effort: "high" })
+    // An agent on auto has no model, and there was never anything behind it
+    // to borrow one from — so the strip has nothing to offer, and the daemon
+    // never sees an effort it would have to refuse.
+    await openPin(user, "Reviewer 1")
+    expect(screen.queryAllByRole("radio")).toHaveLength(0)
   })
 
   it("offers only what the slot's own model takes", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
-    const models = await openPin(user, "Engineer")
+    const models = await openPin(user, "Author")
     await user.click(within(models).getByText("claude_code:claude-opus-5"))
 
     // The claude entry's list, named with what that CLI runs it at — not the
@@ -576,8 +598,8 @@ describe("what each agent is run at", () => {
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    const models = await openPin(user, "Engineer")
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
+    const models = await openPin(user, "Author")
     await user.click(within(models).getByText("claude_code:claude-opus-5"))
     await user.click(await screen.findByRole("radio", { name: "max" }))
 
@@ -592,8 +614,9 @@ describe("what each agent is run at", () => {
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
-    expect(posted[0]).toMatchObject({ model: "claude_code:claude-haiku-4-5" })
-    expect(posted[0]).not.toHaveProperty("effort")
+    const author = (posted[0] as { agents: Record<string, unknown>[] }).agents[0]
+    expect(author).toMatchObject({ model: "claude_code:claude-haiku-4-5" })
+    expect(author).not.toHaveProperty("effort")
   })
 
   it("shows the daemon's refusal of an effort, with the dialog still up", async () => {
@@ -609,8 +632,8 @@ describe("what each agent is run at", () => {
           "`ultra` is no effort of that model — it takes low, medium, high, xhigh",
         )
       }
-      if (url.pathname === "/v1/profiles") {
-        return jsonResponse(url.searchParams.get("role") === "reviewer" ? [REVIEWER] : [ENGINEER])
+      if (url.pathname === "/v1/skills") {
+        return jsonResponse([CODING, REVIEWING])
       }
       if (url.pathname === "/v1/models") return jsonResponse(CATALOG)
       if (url.pathname === "/v1/tasks") return jsonResponse([])
@@ -619,9 +642,9 @@ describe("what each agent is run at", () => {
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    await pickModel(user, "Engineer", "codex:gpt-5.3-codex")
-    await pickEffort(user, "Engineer", "ultra")
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
+    await pickModel(user, "Author", "codex:gpt-5.3-codex")
+    await pickEffort(user, "Author", "ultra")
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     expect(await screen.findByText(/is no effort of that model/)).toBeDefined()
@@ -630,7 +653,7 @@ describe("what each agent is run at", () => {
 })
 
 /**
- * The brief is what the engineer builds from and it is read as Markdown, so
+ * The brief is what the author builds from and it is read as Markdown, so
  * the box writes it and reads it back in place — and the form, whose longest
  * field is that box, can be finished without reaching for the mouse.
  */
@@ -651,8 +674,7 @@ describe("writing the task's brief", () => {
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    expect(await screen.findByText("Reviewer")).toBeDefined()
+    expect(await screen.findByLabelText("Author skills")).toBeDefined()
 
     await user.type(screen.getByLabelText("Description"), "Wire the strip")
     await user.keyboard("{Meta>}{Enter}{/Meta}")
@@ -663,7 +685,13 @@ describe("writing the task's brief", () => {
 
   it("saves an edited task on Ctrl+Enter too", async () => {
     const user = userEvent.setup()
-    const task = { ...CREATED, reviewers: [{ profile_id: REVIEWER.id, model: null }] }
+    const task = {
+      ...CREATED,
+      agents: [
+        { id: "01AGENTAUTHOR", seat: "author", skills: ["coding"] },
+        { id: "01AGENTREVIEW", seat: "reviewer", skills: ["code-review"] },
+      ],
+    }
     renderScreen(<EditTaskDialog task={task as never} open onOpenChange={vi.fn()} />)
 
     await user.type(await screen.findByLabelText("Description"), "One more thing")

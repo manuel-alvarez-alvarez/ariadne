@@ -17,7 +17,7 @@ import { beforeEach, expect, it, vi } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { useStreamStore } from "@/stores/stream"
-import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
+import { aGoal, aSession, aSkill, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { CommandPalette } from "./command-palette"
 
@@ -43,7 +43,7 @@ function stubDaemon(tasks: TaskDto[] = [TASK, STUCK]) {
           : pathname === "/v1/sessions"
             ? [SESSION]
             : pathname === "/v1/profiles"
-              ? [aProfile()]
+              ? [aSkill()]
               : []
     return Promise.resolve(jsonResponse(body))
   })

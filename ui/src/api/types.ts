@@ -23,6 +23,8 @@ export type CreateRepositoryRequest = Schemas["CreateRepositoryRequest"]
 export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
 
 export type TaskDto = Schemas["TaskDto"]
+export type TaskAgentDto = Schemas["TaskAgentDto"]
+export type AgentAssignment = Schemas["AgentAssignment"]
 export type TaskUsage = Schemas["TaskUsageDto"]
 export type TaskStatus = Schemas["TaskStatus"]
 export type TaskTransitionDto = Schemas["TaskTransitionDto"]
@@ -38,15 +40,15 @@ export type AttentionReason = Schemas["AttentionReason"]
 
 /**
  * What one agent spent — the same three counters wherever they are read: a
- * session's own, each half of a task's {@link TaskUsage}, each role of a
+ * session's own, each half of a task's {@link TaskUsage}, each seat of a
  * goal's {@link GoalUsage}.
  */
 export type TokenUsage = Schemas["TokenUsageDto"]
 
-export type ProfileDto = Schemas["ProfileDto"]
-export type CreateProfileRequest = Schemas["CreateProfileRequest"]
-export type UpdateProfileRequest = Schemas["UpdateProfileRequest"]
-export type Role = Schemas["Role"]
+export type SkillDto = Schemas["SkillDto"]
+export type CreateSkillRequest = Schemas["CreateSkillRequest"]
+export type UpdateSkillRequest = Schemas["UpdateSkillRequest"]
+export type Seat = Schemas["Seat"]
 export type AgentKind = Schemas["AgentKind"]
 export type ModelDto = Schemas["ModelDto"]
 export type EffortDto = Schemas["EffortDto"]

@@ -2,18 +2,18 @@
 
 /**
  * The board's own answer to "who is asking for me": the badge on the card of a
- * task whose agent is blocked, and the one in the lane header for a planner,
+ * task whose agent is blocked, and the one in the lane header for an orchestrator,
  * which has no card of its own.
  *
  * Rendered rather than unit-tested because the aggregation is already covered
  * (`attention.test.ts` has `collectBoardAttention`); what only the mounted
  * board shows is *where* a reason lands — on the task it belongs to, in the
- * lane of the goal whose planner raised it, and nowhere at all when nothing is
+ * lane of the goal whose orchestrator raised it, and nowhere at all when nothing is
  * stuck.
  *
  * The columns are here for the same reason: which cell a card lands in is a
  * property of the mounted grid, and `ready` folding into Pending is exactly
- * that — as is a goal the planner is still writing a plan for holding every
+ * that — as is a goal the orchestrator is still writing a plan for holding every
  * one of its tasks in the first column, whatever each task's own status says,
  * and a failed task sitting in that column as the retry candidate it is.
  *
@@ -39,8 +39,8 @@ import { GoalSwimlanes } from "./goal-swimlanes"
 const GOAL: GoalDto = aGoal({
   usage: {
     total: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
-    planner: { input_tokens: 234_567, cached_input_tokens: 200_000, output_tokens: 5_300 },
-    engineers: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },
+    orchestrator: { input_tokens: 234_567, cached_input_tokens: 200_000, output_tokens: 5_300 },
+    authors: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },
     reviewers: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
   },
 })
@@ -48,11 +48,10 @@ const GOAL: GoalDto = aGoal({
 const TASK: TaskDto = aTask({
   title: "Wire the strip",
   branch: "wire-the-strip-000001",
-  engineer_profile_id: "01JPROF0000000000000000ENG",
   goal_id: GOAL.id,
 })
 
-/** An engineer blocked on a prompt: the card's own reason to be badged. */
+/** An author blocked on a prompt: the card's own reason to be badged. */
 const SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000001",
   status: "idle",
@@ -60,16 +59,16 @@ const SESSION: SessionDto = aSession({
   attention_since: "2026-01-01T03:00:00Z",
   goal_id: GOAL.id,
   task_id: TASK.id,
-  profile_id: "01JPROF0000000000000000ENG",
+  task_agent_id: "01JPROF0000000000000000ENG",
   tmux_session: "ariadne-01JSESS0000000000000000001",
 })
 
-/** The planner, which belongs to no task and so to no card. */
+/** The orchestrator, which belongs to no task and so to no card. */
 const PLANNER: SessionDto = {
   ...SESSION,
   id: "01JSESS0000000000000000002",
   task_id: undefined,
-  role: "planner",
+  seat: "orchestrator",
   attention_reason: "waiting_input",
 }
 
@@ -138,11 +137,11 @@ it("leaves a task whose agents want nothing alone", async () => {
   expect(screen.queryByText("Waiting for permission")).toBeNull()
 })
 
-it("badges the lane header when a goal's planner is waiting", async () => {
+it("badges the lane header when a goal's orchestrator is waiting", async () => {
   stubDaemon({ tasks: [TASK], sessions: [PLANNER] })
   renderBoard()
 
-  // A planner has no card, so the lane header — the only place its goal is
+  // An orchestrator has no card, so the lane header — the only place its goal is
   // named — is where it asks.
   const badge = await screen.findByText("Waiting for input")
   expect(badge.closest("header")).not.toBeNull()
@@ -161,14 +160,14 @@ it("lays the pipeline out in five columns", async () => {
     "In progress",
     "Under review",
     "Approved",
-    "Merged",
+    "Finished",
   ])
 })
 
 it("puts a ready task in the Pending column, badged with the status it is really in", async () => {
   const blocked: TaskDto = { ...TASK, id: `${TASK.id}P`, title: "Waiting on a dependency" }
   blocked.status = "pending"
-  const ready: TaskDto = { ...TASK, id: `${TASK.id}R`, title: "Retried, no engineer yet" }
+  const ready: TaskDto = { ...TASK, id: `${TASK.id}R`, title: "Retried, no author yet" }
   ready.status = "ready"
   stubDaemon({ tasks: [blocked, ready] })
   renderBoard()
@@ -187,7 +186,7 @@ it("puts a ready task in the Pending column, badged with the status it is really
   expect(screen.getAllByText("Ready")).toHaveLength(1)
 })
 
-it("puts the tasks their engineers are landing in the Approved column", async () => {
+it("puts the tasks their authors are landing in the Approved column", async () => {
   const landing: TaskDto = { ...TASK, id: `${TASK.id}I`, title: "Squashing onto main" }
   landing.status = "approved"
   const published: TaskDto = { ...TASK, id: `${TASK.id}A`, title: "Waiting on its pull request" }
@@ -224,7 +223,7 @@ it("holds every task of a plan still being written in the first column", async (
   const planning: GoalDto = { ...GOAL, status: "planning" }
   const pending: TaskDto = { ...TASK, id: `${TASK.id}P`, title: "Waiting on a dependency" }
   pending.status = "pending"
-  const ready: TaskDto = { ...TASK, id: `${TASK.id}R`, title: "Dependencies all merged" }
+  const ready: TaskDto = { ...TASK, id: `${TASK.id}R`, title: "Dependencies all finished" }
   ready.status = "ready"
   stubDaemon({ tasks: [pending, ready] })
   renderBoard(planning)
@@ -245,7 +244,7 @@ it("carries the goal's own total in the lane header", async () => {
   await screen.findByText(TASK.title)
   // In the header, beside where the lane is up to and the goal's age — not on
   // a card, which is one task's worth of a figure that is the whole goal's.
-  const meta = screen.getByText(/0\/1 merged · created/)
+  const meta = screen.getByText(/0\/1 finished · created/)
   expect(meta.closest("header")).not.toBeNull()
   // Input first and output after it, each behind its own arrow; the word the
   // arrows stand for is there for a screen reader and nowhere else, since the
@@ -261,7 +260,9 @@ it("says zero for a goal whose agents have spent nothing", async () => {
   await screen.findByText(TASK.title)
   // Both halves, and a figure rather than a dash: an agent that has spent
   // nothing has spent nothing, which is a number the daemon knows.
-  expect(screen.getByText(/0\/1 merged · created/).textContent).toContain("0 in, 0% cached, 0 out")
+  expect(screen.getByText(/0\/1 finished · created/).textContent).toContain(
+    "0 in, 0% cached, 0 out",
+  )
 })
 
 // ── The repository, in the header itself ──────────────────────────────────
@@ -312,7 +313,7 @@ it("shows nothing extra for a goal on no repository", async () => {
 
 it("counts how far through the pipeline the lane is, and what is stuck in it", async () => {
   const tasks = [
-    ...statuses("merged", 3),
+    ...statuses("finished", 3),
     ...statuses("in_progress", 2),
     ...statuses("failed", 1),
     ...statuses("pending", 1),
@@ -320,10 +321,10 @@ it("counts how far through the pipeline the lane is, and what is stuck in it", a
   stubDaemon({ tasks })
   renderBoard()
 
-  await screen.findByText("merged 1")
+  await screen.findByText("finished 1")
   // "N tasks" was the one number about a goal that stops changing the moment
-  // the planner is done; this is the one that does not.
-  expect(laneHeader(GOAL.title).textContent).toContain("3/7 merged · 1 failed · 1 waiting")
+  // the orchestrator is done; this is the one that does not.
+  expect(laneHeader(GOAL.title).textContent).toContain("3/7 finished · 1 failed · 1 waiting")
 })
 
 it("says nothing about what a lane has none of", async () => {
@@ -332,7 +333,7 @@ it("says nothing about what a lane has none of", async () => {
 
   await screen.findByText("in_progress 1")
   const header = laneHeader(GOAL.title).textContent ?? ""
-  expect(header).toContain("0/2 merged")
+  expect(header).toContain("0/2 finished")
   expect(header).not.toContain("failed")
   expect(header).not.toContain("waiting")
 })
@@ -390,7 +391,7 @@ it("puts a lane that is asking for a person above every other lane", async () =>
 
 it("opens a finished lane as the one line its header says", async () => {
   const tasks = [
-    ...statuses("merged", 7).map((task) => ({ ...task, goal_id: COMPLETED.id })),
+    ...statuses("finished", 7).map((task) => ({ ...task, goal_id: COMPLETED.id })),
     ...statuses("cancelled", 1).map((task) => ({ ...task, goal_id: COMPLETED.id })),
   ]
   stubDaemon({ tasks })
@@ -399,16 +400,16 @@ it("opens a finished lane as the one line its header says", async () => {
   // Expanded, this is five columns with every card in the far-right one: a
   // 270px box that is 85% empty, and on a 900px screen it reads as an empty
   // lane because the cards are scrolled off it.
-  const header = await screen.findByText(/7 tasks merged · 1 cancelled/)
+  const header = await screen.findByText(/7 tasks finished · 1 cancelled/)
   expect(header.closest("header")).not.toBeNull()
-  expect(screen.queryByText("merged 1")).toBeNull()
+  expect(screen.queryByText("finished 1")).toBeNull()
 })
 
 it("opens a lane that is still running, and remembers a finished one the user opened", async () => {
   stubDaemon({
     tasks: [
       { ...TASK, goal_id: ACTIVE.id },
-      { ...TASK, id: `${TASK.id}M`, goal_id: COMPLETED.id, title: "Landed", status: "merged" },
+      { ...TASK, id: `${TASK.id}M`, goal_id: COMPLETED.id, title: "Landed", status: "finished" },
     ],
   })
   const user = userEvent.setup()

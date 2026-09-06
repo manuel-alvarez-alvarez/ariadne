@@ -1,12 +1,12 @@
 /**
- * The planner sessions of one goal, inside its panel: the goal's own agent —
+ * The orchestrator sessions of one goal, inside its panel: the goal's own agent —
  * once per resume or restart — as a list, and the one that was picked from it,
  * in full. The sessions of the goal's tasks are not listed here; each task
  * panel has its own sessions tab for those, which is why the tab is called
- * "Planner sessions" rather than "Sessions".
+ * "Orchestrator sessions" rather than "Sessions".
  *
  * Just the list: what the goal has spent is the figure in its facts, and the
- * split by the role that spent it is the hint behind that figure (see
+ * split by the seat that spent it is the hint behind that figure (see
  * {@link import("@/components/token-figure").TokenFigure}). Every row here
  * carries its own session's figure besides.
  *
@@ -48,7 +48,7 @@ export function GoalSessions({
   // this panel drives, so nothing has to be threaded through the panel.
   return (
     <SessionsList
-      filters={{ goal: goalId, role: "planner" }}
+      filters={{ goal: goalId, seat: "orchestrator" }}
       onSelect={(session) => onSelect(session.id)}
     />
   )

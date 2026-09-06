@@ -4,7 +4,7 @@
  * The diff tab keeping up with the branch on its own.
  *
  * It carried a Refresh button until the daemon learned to say when a task's
- * branch head moved; now the only thing between a commit in the engineer's
+ * branch head moved; now the only thing between a commit in the author's
  * worktree and this view is the stream. `dispatch.test.ts` pins what the event
  * does to the cache — this pins the whole path: a daemon pushing the event down
  * the app's one `EventSource`, and the diff on screen refetching with nothing
@@ -131,12 +131,12 @@ it("refetches when the task itself transitions, since landing moves the diff", a
   dispatch({
     event: "task_updated",
     data: {
-      task: { ...TASK, status: "merged", merge_commit: HEAD },
+      task: { ...TASK, status: "finished", merge_commit: HEAD },
       transition: {
         id: "01JTRAN0000000000000000001",
         actor: "daemon",
         from_status: "approved",
-        to_status: "merged",
+        to_status: "finished",
         created_at: TASK.updated_at,
       },
     },

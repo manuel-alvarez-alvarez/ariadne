@@ -19,8 +19,8 @@ describe("preferLiteralMatches", () => {
     // The row that spells the query out is a fuzzy hit at its best — `() => 1`
     // — and still loses to the row that is called that.
     const ranked = preferLiteralMatches(() => 1)
-    expect(ranked("Planner · UX updates …0000PLAN", "planner ux")).toBeGreaterThan(
-      ranked("Keyboard support: command palette", "planner ux"),
+    expect(ranked("Orchestrator · UX updates …0000PLAN", "orchestrator ux")).toBeGreaterThan(
+      ranked("Keyboard support: command palette", "orchestrator ux"),
     )
   })
 
@@ -30,8 +30,8 @@ describe("preferLiteralMatches", () => {
   })
 
   it("treats the separators the palette writes rows with as word starts", () => {
-    expect(score("Engineer · Keyboard support", "keyboard")).toBe(
-      score("Engineer Keyboard support", "keyboard"),
+    expect(score("Author · Keyboard support", "keyboard")).toBe(
+      score("Author Keyboard support", "keyboard"),
     )
     expect(score("worktrees/eng-keyboard", "eng")).toBe(score("worktrees eng keyboard", "eng"))
   })
@@ -46,14 +46,14 @@ describe("preferLiteralMatches", () => {
   })
 
   it("never scores the keywords fuzzily, which is what keeps the ids quiet", () => {
-    // Every letter of "planner", in order, scattered through the id — and
+    // Every letter of "orchestrator", in order, scattered through the id — and
     // nowhere in the row's own text.
-    expect(score("Keyboard support", "planner", ["01JP7L4A2N9NZE5R"])).toBe(0)
+    expect(score("Keyboard support", "orchestrator", ["01JP7L4A2N9NZE5R"])).toBe(0)
   })
 
   it("wants every word of the query, not just one of them", () => {
-    expect(score("Planner · UX updates", "planner ux")).toBeGreaterThan(
-      score("Planner · Documentation pass", "planner ux"),
+    expect(score("Orchestrator · UX updates", "orchestrator ux")).toBeGreaterThan(
+      score("Orchestrator · Documentation pass", "orchestrator ux"),
     )
   })
 
@@ -63,7 +63,7 @@ describe("preferLiteralMatches", () => {
 
   it("drops a fuzzy hit that is only an accident of a long row", () => {
     const barelyMatched = preferLiteralMatches(() => 0.002)
-    expect(barelyMatched("Keyboard support: command palette", "planner")).toBe(0)
+    expect(barelyMatched("Keyboard support: command palette", "orchestrator")).toBe(0)
   })
 
   it("keeps the fuzzy order among the fuzzy hits it does keep", () => {

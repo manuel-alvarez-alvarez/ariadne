@@ -61,9 +61,8 @@ import {
 } from "@/components/ui/command"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/format"
-
+import { AGENT_KINDS, agentKindLabel } from "./labels"
 import { modelRefError, modelRefLabel, parseModelRef, pinLabel } from "./model-ref"
-import { AGENT_KINDS, agentKindLabel } from "./profile-labels"
 
 /** The whole choice, which is what the forms hold and what a pick yields. */
 interface Pin {

@@ -39,7 +39,7 @@ describe("the session status colours", () => {
   it("leaves the colours that carry a task's meaning to the tasks", () => {
     // Merged green and review violet say something about a *task*, and a
     // session wearing one of them would be saying it about the wrong thing.
-    const taken = [TASK_STATUS_META.merged.dot, TASK_STATUS_META.under_review.dot]
+    const taken = [TASK_STATUS_META.finished.dot, TASK_STATUS_META.under_review.dot]
     const live: SessionStatus[] = ["starting", "running", "idle"]
 
     expect(live.map((status) => SESSION_STATUS_META[status].dot)).not.toContain(taken[0])

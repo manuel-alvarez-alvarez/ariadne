@@ -137,8 +137,8 @@ export interface paths {
         get: operations["goals_list"];
         put?: never;
         /**
-         * Create a goal on registered repositories; the planner session is spawned
-         *     by the scheduler once agent execution lands.
+         * Create a goal on registered repositories; the orchestrator session is
+         *     spawned by the scheduler once agent execution lands.
          * @description The repos are referenced, not copied: whatever `POST /v1/repositories`
          *     validated about a checkout holds for every goal that names it, and an edit
          *     there moves this goal too.
@@ -159,7 +159,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create a task in a goal (planner via MCP, or the user). */
+        /** Create a task in a goal (orchestrator via MCP, or the user). */
         post: operations["tasks_create"];
         delete?: never;
         options?: never;
@@ -213,7 +213,8 @@ export interface paths {
         put?: never;
         /**
          * Finalize the plan: goal moves planning -> active and its tasks start. The
-         *     planner's call alone, and there is nothing left for the user to approve.
+         *     orchestrator's call alone, and there is nothing left for the user to
+         *     approve.
          */
         post: operations["goals_finalize"];
         delete?: never;
@@ -326,64 +327,6 @@ export interface paths {
         get: operations["models_list"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/profiles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List profiles. */
-        get: operations["profiles_list"];
-        put?: never;
-        /**
-         * Create a profile.
-         * @description It starts on the system prompt of its role, and it owns no other prompt:
-         *     the briefings that start, resume and nudge a session are Ariadne's own.
-         */
-        post: operations["profiles_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/profiles/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get a profile by id or unique name. */
-        get: operations["profiles_get"];
-        /** Update a profile. */
-        put: operations["profiles_update"];
-        post?: never;
-        /** Delete a profile (409 while referenced). */
-        delete: operations["profiles_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/profiles/{id}/system-prompt/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Put the profile's system prompt back on the default of its role. */
-        post: operations["profiles_reset_system_prompt"];
         delete?: never;
         options?: never;
         head?: never;
@@ -628,6 +571,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List every skill, shipped and written, by name. */
+        get: operations["skills_list"];
+        put?: never;
+        /**
+         * Create a skill of the user's own.
+         * @description It carries its own document: nothing Ariadne ships answers to its name, so
+         *     there is nothing behind it to fall back to.
+         */
+        post: operations["skills_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one skill by name. */
+        get: operations["skills_get"];
+        /** Write a new document over a skill's. */
+        put: operations["skills_update"];
+        post?: never;
+        /** Delete a skill of the user's own (409 for a built-in, or while loaded). */
+        delete: operations["skills_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{name}/document/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put a built-in skill back on the document Ariadne ships. */
+        post: operations["skills_reset_document"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks": {
         parameters: {
             query?: never;
@@ -659,7 +660,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Edit a pending/ready task (planner or user). */
+        /** Edit a pending/ready task (orchestrator or user). */
         patch: operations["tasks_update"];
         trace?: never;
     };
@@ -712,7 +713,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Record the pull or merge request the engineer opened for a task.
+         * Record the pull or merge request the author opened for a task.
          * @description The URL travels as a tool call, so a published task is either one the UI
          *     and the CLI can point at or one that was never reported.
          *
@@ -720,13 +721,13 @@ export interface paths {
          *     merge but a human is exactly what `waiting_user` says, so it goes up here,
          *     on the session that opened it — the pane they answer in, and the one place
          *     the request can be traced back to. It used to be raised by the message the
-         *     landing briefing told the engineer to write, and a published task with
+         *     landing briefing told the author to write, and a published task with
          *     nothing on the strip is one nobody knows to go and merge.
          *
          *     It stays up until the user acts: an agent's own events never take
-         *     `waiting_user` down (`clear_agent_attention`), and the engineer polling its
+         *     `waiting_user` down (`clear_agent_attention`), and the author polling its
          *     request is exactly such an agent. `Scheduler::keep_waiting_user` puts it
-         *     back on whatever comes up when that engineer is restarted, which is what
+         *     back on whatever comes up when that author is restarted, which is what
          *     makes the two halves one flag rather than two.
          */
         post: operations["tasks_record_pull_request"];
@@ -810,7 +811,48 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description How one agent CLI is launched, shared by every profile that runs on it. */
+        /**
+         * @description One agent to staff on a task: where it sits, the skills it loads, and what
+         *     it is to run on.
+         *
+         *     The model is written `<agent_kind>[:<model>]`: the agent CLI on its own
+         *     runs it on its own default model, an agent with a model after the `:` pins
+         *     both, and a string naming no agent CLI is refused — nothing here derives
+         *     one from the other. Omitted, the agent runs on the first installed CLI at
+         *     spawn time, on that CLI's own default model.
+         */
+        AgentAssignment: {
+            /**
+             * @description What to tell this agent beyond the task itself. Omitted = the task is
+             *     the whole of it.
+             */
+            brief?: string | null;
+            /**
+             * @description The reasoning effort to run that model at, one of the efforts
+             *     `GET /v1/models` lists for it; anything else is refused. Omitted (or
+             *     "default") = whatever the agent CLI runs the model at.
+             * @example high
+             */
+            effort?: string | null;
+            /**
+             * @description What this agent runs on, `<agent_kind>[:<model>]`; omitted (or
+             *     "default") = auto.
+             * @example codex:o3
+             */
+            model?: string | null;
+            /** @description `author` or `reviewer`. A task takes exactly one author. */
+            seat: components["schemas"]["Seat"];
+            /**
+             * @description The names of the skills this agent loads, in the order they reach it.
+             *     A name no skill answers to is refused.
+             * @example [
+             *       "coding",
+             *       "testing"
+             *     ]
+             */
+            skills?: string[];
+        };
+        /** @description How one agent CLI is launched, shared by every agent that runs on it. */
         AgentConfigDto: {
             agent_kind: components["schemas"]["AgentKind"];
             /**
@@ -837,6 +879,16 @@ export interface components {
          * @enum {string}
          */
         AgentKind: "claude_code" | "codex" | "opencode";
+        /**
+         * @description What one staffed agent spent on a task, named the way a reader addresses
+         *     it: an agent has no name of its own, so its skills are what identify it.
+         */
+        AgentUsageDto: {
+            agent_id: string;
+            /** @description The skills the agent loads; empty only if the agent is gone. */
+            skills: string[];
+            usage: components["schemas"]["TokenUsageDto"];
+        };
         /**
          * @description Why a live agent session needs the user's attention.
          *
@@ -878,32 +930,29 @@ export interface components {
         CreateGoalRequest: {
             description?: string;
             /**
-             * @description The reasoning effort to run that model at, one of the efforts
-             *     `GET /v1/models` lists for it; anything else is refused. Omitted (or
-             *     "default") = whatever the agent CLI runs the model at, and where
-             *     `model` is omitted too, the planner profile's own effort. Named where
-             *     `model` is omitted, the goal takes the planner profile's own model at
-             *     this effort.
+             * @description The reasoning effort to run that model at, one of the efforts `GET
+             *     /v1/models` lists for it; anything else is refused. Omitted (or
+             *     "default") = whatever the agent CLI runs the model at. An effort is
+             *     run at a model, so an effort written where `model` names none is
+             *     refused.
              * @example high
              */
             effort?: string | null;
             /**
              * Format: int64
-             * @description Max tasks the planner may create (default: unbounded).
+             * @description Max tasks the orchestrator may create (default: unbounded).
              */
             max_tasks?: number | null;
             /**
-             * @description What the planner runs on, `<agent_kind>[:<model>]` — the agent CLI and,
-             *     after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
+             * @description What the orchestrator runs on, `<agent_kind>[:<model>]` — the agent
+             *     CLI and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
              *     `opencode:ollama/llama3:8b`. The model half is free text, handed to
              *     that CLI as typed; an agent CLI on its own runs it on its own default
              *     model, and a string naming no agent CLI is refused. Omitted (or
-             *     "default") = the planner profile's own model, as it stands now.
+             *     "default") = auto: the first installed CLI, on its own default model.
              * @example codex:gpt-5.3-codex
              */
             model?: string | null;
-            /** @description Planner profile id or unique name. */
-            planner_profile: string;
             /** @description Ids of registered repositories (`POST /v1/repositories`); at least one. */
             repository_ids: string[];
             /**
@@ -913,41 +962,12 @@ export interface components {
             required_approvals?: number | null;
             title: string;
         };
-        CreateProfileRequest: {
-            /**
-             * @description The reasoning effort to run that model at, one of the efforts
-             *     `GET /v1/models` lists for it; anything else is refused. Omitted (or
-             *     "default") = whatever the agent CLI runs the model at on its own. An
-             *     effort is run at a model, and a profile created on auto has none of its
-             *     own, so an effort written where `model` names none is refused.
-             * @example high
-             */
-            effort?: string | null;
-            /**
-             * @description What this profile runs on, `<agent_kind>[:<model>]` — the agent CLI
-             *     and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
-             *     `opencode:ollama/llama3:8b`. A string naming no agent CLI is refused.
-             *     Omitted (or "default") = auto: the first installed agent CLI at spawn
-             *     time, on its own default model.
-             * @example codex:gpt-5.3-codex
-             */
-            model?: string | null;
-            /** @example rust-engineer */
-            name: string;
-            role: components["schemas"]["Role"];
-            /**
-             * @description Absent or null = the default of the role, which the profile then
-             *     follows. It is the one prompt a profile owns: the briefings that
-             *     start, resume and nudge a session are Ariadne's own.
-             */
-            system_prompt?: string | null;
-        };
         CreateRepositoryRequest: {
             /** @description Omit for the repo's currently checked-out branch. */
             base_branch?: string | null;
             description?: string | null;
             /**
-             * @description The landing briefing this repository hands its engineer. Omitted or
+             * @description The landing briefing this repository hands its author. Omitted or
              *     empty = the built-in default of `merge_strategy`, which
              *     `GET /v1/merge-strategies` hands out for prefilling. A briefing may
              *     use only the placeholders a landing text is rendered with
@@ -965,38 +985,38 @@ export interface components {
         CreateReviewRequest: {
             body?: string | null;
             /**
-             * @description Reviewer profile id or name. Derived from the session context when the
-             *     call comes from an agent; required for user-submitted reviews.
+             * @description Id of the reviewing task agent. Derived from the session context when
+             *     the call comes from an agent; required for user-submitted reviews.
              */
-            reviewer_profile?: string | null;
+            reviewer_agent_id?: string | null;
             verdict: components["schemas"]["ReviewVerdict"];
         };
+        CreateSkillRequest: {
+            /**
+             * @description The whole `SKILL.md`, frontmatter included. A skill of the user's own
+             *     has no shipped text behind it, so it carries its own.
+             */
+            document: string;
+            /**
+             * @description Kebab-case, and free: a name Ariadne already ships is refused.
+             * @example api-design
+             */
+            name: string;
+        };
         CreateTaskRequest: {
+            /**
+             * @description The agents to staff: exactly one author, then the reviewers in review
+             *     order, at least one.
+             */
+            agents: components["schemas"]["AgentAssignment"][];
             /** @description Task ids this task depends on. */
             depends_on?: string[];
             description?: string;
-            /**
-             * @description The reasoning effort to run that model at, resolved and refused the
-             *     way [`ReviewerAssignment::effort`] is.
-             * @example xhigh
-             */
-            effort?: string | null;
-            /** @description Engineer profile id or unique name. */
-            engineer_profile: string;
-            /**
-             * @description What the engineer runs on, `<agent_kind>[:<model>]`; omitted (or
-             *     "default") = the engineer profile's own model. Resolved the way
-             *     [`ReviewerAssignment::model`] is.
-             * @example codex:gpt-5.3-codex
-             */
-            model?: string | null;
             /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
              */
             repo_id?: string | null;
-            /** @description The reviewers of the task, in review order. At least one. */
-            reviewers: components["schemas"]["ReviewerAssignment"][];
             title: string;
         };
         /** @description The daemon's own environment, as `ariadne doctor` renders it. */
@@ -1078,17 +1098,17 @@ export interface components {
             /** @enum {string} */
             event: "agent_event";
         } | {
-            data: components["schemas"]["ProfileDto"];
+            data: components["schemas"]["SkillDto"];
             /** @enum {string} */
-            event: "profile_created";
+            event: "skill_created";
         } | {
-            data: components["schemas"]["ProfileDto"];
+            data: components["schemas"]["SkillDto"];
             /** @enum {string} */
-            event: "profile_updated";
+            event: "skill_updated";
         } | {
             data: components["schemas"]["DeletedDto"];
             /** @enum {string} */
-            event: "profile_deleted";
+            event: "skill_deleted";
         } | {
             data: components["schemas"]["RepositoryDto"];
             /** @enum {string} */
@@ -1126,8 +1146,8 @@ export interface components {
             id: string;
         };
         /**
-         * @description Body of `POST /v1/goals/{id}/finalize`: the planner ends planning and
-         *     execution starts. The planner's call, not the user's, and it carries
+         * @description Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and
+         *     execution starts. The orchestrator's call, not the user's, and it carries
          *     nothing — the plan is the tasks it wrote.
          */
         FinalizePlanRequest: Record<string, never>;
@@ -1147,16 +1167,13 @@ export interface components {
              */
             max_tasks?: number | null;
             /**
-             * @description What the planner runs on, `<agent_kind>[:<model>]`: the agent CLI and,
-             *     after a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).
-             *     Pinned when the goal was created, from the model chosen for it or,
-             *     where none was, from the planner profile — editing the profile
-             *     afterwards leaves it alone. None = auto: the first installed CLI,
+             * @description What the orchestrator runs on, `<agent_kind>[:<model>]`: the agent CLI
+             *     and, after a `:`, the model of it (`codex`,
+             *     `claude_code:claude-opus-5`). None = auto: the first installed CLI,
              *     resolved at spawn time, on its own default model.
              * @example claude_code:claude-opus-5
              */
             model?: string | null;
-            planner_profile_id: string;
             /**
              * @description The registered repositories the goal works in, as they stand now: a
              *     goal references them, so an edit to one shows up here.
@@ -1176,18 +1193,18 @@ export interface components {
          */
         GoalStatus: "planning" | "active" | "completed" | "cancelled";
         /**
-         * @description What a goal cost, by the role that spent it. Grouped by role rather than
-         *     by profile: a goal's engineers are as many as it has tasks, and what is
+         * @description What a goal cost, by the seat that spent it. Grouped by seat rather than
+         *     by agent: a goal's authors are as many as it has tasks, and what is
          *     read at this height is where the tokens went, not which agent went there.
          */
         GoalUsageDto: {
-            /** @description Every engineer session of every task of the goal. */
-            engineers: components["schemas"]["TokenUsageDto"];
-            /** @description The planner's sessions, which belong to no task. */
-            planner: components["schemas"]["TokenUsageDto"];
+            /** @description Every author session of every task of the goal. */
+            authors: components["schemas"]["TokenUsageDto"];
+            /** @description The orchestrator's sessions, which belong to no task. */
+            orchestrator: components["schemas"]["TokenUsageDto"];
             /** @description Every reviewer session of every task of the goal, all rounds. */
             reviewers: components["schemas"]["TokenUsageDto"];
-            /** @description Every session of the goal summed, the planner's included. */
+            /** @description Every session of the goal summed, the orchestrator's included. */
             total: components["schemas"]["TokenUsageDto"];
         };
         /** @description Response of `GET /v1/health`. */
@@ -1243,7 +1260,7 @@ export interface components {
         };
         /**
          * @description How a repository takes the change a task lands on its base branch: the one
-         *     thing about a repository the engineer that finishes a task has to be told,
+         *     thing about a repository the author that finishes a task has to be told,
          *     since the commands it runs at the end differ entirely between the two.
          *
          *     Which forge a published request goes to is *not* here: `origin` says
@@ -1269,10 +1286,10 @@ export interface components {
          *
          *     The id is what a request writes as its `model`, whole. `agent_kind` is the
          *     same fact taken apart, so a picker can group the catalog by CLI without
-         *     parsing anything. The rest is what a planner sizes a task from: what this
-         *     model is, what it costs and how fast it answers next to every other entry,
-         *     the work it is and is not the choice for, and what each of its efforts
-         *     buys.
+         *     parsing anything. The rest is what an orchestrator sizes a task from: what
+         *     this model is, what it costs and how fast it answers next to every other
+         *     entry, the work it is and is not the choice for, and what each of its
+         *     efforts buys.
          */
         ModelDto: {
             /** @description The agent CLI this entry runs on. */
@@ -1324,7 +1341,7 @@ export interface components {
             tier: components["schemas"]["ModelTier"];
         };
         /**
-         * @description Roughly what a model is, as a picker and a planner compare models: the
+         * @description Roughly what a model is, as a picker and an orchestrator compare models: the
          *     capability class it belongs to, across every agent CLI at once.
          *
          *     One ladder for the whole catalog, so a claude_code entry and a codex entry
@@ -1348,47 +1365,8 @@ export interface components {
              */
             writable: boolean;
         };
-        ProfileDto: {
-            created_at: string;
-            /**
-             * @description The reasoning effort that model is run at, one of the efforts
-             *     `GET /v1/models` lists for it. None = whatever the agent CLI runs it
-             *     at on its own.
-             * @example high
-             */
-            effort?: string | null;
-            id: string;
-            /**
-             * @description What this profile runs on, `<agent_kind>[:<model>]`: the agent CLI and,
-             *     after a `:`, the model of it. None = auto: the first installed agent
-             *     CLI (claude_code, then codex, then opencode), resolved at spawn time,
-             *     on its own default model.
-             * @example claude_code:claude-opus-5
-             */
-            model?: string | null;
-            name: string;
-            role: components["schemas"]["Role"];
-            /**
-             * @description The system prompt this profile is spawned with: the one set on it, or
-             *     the default of its role while it has none of its own.
-             */
-            system_prompt: string;
-            /**
-             * @description Whether `system_prompt` is that role default rather than a text set on
-             *     this profile.
-             */
-            system_prompt_is_default: boolean;
-            updated_at: string;
-        };
-        /** @description What one profile spent on a task, named the way a reader addresses it. */
-        ProfileUsageDto: {
-            profile_id: string;
-            /** @description The profile's name; None only if that profile is gone. */
-            profile_name?: string | null;
-            usage: components["schemas"]["TokenUsageDto"];
-        };
         /**
-         * @description The engineer reporting the pull or merge request it opened for a task, so
+         * @description The author reporting the pull or merge request it opened for a task, so
          *     the user has somewhere to go and read it: taken off `gh pr create`'s output
          *     and recorded on the task.
          */
@@ -1402,7 +1380,7 @@ export interface components {
             description?: string | null;
             id: string;
             /**
-             * @description The landing briefing the engineer of an approved task is handed here:
+             * @description The landing briefing the author of an approved task is handed here:
              *     the text set on this repository, or the built-in default of its merge
              *     strategy while it has none of its own.
              */
@@ -1437,8 +1415,8 @@ export interface components {
             body?: string | null;
             created_at: string;
             id: string;
-            /** @description The reviewer of the round whose verdict this is. */
-            reviewer_profile_id: string;
+            /** @description The task agent whose verdict this is. */
+            reviewer_agent_id: string;
             /** Format: int64 */
             round: number;
             session_id?: string | null;
@@ -1451,38 +1429,15 @@ export interface components {
          */
         ReviewVerdict: "approve" | "request_changes";
         /**
-         * @description One reviewer of a task: the profile that reviews, and what it is to run on.
+         * @description Where an agent sits: the orchestrator of a goal, or the author or a
+         *     reviewer of one task.
          *
-         *     The model is written `<agent_kind>[:<model>]`: the agent CLI on its own
-         *     runs it on its own default model, an agent with a model after the `:` pins
-         *     both, and a string naming no agent CLI is refused — nothing here derives
-         *     one from the other. Omitted, the slot takes the profile's own model as it
-         *     stands when the slot is assigned.
-         */
-        ReviewerAssignment: {
-            /**
-             * @description The reasoning effort to run that model at, one of the efforts
-             *     `GET /v1/models` lists for it; anything else is refused. Omitted (or
-             *     "default") = whatever the agent CLI runs the model at, and where
-             *     `model` is omitted too, the profile's own effort. Named where `model`
-             *     is omitted, the slot takes the profile's own model at this effort.
-             * @example high
-             */
-            effort?: string | null;
-            /**
-             * @description What this reviewer runs on, `<agent_kind>[:<model>]`; omitted (or
-             *     "default") = the profile's own.
-             * @example codex:o3
-             */
-            model?: string | null;
-            /** @description Reviewer profile id or unique name. */
-            profile: string;
-        };
-        /**
-         * @description The role an agent plays in the orchestration.
+         *     A seat is a position, not an identity. Every agent below the orchestrator
+         *     is generic, and what it can do comes from the skills it loads; the seat is
+         *     only what the state machine and the launcher need to know about it.
          * @enum {string}
          */
-        Role: "planner" | "engineer" | "reviewer";
+        Seat: "orchestrator" | "author" | "reviewer";
         SessionDto: {
             agent_kind: components["schemas"]["AgentKind"];
             attention_reason?: null | components["schemas"]["AttentionReason"];
@@ -1498,17 +1453,24 @@ export interface components {
             ended_at?: string | null;
             goal_id: string;
             id: string;
-            /** @description Agent-internal id: claude session uuid / codex thread id / opencode session id. */
+            /**
+             * @description Agent-internal id: claude session uuid / codex thread id / opencode
+             *     session id.
+             */
             internal_session_id?: string | null;
             last_activity_at?: string | null;
             /** @description Model requested at launch; null = the agent CLI's default. */
             model?: string | null;
-            profile_id: string;
             /** Format: int64 */
             review_round?: number | null;
-            role: components["schemas"]["Role"];
+            seat: components["schemas"]["Seat"];
             status: components["schemas"]["SessionStatus"];
-            /** @description None = planner session. */
+            /**
+             * @description The staffed agent this session runs; None for an orchestrator,
+             *     which no task staffs.
+             */
+            task_agent_id?: string | null;
+            /** @description None = orchestrator session. */
             task_id?: string | null;
             tmux_session: string;
             /**
@@ -1585,10 +1547,78 @@ export interface components {
          * @enum {string}
          */
         SessionStatus: "starting" | "running" | "idle" | "exited" | "failed";
+        SkillDto: {
+            /**
+             * @description Whether Ariadne ships this skill. A built-in is reset rather than
+             *     deleted; a skill of the user's own is deleted rather than reset.
+             */
+            builtin: boolean;
+            created_at: string;
+            /**
+             * @description The whole `SKILL.md`: YAML frontmatter naming the skill and describing
+             *     it, then the body. This is the text set on the skill, or the one
+             *     Ariadne ships while a built-in has none of its own.
+             */
+            document: string;
+            /** @description Whether `document` is the shipped text rather than one somebody wrote. */
+            document_is_default: boolean;
+            /**
+             * @description Kebab-case; how an agent loads the skill and how a task names it.
+             * @example code-review
+             */
+            name: string;
+            /**
+             * @description The one line the skill says about itself, read off the `description`
+             *     of its frontmatter. It is what an agent sees before it opens the
+             *     document, and what a listing shows.
+             */
+            summary: string;
+            updated_at: string;
+        };
+        /**
+         * @description One agent staffed on a task: where it sits, what it knows, and what it
+         *     runs on.
+         *
+         *     The agent has no identity of its own. `seat` says only whether it authors
+         *     the task or reviews it; the skills are what it can do. What it runs on was
+         *     sized by the orchestrator when it staffed the task, or chosen by the user
+         *     since — either way it is what this agent runs on, and nothing behind it
+         *     changes that.
+         */
+        TaskAgentDto: {
+            /**
+             * @description What the orchestrator told this agent beyond the task itself. None =
+             *     the task is the whole of it.
+             */
+            brief?: string | null;
+            /**
+             * @description The reasoning effort that model is run at. None = whatever the agent
+             *     CLI runs it at on its own.
+             * @example high
+             */
+            effort?: string | null;
+            id: string;
+            /**
+             * @description What this agent runs on, `<agent_kind>[:<model>]`. None = auto: the
+             *     first installed CLI, resolved at spawn time, on its own default model.
+             * @example codex:o3
+             */
+            model?: string | null;
+            /** @description `author` or `reviewer`. */
+            seat: components["schemas"]["Seat"];
+            /**
+             * @description The skills this agent loads, in the order they reach it.
+             * @example [
+             *       "coding",
+             *       "testing"
+             *     ]
+             */
+            skills: string[];
+        };
         /**
          * @description Payload of `task_branch_updated`: where a task's branch points now.
          *
-         *     A commit in the engineer's worktree changes nothing in the store, so no
+         *     A commit in the author's worktree changes nothing in the store, so no
          *     other event says the task's diff is no longer the one a client fetched.
          */
         TaskBranchDto: {
@@ -1600,45 +1630,26 @@ export interface components {
             task_id: string;
         };
         TaskDto: {
+            /**
+             * @description The agents staffed on the task: the author first, then the reviewers
+             *     in review order. What each one can do is the skills it carries.
+             */
+            agents: components["schemas"]["TaskAgentDto"][];
             branch: string;
             created_at: string;
             /** @description Ids of tasks that must merge before this one starts. */
             depends_on: string[];
             description: string;
-            /**
-             * @description The reasoning effort that model is run at, pinned like `model`. None =
-             *     whatever the agent CLI runs it at on its own.
-             * @example xhigh
-             */
-            effort?: string | null;
-            engineer_profile_id: string;
-            /** @description Name of the engineer's profile; None only if that profile is gone. */
-            engineer_profile_name?: string | null;
             goal_id: string;
             id: string;
             merge_commit?: string | null;
             /**
-             * @description What the engineer runs on, `<agent_kind>[:<model>]`: the agent CLI and,
-             *     after a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).
-             *     Pinned when the task was created, from the model chosen for it at
-             *     creation or on an edit or, where none was, from the engineer profile —
-             *     editing the profile afterwards leaves it alone. None = auto: the first
-             *     installed CLI, resolved at spawn time, on its own default model.
-             * @example claude_code:claude-opus-5
-             */
-            model?: string | null;
-            /**
-             * @description Name of the planner profile of the task's goal, which wrote the task
-             *     without being a field of it.
-             */
-            planner_profile_name?: string | null;
-            /**
              * @description URL of the pull or merge request the task was published as, once its
-             *     engineer has reported one; None for a task landed directly.
+             *     author has reported one; None for a task landed directly.
              */
             pr_url?: string | null;
             /**
-             * @description Why a `failed` or `cancelled` task ended — the engineer's own
+             * @description Why a `failed` or `cancelled` task ended — the author's own
              *     `fail_task` reason, a dependency that never landed, a cancelled goal.
              *     None for every other status, and for an ending nobody gave a reason
              *     for.
@@ -1648,8 +1659,6 @@ export interface components {
             repo_id: string;
             /** Format: int64 */
             review_round: number;
-            /** @description Reviewer slots in planner-assigned order, each carrying its own pin. */
-            reviewers: components["schemas"]["TaskReviewerDto"][];
             /** @description Set when the agent went idle without advancing the task. */
             stalled: boolean;
             status: components["schemas"]["TaskStatus"];
@@ -1660,37 +1669,10 @@ export interface components {
             worktree_path?: string | null;
         };
         /**
-         * @description One reviewer slot of a task: which profile reviews it, and what that
-         *     reviewer was pinned to run on when the slot was assigned — the profile's
-         *     own model, or the one chosen for the slot. Pinned the same way the engineer
-         *     is, and read the same way: what a reviewer of this task runs on, not what
-         *     its profile says today.
-         */
-        TaskReviewerDto: {
-            /**
-             * @description The reasoning effort that model is run at, pinned like `model`. None =
-             *     whatever the agent CLI runs it at on its own.
-             * @example high
-             */
-            effort?: string | null;
-            /**
-             * @description What this reviewer runs on, `<agent_kind>[:<model>]`. None = auto: the
-             *     first installed CLI, resolved at spawn time, on its own default model.
-             * @example codex:o3
-             */
-            model?: string | null;
-            profile_id: string;
-            /**
-             * @description Name of the reviewer's profile; None
-             *     only if that profile is gone.
-             */
-            profile_name?: string | null;
-        };
-        /**
          * @description Task lifecycle status.
          * @enum {string}
          */
-        TaskStatus: "pending" | "ready" | "in_progress" | "under_review" | "changes_requested" | "approved" | "merged" | "cancelled" | "failed";
+        TaskStatus: "pending" | "ready" | "in_progress" | "under_review" | "changes_requested" | "approved" | "finished" | "cancelled" | "failed";
         TaskTransitionDto: {
             actor: string;
             created_at: string;
@@ -1708,20 +1690,20 @@ export interface components {
             transition?: null | components["schemas"]["TaskTransitionDto"];
         };
         /**
-         * @description What a task cost, by who spent it: its engineer, its reviewers one entry
+         * @description What a task cost, by who spent it: its author, its reviewers one entry
          *     each, and the total of every session on the task.
          */
         TaskUsageDto: {
-            /** @description The engineer's own, across every run of it. */
-            engineer: components["schemas"]["TokenUsageDto"];
+            /** @description The author's own, across every run of it. */
+            author: components["schemas"]["TokenUsageDto"];
             /**
-             * @description One entry per reviewer profile that has a session on the task, every
-             *     review round of it summed, ordered like `reviewers`. A reviewer whose
-             *     session has yet to report anything is listed with zeros; one that has
-             *     never been spawned is not listed at all.
+             * @description One entry per reviewer that has a session on the task, every review
+             *     round of it summed, in review order. A reviewer whose session has yet
+             *     to report anything is listed with zeros; one that has never been
+             *     spawned is not listed at all.
              */
-            reviewers: components["schemas"]["ProfileUsageDto"][];
-            /** @description Every session on the task summed, whatever its role. */
+            reviewers: components["schemas"]["AgentUsageDto"][];
+            /** @description Every session on the task summed, whatever its seat. */
             total: components["schemas"]["TokenUsageDto"];
         };
         /**
@@ -1748,7 +1730,7 @@ export interface components {
             output_tokens: number;
         };
         TransitionRequest: {
-            /** @description Required when `to` is `merged`. */
+            /** @description Required when `to` is `finished`. */
             merge_commit?: string | null;
             reason?: string | null;
             to: components["schemas"]["TaskStatus"];
@@ -1756,33 +1738,6 @@ export interface components {
         /** @description Body of `PUT /v1/agents/{kind}`: the whole new flag list, empty included. */
         UpdateAgentConfigRequest: {
             extra_flags: string[];
-        };
-        /** @description Partial update; absent fields stay unchanged. */
-        UpdateProfileRequest: {
-            /**
-             * @description The reasoning effort to run the model at: absent leaves it alone,
-             *     "default" (or the empty string) puts it back on whatever the agent CLI
-             *     runs the model at, and anything else is checked against the model it
-             *     will run at — the one this request names, or the profile's own where it
-             *     names none — and refused where that model does not take it. A `model`
-             *     written without an effort runs at the CLI's own default: the effort
-             *     belonged to the model that was left behind.
-             * @example high
-             */
-            effort?: string | null;
-            /**
-             * @description What this profile runs on, `<agent_kind>[:<model>]`, or "default" (or
-             *     the empty string) to clear it back to auto — the first installed CLI at
-             *     spawn time, on its own default model. Absent = unchanged.
-             * @example codex:gpt-5.3-codex
-             */
-            model?: string | null;
-            name?: string | null;
-            /**
-             * @description New system prompt. Absent = unchanged; putting it back on the role
-             *     default is `POST /v1/profiles/{id}/system-prompt/reset`.
-             */
-            system_prompt?: string | null;
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateRepositoryRequest: {
@@ -1802,6 +1757,14 @@ export interface components {
             merge_strategy?: null | components["schemas"]["MergeStrategy"];
             path?: string | null;
         };
+        /** @description Partial update; absent fields stay unchanged. */
+        UpdateSkillRequest: {
+            /**
+             * @description The new document. Absent = unchanged; putting a built-in back on the
+             *     text Ariadne ships is `POST /v1/skills/{name}/document/reset`.
+             */
+            document?: string | null;
+        };
         /** @description Partial update; only allowed while the task is pending/ready. */
         UpdateTaskRequest: {
             depends_on?: string[] | null;
@@ -1818,19 +1781,17 @@ export interface components {
              */
             effort?: string | null;
             /**
-             * @description What the engineer runs on, `<agent_kind>[:<model>]`: absent leaves the
-             *     task's pins alone, "default" (or the empty string) puts them back on
-             *     the engineer profile's own model as it stands now, and anything else
-             *     pins what it spells. The same clearing word
-             *     [`crate::profiles::UpdateProfileRequest::model`] takes.
+             * @description What the author runs on, `<agent_kind>[:<model>]`: absent leaves the
+             *     author's pins alone, "default" (or the empty string) puts them back on
+             *     auto, and anything else pins what it spells.
              * @example codex:gpt-5.3-codex
              */
             model?: string | null;
             /**
-             * @description The whole reviewer list, replaced: each slot is cut afresh and pinned
-             *     to the model it names or, where it names none, to its profile's.
+             * @description The whole reviewer list, replaced: every reviewer is staffed afresh,
+             *     with the skills and the model it names.
              */
-            reviewers?: components["schemas"]["ReviewerAssignment"][] | null;
+            reviewers?: components["schemas"]["AgentAssignment"][] | null;
             title?: string | null;
         };
         /** @description Response of `GET /v1/version`. */
@@ -2027,7 +1988,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no such repository or planner profile */
+            /** @description no such repository or orchestrator profile */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2304,178 +2265,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ModelDto"][];
                 };
-            };
-        };
-    };
-    profiles_list: {
-        parameters: {
-            query?: {
-                /** @description Filter by role. */
-                role?: null | components["schemas"]["Role"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileDto"][];
-                };
-            };
-        };
-    };
-    profiles_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateProfileRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileDto"];
-                };
-            };
-            /** @description name already exists */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    profiles_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description profile id or name */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileDto"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    profiles_update: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description profile id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateProfileRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileDto"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    profiles_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description profile id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    profiles_reset_system_prompt: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description profile id or name */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileDto"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
@@ -2896,6 +2685,181 @@ export interface operations {
             };
         };
     };
+    skills_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDto"][];
+                };
+            };
+        };
+    };
+    skills_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSkillRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDto"];
+                };
+            };
+            /** @description name already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    skills_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description skill name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    skills_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description skill name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSkillRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    skills_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description skill name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    skills_reset_document: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description skill name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     tasks_list: {
         parameters: {
             query?: {
@@ -3079,7 +3043,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description not an engineer session */
+            /** @description not an author session */
             403: {
                 headers: {
                     [name: string]: unknown;

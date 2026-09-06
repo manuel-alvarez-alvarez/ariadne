@@ -1,21 +1,19 @@
 import { describe, expect, it } from "vitest"
 
-import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
+import type { GoalDto, SessionDto, SkillDto, TaskDto } from "@/api"
 import { attentionTarget, collectAttention } from "@/features/goals/attention"
-import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
+import { aGoal, aSession, aSkill, aTask } from "@/test/fixtures"
 import { attentionEntries, buildPaletteEntries, paletteTargetTo } from "./entries"
 
 const GOAL: GoalDto = aGoal({
   id: "01JGOAL00000000000000000A",
   title: "Ship the palette",
-  planner_profile_id: "01JPROF0000000000000000AA",
 })
 
 const TASK: TaskDto = aTask({
   id: "01JTASK00000000000000000B",
   title: "Add the command palette",
   branch: "add-the-command-palette-01jtask",
-  engineer_profile_id: "01JPROF0000000000000000AA",
   repo_id: "01JREPO0000000000000000AA",
   goal_id: GOAL.id,
 })
@@ -24,7 +22,7 @@ const SESSION: SessionDto = aSession({
   id: "01JSESS00000000000000000C",
   goal_id: GOAL.id,
   task_id: TASK.id,
-  profile_id: "01JPROF0000000000000000AA",
+  task_agent_id: "01JPROF0000000000000000AA",
   tmux_session: "ariadne-eng-01jsess",
 })
 
@@ -32,23 +30,21 @@ const PLANNER_SESSION: SessionDto = {
   ...SESSION,
   id: "01JSESS00000000000000000D",
   task_id: null,
-  role: "planner",
+  seat: "orchestrator",
   tmux_session: "ariadne-plan-01jsess",
 }
 
-const PROFILE: ProfileDto = aProfile({
-  id: "01JPROF0000000000000000AA",
-  name: "Reviewer (strict)",
-  role: "reviewer",
-  model: "codex:gpt-5",
-  effort: "high",
+const SKILL: SkillDto = aSkill({
+  name: "security-review",
+  summary: "Find the vulnerabilities in a change or a component.",
+  builtin: true,
 })
 
 const SOURCE = {
   goals: [GOAL],
   tasks: [TASK],
   sessions: [SESSION, PLANNER_SESSION],
-  profiles: [PROFILE],
+  skills: [SKILL],
 }
 
 describe("buildPaletteEntries", () => {
@@ -57,9 +53,9 @@ describe("buildPaletteEntries", () => {
       goals: undefined,
       tasks: undefined,
       sessions: undefined,
-      profiles: undefined,
+      skills: undefined,
     })
-    expect(entries).toEqual({ goals: [], tasks: [], sessions: [], profiles: [] })
+    expect(entries).toEqual({ goals: [], tasks: [], sessions: [], skills: [] })
   })
 
   it("makes a goal findable by its title and by its id", () => {
@@ -81,19 +77,19 @@ describe("buildPaletteEntries", () => {
     expect(entry?.target).toEqual({ kind: "task", taskId: TASK.id })
   })
 
-  it("names a session after its role and what it is working on", () => {
-    const [engineer, planner] = buildPaletteEntries(SOURCE).sessions
-    expect(engineer?.label).toBe("Engineer · Add the command palette")
-    // A planner session has no task, so it is named after its goal.
-    expect(planner?.label).toBe("Planner · Ship the palette")
-    expect(engineer?.keywords).toContain(SESSION.id)
-    expect(engineer?.target).toEqual({
+  it("names a session after its seat and what it is working on", () => {
+    const [author, orchestrator] = buildPaletteEntries(SOURCE).sessions
+    expect(author?.label).toBe("Author · Add the command palette")
+    // An orchestrator session has no task, so it is named after its goal.
+    expect(orchestrator?.label).toBe("Orchestrator · Ship the palette")
+    expect(author?.keywords).toContain(SESSION.id)
+    expect(author?.target).toEqual({
       kind: "session",
       sessionId: SESSION.id,
       goalId: GOAL.id,
       taskId: TASK.id,
     })
-    expect(planner?.target).toEqual({
+    expect(orchestrator?.target).toEqual({
       kind: "session",
       sessionId: PLANNER_SESSION.id,
       goalId: GOAL.id,
@@ -103,20 +99,19 @@ describe("buildPaletteEntries", () => {
 
   it("falls back to the session's id when neither goal nor task is loaded", () => {
     const [entry] = buildPaletteEntries({ ...SOURCE, goals: [], tasks: [] }).sessions
-    expect(entry?.label).toBe("Engineer")
+    expect(entry?.label).toBe("Author")
     expect(entry?.detail).toBe("…0000000C")
   })
 
-  it("lists profiles by name, with the role they fill", () => {
-    const [entry] = buildPaletteEntries(SOURCE).profiles
-    expect(entry?.label).toBe("Reviewer (strict)")
-    expect(entry?.detail).toBe("Reviewer")
-    // One keyword now carries both halves, since one string is the choice.
-    expect(entry?.keywords).toContain("codex:gpt-5")
-    // The effort is searchable too: it is half of what that profile runs as.
-    expect(entry?.keywords).toContain("high")
-    // The pick carries its subject: the screen opens on that profile.
-    expect(entry?.target).toEqual({ kind: "page", path: `/profiles?profile=${PROFILE.id}` })
+  it("lists skills by name, with the line each says about itself", () => {
+    const [entry] = buildPaletteEntries(SOURCE).skills
+    expect(entry?.label).toBe("security-review")
+    expect(entry?.detail).toBe("Find the vulnerabilities in a change or a component.")
+    // Where the document came from is searchable: it is what says whether the
+    // skill can be reset or deleted.
+    expect(entry?.keywords).toContain("shipped")
+    // The pick carries its subject: the screen opens on that skill.
+    expect(entry?.target).toEqual({ kind: "page", path: "/skills?skill=security-review" })
   })
 })
 
@@ -154,11 +149,11 @@ describe("attentionEntries", () => {
     expect(entry?.keywords).toContain(FLAGGED.id)
   })
 
-  it("names a planner's row by its role and goal, having no task", () => {
-    const planner: SessionDto = { ...PLANNER_SESSION, attention_reason: "disconnected" }
-    const [entry] = attentionEntries(collectAttention([GOAL], [], [planner]))
+  it("names an orchestrator's row by its seat and goal, having no task", () => {
+    const orchestrator: SessionDto = { ...PLANNER_SESSION, attention_reason: "disconnected" }
+    const [entry] = attentionEntries(collectAttention([GOAL], [], [orchestrator]))
 
-    expect(entry?.label).toBe(`Planner · ${GOAL.title}`)
+    expect(entry?.label).toBe(`Orchestrator · ${GOAL.title}`)
     expect(entry?.detail).toBe("Disconnected")
   })
 
@@ -227,7 +222,7 @@ describe("paletteTargetTo", () => {
     expect(target).toEqual({ search: "?task=t1&tab=sessions&session=s1" })
   })
 
-  it("takes a planner session to the goal panel, the only place it shows", () => {
+  it("takes an orchestrator session to the goal panel, the only place it shows", () => {
     const target = paletteTargetTo(
       { kind: "session", sessionId: "s2", goalId: "g1", taskId: null },
       new URLSearchParams("task=t1"),

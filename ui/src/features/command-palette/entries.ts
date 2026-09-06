@@ -12,12 +12,11 @@
  * the live search params.
  */
 
-import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
+import type { GoalDto, SessionDto, SkillDto, TaskDto } from "@/api"
 import { type AttentionItem, attentionSubject, attentionTarget } from "@/features/goals/attention"
-import { roleLabel } from "@/features/profiles/profile-labels"
 import { SESSION_ATTENTION_META } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
-import { ROLE_LABELS, shortId } from "@/lib/format"
+import { SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, taskPanelFrom, taskSessionPanelFrom } from "@/routes/paths"
 
 /** Where a palette entry goes when it is picked. */
@@ -50,7 +49,7 @@ export interface PaletteEntry {
   label: string
   /**
    * Secondary text, to the right of the label and under it in weight: the id,
-   * the branch, the role. Long ones are truncated in the middle (see
+   * the branch, the seat. Long ones are truncated in the middle (see
    * `./detail`), so an id or a branch may show without its head.
    */
   detail?: string
@@ -63,7 +62,7 @@ interface PaletteSource {
   goals: GoalDto[] | undefined
   tasks: TaskDto[] | undefined
   sessions: SessionDto[] | undefined
-  profiles: ProfileDto[] | undefined
+  skills: SkillDto[] | undefined
 }
 
 /** One group of rows per entity, in the order the palette lists them. */
@@ -71,14 +70,14 @@ export interface PaletteEntries {
   goals: PaletteEntry[]
   tasks: PaletteEntry[]
   sessions: PaletteEntry[]
-  profiles: PaletteEntry[]
+  skills: PaletteEntry[]
 }
 
 export function buildPaletteEntries({
   goals,
   tasks,
   sessions,
-  profiles,
+  skills,
 }: PaletteSource): PaletteEntries {
   const goalTitles = new Map((goals ?? []).map((goal) => [goal.id, goal.title]))
   const taskTitles = new Map((tasks ?? []).map((task) => [task.id, task.title]))
@@ -110,8 +109,8 @@ export function buildPaletteEntries({
         (session.task_id ? taskTitles.get(session.task_id) : undefined) ??
         goalTitles.get(session.goal_id)
       return {
-        value: `${ROLE_LABELS[session.role]} ${of ?? ""} ${shortId(session.id)}`,
-        label: of ? `${ROLE_LABELS[session.role]} · ${of}` : ROLE_LABELS[session.role],
+        value: `${SEAT_LABELS[session.seat]} ${of ?? ""} ${shortId(session.id)}`,
+        label: of ? `${SEAT_LABELS[session.seat]} · ${of}` : SEAT_LABELS[session.seat],
         detail: shortId(session.id),
         keywords: [session.id, session.status, session.tmux_session, session.agent_kind],
         target: {
@@ -123,14 +122,14 @@ export function buildPaletteEntries({
       }
     }),
 
-    profiles: (profiles ?? []).map((profile) => ({
-      value: `${profile.name} ${shortId(profile.id)}`,
-      label: profile.name,
-      detail: roleLabel(profile.role),
-      keywords: [profile.id, profile.role, profile.model ?? "", profile.effort ?? ""],
+    skills: (skills ?? []).map((skill) => ({
+      value: skill.name,
+      label: skill.name,
+      detail: skill.summary,
+      keywords: [skill.name, skill.builtin ? "shipped" : "yours"],
       // The one entity with no panel of its own: the screen opens on it,
-      // so the pick is carried there rather than dropped at `/profiles`.
-      target: { kind: "page", path: paths.profile(profile.id) },
+      // so the pick is carried there rather than dropped at `/skills`.
+      target: { kind: "page", path: paths.skill(skill.name) },
     })),
   }
 }
@@ -145,7 +144,7 @@ export function buildPaletteEntries({
  * own, and {@link taskPanelFrom} sends the two targets built on it to the board
  * instead. A pick has to open what its row names.
  *
- * A session is shown inside the panel of the task it ran; a planner session
+ * A session is shown inside the panel of the task it ran; an orchestrator session
  * belongs to no task, and the goal panel only exists on the board, so that one
  * leaves the current screen for it.
  */
@@ -197,7 +196,7 @@ export function attentionEntries(items: AttentionItem[]): PaletteEntry[] {
       item.session?.id ?? "",
       item.taskReason ?? "",
       item.sessionReason ?? "",
-      item.session ? ROLE_LABELS[item.session.role] : "",
+      item.session ? SEAT_LABELS[item.session.seat] : "",
       item.task?.branch ?? "",
       item.goal?.title ?? "",
     ],

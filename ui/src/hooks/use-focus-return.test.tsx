@@ -68,7 +68,7 @@ function Screen({ withRow = true }: { withRow?: boolean }) {
                           data-focus-return="s1"
                           onClick={() => setSearch({ task, session: "s1" }, { replace: true })}
                         >
-                          Open Engineer session
+                          Open Author session
                         </button>
                       ) : null}
                     </td>
@@ -96,7 +96,7 @@ function mount({ at = "/", ...props }: { at?: string; withRow?: boolean } = {}) 
 
 /** The panel's own drill-down, opened from the row that stands for a session. */
 async function drillIn(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole("button", { name: "Open Engineer session" }))
+  await user.click(await screen.findByRole("button", { name: "Open Author session" }))
   return screen.findByRole("button", { name: "Back to the task" })
 }
 
@@ -119,7 +119,7 @@ it("hands focus back to the row a session was opened from", async () => {
 
   await user.click(back)
   expect(document.activeElement).toBe(
-    await screen.findByRole("button", { name: "Open Engineer session" }),
+    await screen.findByRole("button", { name: "Open Author session" }),
   )
 })
 

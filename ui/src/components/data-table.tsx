@@ -131,7 +131,7 @@ export function RowAction({
   onClick,
 }: {
   icon: ReactNode
-  /** Both the accessible name and the tooltip: "Edit rust-engineer". */
+  /** Both the accessible name and the tooltip: "Edit rust-author". */
   label: string
   onClick: () => void
 }) {

@@ -22,11 +22,10 @@ function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): Tas
     branch: `a-task-${id}`,
     repo_id: "r1",
     depends_on: [],
-    engineer_profile_id: "p1",
-    reviewers: [],
+    agents: [],
     review_round: 0,
     stalled: false,
-    usage: { total: NO_TOKENS, engineer: NO_TOKENS, reviewers: [] },
+    usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [] },
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...extra,
@@ -36,7 +35,7 @@ function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): Tas
 describe("compareByAttention", () => {
   it("puts what is waiting on the user before what the agents are still doing", () => {
     const ordered = [
-      task("merged", "merged"),
+      task("finished", "finished"),
       task("in-progress", "in_progress"),
       task("approved", "approved"),
       task("failed", "failed"),
@@ -48,7 +47,7 @@ describe("compareByAttention", () => {
       "approved",
       "in-progress",
       "pending",
-      "merged",
+      "finished",
     ])
   })
 
@@ -71,14 +70,14 @@ describe("compareByAttention", () => {
 })
 
 describe("canEdit", () => {
-  it("allows editing only before an engineer has started", () => {
+  it("allows editing only before an author has started", () => {
     const editable: TaskStatus[] = ["pending", "ready"]
     const frozen: TaskStatus[] = [
       "in_progress",
       "under_review",
       "changes_requested",
       "approved",
-      "merged",
+      "finished",
       "cancelled",
       "failed",
     ]
@@ -90,7 +89,13 @@ describe("canEdit", () => {
 
 describe("the board columns", () => {
   it("is one column per pipeline stage, in pipeline order", () => {
-    expect(BOARD_STATUSES).toEqual(["pending", "in_progress", "under_review", "approved", "merged"])
+    expect(BOARD_STATUSES).toEqual([
+      "pending",
+      "in_progress",
+      "under_review",
+      "approved",
+      "finished",
+    ])
   })
 
   it("leaves the folded statuses out: they are badges, not columns", () => {
@@ -117,17 +122,17 @@ describe("the ready fold", () => {
   it("keeps ready ahead of pending, so a stuck task sorts above a blocked one", () => {
     const ordered = [
       task("dependency-blocked", "pending"),
-      task("waiting-for-an-engineer", "ready"),
+      task("waiting-for-an-author", "ready"),
     ].sort(compareByAttention)
 
-    expect(ordered.map((t) => t.id)).toEqual(["waiting-for-an-engineer", "dependency-blocked"])
+    expect(ordered.map((t) => t.id)).toEqual(["waiting-for-an-author", "dependency-blocked"])
   })
 })
 
 describe("the landing column", () => {
   it("gives approved a column of its own, folded into nothing", () => {
     // The whole of the landing stage: the reviewers are done with it and its
-    // engineer is squashing it onto the base branch, or waiting on the
+    // author is squashing it onto the base branch, or waiting on the
     // request it published.
     expect(primaryStatus("approved")).toBe("approved")
     expect(subStatus("approved")).toBeUndefined()

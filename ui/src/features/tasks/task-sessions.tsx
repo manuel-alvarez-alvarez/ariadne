@@ -75,7 +75,7 @@ export function TaskSessionView({
 }) {
   const session = useQuery(sessionQueryOptions(sessionId))
   // `GET /v1/sessions/{id}` is not scoped to a task, so a link can hand this
-  // panel a session of some *other* task (or a goal's planner session, which
+  // panel a session of some *other* task (or a goal's orchestrator session, which
   // is nobody's task). It is not one of this task's, and the panel would
   // present it as if it were — with kill and resume on it.
   const foreign = session.data !== undefined && session.data.task_id !== taskId

@@ -6,7 +6,7 @@
  * panel on the goal already open, a session opens inside its task's panel.
  *
  * It adds no requests of its own: the four lists it searches are the same
- * cache entries the goals board, the session panels and the profiles screen
+ * cache entries the goals board, the session panels and the skills screen
  * read, so a palette opened after them shows their data instantly and only
  * refreshes it. They are `enabled` on open, so a session that never opens the
  * palette never fetches them either.
@@ -63,8 +63,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAttention } from "@/features/goals/attention"
 import { goalsQueryOptions } from "@/features/goals/queries"
 import { isTerminalGoalStatus } from "@/features/goals/status"
-import { profilesQueryOptions } from "@/features/profiles/queries"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
+import { skillsQueryOptions } from "@/features/skills/queries"
 import { taskListQueryOptions } from "@/features/tasks"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useConnection } from "@/hooks/use-connection"
@@ -161,7 +161,7 @@ export function CommandPalette({
         onOpenChange={onOpenChange}
         className="sm:max-w-xl"
         title="Command palette"
-        description="Search goals, tasks, sessions and profiles, or run an action."
+        description="Search goals, tasks, sessions and skills, or run an action."
       >
         {/* The search is cmdk's own state, not React's: cmdk sorts the rows by
             reordering the DOM, and a re-render on every keystroke — which is
@@ -169,7 +169,7 @@ export function CommandPalette({
             order they were written in. The palette is unmounted while closed,
             so that state also starts empty every time. */}
         <Command loop filter={PALETTE_FILTER}>
-          <CommandInput autoFocus placeholder="Search goals, tasks, sessions, profiles…" />
+          <CommandInput autoFocus placeholder="Search goals, tasks, sessions, skills…" />
           <CommandList>
             <CommandEmpty>No matches.</CommandEmpty>
 
@@ -381,7 +381,7 @@ function Hint({ keys, children }: { keys: string; children: ReactNode }) {
 const PAGES = [
   { label: "Goals", path: paths.goals(), icon: TargetIcon },
   { label: "Sessions", path: paths.sessions(), icon: RadioTowerIcon },
-  { label: "Profiles", path: paths.profiles(), icon: CpuIcon },
+  { label: "Skills", path: paths.skills(), icon: CpuIcon },
   { label: "Agents", path: paths.agents(), icon: BotIcon },
   { label: "Repositories", path: paths.repositories(), icon: FolderGit2Icon },
 ] as const
@@ -391,7 +391,7 @@ const GROUPS = [
   { key: "goals", heading: "Goals", icon: TargetIcon },
   { key: "tasks", heading: "Tasks", icon: ListChecksIcon },
   { key: "sessions", heading: "Sessions", icon: RadioTowerIcon },
-  { key: "profiles", heading: "Profiles", icon: CpuIcon },
+  { key: "skills", heading: "Skills", icon: CpuIcon },
 ] as const satisfies readonly {
   key: keyof PaletteEntries
   heading: string
@@ -483,7 +483,7 @@ function EntryGroup({
 }
 
 /**
- * The row's secondary text — an id, a branch, a role — held to a third of the
+ * The row's secondary text — an id, a branch, a seat — held to a third of the
  * row and truncated in the middle rather than at the end, so a branch keeps the
  * slug that tells it from the next one (see `./detail`).
  */
@@ -524,7 +524,7 @@ function usePaletteEntries(open: boolean): {
   const goals = useQuery({ ...goalsQueryOptions(), enabled: open })
   const tasks = useQuery({ ...taskListQueryOptions(), enabled: open })
   const sessions = useQuery({ ...sessionsQueryOptions(), enabled: open })
-  const profiles = useQuery({ ...profilesQueryOptions(), enabled: open })
+  const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
 
   const entries = useMemo(
     () =>
@@ -532,9 +532,9 @@ function usePaletteEntries(open: boolean): {
         goals: goals.data,
         tasks: tasks.data,
         sessions: sessions.data,
-        profiles: profiles.data,
+        skills: skills.data,
       }),
-    [goals.data, tasks.data, sessions.data, profiles.data],
+    [goals.data, tasks.data, sessions.data, skills.data],
   )
 
   return { entries, goals: goals.data }

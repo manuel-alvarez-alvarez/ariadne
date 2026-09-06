@@ -16,11 +16,11 @@ import { useEffect, useRef, useState } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
 
 /**
- * Which profile is selected, on the profiles screen: what {@link paths.profile}
+ * Which skill is selected, on the skills screen: what {@link paths.skill}
  * points at, and where that screen keeps the selection its detail pane is
  * showing.
  */
-export const PROFILE_PARAM = "profile"
+export const SKILL_PARAM = "skill"
 
 /**
  * What a link asks the screen it opens to hand the keyboard to, under
@@ -39,14 +39,14 @@ export const paths = {
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,
-  profiles: () => "/profiles",
+  skills: () => "/skills",
   /**
-   * The profiles screen, opened on one profile: the screen is a list beside
-   * the selected profile's editor rather than a page per profile, so the link
+   * The skills screen, opened on one skill: the screen is a list beside the
+   * selected skill's editor rather than a page per skill, so the link
    * asks it to select that one and scroll the list to it (see
-   * `features/profiles/profiles-page.tsx`).
+   * `features/skills/skills-page.tsx`).
    */
-  profile: (profileId: string) => `/profiles?${PROFILE_PARAM}=${profileId}`,
+  skill: (name: string) => `/skills?${SKILL_PARAM}=${encodeURIComponent(name)}`,
   /**
    * Every session there is, filtered on the screen itself. A session's own
    * details are a `?session=` panel over whatever screen picked it (see
@@ -58,7 +58,7 @@ export const paths = {
   /**
    * The goals board with this goal's panel open on one of its sessions.
    *
-   * The only way to show a planner session, which belongs to no task: the goal
+   * The only way to show an orchestrator session, which belongs to no task: the goal
    * panel opens on the board and nowhere else (see `detail-panels.tsx`), so
    * this leaves whatever screen the link was on.
    */

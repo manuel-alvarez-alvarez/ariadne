@@ -4,7 +4,7 @@
  * Both are the board's answer to the same complaint: it was ordered by id
  * alone, so an old active goal sat under every finished one, and a lane said
  * only how many tasks it had — which is the one number that never changes once
- * the planner is done.
+ * the orchestrator is done.
  *
  * Pure, and apart from `goal-swimlanes.tsx`, because the ordering is the
  * board's whole reading order and the counters are the only thing a folded
@@ -54,15 +54,15 @@ export function orderLanes(
 interface LaneCounts {
   /**
    * Everything that is in the pipeline or has been through it — the whole lane
-   * minus what was cancelled, which is what "N merged of how many" is out of.
+   * minus what was cancelled, which is what "N finished of how many" is out of.
    * A cancelled task was taken out of the count on purpose, so leaving it in
    * would mean a finished goal never reads as finished.
    */
   pipeline: number
-  merged: number
+  finished: number
   /** Retry candidates: they stay in the Pending column, outlined in danger. */
   failed: number
-  /** Not started — waiting on a dependency, or on an engineer session. */
+  /** Not started — waiting on a dependency, or on an author session. */
   waiting: number
   cancelled: number
 }
@@ -70,14 +70,14 @@ interface LaneCounts {
 const WAITING_STATUSES: readonly TaskStatus[] = ["pending", "ready"]
 
 function countLane(tasks: readonly TaskDto[]): LaneCounts {
-  const counts: LaneCounts = { pipeline: 0, merged: 0, failed: 0, waiting: 0, cancelled: 0 }
+  const counts: LaneCounts = { pipeline: 0, finished: 0, failed: 0, waiting: 0, cancelled: 0 }
   for (const task of tasks) {
     if (task.status === "cancelled") {
       counts.cancelled += 1
       continue
     }
     counts.pipeline += 1
-    if (task.status === "merged") counts.merged += 1
+    if (task.status === "finished") counts.finished += 1
     else if (task.status === "failed") counts.failed += 1
     else if (WAITING_STATUSES.includes(task.status)) counts.waiting += 1
   }
@@ -85,8 +85,8 @@ function countLane(tasks: readonly TaskDto[]): LaneCounts {
 }
 
 /**
- * The lane in one line: "3/7 merged · 1 failed · 1 waiting" while it is
- * running, "7 tasks merged · 1 cancelled" once it is done.
+ * The lane in one line: "3/7 finished · 1 failed · 1 waiting" while it is
+ * running, "7 tasks finished · 1 cancelled" once it is done.
  *
  * Only what is worth saying: a lane with nothing failed does not say "0
  * failed", and a lane that is all the way through says so in words rather than
@@ -100,9 +100,9 @@ export function laneSummary(tasks: readonly TaskDto[]): string {
   const parts: string[] = []
   if (counts.pipeline > 0) {
     parts.push(
-      counts.merged === counts.pipeline
-        ? `${plural(counts.pipeline, "task")} merged`
-        : `${counts.merged}/${counts.pipeline} merged`,
+      counts.finished === counts.pipeline
+        ? `${plural(counts.pipeline, "task")} finished`
+        : `${counts.finished}/${counts.pipeline} finished`,
     )
   }
   if (counts.failed > 0) parts.push(`${counts.failed} failed`)

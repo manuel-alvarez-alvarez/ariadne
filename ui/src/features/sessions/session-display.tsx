@@ -8,7 +8,7 @@
  * reasons. Both are declared here rather than at their call sites because the
  * reason is shown in four places (the board's attention strip, the sessions
  * table, the session panel, and the CLI's `ariadne attention`, which mirrors
- * this wording) and they have to agree. The role and agent-kind names are
+ * this wording) and they have to agree. The seat and agent-kind names are
  * app-wide rather than this feature's and come from `@/lib/format`, the way
  * timestamps come from `@/lib/format`.
  */

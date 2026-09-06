@@ -37,7 +37,7 @@ const BLOCKED: SessionDto = aSession({
   id: "01JSESS0000000000000000001",
   goal_id: GOAL.id,
   task_id: TASK.id,
-  profile_id: ENGINEER,
+  task_agent_id: ENGINEER,
   status: "running",
   attention_reason: "waiting_permission",
   attention_since: "2026-01-01T03:00:00Z",

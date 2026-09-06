@@ -225,11 +225,11 @@ function Lane({
   const repoSummary = goal.repos
     .map((repo) => `${folderName(repo.path)} [${repo.base_branch}]`)
     .join(", ")
-  // A planner belongs to no task, so it has no card to be flagged on: the lane
+  // An orchestrator belongs to no task, so it has no card to be flagged on: the lane
   // header is the only place its goal is named, and so the only place it can
   // ask for a person. It is shown collapsed too — a lane folded away is
-  // exactly where a stuck planner would otherwise go unseen.
-  const planner: SessionAttention | undefined = attention.byGoal.get(goal.id)
+  // exactly where a stuck orchestrator would otherwise go unseen.
+  const orchestrator: SessionAttention | undefined = attention.byGoal.get(goal.id)
 
   return (
     <section className="border-b last:border-b-0">
@@ -272,14 +272,14 @@ function Lane({
           label={GOAL_STATUS_META[goal.status].label}
           tone={GOAL_STATUS_META[goal.status].badge}
         />
-        {planner ? <SessionAttentionBadge attention={planner} /> : null}
+        {orchestrator ? <SessionAttentionBadge attention={orchestrator} /> : null}
         <span className="flex items-baseline gap-1 whitespace-nowrap text-xs text-muted-foreground">
           {/* Where the lane is up to, and the whole of what a folded lane
               says: how far through the pipeline it is, and what is stuck or
               waiting in it. "N tasks" was the one number about a goal that
-              stops changing the moment the planner is done. */}
+              stops changing the moment the orchestrator is done. */}
           {laneSummary(tasks?.all ?? [])} · created <When at={goal.created_at} label="created" /> ·{" "}
-          {/* What the whole goal has cost — planner, engineers and reviewers —
+          {/* What the whole goal has cost — orchestrator, authors and reviewers —
               which is the one number the board can show without opening
               anything. The hint behind it names the halves and splits the
               total between the three roles. */}
@@ -289,7 +289,9 @@ function Lane({
 
       {collapsed ? null : total === 0 ? (
         <p className="sticky left-0 w-fit px-3 pt-1 pb-3 text-xs text-muted-foreground">
-          {goal.status === "planning" ? "No tasks yet — the planner is still working" : "No tasks"}
+          {goal.status === "planning"
+            ? "No tasks yet — the orchestrator is still working"
+            : "No tasks"}
         </p>
       ) : (
         <div className={cn(COLUMNS_GRID, "px-3 pt-1 pb-2.5")}>
@@ -382,7 +384,7 @@ interface GoalTasks {
  * Whether this lane is asking for a person, which is what puts it above every
  * other lane on the board.
  *
- * Three ways it can: its planner is blocked (which has no card to show it on),
+ * Three ways it can: its orchestrator is blocked (which has no card to show it on),
  * one of its agents is (which does), or one of its tasks failed or stalled —
  * the same rule the attention strip lists a task by, read here so a lane and
  * the strip above it never disagree about what is stuck.
@@ -403,8 +405,8 @@ function laneNeedsAttention(
  *
  * A goal still being planned holds all of its tasks in the first column,
  * `pending` and `ready` alike: nothing under it has been handed to an
- * engineer, so a card further down the pipeline would say a task is moving
- * when it is waiting on the planner. That is the goal's status talking, which
+ * author, so a card further down the pipeline would say a task is moving
+ * when it is waiting on the orchestrator. That is the goal's status talking, which
  * is why the goals are an argument here.
  *
  * A failed task lands in that first column too, whatever the goal is doing:

@@ -21,7 +21,7 @@
 
 import type { SessionStatus, TaskStatus } from "./types"
 
-export interface PageFilters {
+interface PageFilters {
   after?: string
   limit?: number
 }
@@ -68,12 +68,12 @@ export const qk = {
     detail: (id: string) => ["sessions", "detail", id] as const,
     logs: (id: string) => ["sessions", "detail", id, "logs"] as const,
   },
-  profiles: {
-    all: () => ["profiles"] as const,
-    lists: () => ["profiles", "list"] as const,
-    list: (filters?: PageFilters) => ["profiles", "list", filters ?? {}] as const,
-    details: () => ["profiles", "detail"] as const,
-    detail: (id: string) => ["profiles", "detail", id] as const,
+  skills: {
+    all: () => ["skills"] as const,
+    lists: () => ["skills", "list"] as const,
+    list: (filters?: PageFilters) => ["skills", "list", filters ?? {}] as const,
+    details: () => ["skills", "detail"] as const,
+    detail: (name: string) => ["skills", "detail", name] as const,
   },
   /**
    * The registered checkouts goals are created against

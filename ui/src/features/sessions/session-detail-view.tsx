@@ -44,11 +44,11 @@ import { When } from "@/components/when"
 // barrel: `@/features/tasks` re-exports the task panel, whose sessions tab
 // leads back here, and the round trip is an import cycle.
 import { goalQueryOptions } from "@/features/goals/queries"
-import { formatModelRef } from "@/features/profiles/model-ref"
-import { ProfileSummary } from "@/features/profiles/profile-summary"
+import { SeatSummary } from "@/features/models/agent-summary"
+import { formatModelRef } from "@/features/models/model-ref"
 import { taskQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
-import { ROLE_LABELS } from "@/lib/format"
+import { SEAT_LABELS } from "@/lib/format"
 import { paths, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
 import { SessionActions } from "./session-actions"
@@ -100,7 +100,7 @@ export function SessionDetailView({
     <div className="space-y-4">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="font-heading text-xl font-semibold tracking-tight">
-          {ROLE_LABELS[session.role]} session
+          {SEAT_LABELS[session.seat]} session
         </h1>
         <SessionStatusBadge status={session.status} />
         {/* Next to the status rather than instead of it: the two are
@@ -139,7 +139,7 @@ export function SessionDetailView({
                 {task.data?.title ?? <Mono>{session.task_id}</Mono>}
               </Link>
             ) : (
-              <span className="text-muted-foreground">— (planner session)</span>
+              <span className="text-muted-foreground">— (orchestrator session)</span>
             )}
           </Fact>
         )}
@@ -150,9 +150,9 @@ export function SessionDetailView({
             since this agent was launched — and a session keeps the CLI and the
             model apart, so the id every other mention carries is composed
             here. */}
-        <Fact label="Profile">
-          <ProfileSummary
-            profileId={session.profile_id}
+        <Fact label="Agent">
+          <SeatSummary
+            seat={session.seat}
             model={formatModelRef(session.agent_kind, session.model)}
             effort={session.effort}
           />

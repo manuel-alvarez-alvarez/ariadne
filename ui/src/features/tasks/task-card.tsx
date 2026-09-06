@@ -5,7 +5,7 @@
  * whether one of its agents is waiting on a person, which round of review it
  * is on, whether its agent went idle, and how many other tasks it is waiting
  * for — plus the branch, which is the one string an
- * engineer actually wants off the card and into a terminal. It sits outside
+ * author actually wants off the card and into a terminal. It sits outside
  * the link on purpose: a copy button nested in an anchor is neither valid nor
  * clickable without hijacking the navigation.
  *
@@ -192,7 +192,7 @@ export function TaskCard({
       <div className="px-2.5 pt-1.5 pb-2.5">
         <span className="flex w-fit max-w-full items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground">
           <GitBranchIcon className="size-3 shrink-0" />
-          {/* Middle-truncated: the card is narrow, and what an engineer looks
+          {/* Middle-truncated: the card is narrow, and what an author looks
               for is the slug at the end rather than the ULID it hangs off. */}
           <CopyableId value={task.branch} label="branch" truncate="middle" tabIndex={NOT_A_STOP} />
         </span>

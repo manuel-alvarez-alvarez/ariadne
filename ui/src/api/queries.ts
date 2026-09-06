@@ -37,12 +37,16 @@ interface EntityKeys {
  * `*_created` / `*_updated` event, and what every create and edit does itself
  * so the result is on screen before the event confirming it arrives.
  */
-export function cacheRow<T extends { id: string }>(
+export function cacheRow<T extends { id: string } | { name: string }>(
   queryClient: QueryClient,
   keys: EntityKeys,
   row: T,
 ): void {
-  queryClient.setQueryData(keys.detail(row.id), row)
+  // Whatever addresses the row is what its detail key is written under: an id
+  // for everything the daemon mints one for, and a name for a skill, which is
+  // named rather than numbered because that is how an agent loads it.
+  const id = "id" in row ? row.id : row.name
+  queryClient.setQueryData(keys.detail(id), row)
   void queryClient.invalidateQueries({ queryKey: keys.lists() })
 }
 

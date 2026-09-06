@@ -2,7 +2,7 @@
  * The sessions screen's filters: what it is showing, and how to change it.
  *
  * The URL is the source of truth while the user is on the screen — `?status=`,
- * `?role=`, `?goal=` and `?task=` are what the list reads, what a link can be
+ * `?seat=`, `?goal=` and `?task=` are what the list reads, what a link can be
  * shared as, and what Back walks. But the sidebar entry is a plain `/sessions`,
  * so leaving the screen and coming back would otherwise drop every selection on
  * the floor. They are therefore mirrored into the persisted settings as they
@@ -23,7 +23,7 @@
 import { useEffect } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import type { Role } from "@/api"
+import type { Seat } from "@/api"
 import { useSettingsStore } from "@/stores/settings"
 
 import {
@@ -43,8 +43,8 @@ import {
 interface SessionFiltersState {
   /** The status the screen is narrowed to, or `null` for every status. */
   status: StatusValue | null
-  /** The role the screen is narrowed to, or `null` for every role. */
-  role: Role | null
+  /** The seat the screen is narrowed to, or `null` for every seat. */
+  seat: Seat | null
   /** The goal the screen is narrowed to, or `null` for every goal. */
   goal: string | null
   /** The task the screen is narrowed to, or `null` for every task. */
@@ -69,13 +69,13 @@ export function useSessionFilters(): SessionFiltersState {
   // first render, instead of loading the unfiltered one and replacing it.
   const restored = restoreSessionFilters(search, {
     status: rememberedStatus,
-    role: rememberedRole,
+    seat: rememberedRole,
     goal: rememberedGoal,
     task: rememberedTask,
   })
   const params = restored ?? search
   const status = readStatusFilter(params)
-  const role = readRoleFilter(params)
+  const seat = readRoleFilter(params)
   const goal = readScopeFilter(params, GOAL_PARAM)
   const task = readScopeFilter(params, TASK_PARAM)
   const restoreTo = restored?.toString() ?? null
@@ -93,8 +93,8 @@ export function useSessionFilters(): SessionFiltersState {
   }, [status, rememberStatus])
 
   useEffect(() => {
-    rememberRole(role ?? "")
-  }, [role, rememberRole])
+    rememberRole(seat ?? "")
+  }, [seat, rememberRole])
 
   useEffect(() => {
     rememberGoal(goal ?? "")
@@ -119,5 +119,5 @@ export function useSessionFilters(): SessionFiltersState {
     setSearch(next, { replace: true })
   }
 
-  return { status, role, goal, task, filterBy }
+  return { status, seat, goal, task, filterBy }
 }

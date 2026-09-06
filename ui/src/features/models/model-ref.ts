@@ -23,7 +23,7 @@ import { z } from "zod"
 
 import type { AgentKind } from "@/api"
 
-import { AGENT_KINDS } from "./profile-labels"
+import { AGENT_KINDS } from "./labels"
 
 /** Shown where nothing is pinned: the daemon resolves it at spawn time. */
 const AUTO_MODEL_LABEL = "auto"

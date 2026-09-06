@@ -7,7 +7,7 @@
  * with no `context`: nothing is open behind it, so the goal and the task the
  * session belongs to are shown as links out of it rather than dropped. That is
  * also why there is no "foreign session" check here — the panel is scoped to
- * nothing, and every session is equally its own, the planner's included.
+ * nothing, and every session is equally its own, the orchestrator's included.
  *
  * The id can come straight from a link or a reload, so the session it names may
  * be gone altogether: that is an error inside the panel, not a broken screen.

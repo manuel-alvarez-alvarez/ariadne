@@ -26,7 +26,7 @@ import {
   sessionAttention,
 } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features/tasks"
-import { ROLE_LABELS, shortId } from "@/lib/format"
+import { SEAT_LABELS, shortId } from "@/lib/format"
 import { sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
 
 import { goalsQueryOptions } from "./queries"
@@ -38,7 +38,7 @@ export type AttentionReason = "failed" | "stalled"
  * Whether this task wants the user, and what for.
  *
  * A task in `changes_requested` is deliberately not one of them: the reviewer
- * has spoken and the daemon resumes the engineer itself, so what that task
+ * has spoken and the daemon resumes the author itself, so what that task
  * waits on is an agent, not a person. A resume that does not happen shows up
  * as the session's own `disconnected` or `stalled` flag, which is where the
  * daemon decides a human is wanted.
@@ -61,7 +61,7 @@ export function taskAttentionReason(task: TaskDto): AttentionReason | null {
  * task under an agent that reported an error, a stalled task under a stalled
  * session — and they are one thing gone wrong, not two. So the row is the
  * task, and the session it carries is a second badge on it rather than a
- * second row saying the same thing a line apart. A planner's session, which
+ * second row saying the same thing a line apart. An orchestrator's session, which
  * belongs to no task, is a row in its own right.
  */
 export interface AttentionItem {
@@ -249,8 +249,8 @@ export interface BoardAttention {
   /** Task id → why one of its sessions wants a person. */
   byTask: Map<string, SessionAttention>
   /**
-   * Goal id → why its planner wants a person. Kept apart from `byTask`
-   * because a planner session belongs to no task and so has no card of its
+   * Goal id → why its orchestrator wants a person. Kept apart from `byTask`
+   * because an orchestrator session belongs to no task and so has no card of its
    * own; its lane header is the only place it can be seen.
    */
   byGoal: Map<string, SessionAttention>
@@ -264,7 +264,7 @@ export function useBoardAttention(): BoardAttention {
 /**
  * The flagged sessions folded onto their subjects.
  *
- * A task can have several sessions flagged at once — an engineer waiting on a
+ * A task can have several sessions flagged at once — an author waiting on a
  * permission prompt while last round's reviewer sits disconnected — and a card
  * has room for one badge, so the most recently raised reason wins: it is the
  * one the strip lists first, and the one the user has not seen yet.
@@ -277,7 +277,7 @@ export function collectBoardAttention(sessions: SessionDto[] | undefined): Board
     const reason = sessionAttention(session)
     if (!reason) continue
     const at = sessionAttentionAt(session)
-    // A session with no task is a planner's, and lands on its goal's lane.
+    // A session with no task is an orchestrator's, and lands on its goal's lane.
     const index = session.task_id ? byTask : byGoal
     const key = session.task_id ?? session.goal_id
     const held = index.get(key)
@@ -332,7 +332,7 @@ export function attentionTarget(
 
 /**
  * What the row is about, in one line: the task the agent was working on, or —
- * for a planner, which has none — its role and the goal it is planning.
+ * for an orchestrator, which has none — its seat and the goal it is planning.
  *
  * The task is named even when the task list did not carry it, by the short id
  * every other mention of a task uses: a row with no subject at all is a row
@@ -342,7 +342,7 @@ export function attentionSubject(item: AttentionItem): string {
   if (item.task) return item.task.title
   if (item.taskId) return `Task ${shortId(item.taskId)}`
   return item.session
-    ? `${ROLE_LABELS[item.session.role]} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
+    ? `${SEAT_LABELS[item.session.seat]} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
     : `Goal ${shortId(item.goalId)}`
 }
 
@@ -358,8 +358,8 @@ export function attentionSubject(item: AttentionItem): string {
 export function attentionDetail(item: AttentionItem): string {
   if (item.session && item.sessionReason) {
     const hint = SESSION_ATTENTION_META[item.sessionReason].hint
-    // A task-less session already says its role in the subject.
-    return item.taskId ? `${ROLE_LABELS[item.session.role]} · ${hint}` : hint
+    // A task-less session already says its seat in the subject.
+    return item.taskId ? `${SEAT_LABELS[item.session.seat]} · ${hint}` : hint
   }
   const reason = item.taskReason
   return `Task · ${reason === "stalled" ? STALLED_META.hint : TASK_STATUS_META.failed.hint}`

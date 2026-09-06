@@ -54,7 +54,7 @@ function emptyBoardCopy(filter: StatusFilter): { title: string; description: str
     return {
       title: "No goals yet",
       description:
-        "A goal is what Ariadne works on: describe one and the planner breaks it into tasks.",
+        "A goal is what Ariadne works on: describe one and the orchestrator breaks it into tasks.",
     }
   }
   return {

@@ -19,7 +19,7 @@ export const BOARD_STATUSES = [
   "in_progress",
   "under_review",
   "approved",
-  "merged",
+  "finished",
 ] as const satisfies readonly TaskStatus[]
 
 /**
@@ -37,14 +37,14 @@ export const OFF_BOARD_STATUSES = ["cancelled"] as const satisfies readonly Task
  * `pending` and `changes_requested` a phase of `in_progress`. The raw status
  * stays visible as a sub-status badge.
  *
- * `ready` is folded because the daemon spawns the engineer in the same
+ * `ready` is folded because the daemon spawns the author in the same
  * reconcile pass that made the task ready — nothing queues there, so a column
  * of its own was empty by design. A task that *does* linger in it (paused
- * goal, daemon down, engineer spawn failing, a failure just retried) is
+ * goal, daemon down, author spawn failing, a failure just retried) is
  * exactly what the badge on the Pending card says.
  *
  * `approved` is not folded: it is the whole of the landing stage now, and a
- * task sits in it for as long as its engineer takes to squash the change onto
+ * task sits in it for as long as its author takes to squash the change onto
  * the base branch — or for as long as a published request waits on a human.
  */
 const SUB_STATUS_OF = {
@@ -82,7 +82,7 @@ interface StatusMeta {
 /**
  * Which step of the ramp each status takes. The pipeline reads left to right —
  * pending grey, in progress accent, review violet, approved teal-green,
- * merged green — with the folded sub-statuses on the step of the column they
+ * finished green — with the folded sub-statuses on the step of the column they
  * sit in (`ready` teal, one shade off its grey column, because a task parked
  * there is not simply waiting). Approved takes the step between the review and
  * the merge it is on its way to, which is what the last active stage of the
@@ -93,19 +93,19 @@ interface StatusMeta {
 export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   pending: {
     label: "Pending",
-    hint: "Not started yet: waiting for its dependencies to merge, or ready and waiting for an engineer session.",
+    hint: "Not started yet: waiting for its dependencies to finish, or ready and waiting for an author session.",
     badge: "bg-status-pending-soft text-status-pending-fg",
     dot: "bg-status-pending",
   },
   ready: {
     label: "Ready",
-    hint: "Dependencies merged, and still waiting for an engineer session — the daemon normally starts one at once, so a task sitting here means its goal is paused, the daemon is down, the spawn is failing, or it was just retried.",
+    hint: "Dependencies finished, and still waiting for an author session — the daemon normally starts one at once, so a task sitting here means its goal is paused, the daemon is down, the spawn is failing, or it was just retried.",
     badge: "bg-status-ready-soft text-status-ready-fg",
     dot: "bg-status-ready",
   },
   in_progress: {
     label: "In progress",
-    hint: "An engineer session is working on the task: implementing, or applying review feedback.",
+    hint: "An author session is working on the task: implementing, or applying review feedback.",
     badge: "bg-status-active-soft text-status-active-fg",
     dot: "bg-status-active",
   },
@@ -123,13 +123,13 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   },
   approved: {
     label: "Approved",
-    hint: "Enough approvals collected; its engineer is landing it — squashing it onto the base branch, or waiting on the pull request it published to be merged.",
+    hint: "Enough approvals collected; its author is ending it — squashing it onto the base branch, or waiting on the pull request it published to be merged.",
     badge: "bg-status-approved-soft text-status-approved-fg",
     dot: "bg-status-approved",
   },
-  merged: {
-    label: "Merged",
-    hint: "Merge verified on the base branch.",
+  finished: {
+    label: "Finished",
+    hint: "The work is done and what it produced is where it belongs: a change landed on the base branch, a request published, a report filed, a release out.",
     badge: "bg-status-done-soft text-status-done-fg",
     dot: "bg-status-done",
   },
@@ -153,7 +153,7 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
  *
  * A failure is waiting for a decision, so it leads. Approved comes next
  * because it is the one stage whose next step can be a *person's*: an
- * engineer that published the change as a pull request has done all it can
+ * author that published the change as a pull request has done all it can
  * itself, and the task sits there until somebody merges it. Then what the
  * agents are still working on, then what has not started, then what is done
  * with.
@@ -166,7 +166,7 @@ const ATTENTION_RANK = {
   in_progress: 4,
   ready: 5,
   pending: 6,
-  merged: 7,
+  finished: 7,
   cancelled: 8,
 } as const satisfies Record<TaskStatus, number>
 
@@ -189,7 +189,7 @@ export function compareByAttention(a: TaskDto, b: TaskDto): number {
  * that decision is still one an agent may be started on again.
  */
 function isTerminalTaskStatus(status: TaskStatus): boolean {
-  return status === "merged" || status === "cancelled"
+  return status === "finished" || status === "cancelled"
 }
 
 /** The user may cancel anything that has not reached a terminal status. */

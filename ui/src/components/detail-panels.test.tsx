@@ -85,7 +85,7 @@ it("gives the stacked panel's breadcrumb the app's own focus ring", async () => 
   // The goal is still loading, so the button wears the word rather than the
   // title — it is the first focusable thing in the sheet either way.
   // Queried by selector: Base UI marks the sheet under the stack inert, and
-  // role queries do not reach into a stacked panel (the same reason the app's
+  // seat queries do not reach into a stacked panel (the same reason the app's
   // own tests drive those controls by CSS).
   const nav = await screen.findByLabelText("Breadcrumb")
   const breadcrumb = nav.querySelector("button")

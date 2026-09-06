@@ -3,7 +3,7 @@
  *
  * Everything here is app-wide vocabulary rather than any one feature's: an id
  * is shortened the same way on the board and in a panel, a timestamp reads the
- * same in a table and in a tooltip, and a role is called the same thing in the
+ * same in a table and in a tooltip, and a seat is called the same thing in the
  * profiles table and the session lists. Written per feature, these drifted;
  * written once, they cannot.
  *
@@ -15,7 +15,7 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 
-import { type AgentKind, ApiError, HTTP_ERROR_CODE, type Role, type TokenUsage } from "@/api"
+import { type AgentKind, ApiError, HTTP_ERROR_CODE, type Seat, type TokenUsage } from "@/api"
 
 /**
  * The language every formatted value is spelled in, pinned rather than taken
@@ -198,12 +198,12 @@ export function folderName(path: string): string {
 // ── The daemon's vocabulary ───────────────────────────────────────────────
 
 /**
- * Both maps are total records over the generated enums, so a new role or agent
+ * Both maps are total records over the generated enums, so a new seat or agent
  * CLI in the daemon fails to compile here until it is given a name.
  */
-export const ROLE_LABELS: Record<Role, string> = {
-  planner: "Planner",
-  engineer: "Engineer",
+export const SEAT_LABELS: Record<Seat, string> = {
+  orchestrator: "Orchestrator",
+  author: "Author",
   reviewer: "Reviewer",
 }
 

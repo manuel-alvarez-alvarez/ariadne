@@ -93,7 +93,7 @@ describe("RepositoriesPage", () => {
     expect(screen.getByText("2 repositories")).toBeDefined()
 
     // How a task lands here is a column of its own: it decides what the
-    // engineer does at the end, so it is read off the list rather than out of
+    // author does at the end, so it is read off the list rather than out of
     // each repository in turn.
     expect(screen.getByText("Direct")).toBeDefined()
     expect(screen.getByText("Pull request")).toBeDefined()

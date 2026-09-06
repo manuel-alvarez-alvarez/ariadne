@@ -1,7 +1,7 @@
 /**
  * "Delete this?", for the three rows the daemon may refuse to let go of.
  *
- * A profile something still points at — a goal's planner, a task's engineer, a
+ * A profile something still points at — a goal's orchestrator, a task's author, a
  * session that ran as it — a repository a goal was created for, and a goal that
  * has been put back to work since the panel rendered all come back as a `409`
  * naming what holds them. That is a normal outcome rather than an error to

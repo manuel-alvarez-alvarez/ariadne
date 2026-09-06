@@ -1,7 +1,7 @@
 /**
  * The sessions screen: every agent Ariadne has run, whatever it was run for.
  *
- * The panels answer "what is this task's engineer doing"; this screen answers
+ * The panels answer "what is this task's author doing"; this screen answers
  * the question no panel can — "what is running right now", and "which agent
  * failed while I was away". It is the one place {@link SessionsList} is mounted
  * unscoped, which is what turns its Context column on: with no goal and no task
@@ -14,7 +14,7 @@
  * The filters live in the URL, next to `?session=`, and are remembered between
  * visits: see `filters.ts` and `use-session-filters.ts`, which are the goals
  * board's pair of the same name. Two of them are dropdowns — a status and a
- * role — and two are chips: `?goal=` and `?task=`, the daemon's own list
+ * seat — and two are chips: `?goal=` and `?task=`, the daemon's own list
  * filters, which this screen claims from the panel scheme that owns those
  * params everywhere else (see `components/detail-panels.tsx`).
  */
@@ -36,7 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { goalsQueryOptions } from "@/features/goals/queries"
 import { taskListQueryOptions } from "@/features/tasks/queries"
-import { ROLE_LABELS, shortId } from "@/lib/format"
+import { SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 
 import {
@@ -62,11 +62,11 @@ import { useSessionFilters } from "./use-session-filters"
 export function SessionsPage() {
   const [search] = useSearchParams()
   const navigate = useNavigate()
-  const { status, role, goal, task, filterBy } = useSessionFilters()
+  const { status, seat, goal, task, filterBy } = useSessionFilters()
 
   const filters: SessionListFilters = {
     ...statusFilters(status),
-    role: role ?? undefined,
+    seat: seat ?? undefined,
     goal: goal ?? undefined,
     task: task ?? undefined,
   }
@@ -118,24 +118,24 @@ export function SessionsPage() {
                 render={
                   <Button
                     variant="outline"
-                    aria-label="Filter by role"
+                    aria-label="Filter by seat"
                     className="w-36 justify-between font-normal"
                   />
                 }
               >
-                {roleLabel(role)}
+                {roleLabel(seat)}
                 <ChevronDownIcon className="text-muted-foreground" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-36">
                 <DropdownMenuRadioGroup
-                  value={role ?? ALL}
+                  value={seat ?? ALL}
                   onValueChange={(value) => filterBy(ROLE_PARAM, value)}
                 >
                   <DropdownMenuRadioItem value={ALL}>All roles</DropdownMenuRadioItem>
                   <DropdownMenuSeparator />
                   {ROLES.map((known) => (
                     <DropdownMenuRadioItem key={known} value={known}>
-                      {ROLE_LABELS[known]}
+                      {SEAT_LABELS[known]}
                     </DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>

@@ -184,14 +184,14 @@ describe("task events", () => {
       data: {
         task: {
           ...TASK,
-          status: "merged",
+          status: "finished",
           merge_commit: "abc1230000000000000000000000000000000000",
         },
         transition: {
           id: "01JTRAN0000000000000000001",
           actor: "daemon",
           from_status: "approved",
-          to_status: "merged",
+          to_status: "finished",
           created_at: TASK.updated_at,
         },
       },

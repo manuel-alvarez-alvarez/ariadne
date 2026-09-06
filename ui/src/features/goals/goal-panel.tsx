@@ -35,7 +35,7 @@ import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
-import { ProfileSummary } from "@/features/profiles/profile-summary"
+import { pinLabel } from "@/features/models/model-ref"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { taskListQueryOptions } from "@/features/tasks"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
@@ -51,7 +51,7 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 // Description leads the strip — it is what the goal *is* — but the panel opens
 // on the tasks, which is what the goal comes down to, whatever its status.
 //
-// `sessions` keeps its param name while the tab is called "Planner sessions":
+// `sessions` keeps its param name while the tab is called "Orchestrator sessions":
 // the tab is in the URL, and renaming the value would break every link already
 // pointing at one.
 const TABS = ["description", "tasks", "sessions"] as const
@@ -193,7 +193,9 @@ function GoalView({
   // cost nothing beyond the first tab that is opened — and stay live with it,
   // since the dispatcher invalidates both lists.
   const tasks = useQuery(taskListQueryOptions({ goal: goal.id }))
-  const plannerSessions = useQuery(sessionsQueryOptions({ goal: goal.id, role: "planner" }))
+  const orchestratorSessions = useQuery(
+    sessionsQueryOptions({ goal: goal.id, seat: "orchestrator" }),
+  )
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -251,8 +253,8 @@ function GoalView({
           {/* Named for what it holds: the goal's own agent, and none of the
               sessions its tasks have run — those are each task panel's. */}
           <TabsTrigger value="sessions">
-            Planner sessions
-            <TabCount count={plannerSessions.data?.length} noun="session" />
+            Orchestrator sessions
+            <TabCount count={orchestratorSessions.data?.length} noun="session" />
           </TabsTrigger>
         </TabsList>
         <TabsContent value="description" className="pt-3">
@@ -298,14 +300,10 @@ function GoalView({
 function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
     <FactList>
-      <Fact label="Planner">
-        {/* The goal's pin: what the planner runs on, which a later edit to its
+      <Fact label="Orchestrator">
+        {/* The goal's pin: what the orchestrator runs on, which a later edit to its
             profile leaves alone. */}
-        <ProfileSummary
-          profileId={goal.planner_profile_id}
-          model={goal.model}
-          effort={goal.effort}
-        />
+        <span className="text-xs">{pinLabel(goal.model, goal.effort)}</span>
       </Fact>
       <Fact label="Approvals">
         <span className="tabular-nums">{goal.required_approvals}</span>
@@ -320,8 +318,8 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
         <When at={goal.updated_at} label="updated" />
       </Fact>
       <Fact label="Tokens">
-        {/* Every session of the goal, its planner's included, with the hint
-            breaking the same total down by the role that spent it. */}
+        {/* Every session of the goal, its orchestrator's included, with the hint
+            breaking the same total down by the seat that spent it. */}
         <TokenFigure
           usage={goal.usage.total}
           rows={goalUsageRows(goal.usage)}

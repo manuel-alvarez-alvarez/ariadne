@@ -17,10 +17,10 @@
  * closing between them, and each one can be taken back off from the chip it
  * left behind.
  *
- * What the planner runs on is the other field with a rule of its own, and one
+ * What the orchestrator runs on is the other field with a rule of its own, and one
  * control makes the whole choice: a model that names the agent CLI running it,
  * and the effort that model is run at — each on the wire when it was pinned
- * and left out entirely when it was not, which is what runs the planner on its
+ * and left out entirely when it was not, which is what runs the orchestrator on its
  * profile's own. A model naming no CLI never reaches the daemon: the field
  * refuses it first.
  */
@@ -29,21 +29,11 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useLocation } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-
-import type { ModelDto, ProfileDto, RepositoryDto } from "@/api"
+import type { ModelDto, RepositoryDto } from "@/api"
 import { paths } from "@/routes/paths"
-import { aModel, anEffort, aProfile, aRepository } from "@/test/fixtures"
+import { aModel, anEffort, aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateGoalDialog } from "./create-goal-dialog"
-
-const PLANNER: ProfileDto = aProfile({
-  id: "01JPROF00000000000000PLN",
-  name: "Planner",
-  role: "planner",
-  // Pinned, and to a model the catalog does not carry, so the picker has
-  // something of its own to name as what an unpinned planner would run on.
-  model: "codex:gpt-5.6-luna",
-})
 
 const ARIADNE: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
@@ -124,7 +114,6 @@ function stubDaemon(repositories: RepositoryDto[]) {
 
     if (pathname === "/v1/repositories") return jsonResponse(repositories)
     if (pathname === "/v1/models") return jsonResponse(CATALOG)
-    if (pathname === "/v1/profiles") return jsonResponse([PLANNER])
     if (pathname === "/v1/goals" && request.method === "POST") {
       return jsonResponse(
         { ...body, id: "01JGOAL0000000000000NEW", repos: repositories, status: "planning" },
@@ -291,18 +280,18 @@ describe("with nothing registered", () => {
 })
 
 /**
- * The brief is the longest thing the app asks anyone to write, and the planner
- * form fills two of its own fields on open — a preselected planner profile is
+ * The brief is the longest thing the app asks anyone to write, and the orchestrator
+ * form fills two of its own fields on open — a preselected orchestrator profile is
  * the dialog's doing, not the user's, so it must not be what makes walking away
  * a question.
  */
 describe("dismissing the dialog", () => {
-  it("closes an untouched form straight away, preselected planner and all", async () => {
+  it("closes an untouched form straight away", async () => {
     const user = userEvent.setup()
     const { onOpenChange } = renderDialog()
 
     // The preselect is what this is about: wait until it has happened.
-    expect(await screen.findByText("Planner")).toBeDefined()
+    expect(await screen.findByLabelText(/Title/i)).toBeDefined()
 
     await user.click(screen.getByRole("button", { name: "Cancel" }))
 
@@ -331,11 +320,11 @@ describe("dismissing the dialog", () => {
 })
 
 /**
- * The planner is pinned with one control, whose value carries the agent CLI,
+ * The orchestrator is pinned with one control, whose value carries the agent CLI,
  * the model of it and the effort it is run at: what was pinned goes on the
  * wire, and nothing pinned is left out rather than sent empty.
  */
-describe("choosing what the planner runs on", () => {
+describe("choosing what the orchestrator runs on", () => {
   /** Fills the required fields, so the submit is about the pin alone. */
   async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
     await user.type(screen.getByLabelText("Title"), "Model selector")
@@ -346,7 +335,7 @@ describe("choosing what the planner runs on", () => {
 
   /** The one control the choice is made in, catalog and all. */
   async function pinButton(): Promise<HTMLElement> {
-    return await screen.findByRole("button", { name: "Planner runs on" })
+    return await screen.findByRole("button", { name: "Orchestrator runs on" })
   }
 
   /** Opens the picker, and answers the catalog inside it. */
@@ -366,7 +355,7 @@ describe("choosing what the planner runs on", () => {
   /** Pins a model the catalog does not carry, which is typed rather than picked. */
   async function typePin(user: ReturnType<typeof userEvent.setup>, id: string) {
     await openPin(user)
-    await user.type(screen.getByRole("combobox", { name: "Planner runs on" }), id)
+    await user.type(screen.getByRole("combobox", { name: "Orchestrator runs on" }), id)
     await user.click(screen.getByText(/^Other — run/))
     await closePin(user)
   }
@@ -383,14 +372,12 @@ describe("choosing what the planner runs on", () => {
     expect(within(models).getByText("claude_code:claude-opus-5")).toBeDefined()
   })
 
-  it("says what an unpinned planner will run on, which is its profile's own", async () => {
+  it("says what an unpinned orchestrator will run on, which is its profile's own", async () => {
     renderDialog()
 
-    // The Planner profile's own pin, read off the profile rather than guessed:
-    // leaving the control alone is then an informed choice and not a blank.
-    await waitFor(async () =>
-      expect((await pinButton()).textContent).toContain(`Profile's own — ${PLANNER.model}`),
-    )
+    // Nothing behind the pin any more: an untouched control says auto, which
+    // is the first installed CLI on its own default model.
+    await waitFor(async () => expect((await pinButton()).textContent).toContain("auto"))
   })
 
   it("sends the picked id, which names the CLI and the model together", async () => {
@@ -398,7 +385,7 @@ describe("choosing what the planner runs on", () => {
     renderDialog()
 
     await fillRequired(user)
-    // A codex model on the Planner profile: the pin is the slot's, not the
+    // A codex model on the Orchestrator profile: the pin is the slot's, not the
     // profile's.
     const models = await openPin(user)
     await user.click(within(models).getByText("codex:gpt-5.3-codex"))
@@ -428,7 +415,7 @@ describe("choosing what the planner runs on", () => {
     expect(lastWrite()?.body?.model).toBe("codex")
   })
 
-  it("sends no model when the planner is left on its profile's own", async () => {
+  it("sends no model when the orchestrator is left on its profile's own", async () => {
     const user = userEvent.setup()
     renderDialog()
 
@@ -490,7 +477,7 @@ describe("choosing what the planner runs on", () => {
 })
 
 /**
- * The brief is the longest thing anyone types into this app, and the planner
+ * The brief is the longest thing anyone types into this app, and the orchestrator
  * reads it as Markdown — so the box is written in and read back in place, and
  * the form can be finished without reaching for the mouse.
  */
@@ -556,7 +543,6 @@ describe("writing the goal's brief", () => {
       requests.push({ method: request.method, path: pathname, body: raw ? JSON.parse(raw) : null })
       if (pathname === "/v1/repositories") return jsonResponse([ARIADNE])
       if (pathname === "/v1/models") return jsonResponse(CATALOG)
-      if (pathname === "/v1/profiles") return jsonResponse([PLANNER])
       if (pathname === "/v1/goals" && request.method === "POST") {
         await held
         return jsonResponse({ id: "01JGOAL0000000000000NEW", repos: [ARIADNE] }, 201)

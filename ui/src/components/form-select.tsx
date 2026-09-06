@@ -105,18 +105,3 @@ export function FormSelect<V extends FieldValues>({
     />
   )
 }
-
-/**
- * What a select says while it has nothing to offer: the profiles are loading,
- * the daemon refused, or this role has none registered. Every picker of a
- * profile had its own copy of this, worded the same.
- */
-export function profilePlaceholder(
-  query: { isPending: boolean; isError: boolean; data?: unknown[] },
-  role: string,
-): string {
-  if (query.isPending) return "Loading…"
-  if (query.isError) return "Profiles unavailable"
-  if (!query.data?.length) return `No ${role} profiles`
-  return "Select a profile"
-}

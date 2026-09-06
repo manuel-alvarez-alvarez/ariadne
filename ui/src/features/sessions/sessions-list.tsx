@@ -9,11 +9,11 @@
  * Four columns in a panel and seven on the screen, out of the same rows: a
  * 48rem panel does not hold what a window holds, and the panel's table was
  * cutting its last heading to "Las…" at every width. So in a panel the session
- * *is* one cell — the role it ran as, with its id after it on the same line,
+ * *is* one cell — the seat it ran as, with its id after it on the same line,
  * small and quiet enough to read as the aside it is — and what it spent rides
  * in the hint behind its last activity, beside the two stamps that were
  * already there. What the agent runs on rides along with the profile and the
- * review round with the role, in either variant, and the end of the session
+ * review round with the seat, in either variant, and the end of the session
  * with its last activity: all three were worth a column only for the sessions
  * that have them.
  *
@@ -64,11 +64,11 @@ import { When, WhenDetail } from "@/components/when"
 // barrel: `@/features/tasks` re-exports the task panel, whose sessions tab is
 // this very component, and the round trip is an import cycle.
 import { goalsQueryOptions } from "@/features/goals/queries"
-import { formatModelRef } from "@/features/profiles/model-ref"
-import { ProfileSummary } from "@/features/profiles/profile-summary"
+import { SeatSummary } from "@/features/models/agent-summary"
+import { formatModelRef } from "@/features/models/model-ref"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
-import { cn, ROLE_LABELS, shortId } from "@/lib/format"
+import { cn, SEAT_LABELS, shortId } from "@/lib/format"
 
 import { GOAL_PARAM, TASK_PARAM, withFilter } from "./filters"
 import { byId, type SessionListFilters, sessionsQueryOptions } from "./queries"
@@ -78,7 +78,7 @@ import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
  * What the list is already inside of.
  *
  * A panel tab is scoped to its task or its goal. A list scoped to nothing is
- * the only place where two rows can be the same role, the same profile and the
+ * the only place where two rows can be the same seat, the same profile and the
  * same status and still be about different work — which is what the context
  * column is for.
  */
@@ -94,7 +94,7 @@ function listScope(filters: SessionListFilters, inside: boolean): "task" | "goal
  * a window that narrow: the id, which identifies nothing a reader is looking
  * for, and the figure, which is the one cell that is also reachable from the
  * hint behind the row's last activity. What is left — what the session was run
- * for, its role, its profile, its status and when it last moved — fits.
+ * for, its seat, its profile, its status and when it last moved — fits.
  */
 const FOLDS_AWAY = "hidden lg:table-cell"
 
@@ -116,15 +116,15 @@ function byLastActivity(sessions: SessionDto[]): SessionDto[] {
  * What an empty list is called where it is empty; never blames absent filters,
  * and never claims more than the list is actually showing.
  *
- * A scoped list narrowed to one role is that role's list — the goal panel's
- * tab is the planner's sessions alone — so an empty one says the role is
+ * A scoped list narrowed to one seat is that seat's list — the goal panel's
+ * tab is the orchestrator's sessions alone — so an empty one says the seat is
  * missing rather than that the goal has no sessions, which is a thing it can
  * say while four of them are running.
  */
 function emptyTitle(filters: SessionListFilters, inside: boolean): string {
   const scope = listScope(filters, inside)
-  if (filters.role && scope !== "unscoped") {
-    return `No ${ROLE_LABELS[filters.role].toLowerCase()} session yet`
+  if (filters.seat && scope !== "unscoped") {
+    return `No ${SEAT_LABELS[filters.seat].toLowerCase()} session yet`
   }
   switch (scope) {
     case "task":
@@ -133,7 +133,7 @@ function emptyTitle(filters: SessionListFilters, inside: boolean): string {
       return "No sessions yet for this goal"
     default:
       return filters.status ||
-        filters.role ||
+        filters.seat ||
         filters.live ||
         filters.attention ||
         filters.goal ||
@@ -199,12 +199,12 @@ export function SessionsList({
       <ScrollableTable className="rounded-lg border">
         <TableHeader>
           <TableRow>
-            {/* In a panel this heading covers the whole cell under it, role
+            {/* In a panel this heading covers the whole cell under it, seat
                 and id both; on the screen it is the id alone, which is what
                 lets it go away below `lg`. */}
             <TableHead className={cn(showContext && FOLDS_AWAY)}>Session</TableHead>
             {showContext ? <TableHead>Context</TableHead> : null}
-            {showContext ? <TableHead>Role</TableHead> : null}
+            {showContext ? <TableHead>Seat</TableHead> : null}
             <TableHead>Profile</TableHead>
             <TableHead>Status</TableHead>
             {showContext ? (
@@ -276,7 +276,7 @@ function SessionRow({
       className="cursor-pointer"
       data-state={selected ? "selected" : undefined}
       // Anywhere on the row picks the session, down to the controls that carry
-      // an action of their own: the copy trigger keeps its menu, the role
+      // an action of their own: the copy trigger keeps its menu, the seat
       // button below selects by itself, and the context link goes to the work
       // the session was run for. The id *text* is not one of them — it is read
       // here, and clicking it is still a click on the row.
@@ -293,8 +293,8 @@ function SessionRow({
       {/* These ids are read here on their way into a terminal, and the row is
           the only place the whole list of them is on screen at once, so the
           copy menu is worth the one thing on the row that is not a pick.
-          In a panel it follows the role on the same line, small and quiet
-          enough that the role is still what the cell reads as; on the screen
+          In a panel it follows the seat on the same line, small and quiet
+          enough that the seat is still what the cell reads as; on the screen
           it has a cell of its own, and gives it up below `lg`. */}
       <TableCell className={cn(showContext && FOLDS_AWAY)}>
         {showContext ? (
@@ -318,8 +318,8 @@ function SessionRow({
           takes is composed here. Narrower below `lg`, where every pixel this
           column does not take is one the status and the figure after it get. */}
       <TableCell className="max-w-36 text-xs lg:max-w-56">
-        <ProfileSummary
-          profileId={session.profile_id}
+        <SeatSummary
+          seat={session.seat}
           model={formatModelRef(session.agent_kind, session.model)}
         />
       </TableCell>
@@ -375,7 +375,7 @@ function SessionRow({
 }
 
 /**
- * The role, as the thing that opens the session.
+ * The seat, as the thing that opens the session.
  *
  * The row above takes the pointer clicks; this button is the same action for
  * the keyboard, which cannot reach a `<tr onClick>` — and it is why the row
@@ -384,7 +384,7 @@ function SessionRow({
  * resolves against the table container instead swallows every other row's
  * clicks.
  *
- * The plain span around the pair is what keeps the round with the role: in a
+ * The plain span around the pair is what keeps the round with the seat: in a
  * panel the two sit inside the cell's flex row, where a round of its own would
  * be an item of its own and lose the space in front of it.
  */
@@ -394,14 +394,14 @@ function SessionRole({ session, onSelect }: { session: SessionDto; onSelect: () 
       <button
         type="button"
         onClick={onSelect}
-        // The visible word is the role; what Enter does is open the session,
-        // and "Engineer" on its own says none of that. The id is what the
+        // The visible word is the seat; what Enter does is open the session,
+        // and "Author" on its own says none of that. The id is what the
         // panel it opens is drilled into — see `useFocusReturn`.
-        aria-label={`Open ${ROLE_LABELS[session.role]} session`}
+        aria-label={`Open ${SEAT_LABELS[session.seat]} session`}
         data-focus-return={session.id}
         className="rounded-xs text-left outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
       >
-        {ROLE_LABELS[session.role]}
+        {SEAT_LABELS[session.seat]}
       </button>
       {session.review_round != null ? (
         <Tooltip>
@@ -417,7 +417,7 @@ function SessionRole({ session, onSelect }: { session: SessionDto; onSelect: () 
 }
 
 /**
- * What this session was run for: its task, or — for a planner session, which
+ * What this session was run for: its task, or — for an orchestrator session, which
  * has none — its goal.
  *
  * It is a link rather than plain text, and what it links to is *this list,
@@ -439,7 +439,7 @@ function ContextCell({
   task: TaskDto | undefined
 }) {
   const [search] = useSearchParams()
-  // The row's Role column already says which of the two this is, so both read
+  // The row's Seat column already says which of the two this is, so both read
   // the same; the tooltip carries the pair in full.
   const subject = session.task_id
     ? {
@@ -476,7 +476,7 @@ function ContextCell({
         <TooltipContent className="flex-col items-start gap-0.5">
           <span>Goal: {goal?.title ?? session.goal_id}</span>
           <span>
-            Task: {session.task_id ? (task?.title ?? session.task_id) : "— (planner session)"}
+            Task: {session.task_id ? (task?.title ?? session.task_id) : "— (orchestrator session)"}
           </span>
           {/* What the link does, since the name alone cannot say it — and the
               name is what the link has to keep being called. */}

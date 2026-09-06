@@ -37,16 +37,15 @@ function task(overrides: Partial<TaskDto>): TaskDto {
     created_at: "2026-08-16T10:00:00Z",
     depends_on: [],
     description: "",
-    engineer_profile_id: "p1",
     goal_id: "g1",
     id: "t1",
     repo_id: "r1",
     review_round: 0,
-    reviewers: [],
+    agents: [],
     stalled: false,
     status: "in_progress",
     title: "A task",
-    usage: { total: NO_TOKENS, engineer: NO_TOKENS, reviewers: [] },
+    usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [] },
     updated_at: "2026-08-16T10:00:00Z",
     ...overrides,
   }
@@ -64,8 +63,8 @@ function session(overrides: Partial<SessionDto>): SessionDto {
     created_at: "2026-08-16T10:00:00Z",
     goal_id: "g1",
     id: "s1",
-    profile_id: "p1",
-    role: "engineer",
+    task_agent_id: "p1",
+    seat: "author",
     status: "failed",
     tmux_session: "ariadne-s1",
     usage: NO_TOKENS,
@@ -78,15 +77,14 @@ function goal(overrides: Partial<GoalDto>): GoalDto {
     created_at: "2026-08-16T09:00:00Z",
     description: "",
     id: "g1",
-    planner_profile_id: "p1",
     repos: [],
     required_approvals: 1,
     status: "active",
     title: "A goal",
     usage: {
       total: NO_TOKENS,
-      planner: NO_TOKENS,
-      engineers: NO_TOKENS,
+      orchestrator: NO_TOKENS,
+      authors: NO_TOKENS,
       reviewers: NO_TOKENS,
     },
     updated_at: "2026-08-16T09:00:00Z",
@@ -97,11 +95,11 @@ function goal(overrides: Partial<GoalDto>): GoalDto {
 describe("taskAttentionReason", () => {
   it("leaves a task that is simply making progress alone", () => {
     expect(taskAttentionReason(task({ status: "in_progress" }))).toBeNull()
-    expect(taskAttentionReason(task({ status: "merged" }))).toBeNull()
+    expect(taskAttentionReason(task({ status: "finished" }))).toBeNull()
     expect(taskAttentionReason(task({ status: "under_review" }))).toBeNull()
   })
 
-  // The reviewer has spoken and the daemon resumes the engineer itself, so
+  // The reviewer has spoken and the daemon resumes the author itself, so
   // the task is waiting on an agent rather than on a person.
   it("leaves a task whose review asked for changes alone", () => {
     expect(taskAttentionReason(task({ status: "changes_requested" }))).toBeNull()
@@ -254,7 +252,7 @@ describe("collectAttention", () => {
   })
 
   // Several sessions of one task can be flagged at once — this round's
-  // engineer waiting on a prompt while last round's reviewer sits
+  // author waiting on a prompt while last round's reviewer sits
   // disconnected — and the row keeps the one the user has not seen yet.
   it("keeps the most recently raised of a task's flagged sessions", () => {
     const items = collectAttention(
@@ -289,12 +287,12 @@ describe("collectAttention", () => {
   })
 
   // It belongs to no task, so there is no row for it to fold into.
-  it("gives a planner session a row of its own", () => {
+  it("gives an orchestrator session a row of its own", () => {
     const items = collectAttention(
       [goal({})],
       [task({ id: "t1", status: "failed" })],
       [
-        session({ id: "s1", role: "planner", attention_reason: "disconnected" }),
+        session({ id: "s1", seat: "orchestrator", attention_reason: "disconnected" }),
         session({ id: "s2", task_id: "t1", attention_reason: "agent_error" }),
       ],
     )
@@ -329,13 +327,13 @@ describe("collectAttention", () => {
   })
 
   // The goal is where the row sits; the task is what the agent was doing.
-  it("names the task a session was run for, and nothing for a planner's", () => {
+  it("names the task a session was run for, and nothing for an orchestrator's", () => {
     const items = collectAttention(
       [goal({})],
       [task({ id: "t1", title: "Wire the strip" })],
       [
         session({ id: "s1", task_id: "t1" }),
-        session({ id: "s2", role: "planner" }),
+        session({ id: "s2", seat: "orchestrator" }),
         session({ id: "s3", task_id: "gone" }),
       ],
     )
@@ -429,7 +427,7 @@ describe("collectBoardAttention", () => {
     expect(board.byGoal.size).toBe(0)
   })
 
-  // A planner belongs to no task, so its goal's lane header is the only place
+  // An orchestrator belongs to no task, so its goal's lane header is the only place
   // on the board it can ask for anything.
   it("indexes a session that has no task by its goal", () => {
     const board = collectBoardAttention([

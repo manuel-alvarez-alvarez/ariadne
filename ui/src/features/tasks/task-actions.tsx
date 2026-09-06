@@ -39,7 +39,7 @@ import { EditTaskDialog } from "./task-form-dialog"
  * places it is ever said. The dialog that used to say it is gone: retry keeps
  * everything, so there is nothing to confirm.
  */
-const RETRY_HINT = "Back to ready, same branch and worktree, fresh engineer"
+const RETRY_HINT = "Back to ready, same branch and worktree, fresh author"
 
 export function TaskActions({ task }: { task: TaskDto }) {
   const cancel = useCancelTask(task.id)

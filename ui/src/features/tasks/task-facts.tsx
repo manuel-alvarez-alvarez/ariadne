@@ -17,14 +17,18 @@ import { CopyableId } from "@/components/copyable-id"
 import { Fact, FactList } from "@/components/fact-list"
 import { TokenFigure, taskUsageRows } from "@/components/token-figure"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { ProfileSummary } from "@/features/profiles/profile-summary"
+import { AgentSummary } from "@/features/models/agent-summary"
 import { cn, shortSha } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
+import { taskAuthor, taskReviewers } from "./agents"
 
 import { taskQueryOptions } from "./queries"
 import { primaryStatus, TASK_STATUS_META } from "./status"
 
 export function TaskFacts({ task }: { task: TaskDto }) {
+  const author = taskAuthor(task)
+  const reviewers = taskReviewers(task)
+
   return (
     // Two columns rather than the three a goal's facts take: a branch and a
     // worktree path are the long values in the app, and a third column only
@@ -43,34 +47,36 @@ export function TaskFacts({ task }: { task: TaskDto }) {
           <Muted>not created yet</Muted>
         )}
       </Fact>
-      <Fact label="Engineer">
-        {/* The task's pin, not the profile's live model: editing the profile
-            does not move work that is already assigned. */}
-        <ProfileSummary
-          profileId={task.engineer_profile_id}
-          model={task.model}
-          effort={task.effort}
-          className="text-xs"
-        />
+      <Fact label="Author">
+        {author ? (
+          <AgentSummary
+            skills={author.skills}
+            model={author.model}
+            effort={author.effort}
+            className="text-xs"
+          />
+        ) : (
+          <Muted>none staffed</Muted>
+        )}
       </Fact>
       <Fact label="Reviewers">
-        {task.reviewers.length > 0 ? (
-          // One line each: a reviewer is now a name and what it runs on, which
-          // side by side would be a run-on the eye cannot split. Each slot
-          // carries its own pin, so two reviewers on the same profile can
-          // still read differently.
+        {reviewers.length > 0 ? (
+          // One line each: a reviewer is its skills and what it runs on, which
+          // side by side would be a run-on the eye cannot split. Each agent
+          // carries its own pin, so two reviewers on the same skills can still
+          // read differently.
           <span className="flex flex-col gap-0.5 text-xs">
-            {task.reviewers.map((reviewer) => (
-              <ProfileSummary
-                key={reviewer.profile_id}
-                profileId={reviewer.profile_id}
+            {reviewers.map((reviewer) => (
+              <AgentSummary
+                key={reviewer.id}
+                skills={reviewer.skills}
                 model={reviewer.model}
                 effort={reviewer.effort}
               />
             ))}
           </span>
         ) : (
-          <Muted>none assigned</Muted>
+          <Muted>none staffed</Muted>
         )}
       </Fact>
       <Fact label="Tokens">
@@ -100,7 +106,7 @@ export function TaskFacts({ task }: { task: TaskDto }) {
           <Muted>not merged</Muted>
         )}
       </Fact>
-      {/* Only a task its engineer published has one, and only then is the
+      {/* Only a task its author published has one, and only then is the
           forge where the rest of its story is — a row saying "no pull request"
           on every locally landed task would say nothing at all. */}
       {task.pr_url ? (

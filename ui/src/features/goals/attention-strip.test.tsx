@@ -30,7 +30,6 @@ const PLANNER = "01JPROF0000000000000000PLA"
 const TASK: TaskDto = aTask({
   title: "Wire the strip",
   branch: "wire-the-strip-000001",
-  engineer_profile_id: ENGINEER,
   goal_id: GOAL.id,
 })
 
@@ -43,21 +42,21 @@ const SESSION: SessionDto = aSession({
   ended_at: "2026-01-01T02:00:00Z",
   goal_id: GOAL.id,
   task_id: TASK.id,
-  profile_id: ENGINEER,
+  task_agent_id: ENGINEER,
   tmux_session: "ariadne-01JSESS0000000000000000001",
 })
 
-/** A planner's: no task, and a lane header of the goal's rather than a task card. */
+/** An orchestrator's: no task, and a lane header of the goal's rather than a task card. */
 const PLANNER_SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000009",
-  role: "planner",
+  seat: "orchestrator",
   task_id: null,
   status: "idle",
   ended_at: undefined,
   attention_reason: "disconnected",
   attention_since: "2026-01-01T03:00:00Z",
   goal_id: GOAL.id,
-  profile_id: PLANNER,
+  task_agent_id: PLANNER,
 })
 
 /**
@@ -104,7 +103,7 @@ it("stays out of the way when nothing is stuck", async () => {
   stubDaemon({
     tasks: [
       { ...TASK, status: "in_progress" },
-      // Waiting on the engineer the daemon resumes, not on the user.
+      // Waiting on the author the daemon resumes, not on the user.
       { ...TASK, id: "01JTASK0000000000000000002", status: "changes_requested" },
     ],
     // Dead with nothing owed to it: the daemon raised no reason, and neither
@@ -150,7 +149,7 @@ it("mixes tasks and stuck sessions into one list, each naming its goal", async (
   renderStrip()
 
   const rows = await screen.findAllByRole("listitem")
-  // The planner raised its reason two hours after the task moved, so it leads.
+  // The orchestrator raised its reason two hours after the task moved, so it leads.
   expect(rows).toHaveLength(2)
   expect(rows[0]?.textContent).toContain("Disconnected")
   expect(rows[1]?.textContent).toContain("Wire the strip")
@@ -204,19 +203,19 @@ it("shows a live session that is waiting on the user, why, and on what", async (
   expect(screen.getByText("Waiting for permission")).not.toBeNull()
   expect(screen.getByText("Wire the strip")).not.toBeNull()
   expect(
-    screen.getByText("Engineer · The agent is blocked on a permission or approval prompt."),
+    screen.getByText("Author · The agent is blocked on a permission or approval prompt."),
   ).not.toBeNull()
 })
 
-it("names a planner session by its role and the goal it is planning", async () => {
+it("names an orchestrator session by its seat and the goal it is planning", async () => {
   stubDaemon({
     sessions: [{ ...PLANNER_SESSION, attention_reason: "waiting_input" }],
   })
   renderStrip()
 
   // No task to be named by, and the row still says whose it is and what it is
-  // about — the goal, which is all a planner session has.
-  expect(await screen.findByText(`Planner · ${GOAL.title}`)).not.toBeNull()
+  // about — the goal, which is all an orchestrator session has.
+  expect(await screen.findByText(`Orchestrator · ${GOAL.title}`)).not.toBeNull()
   expect(
     screen.getByText("The agent asked a question and is idle until it is answered."),
   ).not.toBeNull()
@@ -247,9 +246,9 @@ it("flags a stalled task without a status of its own to show it", async () => {
   expect(await screen.findByText("Stalled")).not.toBeNull()
 })
 
-// A planner belongs to no task, so it has no card of its own to be read from
+// An orchestrator belongs to no task, so it has no card of its own to be read from
 // — its own panel, reached through its session, is the only place left.
-it("sends a stuck planner to its own session panel, having no card of its own", async () => {
+it("sends a stuck orchestrator to its own session panel, having no card of its own", async () => {
   stubDaemon({ sessions: [PLANNER_SESSION] })
   renderStrip()
 

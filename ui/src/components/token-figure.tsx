@@ -35,9 +35,9 @@ import { cachedShare, cn, formatTokens, shortId } from "@/lib/format"
 
 /** One line of a total's breakdown: who spent it, and how much. */
 interface UsageRow {
-  /** Stable across renders: a profile id where there is one, the role otherwise. */
+  /** Stable across renders: a profile id where there is one, the seat otherwise. */
   key: string
-  /** Who spent it — a role ("Planner", "Engineers") or one agent's name. */
+  /** Who spent it — a seat ("Orchestrator", "Authors") or one agent's name. */
   label: string
   usage: TokenUsage
 }
@@ -157,25 +157,25 @@ function NamedHalves({ usage }: { usage: TokenUsage }) {
 }
 
 /**
- * A goal's three roles, in the order the work goes through them: the planner
- * that wrote the tasks, the engineers that did them, the reviewers that read
- * them. No names, because past the planner each role is as many agents as the
+ * A goal's three roles, in the order the work goes through them: the orchestrator
+ * that wrote the tasks, the authors that did them, the reviewers that read
+ * them. No names, because past the orchestrator each seat is as many agents as the
  * goal has tasks — the task panels are where those are.
  *
- * A role that has spent nothing is still a line: "the reviewers have used
+ * A seat that has spent nothing is still a line: "the reviewers have used
  * nothing yet" is an answer, and a list that drops its empty lines makes the
  * reader work out which ones are missing.
  */
 export function goalUsageRows(usage: GoalUsage): UsageRow[] {
   return [
-    { key: "planner", label: "Planner", usage: usage.planner },
-    { key: "engineers", label: "Engineers", usage: usage.engineers },
+    { key: "orchestrator", label: "Orchestrator", usage: usage.orchestrator },
+    { key: "authors", label: "Authors", usage: usage.authors },
     { key: "reviewers", label: "Reviewers", usage: usage.reviewers },
   ]
 }
 
 /**
- * A task's agents: its engineer, then each reviewer the daemon has usage for —
+ * A task's agents: its author, then each reviewer the daemon has usage for —
  * which is every reviewer that has been spawned, and only those. A reviewer
  * replaced after it had already run keeps its line, since what it spent is
  * still in the total above it; the daemon sends the name it ran under, and the
@@ -183,10 +183,12 @@ export function goalUsageRows(usage: GoalUsage): UsageRow[] {
  */
 export function taskUsageRows(usage: TaskUsage): UsageRow[] {
   return [
-    { key: "engineer", label: "Engineer", usage: usage.engineer },
+    { key: "author", label: "Author", usage: usage.author },
     ...usage.reviewers.map((reviewer) => ({
-      key: reviewer.profile_id,
-      label: reviewer.profile_name ?? shortId(reviewer.profile_id),
+      key: reviewer.agent_id,
+      // An agent has no name: its skills are what identifies it, and its id
+      // is the fallback for one the task no longer staffs.
+      label: reviewer.skills.join(", ") || shortId(reviewer.agent_id),
       usage: reviewer.usage,
     })),
   ]

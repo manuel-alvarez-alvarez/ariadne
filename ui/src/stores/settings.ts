@@ -36,10 +36,10 @@ interface SettingsState {
   /**
    * The filters the sessions screen was last left with, each spelled the
    * way its own param spells it: `"failed"`, `"live"` or `"attention"` for the
-   * status, `"engineer"` for the role, and `""` for no filter at all.
+   * status, `"author"` for the seat, and `""` for no filter at all.
    *
    * Raw params again, for the same reason `goalStatusFilter` is one: the store
-   * has no business knowing what a session status or a role is, and a value
+   * has no business knowing what a session status or a seat is, and a value
    * that has aged out of the daemon's vocabulary is dropped where it is read.
    */
   sessionStatusFilter: string
