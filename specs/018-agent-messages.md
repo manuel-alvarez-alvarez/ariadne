@@ -3,7 +3,7 @@ id: agent-messages
 status: current
 updated: 2026-09-06
 areas: [core, store, api, daemon, mcp, cli, ui]
-commits: []
+commits: [1b09ac10]
 tests:
   - crates/ariadne-daemon/tests/agent_messages.rs
   - crates/ariadne-store/tests/store.rs

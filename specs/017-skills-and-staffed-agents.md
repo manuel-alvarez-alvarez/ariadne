@@ -3,7 +3,7 @@ id: skills-and-staffed-agents
 status: current
 updated: 2026-09-06
 areas: [store, api, cli, ui, daemon, prompts]
-commits: [a69b953f, 083c3132, 26f49633, e7997a4f, 87fa62cf]
+commits: [03f9c8b7, 29e6d84e]
 tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs

@@ -1,9 +1,9 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-05
+updated: 2026-09-06
 areas: [api, daemon]
-commits: [d94042f4, 481a405d, 224370f4, 29e6d84e]
+commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
   - crates/ariadne-daemon/tests/events.rs
   - crates/ariadne-daemon/tests/unknown_fields.rs
@@ -100,7 +100,7 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
 - Usage rolls up to the task and the goal
   (`events.rs::reported_usage_rolls_up_to_the_task_and_the_goal`,
   `store.rs::a_tasks_usage_groups_every_round_of_a_reviewer_together`,
-  `::a_goals_usage_is_grouped_by_role_and_counts_its_orchestrator`), a source
+  `::a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator`), a source
   replaces its own totals
   (`::a_source_replaces_its_own_totals_and_sources_add_up`), and usage goes
   with its session (`::usage_goes_when_the_session_it_belonged_to_does`).

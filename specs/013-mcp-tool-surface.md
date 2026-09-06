@@ -3,7 +3,7 @@ id: mcp-tool-surface
 status: current
 updated: 2026-09-06
 areas: [mcp, cli]
-commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, 23d191a5]
+commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
@@ -59,7 +59,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 ## Acceptance criteria
 
 - Every seat has the tools its playbook names and no others
-  (`mcp.rs::every_role_has_the_tools_its_playbook_names_and_no_others`), and
+  (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`), and
   every allowed tool is one the router actually serves
   (`::every_allowed_tool_is_one_the_router_serves`).
 - Every session is told how Ariadne is reached

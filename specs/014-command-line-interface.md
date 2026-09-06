@@ -3,7 +3,7 @@ id: command-line-interface
 status: current
 updated: 2026-09-06
 areas: [cli]
-commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 23d191a5]
+commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
   - crates/ariadne-cli/src/cli/tests.rs
   - crates/ariadne-cli/src/error.rs

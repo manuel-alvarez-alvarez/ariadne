@@ -3,7 +3,7 @@ id: authoring-and-review-rounds
 status: current
 updated: 2026-09-06
 areas: [daemon, store, prompts]
-commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e, 23d191a5, 29e6d84e]
+commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
   - crates/ariadne-daemon/tests/prompts.rs
   - crates/ariadne-daemon/tests/resume.rs

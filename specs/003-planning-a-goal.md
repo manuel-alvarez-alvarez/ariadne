@@ -3,7 +3,7 @@ id: planning-a-goal
 status: current
 updated: 2026-09-06
 areas: [prompts, daemon, mcp]
-commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 23d191a5]
+commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/src/agents/prompts.rs

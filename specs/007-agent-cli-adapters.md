@@ -3,7 +3,7 @@ id: agent-cli-adapters
 status: current
 updated: 2026-09-06
 areas: [daemon, core]
-commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, 87fa62cf]
+commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
   - crates/ariadne-daemon/tests/adapters.rs
   - crates/ariadne-daemon/tests/agents.rs

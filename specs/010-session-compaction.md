@@ -3,7 +3,7 @@ id: session-compaction
 status: current
 updated: 2026-09-06
 areas: [daemon]
-commits: [ab689148, 23d191a5]
+commits: [ab689148, a69b953f, 29e6d84e]
 tests:
   - crates/ariadne-daemon/tests/compaction.rs
   - crates/ariadne-store/tests/store.rs
@@ -71,8 +71,9 @@ watchdog's own timeline (009).
 - A session mid-turn or waiting on a person owes the debt but is not typed into
   (`compaction.rs::a_session_mid_turn_owes_the_compaction_and_is_not_typed_into`,
   `::a_session_waiting_on_a_person_is_not_typed_into`).
-- A reviewer that voted is ended only once its compaction is done
-  (`compaction.rs::a_reviewer_that_voted_is_ended_only_once_its_compaction_is_done`).
+- A reviewer that voted is compacted and left where it is, since every agent
+  of a task stays up until the task is over (018)
+  (`compaction.rs::a_reviewer_that_voted_is_compacted_and_left_where_it_is`).
 - A resume due during a compaction goes out after it
   (`compaction.rs::a_resume_due_during_a_compaction_goes_out_after_it`).
 - A compaction reported done before its delivery settles is over

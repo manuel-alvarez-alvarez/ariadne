@@ -3,7 +3,7 @@ id: desktop-app
 status: current
 updated: 2026-09-06
 areas: [ui]
-commits: [f37dfd7b, 31bb7611, 10908591, b150ce44]
+commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
   - ui/src/features/**/*.test.tsx
   - ui/src/api/**/*.test.ts
@@ -57,7 +57,7 @@ Out: the daemon endpoints themselves (012).
 
 ## Acceptance criteria
 
-- 69 test files cover the features, the API layer and the event stream; each
+- 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
 - The task's channel is grouped by round, every kind is told apart, and both
   ends of a message are named by the skills they work with

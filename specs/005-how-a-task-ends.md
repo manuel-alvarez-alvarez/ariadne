@@ -3,7 +3,7 @@ id: how-a-task-ends
 status: current
 updated: 2026-09-06
 areas: [daemon, store, prompts]
-commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, 23d191a5]
+commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
   - crates/ariadne-daemon/tests/landing_lifecycle.rs
   - crates/ariadne-daemon/tests/repositories.rs

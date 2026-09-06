@@ -3,7 +3,7 @@ id: install-service-and-release
 status: current
 updated: 2026-09-06
 areas: [install, scripts, store]
-commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251]
+commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, 03f9c8b7]
 tests:
   - crates/ariadne-store/tests/store.rs
   - scripts/install.sh

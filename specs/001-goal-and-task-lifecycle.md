@@ -3,7 +3,7 @@ id: goal-and-task-lifecycle
 status: current
 updated: 2026-09-06
 areas: [core, store, daemon]
-commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, 23d191a5]
+commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
   - crates/ariadne-core/src/state_machine.rs
   - crates/ariadne-store/tests/store.rs

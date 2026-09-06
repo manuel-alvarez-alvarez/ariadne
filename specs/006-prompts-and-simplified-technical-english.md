@@ -3,7 +3,7 @@ id: prompts-and-simplified-technical-english
 status: current
 updated: 2026-09-06
 areas: [prompts, store, core, mcp]
-commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, 083c3132, 87fa62cf]
+commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/src/agents/prompts.rs

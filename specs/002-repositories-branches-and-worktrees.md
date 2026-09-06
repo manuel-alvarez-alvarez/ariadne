@@ -3,7 +3,7 @@ id: repositories-branches-and-worktrees
 status: current
 updated: 2026-09-06
 areas: [store, daemon]
-commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d]
+commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
   - crates/ariadne-daemon/tests/repositories.rs
   - crates/ariadne-daemon/tests/goal_repositories.rs

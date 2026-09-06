@@ -3,7 +3,7 @@ id: scheduler-attention-and-watchdogs
 status: current
 updated: 2026-09-06
 areas: [daemon]
-commits: [f68b8ec1, 506e9d76, 7add2a61, 23d191a5]
+commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
   - crates/ariadne-daemon/tests/scheduler_attention.rs
   - crates/ariadne-daemon/tests/scheduler_tmux_outage.rs
@@ -112,11 +112,10 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
 - Under a tmux outage nothing is spawned and nothing fails
   (`scheduler_tmux_outage.rs::reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task`,
   `::a_silent_agent_whose_pane_cannot_be_read_is_left_for_the_next_pass`).
-- A goal whose tasks all landed is completed
-  (`::a_goal_whose_tasks_all_landed_is_completed`), and a session outliving its
-  completed goal is killed (`::a_session_that_outlived_its_completed_goal_is_killed`).
+- A session outliving its completed goal is killed
+  (`scheduler_attention.rs::a_session_that_outlived_its_completed_goal_is_killed`).
 - A pass with three agents to nudge does not wait on the keystrokes
-  (`::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes`).
+  (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes`).
 
 ## Sources
 

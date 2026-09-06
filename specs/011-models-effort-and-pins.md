@@ -3,7 +3,7 @@ id: models-effort-and-pins
 status: current
 updated: 2026-09-06
 areas: [core, api, daemon, cli]
-commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, 083c3132]
+commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
   - crates/ariadne-daemon/tests/models.rs
   - crates/ariadne-daemon/tests/pins.rs

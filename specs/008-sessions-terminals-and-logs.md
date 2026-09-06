@@ -1,9 +1,9 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-05
+updated: 2026-09-06
 areas: [daemon, store]
-commits: [e4816cf6, 39937143]
+commits: [e4816cf6, 39937143, a69b953f]
 tests:
   - crates/ariadne-daemon/tests/resume.rs
   - crates/ariadne-daemon/tests/session_logs.rs
