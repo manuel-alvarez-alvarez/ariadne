@@ -30,7 +30,7 @@ and the wording of the text a message arrives in (006).
    table for verdicts: a verdict is a message whose kind settles a review, so
    one channel holds the whole of what happened to a task.
 2. Four kinds, and the kind is what the daemon reads:
-   - `message` — one agent telling another what it needs from it;
+   - `message` — one agent asking another something, or answering it;
    - `review_request` — the author asking a reviewer to look;
    - `approve`, `request_changes` — a reviewer's verdict on the review.
 3. A message has exactly one recipient, so a review request that goes to three
@@ -39,17 +39,15 @@ and the wording of the text a message arrives in (006).
 4. A recipient is the orchestrator of the goal, or one staffed agent of a task
    named by the id `get_task` lists. An agent has no name, so the id is the
    address; the orchestrator needs none, since a goal has one.
-5. Nothing is answered. There is no question, no answer and no reply — one
-   verb (`send_message`) and one kind, and the recipient acts on it.
-   Every message arrives in a pane as a turn (8), so a channel that invites
-   one back spends two turns saying nothing: a question earns an answer, which
-   earns an acknowledgement, which earns a thank you. What is delivered says
-   so too — act on it, do not answer it — and the seat playbooks (006) say it
-   where each seat is told to use the channel.
-6. An agent that cannot go on has the ways out its seat already gives it: an
-   author calls `fail_task` with the reason, and a reviewer requests changes
-   naming what blocks it. Both move the task, which writing at each other does
-   not.
+5. One verb (`send_message`) and one kind, for asking and for answering.
+   There is no `answer` kind and no `reply`: an answer is a message to
+   whoever asked, addressed the way the question was, so nothing threads and
+   no row points at another.
+6. A message asks or answers, and carries nothing else — no acknowledgement,
+   no thanks, and nothing about what the sender is going to do next. Every
+   message arrives in a pane as a turn (9), so a courtesy costs the recipient
+   a turn: that is what the tool's own description bans, and it is banned
+   there once rather than in each seat's playbook (006).
 7. A message is about one task, or about the goal itself. The goal's channel
    is the orchestrator's inbox, and everything said about a task is on that
    task.

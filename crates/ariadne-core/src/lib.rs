@@ -625,13 +625,12 @@ impl AttentionReason {
 /// message like the rest now, which is what carries a review's whole
 /// conversation in one place.
 ///
-/// Nothing here is answered. Every message is one agent telling another what
-/// it needs from it, and the recipient acts on it — there is no question, no
-/// answer and no reply, because each of them arrives in a pane as a turn, and
-/// a channel that invites one back spends two turns saying nothing. An agent
-/// that cannot go on has the ways out its seat already gives it: an author
-/// calls `fail_task` with the reason, and a reviewer requests changes naming
-/// what blocks it. Both move the task, which writing at each other does not.
+/// One kind carries everything the agents say outside a review, whether it
+/// asks something or answers it. There is no `answer` kind and no `reply`
+/// tool: an answer is a message to whoever asked, addressed the way the
+/// question was, so nothing threads. Each message arrives in a pane as a turn
+/// — which is why the tool that sends one takes questions and answers and
+/// nothing else, no acknowledgement and no thanks.
 ///
 /// The kind is what the daemon reads. Two of them move the task
 /// ([`TaskStatus`]), and the rest are said and left.
@@ -650,9 +649,9 @@ pub enum MessageKind {
     Approve,
     /// A reviewer's verdict: the author starts again on this feedback.
     RequestChanges,
-    /// A message: one agent telling another what it needs from it. The one
-    /// kind that is not part of the review, and the only thing an agent
-    /// writes of its own accord.
+    /// A message: one agent asking another something, or answering what it
+    /// was asked. The one kind that is not part of the review, and the only
+    /// thing an agent writes of its own accord.
     Message,
 }
 

@@ -250,10 +250,9 @@ CREATE TABLE session_usage (
 -- table of its own, which is why the only thing a reviewer could ever say was
 -- approve or request changes.
 --
--- Nothing here is answered. A row is one agent telling another what it needs
--- from it, and the recipient acts on it: there is no question, no answer and
--- no reply, because each message arrives in a pane as a turn and a channel
--- that invites one back spends two turns saying nothing.
+-- One kind carries everything said outside a review, whether it asks or
+-- answers. There is no `answer` kind and no reply: an answer is a row
+-- addressed to whoever asked, so nothing threads and nothing points back.
 --
 -- A review is bounded by its own request rather than by a round number: the
 -- verdicts that count are the ones sent after the last `review_request`, and

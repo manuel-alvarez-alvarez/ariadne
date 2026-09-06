@@ -540,7 +540,7 @@ impl AriadneMcp {
     // ---- everyone ----
 
     #[tool(
-        description = "Send one message to another agent: something it needs from you and cannot work without. `to` is an agent id from `get_task`, or `orchestrator`. Nobody answers it, so say the whole thing. Send nothing else: no questions, no acknowledgements, no thanks, and nothing about what you are going to do next."
+        description = "Send one message to another agent, `to` is an agent id from `get_task`, or `orchestrator`. Use it only to ask questions or to answer questions, no acknowledgements, no thanks, and nothing about what you are going to do next."
     )]
     async fn send_message(
         &self,
