@@ -40,7 +40,7 @@ and the wording of the text a message arrives in (006).
    named by the id `get_task` lists. An agent has no name, so the id is the
    address; the orchestrator needs none, since a goal has one.
 5. Nothing is answered. There is no question, no answer and no reply — one
-   verb (`tell`) and one kind, and the recipient acts on what it is told.
+   verb (`send_message`) and one kind, and the recipient acts on it.
    Every message arrives in a pane as a turn (8), so a channel that invites
    one back spends two turns saying nothing: a question earns an answer, which
    earns an acknowledgement, which earns a thank you. What is delivered says
@@ -72,8 +72,8 @@ and the wording of the text a message arrives in (006).
 12. `request_review` writes one `review_request` per reviewer, carrying the
     summary the author asked with, so the channel holds the whole of the
     review rather than the half of it that happened to be typed.
-13. The MCP surface is two tools every seat has: `tell` and `read_messages`
-    (013).
+13. The MCP surface is two tools every seat has: `send_message` and
+    `read_messages` (013).
 
 ## Acceptance criteria
 

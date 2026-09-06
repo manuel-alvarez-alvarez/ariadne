@@ -81,13 +81,13 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    `approved`.
 
    The agents write to each other while that happens, and only when one of
-   them needs something from another: `tell` sends one message to an agent of
+   them needs something from another: `send_message` writes to an agent of
    the task, or to the orchestrator. Nothing is answered — no question, no
    answer, no reply — because every message lands in the recipient's pane as a
    turn, and a channel that invites one back spends two turns saying nothing.
    There is no inbox to check either: Ariadne types the message in and
-   submits it. A verdict
-   is a message of the kind that settles a review, and it all reads back as one
+   submits it. A verdict is a message of the kind that settles a review, and
+   it all reads back as one
    channel — `ariadne task messages <task-id>`, or the Messages tab of the
    task panel. Every agent of a task stays up until the task is over, so a
    reviewer that has voted is still there to be asked something.

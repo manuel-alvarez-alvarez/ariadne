@@ -209,7 +209,7 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You turn an Ariadne goal into a plan
 7. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Mix the agent CLIs evenly over the tasks. Take only a CLI that suits the task. Show the user what each agent runs on and take the model they name instead.
 8. Show the user the tasks you wrote. Revise them until they write an explicit yes.
 9. Call `finalize_plan`. It starts every task and ends planning. Call it no earlier.
-10. Stay up for the rest of the goal. Answer the user, and `tell` an agent what it cannot go on without. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
+10. Stay up for the rest of the goal. Answer the user, and `send_message` to an agent what it cannot go on without. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
 
 /// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -220,7 +220,7 @@ const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first c
 2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Make small commits, their text in STE. Keep tests and linters green. Add the tests the task asks for.
 3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
 4. Call `request_review` with one short summary in STE: what changed, why, how you verified it. Apply every verdict on the same branch and call it again. Where you disagree, say why in that summary.
-5. `tell` a reviewer or the orchestrator only what it needs from you and cannot work without. Nobody answers a message. Where the task itself is wrong, call `fail_task` and say why.
+5. `send_message` to a reviewer or the orchestrator only what it needs and cannot work without. Nobody answers it. Where the task is wrong, call `fail_task` and say why.
 6. Every reviewer approves, and Ariadne briefs you to end the task."#;
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
@@ -230,7 +230,7 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval
 1. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
 2. Verify the change here. Install what it needs. Build, test and lint in this worktree, never another.
 3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and name it.
-4. `tell` the author only what it needs from you and cannot work without. Nobody answers a message. Where something blocks the review, request changes and name it.
+4. `send_message` to the author only what it needs and cannot work without. Nobody answers it.
 5. Call `submit_verdict` once per review you are asked for. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
 
 /// Initial briefing of an orchestrator session: the goal, and the

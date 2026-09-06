@@ -194,7 +194,7 @@ pub struct SubmitVerdictReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct TellReq {
+pub struct SendMessageReq {
     /// Who to write to: the id of an agent `get_task` lists, or
     /// `orchestrator`.
     pub to: String,
@@ -542,7 +542,10 @@ impl AriadneMcp {
     #[tool(
         description = "Send one message to another agent: something it needs from you and cannot work without. `to` is an agent id from `get_task`, or `orchestrator`. Nobody answers it, so say the whole thing. Send nothing else: no questions, no acknowledgements, no thanks, and nothing about what you are going to do next."
     )]
-    async fn tell(&self, Parameters(req): Parameters<TellReq>) -> Result<CallToolResult, McpError> {
+    async fn send_message(
+        &self,
+        Parameters(req): Parameters<SendMessageReq>,
+    ) -> Result<CallToolResult, McpError> {
         self.write_message(req.task_id, MessageKind::Message, &req.to, req.body)
             .await
     }
@@ -849,13 +852,13 @@ mod tests {
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
 
-        mcp.tell(Parameters(TellReq {
+        mcp.send_message(Parameters(SendMessageReq {
             to: "01AUTHOR".into(),
             body: "The retry is bounded by the caller, so the inner one is not.".into(),
             task_id: None,
         }))
         .await
-        .expect("tell");
+        .expect("send_message");
         let sent: serde_json::Value =
             serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
                 .expect("json");
@@ -877,13 +880,13 @@ mod tests {
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
 
-        mcp.tell(Parameters(TellReq {
+        mcp.send_message(Parameters(SendMessageReq {
             to: "orchestrator".into(),
             body: "The task names no CLI, and the spec it cites has one.".into(),
             task_id: None,
         }))
         .await
-        .expect("tell");
+        .expect("send_message");
 
         let sent: serde_json::Value =
             serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
@@ -906,7 +909,7 @@ mod tests {
         );
 
         let err = mcp
-            .tell(Parameters(TellReq {
+            .send_message(Parameters(SendMessageReq {
                 to: "01NOBODY".into(),
                 body: "the flag moved".into(),
                 task_id: None,
