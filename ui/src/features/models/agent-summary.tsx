@@ -49,6 +49,9 @@ export function AgentSummary({
           <span className="truncate text-muted-foreground italic">no skills</span>
         ) : (
           skills.map((skill, at) => (
+            // The box that clips a name too long for the line: the name
+            // itself is inline, so it keeps the baseline the model beside it
+            // is aligned to.
             <span key={skill} className="min-w-0 truncate">
               {at > 0 ? <span className="text-muted-foreground">, </span> : null}
               <SkillName name={skill} />

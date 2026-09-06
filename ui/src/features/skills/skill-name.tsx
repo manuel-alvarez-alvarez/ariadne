@@ -29,15 +29,17 @@ export function SkillName({ name, className }: { name: string; className?: strin
     // The name leads and the line it says about itself follows: a skill name
     // is short enough to survive a table cell, and what the reader wants from
     // hovering it is what the skill is for.
+    //
+    // The link stays inline, and clips nothing: an inline-block that hides its
+    // overflow takes its *bottom edge* as its baseline, which lifts the name
+    // off the line the rest of the mention sits on — the comma beside it and
+    // the model after it. Whatever box holds the name is what truncates it.
     <Tooltip>
       <TooltipTrigger
         render={
           <Link
             to={paths.skill(name)}
-            className={cn(
-              "inline-block max-w-full truncate underline-offset-3 hover:underline",
-              className,
-            )}
+            className={cn("underline-offset-3 hover:underline", className)}
           />
         }
       >
