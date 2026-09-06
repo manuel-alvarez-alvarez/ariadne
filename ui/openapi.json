@@ -3041,13 +3041,12 @@
       },
       "MessageKind": {
         "type": "string",
-        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells the\nfive things they say apart. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what makes \"the reviewer asked the\nauthor something\" possible at all — before, the only thing a reviewer\ncould say was approve or request changes.\n\nEvery one of them is something the sender needs, or something the\nrecipient does. There is no kind for an answer: an answer is a note to the\nagent that asked, addressed the way the question was. A kind for it, and a\ntool to send it with, made replying the obvious move — and a channel whose\nobvious move is replying fills up with agents thanking each other.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), and the rest are said and left.",
+        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells a\nmessage from the three steps of a review. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what carries a review's whole\nconversation in one place.\n\nNothing here is answered. Every message is one agent telling another what\nit needs from it, and the recipient acts on it — there is no question, no\nanswer and no reply, because each of them arrives in a pane as a turn, and\na channel that invites one back spends two turns saying nothing. An agent\nthat cannot go on has the ways out its seat already gives it: an author\ncalls `fail_task` with the reason, and a reviewer requests changes naming\nwhat blocks it. Both move the task, which writing at each other does not.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), and the rest are said and left.",
         "enum": [
-          "question",
           "review_request",
           "approve",
           "request_changes",
-          "note"
+          "message"
         ]
       },
       "ModelDto": {

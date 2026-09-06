@@ -79,8 +79,9 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
     to do. Once per situation, on its own pane. Work in progress is what the
     orchestrator delegated, and it is not woken for that.
 14. Its pane is also open to the agents themselves. Any of them can write to
-    it about anything the task does not answer, and the message arrives as a
-    turn (018); it answers with `reply`.
+    it about anything it needs to know, and the message arrives as a turn
+    (018). It acts on what it is told — the plan is its to change — rather
+    than writing back.
 15. It answers with `list_tasks`, and then with `retry_task`, `cancel_task`,
     `update_task` or nothing at all.
 16. `complete_goal` ends the goal. Whether the goal is *met* is a judgement

@@ -194,23 +194,11 @@ pub struct SubmitVerdictReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct AskReq {
-    /// Who to ask: the id of an agent `get_task` lists, or the word
-    /// `orchestrator` for the one that planned this goal.
-    pub to: String,
-    /// The question, in one paragraph. Say what you need and why you are
-    /// blocked without it.
-    pub question: String,
-    /// The task it is about. Omit it for your own task.
-    pub task_id: Option<String>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
 pub struct TellReq {
-    /// Who to tell: the id of an agent `get_task` lists, or `orchestrator`.
+    /// Who to write to: the id of an agent `get_task` lists, or
+    /// `orchestrator`.
     pub to: String,
-    /// What it needs from you. Nobody answers this.
+    /// What it needs from you, whole. Nobody answers it.
     pub body: String,
     /// The task it is about. Omit it for your own task.
     pub task_id: Option<String>,
@@ -537,7 +525,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Give your verdict on the change. Approve it, or request changes. A change request carries the feedback the author starts again on. Ask the author with `ask` where you need something before you can judge it."
+        description = "Give your verdict on the change. Approve it, or request changes. A change request carries the feedback the author starts again on. Where something blocks the review, request changes and name it."
     )]
     async fn submit_verdict(
         &self,
@@ -552,28 +540,15 @@ impl AriadneMcp {
     // ---- everyone ----
 
     #[tool(
-        description = "Ask another agent something you need answered before you can go on. `to` is an agent id from `get_task`, or `orchestrator`. The answer arrives in your session as a message. Go on with what you can do meanwhile. Write only when you need something: an agent that is told nothing is working."
-    )]
-    async fn ask(&self, Parameters(req): Parameters<AskReq>) -> Result<CallToolResult, McpError> {
-        self.write_message(
-            req.task_id,
-            MessageKind::Question,
-            &req.to,
-            req.question,
-        )
-        .await
-    }
-
-    #[tool(
-        description = "Tell another agent something it needs from you: the answer to what it asked, or something it cannot do its work without. `to` is an agent id from `get_task`, or `orchestrator`. Never write to acknowledge, to thank, or to say what you are about to do."
+        description = "Send one message to another agent: something it needs from you and cannot work without. `to` is an agent id from `get_task`, or `orchestrator`. Nobody answers it, so say the whole thing. Send nothing else: no questions, no acknowledgements, no thanks, and nothing about what you are going to do next."
     )]
     async fn tell(&self, Parameters(req): Parameters<TellReq>) -> Result<CallToolResult, McpError> {
-        self.write_message(req.task_id, MessageKind::Note, &req.to, req.body)
+        self.write_message(req.task_id, MessageKind::Message, &req.to, req.body)
             .await
     }
 
     #[tool(
-        description = "Read everything the agents of a task have said to each other, oldest first: the questions, the review requests and the verdicts."
+        description = "Read everything the agents of a task have said to each other, oldest first: the messages, the review requests and the verdicts."
     )]
     async fn read_messages(
         &self,
@@ -856,14 +831,14 @@ mod tests {
         }
     }
 
-    /// Any agent can ask any other, and any agent can tell one what it needs.
+    /// One verb, and it names the agent it is for.
     ///
-    /// Both name the agent they are for. There is no third verb for answering:
-    /// an answer is something the asker needs, which is what `tell` is, and a
-    /// channel with a reply verb in it fills up with agents being polite at
-    /// each other.
+    /// There is nothing to ask with and nothing to answer with: a message is
+    /// one agent telling another what it needs from it, and each one arrives
+    /// in a pane as a turn — a channel that invites one back spends two turns
+    /// saying nothing.
     #[tokio::test]
-    async fn asking_and_telling_both_name_the_agent_they_are_for() {
+    async fn a_message_names_the_agent_it_is_for() {
         let (endpoint, seen) = recording_daemon_answering(
             r#"{"agents":[{"id":"01AUTHOR","seat":"author","skills":["coding"]},
                           {"id":"01REVIEWER","seat":"reviewer","skills":["code-review"]}]}"#,
@@ -874,36 +849,19 @@ mod tests {
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
 
-        mcp.ask(Parameters(AskReq {
-            to: "01AUTHOR".into(),
-            question: "Why is the retry unbounded?".into(),
-            task_id: None,
-        }))
-        .await
-        .expect("ask");
-        let asked: serde_json::Value =
-            serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
-                .expect("json");
-        assert_eq!(asked["kind"], serde_json::json!("question"));
-        assert_eq!(asked["to_actor"], serde_json::json!("author"));
-        assert_eq!(asked["to_agent_id"], serde_json::json!("01AUTHOR"));
-
         mcp.tell(Parameters(TellReq {
             to: "01AUTHOR".into(),
-            body: "The caller retries too, so the inner one is bounded.".into(),
+            body: "The retry is bounded by the caller, so the inner one is not.".into(),
             task_id: None,
         }))
         .await
         .expect("tell");
-        let told: serde_json::Value =
+        let sent: serde_json::Value =
             serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
                 .expect("json");
-        assert_eq!(told["kind"], serde_json::json!("note"));
-        assert_eq!(
-            told["to_agent_id"],
-            serde_json::json!("01AUTHOR"),
-            "an answer is addressed like anything else: there is nothing to reply to"
-        );
+        assert_eq!(sent["kind"], serde_json::json!("message"));
+        assert_eq!(sent["to_actor"], serde_json::json!("author"));
+        assert_eq!(sent["to_agent_id"], serde_json::json!("01AUTHOR"));
     }
 
     /// The orchestrator is addressed by what it is: a goal has one, and it is
@@ -919,13 +877,13 @@ mod tests {
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
 
-        mcp.ask(Parameters(AskReq {
+        mcp.tell(Parameters(TellReq {
             to: "orchestrator".into(),
-            question: "Does this task cover the CLI too?".into(),
+            body: "The task names no CLI, and the spec it cites has one.".into(),
             task_id: None,
         }))
         .await
-        .expect("ask");
+        .expect("tell");
 
         let sent: serde_json::Value =
             serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
@@ -948,9 +906,9 @@ mod tests {
         );
 
         let err = mcp
-            .ask(Parameters(AskReq {
+            .tell(Parameters(TellReq {
                 to: "01NOBODY".into(),
-                question: "anyone there?".into(),
+                body: "the flag moved".into(),
                 task_id: None,
             }))
             .await
@@ -968,7 +926,7 @@ mod tests {
     }
 
     /// The body of a change request is what the author is resumed with, so
-    /// one with nothing in it is refused here rather than sent: a round that
+    /// one with nothing in it is refused here rather than sent: a review that
     /// asks for changes and says nothing asks for nothing.
     #[tokio::test]
     async fn a_change_request_with_nothing_in_it_is_refused_before_it_is_sent() {

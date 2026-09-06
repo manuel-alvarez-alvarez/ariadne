@@ -2,10 +2,14 @@
  * What the agents of a task have said to each other — the `task messages`
  * equivalent.
  *
- * One channel carries all of it: the questions, the answers to them, the
+ * One channel carries all of it: the messages the agents send each other, the
  * author's review requests, and the verdicts on those. It reads as one list,
  * newest first — what a reader opens this tab for is what just happened, and
  * a channel that only ever grows would put that at the bottom of a scroll.
+ *
+ * Nothing here is a reply. A message is one agent telling another what it
+ * needs from it, so the list is a record of what was needed rather than a
+ * conversation to follow.
  *
  * An agent has no name of its own, so both ends of a message are named by the
  * skills they work with: "code-review" said this to "coding". The orchestrator
@@ -15,7 +19,6 @@
 import { useQuery } from "@tanstack/react-query"
 import {
   CheckCircle2Icon,
-  CircleHelpIcon,
   EyeIcon,
   MessageSquareIcon,
   MessageSquareWarningIcon,
@@ -59,13 +62,8 @@ const KIND_META: Record<
     badge: "bg-muted text-muted-foreground",
     icon: EyeIcon,
   },
-  question: {
-    label: "Question",
-    badge: "bg-muted text-muted-foreground",
-    icon: CircleHelpIcon,
-  },
-  note: {
-    label: "Note",
+  message: {
+    label: "Message",
     badge: "bg-muted text-muted-foreground",
     icon: MessageSquareIcon,
   },

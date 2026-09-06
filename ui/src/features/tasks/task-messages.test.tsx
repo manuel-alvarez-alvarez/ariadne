@@ -30,7 +30,7 @@ function message(over: Partial<MessageDto>): MessageDto {
     id: "01MSG0000000000000000000A",
     goal_id: TASK.goal_id,
     task_id: TASK.id,
-    kind: "note",
+    kind: "message",
     from_actor: "reviewer",
     from_agent_id: "01REVIEWER",
     to_actor: "author",
@@ -75,7 +75,7 @@ describe("the channel", () => {
   })
 
   it("names both ends by the skills they work with", () => {
-    render([message({ kind: "question", body: "Why is the retry unbounded?" })])
+    render([message({ kind: "message", body: "Why is the retry unbounded?" })])
 
     const card = screen.getByText("Why is the retry unbounded?").closest("article")
     expect(card).not.toBeNull()
@@ -85,7 +85,7 @@ describe("the channel", () => {
   it("names the orchestrator by what it is, since it has no id", () => {
     render([
       message({
-        kind: "question",
+        kind: "message",
         to_actor: "orchestrator",
         to_agent_id: null,
         body: "Does this cover the CLI?",
@@ -106,13 +106,12 @@ describe("the channel", () => {
   it("tells every kind apart, and reads the two verdicts as verdicts", () => {
     render([
       message({ id: "01A", kind: "review_request", body: "please look" }),
-      message({ id: "01B", kind: "question", body: "why?" }),
+      message({ id: "01B", kind: "message", body: "the flag moved" }),
       message({ id: "01D", kind: "request_changes", body: "rename it" }),
       message({ id: "01E", kind: "approve", body: "looks right" }),
-      message({ id: "01F", kind: "note", body: "for the record" }),
     ])
 
-    for (const label of ["Review requested", "Question", "Changes requested", "Approved", "Note"]) {
+    for (const label of ["Review requested", "Message", "Changes requested", "Approved"]) {
       expect(screen.getByText(label), label).toBeDefined()
     }
   })

@@ -122,7 +122,7 @@ dto! {
         // A kind or an actor this build does not know is carried rather than
         // dropped: the body is what somebody typed, and a listing that
         // silently loses a message is worse than one that shows a `note`.
-        kind: m.kind().unwrap_or(MessageKind::Note),
+        kind: m.kind().unwrap_or(MessageKind::Message),
         from_actor: m.from_actor().unwrap_or(Actor::Daemon),
         to_actor: m.to_actor().unwrap_or(Actor::Daemon),
         .. id, goal_id, task_id, from_agent_id, from_session, to_agent_id,

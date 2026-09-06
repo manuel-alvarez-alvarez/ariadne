@@ -150,7 +150,6 @@ pub fn incoming_message_briefing(template: &str, message: &Message, from: &str) 
         template,
         &[
             ("from", from),
-            ("message_id", &message.id),
             ("body", &message.body),
         ],
     )

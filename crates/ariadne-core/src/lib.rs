@@ -249,7 +249,7 @@ impl PromptKind {
             // the scheduler that noticed.
             PromptKind::GoalAttention => &["goal_title", "tasks"],
             // What was said, who said it, and the id an answer names.
-            PromptKind::IncomingMessage => &["from", "message_id", "body"],
+            PromptKind::IncomingMessage => &["from", "body"],
             PromptKind::AuthorBriefing => &[
                 "task_title",
                 "task_description",
@@ -620,17 +620,18 @@ impl AttentionReason {
 
 /// What one agent is saying to another.
 ///
-/// Agents talk to each other through one channel, and this is what tells the
-/// five things they say apart. A verdict used to be a row of its own; it is a
-/// message like the rest now, which is what makes "the reviewer asked the
-/// author something" possible at all — before, the only thing a reviewer
-/// could say was approve or request changes.
+/// Agents talk to each other through one channel, and this is what tells a
+/// message from the three steps of a review. A verdict used to be a row of its own; it is a
+/// message like the rest now, which is what carries a review's whole
+/// conversation in one place.
 ///
-/// Every one of them is something the sender needs, or something the
-/// recipient does. There is no kind for an answer: an answer is a note to the
-/// agent that asked, addressed the way the question was. A kind for it, and a
-/// tool to send it with, made replying the obvious move — and a channel whose
-/// obvious move is replying fills up with agents thanking each other.
+/// Nothing here is answered. Every message is one agent telling another what
+/// it needs from it, and the recipient acts on it — there is no question, no
+/// answer and no reply, because each of them arrives in a pane as a turn, and
+/// a channel that invites one back spends two turns saying nothing. An agent
+/// that cannot go on has the ways out its seat already gives it: an author
+/// calls `fail_task` with the reason, and a reviewer requests changes naming
+/// what blocks it. Both move the task, which writing at each other does not.
 ///
 /// The kind is what the daemon reads. Two of them move the task
 /// ([`TaskStatus`]), and the rest are said and left.
@@ -643,26 +644,23 @@ impl AttentionReason {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MessageKind {
-    /// Something the sender needs answered before it can go on.
-    Question,
     /// The author asking a reviewer to look at what it wrote.
     ReviewRequest,
     /// A reviewer's verdict on the review it was asked for.
     Approve,
     /// A reviewer's verdict: the author starts again on this feedback.
     RequestChanges,
-    /// Something the recipient needs and nobody has to answer: the answer to
-    /// a question, a fact the other agent cannot work without. There is no
-    /// kind for an acknowledgement, because there is no reason to send one.
-    Note,
+    /// A message: one agent telling another what it needs from it. The one
+    /// kind that is not part of the review, and the only thing an agent
+    /// writes of its own accord.
+    Message,
 }
 
 wire_enum! { MessageKind, "message kind", [
-    Question = "question",
     ReviewRequest = "review_request",
     Approve = "approve",
     RequestChanges = "request_changes",
-    Note = "note",
+    Message = "message",
 ]}
 
 impl MessageKind {
@@ -673,11 +671,6 @@ impl MessageKind {
     /// what the daemon holds them to.
     pub fn is_verdict(&self) -> bool {
         matches!(self, MessageKind::Approve | MessageKind::RequestChanges)
-    }
-
-    /// Whether the sender is waiting for an answer to this.
-    pub fn wants_an_answer(&self) -> bool {
-        matches!(self, MessageKind::Question)
     }
 }
 

@@ -786,13 +786,13 @@ async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
         .await
         .unwrap();
     store
-        .send_message(message(MessageKind::Question, Actor::Reviewer, "what is the flag for?"))
+        .send_message(message(MessageKind::Message, Actor::Reviewer, "the flag is read here too"))
         .await
         .unwrap();
     assert_eq!(
         store.open_verdicts(&task.id).await.unwrap().len(),
         1,
-        "the question is not counted as a verdict"
+        "a message is not counted as a verdict"
     );
 
     // Asked for again: the verdict before it belongs to the review before it.
@@ -828,7 +828,7 @@ async fn a_message_is_delivered_once_and_the_stamp_says_so() {
         .send_message(NewMessage {
             goal_id: task.goal_id.clone(),
             task_id: Some(task.id.clone()),
-            kind: MessageKind::Question,
+            kind: MessageKind::Message,
             from_actor: Actor::Reviewer,
             from_agent_id: Some(store.list_task_reviewers(&task.id).await.unwrap()[0].id.clone()),
             from_session: None,

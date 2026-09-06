@@ -24,23 +24,24 @@ fn messages_uri(cast: &Cast) -> String {
 }
 
 /// One message body, as an agent sends it.
-fn ask(to_actor: &str, to_agent_id: Option<&str>, body: &str) -> serde_json::Value {
+fn message(to_actor: &str, to_agent_id: Option<&str>, body: &str) -> serde_json::Value {
     serde_json::json!({
-        "kind": "question",
+        "kind": "message",
         "to_actor": to_actor,
         "to_agent_id": to_agent_id,
         "body": body,
     })
 }
 
-/// A reviewer asks the author something mid-review, and the author answers it.
-/// Neither of them left the task to do it, and the review is where it was.
+/// A reviewer writes to the author mid-review, and the author writes back
+/// what it needs. Neither of them left the task to do it, and the review is
+/// where it was.
 ///
-/// The answer is addressed like anything else. There is no reply — a channel
-/// with one fills up with agents acknowledging each other — so an answer is a
-/// note to the agent that asked, named the way the question named it.
+/// Both are the same thing: one message naming the agent it is for. Nothing
+/// threads and nothing is a reply — each one arrives in a pane as a turn, so
+/// a channel that invites one back spends two turns saying nothing.
 #[tokio::test]
-async fn a_reviewer_asks_the_author_and_the_author_answers_it() {
+async fn agents_write_to_each_other_without_leaving_the_task() {
     let h = harness().await;
     let cast = h.active_cast().await;
     let reviewer = h
@@ -56,46 +57,45 @@ async fn a_reviewer_asks_the_author_and_the_author_answers_it() {
         .await;
     h.advance(&cast.task, TaskStatus::UnderReview).await;
 
-    let asked: MessageDto = h
+    let sent: MessageDto = h
         .json(
             as_session(
                 &messages_uri(&cast),
                 &reviewer.id,
-                ask(
+                message(
                     "author",
                     Some(&cast.author.id),
-                    "Why is the retry unbounded?",
+                    "The retry loop has no bound and the caller has one.",
                 ),
             ),
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(asked.kind, MessageKind::Question);
-    assert_eq!(asked.from_actor, Actor::Reviewer);
+    assert_eq!(sent.kind, MessageKind::Message);
+    assert_eq!(sent.from_actor, Actor::Reviewer);
     assert_eq!(
-        asked.from_agent_id.as_deref(),
+        sent.from_agent_id.as_deref(),
         Some(cast.reviewer.id.as_str())
     );
-    assert_eq!(asked.to_agent_id.as_deref(), Some(cast.author.id.as_str()));
-    assert_eq!(asked.delivered_at, None, "nothing has typed it yet");
+    assert_eq!(sent.to_agent_id.as_deref(), Some(cast.author.id.as_str()));
+    assert_eq!(sent.delivered_at, None, "nothing has typed it yet");
 
     let answered: MessageDto = h
         .json(
             as_session(
                 &messages_uri(&cast),
                 &author.id,
-                serde_json::json!({
-                    "kind": "note",
-                    "to_actor": "reviewer",
-                    "to_agent_id": cast.reviewer.id,
-                    "body": "Because the caller retries too.",
-                }),
+                message(
+                    "reviewer",
+                    Some(&cast.reviewer.id),
+                    "The caller retries too, so the inner one stays.",
+                ),
             ),
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(answered.kind, MessageKind::Note);
-    assert_eq!(answered.to_actor, Actor::Reviewer, "back to whoever asked");
+    assert_eq!(answered.kind, MessageKind::Message);
+    assert_eq!(answered.to_actor, Actor::Reviewer, "back to whoever wrote");
     assert_eq!(
         answered.to_agent_id.as_deref(),
         Some(cast.reviewer.id.as_str())
@@ -126,15 +126,15 @@ async fn a_message_is_typed_into_the_pane_it_was_sent_to() {
         .await;
     h.advance(&cast.task, TaskStatus::UnderReview).await;
 
-    let asked: MessageDto = h
+    let sent: MessageDto = h
         .json(
             as_session(
                 &messages_uri(&cast),
                 &reviewer.id,
-                ask(
+                message(
                     "author",
                     Some(&cast.author.id),
-                    "Why is the retry unbounded?",
+                    "The retry loop has no bound and the caller has one.",
                 ),
             ),
             StatusCode::CREATED,
@@ -147,19 +147,20 @@ async fn a_message_is_typed_into_the_pane_it_was_sent_to() {
         .unwrap();
 
     eventually(TIMEOUT, "the message to reach the pane", async || {
-        h.pasted(&author).contains("Why is the retry unbounded?")
+        h.pasted(&author)
+            .contains("The retry loop has no bound and the caller has one.")
     })
     .await;
     let pasted = h.pasted(&author);
     assert!(
-        pasted.contains(&asked.id),
-        "the id an answer names is not in what was typed: {pasted}"
+        !pasted.contains(&sent.id),
+        "the pane carries an id there is nothing to answer on: {pasted}"
     );
     // Named by the skills it works with: an agent has no name of its own.
     assert!(pasted.contains("reviewer (code-review)"), "{pasted}");
 
     eventually(TIMEOUT, "the message to be stamped delivered", async || {
-        h.store.get_message(&asked.id).await.unwrap().is_delivered()
+        h.store.get_message(&sent.id).await.unwrap().is_delivered()
     })
     .await;
 }
@@ -184,7 +185,7 @@ async fn a_message_to_an_agent_the_task_does_not_staff_is_refused() {
             as_session(
                 &messages_uri(&cast),
                 &reviewer.id,
-                ask("author", Some("01NOBODY"), "anyone there?"),
+                message("author", Some("01NOBODY"), "anyone there?"),
             ),
             StatusCode::BAD_REQUEST,
         )
@@ -277,18 +278,22 @@ async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_pane() {
         .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
 
-    let asked: MessageDto = h
+    let sent: MessageDto = h
         .json(
             as_session(
                 &messages_uri(&cast),
                 &author.id,
-                ask("orchestrator", None, "Does this task cover the CLI too?"),
+                message(
+                    "orchestrator",
+                    None,
+                    "The task names no CLI, and the spec it cites has one.",
+                ),
             ),
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(asked.to_actor, Actor::Orchestrator);
-    assert_eq!(asked.to_agent_id, None);
+    assert_eq!(sent.to_actor, Actor::Orchestrator);
+    assert_eq!(sent.to_agent_id, None);
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
@@ -300,7 +305,7 @@ async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_pane() {
         "the message to reach the orchestrator",
         async || {
             h.pasted(&orchestrator)
-                .contains("Does this task cover the CLI too?")
+                .contains("The task names no CLI, and the spec it cites has one.")
         },
     )
     .await;
