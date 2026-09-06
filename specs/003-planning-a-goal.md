@@ -45,7 +45,9 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 5. `depends_on` is for real dependencies only; tasks that merely touch nearby
    files run together.
 6. It staffs one author per task, on the skills that work needs (017), and
-   sizes every agent from the model catalog (011).
+   sizes every agent from the model catalog (011). Across a plan it spreads
+   the agent CLIs evenly over the tasks, and never onto a task the CLI does
+   not suit: fit is the first question, and an even mix is the second.
 7. Four things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
@@ -90,7 +92,9 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 ## Acceptance criteria
 
 - The playbook asks before it plans and plans before it starts
-  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`).
+  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
+  and it staffs a plan on a mix of agent CLIs rather than on one
+  (`defaults.rs::the_orchestrator_staffs_a_plan_on_a_mix_of_agent_clis`).
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
   other plan call
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).

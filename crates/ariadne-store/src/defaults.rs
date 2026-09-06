@@ -206,7 +206,7 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You turn an Ariadne goal into a plan
 4. Staff one author per task with `create_task`. Give each agent the skills its work needs (`list_skills`). It knows only its task and its skills.
 5. Ask the user which tasks are worth a review, and what each review is for. Staff those reviewers. Staff none on the rest.
 6. Ask the user how each task ends. `merge` puts it on the base branch. `pull_request` opens a request and sees it through. `none` lands nothing.
-7. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Show the user what each agent runs on and take the model they name instead.
+7. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Mix the agent CLIs evenly over the tasks. Take only a CLI that suits the task. Show the user what each agent runs on and take the model they name instead.
 8. Show the user the tasks you wrote. Revise them until they write an explicit yes.
 9. Call `finalize_plan`. It starts every task and ends planning. Call it no earlier.
 10. Stay up for the rest of the goal. Answer the user, and `reply` to every agent that writes to you. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
@@ -589,6 +589,13 @@ mod tests {
     /// briefed with that one — anybody can be written to — and it is the
     /// transport for a thing no text could carry before, so the total went to
     /// 1500 rather than the kinds being squeezed to fit it.
+    ///
+    /// The orchestrator's went to 1750 for the mix: staffing a task was a
+    /// question about that task alone, and it is now a question about the
+    /// plan as well — the agent CLIs are spread over the tasks rather than
+    /// every agent going on whichever one the orchestrator likes. That is a
+    /// decision nothing else in the system makes, and the two sentences it
+    /// takes are the shortest it has been said in.
     #[test]
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 1500;
@@ -606,13 +613,15 @@ mod tests {
         // creates, which is a step of the playbook and not a rewording of
         // one. It went to 1650 when the agents got a channel: staying open to
         // them for the whole goal is a step of its own, and so is showing the
-        // user what each agent runs on before anything starts.
+        // user what each agent runs on before anything starts. And to 1750
+        // for the mix of agent CLIs across a plan, which is a judgement about
+        // the plan rather than about any one task of it.
         //
         // The author's and the reviewer's went to 1010 for the same channel:
         // one step each about asking and answering, which is a thing neither
         // could do before rather than a rewording of a thing it could.
         let system_cap = |seat: Seat| match seat {
-            Seat::Orchestrator => 1650,
+            Seat::Orchestrator => 1750,
             Seat::Author | Seat::Reviewer => 1010,
         };
         let cap = |kind: PromptKind| match kind {
@@ -993,6 +1002,7 @@ mod tests {
             "Staff one author per task with `create_task`",
             "Ask the user which tasks are worth a review",
             "Ask the user how each task ends",
+            "Mix the agent CLIs evenly over the tasks.",
             "Revise them until they write an explicit yes.",
             "Call `finalize_plan`",
             "Stay up for the rest of the goal.",
@@ -1005,6 +1015,34 @@ mod tests {
 
         // And the yes gates the start, in as many words.
         assert!(prompt.contains("Call it no earlier."), "{prompt}");
+    }
+
+    /// A plan is staffed on a mix of agent CLIs, and fit comes first.
+    ///
+    /// Every agent on one CLI is a plan that stands or falls with that CLI:
+    /// its rate limit, its outage, its blind spot on a kind of work. So the
+    /// orchestrator is told to spread them — and told in the same breath not
+    /// to spread them onto a CLI the task does not suit, which is the failure
+    /// an instruction to mix invites.
+    #[test]
+    fn the_orchestrator_staffs_a_plan_on_a_mix_of_agent_clis() {
+        let prompt = default_system_prompt(Seat::Orchestrator);
+        let mix = prompt
+            .find("Mix the agent CLIs evenly over the tasks.")
+            .expect("the orchestrator is not told to mix the agent CLIs");
+        let fit = prompt
+            .find("Take only a CLI that suits the task.")
+            .expect("the orchestrator is not told to keep the mix suitable");
+        assert!(
+            fit > mix,
+            "the fit has to be the sentence after the mix, or the mix reads as the whole rule"
+        );
+        // Said where the agents are sized, not in a step of its own: which
+        // CLI a task runs on is one answer with which model of it.
+        assert!(
+            mix > prompt.find("Size each agent from `list_models`").unwrap(),
+            "the mix is stated before the sizing it is part of"
+        );
     }
 
     /// An orchestrator is nudged in the situation its goal stands in, and
