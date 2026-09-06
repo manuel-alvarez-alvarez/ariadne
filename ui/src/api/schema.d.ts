@@ -351,9 +351,36 @@ export interface paths {
          *     — and carries the efforts it can be run at, cheapest first, each with
          *     what spending it buys and whether it is the one its CLI runs by
          *     default.
+         *     Every entry says whether an agent can be staffed on it. A model the
+         *     user turned off stays in the list, off: a catalog that hid it would
+         *     leave nothing to turn back on, and nothing to say why a pin naming it
+         *     is refused.
          */
         get: operations["models_list"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/models/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Turn one entry of the catalog on or off.
+         * @description The catalog is code and discovery, so this writes only the exception:
+         *     an id nothing in the catalog carries is a 404, and the last entry left
+         *     on cannot be turned off — a plan needs something to be staffed on, and
+         *     a daemon that can staff nothing is not a state to leave a user in.
+         */
+        put: operations["models_set_enabled"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1387,6 +1414,12 @@ export interface components {
              *     where the model takes none, or where nothing knows what it takes.
              */
             efforts: components["schemas"]["EffortDto"][];
+            /**
+             * @description Whether an agent can be staffed on this entry. Every model is enabled
+             *     until the user turns it off; a disabled one stays in the catalog,
+             *     where it is shown as off and refused as a pin.
+             */
+            enabled: boolean;
             /** @example claude_code:claude-fable-5 */
             id: string;
             /**
@@ -1604,6 +1637,24 @@ export interface components {
          * @enum {string}
          */
         SessionStatus: "starting" | "running" | "idle" | "exited" | "failed";
+        /**
+         * @description Body of `PUT /v1/models/enabled`: one model of the catalog, turned on or
+         *     off.
+         *
+         *     The id is a field rather than a path segment because a model id carries
+         *     both `:` and, for the ids opencode discovers, `/`
+         *     (`opencode:anthropic/claude-sonnet-4`) — which is a path of its own, not a
+         *     segment of one.
+         */
+        SetModelEnabledRequest: {
+            /** @description What it becomes. */
+            enabled: boolean;
+            /**
+             * @description The entry, as `GET /v1/models` spells its `id`.
+             * @example claude_code:claude-fable-5
+             */
+            id: string;
+        };
         SkillDto: {
             /**
              * @description Whether Ariadne ships this skill. A built-in is reset rather than
@@ -2403,6 +2454,43 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ModelDto"][];
                 };
+            };
+        };
+    };
+    models_set_enabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetModelEnabledRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDto"];
+                };
+            };
+            /** @description no such model in the catalog */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description it is the last model left enabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

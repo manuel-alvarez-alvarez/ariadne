@@ -313,6 +313,8 @@ ariadne attach <id>                    # session, task or goal id
 # without attaching to a terminal
 ariadne models ls --agent codex        # what --model pins, its tier/cost/speed, and the efforts each takes
 ariadne models show codex:gpt-5.6-luna # one model's card: what it's for, and what each effort buys
+ariadne models disable codex:gpt-5.6-luna  # take it out of use: not offered, and refused as a pin
+ariadne models enable codex:gpt-5.6-luna   # and back in
 ariadne session ls --attention         # the agents waiting on a human
 ariadne session send <session-id> y    # type into a live agent, as the UI does
 

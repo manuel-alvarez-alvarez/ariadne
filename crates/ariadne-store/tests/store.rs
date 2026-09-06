@@ -959,6 +959,43 @@ async fn every_launch_of_a_session_is_dated() {
     assert!(second > first, "every launch moves the date");
 }
 
+/// The catalog is code, so what the database holds is the exception: the
+/// models the user turned off. Turning one off twice is not an error, nor is
+/// turning on one nothing ever turned off — both answer "nothing changed",
+/// which is what a caller checks to know whether to say anything.
+#[tokio::test]
+async fn a_model_is_available_until_it_is_turned_off() {
+    let w = World::new().await;
+    let store = &w.store;
+    let id = "opencode:anthropic/claude-sonnet-4";
+
+    assert!(
+        store.disabled_models().await.unwrap().is_empty(),
+        "a fresh store subtracts nothing from the catalog"
+    );
+    assert!(
+        !store.set_model_enabled(id, true).await.unwrap(),
+        "turning on what was never off changes nothing"
+    );
+
+    assert!(store.set_model_enabled(id, false).await.unwrap());
+    assert!(store.disabled_models().await.unwrap().contains(id));
+    assert!(
+        !store.set_model_enabled(id, false).await.unwrap(),
+        "and off twice is off once"
+    );
+
+    // An id with a `/` in it round-trips whole: that is how opencode names
+    // the models it discovers, and it is the id a pin is refused by.
+    assert_eq!(
+        store.disabled_models().await.unwrap().into_iter().collect::<Vec<_>>(),
+        vec![id.to_string()]
+    );
+
+    assert!(store.set_model_enabled(id, true).await.unwrap());
+    assert!(store.disabled_models().await.unwrap().is_empty());
+}
+
 /// A resumed agent conversation keeps its one session row: restarting puts
 /// the row back where a spawn leaves it, so nothing downstream can tell the
 /// relaunch from a first launch.

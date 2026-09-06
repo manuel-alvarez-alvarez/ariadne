@@ -72,15 +72,18 @@ pub mod agents {
 pub mod models {
     use std::time::Duration;
 
-    use axum::Json;
+    use axum::extract::State;
     use serde::Deserialize;
     use serde::de::{Deserializer, MapAccess, Visitor};
 
-    use ariadne_api::models::{EffortDto, ModelDto};
+    use ariadne_api::models::{EffortDto, ModelDto, SetModelEnabledRequest};
     use ariadne_core::models::{
         ModelInfo, ModelProfile, ModelRef, curated_models, effort_description, opencode_profile,
     };
     use ariadne_core::{AgentKind, ModelTier};
+
+    use crate::http::AppState;
+    use crate::http::error::{ApiError, ApiResult, Json};
 
     /// Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:
     /// each agent CLI on its own — that CLI on its own default model — and
@@ -94,9 +97,69 @@ pub mod models {
     /// — and carries the efforts it can be run at, cheapest first, each with
     /// what spending it buys and whether it is the one its CLI runs by
     /// default.
+    /// Every entry says whether an agent can be staffed on it. A model the
+    /// user turned off stays in the list, off: a catalog that hid it would
+    /// leave nothing to turn back on, and nothing to say why a pin naming it
+    /// is refused.
     #[utoipa::path(get, path = "/v1/models", tag = "models",
         responses((status = 200, body = [ModelDto])))]
-    pub async fn list() -> Json<Vec<ModelDto>> {
+    pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<ModelDto>>> {
+        let mut out = catalog().await;
+        let off = state.store.disabled_models().await?;
+        for entry in &mut out {
+            entry.enabled = !off.contains(&entry.id);
+        }
+        Ok(Json(out))
+    }
+
+    /// Turn one entry of the catalog on or off.
+    ///
+    /// The catalog is code and discovery, so this writes only the exception:
+    /// an id nothing in the catalog carries is a 404, and the last entry left
+    /// on cannot be turned off — a plan needs something to be staffed on, and
+    /// a daemon that can staff nothing is not a state to leave a user in.
+    #[utoipa::path(put, path = "/v1/models/enabled", tag = "models",
+        request_body = SetModelEnabledRequest,
+        responses(
+            (status = 200, body = ModelDto),
+            (status = 404, description = "no such model in the catalog"),
+            (status = 409, description = "it is the last model left enabled")
+        ))]
+    pub async fn set_enabled(
+        State(state): State<AppState>,
+        Json(req): Json<SetModelEnabledRequest>,
+    ) -> ApiResult<Json<ModelDto>> {
+        let mut catalog = catalog().await;
+        let off = state.store.disabled_models().await?;
+        if !catalog.iter().any(|entry| entry.id == req.id) {
+            return Err(ApiError::new(
+                axum::http::StatusCode::NOT_FOUND,
+                "not_found",
+                format!("no model `{}` in the catalog", req.id),
+            ));
+        }
+        if !req.enabled
+            && !catalog
+                .iter()
+                .any(|entry| entry.id != req.id && !off.contains(&entry.id))
+        {
+            return Err(ApiError::conflict(format!(
+                "`{}` is the last model left enabled — turn another one on first",
+                req.id
+            )));
+        }
+        state.store.set_model_enabled(&req.id, req.enabled).await?;
+        let mut entry = catalog
+            .drain(..)
+            .find(|entry| entry.id == req.id)
+            .expect("the entry was found above");
+        entry.enabled = req.enabled;
+        Ok(Json(entry))
+    }
+
+    /// The catalog as the CLIs and the discovery describe it, before anything
+    /// the user turned off is read over it: every entry comes back `enabled`.
+    async fn catalog() -> Vec<ModelDto> {
         let mut out = Vec::new();
         for kind in AgentKind::ALL {
             out.push(ModelDto {
@@ -112,13 +175,14 @@ pub mod models {
                 best_for: Vec::new(),
                 avoid_for: Vec::new(),
                 efforts: Vec::new(),
+                enabled: true,
             });
             match kind {
                 AgentKind::Opencode => out.extend(opencode_models().await),
                 _ => out.extend(curated_models(kind).iter().map(|m| curated(kind, m))),
             }
         }
-        Json(out)
+        out
     }
 
     /// One curated model as the catalog serves it: what ariadne-core knows
@@ -143,6 +207,8 @@ pub mod models {
                     default: model.default_effort == Some(*effort),
                 })
                 .collect(),
+            // Read over by `list`, which is where the user's own choices are.
+            enabled: true,
         }
     }
 
@@ -265,6 +331,8 @@ pub mod models {
                     default: false,
                 })
                 .collect(),
+            // Read over by `list`, as for a curated entry.
+            enabled: true,
         }
     }
 

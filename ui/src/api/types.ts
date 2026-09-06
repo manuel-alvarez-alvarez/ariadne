@@ -51,6 +51,7 @@ export type MessageKind = Schemas["MessageKind"]
 export type AgentKind = Schemas["AgentKind"]
 export type ModelDto = Schemas["ModelDto"]
 export type EffortDto = Schemas["EffortDto"]
+export type SetModelEnabledRequest = Schemas["SetModelEnabledRequest"]
 
 export type AgentConfigDto = Schemas["AgentConfigDto"]
 

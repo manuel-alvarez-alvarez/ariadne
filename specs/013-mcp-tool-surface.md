@@ -36,7 +36,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    orchestrator then waits; an author or reviewer works alone and does not ask.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees:
-   - **orchestrator**: `get_task`, `create_task`, `update_task`, `list_models`,
+   - **orchestrator**: `get_task`, `create_task`, `update_task`, `list_models`
+     (which holds only the models it can staff an agent on: 011),
      `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
      `cancel_task`, `complete_goal` — the last four are what it supervises the
      goal with once the plan is under way (003)

@@ -76,6 +76,7 @@ pub async fn create(
     // chosen" is auto: no agent CLI, and so no model of one either — which is
     // also no model an effort of its own could be run at.
     let pin = pins::chosen(
+        &state.store,
         req.model.as_deref(),
         req.effort.as_deref(),
         Standing::auto(),

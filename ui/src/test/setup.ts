@@ -52,6 +52,22 @@ if (typeof window !== "undefined") {
     disconnect() {}
   }
   Element.prototype.scrollIntoView = vi.fn()
+
+  // Nor a media-query engine, which anything that adapts to a preference asks
+  // for on mount — sonner reads `prefers-reduced-motion` as it renders. It
+  // answers "no" to everything and never changes its mind, which is the
+  // reading a test wants: no reduced motion, no dark mode, no coarse pointer.
+  window.matchMedia = (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList
 }
 
 afterEach(() => {

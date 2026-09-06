@@ -160,6 +160,7 @@ export function aModel(overrides: Partial<ModelDto> = {}): ModelDto {
     best_for: [],
     avoid_for: [],
     efforts: [],
+    enabled: true,
     ...overrides,
   }
 }

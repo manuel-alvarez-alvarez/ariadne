@@ -122,6 +122,7 @@ impl AppState {
         session_logs::logs_stream,
         events::list, stream::stream,
         models::list,
+        models::set_enabled,
         logs::snapshot, logs::stream,
     ),
     components(schemas(
@@ -219,6 +220,7 @@ pub fn router(state: AppState) -> Router {
         )
         // models
         .route("/v1/models", get(models::list))
+        .route("/v1/models/enabled", put(models::set_enabled))
         // daemon logs
         .route("/v1/logs", get(logs::snapshot))
         .route("/v1/logs/stream", get(logs::stream))

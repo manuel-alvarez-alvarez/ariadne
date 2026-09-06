@@ -104,6 +104,8 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal ls", true),
     ("goal rm", true),
     ("mcp serve", false),
+    ("models disable", true),
+    ("models enable", true),
     ("models ls", true),
     ("models show", true),
     ("repo add", true),

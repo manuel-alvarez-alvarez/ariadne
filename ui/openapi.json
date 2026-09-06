@@ -747,7 +747,7 @@
           "models"
         ],
         "summary": "Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:\neach agent CLI on its own — that CLI on its own default model — and\nthen the models of it, curated for claude_code and codex, discovered\nlive (`opencode models --verbose`) for opencode.",
-        "description": "The union always, and grouped by agent CLI: a model is chosen by one\nstring that carries its CLI, so nothing scopes this catalog any more.\nEach entry says what the model is for — its tier, its cost and speed\nnext to every other entry, the work it suits and the work it does not\n— and carries the efforts it can be run at, cheapest first, each with\nwhat spending it buys and whether it is the one its CLI runs by\ndefault.",
+        "description": "The union always, and grouped by agent CLI: a model is chosen by one\nstring that carries its CLI, so nothing scopes this catalog any more.\nEach entry says what the model is for — its tier, its cost and speed\nnext to every other entry, the work it suits and the work it does not\n— and carries the efforts it can be run at, cheapest first, each with\nwhat spending it buys and whether it is the one its CLI runs by\ndefault.\nEvery entry says whether an agent can be staffed on it. A model the\nuser turned off stays in the list, off: a catalog that hid it would\nleave nothing to turn back on, and nothing to say why a pin naming it\nis refused.",
         "operationId": "list",
         "responses": {
           "200": {
@@ -762,6 +762,44 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/models/enabled": {
+      "put": {
+        "tags": [
+          "models"
+        ],
+        "summary": "Turn one entry of the catalog on or off.",
+        "description": "The catalog is code and discovery, so this writes only the exception:\nan id nothing in the catalog carries is a 404, and the last entry left\non cannot be turned off — a plan needs something to be staffed on, and\na daemon that can staff nothing is not a state to leave a user in.",
+        "operationId": "set_enabled",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetModelEnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such model in the catalog"
+          },
+          "409": {
+            "description": "it is the last model left enabled"
           }
         }
       }
@@ -3061,7 +3099,8 @@
           "tier",
           "best_for",
           "avoid_for",
-          "efforts"
+          "efforts",
+          "enabled"
         ],
         "properties": {
           "agent_kind": {
@@ -3112,6 +3151,10 @@
               "$ref": "#/components/schemas/EffortDto"
             },
             "description": "The reasoning efforts this entry can be run at, cheapest first; empty\nwhere the model takes none, or where nothing knows what it takes."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether an agent can be staffed on this entry. Every model is enabled\nuntil the user turns it off; a disabled one stays in the catalog,\nwhere it is shown as off and refused as a pin."
           },
           "id": {
             "type": "string",
@@ -3504,6 +3547,25 @@
           "exited",
           "failed"
         ]
+      },
+      "SetModelEnabledRequest": {
+        "type": "object",
+        "description": "Body of `PUT /v1/models/enabled`: one model of the catalog, turned on or\noff.\n\nThe id is a field rather than a path segment because a model id carries\nboth `:` and, for the ids opencode discovers, `/`\n(`opencode:anthropic/claude-sonnet-4`) — which is a path of its own, not a\nsegment of one.",
+        "required": [
+          "id",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "What it becomes."
+          },
+          "id": {
+            "type": "string",
+            "description": "The entry, as `GET /v1/models` spells its `id`.",
+            "example": "claude_code:claude-fable-5"
+          }
+        }
       },
       "SkillDto": {
         "type": "object",

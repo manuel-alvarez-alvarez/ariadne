@@ -30,7 +30,8 @@ Out: the daemon endpoints themselves (012).
    than replacing it, and the URL carries which panel is open.
 3. Screens: the goals board (swimlanes plus an attention strip), the task
    panel (facts, diff, messages, history), sessions and a terminal, skills,
-   repositories, agent kinds and their launch flags, and a daemon-logs drawer.
+   repositories, agent kinds and their launch flags, models and which of them
+   may be staffed on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -67,6 +68,10 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/tasks/task-form-dialog.test.tsx::sends how the task ends`),
   whether it is reviewed (`::takes every reviewer off`), and whether the goal
   is over (`ui/src/features/goals/goal-actions.test.tsx::completing a goal`).
+- The models screen lists the catalog with a switch apiece, and says why
+  where the daemon refuses one
+  (`ui/src/features/models/models-page.test.tsx`) — the rule of 011 read from
+  the surface that acts on it.
 - The skills screen groups the shipped skills apart from the user's own
   (`ui/src/features/skills/skills-page.test.tsx`), and offers reset for the
   first and delete for the second and never the other way round

@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use clap::Subcommand;
 
-use ariadne_api::models::{EffortDto, ModelDto};
+use ariadne_api::models::{EffortDto, ModelDto, SetModelEnabledRequest};
 use ariadne_client::Client;
 use ariadne_core::AgentKind;
 
@@ -27,6 +27,9 @@ use crate::output::{Column, Format, Kv, UNCAPPED, col, note, print, print_kv, pr
 const LS: &[Column] = &[
     col("agent", UNCAPPED),
     col("model", UNCAPPED).title(),
+    // Never dropped: a row a reader cannot pin is a row they have to be able
+    // to tell apart, whatever the terminal is wide enough for.
+    col("on", UNCAPPED),
     col("tier", UNCAPPED).rank(0),
     col("cost", UNCAPPED).rank(1),
     col("speed", UNCAPPED).rank(2),
@@ -55,13 +58,46 @@ pub enum ModelsCommand {
               add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: String,
     },
+    /// Let agents be staffed on a model again
+    Enable {
+        /// Model id, as `models ls` spells it
+        #[arg(value_parser = parse_model,
+              add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: String,
+    },
+    /// Stop agents being staffed on a model
+    ///
+    /// It stays in the catalogue, off: the orchestrator is no longer offered
+    /// it, and a pin naming it is refused. Work already staffed on it keeps
+    /// running — a pin is what a task was created with, not a lookup.
+    Disable {
+        /// Model id, as `models ls` spells it
+        #[arg(value_parser = parse_model,
+              add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: String,
+    },
 }
 
 pub async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<()> {
     match cmd {
         ModelsCommand::Ls { agent } => ls(client, agent, format).await,
         ModelsCommand::Show { model } => show(client, &model, format).await,
+        ModelsCommand::Enable { model } => set_enabled(client, &model, true, format).await,
+        ModelsCommand::Disable { model } => set_enabled(client, &model, false, format).await,
     }
+}
+
+/// Turn one model on or off. The daemon answers with the entry as it now
+/// stands, which is what is printed: the same card `models show` prints, so
+/// what changed is read where it is read every other time.
+async fn set_enabled(client: &Client, model: &str, enabled: bool, format: Format) -> Result<()> {
+    let body = SetModelEnabledRequest {
+        id: model.to_string(),
+        enabled,
+    };
+    let updated: ModelDto = client.put_json("/v1/models/enabled", &body).await?;
+    print(format, &updated, || print_card(&updated))?;
+    Ok(())
 }
 
 async fn ls(client: &Client, agent: Option<AgentKind>, format: Format) -> Result<()> {
@@ -106,6 +142,10 @@ fn row(m: &ModelDto) -> Vec<String> {
     vec![
         m.agent_kind.as_str().to_string(),
         m.id.clone(),
+        match m.enabled {
+            true => "yes".into(),
+            false => "no".into(),
+        },
         m.tier.as_str().to_string(),
         band(m.cost),
         band(m.speed),
@@ -138,6 +178,14 @@ fn card_pairs(m: &ModelDto) -> Vec<(&'static str, Kv)> {
     let indent = format!("\n{}", " ".repeat(SHOW_KEY_WIDTH + 2));
     vec![
         ("id", Kv::id(m.id.clone())),
+        (
+            "enabled",
+            match m.enabled {
+                true => "yes".to_string(),
+                false => "no — nothing can be staffed on it".to_string(),
+            }
+            .into(),
+        ),
         ("tier", m.tier.as_str().to_string().into()),
         ("cost", band(m.cost).into()),
         ("speed", band(m.speed).into()),
@@ -232,6 +280,7 @@ mod tests {
             best_for: Vec::new(),
             avoid_for: Vec::new(),
             efforts: Vec::new(),
+            enabled: true,
         }
     }
 
@@ -341,8 +390,14 @@ mod tests {
                         default: true,
                     },
                 ],
+                enabled: true,
             },
-            model("opencode:llama3", AgentKind::Opencode),
+            // Turned off, which is the one thing a row says whatever the
+            // terminal is wide enough for.
+            ModelDto {
+                enabled: false,
+                ..model("opencode:llama3", AgentKind::Opencode)
+            },
         ]
     }
 
@@ -355,6 +410,7 @@ mod tests {
             [
                 "codex",
                 "codex:gpt-5.6-luna",
+                "yes",
                 "balanced",
                 "3/5",
                 "3/5",
@@ -364,7 +420,7 @@ mod tests {
         );
         assert_eq!(
             row(&fixture()[1]),
-            ["opencode", "opencode:llama3", "unknown", "-", "-", "-", "-"]
+            ["opencode", "opencode:llama3", "no", "unknown", "-", "-", "-", "-"]
         );
     }
 
@@ -390,6 +446,7 @@ mod tests {
             [
                 "AGENT",
                 "MODEL",
+                "ON",
                 "TIER",
                 "COST",
                 "SPEED",
@@ -407,6 +464,10 @@ mod tests {
         assert!(
             narrow.contains(&"AGENT".to_string()) && narrow.contains(&"MODEL".to_string()),
             "agent and model never drop: {narrow:?}"
+        );
+        assert!(
+            narrow.contains(&"ON".to_string()),
+            "nor does whether a row can be pinned at all: {narrow:?}"
         );
     }
 
@@ -434,8 +495,9 @@ mod tests {
     }
 
     /// The card carries every field the acceptance criteria name, in order:
-    /// id, tier, cost, speed, description, `best_for`, `avoid_for`, then
-    /// every effort with what it buys and the default one marked.
+    /// id, whether an agent can be staffed on it, tier, cost, speed,
+    /// description, `best_for`, `avoid_for`, then every effort with what it
+    /// buys and the default one marked.
     #[test]
     fn the_card_carries_every_field_and_marks_the_default_effort() {
         let indent = format!("\n{}", " ".repeat(SHOW_KEY_WIDTH + 2));
@@ -443,6 +505,7 @@ mod tests {
             card_pairs(&fixture()[0]),
             vec![
                 ("id", Kv::id("codex:gpt-5.6-luna")),
+                ("enabled", "yes".into()),
                 ("tier", "balanced".into()),
                 ("cost", "3/5".into()),
                 ("speed", "3/5".into()),
@@ -462,11 +525,15 @@ mod tests {
     /// every list is a dash, the way `models ls` shows the same entry.
     #[test]
     fn the_card_dashes_what_nothing_knows() {
-        let bare = model("opencode:llama3", AgentKind::Opencode);
+        let bare = ModelDto {
+            enabled: false,
+            ..model("opencode:llama3", AgentKind::Opencode)
+        };
         assert_eq!(
             card_pairs(&bare),
             vec![
                 ("id", Kv::id("opencode:llama3")),
+                ("enabled", "no — nothing can be staffed on it".into()),
                 ("tier", "unknown".into()),
                 ("cost", "-".into()),
                 ("speed", "-".into()),

@@ -19,7 +19,7 @@ use ariadne_core::{AgentKind, Seat};
 
 use axum::http::StatusCode;
 
-use common::{Harness, harness, patch_json, post_json};
+use common::{Harness, harness, patch_json, post_json, put_json};
 
 /// A goal on `pin`, in a repository of its own.
 async fn goal_on(h: &Harness, pin: serde_json::Value) -> GoalDto {
@@ -330,4 +330,119 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
     let author = agent(&plain, Seat::Author);
     assert_eq!(author.model.as_deref(), Some("claude_code:claude-opus-5"));
     assert_eq!(author.effort, None);
+}
+
+/// A model the user turned off is refused wherever an agent is staffed on it,
+/// and by name: the goal it would run in, the author of a task, a reviewer of
+/// one, and an edit that moves an agent onto it.
+///
+/// Work already staffed on it is not disturbed — a pin is the snapshot a row
+/// was created with — so the check is on the model a request *names*, and an
+/// effort moved on its own goes through untouched.
+#[tokio::test]
+async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
+    let h = harness().await;
+    let off = "claude_code:claude-opus-5";
+    let on = "claude_code:claude-sonnet-5";
+
+    // Staffed before it goes off, which is the row that has to keep working.
+    let goal = goal_on(&h, serde_json::json!({ "model": on })).await;
+    let task = task_on(
+        &h,
+        &goal,
+        serde_json::json!({ "model": off }),
+        serde_json::json!({ "model": on }),
+    )
+    .await;
+
+    let _: serde_json::Value = h
+        .json(
+            put_json(
+                "/v1/models/enabled",
+                serde_json::json!({"id": off, "enabled": false}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    let refused = |message: String| {
+        assert!(
+            message.contains(off) && message.contains("turned off"),
+            "the refusal names the model and why: {message}"
+        );
+    };
+
+    // A goal.
+    let repo = h.repository(&h.git_repo("second")).await;
+    refused(
+        h.error(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "model": off,
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await
+        .error
+        .message,
+    );
+
+    // An author, and a reviewer, on a task being created.
+    for agents in [
+        serde_json::json!([{ "seat": "author", "skills": ["coding"], "model": off }]),
+        serde_json::json!([
+            { "seat": "author", "skills": ["coding"], "model": on },
+            { "seat": "reviewer", "skills": ["code-review"], "model": off },
+        ]),
+    ] {
+        refused(
+            h.error(
+                post_json(
+                    &format!("/v1/goals/{}/tasks", goal.id),
+                    serde_json::json!({ "title": "A task", "agents": agents }),
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+            .await
+            .error
+            .message,
+        );
+    }
+
+    // And an edit that would move an agent onto it.
+    refused(
+        h.error(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({ "model": off }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await
+        .error
+        .message,
+    );
+
+    // The task staffed on it before it went off is untouched, and its effort
+    // still moves: what a row runs on is what it was created with.
+    let moved: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({ "effort": "high" }),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let author = moved
+        .agents
+        .iter()
+        .find(|a| a.seat == Seat::Author)
+        .expect("the task keeps its author");
+    assert_eq!(author.model.as_deref(), Some(off));
+    assert_eq!(author.effort.as_deref(), Some("high"));
 }

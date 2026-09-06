@@ -9,6 +9,9 @@ tests:
   - crates/ariadne-daemon/tests/pins.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/adapters.rs
+  - crates/ariadne-cli/src/commands/mcp/tools.rs
+  - ui/src/features/models/models-page.test.tsx
+  - ui/src/features/models/pin-picker.test.tsx
 ---
 
 # Models, effort and pins
@@ -18,9 +21,10 @@ who gets to choose at each level.
 
 ## Scope
 
-In: the model catalog and what it describes, the `<agent>[:<model>]`
-spelling, effort levels, where a pin may be set (the goal's orchestrator, each
-agent a task staffs), and how a running session keeps what it started on.
+In: the model catalog and what it describes, which of it the user allows, the
+`<agent>[:<model>]` spelling, effort levels, where a pin may be set (the goal's
+orchestrator, each agent a task staffs), and how a running session keeps what
+it started on.
 
 Out: how each CLI is handed the choice (007), and how the orchestrator decides
 (003).
@@ -50,6 +54,20 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
 8. A model is stored as typed, whatever the catalog lists, so a CLI that
    gained a model since the release still runs. An effort, by contrast, is
    checked against the model it would run at.
+9. Each entry of the catalog can be turned off, and every model is on until it
+   is. The catalog itself is code and discovery, so what is stored is the
+   subtraction: an entry the CLIs grow arrives usable, and the exceptions are
+   the rows.
+10. A model turned off stays in the catalog, marked off, and is out of use: a
+    pin naming it is refused, the orchestrator is not offered it at all
+    (`list_models`), and the desktop app's picker leaves it out. Where a slot
+    is already pinned to it the picker still shows it, since a field has to be
+    able to say what it holds.
+11. Work already staffed on it is not disturbed. A pin is the snapshot a row
+    was created with, so a task keeps running, and an effort moved on its own
+    still moves.
+12. The last entry left on cannot be turned off: a daemon that can staff
+    nothing is not a state to leave a user in.
 
 ## Acceptance criteria
 
@@ -79,10 +97,30 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
   (`::an_effort_of_its_own_is_run_at_the_model_already_pinned`).
 - An edit moves the pin and `default` hands it back to auto
   (`pins.rs::an_edit_moves_the_pin_and_default_hands_it_back_to_auto`).
+- A model turned off stays in the catalog and out of use
+  (`models.rs::a_model_turned_off_stays_in_the_catalog_and_out_of_use`), and
+  what is stored is the subtraction from a catalog nothing else holds
+  (`store.rs::a_model_is_available_until_it_is_turned_off`).
+- It cannot be staffed on, at a goal, an author, a reviewer or an edit, while
+  work already on it keeps running
+  (`pins.rs::a_model_that_is_turned_off_cannot_be_staffed_on`), and the
+  orchestrator is not offered it
+  (`tools.rs::the_catalog_an_agent_sees_holds_only_the_models_it_can_be_staffed_on`).
+- An id the catalog does not carry cannot be turned off
+  (`models.rs::a_model_the_catalog_does_not_carry_cannot_be_turned_off`), and
+  neither can the last one left on
+  (`::the_last_model_left_on_cannot_be_turned_off`).
+- The desktop app lists the catalog with a switch apiece
+  (`models-page.test.tsx`), sending the id in the body so one named with a
+  slash still travels, and says why where the daemon refuses; the picker
+  leaves an entry that is off out unless it is the one pinned
+  (`pin-picker.test.tsx::leaves out a model that is turned off, unless it is the one pinned`).
 
 ## Sources
 
 `crates/ariadne-core/src/models.rs` (the catalog),
 `crates/ariadne-daemon/src/http/catalog.rs`,
 `crates/ariadne-daemon/src/http/pins.rs`,
-`crates/ariadne-store/src/task_agents.rs`.
+`crates/ariadne-store/src/models.rs`,
+`crates/ariadne-store/src/task_agents.rs`,
+`ui/src/features/models/`.

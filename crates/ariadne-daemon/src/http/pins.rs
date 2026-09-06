@@ -25,7 +25,7 @@
 
 use ariadne_core::AgentKind;
 use ariadne_core::models::{ModelRef, effort_error};
-use ariadne_store::AgentPin;
+use ariadne_store::{AgentPin, Store};
 
 use super::catalog::models::efforts_of;
 use super::error::{ApiError, ApiResult};
@@ -78,6 +78,7 @@ pub enum Repin {
 /// profile's own agent, model and effort for a goal, a task or a slot, and
 /// auto for a profile itself.
 pub async fn chosen(
+    store: &Store,
     model: Option<&str>,
     effort: Option<&str>,
     standing: Standing<'_>,
@@ -89,7 +90,9 @@ pub async fn chosen(
             "model is empty — write the agent CLI it runs on, `<agent_kind>[:<model>]`, \
              or leave the field out to choose nothing at all",
         )),
-        Some(model) if !CLEAR.contains(&model) => Ok(Some(pin(model, named(effort)).await?)),
+        Some(model) if !CLEAR.contains(&model) => {
+            Ok(Some(pin(store, model, named(effort)).await?))
+        }
         // No model chosen, so the row is on auto — at the effort it was
         // given, where it was given one, and at the CLI's own where it was
         // not.
@@ -103,12 +106,15 @@ pub async fn chosen(
 /// The same for an edit, which has two more things to say: a model can be
 /// handed back to the profile, and an effort can move on its own.
 pub async fn rechosen(
+    store: &Store,
     model: Option<&str>,
     effort: Option<&str>,
     standing: Standing<'_>,
 ) -> ApiResult<Repin> {
     match model {
-        Some(model) if !CLEAR.contains(&model) => Ok(Repin::To(pin(model, named(effort)).await?)),
+        Some(model) if !CLEAR.contains(&model) => {
+            Ok(Repin::To(pin(store, model, named(effort)).await?))
+        }
         // Handing the model back puts the row on auto, so there is no model
         // left for an effort named beside it to be checked against.
         Some(_) => {
@@ -164,8 +170,9 @@ fn no_effort_alone(effort: Option<&str>) -> ApiResult<()> {
 /// One `<agent_kind>[:<model>]` and the effort beside it as the pin they
 /// spell, or the refusal naming what was typed and the form that would have
 /// worked.
-async fn pin(model: &str, effort: Option<&str>) -> ApiResult<AgentPin> {
+async fn pin(store: &Store, model: &str, effort: Option<&str>) -> ApiResult<AgentPin> {
     let chosen: ModelRef = model.parse().map_err(ApiError::bad_request)?;
+    available(store, &chosen).await?;
     if let Some(effort) = effort {
         checked(
             Standing {
@@ -181,6 +188,22 @@ async fn pin(model: &str, effort: Option<&str>) -> ApiResult<AgentPin> {
         model: chosen.model,
         effort: effort.map(str::to_string),
     })
+}
+
+/// A model the user has turned off is not one an agent can be staffed on
+/// (`PUT /v1/models/enabled`).
+///
+/// Asked only of a model the request *names*. An effort moved on its own is
+/// checked against the model the row already runs, and refusing that would
+/// trap a row on a model that was turned off under it: a pin is a snapshot,
+/// and work already staffed keeps running on what it was staffed with.
+async fn available(store: &Store, chosen: &ModelRef) -> ApiResult<()> {
+    match store.disabled_models().await?.contains(&chosen.to_string()) {
+        true => Err(ApiError::bad_request(format!(
+            "`{chosen}` is turned off — pin a model that is on, or turn this one              back on first"
+        ))),
+        false => Ok(()),
+    }
 }
 
 /// An effort named with no model beside it: the row stays on the model it

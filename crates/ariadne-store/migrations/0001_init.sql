@@ -42,6 +42,18 @@ CREATE TABLE agent_configs (
     updated_at  TEXT NOT NULL
 );
 
+-- The models the user has turned off. A model is available unless a row here
+-- says otherwise, so the catalog — curated per CLI, and discovered live for
+-- opencode — keeps every entry it grows usable without a write here.
+--
+-- The id is `<agent_kind>[:<model>]`, the one string a model is chosen by
+-- (`ariadne_core::ModelRef`). The catalog itself is code and discovery, so
+-- nothing joins on this: it is read as a set and subtracted.
+CREATE TABLE disabled_models (
+    id          TEXT PRIMARY KEY,
+    disabled_at TEXT NOT NULL
+);
+
 -- A checkout, registered once globally and named by id from there on, so that
 -- editing it moves every goal that works in it.
 --

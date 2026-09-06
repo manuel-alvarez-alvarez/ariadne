@@ -142,6 +142,12 @@ export function PinPicker({
    * The catalog under one heading per agent CLI, in the order the daemon
    * probes them, and inside each the CLI on its own default model first: the
    * shortest id of the group is also the one a slot most often wants.
+   *
+   * A model turned off on the models screen is not offered at all. It is not
+   * a choice — the daemon refuses it as a pin — and a row that can be picked
+   * and then refused on submit is worse than a row that is not there. What a
+   * slot is *already* pinned to still shows: it was pinned while the model
+   * was on, and the picker has to be able to say what a field holds.
    */
   const groups = useMemo(
     () =>
@@ -149,9 +155,10 @@ export function PinPicker({
         kind,
         models: (models ?? [])
           .filter((entry) => entry.agent_kind === kind)
+          .filter((entry) => entry.enabled || entry.id === pinned)
           .sort((a, b) => Number(a.id.includes(":")) - Number(b.id.includes(":"))),
       })).filter((group) => group.models.length > 0),
-    [models],
+    [models, pinned],
   )
 
   // An effort belongs to the model it runs at, so a model moved out from under

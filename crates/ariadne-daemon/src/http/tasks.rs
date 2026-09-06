@@ -9,7 +9,7 @@ use ariadne_api::tasks::{
     TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
-use ariadne_store::{NewTask, NewTaskAgent, Task, TaskFilter, TaskUpdate};
+use ariadne_store::{NewTask, NewTaskAgent, Store, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
 use super::convert::{task_dto_of, transition_dto};
@@ -23,13 +23,17 @@ use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 /// An agent has nothing behind it to fall back to, so "nothing chosen" is
 /// auto: no agent CLI, and so no model of one either — which is also no model
 /// an effort of its own could be run at.
-async fn resolve_agents(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
+async fn resolve_agents(
+    store: &Store,
+    assignments: &[AgentAssignment],
+) -> ApiResult<Vec<NewTaskAgent>> {
     let mut agents = Vec::with_capacity(assignments.len());
     for assignment in assignments {
         agents.push(NewTaskAgent {
             seat: assignment.seat,
             skills: assignment.skills.clone(),
             pin: pins::chosen(
+                store,
                 assignment.model.as_deref(),
                 assignment.effort.as_deref(),
                 Standing::auto(),
@@ -43,13 +47,16 @@ async fn resolve_agents(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTas
 
 /// The reviewers of an assignment list, refusing an author among them: the
 /// author of a task is the one agent an edit cannot replace.
-async fn resolve_reviewers(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
+async fn resolve_reviewers(
+    store: &Store,
+    assignments: &[AgentAssignment],
+) -> ApiResult<Vec<NewTaskAgent>> {
     if assignments.iter().any(|a| a.seat != Seat::Reviewer) {
         return Err(ApiError::bad_request(
             "only reviewers can be re-staffed; a task keeps the author it started with",
         ));
     }
-    resolve_agents(assignments).await
+    resolve_agents(store, assignments).await
 }
 
 /// Create a task in a goal (orchestrator via MCP, or the user).
@@ -94,7 +101,7 @@ pub async fn create(
         }
     };
 
-    let agents = resolve_agents(&req.agents).await?;
+    let agents = resolve_agents(&state.store, &req.agents).await?;
 
     let task = state
         .store
@@ -164,13 +171,14 @@ pub async fn update(
         ));
     }
     let reviewers = match &req.reviewers {
-        Some(assignments) => Some(resolve_reviewers(assignments).await?),
+        Some(assignments) => Some(resolve_reviewers(&state.store, assignments).await?),
         None => None,
     };
     // What the author is pinned to now: an effort written on its own is run at
     // that model, and moves without disturbing it.
     let author = state.store.task_author(&id).await?;
     let (pin, effort) = match pins::rechosen(
+        &state.store,
         req.model.as_deref(),
         req.effort.as_deref(),
         Standing {

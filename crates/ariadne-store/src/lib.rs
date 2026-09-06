@@ -12,6 +12,7 @@ mod entities;
 mod events;
 mod goals;
 mod messages;
+mod models;
 mod query;
 mod repositories;
 mod sessions;

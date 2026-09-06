@@ -209,6 +209,42 @@ it("offers the whole catalog, grouped by agent CLI, each group led by the CLI it
   expect(ids.at(-1)).toContain("Other")
 })
 
+/**
+ * A model turned off on the models screen is not a choice: the daemon refuses
+ * it as a pin, and a row that can be picked and then refused on submit is
+ * worse than a row that is not there.
+ *
+ * What a slot already holds is the exception. It was pinned while the model
+ * was on, and a picker that dropped it could not say what the field holds.
+ */
+it("leaves out a model that is turned off, unless it is the one pinned", async () => {
+  const user = userEvent.setup()
+  const off = CATALOG.map((model) =>
+    model.id === "claude_code:claude-sonnet-5" ? { ...model, enabled: false } : model,
+  )
+  function Host({ model }: { model: string }) {
+    return <PinPicker label={LABEL} model={model} effort="" onChange={() => {}} models={off} />
+  }
+
+  const view = render(<Host model="" />)
+  await openPicker(user)
+  expect(
+    within(await listbox())
+      .getAllByRole("option")
+      .every((option) => !(option.textContent ?? "").includes("claude-sonnet-5")),
+  ).toBe(true)
+  expect(within(await listbox()).getByText("claude_code:claude-haiku-4-5")).toBeDefined()
+
+  // Pinned to it already: the row is back, because the field has to be able
+  // to say what it holds.
+  view.rerender(<Host model="claude_code:claude-sonnet-5" />)
+  expect(
+    within(await listbox())
+      .getAllByRole("option")
+      .some((option) => (option.textContent ?? "").includes("claude-sonnet-5")),
+  ).toBe(true)
+})
+
 it("shows tier and cost/speed pills for a curated model", async () => {
   const user = userEvent.setup()
   renderPicker()

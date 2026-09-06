@@ -45,6 +45,26 @@ pub struct ModelDto {
     /// The reasoning efforts this entry can be run at, cheapest first; empty
     /// where the model takes none, or where nothing knows what it takes.
     pub efforts: Vec<EffortDto>,
+    /// Whether an agent can be staffed on this entry. Every model is enabled
+    /// until the user turns it off; a disabled one stays in the catalog,
+    /// where it is shown as off and refused as a pin.
+    pub enabled: bool,
+}
+
+/// Body of `PUT /v1/models/enabled`: one model of the catalog, turned on or
+/// off.
+///
+/// The id is a field rather than a path segment because a model id carries
+/// both `:` and, for the ids opencode discovers, `/`
+/// (`opencode:anthropic/claude-sonnet-4`) — which is a path of its own, not a
+/// segment of one.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SetModelEnabledRequest {
+    /// The entry, as `GET /v1/models` spells its `id`.
+    #[schema(example = "claude_code:claude-fable-5")]
+    pub id: String,
+    /// What it becomes.
+    pub enabled: bool,
 }
 
 /// One reasoning effort an entry can be run at: the name it is passed by, and

@@ -31,6 +31,7 @@ import {
   FolderGit2Icon,
   type LucideIcon,
   RadioTowerIcon,
+  SparklesIcon,
   TargetIcon,
 } from "lucide-react"
 import { NavLink } from "react-router-dom"
@@ -50,6 +51,7 @@ const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean
   { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
   { to: paths.skills(), label: "Skills", icon: CpuIcon },
   { to: paths.agents(), label: "Agents", icon: BotIcon },
+  { to: paths.models(), label: "Models", icon: SparklesIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
 ]
 

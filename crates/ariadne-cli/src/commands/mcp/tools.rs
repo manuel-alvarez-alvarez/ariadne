@@ -246,16 +246,23 @@ fn assignment(seat: Seat, agent: AgentReq) -> AgentAssignment {
     }
 }
 
-/// The catalog narrowed to one agent CLI, or all of it. Entries pass through
-/// as the daemon wrote them: what a model is called and what it can be run at
-/// is the daemon's answer, not this file's.
+/// The catalog narrowed to one agent CLI, or all of it, and always to the
+/// models an agent can actually be staffed on. Entries pass through as the
+/// daemon wrote them: what a model is called and what it can be run at is the
+/// daemon's answer, not this file's.
+///
+/// A model the user turned off is dropped rather than shown as off. The
+/// catalog is what an orchestrator sizes from, and an entry it is told about
+/// is one it will pin sooner or later — which the daemon then refuses, in the
+/// middle of a plan, over a choice nobody could have made differently.
 fn of_agent(models: Vec<serde_json::Value>, agent_kind: Option<String>) -> Vec<serde_json::Value> {
-    let Some(kind) = agent_kind else {
-        return models;
-    };
     models
         .into_iter()
-        .filter(|m| m["agent_kind"] == serde_json::Value::String(kind.clone()))
+        .filter(|m| m["enabled"] != serde_json::Value::Bool(false))
+        .filter(|m| match &agent_kind {
+            Some(kind) => m["agent_kind"] == serde_json::Value::String(kind.clone()),
+            None => true,
+        })
         .collect()
 }
 
@@ -685,6 +692,43 @@ mod tests {
 
     use crate::commands::mcp::McpSeat;
     use crate::commands::mcp::tests::{recording_daemon, recording_daemon_answering, server_at};
+
+    /// The orchestrator is never offered a model it cannot staff an agent on.
+    ///
+    /// A disabled entry is dropped rather than shown as off: the catalog is
+    /// what a plan is sized from, and an entry an orchestrator is told about
+    /// is one it pins sooner or later — which the daemon then refuses, in the
+    /// middle of a plan, over a choice nobody could have made differently.
+    #[test]
+    fn the_catalog_an_agent_sees_holds_only_the_models_it_can_be_staffed_on() {
+        let catalog = vec![
+            serde_json::json!({"id": "claude_code:a", "agent_kind": "claude_code", "enabled": true}),
+            serde_json::json!({"id": "claude_code:b", "agent_kind": "claude_code", "enabled": false}),
+            serde_json::json!({"id": "codex:c", "agent_kind": "codex", "enabled": true}),
+        ];
+        let ids = |models: Vec<serde_json::Value>| -> Vec<String> {
+            models
+                .into_iter()
+                .map(|m| m["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        assert_eq!(
+            ids(of_agent(catalog.clone(), None)),
+            ["claude_code:a", "codex:c"]
+        );
+        assert_eq!(
+            ids(of_agent(catalog.clone(), Some("claude_code".into()))),
+            ["claude_code:a"],
+            "and narrowing to a CLI does not bring back what is off"
+        );
+
+        // An entry from a daemon that says nothing about it is offered: an
+        // older daemon serves no `enabled` at all, and a catalog that went
+        // empty against one would leave nothing to staff.
+        let older = vec![serde_json::json!({"id": "codex", "agent_kind": "codex"})];
+        assert_eq!(ids(of_agent(older, None)), ["codex"]);
+    }
 
     /// The schema of one tool, as the agent reading the listing gets it.
     fn tool_schema(name: &str) -> serde_json::Value {

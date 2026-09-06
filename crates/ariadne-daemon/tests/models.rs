@@ -8,6 +8,11 @@
 //! is for and carries the efforts it can be run at. OpenCode discovery is not
 //! exercised here: it depends on an installed `opencode` binary, and its
 //! parser is unit-tested in the daemon.
+//!
+//! Every entry also says whether an agent can be staffed on it. The catalog
+//! is code and discovery, so what the database holds is the user's
+//! subtraction from it: a model turned off stays listed, off, and is refused
+//! as a pin.
 
 mod common;
 
@@ -15,7 +20,11 @@ use ariadne_api::models::ModelDto;
 use ariadne_core::models::curated_models;
 use ariadne_core::{AgentKind, ModelTier};
 
-use common::{Harness, harness};
+use axum::http::StatusCode;
+
+use ariadne_api::error::ErrorBody;
+
+use common::{Harness, harness, put_json};
 
 async fn models(h: &Harness) -> Vec<ModelDto> {
     h.get("/v1/models").await
@@ -133,4 +142,131 @@ async fn endpoint_is_in_the_openapi_document_with_nothing_to_filter_by() {
     assert!(doc["components"]["schemas"]["ModelDto"].is_object());
     assert!(doc["components"]["schemas"]["EffortDto"].is_object());
     assert!(get["parameters"].is_null(), "{get}");
+}
+
+/// Turning a model off leaves it in the catalog and takes it out of use.
+///
+/// It stays listed because a catalog that hid it would leave nothing to turn
+/// back on, and nothing to explain a refusal by. What changes is `enabled`,
+/// which is what every surface reads: the desktop app greys the row, the CLI
+/// prints `no`, and the orchestrator is never offered it at all.
+#[tokio::test]
+async fn a_model_turned_off_stays_in_the_catalog_and_out_of_use() {
+    let h = harness().await;
+    let id = "claude_code:claude-opus-5";
+    assert!(
+        models(&h).await.iter().all(|m| m.enabled),
+        "a fresh daemon has nothing turned off"
+    );
+
+    let off: ModelDto = h
+        .json(
+            put_json(
+                "/v1/models/enabled",
+                serde_json::json!({"id": id, "enabled": false}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(off.id, id);
+    assert!(!off.enabled);
+
+    let listed = models(&h).await;
+    let found = listed.iter().find(|m| m.id == id).expect("still listed");
+    assert!(!found.enabled, "and listed as off");
+    assert!(
+        listed.iter().filter(|m| !m.enabled).count() == 1,
+        "and nothing else moved with it"
+    );
+
+    // Turning it back on is the same call, and the catalog is whole again.
+    let on: ModelDto = h
+        .json(
+            put_json(
+                "/v1/models/enabled",
+                serde_json::json!({"id": id, "enabled": true}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(on.enabled);
+    assert!(models(&h).await.iter().all(|m| m.enabled));
+}
+
+/// An id the catalog does not carry is a 404 naming it: the catalog is what
+/// there is, and a typo that wrote a row into the database would be a model
+/// turned off that nothing could ever turn back on.
+#[tokio::test]
+async fn a_model_the_catalog_does_not_carry_cannot_be_turned_off() {
+    let h = harness().await;
+    let envelope: ErrorBody = h
+        .error(
+            put_json(
+                "/v1/models/enabled",
+                serde_json::json!({"id": "claude_code:no-such-model", "enabled": false}),
+            ),
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    assert!(
+        envelope.error.message.contains("claude_code:no-such-model"),
+        "{}",
+        envelope.error.message
+    );
+}
+
+/// The last model left on cannot be turned off. A daemon that can staff
+/// nothing is not a state to leave a user in, and it is the one state this
+/// endpoint could put them in.
+///
+/// The catalog is re-read between writes rather than listed once: opencode's
+/// half of it is whatever discovery answers at that moment, so what "every
+/// other entry" means is a question with a fresh answer each time.
+#[tokio::test]
+async fn the_last_model_left_on_cannot_be_turned_off() {
+    let h = harness().await;
+    let keep = "codex";
+    // Everything but one, off — however many passes the catalog takes to
+    // stop offering another.
+    loop {
+        let others: Vec<String> = models(&h)
+            .await
+            .into_iter()
+            .filter(|m| m.enabled && m.id != keep)
+            .map(|m| m.id)
+            .collect();
+        if others.is_empty() {
+            break;
+        }
+        for id in others {
+            let _: ModelDto = h
+                .json(
+                    put_json(
+                        "/v1/models/enabled",
+                        serde_json::json!({"id": id, "enabled": false}),
+                    ),
+                    StatusCode::OK,
+                )
+                .await;
+        }
+    }
+
+    let envelope: ErrorBody = h
+        .error(
+            put_json(
+                "/v1/models/enabled",
+                serde_json::json!({"id": keep, "enabled": false}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(
+        envelope.error.message.contains("last model"),
+        "{}",
+        envelope.error.message
+    );
+    assert!(
+        models(&h).await.iter().any(|m| m.enabled),
+        "and something is still there to staff an agent on"
+    );
 }
