@@ -131,8 +131,8 @@ impl MergeStrategy {
 /// A repository's [`MergeStrategy`] says how *it* takes a change, and most
 /// tasks end that way. This says how *this* task ends, which the orchestrator
 /// agrees with the user task by task: some work lands on the base branch,
-/// some leaves a request for a person who is not in this system at all, and
-/// some has nothing to land — a report filed, a document published, a release
+/// some goes through a request the author then sees to its merge, and some has
+/// nothing to land at all — a report filed, a document published, a release
 /// cut. All three reach [`TaskStatus::Finished`]; landing is one way of
 /// getting there rather than the meaning of being there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -146,9 +146,11 @@ impl MergeStrategy {
 pub enum Landing {
     /// The author puts the change on the base branch itself.
     Merge,
-    /// The author publishes a request and somebody else merges it.
+    /// The author publishes a request and sees it through: it answers what is
+    /// written on it, and the task ends when the request is merged.
     PullRequest,
-    /// Nothing is landed: what the task produced is the whole of it.
+    /// Nothing is landed: what the task produced is the whole of it — a
+    /// published tag, a filed report, a document that lives elsewhere.
     None,
 }
 

@@ -30,8 +30,9 @@ state machine around `approved` and `finished` (001).
 
 1. A task ends one of three ways, named by its own `landing`:
    - `merge` — the author puts the change on the base branch itself;
-   - `pull_request` — the author publishes a request and somebody else merges
-     it;
+   - `pull_request` — the author opens a request and sees it through: it
+     answers what is written on it, and the task ends when the request is
+     merged;
    - `none` — nothing is landed, and what the task produced is the whole of
      it: a published tag, a filed report, a document that lives elsewhere.
    All three reach `finished` (001). Landing is one way of getting there

@@ -391,7 +391,7 @@ function TaskFormDialog({
             />
             <FieldDescription>
               What happens to the work when the task is approved. Most tasks put the change on the
-              base branch; some leave a request for a person, and some land nothing at all — a
+              base branch; some open a request and see it through, and some land nothing at all — a
               release, a report, a document that lives elsewhere.
             </FieldDescription>
           </Field>

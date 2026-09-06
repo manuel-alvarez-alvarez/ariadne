@@ -229,7 +229,7 @@ export const AGENT_KIND_LABELS: Record<AgentKind, string> = {
  */
 export const LANDING_LABELS: Record<Landing, string> = {
   merge: "Merge onto the base branch",
-  pull_request: "Open a request for a person",
+  pull_request: "Open a request and see it through",
   none: "Land nothing",
 }
 

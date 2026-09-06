@@ -72,8 +72,9 @@ pub struct CreateTaskReq {
     /// Repository id. Pass it only where the goal works in several.
     pub repo_id: Option<String>,
     /// How the task ends, as the user agreed it: `merge` puts the change on
-    /// the base branch, `pull_request` leaves a request for a person, `none`
-    /// lands nothing. Omit it for the way the repository takes a change.
+    /// the base branch, `pull_request` opens a request and sees it through,
+    /// `none` lands nothing. Omit it for the way the repository takes a
+    /// change.
     pub landing: Option<LandingReq>,
 }
 
@@ -154,9 +155,10 @@ pub struct RecordPullRequestReq {
 pub enum LandingReq {
     /// The author puts the change on the base branch itself.
     Merge,
-    /// The author publishes a request and somebody else merges it.
+    /// The author opens a request and sees it through to its merge.
     PullRequest,
-    /// Nothing is landed: what the task produced is the whole of it.
+    /// Nothing is landed: a published tag, a filed report, a document that
+    /// lives elsewhere.
     None,
 }
 

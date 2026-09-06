@@ -132,9 +132,9 @@ pub enum TaskCommand {
         /// its registered path (only needed when the goal has several)
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_repositories))]
         repo: Option<String>,
-        /// How the task ends: merge on the base branch, pull-request for
-        /// somebody else to merge, or none where there is nothing to land.
-        /// Default: the way the repository takes a change
+        /// How the task ends: merge on the base branch, pull-request opened
+        /// and seen through to its merge, or none where there is nothing to
+        /// land. Default: the way the repository takes a change
         #[arg(long, value_enum)]
         landing: Option<Landing>,
     },

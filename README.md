@@ -50,8 +50,8 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
 4. Three things the orchestrator settles with you rather than deciding alone:
    what the goal asks for, which tasks are worth a review, and how each task
    ends. That last one is the task's `landing`: `merge` puts the change on the
-   base branch, `pull_request` leaves a request for a person, and `none` lands
-   nothing at all — a released tag, a filed report, a document that lives
+   base branch, `pull_request` opens a request and sees it through, and `none`
+   lands nothing at all — a released tag, a filed report, a document that lives
    elsewhere. A task with nothing to review is staffed with no reviewer and is
    approved as soon as its author asks.
 5. Nothing runs while the goal is in `planning` — read the tasks and edit what
