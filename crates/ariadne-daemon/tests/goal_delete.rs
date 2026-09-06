@@ -13,7 +13,6 @@ use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::Seat;
 use ariadne_store::AgentSession;
 
 use common::{Harness, delete, get, harness, next_event, post, post_json};
@@ -35,8 +34,7 @@ async fn goal(h: &Harness, name: &str) -> GoalDto {
     h.json(
         post_json(
             "/v1/goals",
-            serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
-                               "orchestrator_profile": "Orchestrator"}),
+            serde_json::json!({"title": "Ship it", "repository_ids": [registered.id]}),
         ),
         StatusCode::CREATED,
     )
@@ -47,8 +45,9 @@ async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
     h.json(
         post_json(
             &format!("/v1/goals/{}/tasks", goal.id),
-            serde_json::json!({"title": "Do the thing", "author_profile": "Author",
-                               "reviewers": [{"profile": "Reviewer"}]}),
+            serde_json::json!({"title": "Do the thing", "agents": [
+                {"seat": "author", "skills": ["coding"]},
+                {"seat": "reviewer", "skills": ["code-review"]}]}),
         ),
         StatusCode::CREATED,
     )

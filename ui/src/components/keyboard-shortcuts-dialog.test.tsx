@@ -13,7 +13,7 @@ import { expect, it } from "vitest"
 import { KeyboardShortcutsDialog } from "./keyboard-shortcuts-dialog"
 
 /** Every chord the README documents, as the sheet spells it. */
-const CHORDS = ["N", "[", "G G", "G S", "G P", "G A", "G R", "?", "Esc"]
+const CHORDS = ["N", "[", "G G", "G S", "G K", "G A", "G R", "?", "Esc"]
 
 it("lists every chord, screen by screen", () => {
   render(<KeyboardShortcutsDialog open onOpenChange={() => {}} />)

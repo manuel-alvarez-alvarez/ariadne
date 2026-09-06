@@ -429,3 +429,51 @@ fn session_names_are_stable_and_short() {
         "ariadne-tjs6gk44-c5dm7hk9-rev-dm7hk9pf"
     );
 }
+
+/// A repository nobody has committed to yet: the base branch is unborn, so the
+/// author's worktree is cut orphan and its first commit is the repository's.
+/// The diff has no merge base to be read against, and is the whole branch.
+#[tokio::test]
+#[ignore = "requires git"]
+async fn a_worktree_is_cut_from_a_base_branch_with_no_commits() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    sh(
+        &repo,
+        "git init -q -b main && git config user.email t@t && git config user.name t",
+    );
+    let git = GitManager;
+    assert!(!git.branch_exists(&repo, "main").await.unwrap());
+
+    let wt = dir.path().join("wt-eng");
+    git.add_worktree(&repo, &wt, "first-task-aaa111", "main")
+        .await
+        .unwrap();
+    // Nothing to check out, and nothing to review until the author commits.
+    assert!(!wt.join("file.txt").exists());
+    assert!(
+        git.ensure_branch_has_commits(&repo, "first-task-aaa111")
+            .await
+            .is_err()
+    );
+
+    sh(
+        &wt,
+        "echo v1 > file.txt && git add . && git commit -qm first",
+    );
+    assert!(git.branch_exists(&repo, "first-task-aaa111").await.unwrap());
+
+    // The whole branch is the change.
+    let diff = git.diff(&repo, "main", "first-task-aaa111").await.unwrap();
+    assert!(diff.contains("+v1"), "{diff}");
+
+    // And the base fast-forwards onto it, which is what `direct` landing does.
+    sh(&repo, "git merge --ff-only first-task-aaa111");
+    assert!(
+        git.is_ancestor(&repo, "first-task-aaa111", "main")
+            .await
+            .unwrap()
+    );
+    git.remove_worktree(&repo, &wt).await.unwrap();
+}

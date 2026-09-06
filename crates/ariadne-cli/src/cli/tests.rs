@@ -8,7 +8,7 @@ use clap::FromArgMatches;
 use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Seat, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
-use crate::commands::profile::PromptCommand;
+use crate::commands::skill::SkillCommand;
 use crate::commands::repo::RepoPromptCommand;
 use crate::output::ColorChoice;
 
@@ -22,7 +22,7 @@ fn the_command_tree_is_well_formed() {
 /// The command groups: every one of them is a screen someone lands on from
 /// `ariadne --help`, so every one of them has to read the same way.
 const GROUPS: &[&str] = &[
-    "agent", "daemon", "goal", "profile", "repo", "session", "task",
+    "agent", "daemon", "goal", "repo", "session", "skill", "task",
 ];
 
 /// The root and every group say what they are for, list the two global flags
@@ -106,14 +106,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("mcp serve", false),
     ("models ls", true),
     ("models show", true),
-    ("profile create", true),
-    ("profile inspect", true),
-    ("profile ls", true),
-    ("profile prompt get", true),
-    ("profile prompt reset", true),
-    ("profile prompt set", true),
-    ("profile rm", true),
-    ("profile update", true),
     ("repo add", true),
     ("repo inspect", true),
     ("repo ls", true),
@@ -129,6 +121,13 @@ const LEAVES: &[(&str, bool)] = &[
     ("session resume", true),
     ("session send", true),
     ("setup codex-hooks", false),
+    ("skill create", true),
+    ("skill get", true),
+    ("skill inspect", true),
+    ("skill ls", true),
+    ("skill reset", true),
+    ("skill rm", true),
+    ("skill set", true),
     ("task attach", false),
     ("task cancel", true),
     ("task create", true),
@@ -478,7 +477,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     assert_eq!(
         orchestrator(&[]),
         None,
-        "and nothing at all is the orchestrator profile's own"
+        "and nothing at all is auto"
     );
     assert_eq!(
         orchestrator(&["--model", "claude-code"]).as_deref(),
@@ -489,7 +488,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
 
     let Command::Task {
         command: TaskCommand::Create {
-            model, reviewers, ..
+            author, reviewers, ..
         },
     } = parse(&[
         "ariadne",
@@ -498,29 +497,30 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         "01GOAL",
         "--title",
         "Do it",
-        "--model",
-        "claude_code:claude-opus-5",
+        "--author",
+        "coding,testing=claude_code:claude-opus-5",
         "--reviewer",
-        "Reviewer=codex:o3",
+        "code-review=codex:o3",
         "--reviewer",
-        "rev-strict=opencode",
+        "security-review=opencode",
         "--reviewer",
-        "Security",
+        "performance-review",
     ])
     .command
     else {
         panic!("task create")
     };
-    assert_eq!(model.as_deref(), Some("claude_code:claude-opus-5"));
+    assert_eq!(author.skills, ["coding", "testing"]);
+    assert_eq!(author.model.as_deref(), Some("claude_code:claude-opus-5"));
     assert_eq!(
         reviewers
             .iter()
-            .map(|r| (r.profile.as_str(), r.model.as_deref()))
+            .map(|r| (r.skills.join(","), r.model.as_deref()))
             .collect::<Vec<_>>(),
         [
-            ("Reviewer", Some("codex:o3")),
-            ("rev-strict", Some("opencode")),
-            ("Security", None),
+            ("code-review".to_string(), Some("codex:o3")),
+            ("security-review".to_string(), Some("opencode")),
+            ("performance-review".to_string(), None),
         ],
         "in the order they were typed, which is review order"
     );
@@ -539,7 +539,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     assert_eq!(
         edited(&["--model", "default"]).as_deref(),
         Some("default"),
-        "\"default\" hands the task back to its author profile's pin"
+        "\"default\" puts the task's author back on auto"
     );
     assert_eq!(
         edited(&["--model", "claude-code"]).as_deref(),
@@ -580,45 +580,9 @@ fn an_effort_can_be_chosen_beside_every_model() {
     assert_eq!(model.as_deref(), Some("codex:gpt-5.6-sol"));
     assert_eq!(effort.as_deref(), Some("xhigh"));
 
-    let Command::Profile {
-        command: ProfileCommand::Create { effort, .. },
-    } = parse(&[
-        "ariadne",
-        "profile",
-        "create",
-        "--name",
-        "eng",
-        "--seat",
-        "author",
-        "--model",
-        "claude_code:claude-opus-5",
-        "--effort",
-        "max",
-    ])
-    .command
-    else {
-        panic!("profile create")
-    };
-    assert_eq!(effort.as_deref(), Some("max"));
-
-    let Command::Profile {
-        command: ProfileCommand::Update { effort, .. },
-    } = parse(&[
-        "ariadne", "profile", "update", "Reviewer", "--effort", "default",
-    ])
-    .command
-    else {
-        panic!("profile update")
-    };
-    assert_eq!(
-        effort.as_deref(),
-        Some("default"),
-        "\"default\" runs the model at whatever its agent CLI runs it at"
-    );
-
     let Command::Task {
         command: TaskCommand::Create {
-            effort, reviewers, ..
+            author, reviewers, ..
         },
     } = parse(&[
         "ariadne",
@@ -627,32 +591,36 @@ fn an_effort_can_be_chosen_beside_every_model() {
         "01GOAL",
         "--title",
         "Do it",
-        "--effort",
-        "xhigh",
+        "--author",
+        "coding@xhigh",
         "--reviewer",
-        "Reviewer=codex:gpt-5.6-sol@xhigh",
+        "code-review=codex:gpt-5.6-sol@xhigh",
         "--reviewer",
-        "rev-strict@high",
+        "security-review@high",
         "--reviewer",
-        "Security=codex",
+        "performance-review=codex",
     ])
     .command
     else {
         panic!("task create")
     };
-    assert_eq!(effort.as_deref(), Some("xhigh"));
+    assert_eq!(author.effort.as_deref(), Some("xhigh"));
     assert_eq!(
         reviewers
             .iter()
-            .map(|r| (r.profile.as_str(), r.model.as_deref(), r.effort.as_deref()))
+            .map(|r| (r.skills.join(","), r.model.as_deref(), r.effort.as_deref()))
             .collect::<Vec<_>>(),
         [
-            ("Reviewer", Some("codex:gpt-5.6-sol"), Some("xhigh")),
-            ("rev-strict", None, Some("high")),
-            ("Security", Some("codex"), None),
+            (
+                "code-review".to_string(),
+                Some("codex:gpt-5.6-sol"),
+                Some("xhigh")
+            ),
+            ("security-review".to_string(), None, Some("high")),
+            ("performance-review".to_string(), Some("codex"), None),
         ],
-        "a slot says a model, an effort, or both — and neither is guessed from \
-         the other"
+        "an agent says a model, an effort, or both — and neither is guessed \
+         from the other"
     );
 
     let edited = |args: &[&str]| {
@@ -724,19 +692,18 @@ fn a_model_naming_no_agent_is_a_usage_error() {
             "01GOAL",
             "--title",
             "Do it",
-            "--model",
-            "gpt-5.3-codex",
+            "--author",
+            "coding=gpt-5.3-codex",
         ],
         &[
             "ariadne",
-            "profile",
+            "task",
             "create",
-            "--name",
-            "eng",
-            "--seat",
-            "author",
-            "--model",
-            "gpt-5.3-codex",
+            "01GOAL",
+            "--title",
+            "Do it",
+            "--reviewer",
+            "code-review=gpt-5.3-codex",
         ],
     ];
     for argv in lines {
@@ -793,15 +760,15 @@ fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
         .expect_err("a reviewer that says half of what it means")
         .to_string()
     };
-    let err = refused("Reviewer=llama");
+    let err = refused("code-review=llama");
     assert!(err.contains("names no agent CLI"), "{err}");
     assert!(err.contains("claude_code, codex, opencode"), "{err}");
-    assert!(refused("Reviewer=").contains("no model after the ="));
-    assert!(refused("Reviewer=codex:").contains("no model after the `:`"));
+    assert!(refused("code-review=").contains("no model after the ="));
+    assert!(refused("code-review=codex:").contains("no model after the `:`"));
     // And the half after the `@`, which the forms in the refusal spell out.
     let err = refused("Reviewer@");
     assert!(err.contains("no effort was named"), "{err}");
-    assert!(refused("Reviewer=@high").contains("PROFILE=MODEL@EFFORT"));
+    assert!(refused("code-review=@high").contains("SKILLS=MODEL@EFFORT"));
 }
 
 /// How a repository takes a change is the user's to set, on the way in
@@ -1049,144 +1016,62 @@ fn an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is() {
     assert_eq!(flags, ["--dangerously-skip-permissions", "--verbose"]);
 }
 
-/// `profile prompt` is about the system prompt and nothing else: each of its
-/// three lines takes the profile, names `system` or leaves it out, and
-/// refuses a briefing — which is Ariadne's own text now. `reset` takes the
-/// confirmation flag with it.
+/// A skill is one document, so its lines are the four things one does to a
+/// document plus the delete: `get` pipes it out, `set` writes it back from a
+/// file or from stdin, `reset` puts a shipped one back, and each of them takes
+/// the skill by name. `reset` and `rm` take the confirmation flag with them.
 #[test]
-fn a_prompt_line_takes_the_profile_and_the_system_prompt() {
-    let profile = |command: PromptCommand| match command {
-        PromptCommand::Get { id, .. }
-        | PromptCommand::Set { id, .. }
-        | PromptCommand::Reset { id, .. } => id,
+fn a_skill_line_takes_the_skill_by_name() {
+    let named = |command: SkillCommand| match command {
+        SkillCommand::Inspect { name }
+        | SkillCommand::Get { name }
+        | SkillCommand::Create { name, .. }
+        | SkillCommand::Set { name, .. }
+        | SkillCommand::Reset { name, .. }
+        | SkillCommand::Rm { name, .. } => name,
+        SkillCommand::Ls => unreachable!("ls names no skill"),
     };
-    for verb in ["get", "set", "reset"] {
-        for argv in [
-            vec!["ariadne", "profile", "prompt", verb, "Author"],
-            vec!["ariadne", "profile", "prompt", verb, "Author", "system"],
-        ] {
-            let Command::Profile {
-                command: ProfileCommand::Prompt { command },
-            } = parse(&argv).command
-            else {
-                panic!("profile prompt {verb}");
-            };
-            assert_eq!(profile(command), "Author");
-        }
-        let err = try_parse(&[
-            "ariadne",
-            "profile",
-            "prompt",
-            verb,
-            "Author",
-            "author-briefing",
-        ])
-        .map(|_| ())
-        .expect_err("a briefing")
-        .to_string();
-        assert!(err.contains("author-briefing is no prompt"), "{err}");
+    for verb in ["inspect", "get", "reset", "rm"] {
+        let Command::Skill { command } = parse(&["ariadne", "skill", verb, "coding"]).command
+        else {
+            panic!("skill {verb}");
+        };
+        assert_eq!(named(command), "coding");
     }
 
-    let Command::Profile {
-        command:
-            ProfileCommand::Prompt {
-                command: PromptCommand::Reset { yes, .. },
-            },
-    } = parse(&["ariadne", "profile", "prompt", "reset", "Author", "-y"]).command
+    // The document comes from a file, or from stdin where none is named.
+    let Command::Skill {
+        command: SkillCommand::Set { name, file },
+    } = parse(&["ariadne", "skill", "set", "coding", "--file", "/tmp/c.md"]).command
     else {
-        panic!("profile prompt reset");
+        panic!("skill set");
+    };
+    assert_eq!(name, "coding");
+    assert_eq!(file, Some(PathBuf::from("/tmp/c.md")));
+
+    let Command::Skill {
+        command: SkillCommand::Set { file, .. },
+    } = parse(&["ariadne", "skill", "set", "coding"]).command
+    else {
+        panic!("skill set from stdin");
+    };
+    assert_eq!(file, None, "no file named is stdin");
+
+    let Command::Skill {
+        command: SkillCommand::Reset { yes, .. },
+    } = parse(&["ariadne", "skill", "reset", "coding", "-y"]).command
+    else {
+        panic!("skill reset");
     };
     assert!(yes);
-}
 
-/// The system prompt is given as text or as a file, on `profile update`
-/// exactly as on `profile create`, and never as both at once.
-#[test]
-fn a_profile_takes_its_system_prompt_as_text_or_as_a_file() {
-    let (text, file) = create_flags(&["--system-prompt", "You are..."]);
-    assert_eq!(text.as_deref(), Some("You are..."));
-    assert_eq!(file, None);
-
-    let (text, file) = create_flags(&["--system-prompt-file", "/tmp/b.md"]);
-    assert_eq!(text, None);
-    assert_eq!(file, Some(PathBuf::from("/tmp/b.md")));
-
-    let Command::Profile {
-        command:
-            ProfileCommand::Update {
-                system_prompt,
-                system_prompt_file,
-                ..
-            },
-    } = parse(&[
-        "ariadne",
-        "profile",
-        "update",
-        "Author",
-        "--system-prompt-file",
-        "/tmp/c.md",
-    ])
-    .command
+    let Command::Skill {
+        command: SkillCommand::Rm { yes, .. },
+    } = parse(&["ariadne", "skill", "rm", "mine", "--yes"]).command
     else {
-        panic!("profile update");
+        panic!("skill rm");
     };
-    assert_eq!(system_prompt, None);
-    assert_eq!(system_prompt_file, Some(PathBuf::from("/tmp/c.md")));
-
-    // One prompt, one source: the two flags never travel together.
-    assert!(
-        try_create(&[
-            "--system-prompt",
-            "You are...",
-            "--system-prompt-file",
-            "/tmp/b.md"
-        ])
-        .is_err(),
-        "both at once"
-    );
-    assert!(
-        try_parse(&[
-            "ariadne",
-            "profile",
-            "update",
-            "Author",
-            "--system-prompt",
-            "You are...",
-            "--system-prompt-file",
-            "/tmp/b.md",
-        ])
-        .is_err(),
-        "both at once on an update"
-    );
-}
-
-/// The system prompt flags of a `profile create` line, as clap parsed them.
-fn create_flags(args: &[&str]) -> (Option<String>, Option<PathBuf>) {
-    let Command::Profile {
-        command:
-            ProfileCommand::Create {
-                system_prompt,
-                system_prompt_file,
-                ..
-            },
-    } = parse(&create_argv(args)).command
-    else {
-        panic!("profile create");
-    };
-    (system_prompt, system_prompt_file)
-}
-
-fn try_create(args: &[&str]) -> Result<(), clap::Error> {
-    try_parse(&create_argv(args)).map(|_| ())
-}
-
-/// A `profile create` line with everything it needs, plus `args`.
-fn create_argv<'a>(args: &[&'a str]) -> Vec<&'a str> {
-    let mut argv = vec![
-        "ariadne", "profile", "create", "--name", "X", "--seat", "author",
-    ];
-    argv.extend_from_slice(args);
-    argv
+    assert!(yes);
 }
 
 /// The daemon group is about one home, so `--home` is the group's: it reaches

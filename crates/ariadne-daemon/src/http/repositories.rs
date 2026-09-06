@@ -166,27 +166,28 @@ fn repo_path(raw: &str) -> Result<PathBuf, ApiError> {
     Ok(path)
 }
 
-/// The base branch to store: the given one once it is known to exist, or the
-/// repo's current branch when none was given. Either way it must point at a
-/// commit — a freshly `git init`ed repo has an unborn branch that worktrees
-/// cannot be created from.
+/// The base branch to store: the given one once it is known to the repository,
+/// or the repo's current branch when none was given.
+///
+/// A freshly `git init`ed repository is registered like any other. Its branch
+/// is unborn — HEAD names it and no ref exists yet — so the branch the caller
+/// asks for counts as known when it is the one HEAD is on, and the first task
+/// to commit is what gives the repository its first commit.
 async fn resolve_base_branch(path: &FsPath, branch: Option<&str>) -> Result<String, ApiError> {
     let git = GitManager;
     git.validate_repo(path).await.map_err(bad)?;
-    let base_branch = match branch {
+    match branch {
         Some(b) => {
-            if !git.branch_exists(path, b).await.map_err(bad)? {
+            let known = git.branch_exists(path, b).await.map_err(bad)?
+                || git.current_branch(path).await.ok().as_deref() == Some(b);
+            if !known {
                 return Err(ApiError::bad_request(format!(
                     "branch {b} does not exist in {}",
                     path.display()
                 )));
             }
-            b.to_string()
+            Ok(b.to_string())
         }
-        None => git.current_branch(path).await.map_err(bad)?,
-    };
-    git.ensure_branch_has_commits(path, &base_branch)
-        .await
-        .map_err(bad)?;
-    Ok(base_branch)
+        None => git.current_branch(path).await.map_err(bad),
+    }
 }

@@ -673,6 +673,22 @@ impl Store {
     }
 }
 
+/// A task takes exactly one author and at least one reviewer: the author
+/// carries it from its first commit to the end, and an approval is what lets
+/// it finish.
+fn check_staffing(agents: &[NewTaskAgent]) -> Result<()> {
+    let count = |seat: Seat| agents.iter().filter(|a| a.seat == seat).count();
+    match (count(Seat::Author), count(Seat::Reviewer)) {
+        (1, 0) => Err(StoreError::Invalid(
+            "a task needs at least one reviewer".into(),
+        )),
+        (1, _) => Ok(()),
+        (authors, _) => Err(StoreError::Invalid(format!(
+            "a task takes exactly one author, not {authors}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::Command;
@@ -770,21 +786,5 @@ mod tests {
                 "git rejected {branch:?} from title {title:?}"
             );
         }
-    }
-}
-
-/// A task takes exactly one author and at least one reviewer: the author
-/// carries it from its first commit to the end, and an approval is what lets
-/// it finish.
-fn check_staffing(agents: &[NewTaskAgent]) -> Result<()> {
-    let count = |seat: Seat| agents.iter().filter(|a| a.seat == seat).count();
-    match (count(Seat::Author), count(Seat::Reviewer)) {
-        (1, 0) => Err(StoreError::Invalid(
-            "a task needs at least one reviewer".into(),
-        )),
-        (1, _) => Ok(()),
-        (authors, _) => Err(StoreError::Invalid(format!(
-            "a task takes exactly one author, not {authors}"
-        ))),
     }
 }

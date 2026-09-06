@@ -115,7 +115,7 @@ fn argv_of(h: &Harness, session_id: &str) -> String {
 /// reach it, on any launch path: not the resume that carries a reviewer into
 /// round two, and not the fresh session a round with nothing to resume gets.
 #[tokio::test]
-async fn a_reviewers_pin_outlives_a_profile_edit() {
+async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
     let h = harness().await;
     let cast = under_review(&h, Some("opus")).await;
     let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
@@ -133,8 +133,8 @@ async fn a_reviewers_pin_outlives_a_profile_edit() {
         "the launch asked for the pinned model"
     );
 
-    // The profile moves to another agent and another model while the session
-    // is alive. The row is not rewritten behind it.
+    // The agent is re-pinned to another CLI and another model while the
+    // session is alive. The row is not rewritten behind it.
     h.move_agent(
         &reviewer, Some(AgentKind::Codex), Some("sonnet"))
         .await;
@@ -146,11 +146,11 @@ async fn a_reviewers_pin_outlives_a_profile_edit() {
             .model
             .as_deref(),
         Some("opus"),
-        "a profile edit rewrote a running session's model"
+        "a re-pin rewrote a running session's model"
     );
 
     // Round two relaunches the same session, on the same agent and model it
-    // was pinned to — the profile now says codex/sonnet.
+    // was launched with — the agent itself now says codex/sonnet.
     h.launcher.kill_session(&first.id).await.unwrap();
     let task = next_round(&h, &task).await;
     let second = h
@@ -167,22 +167,22 @@ async fn a_reviewers_pin_outlives_a_profile_edit() {
         "and that is what the agent was launched with: {argv}"
     );
 
-    // A round that finds nothing to resume spawns afresh, and lands on the
-    // pin just the same.
+    // A round that finds nothing to resume spawns afresh — and a fresh spawn
+    // reads the agent as it stands, which is where the re-pin does land.
     h.launcher.kill_session(&second.id).await.unwrap();
+    h.forget_session(&second).await;
     let third = h
         .launcher
         .spawn_reviewer(&task.id, &reviewer)
         .await
         .unwrap();
     assert_ne!(third.id, second.id, "a fresh session, not the old one");
-    assert_eq!(third.agent_kind(), AgentKind::ClaudeCode);
-    assert_eq!(third.model.as_deref(), Some("opus"));
-    assert!(
-        argv_of(&h, &third.id)
-            .contains("--model opus"),
-        "a fresh session read the profile instead of the pin"
+    assert_eq!(
+        third.agent_kind(),
+        AgentKind::Codex,
+        "a fresh session reads the agent's pin as it stands"
     );
+    assert_eq!(third.model.as_deref(), Some("sonnet"));
 }
 
 /// The same for the author, whose pin is the task's: the spawn that starts
@@ -193,13 +193,15 @@ async fn a_resumed_author_stays_on_the_model_its_session_started_on() {
     let h = harness().await;
     let cast = under_review(&h, Some("opus")).await;
     let task = cast.task.clone();
-    h.move_agent(&cast.author.id, Some(AgentKind::Codex), Some("sonnet"))
-        .await;
 
     let first = h.launcher.spawn_author(&task.id).await.unwrap();
     assert_eq!(first.agent_kind(), AgentKind::ClaudeCode);
     assert_eq!(first.model.as_deref(), Some("opus"));
 
+    // Re-pinned under a session that is already running: what it was launched
+    // with is what every relaunch of it carries.
+    h.move_agent(&cast.author.id, Some(AgentKind::Codex), Some("sonnet"))
+        .await;
     h.launcher.kill_session(&first.id).await.unwrap();
     let resumed = h
         .launcher
@@ -324,14 +326,13 @@ async fn a_pane_left_behind_is_taken_rather_than_spawned_around() {
 }
 
 /// A pin of "no model" is a pin too: the work runs on the agent CLI's own
-/// default however the profile is edited afterwards.
+/// default, and a session launched on it stays there however the agent is
+/// re-pinned afterwards.
 #[tokio::test]
 async fn a_pin_of_no_model_stays_the_agents_own_default() {
     let h = harness().await;
     let cast = under_review(&h, None).await;
     let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
-    h.move_agent(&reviewer, Some(AgentKind::ClaudeCode), Some("sonnet"))
-        .await;
 
     let session = h
         .launcher
@@ -343,6 +344,18 @@ async fn a_pin_of_no_model_stays_the_agents_own_default() {
         !argv_of(&h, &session.id).contains("--model"),
         "no model was asked for"
     );
+
+    // Re-pinned under it: the running session keeps the nothing it started on.
+    h.move_agent(&reviewer, Some(AgentKind::ClaudeCode), Some("sonnet"))
+        .await;
+    h.launcher.kill_session(&session.id).await.unwrap();
+    let resumed = h
+        .launcher
+        .resume_reviewer(&task.id, &reviewer, "Another look.")
+        .await
+        .unwrap();
+    assert_eq!(resumed.id, session.id, "the resume reused the session");
+    assert_eq!(resumed.model, None, "still the agent CLI's own default");
 }
 
 /// The changes-requested bounce, twice over: the task panel's Sessions tab

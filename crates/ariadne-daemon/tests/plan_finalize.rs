@@ -18,7 +18,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::goals::GoalDto;
-use ariadne_core::{GoalStatus, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, SessionStatus, TaskStatus};
 use ariadne_daemon::attention::work_is_active;
 
 use common::{Cast, Harness, as_session, eventually, harness, post_json};

@@ -626,11 +626,20 @@ fn print_status(t: &TaskDto, format: Format) -> Result<()> {
     })
 }
 
+/// How a verdict names the agent that gave it: the skills that agent reviewed
+/// with, and the id where the task no longer staffs it.
+fn reviewer_label(task: &TaskDto, agent_id: &str) -> String {
+    match task.agents.iter().find(|a| a.id == agent_id) {
+        Some(agent) => agent_label(&agent.skills),
+        None => agent_id.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use ariadne_api::tasks::{ProfileUsageDto, TaskReviewerDto, TaskUsageDto};
+    use ariadne_api::tasks::{AgentUsageDto, TaskUsageDto};
 
     use crate::commands::fixtures;
     use crate::output::{View, kv_block, style};
@@ -661,13 +670,9 @@ mod tests {
         }
     }
 
-    fn reviewer(profile_id: &str, name: &str) -> TaskReviewerDto {
-        TaskReviewerDto {
-            profile_id: profile_id.into(),
-            profile_name: Some(name.into()),
-            model: None,
-            effort: None,
-        }
+    /// One reviewer staffed on the task, named by the skills it reviews with.
+    fn reviewer(id: &str, skill: &str) -> ariadne_api::tasks::TaskAgentDto {
+        fixtures::agent(id, ariadne_core::Seat::Reviewer, &[skill])
     }
 
     /// A task nobody has run yet still says what it spent: `0`, which is a
@@ -682,19 +687,22 @@ mod tests {
     }
 
     /// The block is the total and then who spent it: the author, and every
-    /// reviewer slot by the name a message addresses it with — including the
-    /// one that has never been spawned, which spent `0` rather than nothing
-    /// at all.
+    /// reviewer by the skills it reviews with — including the one that has
+    /// never been spawned, which spent `0` rather than nothing at all.
     #[test]
     fn the_block_names_the_author_and_every_reviewer_of_the_task() {
         let t = TaskDto {
-            reviewers: vec![reviewer("01REV", "Reviewer"), reviewer("01SEC", "Security")],
+            agents: vec![
+                fixtures::agent("01AUTHOR", ariadne_core::Seat::Author, &["coding"]),
+                reviewer("01REV", "code-review"),
+                reviewer("01SEC", "security-review"),
+            ],
             usage: TaskUsageDto {
                 total: usage(1_204_567, 1_100_000, 45_300),
                 author: usage(1_200_000, 1_100_000, 45_000),
-                reviewers: vec![ProfileUsageDto {
-                    profile_id: "01REV".into(),
-                    profile_name: Some("Reviewer".into()),
+                reviewers: vec![AgentUsageDto {
+                    agent_id: "01REV".into(),
+                    skills: vec!["code-review".into()],
                     usage: usage(4_567, 0, 300),
                 }],
             },
@@ -705,9 +713,9 @@ mod tests {
             [
                 "input   1.2M  91%",
                 "              output   45k",
-                "              author    ↑1.2M ↓45k",
-                "              Reviewer  ↑4.6k ↓300",
-                "              Security  ↑0 ↓0",
+                "              author           ↑1.2M ↓45k",
+                "              code-review      ↑4.6k ↓300",
+                "              security-review  ↑0 ↓0",
             ]
             .join("\n")
         );
@@ -718,24 +726,24 @@ mod tests {
         );
     }
 
-    /// A profile that spent on the task without holding one of its slots is
+    /// An agent that spent on the task and is staffed on it no longer is
     /// still listed: the lines under the total are meant to add up to it.
     #[test]
-    fn a_spender_that_holds_no_reviewer_slot_is_still_listed() {
+    fn a_spender_the_task_no_longer_staffs_is_still_listed() {
         let t = TaskDto {
             usage: TaskUsageDto {
                 total: usage(1_000, 0, 100),
                 author: usage(600, 0, 60),
-                reviewers: vec![ProfileUsageDto {
-                    profile_id: "01GONE".into(),
-                    profile_name: None,
+                reviewers: vec![AgentUsageDto {
+                    agent_id: "01GONE".into(),
+                    skills: Vec::new(),
                     usage: usage(400, 0, 40),
                 }],
             },
             ..dto()
         };
         assert!(
-            usage_lines(&t).contains("01GONE  ↑400 ↓40"),
+            usage_lines(&t).contains("no skills  ↑400 ↓40"),
             "{}",
             usage_lines(&t)
         );
@@ -756,14 +764,16 @@ mod tests {
         );
     }
 
-    /// A profile is mentioned by the name that addresses it, with the bare id
-    /// where the daemon would not name it — the `reviewer` column, and every
-    /// other mention of a profile in the CLI.
+    /// An agent has no name, so a verdict names it by the skills it reviewed
+    /// with — and by its id where the task staffs it no longer.
     #[test]
-    fn a_profile_is_mentioned_by_name_and_falls_back_to_its_id() {
-        let profiles = ProfileNames::from_pairs([("01REV".to_string(), "My Reviewer".to_string())]);
-        assert_eq!(profiles.label("01REV"), "My Reviewer (01REV)");
-        assert_eq!(profiles.label("01GONE"), "01GONE");
+    fn a_verdict_names_its_reviewer_by_the_skills_it_reviewed_with() {
+        let t = TaskDto {
+            agents: vec![reviewer("01REV", "code-review")],
+            ..dto()
+        };
+        assert_eq!(reviewer_label(&t, "01REV"), "code-review");
+        assert_eq!(reviewer_label(&t, "01GONE"), "01GONE");
     }
 
     /// `task inspect` types its id, its goal, its title and its status the
@@ -778,7 +788,7 @@ mod tests {
             depends_on: vec!["01DEP".into()],
             ..dto()
         };
-        let pairs = inspect_pairs(&t, &ProfileNames::default());
+        let pairs = inspect_pairs(&t);
 
         let coloured = kv_block(
             &pairs,
@@ -856,14 +866,5 @@ mod tests {
             "-",
             "and a task nobody published says nothing"
         );
-    }
-}
-
-/// How a verdict names the agent that gave it: the skills that agent reviewed
-/// with, and the id where the task no longer staffs it.
-fn reviewer_label(task: &TaskDto, agent_id: &str) -> String {
-    match task.agents.iter().find(|a| a.id == agent_id) {
-        Some(agent) => agent_label(&agent.skills),
-        None => agent_id.to_string(),
     }
 }

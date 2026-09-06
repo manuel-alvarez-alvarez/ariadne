@@ -4,7 +4,7 @@
  *
  * The client only catches what it can know on its own: a missing or relative
  * path. Everything else is the daemon's to say — it opens the checkout,
- * resolves the branch and checks it has commits, and rejects a landing
+ * resolves the branch, and rejects a landing
  * briefing that names a placeholder it has no value for — so a 400 lands on
  * the field it is about (the path, the branch when one was typed, or the
  * briefing) and a 409 says the pair is already registered.

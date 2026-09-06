@@ -715,7 +715,19 @@ impl Launcher {
     /// The reviewer's detached worktree, pinned at the branch tip: created on
     /// the first round, re-pointed at the tip on every later one — the same
     /// worktree serves the whole review, as the same session does.
+    ///
+    /// The tip has to be a commit. In a repository that had none when the task
+    /// started, the task branch is unborn until the author commits, and there
+    /// is nothing for a reviewer to be pinned at.
     async fn reviewer_worktree(&self, task: &Task, agent_id: &str) -> Result<PathBuf> {
+        let repo_path = {
+            let repo = self.store.get_repository(&task.repo_id).await?;
+            PathBuf::from(repo.path)
+        };
+        self.git
+            .ensure_branch_has_commits(&repo_path, &task.branch)
+            .await
+            .with_context(|| format!("task {} has nothing to review yet", task.id))?;
         let worktree = self
             .cfg
             .worktree_root
@@ -725,10 +737,9 @@ impl Launcher {
             // New round: refresh to the current branch tip.
             self.git.checkout_detached(&worktree, &task.branch).await?;
         } else {
-            let repo = self.store.get_repository(&task.repo_id).await?;
             std::fs::create_dir_all(worktree.parent().unwrap())?;
             self.git
-                .add_detached_worktree(&PathBuf::from(&repo.path), &worktree, &task.branch)
+                .add_detached_worktree(&repo_path, &worktree, &task.branch)
                 .await?;
         }
         Ok(worktree)

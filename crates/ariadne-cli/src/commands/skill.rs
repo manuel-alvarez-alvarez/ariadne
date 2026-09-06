@@ -241,13 +241,9 @@ mod tests {
 
     fn skill(name: &str, builtin: bool, default: bool) -> SkillDto {
         SkillDto {
-            name: name.into(),
-            summary: "one line".into(),
-            document: "---\nname: x\n---\n".into(),
             document_is_default: default,
             builtin,
-            created_at: "2026-09-05T00:00:00Z".into(),
-            updated_at: "2026-09-05T00:00:00Z".into(),
+            ..crate::commands::fixtures::skill(name, "one line")
         }
     }
 

@@ -4,27 +4,13 @@ use ariadne_core::{
     Actor, AgentKind, AttentionReason, GoalStatus, MergeStrategy, ReviewVerdict, Seat,
     SessionStatus, TaskStatus, TokenUsage,
 };
-use ariadne_store::defaults::{default_landing_prompt, default_system_prompt};
+use ariadne_store::defaults::{default_landing_prompt};
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path().join("test.db")).await.unwrap();
     (store, dir)
-}
-
-async fn seed_profile(store: &Store, name: &str, seat: Seat) -> Profile {
-    store
-        .create_profile(NewProfile {
-            name: name.into(),
-            seat,
-            agent_kind: Some(AgentKind::ClaudeCode),
-            model: None,
-            effort: None,
-            system_prompt: Some(format!("You are {name}.")),
-        })
-        .await
-        .unwrap()
 }
 
 /// A registered repository, on a path of its own so goals can be seeded side
@@ -42,13 +28,12 @@ async fn seed_repository(store: &Store) -> Repository {
         .unwrap()
 }
 
-async fn seed_goal(store: &Store, orchestrator: &Profile, max_tasks: Option<i64>) -> (Goal, Repository) {
+async fn seed_goal(store: &Store, max_tasks: Option<i64>) -> (Goal, Repository) {
     let repo = seed_repository(store).await;
     let goal = store
         .create_goal(NewGoal {
             title: "Test goal".into(),
             description: "desc".into(),
-            orchestrator_profile_id: orchestrator.id.clone(),
             max_tasks,
             required_approvals: 1,
             repository_ids: vec![repo.id.clone()],
@@ -59,12 +44,10 @@ async fn seed_goal(store: &Store, orchestrator: &Profile, max_tasks: Option<i64>
     (goal, repo)
 }
 
-/// The ramp almost every test starts on: a fresh database holding one
-/// orchestrator profile, one goal, the repository that goal works in, and one
-/// task on it.
+/// The ramp almost every test starts on: a fresh database holding one goal,
+/// the repository that goal works in, and one task on it.
 struct World {
     store: Store,
-    orchestrator: Profile,
     goal: Goal,
     repo: Repository,
     task: Task,
@@ -75,12 +58,10 @@ struct World {
 impl World {
     async fn new() -> Self {
         let (store, dir) = test_store().await;
-        let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
-        let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
+        let (goal, repo) = seed_goal(&store, None).await;
         let task = seed_task(&store, &goal, &repo, vec![]).await;
         Self {
             store,
-            orchestrator,
             goal,
             repo,
             task,
@@ -94,7 +75,7 @@ impl World {
         &self,
         tmux: &str,
         seat: Seat,
-        profile_id: &str,
+        agent_id: Option<&str>,
         task_id: Option<&str>,
     ) -> AgentSession {
         self.store
@@ -102,7 +83,7 @@ impl World {
                 goal_id: self.goal.id.clone(),
                 task_id: task_id.map(str::to_string),
                 seat,
-                profile_id: profile_id.to_string(),
+                task_agent_id: agent_id.map(str::to_string),
                 agent_kind: AgentKind::ClaudeCode,
                 model: None,
                 effort: None,
@@ -116,11 +97,11 @@ impl World {
 
     /// The author session of this world's task.
     async fn author_session(&self) -> AgentSession {
-        let profile = self.task.author_profile_id.clone();
+        let author = self.store.task_author(&self.task.id).await.unwrap();
         self.session(
             "ariadne-test-eng",
             Seat::Author,
-            &profile,
+            Some(&author.id),
             Some(&self.task.id),
         )
         .await
@@ -163,19 +144,12 @@ async fn walk_to(store: &Store, task_id: &str, upto: TaskStatus) -> Task {
     task
 }
 
+/// A task's author, which is where its pin lives.
+async fn author_of(store: &Store, task: &Task) -> ariadne_store::TaskAgent {
+    store.task_author(&task.id).await.unwrap()
+}
+
 async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<String>) -> Task {
-    let eng = seed_profile(
-        store,
-        &format!("eng-{}", ariadne_core::id::new_id()),
-        Seat::Author,
-    )
-    .await;
-    let rev = seed_profile(
-        store,
-        &format!("rev-{}", ariadne_core::id::new_id()),
-        Seat::Reviewer,
-    )
-    .await;
     store
         .create_task(NewTask {
             goal_id: goal.id.clone(),
@@ -261,41 +235,6 @@ async fn agent_config_flags_are_replaced_whole() {
             .extra_flags(),
         vec!["--permission-mode=acceptEdits".to_string()]
     );
-}
-
-#[tokio::test]
-async fn profile_crud_and_delete_guard() {
-    let (store, _dir) = test_store().await;
-    let p = seed_profile(&store, "orchestrator-1", Seat::Orchestrator).await;
-    assert_eq!(p.seat(), Seat::Orchestrator);
-
-    // Unique name enforced.
-    let dup = store
-        .create_profile(NewProfile {
-            name: "orchestrator-1".into(),
-            seat: Seat::Orchestrator,
-            agent_kind: Some(AgentKind::Codex),
-            model: None,
-            effort: None,
-            system_prompt: Some("x".into()),
-        })
-        .await;
-    assert!(matches!(dup, Err(StoreError::Conflict(_))));
-
-    // Delete blocked while referenced.
-    let (_goal, _repo) = seed_goal(&store, &p, None).await;
-    assert!(matches!(
-        store.delete_profile(&p.id).await,
-        Err(StoreError::Conflict(_))
-    ));
-
-    // Unreferenced profile deletes fine.
-    let q = seed_profile(&store, "orchestrator-2", Seat::Orchestrator).await;
-    store.delete_profile(&q.id).await.unwrap();
-    assert!(matches!(
-        store.get_profile(&q.id).await,
-        Err(StoreError::NotFound { .. })
-    ));
 }
 
 #[tokio::test]
@@ -599,7 +538,6 @@ async fn a_landing_briefing_naming_an_unknown_placeholder_is_refused() {
 #[tokio::test]
 async fn a_goal_reads_its_repositories_live() {
     let (store, _dir) = test_store().await;
-    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
     let api = seed_repository(&store).await;
     let ui = seed_repository(&store).await;
 
@@ -607,7 +545,6 @@ async fn a_goal_reads_its_repositories_live() {
         .create_goal(NewGoal {
             title: "Two repos".into(),
             description: "desc".into(),
-            orchestrator_profile_id: orchestrator.id.clone(),
             max_tasks: None,
             required_approvals: 1,
             // The same repository named twice is one reference.
@@ -646,12 +583,10 @@ async fn a_goal_reads_its_repositories_live() {
 #[tokio::test]
 async fn a_goal_needs_repositories_that_exist() {
     let (store, _dir) = test_store().await;
-    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
     let repo = seed_repository(&store).await;
     let new_goal = |repository_ids: Vec<String>| NewGoal {
         title: "Goal".into(),
         description: "desc".into(),
-        orchestrator_profile_id: orchestrator.id.clone(),
         max_tasks: None,
         required_approvals: 1,
         repository_ids,
@@ -675,8 +610,6 @@ async fn a_goal_needs_repositories_that_exist() {
     // A task can only work in a repository its goal references.
     let goal = store.create_goal(new_goal(vec![repo.id])).await.unwrap();
     let unrelated = seed_repository(&store).await;
-    let eng = seed_profile(&store, "eng", Seat::Author).await;
-    let rev = seed_profile(&store, "rev", Seat::Reviewer).await;
     assert!(matches!(
         store
             .create_task(NewTask {
@@ -723,8 +656,6 @@ async fn a_repository_a_goal_holds_cannot_be_deleted() {
 #[tokio::test]
 async fn task_branch_is_named_after_the_title() {
     let w = World::new().await;
-    let eng = seed_profile(&w.store, "eng", Seat::Author).await;
-    let rev = seed_profile(&w.store, "rev", Seat::Reviewer).await;
     let task = w
         .store
         .create_task(NewTask {
@@ -812,12 +743,9 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
 #[tokio::test]
 async fn max_tasks_is_enforced() {
     let (store, _dir) = test_store().await;
-    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
-    let (goal, repo) = seed_goal(&store, &orchestrator, Some(1)).await;
+    let (goal, repo) = seed_goal(&store, Some(1)).await;
     let _t1 = seed_task(&store, &goal, &repo, vec![]).await;
 
-    let eng = seed_profile(&store, "eng-x", Seat::Author).await;
-    let rev = seed_profile(&store, "rev-x", Seat::Reviewer).await;
     let t2 = store
         .create_task(NewTask {
             goal_id: goal.id.clone(),
@@ -971,13 +899,13 @@ async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
 async fn one_review_verdict_per_round() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
-    let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0);
+    let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0).id;
 
     store
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: 1,
-            reviewer_profile_id: reviewer.clone(),
+            reviewer_agent_id: reviewer.clone(),
             session_id: None,
             verdict: ReviewVerdict::RequestChanges,
             body: Some("please fix".into()),
@@ -989,7 +917,7 @@ async fn one_review_verdict_per_round() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: 1,
-            reviewer_profile_id: reviewer.clone(),
+            reviewer_agent_id: reviewer.clone(),
             session_id: None,
             verdict: ReviewVerdict::Approve,
             body: None,
@@ -1002,7 +930,7 @@ async fn one_review_verdict_per_round() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: 2,
-            reviewer_profile_id: reviewer,
+            reviewer_agent_id: reviewer,
             session_id: None,
             verdict: ReviewVerdict::Approve,
             body: None,
@@ -1794,11 +1722,12 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
     let author = w.author_session().await;
+    let staffed = w.store.list_task_reviewers(&task.id).await.unwrap();
     let reviewer = w
         .session(
             "ariadne-test-rev",
             Seat::Reviewer,
-            &w.orchestrator.id.clone(),
+            Some(&staffed[0].id),
             Some(&task.id),
         )
         .await;
@@ -1851,13 +1780,9 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
     assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
 
     // An orchestrator has no task to project onto, and says so on its own row.
+    // An orchestrator is staffed on no task, so its session carries no agent.
     let alone = w
-        .session(
-            "ariadne-test-plan",
-            Seat::Orchestrator,
-            &w.orchestrator.id.clone(),
-            None,
-        )
+        .session("ariadne-test-plan", Seat::Orchestrator, None, None)
         .await;
     store
         .set_session_attention(&alone.id, AttentionReason::Stalled)
@@ -2017,8 +1942,7 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
 #[tokio::test]
 async fn every_goal_status_round_trips_through_the_database() {
     let (store, _dir) = test_store().await;
-    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
-    let (goal, _) = seed_goal(&store, &orchestrator, None).await;
+    let (goal, _) = seed_goal(&store, None).await;
 
     for status in GoalStatus::ALL {
         assert_eq!(
@@ -2037,10 +1961,9 @@ async fn every_goal_status_round_trips_through_the_database() {
 #[tokio::test]
 async fn list_goals_filters_by_any_of_the_given_statuses() {
     let (store, _dir) = test_store().await;
-    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
-    let (planning, _) = seed_goal(&store, &orchestrator, None).await;
-    let (active, _) = seed_goal(&store, &orchestrator, None).await;
-    let (cancelled, _) = seed_goal(&store, &orchestrator, None).await;
+    let (planning, _) = seed_goal(&store, None).await;
+    let (active, _) = seed_goal(&store, None).await;
+    let (cancelled, _) = seed_goal(&store, None).await;
     store
         .set_goal_status(&active.id, GoalStatus::Active)
         .await
@@ -2089,83 +2012,6 @@ async fn goal_cascade_delete_cleans_children() {
     ));
 }
 
-/// A fresh database holds three profiles and not one prompt of their own:
-/// what they are briefed with is the code's, which is what a NULL
-/// `system_prompt` means. There is no table for a lifecycle briefing at all.
-#[tokio::test]
-async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default() {
-    let (store, _dir) = test_store().await;
-    for (name, seat) in [
-        ("Orchestrator", Seat::Orchestrator),
-        ("Author", Seat::Author),
-        ("Reviewer", Seat::Reviewer),
-    ] {
-        let p = store.get_profile_by_name(name).await.unwrap();
-        assert_eq!(p.seat(), seat);
-        assert!(p.agent_kind().is_none(), "{name} must have no agent kind");
-        assert!(p.model.is_none(), "{name} must have no model");
-        assert!(
-            p.system_prompt.is_none(),
-            "{name} stores no system prompt of its own"
-        );
-        assert_eq!(
-            p.effective_system_prompt(),
-            default_system_prompt(seat),
-            "{name} is briefed with the seat default system prompt"
-        );
-        assert!(
-            p.effective_system_prompt().contains("Ariadne"),
-            "{name}'s system prompt says what it is the seat of"
-        );
-    }
-
-    // And a lifecycle briefing is stored nowhere: the table is gone.
-    assert!(!has_table(&_dir, "profile_prompts").await);
-
-    // Fixed, recognizable ids; the reviewer carries the newer persona.
-    let reviewer = store.get_profile_by_name("Reviewer").await.unwrap();
-    assert_eq!(reviewer.id, "00000000000000000000000003");
-    assert!(
-        reviewer
-            .effective_system_prompt()
-            .contains("Install what it needs. Build, test and lint in this worktree"),
-        "reviewers are told to install what it needs and verify"
-    );
-    // User edits stick.
-    let author = store.get_profile_by_name("Author").await.unwrap();
-    assert_eq!(author.id, "00000000000000000000000002");
-    store
-        .update_profile(
-            &author.id,
-            ProfileUpdate {
-                system_prompt: Some("custom".into()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    let author = store.get_profile_by_name("Author").await.unwrap();
-    assert_eq!(author.system_prompt.as_deref(), Some("custom"));
-    assert_eq!(author.effective_system_prompt(), "custom");
-}
-
-/// Whether the schema holds a table of that name, read from the file itself:
-/// what the store answers says nothing about which tables are behind it.
-async fn has_table(dir: &tempfile::TempDir, name: &str) -> bool {
-    let path = dir.path().join("test.db");
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
-        .await
-        .unwrap();
-    let found: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
-            .bind(name)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    pool.close().await;
-    found > 0
-}
-
 /// Seeding keys off an empty `profiles` table only: deleting a built-in is
 /// permanent, and a reopened database is not re-seeded behind the user's back.
 #[tokio::test]
@@ -2174,1036 +2020,86 @@ async fn built_ins_are_not_recreated_on_reopen() {
     let path = dir.path().join("test.db");
 
     let store = Store::open(&path).await.unwrap();
-    let orchestrator = store.get_profile_by_name("Orchestrator").await.unwrap();
-    store.delete_profile(&orchestrator.id).await.unwrap();
-    let author = store.get_profile_by_name("Author").await.unwrap();
     store
-        .update_profile(
-            &author.id,
-            ProfileUpdate {
-                system_prompt: Some("mine".into()),
-                ..Default::default()
-            },
-        )
+        .set_skill_document("coding", "---\nname: coding\ndescription: mine\n---\n")
         .await
         .unwrap();
     drop(store);
 
     let store = Store::open(&path).await.unwrap();
-    assert!(matches!(
-        store.get_profile_by_name("Orchestrator").await,
-        Err(StoreError::NotFound { .. })
-    ));
-    let author = store.get_profile_by_name("Author").await.unwrap();
-    assert_eq!(author.system_prompt.as_deref(), Some("mine"));
+    let coding = store.get_skill("coding").await.unwrap();
+    assert_eq!(coding.summary(), "mine", "the edit survived the reopen");
+    assert!(
+        !coding.document_is_default(),
+        "and was not seeded back over"
+    );
 }
 
+/// A pin is written exactly as it was given, and nothing at all is auto.
+///
+/// There is no longer anything behind a pin to inherit from: what the
+/// orchestrator sized an agent at, or what the user chose instead, is the
+/// whole of the answer. This is the rule that replaced the profile-effort
+/// inheritance the store used to run.
 #[tokio::test]
-async fn a_new_profile_starts_on_the_seat_defaults_and_stores_none_of_them() {
+async fn an_agent_is_written_on_the_pin_it_was_given_and_auto_where_it_was_given_none() {
     let (store, _dir) = test_store().await;
-    let reviewer = seed_profile(&store, "rev-strict", Seat::Reviewer).await;
+    let (goal, repo) = seed_goal(&store, None).await;
 
-    // Its system prompt is the one it was created with, not the seat default.
-    assert_eq!(
-        reviewer.system_prompt.as_deref(),
-        Some("You are rev-strict.")
-    );
-    assert!(!reviewer.system_prompt_is_default());
-
-    // Created without one, it follows its seat's instead.
-    let plain = store
-        .create_profile(NewProfile {
-            name: "rev-plain".into(),
-            seat: Seat::Reviewer,
-            agent_kind: None,
-            model: None,
-            effort: None,
-            system_prompt: None,
+    let pinned = AgentPin {
+        agent_kind: AgentKind::Codex,
+        model: Some("gpt-5.6-luna".into()),
+        effort: Some("max".into()),
+    };
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Staffed".into(),
+            description: "do things".into(),
+            agents: vec![
+                NewTaskAgent {
+                    pin: Some(pinned.clone()),
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
+            ],
+            depends_on: vec![],
         })
         .await
         .unwrap();
-    assert!(plain.system_prompt.is_none());
-    assert_eq!(
-        plain.effective_system_prompt(),
-        default_system_prompt(Seat::Reviewer)
-    );
-}
 
-/// Setting the system prompt is what writes a text, and resetting is what
-/// takes it away again: what is left over is the seat default, which nothing
-/// stores.
-#[tokio::test]
-async fn a_system_prompt_is_stored_only_while_it_is_set_and_a_reset_deletes_it() {
-    let (store, _dir) = test_store().await;
-    let author = store.get_profile_by_name("Author").await.unwrap();
-    assert!(author.system_prompt.is_none());
+    let author = store.task_author(&task.id).await.unwrap();
+    assert_eq!(author.agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(author.model.as_deref(), Some("gpt-5.6-luna"));
+    assert_eq!(author.effort.as_deref(), Some("max"));
 
-    let updated = store
-        .update_profile(
+    let reviewers = store.list_task_reviewers(&task.id).await.unwrap();
+    assert_eq!(reviewers[0].agent_kind(), None, "nothing chosen is auto");
+    assert_eq!(reviewers[0].model, None);
+    assert_eq!(reviewers[0].effort, None);
+
+    // And the user's later choice replaces it whole, with no half left behind.
+    let moved = store
+        .set_agent_pin(
             &author.id,
-            ProfileUpdate {
-                system_prompt: Some("custom".into()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(updated.system_prompt.as_deref(), Some("custom"));
-    assert_eq!(updated.effective_system_prompt(), "custom");
-    assert!(!updated.system_prompt_is_default());
-
-    let restored = store.reset_system_prompt(&author.id).await.unwrap();
-    assert!(restored.system_prompt.is_none());
-    assert!(restored.system_prompt_is_default());
-    assert_eq!(
-        restored.effective_system_prompt(),
-        default_system_prompt(Seat::Author)
-    );
-
-    // An unknown profile is a proper error, not a panic.
-    assert!(matches!(
-        store
-            .reset_system_prompt("01ARZ3NDEKTSV4RRFFQ69G5FAV")
-            .await,
-        Err(StoreError::NotFound { .. })
-    ));
-}
-
-/// A profile with an agent and model of its own, for the pinning tests.
-async fn seed_pinned_profile(
-    store: &Store,
-    name: &str,
-    seat: Seat,
-    agent_kind: Option<AgentKind>,
-    model: Option<&str>,
-) -> Profile {
-    store
-        .create_profile(NewProfile {
-            name: name.into(),
-            seat,
-            agent_kind,
-            model: model.map(str::to_string),
-            effort: None,
-            system_prompt: Some(format!("You are {name}.")),
-        })
-        .await
-        .unwrap()
-}
-
-/// Creation snapshots the agent and model off the profiles; editing a profile
-/// afterwards moves nothing that already exists. The goal, the task and every
-/// reviewer slot pin separately, from the profile each of them names.
-#[tokio::test]
-async fn creation_pins_the_agent_and_model_of_every_profile() {
-    let (store, _dir) = test_store().await;
-    let orchestrator = seed_pinned_profile(
-        &store,
-        "orchestrator-pin",
-        Seat::Orchestrator,
-        Some(AgentKind::ClaudeCode),
-        Some("opus"),
-    )
-    .await;
-    let author = seed_pinned_profile(
-        &store,
-        "author-pin",
-        Seat::Author,
-        Some(AgentKind::Codex),
-        Some("gpt-5"),
-    )
-    .await;
-    let reviewer = seed_pinned_profile(
-        &store,
-        "reviewer-pin",
-        Seat::Reviewer,
-        Some(AgentKind::Opencode),
-        Some("sonnet"),
-    )
-    .await;
-
-    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
-    let task = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "task".into(),
-            description: "do things".into(),
-            agents: vec![
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
-                },
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                },
-            ],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(goal.agent_kind(), Some(AgentKind::ClaudeCode));
-    assert_eq!(goal.model.as_deref(), Some("opus"));
-    assert_eq!(task.agent_kind(), Some(AgentKind::Codex));
-    assert_eq!(task.model.as_deref(), Some("gpt-5"));
-    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
-    assert_eq!(pins.len(), 1);
-    assert_eq!(pins[0].profile_id, reviewer.id);
-    assert_eq!(pins[0].position, 0);
-    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Opencode));
-    assert_eq!(pins[0].model.as_deref(), Some("sonnet"));
-
-    // Every profile is moved to a different agent and a different model.
-    for profile in [&orchestrator, &author, &reviewer] {
-        store
-            .update_profile(
-                &profile.id,
-                ProfileUpdate {
-                    agent_kind: Some(Some(AgentKind::ClaudeCode)),
-                    model: Some(Some("haiku".into())),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-    }
-    assert_eq!(
-        store
-            .get_profile(&author.id)
-            .await
-            .unwrap()
-            .model
-            .as_deref(),
-        Some("haiku"),
-        "the edit did land on the profile"
-    );
-
-    // And nothing already created followed it.
-    let goal = store.get_goal(&goal.id).await.unwrap();
-    assert_eq!(goal.agent_kind(), Some(AgentKind::ClaudeCode));
-    assert_eq!(goal.model.as_deref(), Some("opus"));
-    let task = store.get_task(&task.id).await.unwrap();
-    assert_eq!(task.agent_kind(), Some(AgentKind::Codex));
-    assert_eq!(task.model.as_deref(), Some("gpt-5"));
-    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
-    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Opencode));
-    assert_eq!(pins[0].model.as_deref(), Some("sonnet"));
-}
-
-/// Auto and CLI-default are pin values like any other: a task created off an
-/// unpinned profile stays auto even after the profile picks an agent, rather
-/// than reading as "not pinned yet" and resolving live.
-#[tokio::test]
-async fn auto_and_default_are_pinned_as_such() {
-    let (store, _dir) = test_store().await;
-    let orchestrator = seed_pinned_profile(&store, "orchestrator-auto", Seat::Orchestrator, None, None).await;
-    let author = seed_pinned_profile(&store, "author-auto", Seat::Author, None, None).await;
-    let reviewer = seed_pinned_profile(&store, "reviewer-auto", Seat::Reviewer, None, None).await;
-
-    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
-    let task = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "task".into(),
-            description: "do things".into(),
-            agents: vec![
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
-                },
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                },
-            ],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(goal.agent_kind(), None);
-    assert_eq!(goal.model, None);
-    assert_eq!(task.agent_kind(), None);
-    assert_eq!(task.model, None);
-
-    for profile in [&orchestrator, &author, &reviewer] {
-        store
-            .update_profile(
-                &profile.id,
-                ProfileUpdate {
-                    agent_kind: Some(Some(AgentKind::Codex)),
-                    model: Some(Some("gpt-5".into())),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-    }
-
-    let goal = store.get_goal(&goal.id).await.unwrap();
-    assert_eq!(goal.agent_kind(), None, "still auto");
-    assert_eq!(goal.model, None, "still the CLI default");
-    let task = store.get_task(&task.id).await.unwrap();
-    assert_eq!(task.agent_kind(), None, "still auto");
-    assert_eq!(task.model, None, "still the CLI default");
-    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
-    assert_eq!(pins[0].agent_kind(), None);
-    assert_eq!(pins[0].model, None);
-}
-
-/// Reassigning reviewers writes new slots, so each one pins the profile as it
-/// stands at that moment — not what it was when the task was created.
-#[tokio::test]
-async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
-    let (store, _dir) = test_store().await;
-    let orchestrator = seed_pinned_profile(&store, "orchestrator-re", Seat::Orchestrator, None, None).await;
-    let author = seed_pinned_profile(&store, "author-re", Seat::Author, None, None).await;
-    let first = seed_pinned_profile(
-        &store,
-        "reviewer-re-1",
-        Seat::Reviewer,
-        Some(AgentKind::ClaudeCode),
-        Some("opus"),
-    )
-    .await;
-    let second = seed_pinned_profile(
-        &store,
-        "reviewer-re-2",
-        Seat::Reviewer,
-        Some(AgentKind::Codex),
-        Some("gpt-5"),
-    )
-    .await;
-
-    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
-    let task = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "task".into(),
-            description: "do things".into(),
-            agents: vec![
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
-                },
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                },
-            ],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-
-    store
-        .update_profile(
-            &second.id,
-            ProfileUpdate {
-                model: Some(Some("gpt-5-codex".into())),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                reviewers: Some(vec![
-                    ReviewerSlot::of(&second.id),
-                    ReviewerSlot::of(&first.id),
-                ]),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-
-    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
-    assert_eq!(
-        pins.iter()
-            .map(|p| p.profile_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![second.id.as_str(), first.id.as_str()]
-    );
-    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Codex));
-    assert_eq!(
-        pins[0].model.as_deref(),
-        Some("gpt-5-codex"),
-        "as it is now"
-    );
-    assert_eq!(pins[1].agent_kind(), Some(AgentKind::ClaudeCode));
-    assert_eq!(pins[1].model.as_deref(), Some("opus"));
-}
-
-/// An agent and model chosen for a goal, a task or a slot are what gets
-/// pinned — the profile's own pins are what a slot with no choice on it falls
-/// back to, not a floor the choice is merged into. A pin naming only its agent
-/// writes a null model, which is that CLI's own default.
-#[tokio::test]
-async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
-    let (store, _dir) = test_store().await;
-    let orchestrator = seed_pinned_profile(
-        &store,
-        "orchestrator-chosen",
-        Seat::Orchestrator,
-        Some(AgentKind::ClaudeCode),
-        Some("claude-opus-5"),
-    )
-    .await;
-    let author = seed_pinned_profile(
-        &store,
-        "author-chosen",
-        Seat::Author,
-        Some(AgentKind::ClaudeCode),
-        Some("claude-opus-5"),
-    )
-    .await;
-    let chosen = seed_pinned_profile(
-        &store,
-        "reviewer-chosen",
-        Seat::Reviewer,
-        Some(AgentKind::ClaudeCode),
-        Some("claude-opus-5"),
-    )
-    .await;
-    let untouched = seed_pinned_profile(
-        &store,
-        "reviewer-untouched",
-        Seat::Reviewer,
-        Some(AgentKind::Opencode),
-        Some("ollama/llama3:8b"),
-    )
-    .await;
-
-    let repo = seed_repository(&store).await;
-    let goal = store
-        .create_goal(NewGoal {
-            title: "Chosen".into(),
-            description: "desc".into(),
-            orchestrator_profile_id: orchestrator.id.clone(),
-            max_tasks: None,
-            required_approvals: 1,
-            repository_ids: vec![repo.id.clone()],
-            pin: Some(AgentPin {
-                agent_kind: AgentKind::Codex,
-                model: Some("gpt-5.3-codex".into()),
-                effort: None,
-            }),
-        })
-        .await
-        .unwrap();
-    assert_eq!(goal.agent_kind(), Some(AgentKind::Codex));
-    assert_eq!(goal.model.as_deref(), Some("gpt-5.3-codex"));
-
-    let task = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "task".into(),
-            description: "do things".into(),
-            author_profile_id: author.id.clone(),
-            pin: Some(AgentPin {
-                agent_kind: AgentKind::Codex,
-                model: Some("gpt-5.6-sol".into()),
-                effort: None,
-            }),
-            reviewers: vec![
-                ReviewerSlot {
-                    profile_id: chosen.id.clone(),
-                    pin: Some(AgentPin {
-                        agent_kind: AgentKind::Opencode,
-                        model: Some("ollama/llama3:8b".into()),
-                        effort: None,
-                    }),
-                },
-                ReviewerSlot::of(&untouched.id),
-            ],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(task.agent_kind(), Some(AgentKind::Codex));
-    assert_eq!(task.model.as_deref(), Some("gpt-5.6-sol"));
-    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
-    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Opencode));
-    assert_eq!(pins[0].model.as_deref(), Some("ollama/llama3:8b"));
-    assert_eq!(
-        pins[1].agent_kind(),
-        Some(AgentKind::Opencode),
-        "the slot nobody chose for took its profile's"
-    );
-    assert_eq!(pins[1].model.as_deref(), Some("ollama/llama3:8b"));
-
-    // A goal created without a choice is the case that must not have moved.
-    let plain = store
-        .create_goal(NewGoal {
-            title: "Plain".into(),
-            description: "desc".into(),
-            orchestrator_profile_id: orchestrator.id.clone(),
-            max_tasks: None,
-            required_approvals: 1,
-            repository_ids: vec![repo.id.clone()],
-            pin: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(plain.agent_kind(), Some(AgentKind::ClaudeCode));
-    assert_eq!(plain.model.as_deref(), Some("claude-opus-5"));
-
-    // An agent with no model of its own: the CLI is pinned and the model is
-    // left null, which is the CLI's default rather than the profile's model.
-    let agent_only = store
-        .create_goal(NewGoal {
-            title: "Agent only".into(),
-            description: "desc".into(),
-            orchestrator_profile_id: orchestrator.id.clone(),
-            max_tasks: None,
-            required_approvals: 1,
-            repository_ids: vec![repo.id.clone()],
-            pin: Some(AgentPin {
-                agent_kind: AgentKind::Opencode,
+            Some(&AgentPin {
+                agent_kind: AgentKind::ClaudeCode,
                 model: None,
                 effort: None,
             }),
-        })
-        .await
-        .unwrap();
-    assert_eq!(agent_only.agent_kind(), Some(AgentKind::Opencode));
-    assert_eq!(agent_only.model, None);
-}
-
-/// Editing a pending task moves its pins and puts them back: cleared, they
-/// return to the author profile's as it stands at that moment, which is the
-/// same rule reassigning a reviewer follows.
-#[tokio::test]
-async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
-    let (store, _dir) = test_store().await;
-    let orchestrator = seed_pinned_profile(&store, "orchestrator-edit", Seat::Orchestrator, None, None).await;
-    let author = seed_pinned_profile(
-        &store,
-        "author-edit",
-        Seat::Author,
-        Some(AgentKind::ClaudeCode),
-        Some("claude-opus-5"),
-    )
-    .await;
-    let reviewer = seed_pinned_profile(
-        &store,
-        "reviewer-edit",
-        Seat::Reviewer,
-        Some(AgentKind::ClaudeCode),
-        Some("claude-opus-5"),
-    )
-    .await;
-    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
-    let task = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "task".into(),
-            description: "do things".into(),
-            agents: vec![
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
-                },
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                },
-            ],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-
-    let moved = store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                pin: Some(Some(AgentPin {
-                    agent_kind: AgentKind::Codex,
-                    model: Some("gpt-5.3-codex".into()),
-                    effort: None,
-                })),
-                reviewers: Some(vec![ReviewerSlot {
-                    profile_id: reviewer.id.clone(),
-                    pin: Some(AgentPin {
-                        agent_kind: AgentKind::Codex,
-                        model: Some("o3".into()),
-                        effort: None,
-                    }),
-                }]),
-                ..Default::default()
-            },
         )
         .await
         .unwrap();
-    assert_eq!(moved.agent_kind(), Some(AgentKind::Codex));
-    assert_eq!(moved.model.as_deref(), Some("gpt-5.3-codex"));
-    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
-    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Codex));
-    assert_eq!(pins[0].model.as_deref(), Some("o3"));
-
-    // An edit that says nothing about the model leaves the choice standing.
-    let renamed = store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                title: Some("renamed".into()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(renamed.title, "renamed");
-    assert_eq!(renamed.model.as_deref(), Some("gpt-5.3-codex"));
-
-    // Cleared, the task is back on the profile — the profile as it is now.
-    store
-        .update_profile(
-            &author.id,
-            ProfileUpdate {
-                agent_kind: Some(Some(AgentKind::Opencode)),
-                model: Some(Some("ollama/llama3:8b".into())),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    let cleared = store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                pin: Some(None),
-                reviewers: Some(vec![ReviewerSlot::of(&reviewer.id)]),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(cleared.agent_kind(), Some(AgentKind::Opencode));
-    assert_eq!(cleared.model.as_deref(), Some("ollama/llama3:8b"));
-    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
-    assert_eq!(pins[0].agent_kind(), Some(AgentKind::ClaudeCode));
-    assert_eq!(pins[0].model.as_deref(), Some("claude-opus-5"));
-}
-
-/// A profile with an agent, a model and an effort of its own, for the effort
-/// tests: what a goal, a task and a slot pin off it.
-async fn seed_profile_at(
-    store: &Store,
-    name: &str,
-    seat: Seat,
-    agent_kind: Option<AgentKind>,
-    model: Option<&str>,
-    effort: Option<&str>,
-) -> Profile {
-    store
-        .create_profile(NewProfile {
-            name: name.into(),
-            seat,
-            agent_kind,
-            model: model.map(str::to_string),
-            effort: effort.map(str::to_string),
-            system_prompt: Some(format!("You are {name}.")),
-        })
-        .await
-        .unwrap()
-}
-
-/// A profile keeps the effort it was created at, an edit moves it, and
-/// clearing it puts the profile back on whatever the CLI runs its model at —
-/// the same three things `model` does, in its own column.
-#[tokio::test]
-async fn a_profile_keeps_moves_and_clears_the_effort_it_runs_at() {
-    let (store, _dir) = test_store().await;
-    let profile = seed_profile_at(
-        &store,
-        "author-effort",
-        Seat::Author,
-        Some(AgentKind::ClaudeCode),
-        Some("claude-opus-5"),
-        Some("xhigh"),
-    )
-    .await;
-    assert_eq!(profile.effort.as_deref(), Some("xhigh"));
-    let read = store.get_profile(&profile.id).await.unwrap();
-    assert_eq!(read.effort.as_deref(), Some("xhigh"), "and it round-trips");
-
-    // An edit about something else leaves it exactly where it was.
-    let renamed = store
-        .update_profile(
-            &profile.id,
-            ProfileUpdate {
-                name: Some("renamed".into()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(renamed.effort.as_deref(), Some("xhigh"));
-
-    let moved = store
-        .update_profile(
-            &profile.id,
-            ProfileUpdate {
-                effort: Some(Some("max".into())),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(moved.effort.as_deref(), Some("max"));
-
-    let cleared = store
-        .update_profile(
-            &profile.id,
-            ProfileUpdate {
-                effort: Some(None),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(cleared.effort, None);
+    assert_eq!(moved.agent_kind(), Some(AgentKind::ClaudeCode));
+    assert_eq!(moved.model, None, "that CLI's own default model");
     assert_eq!(
-        cleared.model.as_deref(),
-        Some("claude-opus-5"),
-        "clearing the effort leaves the model it was run at alone"
+        moved.effort, None,
+        "the effort belonged to the model that was left behind"
     );
-}
 
-/// The effort is pinned everywhere the model is: off the profile behind a
-/// goal, a task and every reviewer slot at creation, moved and handed back by
-/// an edit, and copied onto the session the launcher opens.
-#[tokio::test]
-async fn creation_pins_the_effort_beside_the_model() {
-    let (store, _dir) = test_store().await;
-    let orchestrator = seed_profile_at(
-        &store,
-        "orchestrator-effort",
-        Seat::Orchestrator,
-        Some(AgentKind::ClaudeCode),
-        Some("claude-opus-5"),
-        Some("high"),
-    )
-    .await;
-    let author = seed_profile_at(
-        &store,
-        "author-effort",
-        Seat::Author,
-        Some(AgentKind::Codex),
-        Some("gpt-5.6-sol"),
-        Some("ultra"),
-    )
-    .await;
-    let inherits = seed_profile_at(
-        &store,
-        "reviewer-inherits",
-        Seat::Reviewer,
-        Some(AgentKind::ClaudeCode),
-        Some("claude-sonnet-5"),
-        Some("low"),
-    )
-    .await;
-    let chosen = seed_profile_at(
-        &store,
-        "reviewer-chosen",
-        Seat::Reviewer,
-        Some(AgentKind::ClaudeCode),
-        Some("claude-sonnet-5"),
-        Some("low"),
-    )
-    .await;
-
-    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
-    assert_eq!(goal.effort.as_deref(), Some("high"));
-
-    let task = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "task".into(),
-            description: "do things".into(),
-            agents: vec![
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
-                },
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                },
-            ],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-    assert_eq!(task.effort.as_deref(), Some("ultra"));
-    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
-    assert_eq!(pins[0].effort.as_deref(), Some("low"), "the profile's own");
-    assert_eq!(pins[1].model.as_deref(), Some("gpt-5.6-luna"));
-    assert_eq!(pins[1].effort.as_deref(), Some("max"), "the slot's own");
-
-    // An edit moves the pair, and handing it back hands back the profile's.
-    let moved = store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                pin: Some(Some(AgentPin {
-                    agent_kind: AgentKind::ClaudeCode,
-                    model: Some("claude-opus-5".into()),
-                    effort: Some("xhigh".into()),
-                })),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(moved.model.as_deref(), Some("claude-opus-5"));
-    assert_eq!(moved.effort.as_deref(), Some("xhigh"));
-
-    let back = store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                pin: Some(None),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(back.model.as_deref(), Some("gpt-5.6-sol"));
-    assert_eq!(back.effort.as_deref(), Some("ultra"));
-
-    // An effort of its own moves alone, and clears alone: the model the task
-    // is pinned to is what it is run at, and it stays where it is.
-    let raised = store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                effort: Some(Some("low".into())),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(raised.model.as_deref(), Some("gpt-5.6-sol"));
-    assert_eq!(raised.effort.as_deref(), Some("low"));
-    let dropped = store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                effort: Some(None),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(dropped.model.as_deref(), Some("gpt-5.6-sol"));
-    assert_eq!(dropped.effort, None);
-
-    // A pin that moves carries its own effort, and the field beside it is not
-    // read: one edit says one thing about what the task runs at.
-    let both = store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                pin: Some(Some(AgentPin {
-                    agent_kind: AgentKind::Codex,
-                    model: Some("gpt-5.6-luna".into()),
-                    effort: Some("max".into()),
-                })),
-                effort: Some(Some("low".into())),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(both.model.as_deref(), Some("gpt-5.6-luna"));
-    assert_eq!(both.effort.as_deref(), Some("max"));
-
-    // Back where the session below expects it.
-    let back = store
-        .update_task(
-            &task.id,
-            TaskUpdate {
-                pin: Some(None),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-
-    // And the session the launcher opens carries what the task was pinned to.
-    let session = store
-        .create_session(NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            seat: Seat::Author,
-            profile_id: author.id.clone(),
-            agent_kind: AgentKind::Codex,
-            model: back.model.clone(),
-            effort: back.effort.clone(),
-            tmux_session: "ariadne-effort".into(),
-            worktree_path: None,
-            review_round: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(session.effort.as_deref(), Some("ultra"));
-    let read = store.get_session(&session.id).await.unwrap();
-    assert_eq!(read.effort.as_deref(), Some("ultra"), "and it round-trips");
-}
-
-/// The rule an override is resolved by: the model is the override's, and the
-/// effort is the override's or else the profile's — but the profile's only
-/// where the model is the profile's too, since the effort it was on may not
-/// exist on the model the row was moved to.
-#[tokio::test]
-async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
-    let (store, _dir) = test_store().await;
-    let orchestrator = seed_profile_at(&store, "orchestrator-rule", Seat::Orchestrator, None, None, None).await;
-    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
-
-    let sol = || Some("gpt-5.6-sol".to_string());
-    // Each case is what it is called, the override it writes, and the model
-    // and effort the row must come out on.
-    let cases = vec![
-        (
-            "an override naming both takes both",
-            Some(AgentPin {
-                agent_kind: AgentKind::Codex,
-                model: Some("gpt-5.6-luna".into()),
-                effort: Some("max".into()),
-            }),
-            Some("gpt-5.6-luna"),
-            Some("max"),
-        ),
-        (
-            "an override on the profile's own model keeps its effort",
-            Some(AgentPin {
-                agent_kind: AgentKind::Codex,
-                model: sol(),
-                effort: None,
-            }),
-            Some("gpt-5.6-sol"),
-            Some("ultra"),
-        ),
-        (
-            "an override onto another model runs at the CLI's own default",
-            Some(AgentPin {
-                agent_kind: AgentKind::Codex,
-                model: Some("gpt-5.6-luna".into()),
-                effort: None,
-            }),
-            Some("gpt-5.6-luna"),
-            None,
-        ),
-        (
-            "and another CLI's model of the same name is another model",
-            Some(AgentPin {
-                agent_kind: AgentKind::ClaudeCode,
-                model: sol(),
-                effort: None,
-            }),
-            Some("gpt-5.6-sol"),
-            None,
-        ),
-        (
-            "no override at all is the profile's, effort and all",
-            None,
-            Some("gpt-5.6-sol"),
-            Some("ultra"),
-        ),
-    ];
-
-    for (n, (case, pin, model, effort)) in cases.into_iter().enumerate() {
-        // A profile apiece: a slot is one row per profile, so every case needs
-        // its own pair to pin off.
-        let author = seed_profile_at(
-            &store,
-            &format!("author-rule-{n}"),
-            Seat::Author,
-            Some(AgentKind::Codex),
-            Some("gpt-5.6-sol"),
-            Some("ultra"),
-        )
-        .await;
-        let reviewer = seed_profile_at(
-            &store,
-            &format!("reviewer-rule-{n}"),
-            Seat::Reviewer,
-            Some(AgentKind::Codex),
-            Some("gpt-5.6-sol"),
-            Some("ultra"),
-        )
-        .await;
-        let task = store
-            .create_task(NewTask {
-                goal_id: goal.id.clone(),
-                repo_id: repo.id.clone(),
-                title: case.into(),
-                description: "do things".into(),
-                agents: vec![
-                    NewTaskAgent {
-                    pin: pin.clone(),
-                        ..NewTaskAgent::new(Seat::Author, ["coding"])
-                    },
-                    NewTaskAgent {
-                    pin: pin.clone(),
-                        ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                    },
-                ],
-                    pin: pin.clone(),
-                }],
-                depends_on: vec![],
-            })
-            .await
-            .unwrap();
-        assert_eq!(task.model.as_deref(), model, "{case}");
-        assert_eq!(task.effort.as_deref(), effort, "{case}");
-        let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
-        assert_eq!(pins[0].model.as_deref(), model, "the slot too: {case}");
-        assert_eq!(pins[0].effort.as_deref(), effort, "the slot too: {case}");
-    }
-
-    // A profile on no effort of its own has none to hand down, whatever the
-    // override leaves open.
-    let plain = seed_profile_at(
-        &store,
-        "author-rule-plain",
-        Seat::Author,
-        Some(AgentKind::Codex),
-        Some("gpt-5.6-sol"),
-        None,
-    )
-    .await;
-    let reviewer = seed_profile_at(
-        &store,
-        "reviewer-rule-plain",
-        Seat::Reviewer,
-        Some(AgentKind::Codex),
-        Some("gpt-5.6-sol"),
-        None,
-    )
-    .await;
-    let task = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "no effort to inherit".into(),
-            description: "do things".into(),
-            author_profile_id: plain.id.clone(),
-            pin: Some(AgentPin {
-                agent_kind: AgentKind::Codex,
-                model: sol(),
-                effort: None,
-            }),
-            reviewers: vec![ReviewerSlot::of(&reviewer.id)],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-    assert_eq!(task.model.as_deref(), Some("gpt-5.6-sol"));
-    assert_eq!(task.effort, None);
+    let cleared = store.set_agent_pin(&author.id, None).await.unwrap();
+    assert_eq!(cleared.agent_kind(), None, "back on auto");
 }
 
 /// A database written by a release from before the schema was squashed into
@@ -3353,12 +2249,12 @@ async fn a_source_replaces_its_own_totals_and_sources_add_up() {
 async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
     let w = World::new().await;
     let author = w.author_session().await;
-    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].clone();
+    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].id.clone();
     let first_round = w
         .session(
             "rev-round-1",
             Seat::Reviewer,
-            &reviewer_id,
+            Some(&reviewer_id),
             Some(&w.task.id),
         )
         .await;
@@ -3366,7 +2262,7 @@ async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
         .session(
             "rev-round-2",
             Seat::Reviewer,
-            &reviewer_id,
+            Some(&reviewer_id),
             Some(&w.task.id),
         )
         .await;
@@ -3386,14 +2282,14 @@ async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
     assert_eq!(
         grouped,
         vec![
-            ProfileUsage {
+            AgentUsage {
                 seat: Seat::Author,
-                profile_id: w.task.author_profile_id.clone(),
+                agent_id: author_of(&w.store, &w.task).await.id,
                 usage: usage(100, 80, 10),
             },
-            ProfileUsage {
+            AgentUsage {
                 seat: Seat::Reviewer,
-                profile_id: reviewer_id,
+                agent_id: reviewer_id,
                 usage: usage(25, 11, 6),
             },
         ]
@@ -3410,25 +2306,25 @@ async fn a_session_that_has_reported_nothing_reads_as_zeros() {
     let grouped = w.store.task_usage(&w.task.id).await.unwrap();
     assert_eq!(
         grouped,
-        vec![ProfileUsage {
+        vec![AgentUsage {
             seat: Seat::Author,
-            profile_id: w.task.author_profile_id.clone(),
+            agent_id: author_of(&w.store, &w.task).await.id,
             usage: TokenUsage::default(),
         }]
     );
 }
 
-/// A goal's usage is grouped by seat rather than by profile, and its
+/// A goal's usage is grouped by seat rather than by agent, and its
 /// orchestrator counts: an orchestrator session belongs to no task, so
 /// nothing under a task would ever have found it.
 #[tokio::test]
 async fn a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator() {
     let w = World::new().await;
-    let orchestrator = w.session("plan", Seat::Orchestrator, &w.orchestrator.id, None).await;
+    let orchestrator = w.session("plan", Seat::Orchestrator, None, None).await;
     let author = w.author_session().await;
-    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].clone();
+    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].id.clone();
     let reviewer = w
-        .session("rev", Seat::Reviewer, &reviewer_id, Some(&w.task.id))
+        .session("rev", Seat::Reviewer, Some(&reviewer_id), Some(&w.task.id))
         .await;
 
     for (session, spent) in [
@@ -3482,4 +2378,145 @@ async fn usage_goes_when_the_session_it_belonged_to_does() {
 
     w.store.delete_goal(&w.goal.id).await.unwrap();
     assert_eq!(usage_rows(&w._dir).await, 0);
+}
+
+/// A skill is created, read, written over and deleted by name; what Ariadne
+/// ships is refused deletion, and what the user wrote is refused a reset.
+#[tokio::test]
+async fn skill_crud_and_the_two_refusals_that_tell_them_apart() {
+    let (store, _dir) = test_store().await;
+
+    let shipped = store.get_skill("coding").await.unwrap();
+    assert!(shipped.is_builtin());
+    assert!(shipped.document_is_default());
+    assert_eq!(
+        shipped.document_text(),
+        ariadne_store::defaults::default_skill_document("coding").unwrap()
+    );
+
+    let mine = store
+        .create_skill(NewSkill {
+            name: "api-design".into(),
+            document: "---\nname: api-design\ndescription: shape an API\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    assert!(!mine.is_builtin());
+    assert_eq!(mine.summary(), "shape an API");
+
+    // A name already taken is a conflict, whoever holds it.
+    assert!(matches!(
+        store
+            .create_skill(NewSkill {
+                name: "coding".into(),
+                document: "---\nname: coding\n---\n".into(),
+            })
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+
+    // A built-in is reset, never deleted; one of the user's own is deleted,
+    // never reset — there is nothing behind it to go back to.
+    assert!(matches!(
+        store.delete_skill("coding").await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert!(matches!(
+        store.reset_skill("api-design").await,
+        Err(StoreError::Conflict(_))
+    ));
+    store.delete_skill("api-design").await.unwrap();
+    assert!(matches!(
+        store.get_skill("api-design").await,
+        Err(StoreError::NotFound { .. })
+    ));
+}
+
+/// Every shipped skill is seeded into a fresh database on the text Ariadne
+/// ships, storing none of it — so a reworded default reaches a database
+/// nobody has touched, and a reset drops what was written rather than copying
+/// a default in.
+#[tokio::test]
+async fn a_fresh_database_is_seeded_with_every_shipped_skill_on_its_own_text() {
+    let (store, _dir) = test_store().await;
+
+    let skills = store.list_skills().await.unwrap();
+    assert_eq!(skills.len(), ariadne_store::defaults::BUILTIN_SKILLS.len());
+    assert!(
+        skills.iter().all(|s| s.is_builtin() && s.document_is_default()),
+        "every seeded skill runs on the shipped text"
+    );
+
+    let edited = store
+        .set_skill_document("coding", "---\nname: coding\ndescription: ours\n---\n")
+        .await
+        .unwrap();
+    assert!(!edited.document_is_default());
+    assert_eq!(edited.summary(), "ours");
+
+    let reset = store.reset_skill("coding").await.unwrap();
+    assert!(
+        reset.document_is_default(),
+        "the reset dropped the text rather than copying the default in"
+    );
+    assert_eq!(
+        reset.document_text(),
+        ariadne_store::defaults::default_skill_document("coding").unwrap()
+    );
+}
+
+/// A skill nothing loads is deleted; one an agent still carries is refused,
+/// so a task cannot be left naming a skill that is gone.
+#[tokio::test]
+async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
+    let (store, _dir) = test_store().await;
+    let (goal, repo) = seed_goal(&store, None).await;
+    store
+        .create_skill(NewSkill {
+            name: "api-design".into(),
+            document: "---\nname: api-design\ndescription: shape an API\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Shape it".into(),
+            description: "do things".into(),
+            agents: vec![
+                NewTaskAgent::new(Seat::Author, ["api-design"]),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
+            ],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+
+    let refused = store.delete_skill("api-design").await;
+    assert!(matches!(refused, Err(StoreError::Conflict(_))), "{refused:?}");
+}
+
+/// An agent can only be staffed on a skill that exists: the name is a
+/// reference, and the refusal says which name it was.
+#[tokio::test]
+async fn an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to() {
+    let (store, _dir) = test_store().await;
+    let (goal, repo) = seed_goal(&store, None).await;
+
+    let refused = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Guess".into(),
+            description: "do things".into(),
+            agents: vec![
+                NewTaskAgent::new(Seat::Author, ["telepathy"]),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
+            ],
+            depends_on: vec![],
+        })
+        .await;
+    let message = format!("{:?}", refused.expect_err("no such skill"));
+    assert!(message.contains("telepathy"), "{message}");
 }

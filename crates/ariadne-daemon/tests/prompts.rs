@@ -16,7 +16,7 @@
 
 mod common;
 
-use ariadne_core::{Actor, PromptKind, TaskStatus};
+use ariadne_core::{Actor, PromptKind, Seat, TaskStatus};
 use ariadne_daemon::agents::prompts;
 use ariadne_store::defaults::default_prompt_text;
 
@@ -76,8 +76,9 @@ async fn a_spawned_author_is_briefed_from_the_builtin_template() {
         "the briefing reached the tmux command line: {log}"
     );
 
-    // The system layer is the profile's prompt as it stands — no playbook
-    // appended to it by the daemon any more.
+    // The system layer is what the seat owes, and then the index of the skills
+    // this agent loads: one line each, with the document left on disk for the
+    // agent to read when it needs it.
     let system = std::fs::read_to_string(
         h.launcher
             .cfg
@@ -86,7 +87,18 @@ async fn a_spawned_author_is_briefed_from_the_builtin_template() {
             .join("system-prompt.md"),
     )
     .unwrap();
-    assert_eq!(system, "You are author.");
+    let (owed, index) = system.split_once("\n\nYour skills:").expect("a skill index");
+    assert_eq!(
+        owed,
+        ariadne_store::defaults::default_system_prompt(Seat::Author).trim(),
+        "the seat's own text, word for word out of the code"
+    );
+    assert_eq!(
+        index.trim(),
+        "- coding: Implement a task from its specification, in the repository's own \
+         conventions, with the tests that prove it.",
+        "one line per skill, and the summary is the skill's own"
+    );
 }
 
 /// The code's text is what reaches the agent, without anything having been

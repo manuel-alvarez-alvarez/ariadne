@@ -225,93 +225,81 @@ mod tests {
         assert_eq!(pick_repo(&repos, "REPOUI").as_deref(), Some("01REPOUI"));
     }
 
-    /// The profile half is resolved like every other profile argument; what
-    /// follows the `=` is a model, and nothing here may touch it.
-    #[tokio::test]
-    async fn a_reviewer_keeps_what_it_runs_on_when_its_profile_is_resolved() {
-        let mut profiles = resolve::Profiles::List(resolve::among(
-            resolve::Kind::Profile,
-            [resolve::Row {
-                id: "01m0prof0000000000000abcde".into(),
-                label: "Reviewer (reviewer)".into(),
-                alias: Some("Reviewer".into()),
-            }],
-        ));
-        let given = vec![
-            parse_reviewer("Reviewer").expect("a name"),
-            parse_reviewer("0000abcde=opencode:ollama/llama3:8b@thinking").expect("a short id"),
-        ];
-        let resolved = resolved_reviewers(&mut profiles, given)
-            .await
-            .expect("both resolved");
-        assert_eq!(
-            resolved
-                .iter()
-                .map(|r| (r.profile.as_str(), r.model.as_deref(), r.effort.as_deref()))
-                .collect::<Vec<_>>(),
-            [
-                ("01m0prof0000000000000abcde", None, None),
-                (
-                    "01m0prof0000000000000abcde",
-                    Some("opencode:ollama/llama3:8b"),
-                    Some("thinking")
-                ),
-            ]
-        );
+    /// The skills are what an agent is, and what follows the `=` is a model:
+    /// both travel as written, since the daemon is what knows the catalog.
+    #[test]
+    fn an_agent_keeps_its_skills_and_what_it_runs_on() {
+        let plain = parse_reviewer("code-review").expect("skills alone");
+        assert_eq!(plain.skills, ["code-review"]);
+        assert_eq!(plain.model, None);
+        assert_eq!(plain.effort, None);
+
+        let pinned = parse_reviewer("code-review,security-review=opencode:ollama/llama3:8b@thinking")
+            .expect("skills, a model and an effort");
+        assert_eq!(pinned.skills, ["code-review", "security-review"]);
+        assert_eq!(pinned.model.as_deref(), Some("opencode:ollama/llama3:8b"));
+        assert_eq!(pinned.effort.as_deref(), Some("thinking"));
+
+        // An `@` with no `=` before it is an agent on auto at an effort.
+        let deeper = parse_reviewer("code-review@high").expect("an effort alone");
+        assert_eq!(deeper.model, None);
+        assert_eq!(deeper.effort.as_deref(), Some("high"));
+
+        assert!(parse_reviewer("=codex").is_err(), "no skills at all");
+        assert!(parse_reviewer("code-review=").is_err(), "no model after the =");
     }
 
-    /// A reviewer is a profile, and after an `=` what it runs on: an agent
+
+    /// A reviewer is its skills, and after an `=` what it runs on: an agent
     /// CLI, or one model of that CLI after the colon — the three forms
     /// `task create` and `task update` both take.
     #[test]
-    fn a_reviewer_is_a_profile_and_what_it_runs_on() {
-        let plain = parse_reviewer("Reviewer").expect("a profile on its own");
-        assert_eq!(plain.profile, "Reviewer");
+    fn a_reviewer_is_its_skills_and_what_it_runs_on() {
+        let plain = parse_reviewer("code-review").expect("skills on their own");
+        assert_eq!(plain.skills, ["code-review"]);
         assert_eq!(plain.model, None);
 
-        let agent = parse_reviewer("Reviewer=codex").expect("an agent CLI");
-        assert_eq!(agent.profile, "Reviewer");
+        let agent = parse_reviewer("code-review=codex").expect("an agent CLI");
+        assert_eq!(agent.skills, ["code-review"]);
         assert_eq!(
             agent.model.as_deref(),
             Some("codex"),
             "codex on its own default model"
         );
 
-        let both = parse_reviewer("Reviewer=codex:gpt-5.3-codex").expect("a model of it");
+        let both = parse_reviewer("code-review=codex:gpt-5.3-codex").expect("a model of it");
         assert_eq!(both.model.as_deref(), Some("codex:gpt-5.3-codex"));
 
         // An opencode id is `provider/model` and may carry a tag of its own,
         // so what splits the model off is the `=` and the id arrives whole.
-        let opencode = parse_reviewer("rev-strict=opencode:ollama/llama3:8b").expect("an id");
-        assert_eq!(opencode.profile, "rev-strict");
+        let opencode =
+            parse_reviewer("security-review=opencode:ollama/llama3:8b").expect("an id");
+        assert_eq!(opencode.skills, ["security-review"]);
         assert_eq!(opencode.model.as_deref(), Some("opencode:ollama/llama3:8b"));
 
         // The agent CLI answers to the hyphenated spelling too, the way
         // `--model` does, and travels as the daemon spells it.
-        let hyphenated = parse_reviewer("Reviewer=claude-code").expect("a spelling");
+        let hyphenated = parse_reviewer("code-review=claude-code").expect("a spelling");
         assert_eq!(hyphenated.model.as_deref(), Some("claude_code"));
     }
 
-    /// The other half a slot may carry: the effort after the `@`, on a model
-    /// of its own or on whatever its profile is on — and the `@` is the last
-    /// one, so a model id keeps every `:` and `/` it came with.
+    /// The other half an agent may carry: the effort after the `@`, on a
+    /// model of its own or on auto — and the `@` is the last one, so a model
+    /// id keeps every `:` and `/` it came with.
     #[test]
     fn a_reviewer_runs_at_the_effort_after_the_at_sign() {
         let both =
-            parse_reviewer("Reviewer=codex:gpt-5.6-sol@xhigh").expect("a model and an effort");
-        assert_eq!(both.profile, "Reviewer");
+            parse_reviewer("code-review=codex:gpt-5.6-sol@xhigh").expect("a model and an effort");
+        assert_eq!(both.skills, ["code-review"]);
         assert_eq!(both.model.as_deref(), Some("codex:gpt-5.6-sol"));
         assert_eq!(both.effort.as_deref(), Some("xhigh"));
 
-        let effort = parse_reviewer("Reviewer@high").expect("an effort on its own");
-        assert_eq!(effort.profile, "Reviewer");
-        assert_eq!(
-            effort.model, None,
-            "the profile's own model, reasoned deeper"
-        );
+        let effort = parse_reviewer("code-review@high").expect("an effort on its own");
+        assert_eq!(effort.skills, ["code-review"]);
+        assert_eq!(effort.model, None, "on auto, reasoned deeper");
         assert_eq!(effort.effort.as_deref(), Some("high"));
 
-        let model = parse_reviewer("Reviewer=codex").expect("a model on its own");
+        let model = parse_reviewer("code-review=codex").expect("a model on its own");
         assert_eq!(model.model.as_deref(), Some("codex"));
         assert_eq!(
             model.effort, None,
@@ -321,7 +309,7 @@ mod tests {
         // The model half is cut at the last `@` and nothing else: an opencode
         // id is `provider/model` with a tag of its own, and all of it is model.
         let opencode =
-            parse_reviewer("Reviewer=opencode:openrouter/x/y:z@high").expect("an opencode id");
+            parse_reviewer("code-review=opencode:openrouter/x/y:z@high").expect("an opencode id");
         assert_eq!(opencode.model.as_deref(), Some("opencode:openrouter/x/y:z"));
         assert_eq!(opencode.effort.as_deref(), Some("high"));
 
@@ -337,39 +325,39 @@ mod tests {
     /// would have been refused in.
     #[test]
     fn a_reviewer_missing_a_half_is_refused_before_it_is_sent() {
-        let err = parse_reviewer("Reviewer=").expect_err("no model");
+        let err = parse_reviewer("code-review=").expect_err("no model");
         assert!(err.contains("no model after the ="), "{err}");
-        assert!(err.contains("Reviewer on its own"), "{err}");
-        assert!(err.contains("PROFILE=MODEL"), "{err}");
+        assert!(err.contains("the skills on their own"), "{err}");
+        assert!(err.contains("SKILLS=MODEL"), "{err}");
         assert!(err.contains("claude_code, codex, opencode"), "{err}");
 
-        let err = parse_reviewer("Reviewer=codex:").expect_err("no model after the colon");
-        assert!(err.contains("in \"Reviewer=codex:\""), "{err}");
+        let err = parse_reviewer("code-review=codex:").expect_err("no model after the colon");
+        assert!(err.contains("in \"code-review=codex:\""), "{err}");
         assert!(err.contains("no model after the `:`"), "{err}");
 
-        let err = parse_reviewer("Reviewer=llama").expect_err("no such agent");
+        let err = parse_reviewer("code-review=llama").expect_err("no such agent");
         assert!(err.contains("names no agent CLI"), "{err}");
         assert!(err.contains("claude_code:llama"), "{err}");
         assert!(err.contains("claude_code, codex, opencode"), "{err}");
 
-        let err = parse_reviewer("Reviewer=llama:x").expect_err("no such agent");
+        let err = parse_reviewer("code-review=llama:x").expect_err("no such agent");
         assert!(err.contains("unknown agent `llama`"), "{err}");
 
-        let err = parse_reviewer("=codex").expect_err("no profile");
-        assert!(err.contains("no profile"), "{err}");
+        let err = parse_reviewer("=codex").expect_err("no skills");
+        assert!(err.contains("no skills"), "{err}");
 
         // An `@` that says nothing after it is the same kind of typo, and the
         // refusal names the forms one of which was meant.
-        let err = parse_reviewer("Reviewer@").expect_err("no effort");
-        assert!(err.contains("in \"Reviewer@\""), "{err}");
+        let err = parse_reviewer("code-review@").expect_err("no effort");
+        assert!(err.contains("in \"code-review@\""), "{err}");
         assert!(err.contains("no effort was named"), "{err}");
         assert!(err.contains("ariadne models ls"), "{err}");
 
         // An effort without the model it belongs to is still a missing model:
         // the `=` was written, so something was meant to follow it.
-        let err = parse_reviewer("Reviewer=@high").expect_err("no model");
+        let err = parse_reviewer("code-review=@high").expect_err("no model");
         assert!(err.contains("no model after the ="), "{err}");
-        assert!(err.contains("PROFILE=MODEL@EFFORT"), "{err}");
+        assert!(err.contains("SKILLS=MODEL@EFFORT"), "{err}");
     }
 
     /// The lists replace rather than extend, so an absent flag must not send an
@@ -391,8 +379,8 @@ mod tests {
             None,
             None,
             vec![
-                ReviewerAssignment::of("Reviewer"),
-                parse_reviewer("rev-strict=codex:gpt-5.6-luna@high").expect("a model"),
+                parse_reviewer("code-review").expect("skills alone"),
+                parse_reviewer("security-review=codex:gpt-5.6-luna@high").expect("a model"),
             ],
             vec!["01TASK".into()],
             false,
@@ -401,11 +389,15 @@ mod tests {
         assert_eq!(
             req.reviewers.as_ref().map(|r| r
                 .iter()
-                .map(|a| (a.profile.as_str(), a.model.as_deref(), a.effort.as_deref()))
+                .map(|a| (a.skills.join(","), a.model.as_deref(), a.effort.as_deref()))
                 .collect::<Vec<_>>()),
             Some(vec![
-                ("Reviewer", None, None),
-                ("rev-strict", Some("codex:gpt-5.6-luna"), Some("high"))
+                ("code-review".to_string(), None, None),
+                (
+                    "security-review".to_string(),
+                    Some("codex:gpt-5.6-luna"),
+                    Some("high")
+                )
             ])
         );
         assert_eq!(

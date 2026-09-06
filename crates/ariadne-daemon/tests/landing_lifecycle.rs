@@ -200,7 +200,9 @@ async fn an_approved_task_is_landed_by_its_own_author() {
         argv.contains("git reset --soft main"),
         "the landing briefing does not carry the squash: {argv}"
     );
-    for published in ["gh ", "glab ", "pull request", "merge request"] {
+    // The forge commands themselves, not a bare "gh": the seat's own prompt
+    // rides in the same argv, and "Enough approvals" carries those two letters.
+    for published in ["gh pr", "glab mr", "pull request", "merge request"] {
         assert!(
             !argv.contains(published),
             "the direct landing briefing names {published}: {argv}"

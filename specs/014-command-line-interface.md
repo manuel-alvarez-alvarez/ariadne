@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe]
 tests:
@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-cli/src/error.rs
   - crates/ariadne-cli/src/complete.rs
   - crates/ariadne-daemon/tests/doctor.rs
+  - crates/ariadne-cli/src/commands/doctor/checks.rs
 ---
 
 # Command-line interface
@@ -58,6 +59,10 @@ same binary also serves (013).
 11. `ariadne doctor` answers why the daemon will not start — including a
     database written by a release whose migrations this one no longer ships,
     which it names along with the file to delete (016).
+12. A tool is checked for its version as well as its presence where a version
+    is what decides: git below 2.42 has no `worktree add --orphan` and so
+    cannot start a task in a repository with no commits (002), which is a
+    warning naming that one case, on this PATH and on the daemon's alike.
 
 ## Acceptance criteria
 
@@ -93,6 +98,10 @@ same binary also serves (013).
   (`doctor.rs::every_agent_kind_is_reported`,
   `::the_tools_a_session_and_a_published_task_need_are_reported`,
   `::a_worktree_root_the_daemon_cannot_write_is_reported_as_such`).
+- A git below the floor is a warning that names what it cannot do, and a
+  version line is read down to its major and minor
+  (`checks.rs::a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits`,
+  `::a_version_line_reads_down_to_its_major_and_minor`).
 
 ## Sources
 

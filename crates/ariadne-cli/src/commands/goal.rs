@@ -457,6 +457,20 @@ fn by_short_id(repos: &[RepositoryDto], spec: &str) -> Result<String> {
     }
 }
 
+/// What a goal's orchestrator runs on: the model, and the effort where one was
+/// pinned.
+///
+/// An effort that was never pinned says nothing at all: the model is run at
+/// whatever its agent CLI runs it at, and a `@` with a guess after it would
+/// read as a choice somebody made.
+fn pin_label(model: Option<&str>, effort: Option<&str>) -> String {
+    let pin = model.unwrap_or("auto");
+    match effort {
+        Some(effort) => format!("{pin} @ {effort}"),
+        None => pin.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -618,19 +632,5 @@ mod tests {
         let err = pick_repository(&repos(), "/home/me/ui").unwrap_err();
         assert!(err.to_string().contains("01REPOUINEXT"), "{err}");
         assert!(err.to_string().contains("by id"), "{err}");
-    }
-}
-
-/// What a goal's orchestrator runs on: the model, and the effort where one was
-/// pinned.
-///
-/// An effort that was never pinned says nothing at all: the model is run at
-/// whatever its agent CLI runs it at, and a `@` with a guess after it would
-/// read as a choice somebody made.
-fn pin_label(model: Option<&str>, effort: Option<&str>) -> String {
-    let pin = model.unwrap_or("auto");
-    match effort {
-        Some(effort) => format!("{pin} @ {effort}"),
-        None => pin.to_string(),
     }
 }

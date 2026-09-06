@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
 
+/// Git's own hash of the empty tree: the "before" of a branch that starts from
+/// no commit at all.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 #[derive(Debug, Clone, Default)]
 pub struct GitManager;
 
@@ -33,6 +37,10 @@ impl GitManager {
     }
 
     /// Create an author worktree on `branch` (created at `base` when new).
+    ///
+    /// A repository nobody has committed to yet has an unborn base branch,
+    /// which no commit can be cut from: the task branch starts unborn as well,
+    /// and the author's first commit is the repository's first commit.
     pub async fn add_worktree(
         &self,
         repo: &Path,
@@ -44,8 +52,11 @@ impl GitManager {
         if self.branch_exists(repo, branch).await? {
             // Respawn after a crash: reuse the existing task branch.
             self.git(repo, &["worktree", "add", &wt, branch]).await?;
-        } else {
+        } else if self.branch_exists(repo, base).await? {
             self.git(repo, &["worktree", "add", "-b", branch, &wt, base])
+                .await?;
+        } else {
+            self.git(repo, &["worktree", "add", "--orphan", "-b", branch, &wt])
                 .await?;
         }
         Ok(())
@@ -143,27 +154,13 @@ impl GitManager {
             })
     }
 
-    /// Ensure a branch points at a real commit. Catches freshly `git init`ed
-    /// repos where HEAD names an unborn branch: worktrees cannot be created
-    /// from it, so fail goal creation with a clear message instead.
+    /// Ensure a branch points at a real commit, saying which one does not when
+    /// it is a branch nothing has been committed to yet.
     pub async fn ensure_branch_has_commits(&self, repo: &Path, branch: &str) -> Result<()> {
-        self.git(
-            repo,
-            &[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{branch}^{{commit}}"),
-            ],
-        )
-        .await
-        .map(|_| ())
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "branch {branch} of {} has no commits yet — make an initial commit first",
-                repo.display()
-            )
-        })
+        if self.branch_exists(repo, branch).await? {
+            return Ok(());
+        }
+        bail!("branch {branch} of {} has no commits yet", repo.display())
     }
 
     pub async fn delete_branch(&self, repo: &Path, branch: &str) -> Result<()> {
@@ -186,7 +183,15 @@ impl GitManager {
 
     /// Diff of the task branch against its merge base with `base`
     /// (`git diff base...branch`).
+    ///
+    /// There is no merge base when the repository had no commits as the task
+    /// started: the base branch was unborn and the task branch was cut orphan
+    /// from it. Then the whole branch is the change, and the empty tree is
+    /// what it is read against.
     pub async fn diff(&self, repo: &Path, base: &str, branch: &str) -> Result<String> {
+        if self.git(repo, &["merge-base", base, branch]).await.is_err() {
+            return self.git(repo, &["diff", EMPTY_TREE, branch]).await;
+        }
         self.git(repo, &["diff", &format!("{base}...{branch}")])
             .await
     }

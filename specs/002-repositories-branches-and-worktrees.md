@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 areas: [store, daemon]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d]
 tests:
@@ -33,7 +33,8 @@ agent is briefed with in its worktree (006).
    strategy and a landing briefing (005).
 2. The base branch defaults to the branch the checkout is on at registration.
 3. A path and branch pair is unique: the same one cannot be registered twice.
-   A path or branch the daemon cannot use is refused at creation.
+   A path or branch the daemon cannot use is refused at creation. A checkout
+   with no commits is usable: its base branch is the unborn one HEAD names.
 4. A repository a goal references cannot be deleted.
 5. Editing the base branch changes what *new* tasks branch from, and nothing
    about tasks already under way.
@@ -41,10 +42,15 @@ agent is briefed with in its worktree (006).
    of its id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`. Branch names
    carry no `ariadne/` prefix.
 7. An author gets a writable worktree of its own, on its task branch, cut
-   from the base branch of the task's repository.
+   from the base branch of the task's repository. When that base has no
+   commits the task branch is cut orphan, the author's first commit is the
+   repository's first, and the task's diff is read against the empty tree
+   because there is no merge base to read it against. Cutting orphan needs
+   git 2.42, which is the floor `ariadne doctor` warns below (014).
 8. A reviewer gets a **detached, read-only** worktree pinned to the branch
    under review, and it is refreshed between rounds so each round reads the
-   commits that round added.
+   commits that round added. A branch with no commits on it has nothing to
+   pin at, and spawning a reviewer there says so.
 9. An orchestrator works in the repository's primary checkout, not a worktree
    of its own: it is the first repository of its goal.
 10. Worktrees are removed when the work that owned them ends; whether finished
@@ -61,7 +67,9 @@ agent is briefed with in its worktree (006).
 - The base branch defaults to the checked-out branch
   (`repositories.rs::base_branch_defaults_to_the_current_branch`), a path or
   branch that cannot be used is refused
-  (`::create_refuses_a_path_or_branch_it_cannot_use`), and the same pair
+  (`::create_refuses_a_path_or_branch_it_cannot_use`), a checkout with no
+  commits registers on its unborn branch
+  (`::a_repository_with_no_commits_can_be_registered`), and the same pair
   cannot be registered twice (`::the_same_path_and_branch_cannot_be_registered_twice`).
 - A task branches from the repository its goal references
   (`goal_repositories.rs::a_task_branches_from_the_repository_its_goal_references`),
@@ -74,7 +82,10 @@ agent is briefed with in its worktree (006).
   (`store.rs::task_branch_is_named_after_the_title`).
 - Worktrees are created, verified and removed, and a reviewer's is refreshed
   between rounds (`managers.rs::git_worktree_lifecycle_and_merge_verification`,
-  `::reviewer_worktree_refresh_between_rounds`).
+  `::reviewer_worktree_refresh_between_rounds`); a base branch with no commits
+  gives an orphan worktree that has nothing to review until it commits, and
+  then diffs and lands
+  (`::a_worktree_is_cut_from_a_base_branch_with_no_commits`).
 - A commit on a task branch reaches the stream
   (`task_branches.rs::a_commit_on_the_task_branch_reaches_the_stream`), the
   startup sweep follows the worktrees it finds

@@ -1,8 +1,8 @@
 //! Integration tests for the repository endpoints.
 //!
 //! The contract is that a repository is validated exactly the way a goal's
-//! repos are — an absolute path into a real git work tree, on a branch that
-//! exists and has a commit — that the same checkout is registered once per
+//! repos are — an absolute path into a real git work tree, on a branch the
+//! checkout knows, born or not — that the same checkout is registered once per
 //! base branch, that every write reaches the domain-event stream, and that
 //! the landing briefing it hands its author is its own: prefilled from its
 //! merge strategy, editable, and reset by writing an empty one.
@@ -114,6 +114,43 @@ async fn base_branch_defaults_to_the_current_branch() {
         .await;
     assert_eq!(created.base_branch, "next");
     assert!(created.description.is_none());
+}
+
+/// A checkout nobody has committed to is a repository like any other: its
+/// branch is unborn, named or defaulted, and the first task commits it into
+/// existence.
+#[tokio::test]
+async fn a_repository_with_no_commits_can_be_registered() {
+    let h = harness().await;
+    let empty = h.at("empty-repo");
+    std::fs::create_dir_all(&empty).unwrap();
+    sh(&empty, "git init -q -b main");
+
+    let created: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": empty.display().to_string(), "base_branch": "main"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created.base_branch, "main");
+
+    // And the same branch is what defaulting finds, since HEAD names it.
+    let other = h.at("empty-repo-2");
+    std::fs::create_dir_all(&other).unwrap();
+    sh(&other, "git init -q -b trunk");
+    let defaulted: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": other.display().to_string()}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(defaulted.base_branch, "trunk");
 }
 
 #[tokio::test]

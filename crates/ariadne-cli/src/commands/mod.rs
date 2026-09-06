@@ -422,29 +422,29 @@ mod tests {
         assert!(err.contains("\"default\""), "{err}");
     }
 
-    /// A pin reads as the two things it says: what the agent runs on, and —
-    /// only where one was pinned — how deeply it reasons there.
+    /// An agent reads as the two things it is: the skills it carries, and —
+    /// only where one was pinned — how deeply it reasons where it runs.
     #[test]
-    fn a_pinned_label_says_the_model_and_the_effort_beside_it() {
-        let profiles = ProfileNames::from_pairs([("01PROF".to_string(), "Reviewer".to_string())]);
+    fn an_agent_label_says_the_skills_and_the_pin_beside_them() {
+        let skills = ["code-review".to_string(), "security-review".to_string()];
         assert_eq!(
-            profiles.pinned_label("01PROF", Some("codex:gpt-5.6-luna"), Some("high")),
-            "Reviewer (01PROF) · codex:gpt-5.6-luna @ high"
+            agent_pin_label(&skills, Some("codex:gpt-5.6-luna"), Some("high")),
+            "code-review, security-review · codex:gpt-5.6-luna @ high"
         );
         assert_eq!(
-            profiles.pinned_label("01PROF", Some("codex:gpt-5.6-luna"), None),
-            "Reviewer (01PROF) · codex:gpt-5.6-luna",
+            agent_pin_label(&skills, Some("codex:gpt-5.6-luna"), None),
+            "code-review, security-review · codex:gpt-5.6-luna",
             "no effort pinned is the CLI's own, which is not a choice to print"
         );
         assert_eq!(
-            profiles.pinned_label("01PROF", None, Some("max")),
-            "Reviewer (01PROF) · the profile's own @ max",
-            "an effort stands on its own: the profile's model, run deeper"
+            agent_pin_label(&skills, None, Some("max")),
+            "code-review, security-review · auto @ max",
+            "an effort stands on its own: auto, run deeper"
         );
-        assert_eq!(
-            profiles.pinned_label("01PROF", None, None),
-            "Reviewer (01PROF) · the profile's own"
-        );
+        assert_eq!(agent_pin_label(&skills, None, None), "code-review, security-review · auto");
+
+        // An agent with no skills is legal, and rarely what anybody wanted.
+        assert_eq!(agent_label(&[]), "no skills");
     }
 
     /// Ids pass through untouched; a name — free text, which is what made

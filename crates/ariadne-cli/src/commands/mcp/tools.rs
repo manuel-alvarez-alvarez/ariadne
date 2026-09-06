@@ -600,36 +600,37 @@ mod tests {
         assert!(approved.body.is_none());
     }
 
-    /// What an orchestrator may write per slot is the schema an agent reads,
-    /// and it is a pin per slot now: the author's model and effort beside its
-    /// profile, and a reviewer object carrying its own — not the list of bare
-    /// profile names those replaced, which an agent that still sent one would
-    /// have silently dropped its pins with.
+    /// What an orchestrator may write per agent is the schema an agent reads,
+    /// and it is skills and a pin per agent now: a staffing object carrying
+    /// what that agent knows and what it runs on. An agent that still sent the
+    /// old author/reviewer profile fields would have staffed nothing at all,
+    /// so those must be gone rather than merely ignored.
     #[test]
-    fn the_task_tools_ask_for_a_model_and_an_effort_per_slot() {
+    fn the_task_tools_ask_for_skills_and_a_pin_per_agent() {
         for tool in ["create_task", "update_task"] {
             let schema = tool_schema(tool);
             let props = schema["properties"].as_object().expect("properties");
-            for field in ["author_model", "author_effort", "reviewers"] {
-                assert!(props.contains_key(field), "{tool} takes no {field}");
+            assert!(props.contains_key("reviewers"), "{tool} takes no reviewers");
+            for gone in ["author_profile", "reviewer_profiles"] {
+                assert!(!props.contains_key(gone), "{tool} still takes {gone}");
             }
-            assert!(
-                !props.contains_key("reviewer_profiles"),
-                "{tool} still takes the bare profile list"
-            );
-            let reviewer = schema["$defs"]["ReviewerReq"]["properties"]
+            let agent = schema["$defs"]["AgentReq"]["properties"]
                 .as_object()
-                .unwrap_or_else(|| panic!("{tool} has no reviewer object"));
-            for field in ["profile", "model", "effort"] {
-                assert!(reviewer.contains_key(field), "{tool}: no reviewer {field}");
+                .unwrap_or_else(|| panic!("{tool} has no agent object"));
+            for field in ["skills", "model", "effort", "brief"] {
+                assert!(agent.contains_key(field), "{tool}: no agent {field}");
             }
         }
-        assert!(
-            tool_schema("create_task")["properties"]
-                .get("author_profile")
-                .is_some(),
-            "the author's profile is still what owns the task"
-        );
+
+        // Only a create staffs the author: a task keeps the one it started
+        // with, so an edit offers the reviewers and the author's pin alone.
+        let create = tool_schema("create_task");
+        assert!(create["properties"].get("author").is_some());
+        let update = tool_schema("update_task");
+        assert!(update["properties"].get("author").is_none());
+        for pin in ["author_model", "author_effort"] {
+            assert!(update["properties"].get(pin).is_some(), "no {pin} on an edit");
+        }
     }
 
     /// A pin the orchestrator named is the pin the daemon is asked for, slot by
@@ -642,13 +643,17 @@ mod tests {
             .create_task(Parameters(CreateTaskReq {
                 title: "Pin the effort".into(),
                 description: "Beside the model.".into(),
-                author_profile: "Author".into(),
-                author_model: Some("codex:gpt-5.6-sol".into()),
-                author_effort: Some("xhigh".into()),
-                reviewers: vec![ReviewerReq {
-                    profile: "Reviewer".into(),
+                author: AgentReq {
+                    skills: vec!["coding".into()],
+                    model: Some("codex:gpt-5.6-sol".into()),
+                    effort: Some("xhigh".into()),
+                    brief: None,
+                },
+                reviewers: vec![AgentReq {
+                    skills: vec!["code-review".into()],
                     model: None,
                     effort: Some("low".into()),
+                    brief: None,
                 }],
                 depends_on: None,
                 repo_id: None,
@@ -661,18 +666,30 @@ mod tests {
         assert_eq!(seen[0].method, "POST");
         assert_eq!(seen[0].path, "/v1/goals/01GOAL/tasks");
         let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
-        assert_eq!(sent["author_profile"], serde_json::json!("Author"));
-        assert_eq!(sent["model"], serde_json::json!("codex:gpt-5.6-sol"));
-        assert_eq!(sent["effort"], serde_json::json!("xhigh"));
         assert_eq!(
-            sent["reviewers"],
-            serde_json::json!([{ "profile": "Reviewer", "model": null, "effort": "low" }])
+            sent["agents"],
+            serde_json::json!([
+                {
+                    "seat": "author",
+                    "skills": ["coding"],
+                    "model": "codex:gpt-5.6-sol",
+                    "effort": "xhigh",
+                    "brief": null,
+                },
+                {
+                    "seat": "reviewer",
+                    "skills": ["code-review"],
+                    "model": null,
+                    "effort": "low",
+                    "brief": null,
+                },
+            ])
         );
     }
 
-    /// The word that hands a slot back to its profile travels as it was
-    /// written: the daemon is what knows "default" clears a pin, so anything
-    /// resolving it here would be a second answer to the same question.
+    /// The word that puts an agent back on auto travels as it was written:
+    /// the daemon is what knows "default" clears a pin, so anything resolving
+    /// it here would be a second answer to the same question.
     #[tokio::test]
     async fn an_edit_hands_a_slot_back_with_the_word_the_daemon_clears_it_by() {
         let (endpoint, seen) = recording_daemon().await;
@@ -683,10 +700,11 @@ mod tests {
                 description: None,
                 author_model: None,
                 author_effort: Some("default".into()),
-                reviewers: Some(vec![ReviewerReq {
-                    profile: "Reviewer".into(),
+                reviewers: Some(vec![AgentReq {
+                    skills: vec!["code-review".into()],
                     model: Some("default".into()),
                     effort: None,
+                    brief: None,
                 }]),
                 depends_on: None,
             }))
@@ -702,7 +720,13 @@ mod tests {
         assert_eq!(sent["model"], serde_json::Value::Null);
         assert_eq!(
             sent["reviewers"],
-            serde_json::json!([{ "profile": "Reviewer", "model": "default", "effort": null }])
+            serde_json::json!([{
+                "seat": "reviewer",
+                "skills": ["code-review"],
+                "model": "default",
+                "effort": null,
+                "brief": null,
+            }])
         );
     }
 

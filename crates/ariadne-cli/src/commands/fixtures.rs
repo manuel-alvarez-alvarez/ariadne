@@ -1,8 +1,8 @@
 //! One plausible row of each DTO, for the unit tests.
 //!
-//! Every test that renders a goal, a task, a session, a profile or a
-//! repository needs a whole DTO to render, and only ever cares about two or
-//! three of its fields. These build the rest once; the caller names what it is
+//! Every test that renders a goal, a task, a session, a skill or a repository
+//! needs a whole DTO to render, and only ever cares about two or three of its
+//! fields. These build the rest once; the caller names what it is
 //! testing with struct-update syntax:
 //!
 //! ```ignore
@@ -10,10 +10,10 @@
 //! ```
 
 use ariadne_api::goals::GoalDto;
-use ariadne_api::profiles::ProfileDto;
+use ariadne_api::skills::SkillDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
-use ariadne_api::tasks::TaskDto;
+use ariadne_api::tasks::{TaskAgentDto, TaskDto};
 use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Seat, SessionStatus, TaskStatus};
 
 /// A stamp every fixture is created and updated at, so a rendered row is
@@ -28,7 +28,6 @@ pub fn goal(id: &str, title: &str) -> GoalDto {
         status: GoalStatus::Active,
         max_tasks: None,
         required_approvals: 1,
-        orchestrator_profile_id: "01PROFILE".into(),
         model: None,
         effort: None,
         repos: Vec::new(),
@@ -47,12 +46,7 @@ pub fn task(id: &str, goal_id: &str) -> TaskDto {
         title: format!("task {id}"),
         description: String::new(),
         status: TaskStatus::InProgress,
-        author_profile_id: "01ENG".into(),
-        author_profile_name: Some("Author".into()),
-        orchestrator_profile_name: Some("Orchestrator".into()),
-        model: None,
-        effort: None,
-        reviewers: Vec::new(),
+        agents: vec![agent("01AUTHOR", Seat::Author, &["coding"])],
         depends_on: Vec::new(),
         branch: format!("a-task-{id}"),
         worktree_path: None,
@@ -78,7 +72,7 @@ pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
             Some(_) => Seat::Author,
             None => Seat::Orchestrator,
         },
-        profile_id: "01PROF".into(),
+        task_agent_id: Some("01AUTHOR".into()),
         agent_kind: AgentKind::ClaudeCode,
         model: None,
         effort: None,
@@ -96,16 +90,27 @@ pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
     }
 }
 
-/// A profile with a system prompt of its own, on no particular agent.
-pub fn profile(name: &str, seat: Seat) -> ProfileDto {
-    ProfileDto {
-        id: format!("01{name}"),
-        name: name.into(),
+/// One agent staffed on a task: the seat it sits in and the skills it carries,
+/// on no particular CLI.
+pub fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
+    TaskAgentDto {
+        id: id.into(),
         seat,
+        skills: skills.iter().map(|s| s.to_string()).collect(),
         model: None,
         effort: None,
-        system_prompt: "you are an author".into(),
-        system_prompt_is_default: false,
+        brief: None,
+    }
+}
+
+/// A skill on the document Ariadne ships.
+pub fn skill(name: &str, summary: &str) -> SkillDto {
+    SkillDto {
+        name: name.into(),
+        summary: summary.into(),
+        document: format!("---\nname: {name}\ndescription: {summary}\n---\n"),
+        document_is_default: true,
+        builtin: true,
         created_at: "2026-08-17T08:00:00Z".into(),
         updated_at: "2026-08-17T09:00:00Z".into(),
     }

@@ -65,7 +65,7 @@ export const SIDEBAR_SHORTCUT: KeySequence = { key: "[" }
 const SCREEN_SHORTCUTS: readonly { path: string; label: string; chord: KeySequence }[] = [
   { path: paths.goals(), label: "Goals", chord: { lead: "g", key: "g" } },
   { path: paths.sessions(), label: "Sessions", chord: { lead: "g", key: "s" } },
-  { path: paths.skills(), label: "Profiles", chord: { lead: "g", key: "p" } },
+  { path: paths.skills(), label: "Skills", chord: { lead: "g", key: "k" } },
   { path: paths.agents(), label: "Agents", chord: { lead: "g", key: "a" } },
   { path: paths.repositories(), label: "Repositories", chord: { lead: "g", key: "r" } },
 ]

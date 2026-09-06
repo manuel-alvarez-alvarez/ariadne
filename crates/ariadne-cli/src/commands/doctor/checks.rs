@@ -292,8 +292,11 @@ pub fn tools(required: &[BinaryDto], forges: &[BinaryDto]) -> Vec<Check> {
 }
 
 /// tmux or git: without it nothing spawns, wherever it is reported from.
+///
+/// git is asked one question more than tmux, because one thing it does for
+/// Ariadne is younger than the rest: see [`GIT_FLOOR`].
 pub fn required_tool(tool: &BinaryDto, lookup: &str) -> Check {
-    Check::when(
+    let present = Check::when(
         tool.name.clone(),
         tool.path.is_some(),
         describe(tool, lookup),
@@ -308,7 +311,50 @@ pub fn required_tool(tool: &BinaryDto, lookup: &str) -> Check {
                 tool.name
             ),
         },
-    )
+    );
+    match tool.name.as_str() {
+        "git" if older_than(tool.version.as_deref(), GIT_FLOOR) => {
+            Check::warn(tool.name.clone(), describe(tool, lookup)).hint(format!(
+                "upgrade to git {}.{} or newer — older git cannot start a task in a \
+                 repository that has no commits yet, and everything else works as it is",
+                GIT_FLOOR.0, GIT_FLOOR.1
+            ))
+        }
+        _ => present,
+    }
+}
+
+/// The oldest git that does everything Ariadne asks of it. The one thing that
+/// needs this much of it is `git worktree add --orphan` (git 2.42, 2023), how
+/// an author's worktree is cut in a repository nobody has committed to yet;
+/// every other command is far older, so a git below the floor is a warning
+/// about that one case and not a failure.
+const GIT_FLOOR: (u32, u32) = (2, 42);
+
+/// Whether a version line reads as older than `floor`.
+///
+/// A binary that answered nothing, or answered something with no number in
+/// it, is not accused: not knowing the version is not knowing it is too old.
+fn older_than(version: Option<&str>, floor: (u32, u32)) -> bool {
+    major_minor(version.unwrap_or_default()).is_some_and(|found| found < floor)
+}
+
+/// The `major.minor` of a version line: the first dotted number in it, with
+/// whatever the vendor added around it ignored — "git version 2.39.5 (Apple
+/// Git-154)" is `(2, 39)`.
+fn major_minor(version: &str) -> Option<(u32, u32)> {
+    let digits = |s: &str| {
+        s.chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse::<u32>()
+            .ok()
+    };
+    let number = version
+        .split_whitespace()
+        .find(|word| word.starts_with(|c: char| c.is_ascii_digit()))?;
+    let (major, minor) = number.split_once('.')?;
+    Some((digits(major)?, digits(minor)?))
 }
 
 /// One forge CLI, wherever it is reported from: installed and signed in is the
@@ -445,5 +491,53 @@ mod tests {
             check.hint.as_deref().is_some_and(|h| h.contains("rm ")),
             "and says what to do about it: {check:?}"
         );
+    }
+
+    /// A git older than the floor is installed and works for everything but
+    /// one thing, so it is a warning that names the thing — and a git that
+    /// answered no version at all is not accused of anything.
+    #[test]
+    fn a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits() {
+        let git = |version: Option<&str>| BinaryDto {
+            version: version.map(Into::into),
+            ..binary("git", None, true, None)
+        };
+
+        let old = required_tool(&git(Some("git version 2.39.5 (Apple Git-154)")), HERE);
+        assert_eq!(old.status, Status::Warn);
+        assert!(old.detail.contains("2.39.5"), "{old:?}");
+        assert!(
+            old.hint
+                .as_deref()
+                .is_some_and(|h| h.contains("2.42") && h.contains("no commits yet")),
+            "{old:?}"
+        );
+
+        // At the floor, past it, and with nothing to read: all fine.
+        for version in [Some("git version 2.42.0"), Some("git version 2.55.0"), None] {
+            let check = required_tool(&git(version), HERE);
+            assert_eq!(check.status, Status::Ok, "{version:?}");
+        }
+
+        // And the floor is git's alone: tmux answers `-V` in its own words.
+        let tmux = BinaryDto {
+            version: Some("tmux 3.4".into()),
+            ..binary("tmux", None, true, None)
+        };
+        assert_eq!(required_tool(&tmux, HERE).status, Status::Ok);
+    }
+
+    /// What a version line is read down to, vendors and release candidates
+    /// included.
+    #[test]
+    fn a_version_line_reads_down_to_its_major_and_minor() {
+        assert_eq!(major_minor("git version 2.55.0"), Some((2, 55)));
+        assert_eq!(
+            major_minor("git version 2.39.5 (Apple Git-154)"),
+            Some((2, 39))
+        );
+        assert_eq!(major_minor("2.43.0-rc1"), Some((2, 43)));
+        assert_eq!(major_minor("git version next"), None);
+        assert_eq!(major_minor(""), None);
     }
 }

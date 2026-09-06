@@ -201,13 +201,6 @@ mod tests {
 
     use super::super::tests::{binary, by_name};
 
-    fn profile(name: &str, agent_kind: Option<AgentKind>) -> ProfileDto {
-        ProfileDto {
-            model: agent_kind.map(|kind| ariadne_core::models::ModelRef::of(kind).to_string()),
-            ..crate::commands::fixtures::profile(name, ariadne_core::Seat::Author)
-        }
-    }
-
     /// The three agent CLIs in `AgentKind::ALL` order, `found` of them present.
     fn agent_binaries(found: &[AgentKind]) -> Vec<BinaryDto> {
         AgentKind::ALL
@@ -217,14 +210,7 @@ mod tests {
     }
 
     /// Availability as the daemon reports it, whatever this shell has.
-    fn daemon_sees(kinds: &[AgentKind]) -> Availability {
-        Availability {
-            daemon: Some(kinds.to_vec()),
-            client: Vec::new(),
-        }
-    }
-
-    /// A trust verdict with `trusted` of the declared events granted.
+        /// A trust verdict with `trusted` of the declared events granted.
     fn trust_for(trusted: &[&'static str]) -> Trust {
         let (trusted, untrusted) = ariadne_core::codex_hooks::EVENTS
             .into_iter()
@@ -237,28 +223,28 @@ mod tests {
         }
     }
 
-    /// Untrusted hooks stop codex before its first turn, so a profile that
-    /// runs on codex cannot spawn at all — a failure, not a note. Trust
-    /// granted before an event was declared has to name the events that will
-    /// not run and the command that fixes it, since nothing else about the
-    /// installation looks wrong; setup skipped altogether reads differently,
-    /// and a codex that never ran has no config to have missed it in.
+    /// Untrusted hooks stop codex before its first turn. Nothing here knows
+    /// whether any work is pinned to codex — an agent's CLI is chosen per goal
+    /// and per task — so it is a warning either way. Trust granted before an
+    /// event was declared has to name the events that will not run and the
+    /// command that fixes it, since nothing else about the installation looks
+    /// wrong; setup skipped altogether reads differently, and a codex that
+    /// never ran has no config to have missed it in.
     #[test]
     fn what_codex_trusts_is_reported_in_the_words_that_say_what_to_do() {
         let all: Vec<_> = ariadne_core::codex_hooks::EVENTS.to_vec();
-        let complete = codex_hooks(&trust_for(&all), true);
+        let complete = codex_hooks(&trust_for(&all));
         assert_eq!(complete.status, Status::Ok);
         assert!(complete.hint.is_none());
 
         let one = trust_for(&["SessionStart"]);
-        assert_eq!(codex_hooks(&one, true).status, Status::Fail);
-        assert_eq!(codex_hooks(&one, false).status, Status::Warn);
+        assert_eq!(codex_hooks(&one).status, Status::Warn);
 
         let old: Vec<_> = ariadne_core::codex_hooks::EVENTS
             .into_iter()
             .filter(|e| *e != "PermissionRequest")
             .collect();
-        let stale = codex_hooks(&trust_for(&old), false);
+        let stale = codex_hooks(&trust_for(&old));
         assert!(stale.detail.contains("permission_request"), "{stale:?}");
         assert!(
             stale
@@ -267,93 +253,24 @@ mod tests {
                 .is_some_and(|h| h.contains("ariadne setup codex-hooks"))
         );
 
-        let never_asked = codex_hooks(&trust_for(&[]), false);
+        let never_asked = codex_hooks(&trust_for(&[]));
         assert!(
             never_asked.detail.contains("none of the"),
             "{never_asked:?}"
         );
-        let never_ran = codex_hooks(
-            &Trust {
-                config_exists: false,
-                ..trust_for(&[])
-            },
-            false,
-        );
+        let never_ran = codex_hooks(&Trust {
+            config_exists: false,
+            ..trust_for(&[])
+        });
         assert!(never_ran.detail.contains("no config"), "{never_ran:?}");
     }
 
-    /// A profile pinned to an agent the daemon cannot launch is a failure, and
-    /// the line has to name both the profile and the binary — that is the
-    /// whole content of the report for whoever has to fix it. Every profile
-    /// that names the same missing binary is on the same line. An `auto`
-    /// profile takes whatever is installed, so it only fails when nothing is.
-    #[test]
-    fn a_profile_whose_agent_is_missing_fails_by_name() {
-        let checks = profiles(
-            &[
-                profile("Author", Some(AgentKind::Codex)),
-                profile("Reviewer", Some(AgentKind::Codex)),
-            ],
-            &daemon_sees(&[AgentKind::ClaudeCode]),
-        );
-        assert_eq!(checks.len(), 1);
-        assert_eq!(checks[0].status, Status::Fail);
-        assert!(checks[0].detail.contains("codex"), "{:?}", checks[0]);
-        assert!(
-            checks[0].detail.contains("Author, Reviewer"),
-            "{:?}",
-            checks[0]
-        );
-
-        let listed = [
-            profile("Author", Some(AgentKind::Opencode)),
-            profile("Orchestrator", None),
-        ];
-        let ok = profiles(&listed, &daemon_sees(&[AgentKind::Opencode]));
-        assert!(ok.iter().all(|c| c.status == Status::Ok), "{ok:?}");
-        assert!(by_name(&ok, "auto").detail.contains("opencode"));
-
-        let bad = profiles(&[profile("Orchestrator", None)], &daemon_sees(&[]));
-        assert_eq!(bad[0].status, Status::Fail);
-        assert!(bad[0].detail.contains("Orchestrator"), "{:?}", bad[0]);
-    }
-
-    /// The daemon's PATH decides, not the shell's: a binary this terminal can
-    /// see is no use to the process that would spawn the session. With no
-    /// daemon to ask, this shell's PATH stands in — better than reporting
-    /// every profile as broken.
-    #[test]
-    fn availability_is_judged_by_what_the_daemon_sees() {
-        let seen = |daemon, client| Availability { daemon, client };
-        let author = |kind| [profile("Author", Some(kind))];
-
-        let stale = profiles(
-            &author(AgentKind::Codex),
-            &seen(Some(vec![]), vec![AgentKind::Codex]),
-        );
-        assert_eq!(stale[0].status, Status::Fail);
-        assert!(
-            stale[0]
-                .hint
-                .as_deref()
-                .is_some_and(|h| h.contains("your PATH")),
-            "{:?}",
-            stale[0]
-        );
-
-        let no_daemon = profiles(
-            &author(AgentKind::ClaudeCode),
-            &seen(None, vec![AgentKind::ClaudeCode]),
-        );
-        assert_eq!(no_daemon[0].status, Status::Ok);
-    }
-
-    /// A missing agent no profile runs on is a warning: one agent is enough.
+    /// A missing agent nothing is pinned to is a warning: one agent is enough.
     /// No agent at all is a different matter — nothing can be spawned.
     #[test]
     fn a_missing_agent_is_a_warning_until_none_is_left() {
         let some = agent_binaries(&[AgentKind::ClaudeCode]);
-        let checks = agents(&some, &[], &Availability::new(None, &some), &[]);
+        let checks = agents(&some, &[], &Availability::new(None, &some));
         assert_eq!(
             checks.len(),
             3,
@@ -364,7 +281,7 @@ mod tests {
         assert_eq!(checks[2].status, Status::Warn);
 
         let none = agent_binaries(&[]);
-        let checks = agents(&none, &[], &Availability::new(None, &none), &[]);
+        let checks = agents(&none, &[], &Availability::new(None, &none));
         assert_eq!(checks.last().unwrap().status, Status::Fail);
     }
 
