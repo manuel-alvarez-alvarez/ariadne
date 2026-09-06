@@ -8,8 +8,8 @@
  * above the lanes it is about (see `features/goals/attention-strip.tsx`), and a
  * count on the Goals entry here, which is what says an agent is waiting while
  * the user is on one of the other four screens. "Sessions" is
- * the agents that are running, across every goal; "Agents" is the CLIs and
- * their flags, not what is running on them. A single session still has no entry
+ * the agents that are running, across every goal; "Agents" is the CLIs, their flags
+ * and the models they can be staffed on, not what is running on them. A single session still has no entry
  * of its own: it opens as a panel over whichever list picked it (see
  * `features/sessions/session-panel.tsx`).
  *
@@ -31,7 +31,6 @@ import {
   FolderGit2Icon,
   type LucideIcon,
   RadioTowerIcon,
-  SparklesIcon,
   TargetIcon,
 } from "lucide-react"
 import { NavLink } from "react-router-dom"
@@ -51,7 +50,6 @@ const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean
   { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
   { to: paths.skills(), label: "Skills", icon: CpuIcon },
   { to: paths.agents(), label: "Agents", icon: BotIcon },
-  { to: paths.models(), label: "Models", icon: SparklesIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
 ]
 

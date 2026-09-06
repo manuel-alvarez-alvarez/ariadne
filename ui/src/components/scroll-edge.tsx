@@ -32,10 +32,22 @@ import { cn } from "@/lib/format"
  */
 export function ScrollableTable({
   className,
+  pinnedEnd = false,
   children,
 }: {
   /** The frame: its radius and border, which differ between the list screens and the panels. */
   className?: string
+  /**
+   * The last column is pinned to the trailing edge, so that edge is not faded.
+   *
+   * A fade is a picture of content carrying on past the edge, and it is drawn
+   * over whatever is under it. Where the last column is a control — a switch,
+   * a row of buttons — that wash lands on the one thing in the row the reader
+   * came to press, greying a switch that is not disabled and dimming its own
+   * affordance. A column that does not move needs no such picture: nothing of
+   * it is cut off, and what scrolls passes underneath it instead.
+   */
+  pinnedEnd?: boolean
   children: ReactNode
 }) {
   const scroll = useHorizontalOverflow<HTMLDivElement>()
@@ -43,7 +55,7 @@ export function ScrollableTable({
     <div className={cn("relative overflow-hidden", className)}>
       <Table containerRef={scroll.ref}>{children}</Table>
       <ScrollEdge side="start" show={scroll.overflow.start} />
-      <ScrollEdge side="end" show={scroll.overflow.end} />
+      <ScrollEdge side="end" show={!pinnedEnd && scroll.overflow.end} />
     </div>
   )
 }

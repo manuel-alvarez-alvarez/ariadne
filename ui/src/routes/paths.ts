@@ -54,7 +54,6 @@ export const paths = {
    */
   sessions: () => "/sessions",
   agents: () => "/agents",
-  models: () => "/models",
   repositories: () => "/repositories",
   /**
    * The goals board with this goal's panel open on one of its sessions.

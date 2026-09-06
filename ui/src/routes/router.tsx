@@ -24,7 +24,6 @@ import { createHashRouter, Navigate, type RouteObject, useParams } from "react-r
 import { AppShell, type PageHandle } from "@/components/app-shell"
 import { AgentsPage } from "@/features/agents/agents-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
-import { ModelsPage } from "@/features/models/models-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
 import { SkillsPage } from "@/features/skills/skills-page"
@@ -51,7 +50,8 @@ const routes: RouteObject[] = [
   { path: "sessions", element: <SessionsPage />, handle: { title: "Sessions" } },
   { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
   { path: "agents", element: <AgentsPage />, handle: { title: "Agents" } },
-  { path: "models", element: <ModelsPage />, handle: { title: "Models" } },
+  // The models were folded into the agents screen; the address outlives it.
+  { path: "models", element: <Navigate to={paths.agents()} replace /> },
   { path: "repositories", element: <RepositoriesPage />, handle: { title: "Repositories" } },
   { path: "*", element: <NotFoundPage /> },
 ]

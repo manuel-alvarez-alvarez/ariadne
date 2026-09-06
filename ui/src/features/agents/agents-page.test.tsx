@@ -16,13 +16,14 @@
  * with no agents at all leaves on screen.
  */
 
-import { screen, waitFor } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it } from "vitest"
 
-import type { AgentConfigDto } from "@/api"
-import { anAgentConfig } from "@/test/fixtures"
-import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import type { AgentConfigDto, ModelDto } from "@/api"
+import { Toaster } from "@/components/ui/sonner"
+import { aModel, anAgentConfig } from "@/test/fixtures"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { AgentsPage } from "./agents-page"
 
 /** Customized: the default is there, with one flag added after it. */
@@ -41,10 +42,22 @@ const CODEX = anAgentConfig({
 /** Emptied: the default dropped, which is a legitimate answer of its own. */
 const OPENCODE = anAgentConfig({ agent_kind: "opencode", default_flags: ["--auto"] })
 
+const OPUS = aModel({
+  id: "claude_code:claude-opus-5",
+  description: "the frontier model",
+  tier: "frontier",
+})
+/** Discovered by opencode, so its id carries a `/` of its own. */
+const LOCAL = aModel({
+  id: "opencode:anthropic/claude-sonnet-4",
+  agent_kind: "opencode",
+  enabled: false,
+})
+
 interface Recorded {
   method: string
   path: string
-  body: { extra_flags?: string[] } | null
+  body: { extra_flags?: string[]; id?: string; enabled?: boolean } | null
 }
 
 let requests: Recorded[] = []
@@ -61,14 +74,29 @@ function lastWrite(): Recorded | undefined {
  * triggers answers with the new list — which is what makes "the row shows what
  * was saved" a test of the round trip rather than of the optimistic patch.
  */
-function stubDaemon(configs: AgentConfigDto[] = [CLAUDE_CODE, CODEX, OPENCODE]) {
+function stubDaemon(
+  configs: AgentConfigDto[] = [CLAUDE_CODE, CODEX, OPENCODE],
+  models: ModelDto[] = [OPUS, LOCAL],
+  /** Stands in for the one refusal there is: the last model left on. */
+  refuse?: string,
+) {
   const stored = configs.map((config) => ({ ...config }))
+  const catalog = models.map((model) => ({ ...model }))
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     const { pathname } = new URL(request.url)
     const raw = await request.text()
     const body = raw.length > 0 ? JSON.parse(raw) : null
     requests.push({ method: request.method, path: pathname, body })
+
+    if (pathname === "/v1/models/enabled") {
+      if (refuse !== undefined) return errorResponse(409, "conflict", refuse)
+      const model = catalog.find((one) => one.id === body?.id)
+      if (!model) return jsonResponse({})
+      model.enabled = body?.enabled ?? true
+      return jsonResponse(model)
+    }
+    if (pathname === "/v1/models") return jsonResponse(catalog)
 
     if (request.method === "PUT") {
       const kind = pathname.split("/").at(-1)
@@ -81,8 +109,23 @@ function stubDaemon(configs: AgentConfigDto[] = [CLAUDE_CODE, CODEX, OPENCODE]) 
   })
 }
 
-/** Opens the dialog on one agent, by the row's own edit button. */
+/** The switch on one model's row, by the accessible name it carries. */
+function toggle(id: string): Promise<HTMLElement> {
+  return screen.findByRole("switch", { name: `${id} available` })
+}
+
+/**
+ * Brings one CLI's tab to the front. Only the open tab is rendered, so every
+ * assertion about a CLI other than the first has to come through here.
+ */
+async function selectAgent(user: ReturnType<typeof userEvent.setup>, label: string) {
+  await user.click(await screen.findByRole("tab", { name: new RegExp(`^${label}`) }))
+  return screen.findByRole("tabpanel")
+}
+
+/** Opens the dialog on one agent, by its own edit button. */
 async function openFlags(user: ReturnType<typeof userEvent.setup>, label: string) {
+  await selectAgent(user, label)
   await user.click(await screen.findByRole("button", { name: `Edit ${label} flags` }))
   await screen.findByRole("dialog")
 }
@@ -96,33 +139,49 @@ beforeEach(() => {
 // project does not use — without this every screen stays in the document.
 
 describe("AgentsPage", () => {
-  it("lists the three agents by name, with the flags each is launched with", async () => {
+  it("gives every agent a tab, and opens on the daemon's first", async () => {
+    const user = userEvent.setup()
     renderScreen(<AgentsPage />)
 
-    expect(await screen.findByText("Claude Code")).toBeDefined()
-    expect(screen.getByText("Codex")).toBeDefined()
-    expect(screen.getByText("OpenCode")).toBeDefined()
+    // The strip is the list of CLIs there are, whichever one is open.
+    expect(await screen.findByRole("tab", { name: /^Claude Code/ })).toBeDefined()
+    expect(screen.getByRole("tab", { name: /^Codex/ })).toBeDefined()
+    expect(screen.getByRole("tab", { name: /^OpenCode/ })).toBeDefined()
 
+    // The first is open, so its flags are the ones on screen.
     expect(screen.getByText("--dangerously-skip-permissions")).toBeDefined()
     expect(screen.getByText("--verbose")).toBeDefined()
-    expect(screen.getByText("--dangerously-bypass-approvals-and-sandbox")).toBeDefined()
+    expect(screen.queryByText("--dangerously-bypass-approvals-and-sandbox")).toBeNull()
+
+    await selectAgent(user, "Codex")
+    expect(await screen.findByText("--dangerously-bypass-approvals-and-sandbox")).toBeDefined()
+    expect(screen.queryByText("--dangerously-skip-permissions")).toBeNull()
   })
 
-  it("says which lists have been moved off the defaults, in both directions", async () => {
+  it("says whether the open tab's list has been moved off the defaults", async () => {
+    const user = userEvent.setup()
     renderScreen(<AgentsPage />)
 
     // Claude Code has a flag added, OpenCode has the default dropped; only
     // Codex is still exactly what Ariadne ships.
-    expect(await screen.findAllByText("Customized")).toHaveLength(2)
+    expect(await screen.findByText("Customized")).toBeDefined()
+
+    await selectAgent(user, "Codex")
     // The same word the prompt sections use for a text nobody has moved.
-    expect(screen.getAllByText("Default")).toHaveLength(1)
+    expect(await screen.findByText("Default")).toBeDefined()
+
+    await selectAgent(user, "OpenCode")
+    expect(await screen.findByText("Customized")).toBeDefined()
     expect(screen.getByText(/none — Ariadne's own arguments only/)).toBeDefined()
   })
 
-  it("counts the rows it is showing", async () => {
+  it("counts both what it lists and what those can be staffed on", async () => {
     renderScreen(<AgentsPage />)
 
-    expect(await screen.findByText("3 agents")).toBeDefined()
+    // One line for the page, because the catalog is now part of it: how many
+    // CLIs there are, how many models between them, and — the fact no single
+    // row carries — how many of those are turned off.
+    expect(await screen.findByText("3 agents, 2 models, 1 turned off")).toBeDefined()
   })
 
   /**
@@ -131,11 +190,11 @@ describe("AgentsPage", () => {
    * looking like it is still loading.
    */
   it("says the list is empty rather than showing a bare table", async () => {
-    stubDaemon([])
+    stubDaemon([], [])
     renderScreen(<AgentsPage />)
 
     expect(await screen.findByText("No agents")).toBeDefined()
-    expect(screen.getByText("0 agents")).toBeDefined()
+    expect(screen.getByText("0 agents, 0 models")).toBeDefined()
     expect(screen.queryByRole("button", { name: /Edit .* flags/ })).toBeNull()
   })
 
@@ -206,6 +265,9 @@ describe("editing an agent's flags", () => {
     const user = userEvent.setup()
     daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(String(input), init)
+      // The catalog is a separate request and not what this is about; answering
+      // it with the agent list would hand the models table agent configs.
+      if (new URL(request.url).pathname === "/v1/models") return jsonResponse([])
       if (request.method !== "PUT") return jsonResponse([CLAUDE_CODE, CODEX, OPENCODE])
       return new Response(
         JSON.stringify({ error: { code: "bad_request", message: "unknown agent kind: codex" } }),
@@ -261,5 +323,121 @@ describe("restoring the defaults", () => {
     await openFlags(user, "Codex")
 
     expect(screen.queryByRole("button", { name: "Restore defaults" })).toBeNull()
+  })
+})
+
+/**
+ * The catalog, now that it is part of this screen rather than one of its own.
+ *
+ * The rows sit under the CLI that runs them, so what is worth pinning beyond
+ * the round trip is that they land in the right section — and that the id
+ * still travels in the *body*, because a model id carries both `:` and, for
+ * the ids opencode discovers, `/`, which no path segment holds.
+ */
+describe("the models under each agent", () => {
+  it("puts each model in the tab of the CLI that runs it", async () => {
+    const user = userEvent.setup()
+    renderScreen(<AgentsPage />)
+
+    // Claude Code's tab holds the Claude model and not opencode's.
+    const claude = (await screen.findByRole("tabpanel")) as HTMLElement
+    expect(within(claude).getByText(OPUS.id)).toBeDefined()
+    expect(within(claude).getByText("the frontier model")).toBeDefined()
+    expect(within(claude).queryByText(LOCAL.id)).toBeNull()
+
+    const opencode = (await selectAgent(user, "OpenCode")) as HTMLElement
+    expect(within(opencode).getByText(LOCAL.id)).toBeDefined()
+    expect(within(opencode).queryByText(OPUS.id)).toBeNull()
+  })
+
+  /** Each tab carries the size of the catalog behind it, loaded or not. */
+  it("counts each CLI's catalog on its tab", async () => {
+    renderScreen(<AgentsPage />)
+
+    // The pill's own `aria-label` runs straight on after the CLI's name, which
+    // is how every tab strip in the app already reads.
+    expect(await screen.findByRole("tab", { name: /^Claude Code\s*1 model$/ })).toBeDefined()
+    expect(screen.getByRole("tab", { name: /^OpenCode\s*1 model$/ })).toBeDefined()
+    // A CLI the catalog has nothing for still says so, rather than nothing.
+    expect(screen.getByRole("tab", { name: /^Codex\s*0 models$/ })).toBeDefined()
+  })
+
+  it("shows whether each one can be staffed on", async () => {
+    const user = userEvent.setup()
+    renderScreen(<AgentsPage />)
+
+    expect((await toggle(OPUS.id)).getAttribute("aria-checked")).toBe("true")
+    await selectAgent(user, "OpenCode")
+    expect((await toggle(LOCAL.id)).getAttribute("aria-checked")).toBe("false")
+  })
+
+  it("sends the id in the body, so a model named with a slash still travels", async () => {
+    const user = userEvent.setup()
+    renderScreen(<AgentsPage />)
+
+    await selectAgent(user, "OpenCode")
+    await user.click(await toggle(LOCAL.id))
+
+    await waitFor(() => expect(lastWrite()).toBeDefined())
+    const write = lastWrite()
+    expect(write?.method).toBe("PUT")
+    // Not `/v1/models/opencode:anthropic/claude-sonnet-4`, which is two
+    // segments and matches no route.
+    expect(write?.path).toBe("/v1/models/enabled")
+    expect(write?.body).toEqual({ id: LOCAL.id, enabled: true })
+
+    await waitFor(async () =>
+      expect((await toggle(LOCAL.id)).getAttribute("aria-checked")).toBe("true"),
+    )
+  })
+
+  it("turns a model off", async () => {
+    const user = userEvent.setup()
+    renderScreen(<AgentsPage />)
+
+    await user.click(await toggle(OPUS.id))
+
+    await waitFor(() => expect(lastWrite()?.body).toEqual({ id: OPUS.id, enabled: false }))
+    await waitFor(async () =>
+      expect((await toggle(OPUS.id)).getAttribute("aria-checked")).toBe("false"),
+    )
+  })
+
+  /**
+   * The daemon refuses the last model left on. A switch that springs back with
+   * nothing said reads as a click that never registered, so the reason it gave
+   * is what the screen shows — and the row goes back to what the daemon still
+   * says rather than to what was asked for.
+   */
+  it("says why, where the daemon refuses to turn a model off", async () => {
+    const refusal = "`claude_code:claude-opus-5` is the last model left enabled"
+    stubDaemon([CLAUDE_CODE], [{ ...OPUS, enabled: true }], refusal)
+    const user = userEvent.setup()
+    renderScreen(
+      <>
+        <Toaster />
+        <AgentsPage />
+      </>,
+    )
+
+    await user.click(await toggle(OPUS.id))
+
+    expect(await screen.findByText(refusal)).toBeDefined()
+    expect((await toggle(OPUS.id)).getAttribute("aria-checked")).toBe("true")
+  })
+
+  /**
+   * A CLI the daemon knows but reported no catalog for still gets its section:
+   * the flags are the other half of it, and a headed table over nothing looks
+   * like one that is still loading.
+   */
+  it("says which CLI has no catalog rather than leaving a bare table", async () => {
+    stubDaemon([CLAUDE_CODE], [])
+    renderScreen(<AgentsPage />)
+
+    expect(await screen.findByText(/the daemon reported none for this CLI/)).toBeDefined()
+    expect(screen.getByText("ariadne models ls")).toBeDefined()
+    // The flags are still there: only the catalog was empty.
+    expect(screen.getByText("--verbose")).toBeDefined()
   })
 })
