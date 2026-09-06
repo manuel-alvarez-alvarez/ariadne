@@ -27,14 +27,11 @@ import { plural } from "@/lib/format"
 import { DeleteRepositoryDialog } from "./delete-repository-dialog"
 import { NoRepositories as SharedNoRepositories } from "./no-repositories"
 import { repositoriesQueryOptions } from "./queries"
-// The strategies are named once, by the form that sets them: a column
-// spelling the same stored value differently is how the two drifted apart.
-import { MERGE_STRATEGY_META, RepositoryFormDialog } from "./repository-form-dialog"
+import { RepositoryFormDialog } from "./repository-form-dialog"
 
 const COLUMNS = [
   { header: "Path" },
   { header: "Base branch" },
-  { header: "Merge strategy" },
   // Wide enough to be a sentence rather than a word per line: what made the
   // rows of this table 130px tall was a description with nothing to wrap in.
   { header: "Description", className: "min-w-48" },
@@ -135,17 +132,6 @@ function RepositoryRow({
       </TableCell>
       <TableCell className="max-w-24 text-xs lg:max-w-56">
         <CopyableId value={repository.base_branch} label="base branch" truncate="middle" />
-      </TableCell>
-      <TableCell className="text-xs text-muted-foreground">
-        {MERGE_STRATEGY_META[repository.merge_strategy].label}
-        {!repository.landing_prompt_is_default ? (
-          <span
-            className="ml-1.5 text-muted-foreground/70 italic"
-            title="The landing briefing was edited away from the strategy's default."
-          >
-            custom
-          </span>
-        ) : null}
       </TableCell>
       <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}

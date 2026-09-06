@@ -114,12 +114,7 @@ pub fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) 
     let repo_lines = repos
         .iter()
         .map(|r| {
-            let line = format!(
-                "- {} (base branch: {}, merge strategy: {})",
-                r.path,
-                r.base_branch,
-                r.merge_strategy().as_str()
-            );
+            let line = format!("- {} (base branch: {})", r.path, r.base_branch);
             match r.description.as_deref().map(str::trim) {
                 Some(d) if !d.is_empty() => format!("{line} — {d}"),
                 _ => line,
@@ -194,7 +189,7 @@ pub fn author_briefing(
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
             ("repo_path", &repo.path),
-            ("merge_strategy", repo.merge_strategy().as_str()),
+            ("landing", task.landing().as_str()),
             ("dependencies", &dep_lines),
         ],
     )
@@ -290,7 +285,7 @@ pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> Strin
 mod tests {
     use super::*;
 
-    use ariadne_core::MergeStrategy;
+    use ariadne_core::Landing;
 
     use ariadne_store::defaults::default_landing_prompt;
 
@@ -315,8 +310,6 @@ mod tests {
             path: "/repos/ariadne".into(),
             base_branch: "main".into(),
             description: None,
-            merge_strategy: "direct".into(),
-            landing_prompt: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }
@@ -453,9 +446,9 @@ mod tests {
             );
         }
 
-        // And the landing briefing, whose allowed names are the repository's
-        // to hold rather than a kind's.
-        let template = MergeStrategy::LANDING_PLACEHOLDERS
+        // And the landing briefing, whose allowed names belong to the ending
+        // rather than to a kind.
+        let template = Landing::LANDING_PLACEHOLDERS
             .iter()
             .map(|name| format!("{{{name}}}"))
             .collect::<Vec<_>>()
@@ -502,12 +495,7 @@ mod tests {
             .map(|(who, body)| format!("### From {who}\n{body}"))
             .collect::<Vec<_>>()
             .join("\n\n");
-        let repo_line = format!(
-            "- {} (base branch: {}, merge strategy: {})",
-            repo.path,
-            repo.base_branch,
-            repo.merge_strategy().as_str()
-        );
+        let repo_line = format!("- {} (base branch: {})", repo.path, repo.base_branch);
         let round = task.review_round.to_string();
         let attention = "- Render prompts (01task) failed".to_string();
 
@@ -562,7 +550,7 @@ mod tests {
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
                     ("repo_path", &repo.path),
-                    ("merge_strategy", "direct"),
+                    ("landing", "merge"),
                     ("dependencies", &dep_lines),
                 ],
             ),
@@ -627,31 +615,31 @@ mod tests {
             );
         }
 
-        // And the landing briefing of each strategy, the same way: the
-        // repository's default text with this task's values put in.
+        // And the landing briefing of each ending, the same way: the built-in
+        // text with this task's values put in.
         let landing_values = vec![
             ("task_title", task.title.as_str()),
             ("branch", task.branch.as_str()),
             ("base_branch", repo.base_branch.as_str()),
             ("repo_path", repo.path.as_str()),
         ];
-        for strategy in MergeStrategy::ALL {
-            let repo = Repository {
-                merge_strategy: strategy.as_str().into(),
-                ..repo.clone()
+        for landing in Landing::ALL {
+            let task = Task {
+                landing: landing.as_str().into(),
+                ..task.clone()
             };
-            let template = default_landing_prompt(strategy);
-            let rendered = landing_briefing(repo.landing_prompt_text(), &task, &repo);
+            let template = default_landing_prompt(landing);
+            let rendered = landing_briefing(task.landing_prompt_text(), &task, &repo);
             assert_eq!(
                 rendered,
                 filled(template, &landing_values),
-                "the default {} landing briefing, substituted",
-                strategy.as_str()
+                "the {} landing briefing, substituted",
+                landing.as_str()
             );
             assert!(
                 !rendered.contains('{'),
                 "the {} landing briefing left a placeholder unfilled: {rendered}",
-                strategy.as_str()
+                landing.as_str()
             );
         }
     }
@@ -704,29 +692,27 @@ mod tests {
             "{changes}"
         );
 
-        let landing = landing_briefing(repo.landing_prompt_text(), &task, &repo);
+        let landing = landing_briefing(task.landing_prompt_text(), &task, &repo);
         assert!(landing.starts_with(&format!("# Land task: {}", task.title)));
     }
 
-    /// The landing briefing is the repository's: with nothing set on it, the
-    /// default of its merge strategy, which is the whole of what the author
-    /// reads — the branch, the base and the checkout its commands act on, and
-    /// one procedure, not two.
+    /// The task says what its author lands with: one procedure, not three.
+    /// The repository it works in has no say — a checkout and a base branch
+    /// is all a repository is.
     #[test]
-    fn the_repository_says_what_the_author_lands_with() {
-        let task = task();
+    fn the_task_says_what_the_author_lands_with() {
         let repo = repo();
-        let published_repo = Repository {
-            merge_strategy: "pull_request".into(),
-            ..repo.clone()
+        let merging = task();
+        let publishing = Task {
+            landing: "pull_request".into(),
+            ..merging.clone()
         };
 
-        let direct = landing_briefing(repo.landing_prompt_text(), &task, &repo);
+        let direct = landing_briefing(merging.landing_prompt_text(), &merging, &repo);
         assert!(direct.contains("git reset --soft main"), "{direct}");
         assert!(!direct.contains("gh pr"), "{direct}");
 
-        let published =
-            landing_briefing(published_repo.landing_prompt_text(), &task, &published_repo);
+        let published = landing_briefing(publishing.landing_prompt_text(), &publishing, &repo);
         assert!(
             published.contains("gh pr create --base main"),
             "{published}"
@@ -734,21 +720,21 @@ mod tests {
         assert!(!published.contains("reset --soft"), "{published}");
 
         // The branch, the base and the checkout the commands act on.
-        for value in [task.branch.as_str(), "main", "/repos/ariadne"] {
+        for value in [merging.branch.as_str(), "main", "/repos/ariadne"] {
             assert!(published.contains(value), "{value}: {published}");
         }
         assert!(!published.contains('{'), "{published}");
 
-        // A text of the repository's own is what is rendered instead, and the
-        // merge strategy under it changes nothing about that.
-        let custom = Repository {
-            landing_prompt: Some("Land {branch} onto {base_branch} however you like.".into()),
-            ..published_repo.clone()
+        // And the third ending runs neither: nothing is landed, so nothing
+        // about the repository is in it.
+        let nothing = Task {
+            landing: "none".into(),
+            ..merging.clone()
         };
-        assert_eq!(
-            landing_briefing(custom.landing_prompt_text(), &task, &custom),
-            format!("Land {} onto main however you like.", task.branch)
-        );
+        let landed = landing_briefing(nothing.landing_prompt_text(), &nothing, &repo);
+        assert!(landed.contains("lands nothing"), "{landed}");
+        assert!(!landed.contains("gh pr"), "{landed}");
+        assert!(!landed.contains("reset --soft"), "{landed}");
     }
 
     /// A repository is registered with a description; the orchestrator is
@@ -773,17 +759,15 @@ mod tests {
             &[described, blank, repo()],
         );
         assert!(
-            briefing.contains(
-                "- /repos/ui (base branch: main, merge strategy: direct) — the web client"
-            ),
+            briefing.contains("- /repos/ui (base branch: main) — the web client"),
             "{briefing}"
         );
         assert!(
-            briefing.contains("- /repos/api (base branch: main, merge strategy: direct)\n"),
+            briefing.contains("- /repos/api (base branch: main)\n"),
             "a blank description adds nothing: {briefing}"
         );
         assert!(
-            briefing.contains("- /repos/ariadne (base branch: main, merge strategy: direct)"),
+            briefing.contains("- /repos/ariadne (base branch: main)"),
             "{briefing}"
         );
     }
@@ -803,25 +787,23 @@ mod tests {
     /// ends with is the orchestrator's to agree with the user, so it has to
     /// know what each repository does by default.
     #[test]
-    fn the_orchestrator_is_briefed_with_every_repository_and_how_each_takes_a_change() {
-        let direct = repo();
-        let published = Repository {
+    fn the_orchestrator_is_briefed_with_every_repository_and_its_base_branch() {
+        let other = Repository {
             path: "/repos/web".into(),
             base_branch: "trunk".into(),
-            merge_strategy: "pull_request".into(),
             ..repo()
         };
         let briefing = orchestrator_briefing(
             default(PromptKind::OrchestratorBriefing),
             &goal(),
-            &[direct, published],
+            &[repo(), other],
         );
         assert!(
-            briefing.contains("- /repos/ariadne (base branch: main, merge strategy: direct)"),
+            briefing.contains("- /repos/ariadne (base branch: main)"),
             "{briefing}"
         );
         assert!(
-            briefing.contains("- /repos/web (base branch: trunk, merge strategy: pull_request)"),
+            briefing.contains("- /repos/web (base branch: trunk)"),
             "{briefing}"
         );
         assert!(!briefing.contains('{'), "{briefing}");

@@ -76,66 +76,19 @@ wire_enum! { Seat, "seat", [
     Reviewer = "reviewer",
 ]}
 
-/// How a repository takes the change a task lands on its base branch: the one
-/// thing about a repository the author that finishes a task has to be told,
-/// since the commands it runs at the end differ entirely between the two.
+/// How one task ends.
+///
+/// The one thing about the end of a task the author has to be told, since the
+/// commands it runs differ entirely between the three. The orchestrator agrees
+/// it with the user task by task: some work lands on the base branch, some
+/// goes through a request the author then sees to its merge, and some has
+/// nothing to land at all — a report filed, a document published, a release
+/// cut. All three reach [`TaskStatus::Finished`]; landing is one way of
+/// getting there rather than the meaning of being there.
 ///
 /// Which forge a published request goes to is *not* here: `origin` says
 /// whether it is GitHub or GitLab, and asking the remote at landing time
 /// cannot go stale the way a second copy of the answer would.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[cfg_attr(
-    feature = "clap",
-    derive(clap::ValueEnum),
-    value(rename_all = "kebab-case")
-)]
-#[serde(rename_all = "snake_case")]
-pub enum MergeStrategy {
-    /// Squashed onto the base branch with git alone, in the primary checkout.
-    #[default]
-    Direct,
-    /// Published as a pull or merge request, which its author then sees
-    /// through: it answers what is written on the request and merges it.
-    PullRequest,
-}
-
-wire_enum! { MergeStrategy, "merge strategy", [
-    Direct = "direct", PullRequest = "pull_request",
-]}
-
-impl MergeStrategy {
-    /// The placeholders a landing briefing may name, whichever strategy it is
-    /// written for: the branch, the base and the checkout its commands act
-    /// on, and the task they are landing.
-    ///
-    /// The contract between a repository's landing text and the daemon's
-    /// `landing_briefing` builder, read the same way
-    /// [`PromptKind::placeholders`] is read: a `{token}` outside this list is
-    /// one nothing will ever substitute.
-    pub const LANDING_PLACEHOLDERS: &'static [&'static str] =
-        &["task_title", "branch", "base_branch", "repo_path"];
-
-    /// Refuse a landing template that names a placeholder nothing fills in.
-    ///
-    /// The same check, and the same leniency about what is text, as
-    /// [`PromptKind::validate_template`]: saving is the last moment anyone
-    /// looks at a `{task_titel}`, since rendering carries it through to the
-    /// agent as it stands.
-    pub fn validate_landing_template(template: &str) -> Result<(), UnknownPlaceholders> {
-        unknown_placeholders("landing", Self::LANDING_PLACEHOLDERS, template)
-    }
-}
-
-/// How one task ends.
-///
-/// A repository's [`MergeStrategy`] says how *it* takes a change, and most
-/// tasks end that way. This says how *this* task ends, which the orchestrator
-/// agrees with the user task by task: some work lands on the base branch,
-/// some goes through a request the author then sees to its merge, and some has
-/// nothing to land at all — a report filed, a document published, a release
-/// cut. All three reach [`TaskStatus::Finished`]; landing is one way of
-/// getting there rather than the meaning of being there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(
@@ -160,23 +113,34 @@ wire_enum! { Landing, "landing", [
 ]}
 
 impl Landing {
-    /// How a task in a repository on `strategy` ends unless somebody says
-    /// otherwise: the way that repository takes a change.
-    pub fn of(strategy: MergeStrategy) -> Landing {
-        match strategy {
-            MergeStrategy::Direct => Landing::Merge,
-            MergeStrategy::PullRequest => Landing::PullRequest,
-        }
+    /// The placeholders a landing briefing may name, whichever ending it is
+    /// written for: the branch, the base and the checkout its commands act
+    /// on, and the task they are landing.
+    ///
+    /// The contract between a repository's landing text and the daemon's
+    /// `landing_briefing` builder, read the same way
+    /// [`PromptKind::placeholders`] is read: a `{token}` outside this list is
+    /// one nothing will ever substitute.
+    pub const LANDING_PLACEHOLDERS: &'static [&'static str] =
+        &["task_title", "branch", "base_branch", "repo_path"];
+
+    /// Refuse a landing template that names a placeholder nothing fills in.
+    ///
+    /// The same check, and the same leniency about what is text, as
+    /// [`PromptKind::validate_template`]: saving is the last moment anyone
+    /// looks at a `{task_titel}`, since rendering carries it through to the
+    /// agent as it stands.
+    pub fn validate_landing_template(template: &str) -> Result<(), UnknownPlaceholders> {
+        unknown_placeholders("landing", Self::LANDING_PLACEHOLDERS, template)
     }
 
-    /// The merge strategy whose landing briefing this landing is run with, or
-    /// `None` where there is nothing to land.
-    pub fn strategy(&self) -> Option<MergeStrategy> {
-        match self {
-            Landing::Merge => Some(MergeStrategy::Direct),
-            Landing::PullRequest => Some(MergeStrategy::PullRequest),
-            Landing::None => Option::None,
-        }
+    /// Whether this ending puts anything in the repository at all.
+    ///
+    /// The one that does not is why a repository's own landing text is not
+    /// handed to every task: a repository's way of taking a change has
+    /// nothing to say about a task that hands it none.
+    pub fn lands_a_change(&self) -> bool {
+        !matches!(self, Landing::None)
     }
 }
 
@@ -303,7 +267,7 @@ impl PromptKind {
                 // said once at the start as well as in the landing briefing:
                 // a branch that will be published is written differently
                 // from one that is squashed away.
-                "merge_strategy",
+                "landing",
                 "dependencies",
             ],
             PromptKind::AuthorResume => &["task_title", "branch"],
@@ -853,7 +817,7 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            MergeStrategy::validate_landing_template("Land it yourself."),
+            Landing::validate_landing_template("Land it yourself."),
             Ok(())
         );
     }
@@ -863,15 +827,15 @@ mod tests {
     /// the whole allowed set, and what renders as text is text here too.
     #[test]
     fn a_landing_template_names_only_what_the_landing_briefing_fills_in() {
-        let all = MergeStrategy::LANDING_PLACEHOLDERS
+        let all = Landing::LANDING_PLACEHOLDERS
             .iter()
             .map(|name| format!("{{{name}}}"))
             .collect::<Vec<_>>()
             .join(" ");
-        assert_eq!(MergeStrategy::validate_landing_template(&all), Ok(()));
+        assert_eq!(Landing::validate_landing_template(&all), Ok(()));
 
-        let err = MergeStrategy::validate_landing_template("Squash {branch} onto {base_brunch}.")
-            .unwrap_err();
+        let err =
+            Landing::validate_landing_template("Squash {branch} onto {base_brunch}.").unwrap_err();
         assert_eq!(err.unknown, ["base_brunch"]);
         let message = err.to_string();
         assert!(message.contains("landing"), "{message}");
@@ -881,9 +845,9 @@ mod tests {
 
         // A placeholder of a profile's briefing is not one a landing text can
         // use: the sets are per template, not one pool.
-        assert!(MergeStrategy::validate_landing_template("{task_description}").is_err());
+        assert!(Landing::validate_landing_template("{task_description}").is_err());
         assert_eq!(
-            MergeStrategy::validate_landing_template("Answer with {\"ok\": true} and {}."),
+            Landing::validate_landing_template("Answer with {\"ok\": true} and {}."),
             Ok(())
         );
     }

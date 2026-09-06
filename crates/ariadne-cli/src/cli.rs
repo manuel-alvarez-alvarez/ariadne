@@ -64,13 +64,9 @@ Examples:
 const REPO_EXAMPLES: &str = "\
 Examples:
   ariadne repo add ~/projects/api --description \"the public API\"
-  ariadne repo add ~/projects/ui --branch next --merge-strategy pull-request
-  ariadne repo add ~/projects/ui --landing-prompt-file landing.md
+  ariadne repo add ~/projects/ui --branch next
   ariadne repo ls
   ariadne repo update <repo-id> --branch main
-  ariadne repo prompt get <repo-id> > landing.md   # pipe it out, edit, pipe it back
-  ariadne repo prompt set <repo-id> --file landing.md
-  ariadne repo prompt reset <repo-id>              # back to the strategy's default
 ";
 
 const GOAL_EXAMPLES: &str = "\
@@ -316,9 +312,9 @@ pub enum Command {
     /// Manage repositories
     ///
     /// The checkouts goals may work in. A repository is registered once —
-    /// with the base branch its tasks branch off and how an approved task
-    /// lands on it — and named by every goal after that; the same checkout
-    /// can be registered once per base branch.
+    /// with the base branch its tasks branch off — and named by every goal
+    /// after that; the same checkout can be registered once per base branch.
+    /// How a task ends in it is the task's own (`task create --landing`).
     #[command(after_help = REPO_EXAMPLES)]
     Repo {
         #[command(subcommand)]

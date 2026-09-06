@@ -332,28 +332,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/merge-strategies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List the merge strategies and their built-in landing briefings.
-         * @description The landing briefing is the repository's, and a client editing one needs
-         *     the text of the strategy it is prefilled from and reset to before that
-         *     repository exists. One entry per strategy, in [`MergeStrategy::ALL`] order.
-         */
-        get: operations["repositories_list_merge_strategies"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/models": {
         parameters: {
             query?: never;
@@ -1039,16 +1017,6 @@ export interface components {
             base_branch?: string | null;
             description?: string | null;
             /**
-             * @description The landing briefing this repository hands its author. Omitted or
-             *     empty = the built-in default of `merge_strategy`, which
-             *     `GET /v1/merge-strategies` hands out for prefilling. A briefing may
-             *     use only the placeholders a landing text is rendered with
-             *     (`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that
-             *     names another is refused.
-             */
-            landing_prompt?: string | null;
-            merge_strategy?: null | components["schemas"]["MergeStrategy"];
-            /**
              * @description Absolute path of an existing git work tree.
              * @example /home/me/dev/ariadne
              */
@@ -1300,13 +1268,17 @@ export interface components {
         /**
          * @description How one task ends.
          *
-         *     A repository's [`MergeStrategy`] says how *it* takes a change, and most
-         *     tasks end that way. This says how *this* task ends, which the orchestrator
-         *     agrees with the user task by task: some work lands on the base branch,
-         *     some leaves a request for a person who is not in this system at all, and
-         *     some has nothing to land — a report filed, a document published, a release
+         *     The one thing about the end of a task the author has to be told, since the
+         *     commands it runs differ entirely between the three. The orchestrator agrees
+         *     it with the user task by task: some work lands on the base branch, some
+         *     goes through a request the author then sees to its merge, and some has
+         *     nothing to land at all — a report filed, a document published, a release
          *     cut. All three reach [`TaskStatus::Finished`]; landing is one way of
          *     getting there rather than the meaning of being there.
+         *
+         *     Which forge a published request goes to is *not* here: `origin` says
+         *     whether it is GitHub or GitLab, and asking the remote at landing time
+         *     cannot go stale the way a second copy of the answer would.
          * @enum {string}
          */
         Landing: "merge" | "pull_request" | "none";
@@ -1333,27 +1305,6 @@ export interface components {
         /** @description Response of `GET /v1/logs`: the in-memory ring buffer, oldest first. */
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
-        };
-        /**
-         * @description How a repository takes the change a task lands on its base branch: the one
-         *     thing about a repository the author that finishes a task has to be told,
-         *     since the commands it runs at the end differ entirely between the two.
-         *
-         *     Which forge a published request goes to is *not* here: `origin` says
-         *     whether it is GitHub or GitLab, and asking the remote at landing time
-         *     cannot go stale the way a second copy of the answer would.
-         * @enum {string}
-         */
-        MergeStrategy: "direct" | "pull_request";
-        /**
-         * @description One merge strategy and the landing briefing a repository on it runs on
-         *     while it has none of its own: what `GET /v1/merge-strategies` lists, so a
-         *     client can show and prefill a landing prompt before the repository exists.
-         */
-        MergeStrategyDto: {
-            /** @description The built-in landing briefing of this strategy. */
-            landing_prompt: string;
-            merge_strategy: components["schemas"]["MergeStrategy"];
         };
         MessageDto: {
             body: string;
@@ -1501,19 +1452,6 @@ export interface components {
             created_at: string;
             description?: string | null;
             id: string;
-            /**
-             * @description The landing briefing the author of an approved task is handed here:
-             *     the text set on this repository, or the built-in default of its merge
-             *     strategy while it has none of its own.
-             */
-            landing_prompt: string;
-            /**
-             * @description Whether `landing_prompt` is that strategy default rather than a text
-             *     set on this repository.
-             */
-            landing_prompt_is_default: boolean;
-            /** @description How a task lands on `base_branch` here. */
-            merge_strategy: components["schemas"]["MergeStrategy"];
             /** @description Absolute path of the checkout. */
             path: string;
             updated_at: string;
@@ -1878,17 +1816,6 @@ export interface components {
             base_branch?: string | null;
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
-            /**
-             * @description New landing briefing, or empty to put it back on the built-in default
-             *     of the merge strategy in force. Absent = unchanged, which is also what
-             *     a `merge_strategy` written on its own does to it: the words are the
-             *     user's, and the reset is what asks for the new strategy's text. A
-             *     briefing may use only the placeholders a landing text is rendered with
-             *     (`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that
-             *     names another is refused.
-             */
-            landing_prompt?: string | null;
-            merge_strategy?: null | components["schemas"]["MergeStrategy"];
             path?: string | null;
         };
         /** @description Partial update; absent fields stay unchanged. */
@@ -2470,25 +2397,6 @@ export interface operations {
             };
         };
     };
-    repositories_list_merge_strategies: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MergeStrategyDto"][];
-                };
-            };
-        };
-    };
     models_list: {
         parameters: {
             query?: never;
@@ -2548,7 +2456,7 @@ export interface operations {
                     "application/json": components["schemas"]["RepositoryDto"];
                 };
             };
-            /** @description not an absolute path, not a git work tree, unknown branch, or a landing prompt naming a placeholder nothing fills in */
+            /** @description not an absolute path, not a git work tree, or an unknown branch */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2616,7 +2524,7 @@ export interface operations {
                     "application/json": components["schemas"]["RepositoryDto"];
                 };
             };
-            /** @description not an absolute path, not a git work tree, unknown branch, or a landing prompt naming a placeholder nothing fills in */
+            /** @description not an absolute path, not a git work tree, or an unknown branch */
             400: {
                 headers: {
                     [name: string]: unknown;

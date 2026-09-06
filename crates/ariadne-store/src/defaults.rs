@@ -5,10 +5,8 @@
 //! constants on every launch and every resume, and no row holds one of its
 //! own. A skill is stored with a `NULL` document while it runs on the text
 //! here, and a reset drops what was written over it rather than copying a
-//! default in. A repository's landing briefing works the same way, off its
-//! merge strategy ([`default_landing_prompt`]). Because nothing is ever copied
-//! into the database, rewording a text here reaches every database that never
-//! edited it.
+//! default in. Because nothing is ever copied into the database, rewording a
+//! text here reaches every database that never edited it.
 //!
 //! Each rule is written once, in the layer it belongs to. A system prompt
 //! states what a seat owes, from its first read to the call that ends its
@@ -40,7 +38,7 @@
 //! `every_default_text_is_simplified_technical_english` keeps the sentences
 //! short across both.
 
-use ariadne_core::{MergeStrategy, PromptKind, Seat};
+use ariadne_core::{Landing, PromptKind, Seat};
 
 /// A skill Ariadne ships: one document that tells a generic agent how to do
 /// one kind of work.
@@ -156,29 +154,21 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     }
 }
 
-/// The landing briefing a repository on `strategy` runs on while it has none
-/// of its own: the whole procedure of that strategy, which is what its
+/// The whole procedure that ends a task on `landing`, which is what its
 /// author is handed once the task is approved.
 ///
-/// One text per strategy rather than one with two halves: a repository lands
-/// one way, so the author reads the procedure it runs and nothing of the
-/// other. A repository may be given a text of its own instead
-/// ([`Repository::landing_prompt_text`](crate::Repository::landing_prompt_text)),
-/// and clearing it puts this back in force.
-pub fn default_landing_prompt(strategy: MergeStrategy) -> &'static str {
-    match strategy {
-        MergeStrategy::Direct => LANDING_DIRECT,
-        MergeStrategy::PullRequest => LANDING_PULL_REQUEST,
+/// One text per ending rather than one with three halves: a task ends one
+/// way, so the author reads the procedure it runs and nothing of the other
+/// two. Nothing overrides these — how a change reaches a base branch is a
+/// fact about the task, agreed with the user when the task was written
+/// (`Landing`), and a second answer stored anywhere else could only disagree
+/// with it.
+pub fn default_landing_prompt(landing: Landing) -> &'static str {
+    match landing {
+        Landing::Merge => LANDING_DIRECT,
+        Landing::PullRequest => LANDING_PULL_REQUEST,
+        Landing::None => LANDING_NONE,
     }
-}
-
-/// What the author of a task that lands nothing is briefed with instead.
-///
-/// No repository holds a text for this: the two landing texts a repository
-/// may rewrite are the two procedures it takes a change by, and a task that
-/// lands nothing runs neither of them.
-pub fn default_no_landing_prompt() -> &'static str {
-    LANDING_NONE
 }
 
 /// Orchestrator persona and playbook, and the one place `finalize_plan` is
@@ -306,7 +296,7 @@ const AUTHOR_BRIEFING: &str = r#"# Task: {task_title}
 ## Context
 - Goal: {goal_title}
 - Worktree (your cwd): {worktree_path}
-- Branch: {branch} onto {base_branch}, merge strategy {merge_strategy}
+- Branch: {branch} onto {base_branch}, ending in {landing}
 - Repo: {repo_path}
 - Finished dependencies:
 {dependencies}"#;
@@ -506,9 +496,9 @@ mod tests {
                     .map(|kind| (kind.as_str().to_string(), default_prompt_text(kind))),
             )
             .chain(
-                MergeStrategy::ALL
+                Landing::ALL
                     .into_iter()
-                    .map(|strategy| (landing_name(strategy), default_landing_prompt(strategy))),
+                    .map(|landing| (landing_name(landing), default_landing_prompt(landing))),
             )
             .collect()
     }
@@ -522,8 +512,8 @@ mod tests {
     }
 
     /// How a strategy's landing briefing is named in a failure.
-    fn landing_name(strategy: MergeStrategy) -> String {
-        format!("{} landing briefing", strategy.as_str())
+    fn landing_name(landing: Landing) -> String {
+        format!("{} landing briefing", landing.as_str())
     }
 
     /// The size a prompt may grow back to, per kind, and in total.
@@ -595,7 +585,11 @@ mod tests {
     #[test]
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 1500;
-        const LANDING_TOTAL: usize = 2150;
+        // Three now rather than two: the ending that lands nothing used to be
+        // counted apart, because a repository could rewrite the other two and
+        // never that one. Nothing rewrites any of them now, so they are one
+        // set, and the total is the two plus the third at its own cap.
+        const LANDING_TOTAL: usize = 2570;
         const GRAND_TOTAL: usize = 8000;
 
         // A cap per seat, not one for the three: the orchestrator alone
@@ -620,9 +614,10 @@ mod tests {
             }
             _ => 300,
         };
-        let landing_cap = |strategy: MergeStrategy| match strategy {
-            MergeStrategy::Direct => 880,
-            MergeStrategy::PullRequest => 1300,
+        let landing_cap = |landing: Landing| match landing {
+            Landing::Merge => 880,
+            Landing::PullRequest => 1300,
+            Landing::None => 420,
         };
 
         for (name, text) in all_defaults() {
@@ -658,15 +653,15 @@ mod tests {
         );
 
         let mut landings = 0;
-        for strategy in MergeStrategy::ALL {
-            let text = default_landing_prompt(strategy);
+        for landing in Landing::ALL {
+            let text = default_landing_prompt(landing);
             landings += text.len();
             assert!(
-                text.len() <= landing_cap(strategy),
+                text.len() <= landing_cap(landing),
                 "the {} is {} characters, over its {}",
-                landing_name(strategy),
+                landing_name(landing),
                 text.len(),
-                landing_cap(strategy)
+                landing_cap(landing)
             );
         }
         assert!(
@@ -805,11 +800,11 @@ mod tests {
     /// alone with nothing left to notice.
     #[test]
     fn nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task() {
-        for strategy in MergeStrategy::ALL {
-            let text = default_landing_prompt(strategy);
+        for landing in Landing::ALL {
+            let text = default_landing_prompt(landing);
             let ends = text
                 .find("`finish_task`")
-                .unwrap_or_else(|| panic!("the {} never ends the task", landing_name(strategy)));
+                .unwrap_or_else(|| panic!("the {} never ends the task", landing_name(landing)));
             for command in [
                 "git -C {repo_path} push",
                 "git push",
@@ -822,7 +817,7 @@ mod tests {
                     assert!(
                         at < ends,
                         "the {} runs {command} after finish_task",
-                        landing_name(strategy)
+                        landing_name(landing)
                     );
                 }
             }
@@ -830,7 +825,7 @@ mod tests {
 
         // And the reason is in the text, where the agent reading it is.
         assert!(
-            default_landing_prompt(MergeStrategy::Direct).contains("Push first:"),
+            default_landing_prompt(Landing::Merge).contains("Push first:"),
             "the direct briefing does not say why the push comes first"
         );
     }
@@ -840,8 +835,8 @@ mod tests {
     /// the author has neither a section to skip nor a choice to make.
     #[test]
     fn each_landing_briefing_is_one_strategy_and_nothing_of_the_other() {
-        let direct = default_landing_prompt(MergeStrategy::Direct);
-        let published = default_landing_prompt(MergeStrategy::PullRequest);
+        let direct = default_landing_prompt(Landing::Merge);
+        let published = default_landing_prompt(Landing::PullRequest);
 
         // Squashed onto the base with git alone.
         for step in [
@@ -955,12 +950,12 @@ mod tests {
                 kind.as_str()
             );
         }
-        for strategy in MergeStrategy::ALL {
+        for landing in Landing::ALL {
             assert_eq!(
-                MergeStrategy::validate_landing_template(default_landing_prompt(strategy)),
+                Landing::validate_landing_template(default_landing_prompt(landing)),
                 Ok(()),
                 "the default {}",
-                landing_name(strategy)
+                landing_name(landing)
             );
         }
     }

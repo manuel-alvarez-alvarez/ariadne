@@ -90,15 +90,10 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    reviewer that has voted is still there to be asked something.
 8. The task never leaves the author that wrote it: it keeps its session and
    its worktree, and is briefed with the procedure that ends the task — the
-   whole thing, which the author then runs. A task ending the way its
-   repository takes a change runs that repository's **landing briefing**: a
-   repository field, prefilled from its selected **merge strategy** (`ariadne
-   repo add --merge-strategy`, default `direct`), replaceable with custom text
-   at registration or after (`--landing-prompt`, `--landing-prompt-file`, and
-   `ariadne repo prompt get|set|reset`), and put back on the default by
-   clearing it (`repo update --reset-landing-prompt`, or `repo prompt reset`).
-   What the two strategies prefill is:
-   - **`direct`** — rebase onto the base, squash into one commit with a
+   whole thing, which the author then runs. There is one procedure per ending,
+   and it is Ariadne's own: a repository is a checkout and a base branch, and
+   says nothing about how work ends in it. What the three are:
+   - **`merge`** — rebase onto the base, squash into one commit with a
      conventional subject, fast-forward the base branch in the primary
      checkout, push it where there is a remote, then `finish_task`. The daemon
      only accepts the sha after verifying the merge with
@@ -113,10 +108,10 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
      into and added to, never rewritten. Once the request is approved and green
      it merges it with `--squash`, fast-forwards the base branch and reports
      the sha.
+   - **`none`** — nothing is landed. The author checks that what the task asked
+     for is where the task said to put it, and that nothing is left only in
+     the worktree, which is thrown away with the task.
 
-   A task that lands nothing runs neither: it is briefed to check that what
-   the task asked for is where the task said to put it, and that nothing is
-   left only in the worktree, which is thrown away with the task.
 9. Worktrees are cleaned up and dependent tasks wake up. The orchestrator is
    still there — it stays up for the whole goal, which is why you can attach
    to it at any point and ask what is going on — and the daemon tells it when
@@ -297,15 +292,10 @@ ariadne skill get coding > coding.md   # pipe it out, edit, pipe it back
 ariadne skill set coding --file coding.md
 ariadne skill reset coding
 
-# the repository landing briefing is prefilled from --merge-strategy, or can
-# use custom text; edit it after registration with repo prompt
-ariadne repo add ~/projects/ui --merge-strategy direct \
-    --landing-prompt "Rebase, squash and fast-forward the base branch."
-ariadne repo add ~/projects/web --merge-strategy pull-request \
-    --landing-prompt-file landing.md
-ariadne repo prompt get <repo-id> > landing.md   # pipe it out, edit, pipe it back
-ariadne repo prompt set <repo-id> --file landing.md
-ariadne repo prompt reset <repo-id>              # back to the strategy's default
+# a repository is a checkout and a base branch; how work ends in it is the
+# task's own, agreed with you when the task is written
+ariadne repo add ~/projects/ui --branch next
+ariadne repo ls
 
 # an agent CLI of your own, a model of it where you want one, and how deeply
 # it reasons there

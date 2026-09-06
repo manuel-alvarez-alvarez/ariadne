@@ -173,13 +173,10 @@ impl Store {
         .bind(&new.title)
         .bind(&new.description)
         .bind(&branch)
-        // The repository's way of taking a change is what a task ends with
-        // unless whoever wrote it said otherwise.
-        .bind(
-            new.landing
-                .unwrap_or_else(|| Landing::of(repo.merge_strategy()))
-                .as_str(),
-        )
+        // Landing on the base branch is what a task ends with unless whoever
+        // wrote it said otherwise: it is what most work does, and the other
+        // two are the ones somebody chooses.
+        .bind(new.landing.unwrap_or(Landing::Merge).as_str())
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)

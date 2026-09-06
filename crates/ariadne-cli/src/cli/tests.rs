@@ -5,11 +5,10 @@ use super::*;
 
 use clap::FromArgMatches;
 
-use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{AgentKind, GoalStatus, Landing, Seat, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
 use crate::commands::skill::SkillCommand;
-use crate::commands::repo::RepoPromptCommand;
 use crate::output::ColorChoice;
 
 /// clap's own consistency check over the whole tree, shadowed `--format`
@@ -110,9 +109,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("repo add", true),
     ("repo inspect", true),
     ("repo ls", true),
-    ("repo prompt get", true),
-    ("repo prompt reset", true),
-    ("repo prompt set", true),
     ("repo rm", true),
     ("repo update", true),
     ("session inspect", true),
@@ -383,23 +379,25 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
 fn a_status_is_spelled_in_kebab_or_in_snake() {
     assert_eq!(task_statuses(&["in-progress"]), [TaskStatus::InProgress]);
     assert_eq!(task_statuses(&["in_progress"]), [TaskStatus::InProgress]);
-    let Command::Repo {
-        command: RepoCommand::Add { merge_strategy, .. },
+    let Command::Task {
+        command: TaskCommand::Create { landing, .. },
     } = parse(&[
         "ariadne",
-        "repo",
-        "add",
-        "/r",
-        "--merge-strategy",
+        "task",
+        "create",
+        "01GOAL",
+        "--title",
+        "t",
+        "--landing",
         "pull-request",
     ])
     .command
     else {
-        panic!("repo add");
+        panic!("task create");
     };
     assert_eq!(
-        merge_strategy,
-        MergeStrategy::PullRequest,
+        landing,
+        Some(Landing::PullRequest),
         "and so is every other enum a flag takes"
     );
 }
@@ -772,177 +770,58 @@ fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
     assert!(refused("code-review=@high").contains("SKILLS=MODEL@EFFORT"));
 }
 
-/// How a repository takes a change is the user's to set, on the way in
-/// and afterwards; a repository nobody said anything about is landed on
-/// directly.
+/// A repository is a checkout and a base branch, and that is all it takes:
+/// how a change reaches that base branch is the task's own `landing`, agreed
+/// with the user task by task, so nothing about landing is registered here.
 #[test]
-fn a_repository_can_be_registered_with_a_merge_strategy() {
-    let added = |args: &[&str]| {
-        let mut argv = vec!["ariadne", "repo", "add", "/tmp/repo"];
-        argv.extend_from_slice(args);
-        let Command::Repo {
-            command: RepoCommand::Add { merge_strategy, .. },
-        } = parse(&argv).command
-        else {
-            panic!("repo add");
-        };
-        merge_strategy
-    };
-    assert_eq!(added(&[]), MergeStrategy::Direct);
-    assert_eq!(
-        added(&["--merge-strategy", "pull_request"]),
-        MergeStrategy::PullRequest
-    );
-    assert!(
-        try_parse(&["ariadne", "repo", "add", "/r", "--merge-strategy", "forge"]).is_err(),
-        "an unknown strategy is a usage error"
-    );
-
-    let Command::Repo {
-        command: RepoCommand::Update { merge_strategy, .. },
-    } = parse(&[
-        "ariadne",
-        "repo",
-        "update",
-        "01REPO",
-        "--merge-strategy",
-        "direct",
-    ])
-    .command
-    else {
-        panic!("repo update");
-    };
-    assert_eq!(merge_strategy, Some(MergeStrategy::Direct));
-}
-
-/// The landing briefing is set from text on the line, a file, or — on
-/// `update` only — reset to the merge strategy's default; never two of those
-/// at once.
-#[test]
-fn a_landing_prompt_is_set_from_text_a_file_or_reset_but_never_two_of_those() {
+fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing() {
     let Command::Repo {
         command:
             RepoCommand::Add {
-                landing_prompt,
-                landing_prompt_file,
-                ..
+                path,
+                branch,
+                description,
             },
     } = parse(&[
         "ariadne",
         "repo",
         "add",
-        "/r",
-        "--landing-prompt",
-        "Land it.",
+        "/tmp/repo",
+        "--branch",
+        "next",
+        "--description",
+        "the API",
     ])
     .command
     else {
         panic!("repo add");
     };
-    assert_eq!(landing_prompt.as_deref(), Some("Land it."));
-    assert_eq!(landing_prompt_file, None);
+    assert_eq!(path, "/tmp/repo");
+    assert_eq!(branch.as_deref(), Some("next"));
+    assert_eq!(description.as_deref(), Some("the API"));
 
-    let Command::Repo {
-        command: RepoCommand::Add {
-            landing_prompt_file,
-            ..
-        },
-    } = parse(&[
-        "ariadne",
-        "repo",
-        "add",
-        "/r",
-        "--landing-prompt-file",
-        "brief.md",
-    ])
-    .command
-    else {
-        panic!("repo add");
-    };
-    assert_eq!(landing_prompt_file, Some(PathBuf::from("brief.md")));
-
-    assert!(
-        try_parse(&[
-            "ariadne",
-            "repo",
-            "add",
-            "/r",
-            "--landing-prompt",
-            "x",
-            "--landing-prompt-file",
-            "brief.md",
-        ])
-        .is_err(),
-        "text and a file at once is a usage error"
-    );
-
-    let update = |args: &[&str]| {
+    // The flags that used to say how landing works are gone, not ignored.
+    for gone in [
+        &["--merge-strategy", "pull-request"][..],
+        &["--landing-prompt", "Land it."][..],
+        &["--landing-prompt-file", "brief.md"][..],
+    ] {
+        let mut argv = vec!["ariadne", "repo", "add", "/r"];
+        argv.extend_from_slice(gone);
+        assert!(try_parse(&argv).is_err(), "{gone:?} still parses");
+    }
+    for gone in [
+        &["--merge-strategy", "direct"][..],
+        &["--reset-landing-prompt"][..],
+    ] {
         let mut argv = vec!["ariadne", "repo", "update", "01REPO"];
-        argv.extend_from_slice(args);
-        try_parse(&argv).is_ok()
-    };
-    assert!(update(&[]), "nothing to say leaves it unchanged");
-    assert!(update(&["--landing-prompt", "Land it."]), "text");
-    assert!(update(&["--landing-prompt-file", "brief.md"]), "a file");
-    assert!(update(&["--reset-landing-prompt"]), "reset");
+        argv.extend_from_slice(gone);
+        assert!(try_parse(&argv).is_err(), "{gone:?} still parses");
+    }
     assert!(
-        !update(&["--landing-prompt", "x", "--reset-landing-prompt"]),
-        "text + reset"
+        try_parse(&["ariadne", "repo", "prompt", "get", "01REPO"]).is_err(),
+        "repo prompt still parses"
     );
-    assert!(
-        !update(&[
-            "--landing-prompt-file",
-            "brief.md",
-            "--reset-landing-prompt"
-        ]),
-        "file + reset"
-    );
-    assert!(
-        !update(&["--landing-prompt", "x", "--landing-prompt-file", "brief.md"]),
-        "text + file"
-    );
-}
-
-/// `repo prompt` is the other half of the landing briefing story: it prints,
-/// pipes and resets what `repo add`/`repo update` write.
-#[test]
-fn repo_prompt_gets_sets_and_resets_the_landing_briefing() {
-    let Command::Repo {
-        command: RepoCommand::Prompt {
-            command: RepoPromptCommand::Get { id },
-        },
-    } = parse(&["ariadne", "repo", "prompt", "get", "01REPO"]).command
-    else {
-        panic!("repo prompt get");
-    };
-    assert_eq!(id, "01REPO");
-
-    let Command::Repo {
-        command:
-            RepoCommand::Prompt {
-                command: RepoPromptCommand::Set { id, file },
-            },
-    } = parse(&[
-        "ariadne", "repo", "prompt", "set", "01REPO", "--file", "brief.md",
-    ])
-    .command
-    else {
-        panic!("repo prompt set");
-    };
-    assert_eq!(id, "01REPO");
-    assert_eq!(file, Some(PathBuf::from("brief.md")));
-
-    let Command::Repo {
-        command:
-            RepoCommand::Prompt {
-                command: RepoPromptCommand::Reset { id, yes },
-            },
-    } = parse(&["ariadne", "repo", "prompt", "reset", "01REPO", "-y"]).command
-    else {
-        panic!("repo prompt reset");
-    };
-    assert_eq!(id, "01REPO");
-    assert!(yes);
 }
 
 /// `--host` was the documented spelling before `--endpoint`; scripts that

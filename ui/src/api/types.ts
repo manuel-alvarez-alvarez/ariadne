@@ -17,8 +17,6 @@ export type GoalStatus = Schemas["GoalStatus"]
 export type CreateGoalRequest = Schemas["CreateGoalRequest"]
 
 export type RepositoryDto = Schemas["RepositoryDto"]
-export type MergeStrategy = Schemas["MergeStrategy"]
-export type MergeStrategyDto = Schemas["MergeStrategyDto"]
 export type CreateRepositoryRequest = Schemas["CreateRepositoryRequest"]
 export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
 

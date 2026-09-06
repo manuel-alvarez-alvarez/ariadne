@@ -741,31 +741,6 @@
         }
       }
     },
-    "/v1/merge-strategies": {
-      "get": {
-        "tags": [
-          "repositories"
-        ],
-        "summary": "List the merge strategies and their built-in landing briefings.",
-        "description": "The landing briefing is the repository's, and a client editing one needs\nthe text of the strategy it is prefilled from and reset to before that\nrepository exists. One entry per strategy, in [`MergeStrategy::ALL`] order.",
-        "operationId": "list_merge_strategies",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MergeStrategyDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/models": {
       "get": {
         "tags": [
@@ -842,7 +817,7 @@
             }
           },
           "400": {
-            "description": "not an absolute path, not a git work tree, unknown branch, or a landing prompt naming a placeholder nothing fills in"
+            "description": "not an absolute path, not a git work tree, or an unknown branch"
           },
           "409": {
             "description": "this path and base branch are already registered"
@@ -923,7 +898,7 @@
             }
           },
           "400": {
-            "description": "not an absolute path, not a git work tree, unknown branch, or a landing prompt naming a placeholder nothing fills in"
+            "description": "not an absolute path, not a git work tree, or an unknown branch"
           },
           "404": {
             "description": ""
@@ -2322,24 +2297,6 @@
               "null"
             ]
           },
-          "landing_prompt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The landing briefing this repository hands its author. Omitted or\nempty = the built-in default of `merge_strategy`, which\n`GET /v1/merge-strategies` hands out for prefilling. A briefing may\nuse only the placeholders a landing text is rendered with\n(`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that\nnames another is refused."
-          },
-          "merge_strategy": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/MergeStrategy",
-                "description": "Omit for `direct`."
-              }
-            ]
-          },
           "path": {
             "type": "string",
             "description": "Absolute path of an existing git work tree.",
@@ -2964,7 +2921,7 @@
       },
       "Landing": {
         "type": "string",
-        "description": "How one task ends.\n\nA repository's [`MergeStrategy`] says how *it* takes a change, and most\ntasks end that way. This says how *this* task ends, which the orchestrator\nagrees with the user task by task: some work lands on the base branch,\nsome leaves a request for a person who is not in this system at all, and\nsome has nothing to land — a report filed, a document published, a release\ncut. All three reach [`TaskStatus::Finished`]; landing is one way of\ngetting there rather than the meaning of being there.",
+        "description": "How one task ends.\n\nThe one thing about the end of a task the author has to be told, since the\ncommands it runs differ entirely between the three. The orchestrator agrees\nit with the user task by task: some work lands on the base branch, some\ngoes through a request the author then sees to its merge, and some has\nnothing to land at all — a report filed, a document published, a release\ncut. All three reach [`TaskStatus::Finished`]; landing is one way of\ngetting there rather than the meaning of being there.\n\nWhich forge a published request goes to is *not* here: `origin` says\nwhether it is GitHub or GitLab, and asking the remote at landing time\ncannot go stale the way a second copy of the answer would.",
         "enum": [
           "merge",
           "pull_request",
@@ -3014,31 +2971,6 @@
             "items": {
               "$ref": "#/components/schemas/LogLineDto"
             }
-          }
-        }
-      },
-      "MergeStrategy": {
-        "type": "string",
-        "description": "How a repository takes the change a task lands on its base branch: the one\nthing about a repository the author that finishes a task has to be told,\nsince the commands it runs at the end differ entirely between the two.\n\nWhich forge a published request goes to is *not* here: `origin` says\nwhether it is GitHub or GitLab, and asking the remote at landing time\ncannot go stale the way a second copy of the answer would.",
-        "enum": [
-          "direct",
-          "pull_request"
-        ]
-      },
-      "MergeStrategyDto": {
-        "type": "object",
-        "description": "One merge strategy and the landing briefing a repository on it runs on\nwhile it has none of its own: what `GET /v1/merge-strategies` lists, so a\nclient can show and prefill a landing prompt before the repository exists.",
-        "required": [
-          "merge_strategy",
-          "landing_prompt"
-        ],
-        "properties": {
-          "landing_prompt": {
-            "type": "string",
-            "description": "The built-in landing briefing of this strategy."
-          },
-          "merge_strategy": {
-            "$ref": "#/components/schemas/MergeStrategy"
           }
         }
       },
@@ -3270,9 +3202,6 @@
           "id",
           "path",
           "base_branch",
-          "merge_strategy",
-          "landing_prompt",
-          "landing_prompt_is_default",
           "created_at",
           "updated_at"
         ],
@@ -3291,18 +3220,6 @@
           },
           "id": {
             "type": "string"
-          },
-          "landing_prompt": {
-            "type": "string",
-            "description": "The landing briefing the author of an approved task is handed here:\nthe text set on this repository, or the built-in default of its merge\nstrategy while it has none of its own."
-          },
-          "landing_prompt_is_default": {
-            "type": "boolean",
-            "description": "Whether `landing_prompt` is that strategy default rather than a text\nset on this repository."
-          },
-          "merge_strategy": {
-            "$ref": "#/components/schemas/MergeStrategy",
-            "description": "How a task lands on `base_branch` here."
           },
           "path": {
             "type": "string",
@@ -4012,23 +3929,6 @@
               "null"
             ],
             "description": "New description, or empty to clear it. Absent = unchanged."
-          },
-          "landing_prompt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "New landing briefing, or empty to put it back on the built-in default\nof the merge strategy in force. Absent = unchanged, which is also what\na `merge_strategy` written on its own does to it: the words are the\nuser's, and the reset is what asks for the new strategy's text. A\nbriefing may use only the placeholders a landing text is rendered with\n(`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that\nnames another is refused."
-          },
-          "merge_strategy": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/MergeStrategy"
-              }
-            ]
           },
           "path": {
             "type": [

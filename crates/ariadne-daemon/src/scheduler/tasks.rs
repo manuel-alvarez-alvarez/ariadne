@@ -566,10 +566,10 @@ impl super::Scheduler {
         if task.status() == TaskStatus::Approved {
             let repo = self.store.get_repository(&task.repo_id).await?;
             // The procedure is the task's: how this task ends was agreed with
-            // the user, and the repository's own text is what a task that
-            // ends the repository's way runs.
+            // the user when it was written, and it is the whole of what
+            // decides which of the three the author runs.
             return Ok(prompts::landing_briefing(
-                task.landing_prompt_text(&repo),
+                task.landing_prompt_text(),
                 task,
                 &repo,
             ));

@@ -23,14 +23,15 @@ In: registering a repository, its base branch and description, the merge
 strategy field, task branch naming, the worktree per seat, worktree cleanup,
 and the watch on a task branch's head.
 
-Out: what the merge strategy *does* at the end of a task (005), and what an
+Out: how a task ends in it (005), and what an
 agent is briefed with in its worktree (006).
 
 ## Behavior
 
 1. A repository is registered once and referenced by every goal that works in
-   it. It carries a path, a base branch, an optional description, a merge
-   strategy and a landing briefing (005).
+   it. It carries a path, a base branch and an optional description, and
+   nothing else. How work *ends* in it is not a repository field: that is the
+   task's own ending (005).
 2. The base branch defaults to the branch the checkout is on at registration.
 3. A path and branch pair is unique: the same one cannot be registered twice.
    A path or branch the daemon cannot use is refused at creation. A checkout

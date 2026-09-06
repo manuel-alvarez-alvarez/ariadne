@@ -618,8 +618,6 @@ impl Harness {
                 path: path.display().to_string(),
                 base_branch: "main".into(),
                 description: None,
-                merge_strategy: Default::default(),
-                landing_prompt: None,
             })
             .await
             .unwrap()

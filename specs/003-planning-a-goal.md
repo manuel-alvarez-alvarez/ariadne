@@ -92,10 +92,10 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).
 - The nudge fits the conversation and the goal under way
   (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`).
-- The orchestrator's own texts name no forge and no merge strategy
+- The orchestrator's own texts name no forge and no landing procedure
   (`defaults.rs::the_orchestrator_is_told_nothing_of_forges_or_landing`), and
-  its briefing names every repository with the way each takes a change
-  (`prompts.rs::the_orchestrator_is_briefed_with_every_repository_and_how_each_takes_a_change`).
+  its briefing names every repository with its base branch
+  (`prompts.rs::the_orchestrator_is_briefed_with_every_repository_and_its_base_branch`).
 - `finalize_plan` starts every task
   (`plan_finalize.rs::the_orchestrator_finalizes_the_plan_and_its_tasks_start`),
   only the orchestrator may call it

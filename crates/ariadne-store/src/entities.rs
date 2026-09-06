@@ -5,13 +5,11 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, Landing, MergeStrategy, MessageKind, Seat,
-    SessionStatus, TaskStatus,
+    Actor, AgentKind, AttentionReason, GoalStatus, Landing, MessageKind, Seat, SessionStatus,
+    TaskStatus,
 };
 
-use crate::defaults::{
-    default_landing_prompt, default_no_landing_prompt, default_skill_document, skill_summary,
-};
+use crate::defaults::{default_landing_prompt, default_skill_document, skill_summary};
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
 /// and the column share a name; brackets mark a nullable column, which reads
@@ -44,7 +42,6 @@ macro_rules! enum_columns {
 
 enum_columns! {
     AgentConfig { agent_kind: AgentKind }
-    Repository { merge_strategy: MergeStrategy }
     Goal { status: GoalStatus, agent_kind: [AgentKind] }
     Task { status: TaskStatus }
     TaskAgent { seat: Seat, agent_kind: [AgentKind] }
@@ -141,32 +138,8 @@ pub struct Repository {
     pub path: String,
     pub base_branch: String,
     pub description: Option<String>,
-    /// How a task lands on `base_branch` here: squashed onto it directly, or
-    /// published as a pull or merge request.
-    pub merge_strategy: String,
-    /// The landing briefing set on this repository, or NULL while it runs on
-    /// the built-in default of its merge strategy. Read through
-    /// [`Repository::landing_prompt_text`], which is what the author of an
-    /// approved task is briefed with.
-    pub landing_prompt: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-impl Repository {
-    /// The landing briefing this repository hands its author: the text set
-    /// on it, or the built-in default of its merge strategy.
-    pub fn landing_prompt_text(&self) -> &str {
-        self.landing_prompt
-            .as_deref()
-            .unwrap_or_else(|| default_landing_prompt(self.merge_strategy()))
-    }
-
-    /// Whether [`Repository::landing_prompt_text`] is that strategy default
-    /// rather than a text set on this repository.
-    pub fn landing_prompt_is_default(&self) -> bool {
-        self.landing_prompt.is_none()
-    }
 }
 
 /// The agent CLI, and optionally the model and the effort, that a goal's
@@ -258,26 +231,15 @@ impl Task {
         self.landing.parse().unwrap_or(Landing::None)
     }
 
-    /// The procedure the author of this task is briefed to end it with.
+    /// The procedure the author of this task is briefed to end it with: the
+    /// built-in of the ending the task carries.
     ///
-    /// The task says which of the three it runs. Where it ends the way its
-    /// repository takes a change, that repository's own text is what it runs
-    /// — the one a user may have rewritten. Where it ends the other way, the
-    /// built-in procedure for that way is what it runs instead: a text
-    /// written for direct commits is not one to hand somebody publishing a
-    /// request. A task that lands nothing runs neither.
-    pub fn landing_prompt_text<'a>(&self, repo: &'a Repository) -> &'a str
-    where
-        Self: 'a,
-    {
-        match self.landing() {
-            Landing::None => default_no_landing_prompt(),
-            landing => match landing.strategy() {
-                Some(strategy) if strategy == repo.merge_strategy() => repo.landing_prompt_text(),
-                Some(strategy) => default_landing_prompt(strategy),
-                None => default_no_landing_prompt(),
-            },
-        }
+    /// One text per ending, Ariadne's own. A repository has no say in it —
+    /// how a change reaches a base branch is a fact about the task, agreed
+    /// with the user when the task was written, and a second answer stored
+    /// on the checkout could only disagree with it.
+    pub fn landing_prompt_text(&self) -> &'static str {
+        default_landing_prompt(self.landing())
     }
 }
 

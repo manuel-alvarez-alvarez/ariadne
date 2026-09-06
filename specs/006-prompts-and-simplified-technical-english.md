@@ -40,7 +40,7 @@ they describe (003, 004, 005) — and what a skill is (017).
    - the **lifecycle briefing**, which carries the values of one goal, task or
      round and whatever is only true of this moment;
    - the **landing briefing**, which carries the procedure that ends a task,
-     and belongs to the repository (005).
+     one per ending (005).
 2. The system prompt is the code's, one text per seat. Nothing an agent runs
    under carries a lifecycle text of its own: what makes one agent differ from
    another in the same seat is the skills it holds.
@@ -57,10 +57,10 @@ they describe (003, 004, 005) — and what a skill is (017).
 5. A briefing is rendered by substituting `{name}` tokens. Rendering is
    lenient by construction: an unknown token, an unclosed brace and an empty
    template all render to something, and none of them fails a spawn.
-6. Each kind declares the placeholders its builder fills in. A hand-written
-   text — today only a repository's landing briefing — is checked against that
-   list when it is **saved**, which is the last moment anyone looks at a
-   `{task_titel}`.
+6. Each kind declares the placeholders its builder fills in, and a default
+   naming one outside its list fails the suite. Nothing hand-written reaches
+   an agent any more — every text is the code's — so the check runs over the
+   defaults rather than at a save.
 7. Every agent-facing text is ASD-STE100 Simplified Technical English: one
    instruction to a sentence, the imperative for an instruction, the active
    voice, at most 25 words a sentence, one meaning per word, a list for a

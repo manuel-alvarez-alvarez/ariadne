@@ -45,23 +45,17 @@ CREATE TABLE agent_configs (
 -- A checkout, registered once globally and named by id from there on, so that
 -- editing it moves every goal that works in it.
 --
--- `merge_strategy` is how a task lands on `base_branch`: `direct` squashes and
--- fast-forwards with git alone, `pull_request` publishes a request for a human
--- to merge.
+-- How a change reaches `base_branch` is not here. That is the task's own
+-- `landing`, agreed with the user task by task, and the procedure it names is
+-- Ariadne's (`ariadne_store::defaults::default_landing_prompt`). A repository
+-- is a checkout and a base branch, and nothing else about how work ends.
 CREATE TABLE repositories (
-    id             TEXT PRIMARY KEY,
-    path           TEXT NOT NULL,               -- absolute repo path
-    base_branch    TEXT NOT NULL,
-    description    TEXT,                        -- NULL = none given
-    created_at     TEXT NOT NULL,
-    updated_at     TEXT NOT NULL,
-    merge_strategy TEXT NOT NULL DEFAULT 'direct'
-                   CHECK (merge_strategy IN ('direct', 'pull_request')),
-    -- The landing briefing the author of an approved task is handed here.
-    -- NULL = the built-in default of `merge_strategy` (see
-    -- `ariadne_store::defaults::default_landing_prompt`), which is also what
-    -- a reset goes back to by clearing this column.
-    landing_prompt TEXT,
+    id          TEXT PRIMARY KEY,
+    path        TEXT NOT NULL,                  -- absolute repo path
+    base_branch TEXT NOT NULL,
+    description TEXT,                           -- NULL = none given
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
     -- The same checkout can be registered once per base branch.
     UNIQUE (path, base_branch)
 );

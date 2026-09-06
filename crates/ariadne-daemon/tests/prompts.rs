@@ -128,7 +128,7 @@ async fn a_spawn_assembles_the_default_briefing_word_for_word() {
             ("branch", &task.branch),
             ("base_branch", &cast.repo.base_branch),
             ("repo_path", &cast.repo.path),
-            ("merge_strategy", cast.repo.merge_strategy().as_str()),
+            ("landing", cast.task.landing().as_str()),
             ("dependencies", "none"),
         ],
     );

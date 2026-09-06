@@ -25,9 +25,9 @@ use axum::http::StatusCode;
 use ariadne_api::messages::MessageDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_core::{
-    Actor, AttentionReason, Landing, MergeStrategy, MessageKind, Seat, TaskStatus,
+    Actor, AttentionReason, Landing, MessageKind, Seat, TaskStatus,
 };
-use ariadne_store::{AgentSession, NewTaskAgent, Repository, RepositoryUpdate, Task};
+use ariadne_store::{AgentSession, NewTaskAgent, Repository, Task};
 
 use common::{Cast, Harness, as_session, eventually, get, harness, sh};
 
@@ -35,34 +35,23 @@ use common::{Cast, Harness, as_session, eventually, get, harness, sh};
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 
-/// A goal on a real repository, active, with one task on it. The profiles are
-/// pinned to an agent kind: the internal session id a resume needs is one the
-/// Claude adapter chooses at spawn, so the resume paths here are the ones a
-/// real session takes.
-async fn seeded(strategy: MergeStrategy) -> (Harness, Cast) {
+/// A goal on a real repository, active, with one task on it ending in
+/// `landing`. The agents are pinned to an agent kind: the internal session id
+/// a resume needs is one the Claude adapter chooses at spawn, so the resume
+/// paths here are the ones a real session takes.
+async fn seeded(landing: Landing) -> (Harness, Cast) {
     let h = harness().scheduler().await;
     h.git_repo("repo");
     let mut cast = h.active_cast().await;
-    if strategy != MergeStrategy::Direct {
-        h.store
-            .update_repository(
-                &cast.repo.id,
-                RepositoryUpdate {
-                    merge_strategy: Some(strategy),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        // How a task ends is the task's own, decided when it is written. A
-        // repository that changes strategy afterwards does not move a task
-        // already planned, so this moves it the way an orchestrator would.
+    if landing != Landing::Merge {
+        // How a task ends is the task's own, agreed with the user when it is
+        // written, so this sets it the way an orchestrator would.
         cast.task = h
             .store
             .update_task(
                 &cast.task.id,
                 ariadne_store::TaskUpdate {
-                    landing: Some(Landing::of(strategy)),
+                    landing: Some(landing),
                     ..Default::default()
                 },
             )
@@ -162,7 +151,7 @@ async fn walk_to_landing(
 /// woken.
 #[tokio::test]
 async fn an_approved_task_is_landed_by_its_own_author() {
-    let (h, cast) = seeded(MergeStrategy::Direct).await;
+    let (h, cast) = seeded(Landing::Merge).await;
     let task = cast.task.clone();
     let dependent = h
         .store
@@ -253,41 +242,6 @@ async fn an_approved_task_is_landed_by_its_own_author() {
     .await;
 }
 
-/// The landing briefing belongs to the repository: a text written on it is
-/// what its author is picked up with, rendered with this task's values, and
-/// the merge strategy's default is only what stands while there is none.
-#[tokio::test]
-async fn an_approved_author_is_briefed_with_the_repositorys_own_landing_text() {
-    let (h, cast) = seeded(MergeStrategy::Direct).await;
-    let task = cast.task.clone();
-    h.store
-        .update_repository(
-            &cast.repo.id,
-            RepositoryUpdate {
-                landing_prompt: Some(Some(
-                    "Ship {task_title}: {branch} onto {base_branch} in {repo_path}.".into(),
-                )),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-
-    let heading = format!("Ship {}:", task.title);
-    let (_worktree, author) = walk_to_landing(&h, &task, &cast.reviewer.id, &heading).await;
-
-    let argv = h.spawn_argv(&author.id);
-    assert!(
-        argv.contains(&format!(
-            "Ship {}: {} onto main in {}.",
-            task.title, task.branch, cast.repo.path
-        )),
-        "the repository's landing text did not reach the author, filled in: {argv}"
-    );
-    // And nothing of the default it replaced.
-    assert!(!argv.contains("git reset --soft main"), "{argv}");
-}
-
 /// A merge nobody made is refused, under either procedure: the daemon checks
 /// the sha really is on the base branch of the primary checkout before it
 /// believes it, and the tip of the task branch is not.
@@ -297,7 +251,7 @@ async fn an_approved_author_is_briefed_with_the_repositorys_own_landing_text() {
 /// either, so a daemon that trusted the caller would accept both.
 #[tokio::test]
 async fn a_merge_that_never_happened_is_refused() {
-    for strategy in [MergeStrategy::Direct, MergeStrategy::PullRequest] {
+    for strategy in [Landing::Merge, Landing::PullRequest] {
         let (h, cast) = seeded(strategy).await;
         let (worktree, author) = walk_to_approved(&h, &cast.task, &cast.reviewer.id).await;
 
@@ -323,7 +277,7 @@ async fn a_merge_that_never_happened_is_refused() {
 /// where a task being landed sits.
 #[tokio::test]
 async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
-    let (h, cast) = seeded(MergeStrategy::Direct).await;
+    let (h, cast) = seeded(Landing::Merge).await;
     let task = cast.task.clone();
     let (_worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
 
@@ -422,7 +376,7 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
 /// sha it reports is on the base branch of the primary checkout.
 #[tokio::test]
 async fn a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to() {
-    let (h, cast) = seeded(MergeStrategy::PullRequest).await;
+    let (h, cast) = seeded(Landing::PullRequest).await;
     let task = cast.task.clone();
     let (worktree, author) = walk_to_approved(&h, &task, &cast.reviewer.id).await;
 
