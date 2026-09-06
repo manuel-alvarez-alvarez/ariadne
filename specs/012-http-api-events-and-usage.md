@@ -46,8 +46,7 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
    dropping events.
 6. CORS allows the preflight and cross-origin calls the desktop app makes.
 7. Session events reach the stream too: launches, ingested agent hook events,
-   attention raised and cleared, compactions, and a task branch's head moving
-   (002, 010).
+   attention raised and cleared, and a task branch's head moving (002).
 8. Agent hook events are ingested per CLI and classified: a permission prompt
    or a notification flags the session as blocked, an idle report clears the
    stall and the error and nothing else, and a question is held until it is

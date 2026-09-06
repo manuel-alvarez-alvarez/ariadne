@@ -324,8 +324,8 @@ mod tests {
         for (agent, kind) in codex.chain(opencode) {
             let acted_on = status_for_event(&kind).is_some()
                 || attention_for_event(&kind, &permission_asked()).is_some()
-                // The end of a compaction: what the scheduler waits for
-                // before typing into the pane again.
+                // The end of a compaction the user or the CLI itself ran:
+                // what says the agent is back at its prompt.
                 || crate::agents::adapter_for(agent).compaction_done(&kind, &permission_asked())
                 // Forwarded for its payload alone: `info.id` is where the
                 // internal session id comes from, and `session.updated`

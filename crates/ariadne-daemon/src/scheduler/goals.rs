@@ -41,10 +41,6 @@ impl super::Scheduler {
             // to do — so no watchdog nudges it here. It is woken by what
             // happened, and by nothing else.
             GoalStatus::Active => {
-                // Finalizing the plan is a hand-off, and what the orchestrator
-                // is owed for it is the compaction of everything it said and
-                // read getting there.
-                self.owe_orchestrator_compaction(&goal).await;
                 self.keep_orchestrator(&goal).await?;
                 // What the agents have said to the orchestrator, before it is
                 // told anything the daemon noticed: an agent waiting on an
@@ -284,19 +280,6 @@ impl super::Scheduler {
         let text = prompts::goal_attention_briefing(template, goal, &situation);
         self.spawn_delivery(orchestrator, text);
         Ok(())
-    }
-
-    /// Owe the goal's live orchestrators the compaction their hand-off earns,
-    /// once: the plan is finalized, and the situation that names is the goal
-    /// being active.
-    async fn owe_orchestrator_compaction(&mut self, goal: &Goal) {
-        let Ok(orchestrators) = self.live_sessions(&goal.id, None, Seat::Orchestrator).await else {
-            return;
-        };
-        for orchestrator in orchestrators {
-            self.owe_compaction(&orchestrator, (goal.status.clone(), 0))
-                .await;
-        }
     }
 
     /// Every live session of a goal, whatever ended it.

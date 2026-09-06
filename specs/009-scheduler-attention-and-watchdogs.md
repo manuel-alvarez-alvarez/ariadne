@@ -21,8 +21,7 @@ In: the reconciliation loop, what each entity wants by status, the quiet
 watchdog and its timeline, attention reasons, the sweeps over every session,
 and behaviour under a tmux outage.
 
-Out: what a resumed agent is told (006), and the compaction a hand-off owes
-(010).
+Out: what a resumed agent is told (006).
 
 ## Behavior
 
@@ -33,8 +32,8 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
    — so a pass that arrives late does what the state says now, never a replay
    of what it missed.
 3. A goal wants one live orchestrator for its whole life, `planning` and
-   `active` alike; finalizing the plan is a hand-off that earns it a
-   compaction (010), not an ending. It is the agent the user talks to about
+   `active` alike; finalizing the plan is a hand-off, not an ending. It is the
+   agent the user talks to about
    work already running, and the one the daemon tells when a task needs a
    decision: a task that failed, a task that has gone quiet, or a goal with
    nothing left to do, said once per situation on its own pane. Running work

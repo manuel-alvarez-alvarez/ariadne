@@ -90,8 +90,8 @@ and the wording of the text a message arrives in (006).
   (`agent_messages.rs::a_review_request_reaches_every_reviewer_as_a_message`).
 - A message is delivered once, and the stamp says which have gone
   (`store.rs::a_message_is_delivered_once_and_the_stamp_says_so`).
-- A reviewer that voted is compacted and left where it is
-  (`compaction.rs::a_reviewer_that_voted_is_compacted_and_left_where_it_is`).
+- A reviewer that voted is left where it is
+  (`agent_messages.rs::a_reviewer_that_voted_is_left_where_it_is`).
 - Asking names the agent and answering names only the message
   (`tools.rs::asking_names_the_agent_and_answering_names_only_the_message`),
   the orchestrator is addressed by name

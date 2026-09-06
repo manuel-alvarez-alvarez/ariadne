@@ -117,16 +117,13 @@ pub async fn ingest(
     }
 
     // A compaction that has just finished, in this CLI's own words for it.
-    // The debt the scheduler noted at the last hand-off is paid whoever
-    // started the compaction — the daemon, the user at the pane, or the CLI
-    // itself near the context limit — and the pane is back at its prompt:
-    // Claude spells the end with the same `SessionStart` a resume fires,
-    // which would otherwise read as a turn beginning.
+    // Whoever ran it — the user at the pane, or the CLI itself near the
+    // context limit; the daemon asks for none — the agent is back at its
+    // prompt afterwards, and Claude spells that end with the same
+    // `SessionStart` a resume fires, which would otherwise read as a turn
+    // beginning.
     let compacted =
         crate::agents::adapter_for(session.agent_kind()).compaction_done(&req.kind, &req.payload);
-    if compacted && state.store.clear_compaction_owed(&session.id).await? {
-        tracing::info!(session = %session.id, seat = %session.seat, "the agent compacted its conversation; the compaction it owed is paid");
-    }
 
     // Track liveness from lifecycle events (never resurrect ended sessions).
     let status = match compacted {

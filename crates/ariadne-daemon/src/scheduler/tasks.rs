@@ -107,13 +107,6 @@ impl super::Scheduler {
                     .round_verdicts(&task.id, task.review_round)
                     .await?;
 
-                // Two hand-offs meet here, and each earns the session that
-                // made it a compaction: the author's, which requested this
-                // review, and every reviewer's whose verdict is in. Owed
-                // before the verdicts are read, so that a round they close
-                // ends the reviewers only once the compaction is done.
-                self.owe_review_compactions(&task, &verdicts).await?;
-
                 // Verdicts first: they may close the round.
                 let changes_requested = verdicts
                     .iter()
@@ -215,18 +208,6 @@ impl super::Scheduler {
                             &resume,
                         )
                         .await?;
-                    } else if let Some(compacting) = live
-                        .iter()
-                        .find(|s| {
-                            s.task_agent_id.as_deref() == Some(agent_id.as_str())
-                                && self.compaction_in_flight(s)
-                        })
-                    {
-                        // Its earlier session is still compacting the last
-                        // round: relaunching it now would kill the pane
-                        // under that, so the round waits for the pass after
-                        // the compaction ends.
-                        info!(task = %task.id, session = %compacting.id, "the reviewer is compacting its conversation; its next round starts after it");
                     } else {
                         // A reviewer that came up and was never heard from
                         // spends an attempt of the task's, like its author
@@ -287,13 +268,6 @@ impl super::Scheduler {
                     };
                     feedback.push((who, verdict.body.clone()));
                 }
-                // The author's pane is not killed under a compaction: the
-                // feedback goes out on the pass after it ends, and the task
-                // waits here for that pass.
-                if let Some(compacting) = self.author_compacting(&task).await? {
-                    info!(task = %task.id, session = %compacting.id, "the author is compacting its conversation; the review feedback goes out after it");
-                    return Ok(());
-                }
                 info!(task = %task.id, "resuming author with review feedback");
                 let template = prompts::template_for(PromptKind::ChangesRequested);
                 self.launcher
@@ -312,14 +286,7 @@ impl super::Scheduler {
                 // took the worktree away. What it has not had is the briefing
                 // that says the task is approved and how its repository takes
                 // it, so that goes out once — and from there the turn is
-                // watched like any other. Once its pane is free: an author
-                // compacting its conversation is briefed on the pass after.
-                if !self.landing_briefed.contains(&task.id)
-                    && let Some(compacting) = self.author_compacting(&task).await?
-                {
-                    info!(task = %task.id, session = %compacting.id, "the author is compacting its conversation; the landing briefing goes out after it");
-                    return Ok(());
-                }
+                // watched like any other.
                 if self.landing_briefed.insert(task.id.clone()) {
                     info!(task = %task.id, "approved: briefing the author to land it");
                     self.start_author(&task).await?;
@@ -351,54 +318,6 @@ impl super::Scheduler {
             TaskStatus::Failed => {}
         }
         Ok(())
-    }
-
-    /// Owe the compactions the review hand-offs earn: the author's for
-    /// requesting the round, and each voting reviewer's for its verdict —
-    /// once per round each, since the round is what the hand-off is about.
-    async fn owe_review_compactions(
-        &mut self,
-        task: &Task,
-        verdicts: &[ariadne_store::Message],
-    ) -> anyhow::Result<()> {
-        let situation = (task.status.clone(), task.review_round);
-        let live = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                live_only: true,
-                ..Default::default()
-            })
-            .await?;
-        for author in live.iter().filter(|s| s.seat() == Seat::Author) {
-            self.owe_compaction(author, situation.clone()).await;
-        }
-        for verdict in verdicts {
-            let Some(session_id) = &verdict.from_session else {
-                continue;
-            };
-            if let Some(reviewer) = live.iter().find(|s| &s.id == session_id) {
-                self.owe_compaction(reviewer, situation.clone()).await;
-            }
-        }
-        Ok(())
-    }
-
-    /// The task's live author session while a compaction is running in
-    /// its pane, if that is where it is: the one moment the author is not
-    /// relaunched with what the task has for it.
-    async fn author_compacting(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
-        let live = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                live_only: true,
-                ..Default::default()
-            })
-            .await?;
-        Ok(live
-            .into_iter()
-            .find(|s| s.seat() == Seat::Author && self.compaction_in_flight(s)))
     }
 
     /// Count an attempt at giving this task an agent that came to nothing, and

@@ -371,3 +371,57 @@ async fn a_review_request_reaches_every_reviewer_as_a_message() {
         "the summary the author asked with is what they were sent: {requests:?}"
     );
 }
+
+/// Every agent of a task stays up until the task is over. A reviewer that has
+/// voted is not done with it — the author may have something to ask, and an
+/// agent that was killed can be asked nothing — so the round it closed leaves
+/// it idle at its prompt rather than ending it.
+#[tokio::test]
+async fn a_reviewer_that_voted_is_left_where_it_is() {
+    let h = harness().scheduler().await;
+    let cast = h.active_cast().await;
+    // The author is there and resumable: an approved task briefs it to land
+    // the change, and a task that cannot find one fails and takes every
+    // session of it down, reviewer included.
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.make_resumable(&cast.task, &author).await;
+    h.pane_exists(&author);
+    h.set_status(&author, SessionStatus::Idle).await;
+
+    let reviewer = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
+        .await;
+    h.pane_exists(&reviewer);
+    h.set_status(&reviewer, SessionStatus::Idle).await;
+    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    h.verdict_from(&cast.task, &reviewer, MessageKind::Approve, "Looks fine.")
+        .await;
+
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the reviewer's verdict to close the round", async || {
+        h.status(&cast.task.id).await == TaskStatus::Approved
+    })
+    .await;
+
+    // Several passes past the verdict, and the reviewer is still where it was.
+    for _ in 0..3 {
+        h.notify(&cast.task.id);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    assert!(
+        h.pane_is_alive(&reviewer),
+        "the reviewer was killed once its round closed"
+    );
+    assert_eq!(
+        h.session_status(&reviewer).await,
+        SessionStatus::Idle,
+        "and it sits idle, ready for anything the author asks it"
+    );
+}

@@ -794,28 +794,8 @@ async fn the_sweep_lets_go_of_a_blocked_agent_only_once_its_work_moved_on() {
     let control = w.author_on(&handed_over, TaskStatus::UnderReview).await;
     w.raise(&control, AttentionReason::WaitingPermission).await;
 
-    // The sweep runs on the tick, and the first tick is immediate. The
-    // hand-off owes the finished author a compaction first, and a dialog
-    // on a pane the daemon means to type into is not stale while it does:
-    // the flag stands until the debt is paid or written off, and comes down
-    // on the pass after.
+    // The sweep runs on the tick, and the first tick is immediate.
     let _sched = w.scheduler();
-    eventually(TIMEOUT, "the finished author to owe a compaction", async || {
-        w.store
-            .get_session(&control.id)
-            .await
-            .unwrap()
-            .compact_owed_at
-            .is_some()
-    })
-    .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(
-        w.attention(&control).await,
-        Some(AttentionReason::WaitingPermission),
-        "the dialog stands while the compaction it holds up is owed"
-    );
-    w.store.clear_compaction_owed(&control.id).await.unwrap();
     eventually(TIMEOUT, "the finished author to be let go", async || {
         w.attention(&control).await.is_none()
     })
@@ -1616,8 +1596,8 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
 
 /// The orchestrator outlives the plan. Once the goal it planned is being
 /// worked on it stays up — it is what the user talks to about work already
-/// running, and what the daemon tells when a task needs a decision — so the
-/// compaction it is owed shortens its conversation rather than ending it.
+/// running, and what the daemon tells when a task needs a decision — and an
+/// orchestrator with nothing to do is neither ended nor nudged nor flagged.
 #[tokio::test]
 async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
     let w = World::active().await;
@@ -1632,16 +1612,6 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
     w.set_status(&orchestrator, SessionStatus::Idle).await;
 
     let _sched = w.scheduler();
-    eventually(TIMEOUT, "the orchestrator to be told to compact", async || {
-        w.pasted(&orchestrator).contains("/compact")
-    })
-    .await;
-    w.ingest(
-        &orchestrator,
-        "session_start",
-        serde_json::json!({"hook_event_name": "SessionStart", "source": "compact"}),
-    )
-    .await;
     // Whatever the passes and the sweep beside them had to say would have
     // been said by now.
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -1649,6 +1619,11 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
         w.session_status(&orchestrator).await,
         SessionStatus::Idle,
         "the orchestrator was let go once its plan was under way"
+    );
+    assert_eq!(
+        w.pasted(&orchestrator),
+        "",
+        "nothing happened on the goal, and the daemon typed into its pane anyway"
     );
     assert_eq!(
         w.attention(&orchestrator).await,

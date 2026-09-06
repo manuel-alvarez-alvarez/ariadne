@@ -70,9 +70,8 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
     reconciles the tasks of active goals alone. That is what makes 8 safe —
     the plan can be written in full, and read, before anybody agrees to it.
 12. The plan is a hand-off, not an ending. The orchestrator stays up for the
-    rest of the goal: it is what the user talks to about work already running,
-    and the compaction the hand-off earns it (010) shortens that conversation
-    rather than closing it.
+    rest of the goal: it is what the user talks to about work already running.
+    Nothing is typed into its pane for the hand-off itself.
 13. The daemon wakes it when its tasks need a decision no author can make: a
     task that failed, a task that has gone quiet, or a goal with nothing left
     to do. Once per situation, on its own pane. Work in progress is what the
@@ -111,8 +110,8 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
   (`::a_plan_is_finalized_only_out_of_planning`).
 - Work waits on the orchestrator until the goal is over
   (`plan_finalize.rs::an_orchestrator_is_the_agent_work_waits_on_until_the_goal_is_over`),
-  and it is compacted and kept rather than let go
-  (`::a_scheduler_pass_compacts_the_orchestrator_of_an_active_goal_and_keeps_it`,
+  and it is kept and left alone rather than let go
+  (`::a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_nothing`,
   `scheduler_attention.rs::an_idle_orchestrator_stays_up_for_the_whole_goal`).
 - A failed task wakes it once (`scheduler_attention.rs::a_failed_task_wakes_the_orchestrator_once`),
   a goal with nothing left to do wakes it too

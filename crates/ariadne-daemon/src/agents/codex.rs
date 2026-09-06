@@ -29,7 +29,7 @@
 
 use anyhow::Result;
 
-use ariadne_core::{AgentKind, Seat};
+use ariadne_core::AgentKind;
 
 use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env};
 
@@ -123,10 +123,6 @@ impl AgentAdapter for CodexAdapter {
             internal_session_id: Some(internal_id.to_string()),
             post_launch_input: None,
         })
-    }
-
-    fn compaction_command(&self, _seat: Seat) -> Option<String> {
-        Some("/compact".into())
     }
 
     fn compaction_done(&self, kind: &str, _payload: &serde_json::Value) -> bool {

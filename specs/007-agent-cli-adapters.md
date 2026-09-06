@@ -49,8 +49,9 @@ what a skill says (017).
 7. Hooks installed at spawn time report every session and tool event back to
    the daemon, and each CLI's internal session id is tracked so a session can
    be resumed and attached.
-8. A resume replays the whole transcript as its first prompt, which is why the
-   daemon compacts at every hand-off (010).
+8. A resume replays the whole transcript as its first prompt. Shortening it is
+   the agent's own business: the daemon asks no session to compact, and reads
+   the compaction a CLI reports as the agent being back at its prompt.
 9. A session with no internal agent id cannot be revived and is spawned
    afresh; a session of a finished goal is not revived at all.
 10. A launch hands tmux nothing that can outgrow a command line: the prompt

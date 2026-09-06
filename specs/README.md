@@ -21,7 +21,6 @@ test that proves it.
 | 007 | [Agent CLI adapters](007-agent-cli-adapters.md) | Claude Code, Codex, OpenCode: argv, env, hooks, resume |
 | 008 | [Sessions, terminals and logs](008-sessions-terminals-and-logs.md) | tmux panes, log streams, typing, resizing, confirmed delivery |
 | 009 | [Scheduler, attention and watchdogs](009-scheduler-attention-and-watchdogs.md) | the reconciliation loop, the quiet clock, what needs a human |
-| 010 | [Session compaction](010-session-compaction.md) | the hand-offs that owe one, and what a compacting pane is spared |
 | 011 | [Models, effort and pins](011-models-effort-and-pins.md) | the catalog, `<agent>:<model>`, effort, and where a pin is set |
 | 012 | [HTTP API, event stream and usage](012-http-api-events-and-usage.md) | transports, the envelope, SSE, token accounting |
 | 013 | [MCP tool surface](013-mcp-tool-surface.md) | the tools each seat sees, and the rules every session is given |
@@ -34,7 +33,8 @@ test that proves it.
 ## Writing one
 
 - One file per subsystem, `NNN-kebab-slug.md`, numbered in the order they were
-  written.
+  written. A number is never reused: a subsystem that goes away leaves its
+  number behind, so a reference in the git history still points where it did.
 - YAML frontmatter: `id`, `status`, `updated`, `areas`, `commits`, `tests`.
 - Sections: **Scope** (in and out), **Behavior** (numbered rules), **Acceptance
   criteria** (each citing the test that proves it), **Sources**. Add **Known

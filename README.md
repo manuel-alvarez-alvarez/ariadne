@@ -150,22 +150,14 @@ tracked so sessions can be resumed and attached.
 
 Sessions are long-lived — one author per task, one reviewer per task across
 its rounds, one orchestrator per goal — and every resume replays the whole
-transcript as its first prompt. So the daemon compacts each session at every
-hand-off: after the orchestrator finalizes its plan, when the author requests a
-review, and after each verdict a reviewer gives. The orchestrator's own
-hand-off ends nothing — it stays up for the goal, and the compaction shortens
-the conversation it carries into the rest of it. It types the CLI's own
-`/compact` into the pane once the agent is at its prompt — with a per-seat
-focus for Claude Code, which takes one, saying what to keep — and leaves the
-pane alone until the CLI reports the compaction done (Claude Code's
-`SessionStart` from `compact`, Codex's `PostCompact` hook, OpenCode's
-`session.compacted` event), or for three minutes at most. Nothing is typed into
-a compacting session and nothing kills its pane: a review's feedback, a landing
-briefing or a nudge that becomes due meanwhile goes out after it. Each
-compaction shows in the session's events as `compaction`, and one that ended
-any other way as `compaction_failed` naming why. A session is never held for
-its compaction beyond that wait, and one whose CLI cannot be told to compact
-from outside simply is not.
+transcript as its first prompt. Shortening that transcript is the agent's own
+business: compact a session by typing `/compact` in its pane, or leave it to
+the CLI near its context limit. The daemon asks for none, and types into a
+pane only what the work gives it — a nudge, a review's feedback, a landing
+briefing, a message from another agent. It reads a compaction the CLI reports
+(Claude Code's `SessionStart` from `compact`, Codex's `PostCompact` hook,
+OpenCode's `session.compacted` event) for what it says about the agent: the
+turn is over and it is back at its prompt.
 
 ## Install
 
@@ -224,10 +216,10 @@ Codex grants that trust per event, so an Ariadne that declares a new hook event
 keeps the verdicts you already gave and takes every session down to the prompt
 over the one that is new — quietly, since the prompt is at the start of a
 session nobody is watching. **After upgrading, re-run `ariadne setup
-codex-hooks`** — the `PostCompact` hook, which tells the daemon a compaction it
-asked for is over, is the latest addition. `ariadne doctor` reads the verdicts
-back out of codex's config and names any declared event that has none. Which
-events are declared, and why each one, is in
+codex-hooks`** — the `PostCompact` hook, which tells the daemon the agent is
+back at its prompt after a compaction, is the latest addition. `ariadne doctor`
+reads the verdicts back out of codex's config and names any declared event that
+has none. Which events are declared, and why each one, is in
 `crates/ariadne-core/src/codex_hooks.rs`.
 
 The daemon then runs as a user service with restart-on-failure, and

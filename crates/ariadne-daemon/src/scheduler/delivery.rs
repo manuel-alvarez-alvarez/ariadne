@@ -33,6 +33,15 @@ pub(super) enum DeliveryOutcome {
 }
 
 impl super::Scheduler {
+    /// Whether something is going into this pane right now: a delivery being
+    /// typed into the composer. Not a pane to type a second thing into — two
+    /// pastes at once interleave into something neither of them said — and
+    /// not a pane to kill, since the keystrokes would come back as a message
+    /// nobody could be given.
+    pub(super) fn pane_busy(&self, session_id: &str) -> bool {
+        self.typing.contains(session_id)
+    }
+
     /// Type `text` into a session's pane in a task of its own, which reports
     /// back what came of it.
     ///

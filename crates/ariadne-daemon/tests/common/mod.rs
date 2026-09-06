@@ -102,7 +102,6 @@ pub struct HarnessBuilder {
     spawns: bool,
     logs: Option<LogBuffer>,
     typed_input_window: Option<Duration>,
-    compaction_timeout: Option<Duration>,
 }
 
 /// A daemon in a temporary directory: a stub `tmux`, no scheduler.
@@ -114,7 +113,6 @@ pub fn harness() -> HarnessBuilder {
         spawns: true,
         logs: None,
         typed_input_window: None,
-        compaction_timeout: None,
     }
 }
 
@@ -159,13 +157,6 @@ impl HarnessBuilder {
         self
     }
 
-    /// How long a compaction the daemon typed is waited for. Seconds rather
-    /// than the configured minutes, for the test about the wait running out.
-    pub fn compaction_timeout(mut self, timeout: Duration) -> Self {
-        self.compaction_timeout = Some(timeout);
-        self
-    }
-
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -180,9 +171,6 @@ impl HarnessBuilder {
         }
         if let Some(window) = self.typed_input_window {
             config.typed_input_window = window;
-        }
-        if let Some(timeout) = self.compaction_timeout {
-            config.compaction_timeout = timeout;
         }
         let tmux = match self.tmux {
             Tmux::Stub => write_tmux_stub(dir.path()),
@@ -637,8 +625,8 @@ impl Harness {
             .await
     }
 
-    /// The same, sent from a live reviewer session, so the compaction its
-    /// verdict earns has a pane to land in.
+    /// The same, sent from a live reviewer session, so the verdict names the
+    /// pane it came from.
     pub async fn verdict_from(
         &self,
         task: &Task,

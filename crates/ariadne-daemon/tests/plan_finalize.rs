@@ -215,12 +215,15 @@ async fn an_orchestrator_is_the_agent_work_waits_on_until_the_goal_is_over() {
     assert!(!work_is_active(&h.store, &orchestrator).await);
 }
 
-/// What a reconciliation pass makes of a finalized goal: the plan it was
-/// started for is being worked on, so its orchestrator is owed the compaction
-/// of the conversation that wrote the plan — and is then left up, because the
-/// goal is not over.
+/// What a reconciliation pass makes of a finalized goal: the orchestrator is
+/// left up, because the goal is not over — and left alone, because a goal
+/// under way has nothing to say to it.
+///
+/// The hand-off used to be typed into: the daemon asked the orchestrator to
+/// compact the conversation that wrote the plan. It asks nothing now, and an
+/// idle pane that nothing has happened on stays empty.
 #[tokio::test]
-async fn a_scheduler_pass_compacts_the_orchestrator_of_an_active_goal_and_keeps_it() {
+async fn a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_nothing() {
     let h = harness().scheduler().await;
     let cast = h.cast().await;
     let orchestrator = orchestrator_session(&h, &cast).await;
@@ -228,24 +231,18 @@ async fn a_scheduler_pass_compacts_the_orchestrator_of_an_active_goal_and_keeps_
     h.set_status(&orchestrator, SessionStatus::Idle).await;
     finalize(&h, &cast, &orchestrator.id).await;
 
-    h.notify_goal(&cast.goal.id);
-
-    eventually(TIMEOUT, "the orchestrator to be told to compact", async || {
-        h.pasted(&orchestrator).contains("/compact")
-    })
-    .await;
-    h.ingest(
-        &orchestrator,
-        "session_start",
-        serde_json::json!({"hook_event_name": "SessionStart", "source": "compact"}),
-    )
-    .await;
     for _ in 0..3 {
         h.notify_goal(&cast.goal.id);
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
+
     assert!(
         !h.killed_panes().contains(&orchestrator.tmux_session),
         "the orchestrator was let go once its plan was under way"
+    );
+    assert_eq!(
+        h.pasted(&orchestrator),
+        "",
+        "the daemon typed into a pane that had nothing waiting for it"
     );
 }

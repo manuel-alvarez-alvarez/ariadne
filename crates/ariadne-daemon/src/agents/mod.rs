@@ -112,33 +112,12 @@ pub trait AgentAdapter: Send + Sync {
         internal_id: &str,
         instruction: &str,
     ) -> Result<SpawnPlan>;
-    /// What the daemon types into this CLI's composer to have it compact its
-    /// conversation, with the focus of `seat` where the CLI takes one
-    /// ([`compaction_focus`]); `None` for a CLI whose compaction cannot be
-    /// started from outside.
-    fn compaction_command(&self, seat: Seat) -> Option<String>;
     /// Whether an event this CLI reported — `kind` as `ariadne agent-event`
-    /// spells it, with its payload — says a compaction has just finished.
-    /// Whatever started it: one the daemon asked for, one the user typed, or
-    /// the CLI's own near the context limit.
+    /// spells it, with its payload — says a compaction has just finished, so
+    /// the agent is back at its prompt rather than mid-turn. Started by the
+    /// user at the pane, or by the CLI itself near the context limit: the
+    /// daemon asks for none.
     fn compaction_done(&self, kind: &str, payload: &serde_json::Value) -> bool;
-}
-
-/// What a compaction is told to keep, per seat, for the CLIs that take a
-/// focus beside the command.
-///
-/// Simplified Technical English: short imperative sentences, one instruction
-/// each, so the summary that comes out carries what the next resume of this
-/// seat has to know and nothing it does not.
-pub fn compaction_focus(seat: Seat) -> &'static str {
-    match seat {
-        Seat::Author => {
-            "Keep the task and the branch. Keep what changed and why. \
-             Keep how you verified it. Keep the open review points."
-        }
-        Seat::Reviewer => "Keep what you checked. Keep each finding of each verdict you gave.",
-        Seat::Orchestrator => "Keep the goal. Keep the decisions. Keep the tasks you created.",
-    }
 }
 
 pub fn adapter_for(kind: AgentKind) -> &'static dyn AgentAdapter {
@@ -195,60 +174,10 @@ pub fn env_json(ctx: &SpawnCtx) -> serde_json::Map<String, serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{adapter_for, compaction_focus};
+    use super::adapter_for;
 
-    use ariadne_core::{AgentKind, Seat};
+    use ariadne_core::AgentKind;
     use serde_json::json;
-
-    /// Every CLI can be told to compact from its composer, and only Claude
-    /// Code takes the focus text on the same line: the other two run
-    /// `/compact` bare and are handed nothing else.
-    #[test]
-    fn every_cli_has_a_compaction_command_and_only_claude_takes_a_focus() {
-        for seat in [Seat::Orchestrator, Seat::Author, Seat::Reviewer] {
-            let claude = adapter_for(AgentKind::ClaudeCode)
-                .compaction_command(seat)
-                .unwrap();
-            assert_eq!(
-                claude,
-                format!("/compact {}", compaction_focus(seat)),
-                "{seat:?}"
-            );
-            assert!(
-                !claude.contains('\n'),
-                "one line, or the paste submits in pieces"
-            );
-            for kind in [AgentKind::Codex, AgentKind::Opencode] {
-                assert_eq!(
-                    adapter_for(kind).compaction_command(seat).as_deref(),
-                    Some("/compact"),
-                    "{kind:?} {seat:?}"
-                );
-            }
-        }
-    }
-
-    /// The focus texts are Simplified Technical English: short imperative
-    /// sentences, each one an instruction of its own.
-    #[test]
-    fn the_focus_texts_are_short_imperative_sentences() {
-        for seat in [Seat::Orchestrator, Seat::Author, Seat::Reviewer] {
-            for sentence in compaction_focus(seat)
-                .split('.')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                assert!(
-                    sentence.starts_with("Keep"),
-                    "{seat:?}: {sentence:?} does not start with an imperative"
-                );
-                assert!(
-                    sentence.split_whitespace().count() <= 20,
-                    "{seat:?}: {sentence:?} is longer than a Simplified Technical English sentence"
-                );
-            }
-        }
-    }
 
     /// Each CLI says a compaction is over in its own vocabulary, and nothing
     /// else it reports is mistaken for it — least of all the session start of

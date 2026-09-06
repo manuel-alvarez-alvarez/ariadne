@@ -28,7 +28,7 @@
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use ariadne_core::{AgentKind, Seat};
+use ariadne_core::AgentKind;
 
 use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env};
 
@@ -182,10 +182,6 @@ impl AgentAdapter for OpencodeAdapter {
             // Empty instruction = interactive resume without a message.
             post_launch_input: (!instruction.is_empty()).then(|| instruction.to_string()),
         })
-    }
-
-    fn compaction_command(&self, _seat: Seat) -> Option<String> {
-        Some("/compact".into())
     }
 
     fn compaction_done(&self, kind: &str, _payload: &serde_json::Value) -> bool {

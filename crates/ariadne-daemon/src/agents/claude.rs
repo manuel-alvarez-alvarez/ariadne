@@ -27,9 +27,9 @@ use serde_json::json;
 #[cfg(unix)]
 use std::os::unix::fs::symlink as symlink_dir;
 
-use ariadne_core::{AgentKind, Seat};
+use ariadne_core::AgentKind;
 
-use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env, compaction_focus, env_json};
+use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env, env_json};
 
 pub struct ClaudeAdapter;
 
@@ -181,10 +181,6 @@ impl AgentAdapter for ClaudeAdapter {
             internal_session_id: Some(internal_id.to_string()),
             post_launch_input: None,
         })
-    }
-
-    fn compaction_command(&self, seat: Seat) -> Option<String> {
-        Some(format!("/compact {}", compaction_focus(seat)))
     }
 
     fn compaction_done(&self, kind: &str, payload: &serde_json::Value) -> bool {

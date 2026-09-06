@@ -307,10 +307,6 @@ pub struct AgentSession {
     /// told from what the process it replaced is still reporting. None where
     /// the session has never been launched.
     pub launch_id: Option<String>,
-    /// When this session was last found to owe a compaction of its agent
-    /// conversation, or None where nothing is owed: set at every hand-off
-    /// and cleared once the compaction is done or given up on.
-    pub compact_owed_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
 }

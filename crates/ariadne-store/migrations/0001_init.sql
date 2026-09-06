@@ -203,13 +203,7 @@ CREATE TABLE agent_sessions (
     -- Copied off the pin the session's seat carries, beside its model.
     effort              TEXT,
     launched_at         TEXT,
-    launch_id           TEXT,                   -- == ARIADNE_LAUNCH_ID env of that run
-    -- When the daemon last decided this session owes a compaction of its
-    -- agent conversation — set at every hand-off (a plan finalized, a review
-    -- requested, a verdict given) and cleared once the CLI reports the
-    -- compaction done, or the daemon stops waiting for it. NULL = nothing
-    -- owed.
-    compact_owed_at     TEXT
+    launch_id           TEXT                    -- == ARIADNE_LAUNCH_ID env of that run
 );
 CREATE INDEX idx_sessions_task ON agent_sessions (task_id);
 CREATE INDEX idx_sessions_status ON agent_sessions (status);
