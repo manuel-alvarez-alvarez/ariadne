@@ -102,7 +102,6 @@ async fn start_tui(dir: &Path, session: &str, mode: &str) -> TmuxManager {
 /// does with one that arrives inside its paste window. The message is not
 /// lost: it is still in the composer, and the next Enter sends it.
 #[tokio::test]
-#[ignore = "requires tmux and python3"]
 async fn a_swallowed_enter_is_pressed_again_until_the_message_goes() {
     let dir = tempfile::tempdir().unwrap();
     let name = format!("ariadne-test-swallow-once-{}", std::process::id());
@@ -123,7 +122,6 @@ async fn a_swallowed_enter_is_pressed_again_until_the_message_goes() {
 /// told the message is still sitting there, which is what raises the session
 /// for the user.
 #[tokio::test]
-#[ignore = "requires tmux and python3"]
 async fn a_message_that_never_submits_is_never_called_delivered() {
     let dir = tempfile::tempdir().unwrap();
     let name = format!("ariadne-test-swallow-always-{}", std::process::id());

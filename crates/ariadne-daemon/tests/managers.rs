@@ -1,8 +1,8 @@
 //! Integration tests for TmuxManager and GitManager.
 //!
-//! Marked #[ignore]: they need `git` and `tmux` on PATH and touch real
-//! processes. Run with `cargo test -p ariadne-daemon -- --ignored`; the spawn
-//! plan test also needs the `ariadne` CLI built into the same target dir
+//! These need `git` and `tmux` on PATH and touch real processes, so they run
+//! with the rest of the suite rather than behind `#[ignore]`. The spawn plan
+//! test also needs the `ariadne` CLI built into the same target dir
 //! (`cargo build -p ariadne-cli`), since a plan is launched by it.
 
 mod common;
@@ -29,7 +29,6 @@ fn toy_repo() -> (tempfile::TempDir, PathBuf) {
 }
 
 #[tokio::test]
-#[ignore = "requires git"]
 async fn git_worktree_lifecycle_and_merge_verification() {
     let (dir, repo) = toy_repo();
     let git = GitManager;
@@ -109,7 +108,6 @@ async fn git_worktree_lifecycle_and_merge_verification() {
 }
 
 #[tokio::test]
-#[ignore = "requires git"]
 async fn reviewer_worktree_refresh_between_rounds() {
     let (dir, repo) = toy_repo();
     let git = GitManager;
@@ -145,7 +143,6 @@ async fn reviewer_worktree_refresh_between_rounds() {
 }
 
 #[tokio::test]
-#[ignore = "requires tmux"]
 async fn tmux_session_lifecycle() {
     let tmux = TmuxManager::default();
     let dir = tempfile::tempdir().unwrap();
@@ -208,7 +205,6 @@ async fn tmux_session_lifecycle() {
 /// the plan names, so what tmux watches is that program and not the `ariadne`
 /// that read the plan for it.
 #[tokio::test]
-#[ignore = "requires tmux and a built ariadne CLI"]
 async fn tmux_runs_a_plan_no_command_line_could_carry() {
     let tmux = TmuxManager::default();
     let dir = tempfile::tempdir().unwrap();
@@ -318,7 +314,6 @@ async fn capture(bin: &str, args: &[&str]) -> String {
 /// arrive at the pane unaltered — Return submits, Ctrl-C interrupts, and an
 /// escape sequence stays an escape sequence rather than becoming literal text.
 #[tokio::test]
-#[ignore = "requires tmux"]
 async fn tmux_send_raw_delivers_control_bytes_verbatim() {
     let tmux = TmuxManager::default();
     let dir = tempfile::tempdir().unwrap();
@@ -364,7 +359,6 @@ async fn tmux_send_raw_delivers_control_bytes_verbatim() {
 /// so without sizing being taken off its hands the pane stays at 80x24 and a
 /// web viewer's resize does nothing at all.
 #[tokio::test]
-#[ignore = "requires tmux"]
 async fn tmux_resizes_a_pane_with_no_client_attached() {
     let tmux = TmuxManager::default();
     let dir = tempfile::tempdir().unwrap();
@@ -436,7 +430,6 @@ fn session_names_are_stable_and_short() {
 /// nor, once it has landed, a first parent, since it is the commit the
 /// repository starts from.
 #[tokio::test]
-#[ignore = "requires git"]
 async fn a_worktree_is_cut_from_a_base_branch_with_no_commits() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("repo");

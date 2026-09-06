@@ -4,8 +4,7 @@
 //! a name no stub admits to is exactly the "session already over" path — the
 //! one whose framing and lifecycle the acceptance criteria pin down.
 //! Following a live pane is the tailing logic, unit-tested in `log::console`;
-//! the one test that drives a real pane is `#[ignore]`d and asks for real
-//! tmux.
+//! the one test that drives a real pane asks for real tmux.
 
 mod common;
 
@@ -867,7 +866,6 @@ async fn a_burst_of_invalid_bytes_is_capped_by_what_it_decodes_to() {
 /// The live path end to end: pane output shows up as deltas within a second
 /// of being written, and killing the session closes the stream with `end`.
 #[tokio::test]
-#[ignore = "requires tmux"]
 async fn a_live_session_streams_new_output_until_it_is_killed() {
     let h = harness().tmux(Tmux::Real).await;
     let tmux_name = format!("ariadne-test-logstream-{}", std::process::id());

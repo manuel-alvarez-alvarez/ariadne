@@ -49,18 +49,25 @@ jobs:
           key: ${{ matrix.os }}
           cache-on-failure: true
 
-      # The ignored integration tests drive real tmux panes, and the keystroke
-      # ones script a TUI in python3. macOS runners have no tmux and do not
-      # run them.
-      - name: Install tmux
+      # The integration tests drive real tmux panes, and the keystroke ones
+      # script a TUI in python3. Neither runner image ships tmux, and both
+      # legs run those tests, so both install it.
+      - name: Install tmux (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y tmux
 
+      - name: Install tmux (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install tmux
+
       - name: Build
         run: cargo build --workspace --all-targets
 
+      # Everything, tmux and git tests included — they are no longer
+      # `#[ignore]`d. The spawn-plan one launches the `ariadne` CLI, which the
+      # build step above put in the same target dir.
       - name: Test
         run: cargo nextest run --workspace --profile ci
 
@@ -72,14 +79,6 @@ jobs:
       # `-D warnings` on top of the workspace's `clippy::all = warn`.
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-
-      # Real tmux and real git, plus the `ariadne` CLI the spawn-plan test
-      # launches — built into the same target dir by the build step above.
-      # A separate nextest profile so this run's report does not overwrite
-      # the Test step's above.
-      - name: Integration tests (tmux, git)
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo nextest run -p ariadne-daemon --profile ci-ignored --run-ignored only
 
       # Name the failed test in the run summary and as an annotation, rather
       # than leaving it to a dig through the raw log. Runs even when a test

@@ -73,7 +73,7 @@ pub enum Tmux {
     /// puts the stub where it was looked for.
     Missing,
     /// The real `tmux` on `PATH`. Only a test that drives an actual pane wants
-    /// one, and every such test is `#[ignore]`d.
+    /// one; every other test is handed a stub.
     Real,
 }
 
