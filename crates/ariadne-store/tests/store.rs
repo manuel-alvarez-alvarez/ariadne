@@ -26,13 +26,12 @@ async fn seed_repository(store: &Store) -> Repository {
         .unwrap()
 }
 
-async fn seed_goal(store: &Store, max_tasks: Option<i64>) -> (Goal, Repository) {
+async fn seed_goal(store: &Store) -> (Goal, Repository) {
     let repo = seed_repository(store).await;
     let goal = store
         .create_goal(NewGoal {
             title: "Test goal".into(),
             description: "desc".into(),
-            max_tasks,
             repository_ids: vec![repo.id.clone()],
             pin: None,
         })
@@ -55,7 +54,7 @@ struct World {
 impl World {
     async fn new() -> Self {
         let (store, dir) = test_store().await;
-        let (goal, repo) = seed_goal(&store, None).await;
+        let (goal, repo) = seed_goal(&store).await;
         let task = seed_task(&store, &goal, &repo, vec![]).await;
         Self {
             store,
@@ -328,7 +327,6 @@ async fn a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say() {
         .create_goal(NewGoal {
             title: "Ship it".into(),
             description: String::new(),
-            max_tasks: None,
             repository_ids: vec![repo.id.clone()],
             pin: None,
         })
@@ -392,7 +390,6 @@ async fn a_goal_reads_its_repositories_live() {
         .create_goal(NewGoal {
             title: "Two repos".into(),
             description: "desc".into(),
-            max_tasks: None,
             // The same repository named twice is one reference.
             repository_ids: vec![api.id.clone(), ui.id.clone(), api.id.clone()],
             pin: None,
@@ -433,7 +430,6 @@ async fn a_goal_needs_repositories_that_exist() {
     let new_goal = |repository_ids: Vec<String>| NewGoal {
         title: "Goal".into(),
         description: "desc".into(),
-        max_tasks: None,
         repository_ids,
         pin: None,
     };
@@ -587,31 +583,27 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
     assert_eq!(audit.len(), 4, "failed transitions leave no audit rows");
 }
 
+/// Nothing caps how many tasks a goal takes. How a goal breaks down is what
+/// the orchestrator settles with the user before it writes any of them, so a
+/// number enforced here could only refuse a plan they had already agreed.
 #[tokio::test]
-async fn max_tasks_is_enforced() {
+async fn a_goal_takes_as_many_tasks_as_its_plan_calls_for() {
     let (store, _dir) = test_store().await;
-    let (goal, repo) = seed_goal(&store, Some(1)).await;
-    let _t1 = seed_task(&store, &goal, &repo, vec![]).await;
-
-    let t2 = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
-            title: "too many".into(),
-            description: "".into(),
-            agents: vec![
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
-                },
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                },
-            ],
-            depends_on: vec![],
-            landing: None,
-        })
-        .await;
-    assert!(matches!(t2, Err(StoreError::Conflict(_))));
+    let (goal, repo) = seed_goal(&store).await;
+    for _ in 0..12 {
+        seed_task(&store, &goal, &repo, vec![]).await;
+    }
+    assert_eq!(
+        store
+            .list_tasks(TaskFilter {
+                goal_id: Some(goal.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .len(),
+        12
+    );
 }
 
 #[tokio::test]
@@ -1854,7 +1846,7 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
 #[tokio::test]
 async fn every_goal_status_round_trips_through_the_database() {
     let (store, _dir) = test_store().await;
-    let (goal, _) = seed_goal(&store, None).await;
+    let (goal, _) = seed_goal(&store).await;
 
     for status in GoalStatus::ALL {
         assert_eq!(
@@ -1873,9 +1865,9 @@ async fn every_goal_status_round_trips_through_the_database() {
 #[tokio::test]
 async fn list_goals_filters_by_any_of_the_given_statuses() {
     let (store, _dir) = test_store().await;
-    let (planning, _) = seed_goal(&store, None).await;
-    let (active, _) = seed_goal(&store, None).await;
-    let (cancelled, _) = seed_goal(&store, None).await;
+    let (planning, _) = seed_goal(&store).await;
+    let (active, _) = seed_goal(&store).await;
+    let (cancelled, _) = seed_goal(&store).await;
     store
         .set_goal_status(&active.id, GoalStatus::Active)
         .await
@@ -1956,7 +1948,7 @@ async fn built_ins_are_not_recreated_on_reopen() {
 #[tokio::test]
 async fn an_agent_is_written_on_the_pin_it_was_given_and_auto_where_it_was_given_none() {
     let (store, _dir) = test_store().await;
-    let (goal, repo) = seed_goal(&store, None).await;
+    let (goal, repo) = seed_goal(&store).await;
 
     let pinned = AgentPin {
         agent_kind: AgentKind::Codex,
@@ -2383,7 +2375,7 @@ async fn a_fresh_database_is_seeded_with_every_shipped_skill_on_its_own_text() {
 #[tokio::test]
 async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
     let (store, _dir) = test_store().await;
-    let (goal, repo) = seed_goal(&store, None).await;
+    let (goal, repo) = seed_goal(&store).await;
     store
         .create_skill(NewSkill {
             name: "api-design".into(),
@@ -2416,7 +2408,7 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
 #[tokio::test]
 async fn an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to() {
     let (store, _dir) = test_store().await;
-    let (goal, repo) = seed_goal(&store, None).await;
+    let (goal, repo) = seed_goal(&store).await;
 
     let refused = store
         .create_task(NewTask {

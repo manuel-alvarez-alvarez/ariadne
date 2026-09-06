@@ -218,6 +218,34 @@ describe("picking the goal's repositories", () => {
     expect(lastWrite()?.body?.repository_ids).toEqual([ARIADNE.id, SANDBOX.id])
   })
 
+  /**
+   * The whole body, not a subset: a goal is a title, a description and the
+   * repositories it works in, and the numbers that used to sit beside them —
+   * how many approvals a task needs, how many tasks a goal may have — are
+   * the orchestrator's to settle with the user, not fields on this form.
+   */
+  it("sends a goal and nothing that would cap the plan before it exists", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.type(screen.getByLabelText("Title"), "Repositories")
+    const list = await openList(user)
+    await user.click(row(list, ARIADNE))
+    await user.keyboard("{Escape}")
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).toEqual({
+      title: "Repositories",
+      description: "",
+      repository_ids: [ARIADNE.id],
+    })
+    expect(screen.queryByLabelText("Max tasks")).toBeNull()
+    expect(screen.queryByLabelText("Approvals")).toBeNull()
+  })
+
   it("takes one back off from its chip, so the body follows the field", async () => {
     const user = userEvent.setup()
     renderDialog()

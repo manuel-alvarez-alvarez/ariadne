@@ -22,18 +22,18 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
 ## How it works
 
 1. `ariadne goal create` — you describe a goal, pick the registered
-   repositories it works in (`ariadne repo add`) and optionally a max task
-   count. The daemon spawns the **orchestrator** in tmux; `ariadne goal
-   attach` drops you into its terminal. `--model` runs that orchestrator on
-   something other than the first installed agent CLI, and it is the whole
-   choice: a model is spelled `<agent>[:<model>]` — the agent CLI that runs it
-   (`claude_code`, `codex`, `opencode`) and, after a colon, one model of that
-   CLI (`--model codex:gpt-5.6-sol`). The agent CLI on its own (`--model
-   codex`) runs it on that CLI's own default model, and a model naming no CLI
-   is a usage error, since nothing says which CLI would run it. `--effort`
-   goes beside it and says how deeply that model reasons — one of the efforts
-   `ariadne models ls` lists for it (`--effort xhigh`); left out, the model
-   runs at whatever its agent CLI runs it at.
+   repositories it works in (`ariadne repo add`). The daemon spawns the
+   **orchestrator** in tmux; `ariadne goal attach` drops you into its terminal.
+   `--model` runs that orchestrator on something other than the first installed
+   agent CLI, and it is the whole choice: a model is spelled
+   `<agent>[:<model>]` — the agent CLI that runs it (`claude_code`, `codex`,
+   `opencode`) and, after a colon, one model of that CLI (`--model
+   codex:gpt-5.6-sol`). The agent CLI on its own (`--model codex`) runs it on
+   that CLI's own default model, and a model naming no CLI is a usage error,
+   since nothing says which CLI would run it. `--effort` goes beside it and
+   says how deeply that model reasons — one of the efforts `ariadne models ls`
+   lists for it (`--effort xhigh`); left out, the model runs at whatever its
+   agent CLI runs it at.
 2. The orchestrator asks its questions in its terminal and waits — `ariadne
    goal attach` drops you into that terminal to answer them, and an
    orchestrator waiting on you shows up wherever Ariadne lists what needs

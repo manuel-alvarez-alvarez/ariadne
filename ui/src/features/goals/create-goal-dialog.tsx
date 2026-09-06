@@ -50,16 +50,6 @@ import { paths } from "@/routes/paths"
 import { useCreateGoal } from "./queries"
 import { RepositoryCombobox } from "./repository-combobox"
 
-/** Optional positive integer, kept as the string the input holds. */
-function optionalCount(label: string) {
-  return z
-    .string()
-    .trim()
-    .refine((value) => value === "" || /^[1-9]\d*$/.test(value), {
-      message: `${label} must be a positive whole number.`,
-    })
-}
-
 const formSchema = z.object({
   title: z.string().trim().min(1, "Give the goal a title."),
   description: z.string(),
@@ -69,7 +59,6 @@ const formSchema = z.object({
   // The effort that model is run at, scoped by the box beside it; empty is
   // whatever the agent CLI runs it at.
   effort: z.string(),
-  max_tasks: optionalCount("Max tasks"),
   repository_ids: z.array(z.string()).min(1, "Pick at least one repository."),
 })
 
@@ -80,7 +69,6 @@ const DEFAULT_VALUES: CreateGoalForm = {
   description: "",
   model: "",
   effort: "",
-  max_tasks: "",
   repository_ids: [],
 }
 
@@ -121,7 +109,6 @@ export function CreateGoalDialog({
       ...(model.length > 0 ? { model } : {}),
       ...(effort.length > 0 ? { effort } : {}),
       repository_ids: values.repository_ids,
-      max_tasks: values.max_tasks ? Number(values.max_tasks) : null,
     }
     try {
       const goal = await createGoal.mutateAsync(body)
@@ -215,21 +202,6 @@ export function CreateGoalDialog({
               </Field>
             )}
           />
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field data-invalid={errors.max_tasks ? "" : undefined}>
-              <FieldLabel htmlFor="goal-max-tasks">Max tasks</FieldLabel>
-              <Input
-                id="goal-max-tasks"
-                inputMode="numeric"
-                placeholder="unbounded"
-                autoComplete="off"
-                aria-invalid={errors.max_tasks ? true : undefined}
-                {...form.register("max_tasks")}
-              />
-              <FieldError>{errors.max_tasks?.message}</FieldError>
-            </Field>
-          </div>
 
           <Field data-invalid={errors.model ? "" : undefined}>
             <FieldLabel htmlFor="goal-pin">Orchestrator runs on</FieldLabel>

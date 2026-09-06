@@ -124,9 +124,13 @@ fn slug(title: &str) -> String {
 }
 
 impl Store {
-    /// Create a task in `pending`. Enforces the goal's `max_tasks`, checks
-    /// the staffing, and checks that the dependencies belong to the same goal
-    /// and are acyclic.
+    /// Create a task in `pending`. Checks the staffing, and checks that the
+    /// dependencies belong to the same goal and are acyclic.
+    ///
+    /// Nothing caps how many tasks a goal takes: how a goal breaks down is
+    /// what the orchestrator settles with the user before it writes any of
+    /// them (003), and a number the store enforced afterwards could only
+    /// refuse a plan they had already agreed.
     pub async fn create_task(&self, new: NewTask) -> Result<Task> {
         check_staffing(&new.agents)?;
         let goal = self.get_goal(&new.goal_id).await?;
@@ -148,19 +152,6 @@ impl Store {
         let branch = branch_name(&new.title, &id);
 
         let mut tx = self.w().begin().await?;
-
-        if let Some(max) = goal.max_tasks {
-            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE goal_id = ?")
-                .bind(&goal.id)
-                .fetch_one(&mut *tx)
-                .await?;
-            if count >= max {
-                return Err(StoreError::Conflict(format!(
-                    "goal {} already has {count} of max {max} tasks",
-                    goal.id
-                )));
-            }
-        }
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,

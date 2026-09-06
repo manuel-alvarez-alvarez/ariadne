@@ -13,8 +13,6 @@ pub struct GoalDto {
     pub title: String,
     pub description: String,
     pub status: GoalStatus,
-    /// None = unbounded.
-    pub max_tasks: Option<i64>,
     /// What the orchestrator runs on, `<agent_kind>[:<model>]`: the agent CLI
     /// and, after a `:`, the model of it (`codex`,
     /// `claude_code:claude-opus-5`). None = auto: the first installed CLI,
@@ -72,8 +70,6 @@ pub struct CreateGoalRequest {
     pub description: String,
     /// Ids of registered repositories (`POST /v1/repositories`); at least one.
     pub repository_ids: Vec<String>,
-    /// Max tasks the orchestrator may create (default: unbounded).
-    pub max_tasks: Option<i64>,
     /// What the orchestrator runs on, `<agent_kind>[:<model>]` — the agent
     /// CLI and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
     /// `opencode:ollama/llama3:8b`. The model half is free text, handed to

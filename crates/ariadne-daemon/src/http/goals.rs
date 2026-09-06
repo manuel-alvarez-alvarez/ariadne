@@ -87,7 +87,6 @@ pub async fn create(
         .create_goal(NewGoal {
             title: req.title,
             description: req.description,
-            max_tasks: req.max_tasks,
             repository_ids: req.repository_ids,
             pin,
         })

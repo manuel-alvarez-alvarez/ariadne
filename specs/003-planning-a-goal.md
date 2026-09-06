@@ -30,8 +30,9 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 ## Behavior
 
 1. A goal opens with one orchestrator session, started in the primary checkout
-   of the goal's first repository and briefed with the goal, its repositories
-   and `max_tasks`.
+   of the goal's first repository and briefed with the goal and its
+   repositories. No numbers: how many tasks the goal takes is what the
+   conversation settles.
 2. The orchestrator never writes code. Its whole output is the plan.
 3. It asks the user about every unclear point, until nothing about the goal is
    open: one question in plain turn text, then it waits. The user answers in

@@ -88,7 +88,7 @@ export function taskDiffQueryOptions(taskId: string) {
  * `POST /v1/goals/{goal_id}/tasks` — the create-task form's submit.
  *
  * The daemon owns the validation (profile roles, repo membership, dep cycles,
- * `max_tasks`), so a failure surfaces as the `ApiError` the form renders. On
+ * dep cycles), so a failure surfaces as the `ApiError` the form renders. On
  * success the new task is cached and the lists refetched — the `task_created`
  * event will say the same thing, but the stream may be down.
  */

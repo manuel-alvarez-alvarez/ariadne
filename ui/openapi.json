@@ -2249,14 +2249,6 @@
             "description": "The reasoning effort to run that model at, one of the efforts `GET\n/v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at. An effort is\nrun at a model, so an effort written where `model` names none is\nrefused.",
             "example": "high"
           },
-          "max_tasks": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Max tasks the orchestrator may create (default: unbounded)."
-          },
           "model": {
             "type": [
               "string",
@@ -2803,14 +2795,6 @@
           },
           "id": {
             "type": "string"
-          },
-          "max_tasks": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "None = unbounded."
           },
           "model": {
             "type": [

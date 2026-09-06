@@ -77,7 +77,7 @@ dto! {
         model: spelled(g.agent_kind(), g.model.as_deref()),
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
-        .. id, title, description, max_tasks, effort,
+        .. id, title, description, effort,
            created_at, updated_at
     }
 

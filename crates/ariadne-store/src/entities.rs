@@ -183,7 +183,6 @@ pub struct Goal {
     pub title: String,
     pub description: String,
     pub status: String,
-    pub max_tasks: Option<i64>,
     /// Agent CLI this goal's orchestrator runs on. None = auto, resolved at
     /// spawn time to the first installed CLI.
     pub agent_kind: Option<String>,

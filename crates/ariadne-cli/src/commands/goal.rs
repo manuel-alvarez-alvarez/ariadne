@@ -52,9 +52,9 @@ Examples:
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
       --model codex:gpt-5.6-sol --effort xhigh
 
-  # two repositories, and at most four tasks between them
+  # a goal that works in two repositories
   ariadne goal create --title \"Split the API\" --repo ~/projects/api \\
-      --repo ~/projects/ui --max-tasks 4
+      --repo ~/projects/ui
 ";
 
 #[derive(Subcommand)]
@@ -88,9 +88,6 @@ pub enum GoalCommand {
         /// runs it at
         #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
         effort: Option<String>,
-        /// Maximum number of tasks (default: unbounded)
-        #[arg(long)]
-        max_tasks: Option<i64>,
     },
     /// List goals: the live ones, newest first (--all includes finished)
     Ls {
@@ -160,7 +157,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             repos,
             model,
             effort,
-            max_tasks,
         } => {
             let goal: GoalDto = client
                 .post_json(
@@ -169,7 +165,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         title,
                         description,
                         repository_ids: resolve_repositories(client, &repos).await?,
-                        max_tasks,
                         model,
                         effort,
                     },
@@ -220,12 +215,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     (
                         "orchestrator",
                         pin_label(g.model.as_deref(), g.effort.as_deref()).into(),
-                    ),
-                    (
-                        "max_tasks",
-                        g.max_tasks
-                            .map_or("unbounded".into(), |m| m.to_string())
-                            .into(),
                     ),
                     (
                         "repos",

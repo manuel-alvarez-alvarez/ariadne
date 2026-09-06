@@ -693,7 +693,6 @@ impl Harness {
             .create_goal(NewGoal {
                 title: "Ship the UI".into(),
                 description: "desc".into(),
-                max_tasks: None,
                 repository_ids: vec![repo.id.clone()],
                 pin,
             })

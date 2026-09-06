@@ -73,7 +73,6 @@ CREATE TABLE goals (
     description         TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'planning'
                         CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
-    max_tasks           INTEGER,                -- NULL = unbounded
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
     agent_kind          TEXT

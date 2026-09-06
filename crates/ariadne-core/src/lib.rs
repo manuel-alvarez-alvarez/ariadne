@@ -241,12 +241,7 @@ impl PromptKind {
     /// Adding a value to a builder means adding its name here.
     pub fn placeholders(&self) -> &'static [&'static str] {
         match self {
-            PromptKind::OrchestratorBriefing => &[
-                "goal_title",
-                "goal_description",
-                "repositories",
-                "max_tasks",
-            ],
+            PromptKind::OrchestratorBriefing => &["goal_title", "goal_description", "repositories"],
             // A nudge says what is waiting and nothing else: the orchestrator
             // it reaches has read the goal already.
             PromptKind::OrchestratorResume => &["goal_title"],

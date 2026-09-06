@@ -28,7 +28,6 @@ pub fn goal(id: &str, title: &str) -> GoalDto {
         title: title.into(),
         description: String::new(),
         status: GoalStatus::Active,
-        max_tasks: None,
         model: None,
         effort: None,
         repos: Vec::new(),

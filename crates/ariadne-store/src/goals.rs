@@ -9,7 +9,6 @@ use crate::{AgentPin, Change, Goal, Repository, Result, Store, StoreError, not_f
 pub struct NewGoal {
     pub title: String,
     pub description: String,
-    pub max_tasks: Option<i64>,
     /// Ids of registered repositories the goal works in; each must exist.
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
@@ -37,14 +36,13 @@ impl Store {
         let mut tx = self.w().begin().await?;
         let (agent_kind, model, effort) = AgentPin::columns(new.pin.as_ref());
         sqlx::query(
-            "INSERT INTO goals (id, title, description, status, max_tasks,
+            "INSERT INTO goals (id, title, description, status,
                                 agent_kind, model, effort, created_at, updated_at)
-             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
         .bind(&new.description)
-        .bind(new.max_tasks)
         .bind(&agent_kind)
         .bind(&model)
         .bind(&effort)

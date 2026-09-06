@@ -3,7 +3,7 @@
  * update` in the task panel, as one dialog with two modes.
  *
  * The daemon does the real validation — the skills a name answers to, repo
- * membership, dep cycles, `max_tasks`, and for edits the pending/ready guard
+ * membership, dep cycles, and for edits the pending/ready guard
  * — so the client only catches what it can know on its own (an empty title,
  * an agent with no skill) and shows the daemon's error envelope verbatim for
  * everything else, with the dialog staying open. That covers the stale edit:

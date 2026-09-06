@@ -994,11 +994,6 @@ export interface components {
              */
             effort?: string | null;
             /**
-             * Format: int64
-             * @description Max tasks the orchestrator may create (default: unbounded).
-             */
-            max_tasks?: number | null;
-            /**
              * @description What the orchestrator runs on, `<agent_kind>[:<model>]` — the agent
              *     CLI and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
              *     `opencode:ollama/llama3:8b`. The model half is free text, handed to
@@ -1194,11 +1189,6 @@ export interface components {
              */
             effort?: string | null;
             id: string;
-            /**
-             * Format: int64
-             * @description None = unbounded.
-             */
-            max_tasks?: number | null;
             /**
              * @description What the orchestrator runs on, `<agent_kind>[:<model>]`: the agent CLI
              *     and, after a `:`, the model of it (`codex`,

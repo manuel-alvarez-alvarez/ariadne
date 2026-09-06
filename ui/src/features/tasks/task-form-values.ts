@@ -7,7 +7,7 @@
  * shown), and the author is staffed only on create — a task keeps the author
  * it started with, so edit mode neither shows nor sends it. Everything else
  * the daemon validates: the skill names, repo membership, dep cycles,
- * `max_tasks`, and for edits the pending/ready guard.
+ * and for edits the pending/ready guard.
  *
  * Two things carry a meaning of their own here.
  *

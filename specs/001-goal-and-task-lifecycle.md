@@ -20,7 +20,7 @@ them. Every other spec assumes this vocabulary.
 ## Scope
 
 In: goal statuses, task statuses, the transition table and its actors, the
-audit trail, dependencies, `max_tasks`, cancellation, failure and retry, and
+audit trail, dependencies, cancellation, failure and retry, and
 what deleting a goal takes with it.
 
 Out: how each state is *worked* — planning (003), engineering and review
@@ -72,9 +72,11 @@ Out: how each state is *worked* — planning (003), engineering and review
 10. Dependencies are declared per task and gate `pending → ready`. Cycles are
     refused. A dependency that ends unmerged is reported as blocking, and a
     dependency that failed or was cancelled fails the task waiting on it.
-11. A goal may cap its task count (`max_tasks`). How many approvals a task
-    needs is not a goal-level number: it is however many reviewers the task
-    was staffed with (017), agreed with the user task by task (003).
+11. A goal carries no numbers about its plan. How many tasks it takes, and how
+    many approvals each of them needs, are settled between the orchestrator
+    and the user (003) — the second as however many reviewers the task was
+    staffed with (017). A cap written down before that conversation could only
+    refuse a plan they had already agreed.
 12. A task also carries how it ends — `merge`, `pull_request` or `none` (005)
     — and all three reach `finished`.
 13. Only a finished goal can be deleted, and deleting it takes its tasks,
@@ -106,7 +108,8 @@ Out: how each state is *worked* — planning (003), engineering and review
 - An author fails its own task with the reason on it, and a reviewer may not
   (`task_failure.rs::an_author_fails_its_own_task_with_the_reason_on_it`,
   `::a_reviewer_may_not_fail_the_task_it_is_reviewing`).
-- `max_tasks` is enforced (`store.rs::max_tasks_is_enforced`).
+- A goal takes as many tasks as its plan calls for
+  (`store.rs::a_goal_takes_as_many_tasks_as_its_plan_calls_for`).
 - An unfinished goal is refused deletion and keeps everything
   (`goal_delete.rs::an_unfinished_goal_is_refused_and_keeps_everything`); a
   finished one takes its children and reaches the event stream

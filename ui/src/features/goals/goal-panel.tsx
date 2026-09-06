@@ -305,9 +305,6 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
             was created. */}
         <span className="text-xs">{pinLabel(goal.model, goal.effort)}</span>
       </Fact>
-      <Fact label="Max tasks">
-        <span className="tabular-nums">{goal.max_tasks ?? "unbounded"}</span>
-      </Fact>
       <Fact label="Created">
         <When at={goal.created_at} label="created" />
       </Fact>

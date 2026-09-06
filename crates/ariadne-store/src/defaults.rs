@@ -227,17 +227,18 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task
 4. `ask` the author what the change does not answer. `reply` to what it asks you. A question is not a verdict.
 5. Call `submit_verdict` once per round. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
 
-/// Initial briefing of an orchestrator session: the goal, the repositories it
-/// works in, and the one number a plan has to fit inside.
+/// Initial briefing of an orchestrator session: the goal, and the
+/// repositories it works in.
+///
+/// No numbers. How many tasks a goal takes is what the conversation with the
+/// user settles (003), and a cap written down before that conversation could
+/// only be a guess the orchestrator then has to plan around.
 const ORCHESTRATOR_BRIEFING: &str = r#"# Goal: {goal_title}
 
 {goal_description}
 
 ## Repositories
-{repositories}
-
-## Constraints
-- At most {max_tasks} tasks"#;
+{repositories}"#;
 
 /// What an orchestrator that has gone quiet is picked up with, in both
 /// situations there are.

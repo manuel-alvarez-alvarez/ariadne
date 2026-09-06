@@ -122,16 +122,12 @@ pub fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) 
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let max = goal
-        .max_tasks
-        .map_or("unbounded".to_string(), |m| m.to_string());
     render(
         template,
         &[
             ("goal_title", &goal.title),
             ("goal_description", &goal.description),
             ("repositories", &repo_lines),
-            ("max_tasks", &max),
         ],
     )
 }
@@ -295,7 +291,6 @@ mod tests {
             title: "Ship the UI".into(),
             description: "The board needs swimlanes.".into(),
             status: "planning".into(),
-            max_tasks: Some(4),
             agent_kind: None,
             model: None,
             effort: None,
@@ -520,7 +515,6 @@ mod tests {
                     ("goal_title", &goal.title),
                     ("goal_description", &goal.description),
                     ("repositories", &repo_line),
-                    ("max_tasks", "4"),
                 ],
             ),
             (
