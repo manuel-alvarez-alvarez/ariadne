@@ -43,7 +43,8 @@ pub enum RepoCommand {
         #[arg(long)]
         description: Option<String>,
         /// How an approved task lands on the base branch: squashed straight
-        /// onto it, or published as a pull/merge request for a human to merge
+        /// onto it, or published as a pull/merge request the author then sees
+        /// through to its merge
         #[arg(long, value_parser = Spelling::<MergeStrategy>::new(), default_value = "direct")]
         merge_strategy: MergeStrategy,
         /// The landing briefing this repository hands its author, as text

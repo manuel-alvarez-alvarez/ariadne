@@ -95,7 +95,8 @@ pub enum MergeStrategy {
     /// Squashed onto the base branch with git alone, in the primary checkout.
     #[default]
     Direct,
-    /// Published as a pull or merge request for a human to merge.
+    /// Published as a pull or merge request, which its author then sees
+    /// through: it answers what is written on the request and merges it.
     PullRequest,
 }
 

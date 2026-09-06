@@ -116,7 +116,7 @@ describe("registering a repository", () => {
     })
   })
 
-  it("registers a repository whose tasks are published for a human to merge", async () => {
+  it("registers a repository whose tasks are published as a request", async () => {
     const user = userEvent.setup()
     renderDialog(null)
 

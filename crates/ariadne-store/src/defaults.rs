@@ -855,7 +855,7 @@ mod tests {
             assert!(direct.contains(step), "the direct briefing has no {step}");
         }
 
-        // Published for a human to merge, on either forge.
+        // Published, answered and merged by the author, on either forge.
         for step in [
             "auth status",
             "gh pr create",
