@@ -80,10 +80,12 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    the author with the feedback; every reviewer approving moves the task to
    `approved`.
 
-   The agents talk to each other while that happens. `ask` writes to another
-   agent of the task, or to the orchestrator; `reply` answers on the id a
-   message arrived with. There is no inbox to check: Ariadne types the message
-   into the recipient's pane and submits it, so it lands as a turn. A verdict
+   The agents talk to each other while that happens, and only when one of them
+   needs something: `ask` writes to another agent of the task, or to the
+   orchestrator, and `tell` gives one what it asked for. There is nothing to
+   reply with, and nothing to acknowledge with — every message lands in the
+   recipient's pane as a turn, so a courtesy costs a turn. There is no inbox
+   to check either: Ariadne types the message in and submits it. A verdict
    is a message of the kind that settles a review, and it all reads back as one
    channel — `ariadne task messages <task-id>`, or the Messages tab of the
    task panel. Every agent of a task stays up until the task is over, so a

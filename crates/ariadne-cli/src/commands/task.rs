@@ -350,8 +350,13 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         }
         TaskCommand::Messages { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
-            let messages: Vec<MessageDto> =
+            let mut messages: Vec<MessageDto> =
                 client.get_json(&format!("/v1/tasks/{id}/messages")).await?;
+            // Newest first. The daemon serves the channel in the order it was
+            // written, which is what an agent reading it as context wants; a
+            // person running this wants what just happened, and a channel
+            // that only grows would put it under everything else.
+            messages.reverse();
             // The agents of the task, so a message reads as the skills that
             // sent it rather than as an id.
             let t: TaskDto = client.get_json(&task_path(&id)).await?;

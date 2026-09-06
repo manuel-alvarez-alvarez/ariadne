@@ -209,7 +209,7 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You turn an Ariadne goal into a plan
 7. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Mix the agent CLIs evenly over the tasks. Take only a CLI that suits the task. Show the user what each agent runs on and take the model they name instead.
 8. Show the user the tasks you wrote. Revise them until they write an explicit yes.
 9. Call `finalize_plan`. It starts every task and ends planning. Call it no earlier.
-10. Stay up for the rest of the goal. Answer the user, and `reply` to every agent that writes to you. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
+10. Stay up for the rest of the goal. Answer the user, and `tell` an agent what it asked you for. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
 
 /// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -220,7 +220,7 @@ const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first c
 2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Make small commits, their text in STE. Keep tests and linters green. Add the tests the task asks for.
 3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
 4. Call `request_review` with one short summary in STE: what changed, why, how you verified it. Apply every verdict on the same branch and call it again. Where you disagree, say why in that summary.
-5. `ask` a reviewer or the orchestrator what the task does not answer. `reply` to what they ask you. Work on while you wait.
+5. `ask` a reviewer or the orchestrator what the task does not answer. `tell` them what they ask you for. Write for no other reason: never to thank, and never to acknowledge. Work on while you wait.
 6. Every reviewer approves, and Ariadne briefs you to end the task."#;
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
@@ -230,7 +230,7 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval
 1. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
 2. Verify the change here. Install what it needs. Build, test and lint in this worktree, never another.
 3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and name it.
-4. `ask` the author what the change does not answer. `reply` to what it asks you. A question is not a verdict.
+4. `ask` the author what the change does not answer. `tell` it what it asks you for. Write for no other reason: never to thank, and never to acknowledge. A question is not a verdict.
 5. Call `submit_verdict` once per review you are asked for. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
 
 /// Initial briefing of an orchestrator session: the goal, and the
@@ -590,6 +590,13 @@ mod tests {
     /// transport for a thing no text could carry before, so the total went to
     /// 1500 rather than the kinds being squeezed to fit it.
     ///
+    /// The author's and the reviewer's went to 1080 for the rule about *not*
+    /// writing: an agent that is handed a channel and a pane that answers on
+    /// it will thank the one that answered, and be thanked back. Naming the
+    /// two turns nobody needs is what stops them, and there was nowhere else
+    /// to name them — every other text says what to do rather than what a
+    /// message is for.
+    ///
     /// The orchestrator's went to 1750 for the mix: staffing a task was a
     /// question about that task alone, and it is now a question about the
     /// plan as well — the agent CLIs are spread over the tasks rather than
@@ -622,7 +629,7 @@ mod tests {
         // could do before rather than a rewording of a thing it could.
         let system_cap = |seat: Seat| match seat {
             Seat::Orchestrator => 1750,
-            Seat::Author | Seat::Reviewer => 1010,
+            Seat::Author | Seat::Reviewer => 1080,
         };
         let cap = |kind: PromptKind| match kind {
             PromptKind::OrchestratorResume | PromptKind::AuthorResume | PromptKind::ReviewerResume => {

@@ -324,7 +324,6 @@ pub struct Message {
     pub to_actor: String,
     /// The staffed agent it is for, or None for the orchestrator.
     pub to_agent_id: Option<String>,
-    pub in_reply_to: Option<String>,
     pub body: String,
     /// When it reached the recipient's pane, or None while it is still
     /// waiting for one to be free.

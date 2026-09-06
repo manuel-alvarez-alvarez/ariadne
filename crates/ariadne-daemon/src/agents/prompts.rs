@@ -316,7 +316,6 @@ mod tests {
             from_session: None,
             to_actor: "author".into(),
             to_agent_id: Some("01authorxxxxxxxxxxxxxxxxxx".into()),
-            in_reply_to: None,
             body: "Why is the retry unbounded?".into(),
             delivered_at: None,
             created_at: "2026-01-01T00:00:00Z".into(),

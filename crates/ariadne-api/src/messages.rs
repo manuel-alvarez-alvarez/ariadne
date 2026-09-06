@@ -19,8 +19,6 @@ pub struct MessageDto {
     pub to_actor: Actor,
     /// The staffed agent it is for, or None for the orchestrator.
     pub to_agent_id: Option<String>,
-    /// The message this answers, where it answers one.
-    pub in_reply_to: Option<String>,
     pub body: String,
     /// When it reached the recipient's pane, or None while it is still
     /// waiting for one to be free.
@@ -43,11 +41,6 @@ pub struct SendMessageRequest {
     /// Required for `author` and `reviewer`, refused for the orchestrator.
     #[serde(default)]
     pub to_agent_id: Option<String>,
-    /// The message this answers. Its recipient is where the answer goes, so
-    /// an answer needs neither `to_actor` that disagrees with it nor an agent
-    /// id of its own.
-    #[serde(default)]
-    pub in_reply_to: Option<String>,
     pub body: String,
 }
 

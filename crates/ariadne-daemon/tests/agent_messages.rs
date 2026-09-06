@@ -33,8 +33,12 @@ fn ask(to_actor: &str, to_agent_id: Option<&str>, body: &str) -> serde_json::Val
     })
 }
 
-/// A reviewer asks the author something mid-round, and the author answers it.
-/// Neither of them left the task to do it, and the round is where it was.
+/// A reviewer asks the author something mid-review, and the author answers it.
+/// Neither of them left the task to do it, and the review is where it was.
+///
+/// The answer is addressed like anything else. There is no reply — a channel
+/// with one fills up with agents acknowledging each other — so an answer is a
+/// note to the agent that asked, named the way the question named it.
 #[tokio::test]
 async fn a_reviewer_asks_the_author_and_the_author_answers_it() {
     let h = harness().await;
@@ -75,29 +79,27 @@ async fn a_reviewer_asks_the_author_and_the_author_answers_it() {
     assert_eq!(asked.to_agent_id.as_deref(), Some(cast.author.id.as_str()));
     assert_eq!(asked.delivered_at, None, "nothing has typed it yet");
 
-    // The answer names the message and nothing else: where it goes is who
-    // asked.
     let answered: MessageDto = h
         .json(
             as_session(
                 &messages_uri(&cast),
                 &author.id,
                 serde_json::json!({
-                    "kind": "answer",
-                    "to_actor": "orchestrator",
-                    "in_reply_to": asked.id,
+                    "kind": "note",
+                    "to_actor": "reviewer",
+                    "to_agent_id": cast.reviewer.id,
                     "body": "Because the caller retries too.",
                 }),
             ),
             StatusCode::CREATED,
         )
         .await;
+    assert_eq!(answered.kind, MessageKind::Note);
     assert_eq!(answered.to_actor, Actor::Reviewer, "back to whoever asked");
     assert_eq!(
         answered.to_agent_id.as_deref(),
         Some(cast.reviewer.id.as_str())
     );
-    assert_eq!(answered.in_reply_to.as_deref(), Some(asked.id.as_str()));
 
     // And the review is untouched: a question is not a vote.
     assert_eq!(h.store.open_verdicts(&cast.task.id).await.unwrap().len(), 0);
@@ -478,8 +480,7 @@ async fn only_one_verdict_per_reviewer_per_review_is_taken() {
             from_session: None,
             to_actor: Actor::Reviewer,
             to_agent_id: Some(cast.reviewer.id.clone()),
-            in_reply_to: None,
-            body: "revised".into(),
+                body: "revised".into(),
         })
         .await
         .unwrap();

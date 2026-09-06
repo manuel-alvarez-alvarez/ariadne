@@ -126,7 +126,7 @@ dto! {
         from_actor: m.from_actor().unwrap_or(Actor::Daemon),
         to_actor: m.to_actor().unwrap_or(Actor::Daemon),
         .. id, goal_id, task_id, from_agent_id, from_session, to_agent_id,
-           in_reply_to, body, delivered_at, created_at
+           body, delivered_at, created_at
     }
 
     /// `usage` is what this session has spent, which the caller loads.

@@ -621,13 +621,19 @@ impl AttentionReason {
 /// What one agent is saying to another.
 ///
 /// Agents talk to each other through one channel, and this is what tells the
-/// six things they say apart. A verdict used to be a row of its own; it is a
+/// five things they say apart. A verdict used to be a row of its own; it is a
 /// message like the rest now, which is what makes "the reviewer asked the
 /// author something" possible at all — before, the only thing a reviewer
 /// could say was approve or request changes.
 ///
+/// Every one of them is something the sender needs, or something the
+/// recipient does. There is no kind for an answer: an answer is a note to the
+/// agent that asked, addressed the way the question was. A kind for it, and a
+/// tool to send it with, made replying the obvious move — and a channel whose
+/// obvious move is replying fills up with agents thanking each other.
+///
 /// The kind is what the daemon reads. Two of them move the task
-/// ([`TaskStatus`]), one of them is answered, and the rest are said and left.
+/// ([`TaskStatus`]), and the rest are said and left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(
@@ -639,21 +645,20 @@ impl AttentionReason {
 pub enum MessageKind {
     /// Something the sender needs answered before it can go on.
     Question,
-    /// The answer to one.
-    Answer,
     /// The author asking a reviewer to look at what it wrote.
     ReviewRequest,
     /// A reviewer's verdict on the review it was asked for.
     Approve,
     /// A reviewer's verdict: the author starts again on this feedback.
     RequestChanges,
-    /// Anything worth saying that nobody has to answer.
+    /// Something the recipient needs and nobody has to answer: the answer to
+    /// a question, a fact the other agent cannot work without. There is no
+    /// kind for an acknowledgement, because there is no reason to send one.
     Note,
 }
 
 wire_enum! { MessageKind, "message kind", [
     Question = "question",
-    Answer = "answer",
     ReviewRequest = "review_request",
     Approve = "approve",
     RequestChanges = "request_changes",

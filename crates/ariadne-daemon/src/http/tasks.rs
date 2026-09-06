@@ -373,7 +373,6 @@ async fn announce_review(state: &AppState, ctx: &CallCtx, task: &Task, summary: 
                 from_session: ctx.session.as_ref().map(|s| s.id.clone()),
                 to_actor: Actor::Reviewer,
                 to_agent_id: Some(reviewer.id.clone()),
-                in_reply_to: None,
                 body: body.to_string(),
             })
             .await;

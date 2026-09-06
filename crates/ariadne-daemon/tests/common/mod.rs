@@ -662,8 +662,7 @@ impl Harness {
                 from_session: session_id.map(str::to_string),
                 to_actor: Actor::Author,
                 to_agent_id: Some(author.id),
-                in_reply_to: None,
-                body: body.to_string(),
+                        body: body.to_string(),
             })
             .await
             .unwrap()

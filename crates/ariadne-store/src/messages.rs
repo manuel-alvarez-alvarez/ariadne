@@ -33,8 +33,6 @@ pub struct NewMessage {
     pub to_actor: Actor,
     /// The staffed agent it is for, or None for the orchestrator.
     pub to_agent_id: Option<String>,
-    /// The message this answers, where it answers one.
-    pub in_reply_to: Option<String>,
     pub body: String,
 }
 
@@ -73,9 +71,8 @@ impl Store {
         let id = new_id();
         sqlx::query(
             "INSERT INTO messages (id, goal_id, task_id, kind, from_actor, from_agent_id,
-                                   from_session, to_actor, to_agent_id, in_reply_to, body,
-                                   created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   from_session, to_actor, to_agent_id, body, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.goal_id)
@@ -86,7 +83,6 @@ impl Store {
         .bind(&new.from_session)
         .bind(new.to_actor.as_str())
         .bind(&new.to_agent_id)
-        .bind(&new.in_reply_to)
         .bind(&new.body)
         .bind(now())
         .execute(&mut **tx)

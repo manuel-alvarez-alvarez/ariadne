@@ -1340,8 +1340,6 @@ export interface components {
             from_session?: string | null;
             goal_id: string;
             id: string;
-            /** @description The message this answers, where it answers one. */
-            in_reply_to?: string | null;
             kind: components["schemas"]["MessageKind"];
             /** @description The task it is about, or None for a message about the goal itself. */
             task_id?: string | null;
@@ -1353,16 +1351,22 @@ export interface components {
          * @description What one agent is saying to another.
          *
          *     Agents talk to each other through one channel, and this is what tells the
-         *     six things they say apart. A verdict used to be a row of its own; it is a
+         *     five things they say apart. A verdict used to be a row of its own; it is a
          *     message like the rest now, which is what makes "the reviewer asked the
          *     author something" possible at all — before, the only thing a reviewer
          *     could say was approve or request changes.
          *
+         *     Every one of them is something the sender needs, or something the
+         *     recipient does. There is no kind for an answer: an answer is a note to the
+         *     agent that asked, addressed the way the question was. A kind for it, and a
+         *     tool to send it with, made replying the obvious move — and a channel whose
+         *     obvious move is replying fills up with agents thanking each other.
+         *
          *     The kind is what the daemon reads. Two of them move the task
-         *     ([`TaskStatus`]), one of them is answered, and the rest are said and left.
+         *     ([`TaskStatus`]), and the rest are said and left.
          * @enum {string}
          */
-        MessageKind: "question" | "answer" | "review_request" | "approve" | "request_changes" | "note";
+        MessageKind: "question" | "review_request" | "approve" | "request_changes" | "note";
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: an
          *     agent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI
@@ -1507,12 +1511,6 @@ export interface components {
          */
         SendMessageRequest: {
             body: string;
-            /**
-             * @description The message this answers. Its recipient is where the answer goes, so
-             *     an answer needs neither `to_actor` that disagrees with it nor an agent
-             *     id of its own.
-             */
-            in_reply_to?: string | null;
             kind: components["schemas"]["MessageKind"];
             /** @description Who it is for. `orchestrator` needs no agent id — a goal has one. */
             to_actor: components["schemas"]["Actor"];

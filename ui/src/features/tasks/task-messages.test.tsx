@@ -58,15 +58,19 @@ describe("the channel", () => {
     expect(screen.getByText("The agents have said nothing yet")).toBeDefined()
   })
 
-  it("reads as one list, in the order it was said", () => {
+  /// The daemon serves the channel oldest first, which is what an agent
+  /// reading it as context wants. A person opening the tab wants what just
+  /// happened, and a channel that only grows would put it under everything
+  /// else.
+  it("reads as one list, newest first", () => {
     render([
-      message({ id: "01MSGONE", body: "asked first" }),
-      message({ id: "01MSGTWO", body: "answered after" }),
+      message({ id: "01MSGONE", body: "said first" }),
+      message({ id: "01MSGTWO", body: "said after" }),
     ])
 
     const bodies = screen.getAllByRole("article").map((card) => card.textContent ?? "")
-    expect(bodies[0]).toContain("asked first")
-    expect(bodies[1]).toContain("answered after")
+    expect(bodies[0]).toContain("said after")
+    expect(bodies[1]).toContain("said first")
     expect(screen.getByText("2 messages")).toBeDefined()
   })
 
@@ -103,20 +107,12 @@ describe("the channel", () => {
     render([
       message({ id: "01A", kind: "review_request", body: "please look" }),
       message({ id: "01B", kind: "question", body: "why?" }),
-      message({ id: "01C", kind: "answer", body: "because" }),
       message({ id: "01D", kind: "request_changes", body: "rename it" }),
       message({ id: "01E", kind: "approve", body: "looks right" }),
       message({ id: "01F", kind: "note", body: "for the record" }),
     ])
 
-    for (const label of [
-      "Review requested",
-      "Question",
-      "Answer",
-      "Changes requested",
-      "Approved",
-      "Note",
-    ]) {
+    for (const label of ["Review requested", "Question", "Changes requested", "Approved", "Note"]) {
       expect(screen.getByText(label), label).toBeDefined()
     }
   })

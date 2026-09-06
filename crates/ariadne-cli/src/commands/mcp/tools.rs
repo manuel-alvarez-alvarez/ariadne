@@ -210,19 +210,10 @@ pub struct AskReq {
 pub struct TellReq {
     /// Who to tell: the id of an agent `get_task` lists, or `orchestrator`.
     pub to: String,
-    /// What to say. Nobody answers this.
+    /// What it needs from you. Nobody answers this.
     pub body: String,
     /// The task it is about. Omit it for your own task.
     pub task_id: Option<String>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct ReplyReq {
-    /// The `message_id` of the message you are answering, as it reached you.
-    pub message_id: String,
-    /// The answer.
-    pub body: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -294,7 +285,6 @@ fn verdict_message(verdict: Verdict, body: Option<String>) -> Result<SendMessage
         to_actor: Actor::Author,
         // Filled in by the caller, which knows the task's author.
         to_agent_id: None,
-        in_reply_to: None,
         body,
     })
 }
@@ -562,7 +552,7 @@ impl AriadneMcp {
     // ---- everyone ----
 
     #[tool(
-        description = "Ask another agent something you need answered before you can go on. `to` is an agent id from `get_task`, or `orchestrator`. The answer arrives in your session as a message. Go on with what you can do meanwhile."
+        description = "Ask another agent something you need answered before you can go on. `to` is an agent id from `get_task`, or `orchestrator`. The answer arrives in your session as a message. Go on with what you can do meanwhile. Write only when you need something: an agent that is told nothing is working."
     )]
     async fn ask(&self, Parameters(req): Parameters<AskReq>) -> Result<CallToolResult, McpError> {
         self.write_message(
@@ -570,47 +560,20 @@ impl AriadneMcp {
             MessageKind::Question,
             &req.to,
             req.question,
-            None,
         )
         .await
     }
 
     #[tool(
-        description = "Tell another agent something nobody has to answer. Use `ask` where you need an answer. `to` is an agent id from `get_task`, or `orchestrator`."
+        description = "Tell another agent something it needs from you: the answer to what it asked, or something it cannot do its work without. `to` is an agent id from `get_task`, or `orchestrator`. Never write to acknowledge, to thank, or to say what you are about to do."
     )]
     async fn tell(&self, Parameters(req): Parameters<TellReq>) -> Result<CallToolResult, McpError> {
-        self.write_message(req.task_id, MessageKind::Note, &req.to, req.body, None)
+        self.write_message(req.task_id, MessageKind::Note, &req.to, req.body)
             .await
     }
 
     #[tool(
-        description = "Answer a message somebody sent you, on the `message_id` it arrived with. The answer reaches whoever asked."
-    )]
-    async fn reply(
-        &self,
-        Parameters(req): Parameters<ReplyReq>,
-    ) -> Result<CallToolResult, McpError> {
-        let body = req.body.trim();
-        if body.is_empty() {
-            return Err(McpError::invalid_params(
-                "reply needs a body: an empty answer answers nothing",
-                None,
-            ));
-        }
-        // Where it goes is the message being answered: back to whoever asked.
-        let path = self.task_path(self.task_id.clone(), "/messages")?;
-        let request = SendMessageRequest {
-            kind: MessageKind::Answer,
-            to_actor: Actor::Orchestrator,
-            to_agent_id: None,
-            in_reply_to: Some(req.message_id),
-            body: body.to_string(),
-        };
-        json_result(self.post(&path, &request).await?)
-    }
-
-    #[tool(
-        description = "Read everything the agents of a task have said to each other, oldest first: the questions, the answers, the review requests and the verdicts."
+        description = "Read everything the agents of a task have said to each other, oldest first: the questions, the review requests and the verdicts."
     )]
     async fn read_messages(
         &self,
@@ -630,7 +593,6 @@ impl AriadneMcp {
         kind: MessageKind,
         to: &str,
         body: String,
-        in_reply_to: Option<String>,
     ) -> Result<CallToolResult, McpError> {
         let body = body.trim();
         if body.is_empty() {
@@ -642,7 +604,6 @@ impl AriadneMcp {
             kind,
             to_actor,
             to_agent_id,
-            in_reply_to,
             body: body.to_string(),
         };
         json_result(self.post(&path, &request).await?)
@@ -895,11 +856,14 @@ mod tests {
         }
     }
 
-    /// Any agent can ask any other, and the answer goes back to whoever asked
-    /// rather than to an address the answer has to name: `reply` carries the
-    /// id it arrived with, and the daemon reads the recipient off that.
+    /// Any agent can ask any other, and any agent can tell one what it needs.
+    ///
+    /// Both name the agent they are for. There is no third verb for answering:
+    /// an answer is something the asker needs, which is what `tell` is, and a
+    /// channel with a reply verb in it fills up with agents being polite at
+    /// each other.
     #[tokio::test]
-    async fn asking_names_the_agent_and_answering_names_only_the_message() {
+    async fn asking_and_telling_both_name_the_agent_they_are_for() {
         let (endpoint, seen) = recording_daemon_answering(
             r#"{"agents":[{"id":"01AUTHOR","seat":"author","skills":["coding"]},
                           {"id":"01REVIEWER","seat":"reviewer","skills":["code-review"]}]}"#,
@@ -924,21 +888,21 @@ mod tests {
         assert_eq!(asked["to_actor"], serde_json::json!("author"));
         assert_eq!(asked["to_agent_id"], serde_json::json!("01AUTHOR"));
 
-        mcp.reply(Parameters(ReplyReq {
-            message_id: "01MSG".into(),
-            body: "Because the caller retries too.".into(),
+        mcp.tell(Parameters(TellReq {
+            to: "01AUTHOR".into(),
+            body: "The caller retries too, so the inner one is bounded.".into(),
+            task_id: None,
         }))
         .await
-        .expect("reply");
-        let answered: serde_json::Value =
+        .expect("tell");
+        let told: serde_json::Value =
             serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
                 .expect("json");
-        assert_eq!(answered["kind"], serde_json::json!("answer"));
-        assert_eq!(answered["in_reply_to"], serde_json::json!("01MSG"));
+        assert_eq!(told["kind"], serde_json::json!("note"));
         assert_eq!(
-            answered["to_agent_id"],
-            serde_json::Value::Null,
-            "an answer names the message, and the daemon reads the recipient off it"
+            told["to_agent_id"],
+            serde_json::json!("01AUTHOR"),
+            "an answer is addressed like anything else: there is nothing to reply to"
         );
     }
 

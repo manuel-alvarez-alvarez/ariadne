@@ -213,18 +213,7 @@ pub(super) async fn send(
     if body.is_empty() {
         return Err(ApiError::bad_request("a message needs a body"));
     }
-    // Answering settles where the answer goes: it goes back to whoever asked.
-    let answering = match &req.in_reply_to {
-        Some(id) => Some(state.store.get_message(id).await?),
-        None => None,
-    };
-    let (to_actor, to_agent_id) = match &answering {
-        Some(asked) => (
-            asked.from_actor().unwrap_or(req.to_actor),
-            asked.from_agent_id.clone(),
-        ),
-        None => (req.to_actor, req.to_agent_id.clone()),
-    };
+    let (to_actor, to_agent_id) = (req.to_actor, req.to_agent_id.clone());
     match to_actor {
         Actor::Orchestrator => {
             if to_agent_id.is_some() {
@@ -308,7 +297,6 @@ pub(super) async fn send(
             from_session: ctx.session.as_ref().map(|s| s.id.clone()),
             to_actor,
             to_agent_id,
-            in_reply_to: answering.map(|m| m.id),
             body: body.to_string(),
         })
         .await?)

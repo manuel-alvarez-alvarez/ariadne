@@ -764,7 +764,6 @@ async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
             Actor::Author => reviewer.clone(),
             _ => author.clone(),
         }),
-        in_reply_to: None,
         body: body.into(),
     };
 
@@ -835,8 +834,7 @@ async fn a_message_is_delivered_once_and_the_stamp_says_so() {
             from_session: None,
             to_actor: Actor::Author,
             to_agent_id: Some(author.clone()),
-            in_reply_to: None,
-            body: "why the retry?".into(),
+                body: "why the retry?".into(),
         })
         .await
         .unwrap();

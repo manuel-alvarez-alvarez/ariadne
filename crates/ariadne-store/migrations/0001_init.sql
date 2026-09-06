@@ -245,10 +245,15 @@ CREATE TABLE session_usage (
 
 -- What one agent said to another.
 --
--- One channel for everything the agents say between themselves: a question and
--- its answer, an author asking for a review, a reviewer's verdict, a note. A
--- verdict used to be a table of its own, which is why the only thing a
--- reviewer could ever say was approve or request changes.
+-- One channel for everything the agents say between themselves: a question, an
+-- author asking for a review, a reviewer's verdict, a note. A verdict used to
+-- be a table of its own, which is why the only thing a reviewer could ever say
+-- was approve or request changes.
+--
+-- Every row is something the sender needs, or something the recipient does.
+-- There is no reply: a message that answers one is a `note` addressed like any
+-- other, and nothing threads, because a channel that threads fills up with
+-- agents acknowledging each other.
 --
 -- A review is bounded by its own request rather than by a round number: the
 -- verdicts that count are the ones sent after the last `review_request`, and
@@ -267,7 +272,7 @@ CREATE TABLE messages (
     -- NULL for a message about the goal rather than about one task.
     task_id       TEXT REFERENCES tasks (id) ON DELETE CASCADE,
     kind          TEXT NOT NULL
-                  CHECK (kind IN ('question', 'answer', 'review_request',
+                  CHECK (kind IN ('question', 'review_request',
                                   'approve', 'request_changes', 'note')),
     from_actor    TEXT NOT NULL
                   CHECK (from_actor IN ('orchestrator', 'author', 'reviewer',
@@ -279,8 +284,6 @@ CREATE TABLE messages (
                   CHECK (to_actor IN ('orchestrator', 'author', 'reviewer',
                                       'daemon', 'user')),
     to_agent_id   TEXT REFERENCES task_agents (id) ON DELETE CASCADE,
-    -- The message this answers, where it answers one.
-    in_reply_to   TEXT REFERENCES messages (id) ON DELETE SET NULL,
     body          TEXT NOT NULL,
     -- When it reached the recipient's pane. NULL while it is still waiting.
     delivered_at  TEXT,

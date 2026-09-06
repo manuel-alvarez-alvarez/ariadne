@@ -2,11 +2,10 @@
  * What the agents of a task have said to each other — the `task messages`
  * equivalent.
  *
- * One channel carries all of it: the questions and their answers, the author's
- * review requests, and the verdicts on them. It reads as one list in the order
- * it was said, which is what it is — a review used to be numbered, and the
- * tab used to be grouped by that number, but what a verdict answers is the
- * request above it rather than a round it belongs to.
+ * One channel carries all of it: the questions, the answers to them, the
+ * author's review requests, and the verdicts on those. It reads as one list,
+ * newest first — what a reader opens this tab for is what just happened, and
+ * a channel that only ever grows would put that at the bottom of a scroll.
  *
  * An agent has no name of its own, so both ends of a message are named by the
  * skills they work with: "code-review" said this to "coding". The orchestrator
@@ -17,11 +16,12 @@ import { useQuery } from "@tanstack/react-query"
 import {
   CheckCircle2Icon,
   CircleHelpIcon,
-  CornerUpLeftIcon,
   EyeIcon,
   MessageSquareIcon,
   MessageSquareWarningIcon,
 } from "lucide-react"
+
+import { useMemo } from "react"
 
 import type { Actor, MessageDto, MessageKind, TaskAgentDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
@@ -64,11 +64,6 @@ const KIND_META: Record<
     badge: "bg-muted text-muted-foreground",
     icon: CircleHelpIcon,
   },
-  answer: {
-    label: "Answer",
-    badge: "bg-muted text-muted-foreground",
-    icon: CornerUpLeftIcon,
-  },
   note: {
     label: "Note",
     badge: "bg-muted text-muted-foreground",
@@ -82,7 +77,12 @@ export function TaskMessages({ taskId }: { taskId: string }) {
   // Already in the cache: the panel around this read it first.
   const task = useQuery(taskQueryOptions(taskId))
   const agents = task.data?.agents ?? []
-  const entries = messages.data ?? []
+  // Newest first, off the ids: they are ULIDs, so the order they sort in is
+  // the order they were written, and the daemon serves them oldest first.
+  const entries = useMemo(
+    () => [...(messages.data ?? [])].sort((a, b) => b.id.localeCompare(a.id)),
+    [messages.data],
+  )
 
   if (messages.isPending) {
     return (

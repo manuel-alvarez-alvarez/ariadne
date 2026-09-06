@@ -29,21 +29,26 @@ and the wording of the text a message arrives in (006).
 1. Everything one agent says to another is a **message**. There is no second
    table for verdicts: a verdict is a message whose kind settles a review, which
    is what makes "the reviewer asked the author something" possible at all.
-2. Six kinds, and the kind is what the daemon reads:
+2. Five kinds, and the kind is what the daemon reads:
    - `question` — the sender needs it answered before it can go on;
-   - `answer` — the answer to one;
    - `review_request` — the author asking a reviewer to look;
    - `approve`, `request_changes` — a reviewer's verdict on the review;
-   - `note` — anything worth saying that nobody has to answer.
+   - `note` — something the recipient needs and nobody has to answer: the
+     answer to a question, a fact the other agent cannot work without.
 3. A message has exactly one recipient, so a review request that goes to three
    reviewers is three messages: whether it has been seen is a question about
    one reader, and one row with three of them could not answer it.
 4. A recipient is the orchestrator of the goal, or one staffed agent of a task
    named by the id `get_task` lists. An agent has no name, so the id is the
    address; the orchestrator needs none, since a goal has one.
-5. An answer names only the message it answers. Where it goes is who asked,
-   which the daemon reads off that message rather than trusting the answer to
-   address it again.
+5. A message is written because the sender needs something, or because the
+   recipient does. Nothing threads and nothing replies: an answer is a `note`
+   to the agent that asked, addressed the way the question was. There is no
+   `reply` tool and no kind for an answer, because a channel whose obvious
+   move is replying fills up with agents acknowledging each other — and every
+   message lands in a pane as a turn, so each one costs the recipient a turn
+   of its own. The seat playbooks (006) say it in as many words: never write
+   to thank, and never to acknowledge.
 6. A message is about one task, or about the goal itself. The goal's channel
    is the orchestrator's inbox, and everything said about a task is on that
    task.
@@ -66,7 +71,7 @@ and the wording of the text a message arrives in (006).
 11. `request_review` writes one `review_request` per reviewer, carrying the
     summary the author asked with, so the channel holds the whole
     conversation rather than the half of it that happened to be typed.
-12. The MCP surface is four tools every seat has: `ask`, `tell`, `reply` and
+12. The MCP surface is three tools every seat has: `ask`, `tell` and
     `read_messages` (013).
 
 ## Acceptance criteria
@@ -75,7 +80,7 @@ and the wording of the text a message arrives in (006).
   the task and without the review moving
   (`agent_messages.rs::a_reviewer_asks_the_author_and_the_author_answers_it`).
 - The message is typed into the recipient's pane, names the sender by its
-  skills, carries the id an answer names, and is stamped delivered
+  skills, and is stamped delivered
   (`agent_messages.rs::a_message_is_typed_into_the_pane_it_was_sent_to`).
 - An agent can write to the orchestrator, and it reaches its pane
   (`agent_messages.rs::an_agent_writes_to_the_orchestrator_and_it_reaches_its_pane`).
@@ -95,8 +100,8 @@ and the wording of the text a message arrives in (006).
   (`store.rs::a_message_is_delivered_once_and_the_stamp_says_so`).
 - A reviewer that voted is left where it is
   (`agent_messages.rs::a_reviewer_that_voted_is_left_where_it_is`).
-- Asking names the agent and answering names only the message
-  (`tools.rs::asking_names_the_agent_and_answering_names_only_the_message`),
+- Asking and telling both name the agent they are for
+  (`tools.rs::asking_and_telling_both_name_the_agent_they_are_for`),
   the orchestrator is addressed by name
   (`::the_orchestrator_is_addressed_by_name_and_needs_no_agent_id`), and a
   message to nobody is refused with the addresses that would work

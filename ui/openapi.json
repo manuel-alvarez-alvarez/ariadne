@@ -3017,13 +3017,6 @@
           "id": {
             "type": "string"
           },
-          "in_reply_to": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The message this answers, where it answers one."
-          },
           "kind": {
             "$ref": "#/components/schemas/MessageKind"
           },
@@ -3048,10 +3041,9 @@
       },
       "MessageKind": {
         "type": "string",
-        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells the\nsix things they say apart. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what makes \"the reviewer asked the\nauthor something\" possible at all — before, the only thing a reviewer\ncould say was approve or request changes.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), one of them is answered, and the rest are said and left.",
+        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells the\nfive things they say apart. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what makes \"the reviewer asked the\nauthor something\" possible at all — before, the only thing a reviewer\ncould say was approve or request changes.\n\nEvery one of them is something the sender needs, or something the\nrecipient does. There is no kind for an answer: an answer is a note to the\nagent that asked, addressed the way the question was. A kind for it, and a\ntool to send it with, made replying the obvious move — and a channel whose\nobvious move is replying fills up with agents thanking each other.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), and the rest are said and left.",
         "enum": [
           "question",
-          "answer",
           "review_request",
           "approve",
           "request_changes",
@@ -3260,13 +3252,6 @@
         "properties": {
           "body": {
             "type": "string"
-          },
-          "in_reply_to": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The message this answers. Its recipient is where the answer goes, so\nan answer needs neither `to_actor` that disagrees with it nor an agent\nid of its own."
           },
           "kind": {
             "$ref": "#/components/schemas/MessageKind"
