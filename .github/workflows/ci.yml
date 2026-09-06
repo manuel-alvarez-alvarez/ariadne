@@ -1,5 +1,5 @@
-# Compile, test and lint everything the repository builds: the Rust workspace,
-# the Vite UI, and the desktop shell's own Tauri workspace.
+# Format, compile, test and lint everything the repository builds: the Rust
+# workspace, the Vite UI, and the desktop shell's own Tauri workspace.
 name: CI
 
 on:
@@ -18,6 +18,29 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Formatting is the same answer on every OS and needs nothing built, so it
+  # is one small job rather than a step on each leg of the matrix below.
+  # `--check` exits non-zero on any diff, which fails the run.
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # `ui/src-tauri` is excluded from the root workspace, so `--all` above
+      # never reaches it; it is checked from inside.
+      - name: Check formatting (Tauri shell)
+        run: cargo fmt --all -- --check
+        working-directory: ui/src-tauri
+
   rust:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
