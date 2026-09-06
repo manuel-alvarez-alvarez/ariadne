@@ -27,7 +27,6 @@ pub enum Kind {
     Task,
     Session,
     Repo,
-    Profile,
 }
 
 impl Kind {
@@ -38,7 +37,6 @@ impl Kind {
             Self::Task => "task",
             Self::Session => "session",
             Self::Repo => "repository",
-            Self::Profile => "profile",
         }
     }
 
@@ -49,7 +47,6 @@ impl Kind {
             Self::Task => "tasks",
             Self::Session => "sessions",
             Self::Repo => "repositories",
-            Self::Profile => "profiles",
         }
     }
 
@@ -60,7 +57,6 @@ impl Kind {
             Self::Task => "/v1/tasks",
             Self::Session => "/v1/sessions",
             Self::Repo => "/v1/repositories",
-            Self::Profile => "/v1/profiles",
         }
     }
 
@@ -71,7 +67,6 @@ impl Kind {
             Self::Task => "ariadne task ls",
             Self::Session => "ariadne session ls",
             Self::Repo => "ariadne repo ls",
-            Self::Profile => "ariadne profile ls",
         }
     }
 
@@ -85,7 +80,6 @@ impl Kind {
                 format!("{} [{}]", f("path"), f("base_branch")),
                 Some(f("path")),
             ),
-            Self::Profile => (format!("{} ({})", f("name"), f("seat")), Some(f("name"))),
         };
         Row {
             id: f("id"),
@@ -217,42 +211,6 @@ pub fn row(id: impl Into<String>, label: impl Into<String>) -> Row {
         id: id.into(),
         label: label.into(),
         alias: None,
-    }
-}
-
-/// The profiles the arguments of one command name.
-///
-/// A profile is named by its name as often as by its id — `--orchestrator`,
-/// `--author`, a `--reviewer`'s half — so the list is what all of them are
-/// matched against, read once however many there are and not at all when
-/// every one of them is already a whole id.
-pub enum Profiles<'a> {
-    /// Nothing read yet, and where to read it from.
-    Daemon(&'a Client),
-    /// The profiles, once something has needed them — which is also how a
-    /// test hands over a list with no daemon behind it.
-    List(Catalog),
-}
-
-impl<'a> Profiles<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self::Daemon(client)
-    }
-
-    /// One profile argument as the daemon should receive it: the id behind a
-    /// name, a whole id, or an id in any of the short spellings it is shown
-    /// in — which the daemon's own exact id-or-name lookup cannot take.
-    pub async fn id(&mut self, typed: &str) -> Result<String> {
-        if let Some(id) = whole_id(typed) {
-            return Ok(id);
-        }
-        if let Self::Daemon(client) = self {
-            *self = Self::List(catalog(client, Kind::Profile).await?);
-        }
-        let Self::List(list) = self else {
-            unreachable!("the profiles have just been read")
-        };
-        Ok(list.pick(typed)?.id.clone())
     }
 }
 
@@ -534,55 +492,6 @@ mod tests {
         );
     }
 
-    /// Two profiles, as `/v1/profiles` lists them: the id, and the name that
-    /// is what a caller normally types.
-    fn profiles() -> Profiles<'static> {
-        Profiles::List(among(
-            Kind::Profile,
-            [
-                Row {
-                    id: "01m0prof0000000000000abcde".into(),
-                    label: "Reviewer (reviewer)".into(),
-                    alias: Some("Reviewer".into()),
-                },
-                Row {
-                    id: "01m0prof0000000000000fghjk".into(),
-                    label: "My Author (author)".into(),
-                    alias: Some("My Author".into()),
-                },
-            ],
-        ))
-    }
-
-    /// `--orchestrator`, `--author`, a `--reviewer`'s half: all documented as
-    /// taking an id or a name, and the daemon's own lookup is exact — so the
-    /// short and upper-cased spellings are resolved here or not at all.
-    #[tokio::test]
-    async fn a_profile_argument_takes_a_name_or_an_id_in_any_spelling() {
-        let mut profiles = profiles();
-        assert_eq!(
-            profiles.id("Reviewer").await.expect("a name"),
-            "01m0prof0000000000000abcde"
-        );
-        assert_eq!(
-            profiles.id("my author").await.expect("a name, any case"),
-            "01m0prof0000000000000fghjk"
-        );
-        assert_eq!(
-            profiles.id("0000abcde").await.expect("the tail of an id"),
-            "01m0prof0000000000000abcde"
-        );
-        assert_eq!(
-            profiles
-                .id("01M0PROF0000000000000ABCDE")
-                .await
-                .expect("an upper-cased paste"),
-            "01m0prof0000000000000abcde"
-        );
-        let err = profiles.id("Nobody").await.expect_err("no such profile");
-        assert_eq!(err.to_string(), "no profile matches \"Nobody\"");
-    }
-
     /// The rows come off the daemon's own listing payloads, which is where
     /// the titles in an ambiguity answer come from.
     #[test]
@@ -592,10 +501,5 @@ mod tests {
         assert_eq!(row.id, "01m0t");
         assert_eq!(row.label, "Wire the screen");
         assert_eq!(row.alias, None);
-
-        let profile = serde_json::json!({"id": "01m0p", "name": "Reviewer", "seat": "reviewer"});
-        let row = Kind::Profile.row(&profile);
-        assert_eq!(row.label, "Reviewer (reviewer)");
-        assert_eq!(row.alias.as_deref(), Some("Reviewer"));
     }
 }

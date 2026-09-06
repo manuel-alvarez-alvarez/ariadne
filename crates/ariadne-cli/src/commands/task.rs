@@ -115,7 +115,7 @@ pub enum TaskCommand {
         /// same way as `--author` (`--reviewer code-review=codex@xhigh`)
         #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", default_value = "code-review", value_parser = parse_reviewer)]
         reviewers: Vec<AgentAssignment>,
-        /// Id of a task that must merge before this one starts; repeatable
+        /// Id of a task that must finish before this one starts; repeatable
         #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         depends_on: Vec<String>,
         /// Which of the goal's repositories the task works in, by id or by
@@ -157,7 +157,7 @@ pub enum TaskCommand {
         /// than adding to them
         #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", value_parser = parse_reviewer)]
         reviewers: Vec<AgentAssignment>,
-        /// Id of a task that must merge first; repeatable, and replaces the
+        /// Id of a task that must finish first; repeatable, and replaces the
         /// task's dependencies rather than adding to them
         #[arg(long = "depends-on", conflicts_with = "clear_depends_on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         depends_on: Vec<String>,

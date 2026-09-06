@@ -51,14 +51,14 @@ Examples:
   ariadne agent update claude_code --reset # back to what Ariadne ships
 ";
 
-const PROFILE_EXAMPLES: &str = "\
+const SKILL_EXAMPLES: &str = "\
 Examples:
-  ariadne profile ls --seat reviewer
-  ariadne profile create --name Architect --seat orchestrator --model codex:gpt-5.3-codex
-  ariadne profile update Reviewer --model default
-  ariadne profile prompt get Author system > system.md  # pipe it out, edit, pipe it back
-  ariadne profile prompt set Author system --file system.md
-  ariadne profile prompt reset Author system            # back to the seat's default
+  ariadne skill ls                              # every skill, shipped and yours
+  ariadne skill inspect code-review
+  ariadne skill get coding > coding.md          # pipe it out, edit, pipe it back
+  ariadne skill set coding --file coding.md
+  ariadne skill reset coding                    # back to the one Ariadne ships
+  ariadne skill create api-design --file api-design.md
 ";
 
 const REPO_EXAMPLES: &str = "\
@@ -117,7 +117,7 @@ Exit codes:
   2  the command as typed cannot be run: a bad argument, an id that names
      several things, or something irreversible refused without --yes
   3  nothing answered at the daemon endpoint
-  4  no goal, task, session, repository or profile of that name
+  4  no goal, task, session, repository or skill of that name
   5  the daemon refused: the thing is not in a state that allows it";
 
 #[derive(Parser)]
@@ -128,8 +128,8 @@ Exit codes:
     long_about = "Coding-agent orchestrator CLI.\n\n\
         Every command here asks the ariadned daemon for something. It plans a \
         goal with an orchestrator agent, hands each task to an author that owns it \
-        from its first commit to the merge that lands it, and gates that merge \
-        behind reviewer agents. Each of them works in a tmux session `ariadne \
+        from its first commit to the end, and gates it behind reviewer \
+        agents. Each of them works in a tmux session `ariadne \
         attach` drops you into, and `ariadne attention` is what says which of \
         them is waiting for you.",
     after_help = format!("{EXAMPLES}\n{EXIT_CODES}")
@@ -171,7 +171,7 @@ pub struct Cli {
     /// Colour is never the only signal: a status carries a glyph too, so the
     /// same table reads through a pipe, through NO_COLOR and to a
     /// colour-blind eye. The set is ● running, ○ pending or idle, ✓ done
-    /// (merged, completed, exited) or ok, ✗ failed or cancelled, ? waiting on
+    /// (finished, completed, exited) or ok, ✗ failed or cancelled, ? waiting on
     /// you, ! a warning worth a look.
     #[arg(
         long,
@@ -244,7 +244,7 @@ pub enum Command {
     ///
     /// What is printed is the dynamic registration: a few lines the shell
     /// evaluates, which call `ariadne` back on every TAB — so task, goal and
-    /// session ids, profile names and models are the ones the daemon has now,
+    /// session ids, skill names and models are the ones the daemon has now,
     /// with their status and title beside them.
     ///
     /// Wire it up once, by hand:
@@ -289,8 +289,8 @@ pub enum Command {
     ///
     /// One entry per coding-agent CLI Ariadne can run — claude_code, codex,
     /// opencode — holding the flags every session of that CLI is launched and
-    /// resumed with. `ariadne profile` is the other half: the persona, this
-    /// is the program it runs in.
+    /// resumed with. `ariadne skill` is the other half: what an agent knows,
+    /// this is the program it runs in.
     #[command(after_help = AGENT_EXAMPLES)]
     Agent {
         #[command(subcommand)]
@@ -303,11 +303,12 @@ pub enum Command {
     },
     /// Manage agent skills
     ///
-    /// A profile is one agent as it is spawned: the seat it plays, what it
-    /// runs on, and the prompts it is briefed and resumed with. Goals and
-    /// tasks are assigned to profiles by name, and a change here reaches
-    /// every session started after it.
-    #[command(after_help = PROFILE_EXAMPLES)]
+    /// A skill is one document telling a generic agent how to do one kind of
+    /// work. Ariadne ships a catalog of them and you add your own; a task
+    /// names them per agent, and a change here reaches every session started
+    /// after it. A shipped skill is reset rather than deleted; one of yours is
+    /// deleted rather than reset.
+    #[command(after_help = SKILL_EXAMPLES)]
     Skill {
         #[command(subcommand)]
         command: SkillCommand,
@@ -336,9 +337,8 @@ pub enum Command {
     /// Manage tasks
     ///
     /// A task is one unit of a goal, owned by an author agent in a worktree
-    /// of its own from its first commit to the merge that lands it, with
-    /// reviewer agents gating that merge. Its diff, its reviews and its
-    /// history are all here.
+    /// of its own from its first commit to the end, with reviewer agents
+    /// gating it. Its diff, its reviews and its history are all here.
     #[command(after_help = TASK_EXAMPLES)]
     Task {
         #[command(subcommand)]
@@ -516,7 +516,7 @@ const LISTINGS: &[&str] = &[
     "attention",
     "goal ls",
     "models ls",
-    "profile ls",
+    "skill ls",
     "repo ls",
     "session ls",
     "task ls",

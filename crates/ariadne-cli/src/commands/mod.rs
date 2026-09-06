@@ -278,15 +278,6 @@ pub fn parse_effort_or_default(s: &str) -> Result<String, String> {
     parse_effort(s).map_err(|e| format!("{e}; or \"{DEFAULT}\" to pin no effort at all"))
 }
 
-/// What a pin says, taken apart: the agent CLI, and the model of it where one
-/// was pinned.
-///
-/// None where nothing is pinned — auto — and also where the string is one this
-/// build cannot read, which a reader shows as auto rather than failing on.
-pub fn pinned(model: Option<&str>) -> Option<ModelRef> {
-    model?.parse().ok()
-}
-
 /// One caller-typed value as a single path segment.
 ///
 /// A skill answers to its name, and a name written by a user is free text —

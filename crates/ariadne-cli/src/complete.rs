@@ -370,12 +370,6 @@ pub fn agent_kinds() -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// The prompt kind of `profile prompt get|set|reset`: `system`, the one
-/// prompt a profile owns.
-pub fn prompt_kinds() -> Vec<CompletionCandidate> {
-    vec![CompletionCandidate::new("system").help(Some("the profile's own system prompt".into()))]
-}
-
 // ---- models --------------------------------------------------------------
 
 /// Model candidates for `--model`: everything an agent can be pinned to, in

@@ -98,13 +98,6 @@ pub struct ListModelsReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct ListProfilesReq {
-    /// Filter: orchestrator | author | reviewer
-    pub seat: Option<String>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
 pub struct RequestReviewReq {
     /// Your summary of the change, for the reviewers.
     pub summary: String,
