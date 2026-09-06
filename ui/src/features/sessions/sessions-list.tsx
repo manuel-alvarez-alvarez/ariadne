@@ -12,10 +12,9 @@
  * *is* one cell — the seat it ran as, with its id after it on the same line,
  * small and quiet enough to read as the aside it is — and what it spent rides
  * in the hint behind its last activity, beside the two stamps that were
- * already there. What the agent runs on rides along with the profile and the
- * review round with the seat, in either variant, and the end of the session
- * with its last activity: all three were worth a column only for the sessions
- * that have them.
+ * already there. The review round rides along with the seat, in either
+ * variant, and the end of the session with its last activity: both were worth
+ * a column only for the sessions that have them.
  *
  * The screen keeps a column each where a window is wide enough, and folds two
  * of them away below `lg`: the id, which says nothing about the work a row is
@@ -64,8 +63,7 @@ import { When, WhenDetail } from "@/components/when"
 // barrel: `@/features/tasks` re-exports the task panel, whose sessions tab is
 // this very component, and the round trip is an import cycle.
 import { goalsQueryOptions } from "@/features/goals/queries"
-import { SeatSummary } from "@/features/models/agent-summary"
-import { formatModelRef } from "@/features/models/model-ref"
+import { formatModelRef, pinLabel } from "@/features/models/model-ref"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { cn, SEAT_LABELS, shortId } from "@/lib/format"
@@ -78,7 +76,7 @@ import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
  * What the list is already inside of.
  *
  * A panel tab is scoped to its task or its goal. A list scoped to nothing is
- * the only place where two rows can be the same seat, the same profile and the
+ * the only place where two rows can be the same seat, the same model and the
  * same status and still be about different work — which is what the context
  * column is for.
  */
@@ -94,7 +92,7 @@ function listScope(filters: SessionListFilters, inside: boolean): "task" | "goal
  * a window that narrow: the id, which identifies nothing a reader is looking
  * for, and the figure, which is the one cell that is also reachable from the
  * hint behind the row's last activity. What is left — what the session was run
- * for, its seat, its profile, its status and when it last moved — fits.
+ * for, its seat, its model, its status and when it last moved — fits.
  */
 const FOLDS_AWAY = "hidden lg:table-cell"
 
@@ -205,7 +203,7 @@ export function SessionsList({
             <TableHead className={cn(showContext && FOLDS_AWAY)}>Session</TableHead>
             {showContext ? <TableHead>Context</TableHead> : null}
             {showContext ? <TableHead>Seat</TableHead> : null}
-            <TableHead>Profile</TableHead>
+            <TableHead>Model</TableHead>
             <TableHead>Status</TableHead>
             {showContext ? (
               <TableHead className={cn("text-right", FOLDS_AWAY)}>Tokens</TableHead>
@@ -312,16 +310,21 @@ function SessionRow({
           <SessionRole session={session} onSelect={onSelect} />
         </TableCell>
       ) : null}
-      {/* What the agent runs on rides along with the name: which CLI and which
-          model of it is what the column is read for, and it was a `title=`
-          nobody hovers. A session keeps the two apart, so the id the badge
-          takes is composed here. Narrower below `lg`, where every pixel this
-          column does not take is one the status and the figure after it get. */}
-      <TableCell className="max-w-36 text-xs lg:max-w-56">
-        <SeatSummary
-          seat={session.seat}
-          model={formatModelRef(session.agent_kind, session.model)}
-        />
+      {/* What the agent runs on, and nothing else: an agent has no name to
+          carry it any more, so this column is the model itself — the CLI and
+          the model of it as one id, with the effort after an `@` where one is
+          pinned. The seat is already on the row, in the column of its own on
+          the screen and beside the id in a panel, so it is not repeated here.
+          It is the session's own snapshot: what it was launched on. Narrower
+          below `lg`, where every pixel this column does not take is one the
+          status and the figure after it get — and the truncating block inside
+          the cell is what holds it there, since a `<td>` told to keep its text
+          on one line grows to the longest id instead (see {@link ContextCell}).
+          */}
+      <TableCell className="max-w-36 text-xs text-muted-foreground lg:max-w-56">
+        <span className="block truncate">
+          {pinLabel(formatModelRef(session.agent_kind, session.model), session.effort)}
+        </span>
       </TableCell>
       {/* The reason rides in the status cell rather than taking a seventh
           column: it is empty for almost every row, and where it is not it is

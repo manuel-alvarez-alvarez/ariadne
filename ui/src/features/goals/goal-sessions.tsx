@@ -1,9 +1,8 @@
 /**
- * The orchestrator sessions of one goal, inside its panel: the goal's own agent —
- * once per resume or restart — as a list, and the one that was picked from it,
- * in full. The sessions of the goal's tasks are not listed here; each task
- * panel has its own sessions tab for those, which is why the tab is called
- * "Orchestrator sessions" rather than "Sessions".
+ * The sessions of one goal, inside its panel: the goal's own agent — its
+ * orchestrator, once per resume or restart — as a list, and the one that was
+ * picked from it, in full. The sessions of the goal's tasks are not listed
+ * here; each task panel has its own sessions tab for those.
  *
  * Just the list: what the goal has spent is the figure in its facts, and the
  * split by the seat that spent it is the hint behind that figure (see

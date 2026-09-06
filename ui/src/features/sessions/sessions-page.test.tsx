@@ -27,10 +27,10 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
-import type { GoalDto, SessionDto, SkillDto, TaskDto } from "@/api"
+import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { formatAbsolute, shortId } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
-import { aGoal, aSession, aSkill, aTask } from "@/test/fixtures"
+import { aGoal, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { SessionsPage } from "./sessions-page"
 
@@ -39,8 +39,6 @@ const GOAL: GoalDto = aGoal()
 const TASK: TaskDto = aTask({
   goal_id: GOAL.id,
 })
-
-const PROFILE: SkillDto = aSkill()
 
 /**
  * An author at work, and the orchestrator that has no task of its own. The
@@ -90,9 +88,7 @@ function stubDaemon(sessions: SessionDto[] = [ENGINEER, PLANNER]) {
           ? [GOAL]
           : url.pathname === "/v1/tasks"
             ? [TASK]
-            : url.pathname === "/v1/profiles"
-              ? [PROFILE]
-              : []
+            : []
     return Promise.resolve(jsonResponse(body))
   })
 }
@@ -403,6 +399,28 @@ it("names the two halves behind the tokens column in reach of a keyboard", async
   expect(popup.textContent).not.toMatch(/\d,\d/)
 })
 
+/**
+ * The column is the model and nothing else. An agent has no name of its own
+ * any more — no profile stands behind it — so what a row is scanned down this
+ * column for is what the session was launched on, and the seat it sits in is
+ * already a column of its own two cells to the left.
+ */
+it("says what each session runs on, without repeating the seat beside it", async () => {
+  stubDaemon([
+    aSession({
+      ...ENGINEER,
+      model: "claude-opus-5",
+      effort: "xhigh",
+    }),
+  ])
+  renderPage()
+
+  const cells = within(await row("Open Author session")).getAllByRole("cell")
+  // The CLI and the model of it are one id, and the effort it is run at
+  // follows the model it belongs to.
+  expect(cells[3]?.textContent).toBe("claude_code:claude-opus-5 @ xhigh")
+})
+
 it("keeps a column each, and folds the two a narrow window can spare", async () => {
   renderPage()
   const author = await row("Open Author session")
@@ -414,7 +432,7 @@ it("keeps a column each, and folds the two a narrow window can spare", async () 
   expect(cells[0]?.textContent).toContain(shortId(ENGINEER.id))
 
   // Two of them go below `lg`, so that what is left — the work, the seat, the
-  // profile, the status and the age — fits rather than being cut off the right
+  // model, the status and the age — fits rather than being cut off the right
   // edge. The id says nothing about the work a row is about (the panel it
   // opens carries it in full), and the figure is in the hint either way.
   const folded = "hidden lg:table-cell"

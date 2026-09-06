@@ -9,12 +9,12 @@
  * arrives — and because the event never arrives at all when the stream is
  * down.
  *
- * Only the session calls are here. A session view also reads the goal, the
- * task and the profiles behind the ids it carries, and those are asked for
- * where they are owned (`goals/queries.ts`, `tasks/queries.ts`,
- * `profiles/queries.ts`) rather than declared a second time here: the key is
- * the same either way, so a second declaration bought nothing and was one
- * `select` or one `staleTime` away from disagreeing with the original.
+ * Only the session calls are here. A session view also reads the goal and the
+ * task behind the ids it carries, and those are asked for where they are
+ * owned (`goals/queries.ts`, `tasks/queries.ts`) rather than declared a second
+ * time here: the key is the same either way, so a second declaration bought
+ * nothing and was one `select` or one `staleTime` away from disagreeing with
+ * the original.
  */
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"

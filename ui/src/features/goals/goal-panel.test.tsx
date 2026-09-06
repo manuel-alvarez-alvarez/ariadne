@@ -127,7 +127,7 @@ it("breaks the total down by the seat that spent it, behind the figure", async (
 
 it("keeps the sessions tab to the sessions, with no breakdown above them", async () => {
   mount()
-  await userEvent.setup().click(tab("Orchestrator sessions"))
+  await userEvent.setup().click(tab("Sessions"))
 
   // The figure in the facts carries the total and its split; a card repeating
   // both above a table whose rows carry their own figures said it all twice.
@@ -182,7 +182,7 @@ describe("which tab the panel opens on", () => {
 })
 
 describe("what the tabs are called, and how much is behind them", () => {
-  it("counts the tasks and the orchestrator sessions, and only the orchestrator ones", () => {
+  it("counts the tasks and the goal's own sessions, and only the goal's own", () => {
     mount(GOAL, {
       tasks: [
         aTask({ id: "01JTASK000000000000000000A" }),
@@ -196,14 +196,14 @@ describe("what the tabs are called, and how much is behind them", () => {
     })
 
     expect(tab("Tasks").textContent).toBe("Tasks2")
-    // The tab is the goal's own agent, so it says so — and a goal with four
-    // sessions under it has one orchestrator session, not four.
-    expect(tab("Orchestrator sessions").textContent).toBe("Orchestrator sessions1")
+    // The tab holds the goal's own agent, and the sessions its tasks have run
+    // are each task panel's: a goal with four sessions under it counts one.
+    expect(tab("Sessions").textContent).toBe("Sessions1")
 
     // A bare number beside a label is read out as "Tasks 2", which says
     // nothing about what the two are; each pill names what it counts.
     expect(within(tab("Tasks")).getByLabelText("2 tasks").textContent).toBe("2")
-    expect(within(tab("Orchestrator sessions")).getByLabelText("1 session").textContent).toBe("1")
+    expect(within(tab("Sessions")).getByLabelText("1 session").textContent).toBe("1")
   })
 
   it("says nothing about a count it does not have yet", () => {
@@ -218,9 +218,9 @@ describe("what the tabs are called, and how much is behind them", () => {
     expect(tab("Tasks").textContent).toBe("Tasks")
   })
 
-  it("names an empty orchestrator tab for the seat it lists, not for the goal", async () => {
+  it("names an empty sessions tab for the seat it lists, not for the goal", async () => {
     mount(GOAL, { sessions: [aSession({ seat: "author" })] })
-    await userEvent.setup().click(tab("Orchestrator sessions"))
+    await userEvent.setup().click(tab("Sessions"))
 
     expect(screen.getByText("No orchestrator session yet")).toBeDefined()
   })

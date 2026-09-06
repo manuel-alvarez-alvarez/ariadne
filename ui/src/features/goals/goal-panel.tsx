@@ -50,10 +50,6 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
 // Description leads the strip — it is what the goal *is* — but the panel opens
 // on the tasks, which is what the goal comes down to, whatever its status.
-//
-// `sessions` keeps its param name while the tab is called "Orchestrator sessions":
-// the tab is in the URL, and renaming the value would break every link already
-// pointing at one.
 const TABS = ["description", "tasks", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
@@ -193,9 +189,7 @@ function GoalView({
   // cost nothing beyond the first tab that is opened — and stay live with it,
   // since the dispatcher invalidates both lists.
   const tasks = useQuery(taskListQueryOptions({ goal: goal.id }))
-  const orchestratorSessions = useQuery(
-    sessionsQueryOptions({ goal: goal.id, seat: "orchestrator" }),
-  )
+  const sessions = useQuery(sessionsQueryOptions({ goal: goal.id, seat: "orchestrator" }))
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -250,11 +244,12 @@ function GoalView({
             Tasks
             <TabCount count={tasks.data?.length} noun="task" />
           </TabsTrigger>
-          {/* Named for what it holds: the goal's own agent, and none of the
-              sessions its tasks have run — those are each task panel's. */}
+          {/* The goal's own sessions: its orchestrator, once per resume or
+              restart. The sessions its tasks have run are each task panel's,
+              which is why the count here is a small number. */}
           <TabsTrigger value="sessions">
-            Orchestrator sessions
-            <TabCount count={orchestratorSessions.data?.length} noun="session" />
+            Sessions
+            <TabCount count={sessions.data?.length} noun="session" />
           </TabsTrigger>
         </TabsList>
         <TabsContent value="description" className="pt-3">
