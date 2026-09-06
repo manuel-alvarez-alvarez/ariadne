@@ -31,7 +31,7 @@ same binary also serves (013).
 1. Every user-facing action exists both here and in the desktop app: neither
    surface is a subset of the other.
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
-   `models`, `profile`, `repo`, `goal`, `task`, `session`, `events`,
+   `models`, `skill`, `repo`, `goal`, `task`, `session`, `events`,
    `attention`, `doctor`, `completions`, plus the hidden plumbing the agents
    use (`mcp serve`, `agent-event`).
 3. The root and every group share one help-screen shape, and no help screen

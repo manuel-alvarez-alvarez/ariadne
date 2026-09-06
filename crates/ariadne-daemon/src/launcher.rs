@@ -16,11 +16,11 @@ use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{
     AgentKind, AttentionReason, PromptKind, Seat, SessionStatus, TaskStatus, probe,
 };
-use ariadne_store::{
-    AgentSession, NewSession, Repository, SessionFilter, Store, Task, TaskAgent, TaskFilter,
-};
+use ariadne_store::{AgentSession, NewSession, Repository, SessionFilter, Store, Task, TaskFilter};
 
-use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
+use crate::agents::{
+    SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts, write_skills,
+};
 use crate::branch::BranchWatchers;
 use crate::config::Config;
 use crate::gitwt::GitManager;
@@ -310,10 +310,30 @@ impl Launcher {
         &self,
         session: &AgentSession,
         cwd: PathBuf,
-        system_prompt: String,
         initial_prompt: String,
     ) -> Result<SpawnCtx> {
         let agent = self.store.get_agent_config(session.agent_kind()).await?;
+        // What this agent knows, read here rather than passed in: one place
+        // decides what a session is briefed with, and the index in the prompt
+        // and the documents on disk are then the same list by construction.
+        let skills = match &session.task_agent_id {
+            Some(id) => self.store.agent_skills(id).await?,
+            None => Vec::new(),
+        };
+        let run_dir = self.run_dir(&session.id);
+        // Written before the adapter plans anything, and by the same call that
+        // renders the index, so what the prompt names is what is on disk.
+        let skills_dir = match skills.is_empty() {
+            true => None,
+            false => {
+                let documents: Vec<(String, String)> = skills
+                    .iter()
+                    .map(|skill| (skill.name.clone(), skill.document_text().to_string()))
+                    .collect();
+                Some(write_skills(&run_dir, &documents)?)
+            }
+        };
+        let system_prompt = prompts::system_prompt(session.seat(), &skills, skills_dir.as_deref());
         Ok(SpawnCtx {
             session_id: session.id.clone(),
             // Minted here, once per launch: the row is told it in
@@ -322,11 +342,12 @@ impl Launcher {
             goal_id: session.goal_id.clone(),
             task_id: session.task_id.clone(),
             seat: session.seat(),
-            run_dir: self.run_dir(&session.id),
+            run_dir,
             cwd,
             socket_path: self.cfg.socket_path.clone(),
             cli_bin: self.cfg.cli_bin.clone(),
             system_prompt,
+            skills_dir,
             initial_prompt,
             model: session.model.clone(),
             effort: session.effort.clone(),
@@ -459,12 +480,9 @@ impl Launcher {
         &self,
         session: &AgentSession,
         cwd: PathBuf,
-        system_prompt: String,
         initial_prompt: String,
     ) -> Result<()> {
-        let ctx = self
-            .spawn_ctx(session, cwd, system_prompt, initial_prompt)
-            .await?;
+        let ctx = self.spawn_ctx(session, cwd, initial_prompt).await?;
         let plan = adapter_for(session.agent_kind()).plan_spawn(&ctx)?;
         self.launch(session, plan, &ctx.launch_id).await?;
         self.clear_superseded_attention(session).await;
@@ -514,18 +532,11 @@ impl Launcher {
     async fn launch_resumed(
         &self,
         session: &AgentSession,
-        agent: Option<&TaskAgent>,
         cwd: PathBuf,
         internal: &str,
         instruction: &str,
     ) -> Result<AgentSession> {
-        let system = match agent {
-            Some(agent) => self.agent_system_prompt(agent).await?,
-            None => prompts::system_prompt(session.seat(), &[]),
-        };
-        let ctx = self
-            .spawn_ctx(session, cwd, system, String::new())
-            .await?;
+        let ctx = self.spawn_ctx(session, cwd, String::new()).await?;
         let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, internal, instruction)?;
         self.launch(session, plan, &ctx.launch_id).await?;
         self.store
@@ -576,17 +587,6 @@ impl Launcher {
         }
     }
 
-    /// The system prompt an agent is spawned with: what its seat owes, then
-    /// the index of the skills it loads.
-    ///
-    /// The index is built here rather than stored, so a skill reworded since
-    /// the task was staffed reaches the next launch of the agent that loads
-    /// it — the same way every other default text does.
-    async fn agent_system_prompt(&self, agent: &TaskAgent) -> Result<String> {
-        let skills = self.store.agent_skills(&agent.id).await?;
-        Ok(prompts::system_prompt(agent.seat(), &skills))
-    }
-
     /// Spawn the orchestrator for a goal (cwd = first repo).
     pub async fn spawn_orchestrator(&self, goal_id: &str) -> Result<AgentSession> {
         let goal = self.store.get_goal(goal_id).await?;
@@ -614,10 +614,9 @@ impl Launcher {
             })
             .await?;
 
-        let system = prompts::system_prompt(Seat::Orchestrator, &[]);
         let template = prompts::template_for(PromptKind::OrchestratorBriefing);
         let briefing = prompts::orchestrator_briefing(template, &goal, &repos);
-        self.spawn(&session, PathBuf::from(&repo.path), system, briefing)
+        self.spawn(&session, PathBuf::from(&repo.path), briefing)
             .await?;
         self.store
             .get_session(&session.id)
@@ -661,10 +660,9 @@ impl Launcher {
         for dep_id in self.store.list_task_dependencies(&task.id).await? {
             deps.push(self.store.get_task(&dep_id).await?);
         }
-        let system = self.agent_system_prompt(&author).await?;
         let template = prompts::template_for(PromptKind::AuthorBriefing);
         let briefing = prompts::author_briefing(template, &task, &goal, &repo, &deps);
-        self.spawn(&session, worktree, system, briefing).await?;
+        self.spawn(&session, worktree, briefing).await?;
         self.store
             .get_session(&session.id)
             .await
@@ -794,11 +792,10 @@ impl Launcher {
             .await?;
 
         let summary = self.store.review_summary(&task.id).await?;
-        let system = self.agent_system_prompt(&reviewer).await?;
         let template = prompts::template_for(PromptKind::ReviewerBriefing);
         let briefing =
             prompts::reviewer_briefing(template, &task, &goal, &repo, summary.as_deref());
-        self.spawn(&session, worktree, system, briefing).await?;
+        self.spawn(&session, worktree, briefing).await?;
         self.store
             .get_session(&session.id)
             .await
@@ -843,7 +840,7 @@ impl Launcher {
             )
             .await?;
 
-        self.launch_resumed(&session, Some(&reviewer), worktree, &internal, instruction)
+        self.launch_resumed(&session, worktree, &internal, instruction)
             .await
     }
 
@@ -853,9 +850,7 @@ impl Launcher {
     /// than one per round (spawn afresh if there is nothing to resume).
     pub async fn resume_author(&self, task_id: &str, instruction: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
-        let author = self.store.task_author(task_id).await?;
-
-        let Some((previous, internal)) = self
+            let Some((previous, internal)) = self
             .resumable_session(&task.id, Seat::Author, None)
             .await?
         else {
@@ -882,7 +877,7 @@ impl Launcher {
             .restart_session(&previous.id, Some(&worktree.display().to_string()), None)
             .await?;
 
-        self.launch_resumed(&session, Some(&author), worktree, &internal, instruction)
+        self.launch_resumed(&session, worktree, &internal, instruction)
             .await
     }
 
@@ -928,10 +923,6 @@ impl Launcher {
                 previous.id
             )
         })?;
-        let agent = match &previous.task_agent_id {
-            Some(id) => Some(self.store.get_task_agent(id).await?),
-            None => None,
-        };
         let seat = previous.seat();
 
         let cwd = match seat {
@@ -958,14 +949,8 @@ impl Launcher {
         // Neither the worktree nor (for a reviewer) the round changes: this is
         // the same session put back on its feet, not a new round of work.
         let session = self.store.restart_session(&previous.id, None, None).await?;
-        self.launch_resumed(
-            &session,
-            agent.as_ref(),
-            cwd,
-            &internal,
-            instruction.unwrap_or(""),
-        )
-        .await
+        self.launch_resumed(&session, cwd, &internal, instruction.unwrap_or(""))
+            .await
     }
 
     /// Kill a session's tmux process and mark it exited.

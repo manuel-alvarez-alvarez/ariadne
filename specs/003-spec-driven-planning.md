@@ -1,14 +1,13 @@
 ---
 id: spec-driven-planning
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611]
 tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/plan_finalize.rs
-  - crates/ariadne-daemon/tests/profile_system_prompt.rs
 ---
 
 # Spec-driven planning
@@ -52,9 +51,9 @@ reads (011), and the MCP tools' shapes (013).
    merged spec path.
 8. `depends_on` is for real dependencies only; tasks that merely touch nearby
    files run together.
-9. The orchestrator names an author profile and one or more reviewer profiles
-   per task, and sizes the model and effort of each slot from the model catalog
-   (011). The user's later choice overrides it.
+9. The orchestrator staffs each task: one author and any number of reviewers,
+   each on the skills the work calls for (017), each sized from the model
+   catalog (011). The user's later choice overrides it.
 10. `finalize_plan` ends planning: it moves the goal to `active` and starts
     every task at once. Only the goal's orchestrator may call it, only out of
     `planning`, and never on a plan with no tasks.
@@ -70,8 +69,9 @@ reads (011), and the MCP tools' shapes (013).
   (`defaults.rs::the_orchestrator_playbook_orders_the_spec_phases_before_the_tasks`).
 - The yes gates the tasks, in as many words: "Create no task before it."
   (same test).
-- An orchestrator nobody has edited is briefed with all of it
-  (`profile_system_prompt.rs::an_orchestrator_on_the_default_prompt_is_briefed_to_write_a_spec_and_size_its_slots`).
+- The orchestrator is briefed to end planning with `finalize_plan` and with no
+  other plan call
+  (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).
 - The nudge fits whichever phase the goal stands in
   (`defaults.rs::the_orchestrator_nudge_fits_the_spec_conversation_and_the_breakdown`).
 - The orchestrator's own texts name no forge and no merge strategy; the

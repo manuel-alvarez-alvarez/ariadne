@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-09-05
+updated: 2026-09-06
 areas: [install, scripts, store]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251]
 tests:
@@ -71,9 +71,9 @@ Out: what the daemon does once running (009, 012).
 
 - A database from before the squash says which file to delete
   (`store.rs::a_database_from_before_the_squash_says_which_file_to_delete`).
-- Built-in profiles are seeded into a fresh database on every default and are
-  not recreated on reopen
-  (`store.rs::a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default`,
+- The shipped skills are seeded into a fresh database, each on the text
+  Ariadne ships, and are not recreated on reopen
+  (`store.rs::a_fresh_database_is_seeded_with_every_shipped_skill_on_its_own_text`,
   `::built_ins_are_not_recreated_on_reopen`), and so are the per-agent launch
   flags (`::agent_configs_are_seeded_with_the_defaults`).
 - The installer fails late and unprompted on an unsupported OS, showing the log

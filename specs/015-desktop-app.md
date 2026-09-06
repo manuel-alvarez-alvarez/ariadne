@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-05
+updated: 2026-09-06
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44]
 tests:
@@ -29,7 +29,7 @@ Out: the daemon endpoints themselves (012).
 2. The shell is a sidebar and a main area; a panel opens beside a list rather
    than replacing it, and the URL carries which panel is open.
 3. Screens: the goals board (swimlanes plus an attention strip), the task
-   panel (facts, diff, reviews, history), sessions and a terminal, profiles,
+   panel (facts, diff, reviews, history), sessions and a terminal, skills,
    repositories, agent kinds and their launch flags, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
@@ -57,11 +57,13 @@ Out: the daemon endpoints themselves (012).
 
 ## Acceptance criteria
 
-- 68 test files cover the features, the API layer and the event stream; each
+- 69 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
-- A profile screen shows one configurable system prompt and requests no
-  lifecycle prompt (`ui/src/features/profiles/profile-editor.test.tsx`) — the
-  ownership rule of 006 read from the client side.
+- The skills screen groups the shipped skills apart from the user's own
+  (`ui/src/features/skills/skills-page.test.tsx`), and offers reset for the
+  first and delete for the second and never the other way round
+  (`ui/src/features/skills/skill-editor.test.tsx`) — the rule of 017 read from
+  the client side.
 - The repository dialog puts a placeholder refusal on the landing-briefing
   field rather than on the branch its message also names
   (`ui/src/features/repositories/repository-form-dialog.test.tsx`).

@@ -19,6 +19,8 @@
 //! repository the task lands in (`Repository::landing_prompt_text`), since
 //! how a change reaches a base branch is the repository's to say.
 
+use std::path::Path;
+
 use ariadne_core::{MergeStrategy, PromptKind, Seat};
 use ariadne_store::defaults::{
     default_prompt_text, default_spec_landing_prompt, default_system_prompt,
@@ -68,9 +70,13 @@ pub fn render(template: &str, values: &[(&str, &str)]) -> String {
     out
 }
 
-/// System layer: the profile's prompt, as the profile has it — the one set on
-/// it, or the default of its seat.
-pub fn system_prompt(seat: Seat, skills: &[Skill]) -> String {
+/// System layer: what the seat owes, and then the index of the skills this
+/// agent was staffed with.
+///
+/// `skills_dir` is where the documents were written
+/// ([`write_skills`](super::write_skills)); each line names the file, so an
+/// agent whose CLI loads no skill of its own can still open it.
+pub fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Path>) -> String {
     let mut prompt = default_system_prompt(seat).trim().to_string();
     if skills.is_empty() {
         return prompt;
@@ -78,6 +84,10 @@ pub fn system_prompt(seat: Seat, skills: &[Skill]) -> String {
     prompt.push_str(SKILLS_HEADER);
     for skill in skills {
         prompt.push_str(&format!("\n- {}: {}", skill.name, skill.summary()));
+        if let Some(dir) = skills_dir {
+            let path = dir.join(&skill.name).join("SKILL.md");
+            prompt.push_str(&format!(" ({})", path.display()));
+        }
     }
     prompt
 }
@@ -88,7 +98,8 @@ pub fn system_prompt(seat: Seat, skills: &[Skill]) -> String {
 /// on disk beside the session, and the agent reads it when it needs it. That
 /// is what the agent CLIs do with a skill of their own, and it is why a broad
 /// set of skills costs an agent a few lines rather than a few pages.
-const SKILLS_HEADER: &str = "\n\nYour skills:";
+const SKILLS_HEADER: &str =
+    "\n\nYour skills. Read the document of a skill before you do the work it covers:";
 
 /// Initial prompt for an orchestrator session.
 ///
@@ -407,9 +418,7 @@ mod tests {
                     orchestrator_briefing(&template, &goal, std::slice::from_ref(&repo))
                 }
                 PromptKind::OrchestratorResume => orchestrator_resume_briefing(&template, &goal),
-                PromptKind::AuthorBriefing => {
-                    author_briefing(&template, &task, &goal, &repo, &[])
-                }
+                PromptKind::AuthorBriefing => author_briefing(&template, &task, &goal, &repo, &[]),
                 PromptKind::AuthorResume => author_resume_briefing(&template, &task),
                 PromptKind::ChangesRequested => changes_requested_briefing(&template, &feedback),
                 PromptKind::ReviewerBriefing => {
@@ -818,7 +827,8 @@ mod tests {
     /// one all the same reads as a briefing rather than as a broken template.
     #[test]
     fn a_goal_without_a_repository_still_briefs() {
-        let briefing = orchestrator_briefing(default(PromptKind::OrchestratorBriefing), &goal(), &[]);
+        let briefing =
+            orchestrator_briefing(default(PromptKind::OrchestratorBriefing), &goal(), &[]);
         assert!(
             briefing.contains("Commit it on <base branch> in <repo>"),
             "{briefing}"

@@ -22,6 +22,8 @@
 //!   for the launcher to type into the TUI once it is up.
 //! - Compaction: `/compact` typed into the TUI — no focus text — reported
 //!   done by the `session.compacted` event the plugin forwards.
+//! - Skills: `skills.paths` in that same config, naming the run dir the
+//!   launcher wrote the documents into.
 
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -72,7 +74,7 @@ impl OpencodeAdapter {
             );
         }
 
-        let config = json!({
+        let mut config = json!({
             "$schema": "https://opencode.ai/config.json",
             // The catch-all allow does not silence everything: OpenCode
             // resolves its built-in *ask* rules (`doom_loop`,
@@ -107,6 +109,14 @@ impl OpencodeAdapter {
             },
             "plugin": [format!("file://{}", plugin_path.display())],
         });
+        // OpenCode's own skill loading, pointed at the run dir rather than at
+        // a folder of the worktree: `skills.paths` is a list of extra folders
+        // it globs `**/SKILL.md` under, which is the layout `write_skills`
+        // leaves (verified on 1.18.20 — `opencode debug skill` lists the
+        // document with its run-dir location).
+        if let Some(skills) = &ctx.skills_dir {
+            config["skills"] = json!({ "paths": [skills.display().to_string()] });
+        }
         let config_file = ctx.run_dir.join("opencode.json");
         std::fs::write(&config_file, serde_json::to_string_pretty(&config)?)?;
         Ok(config_file)

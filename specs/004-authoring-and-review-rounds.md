@@ -1,7 +1,7 @@
 ---
 id: authoring-and-review-rounds
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e]
 tests:
@@ -39,8 +39,8 @@ Out: the transition table itself (001), the landing that follows approval
 5. `request_review` moves the task to `under_review` and carries one short
    summary — what changed, why, and how it was verified. That summary is what
    the reviewers read first.
-6. Each assigned reviewer profile gets one session for the whole task, in a
-   detached read-only worktree (002). A round is not part of a reviewer's
+6. Each reviewer the task staffs (017) gets one session for the whole task, in
+   a detached read-only worktree (002). A round is not part of a reviewer's
    identity, only of the briefing it is woken with.
 7. A reviewer verifies the change in its own worktree — installing what it
    needs, building, testing and linting there — and gives exactly one verdict

@@ -31,6 +31,7 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
         socket_path: PathBuf::from("/tmp/ariadne.sock"),
         cli_bin: "/usr/local/bin/ariadne".into(),
         system_prompt: "SYSTEM PROMPT".into(),
+        skills_dir: None,
         initial_prompt: "DO THE TASK".into(),
         model: Some("test-model".into()),
         effort: None,
@@ -459,4 +460,119 @@ fn opencode_writes_the_effort_as_the_agents_variant() {
         let plan = adapter.plan_spawn(&unpinned).unwrap();
         assert_eq!(variant(&plan), serde_json::Value::Null, "{model:?}");
     }
+}
+
+/// A context whose agent holds skills: the launcher has written them into the
+/// run dir, and the adapter's job is to point its CLI at that directory.
+fn ctx_with_skills(run_dir: PathBuf) -> SpawnCtx {
+    let documents = [
+        (
+            "coding".to_string(),
+            "---\nname: coding\n---\nWrite it.".to_string(),
+        ),
+        (
+            "testing".to_string(),
+            "---\nname: testing\n---\nProve it.".to_string(),
+        ),
+    ];
+    let skills_dir = ariadne_daemon::agents::write_skills(&run_dir, &documents).unwrap();
+    SpawnCtx {
+        skills_dir: Some(skills_dir),
+        ..ctx_with_flags(run_dir, vec!["--extra".into()])
+    }
+}
+
+/// Claude Code takes its skills as a plugin of the session: a manifest and a
+/// `skills/` directory, loaded with `--plugin-dir` and installed nowhere, so
+/// the worktree stays exactly the repository.
+#[test]
+fn claude_loads_the_skills_as_a_session_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_with_skills(dir.path().into());
+    let plan = adapter_for(AgentKind::ClaudeCode).plan_spawn(&ctx).unwrap();
+
+    let at = plan
+        .argv
+        .iter()
+        .position(|a| a == "--plugin-dir")
+        .expect("--plugin-dir passed");
+    let plugin = PathBuf::from(&plan.argv[at + 1]);
+    assert_eq!(plugin, dir.path().join("plugin"));
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(plugin.join(".claude-plugin").join("plugin.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["name"], "ariadne-skills");
+
+    // The plugin's skills are the ones on disk, not a second copy of them.
+    assert_eq!(
+        std::fs::read_to_string(plugin.join("skills").join("coding").join("SKILL.md")).unwrap(),
+        "---\nname: coding\n---\nWrite it."
+    );
+}
+
+/// An agent with no skills gets no plugin, rather than an empty one.
+#[test]
+fn claude_passes_no_plugin_for_an_agent_with_no_skills() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = adapter_for(AgentKind::ClaudeCode)
+        .plan_spawn(&ctx(dir.path().into(), AgentKind::ClaudeCode))
+        .unwrap();
+    assert!(!plan.argv.contains(&"--plugin-dir".to_string()));
+    assert!(!dir.path().join("plugin").exists());
+}
+
+/// OpenCode takes an extra folder to look for skills under, so the run dir is
+/// named there and nothing is written into the checkout.
+#[test]
+fn opencode_points_its_skill_paths_at_the_run_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let adapter = adapter_for(AgentKind::Opencode);
+    let with = ctx_with_skills(dir.path().into());
+    let paths = |plan: &ariadne_daemon::agents::SpawnPlan| {
+        let path = plan
+            .env
+            .iter()
+            .find(|(k, _)| k == "OPENCODE_CONFIG")
+            .map(|(_, v)| v.clone())
+            .expect("OPENCODE_CONFIG set");
+        let config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        config["skills"].clone()
+    };
+
+    // Spawns and resumes alike: the config is rewritten on every launch.
+    for plan in [
+        adapter.plan_spawn(&with).unwrap(),
+        adapter
+            .plan_resume(&with, "ses_1", "apply feedback")
+            .unwrap(),
+    ] {
+        assert_eq!(
+            paths(&plan),
+            serde_json::json!({ "paths": [dir.path().join("skills").display().to_string()] })
+        );
+    }
+
+    // No skills, no key: OpenCode keeps its own defaults.
+    let plan = adapter
+        .plan_spawn(&ctx(dir.path().into(), AgentKind::Opencode))
+        .unwrap();
+    assert_eq!(paths(&plan), serde_json::Value::Null);
+}
+
+/// A skill the agent no longer loads is gone from the run dir, not left there
+/// for it to read.
+#[test]
+fn a_dropped_skill_leaves_nothing_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    let both = [
+        ("coding".to_string(), "one".to_string()),
+        ("testing".to_string(), "two".to_string()),
+    ];
+    ariadne_daemon::agents::write_skills(dir.path(), &both).unwrap();
+    ariadne_daemon::agents::write_skills(dir.path(), &both[..1]).unwrap();
+    assert!(dir.path().join("skills").join("coding").exists());
+    assert!(!dir.path().join("skills").join("testing").exists());
 }

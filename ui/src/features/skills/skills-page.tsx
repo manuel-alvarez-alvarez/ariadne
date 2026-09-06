@@ -194,8 +194,13 @@ function SkillList({
           <p className="px-1 py-6 text-muted-foreground text-sm">No skill matches “{filter}”.</p>
         ) : (
           groups.map((group) => (
-            <section key={group.key} className="mb-4">
-              <h3 className="px-1 pb-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+            // Named by its own heading, so the group a row belongs to — and
+            // so what can be done to that row — reaches a screen reader too.
+            <section key={group.key} aria-labelledby={`skills-${group.key}`} className="mb-4">
+              <h3
+                id={`skills-${group.key}`}
+                className="px-1 pb-1 font-medium text-muted-foreground text-xs uppercase tracking-wide"
+              >
                 {group.title}
               </h3>
               <ul className="flex flex-col gap-0.5">

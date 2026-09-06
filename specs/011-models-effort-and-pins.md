@@ -1,9 +1,9 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 areas: [core, api, daemon, cli]
-commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb]
+commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, 083c3132]
 tests:
   - crates/ariadne-daemon/tests/models.rs
   - crates/ariadne-daemon/tests/pins.rs
@@ -19,8 +19,8 @@ who gets to choose at each level.
 ## Scope
 
 In: the model catalog and what it describes, the `<agent>[:<model>]`
-spelling, effort levels, where a pin may be set (profile, goal, task,
-reviewer slot), and how a pin outlives a profile edit.
+spelling, effort levels, where a pin may be set (the goal's orchestrator, each
+agent a task staffs), and how a running session keeps what it started on.
 
 Out: how each CLI is handed the choice (007), and how the orchestrator decides
 (003).
@@ -33,20 +33,19 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
    which CLI would run it.
 2. An effort says how deeply a model reasons, and belongs to the model it runs
    at: a pin naming a model and no effort runs at the CLI's own default, and
-   only a pin left on the profile's own model keeps the profile's effort.
+   an effort set on its own is run at the model already pinned.
 3. The catalog describes each curated model as its agent runs it: tier, a cost
    and a speed band, what task shapes it is and is not a fit for
    (`best_for` / `avoid_for`), and what each of its efforts buys. Each agent is
    also offered on its own default model.
-4. A profile carries a pin of its own; a goal carries the orchestrator's; a task
-   carries its author's and one per reviewer slot. A reviewer slot is spelled
-   `<profile>[=<model>][@<effort>]`.
-5. A pin is written in place of the profile's at creation, so it outlives any
-   later edit of that profile: what a session runs on is decided when the work
-   is created, not when it starts.
-6. `default` hands a pin back — `--model default` to the profile's own,
-   `--effort default` to the CLI's own.
-7. The orchestrator sizes each slot it assigns from the catalog and the user
+4. A goal carries the orchestrator's pin; every other pin sits on the agent
+   the task staffs (017), one per author and per reviewer.
+5. A pin is written on the agent when the task is staffed, and a session
+   freezes it at its first launch: a re-pin steers the next spawn, never the
+   conversation already running.
+6. `default` hands a pin back: `--model default` runs the agent CLI's own
+   default model, `--effort default` runs it at the CLI's own effort.
+7. The orchestrator sizes each agent it staffs from the catalog and the user
    has the last word, on a task that is still `pending` or `ready`.
 8. A model is stored as typed, whatever the catalog lists, so a CLI that
    gained a model since the release still runs. An effort, by contrast, is
@@ -59,12 +58,14 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
   efforts and default (`::a_curated_model_carries_its_efforts_and_its_default`),
   and each agent is offered on its own default model
   (`::each_agent_is_offered_on_its_own_default_model`).
-- A task and a goal carry the pins their profiles no longer have
-  (`pins.rs::a_task_carries_the_pins_its_profiles_no_longer_have`,
-  `::a_goal_carries_the_orchestrator_pin_its_profile_no_longer_has`), and a pin
-  outlives a profile edit for every seat
-  (`resume.rs::an_authors_pin_outlives_a_profile_edit`,
-  `::a_reviewers_pin_outlives_a_profile_edit`,
+- A goal plans on the pin it was created with
+  (`pins.rs::a_goal_created_with_an_agent_and_a_model_plans_on_them`), and a
+  task staffs each agent on its own
+  (`::a_task_staffs_each_agent_on_its_own_pin`,
+  `store.rs::an_agent_is_written_on_the_pin_it_was_given_and_auto_where_it_was_given_none`).
+- A session keeps what it started on for every seat
+  (`resume.rs::a_resumed_author_stays_on_the_model_its_session_started_on`,
+  `::a_running_reviewer_keeps_the_model_its_session_started_on`,
   `::an_orchestrator_respawn_stays_on_the_goals_pin`).
 - An agent alone pins with no model of its own
   (`pins.rs::an_agent_alone_pins_it_with_no_model_of_its_own`,
@@ -73,15 +74,15 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
   (`pins.rs::a_model_naming_no_agent_is_refused_by_name`), and a model is stored
   as typed (`::a_model_is_stored_as_typed_whatever_the_catalogs_list`).
 - An effort is checked against the model it runs at
-  (`pins.rs::an_effort_is_checked_against_the_model_it_runs_at`), moves with the
-  model (`::a_task_pins_the_effort_beside_the_model_and_moves_with_it`), and an
-  override takes the profile's effort only on the profile's model
-  (`store.rs::an_override_takes_the_profiles_effort_only_on_the_profiles_model`).
-- An edit moves the pins and `default` hands them back
-  (`pins.rs::an_edit_moves_the_pins_and_default_hands_them_back`).
+  (`pins.rs::an_effort_is_checked_against_the_model_it_runs_at`), and an effort
+  of its own is run at the model already pinned
+  (`::an_effort_of_its_own_is_run_at_the_model_already_pinned`).
+- An edit moves the pin and `default` hands it back to auto
+  (`pins.rs::an_edit_moves_the_pin_and_default_hands_it_back_to_auto`).
 
 ## Sources
 
 `crates/ariadne-core/src/models.rs` (the catalog),
 `crates/ariadne-daemon/src/http/catalog.rs`,
-`crates/ariadne-daemon/src/http/pins.rs`, `crates/ariadne-store/src/profiles.rs`.
+`crates/ariadne-daemon/src/http/pins.rs`,
+`crates/ariadne-store/src/task_agents.rs`.

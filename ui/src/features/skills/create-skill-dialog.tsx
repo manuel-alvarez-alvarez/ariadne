@@ -11,6 +11,7 @@
  * on the name field.
  */
 
+import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { toast } from "sonner"
 
@@ -50,25 +51,36 @@ export function CreateSkillDialog({
   const createSkill = useCreateSkill()
 
   const form = useForm<SkillFormValues>({ defaultValues: EMPTY })
-  const { formState, handleSubmit, register, setError, watch } = form
+  const { formState, handleSubmit, register, setError, setValue, watch } = form
   useResetOnOpen(open, form, EMPTY, createSkill)
 
-  const name = watch("name")
-  const typed = watch("document")
   // The template follows the name until the document is touched, so the
-  // frontmatter names the skill without anybody typing it twice.
-  const document = typed || skillTemplate(name)
+  // frontmatter names the skill without anybody typing it twice. Written
+  // through the form rather than over the box: the box is the form's, and a
+  // value prop laid on top of it is dropped the moment the field registers.
+  const name = watch("name")
+  const [touched, setTouched] = useState(false)
+  useEffect(() => {
+    if (!touched) setValue("document", skillTemplate(name.trim()))
+  }, [name, touched, setValue])
+  // Reopening the dialog is a new skill, so the template follows the name
+  // again — `useResetOnOpen` puts the fields back, and this puts back the
+  // reason they are still the template's.
+  useEffect(() => {
+    if (open) setTouched(false)
+  }, [open])
 
   async function submit(values: SkillFormValues) {
-    const body = values.document || skillTemplate(values.name)
+    const named = values.name.trim()
+    const body = values.document || skillTemplate(named)
     try {
-      const created = await createSkill.mutateAsync({ name: values.name.trim(), document: body })
+      const created = await createSkill.mutateAsync({ name: named, document: body })
       toast.success("Skill created", { description: created.name })
       onOpenChange(false)
       onCreated?.(created)
     } catch (error) {
       if (ApiError.is(error) && error.status === 409) {
-        setError("name", { message: `A skill named "${values.name.trim()}" already exists.` })
+        setError("name", { message: `A skill named "${named}" already exists.` })
         return
       }
       setError("root", { message: describeError(error) })
@@ -120,8 +132,7 @@ export function CreateSkillDialog({
               rows={12}
               spellCheck={false}
               className="resize-none font-mono text-xs"
-              value={document}
-              {...register("document")}
+              {...register("document", { onChange: () => setTouched(true) })}
             />
             <FieldDescription>
               The whole <code>SKILL.md</code>. The <code>description</code> in its frontmatter is

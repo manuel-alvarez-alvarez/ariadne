@@ -1,9 +1,9 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 areas: [daemon, core]
-commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd]
+commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, 87fa62cf]
 tests:
   - crates/ariadne-daemon/tests/adapters.rs
   - crates/ariadne-daemon/tests/agents.rs
@@ -18,10 +18,12 @@ the generated config, and the hooks that report back.
 ## Scope
 
 In: the three supported CLIs, per-agent launch flags, how a model and an
-effort are passed to each, the session context in the environment, hook
-installation, and resuming or reviving a session.
+effort are passed to each, the session context in the environment, how each
+CLI is given the agent's skill documents, hook installation, and resuming or
+reviving a session.
 
-Out: which model to pick (011), and what the session is briefed with (006).
+Out: which model to pick (011), what the session is briefed with (006), and
+what a skill says (017).
 
 ## Behavior
 
@@ -52,6 +54,21 @@ Out: which model to pick (011), and what the session is briefed with (006).
    afresh; a session of a finished goal is not revived at all.
 10. A launch hands tmux nothing that can outgrow a command line: the prompt
     goes through a plan file rather than argv.
+11. The skill documents of the agent are written into its run directory before
+    the adapter plans anything, one `<name>/SKILL.md` under `skills/`. They go
+    there and never into the worktree, which belongs to the repository. A
+    skill the agent no longer holds is removed by the same write.
+12. Each adapter then points its CLI at that directory the way that CLI takes
+    one:
+    - Claude Code loads it as a plugin of this session alone — a manifest and
+      a link to the directory, passed with `--plugin-dir`;
+    - OpenCode names it in `skills.paths` of the session config;
+    - Codex is given nothing, because it discovers skills only under its own
+      home or under the project root, and the project root of an agent is its
+      worktree.
+13. The index in the system prompt names every document by its run-directory
+    path (006), which is the floor under all three: a CLI with no skill
+    loading of its own still has a file the agent can open.
 
 ## Acceptance criteria
 
@@ -73,6 +90,14 @@ Out: which model to pick (011), and what the session is briefed with (006).
   launch takes its flags from the config (`::a_launch_takes_its_flags_from_the_agent_config`).
 - A launch hands tmux nothing that can outgrow it
   (`resume.rs::a_launch_hands_tmux_nothing_that_can_outgrow_it`).
+- Claude Code gets the skills as a session plugin
+  (`adapters.rs::claude_loads_the_skills_as_a_session_plugin`), and an agent
+  with none gets no plugin
+  (`::claude_passes_no_plugin_for_an_agent_with_no_skills`).
+- OpenCode looks for them in the run directory
+  (`adapters.rs::opencode_points_its_skill_paths_at_the_run_dir`).
+- A skill the agent dropped is gone from the run directory
+  (`adapters.rs::a_dropped_skill_leaves_nothing_behind`).
 - A session without an agent id is not revived
   (`resume.rs::a_session_without_an_agent_id_is_not_revived`), nor is one of a
   finished goal (`::a_session_of_a_finished_goal_is_not_revived`).

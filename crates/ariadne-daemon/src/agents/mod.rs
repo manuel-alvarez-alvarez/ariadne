@@ -6,9 +6,9 @@ mod codex;
 mod opencode;
 pub mod prompts;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use ariadne_core::{AgentKind, Seat};
 
@@ -33,8 +33,15 @@ pub struct SpawnCtx {
     pub socket_path: PathBuf,
     /// Path or name of the `ariadne` CLI binary (hooks + MCP entry point).
     pub cli_bin: String,
-    /// The profile's system prompt, as stored.
+    /// What the agent is briefed as: what its seat owes, and the index of the
+    /// skills it loads.
     pub system_prompt: String,
+    /// Where this agent's skill documents are, one `<name>/SKILL.md` under it.
+    /// The launcher writes them ([`write_skills`]) before the adapter plans
+    /// anything, so the index in the system prompt and the files on disk are
+    /// the same list, and an adapter only has to point its CLI at the
+    /// directory. `None` for an agent that loads no skill.
+    pub skills_dir: Option<PathBuf>,
     /// Task/goal briefing delivered as the first user prompt.
     pub initial_prompt: String,
     pub model: Option<String>,
@@ -46,6 +53,36 @@ pub struct SpawnCtx {
     /// structural flags — session ids, MCP and hook config, the system prompt,
     /// the model and its effort — are the adapters' own and are not in here.
     pub extra_flags: Vec<String>,
+}
+
+/// Write an agent's skills into its run dir, one `SKILL.md` per skill, and
+/// answer with the directory holding them.
+///
+/// The layout is the one all three CLIs read — `<name>/SKILL.md`, frontmatter
+/// and body — so one write serves whichever mechanism the adapter then points
+/// at it: a plugin for Claude Code, `skills.paths` for OpenCode. Codex takes
+/// neither, because it discovers skills only under its own home or the project
+/// root, and the project root of an agent is the worktree. So the index in the
+/// system prompt names these paths as well, which is the floor under all
+/// three: an agent with no native skill loading opens the file itself.
+///
+/// Rewritten on every launch rather than cached, so a skill reworded since the
+/// task was staffed reaches the next launch of the agent that loads it — the
+/// same way every other default text does.
+pub fn write_skills(run_dir: &Path, skills: &[(String, String)]) -> Result<PathBuf> {
+    let root = run_dir.join("skills");
+    // Cleared first: a skill an agent no longer loads must not be left behind
+    // for it to read.
+    if root.exists() {
+        std::fs::remove_dir_all(&root).with_context(|| format!("clearing {}", root.display()))?;
+    }
+    for (name, document) in skills {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        std::fs::write(dir.join("SKILL.md"), document)
+            .with_context(|| format!("writing the {name} skill"))?;
+    }
+    Ok(root)
 }
 
 /// A fully planned process launch for tmux.

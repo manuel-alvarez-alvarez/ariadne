@@ -1,14 +1,14 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-09-04
+updated: 2026-09-06
 areas: [prompts, store, core, mcp]
-commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b]
+commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, 083c3132, 87fa62cf]
 tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
   - crates/ariadne-daemon/tests/prompts.rs
-  - crates/ariadne-daemon/tests/profile_system_prompt.rs
+  - crates/ariadne-daemon/tests/skill_documents.rs
   - crates/ariadne-core/src/lib.rs
 ---
 
@@ -19,12 +19,12 @@ the English all of it is written in.
 
 ## Scope
 
-In: the three layers of text (system prompt, lifecycle briefing, landing
-briefing), what each layer states, rendering and placeholder validation, the
-STE rules, and the size caps.
+In: the layers of text (system prompt, skill index, lifecycle briefing,
+landing briefing), what each layer states, rendering and placeholder
+validation, the STE rules, and the size caps.
 
 Out: the wording of any one procedure — those belong to the spec of the thing
-they describe (003, 004, 005).
+they describe (003, 004, 005) — and what a skill is (017).
 
 ## Behavior
 
@@ -35,19 +35,25 @@ they describe (003, 004, 005).
      tools, whether anyone answers a question, how few turns to take, and the
      English to write in (013);
    - the **system prompt**, which states what a seat owes from its first read
-     to the call that ends its turn;
+     to the call that ends its turn, and then indexes the skills this agent
+     was staffed with (017);
    - the **lifecycle briefing**, which carries the values of one goal, task or
      round and whatever is only true of this moment;
    - the **landing briefing**, which carries the procedure that ends a task,
      and belongs to the repository (005).
-2. A profile owns exactly one text: its **system prompt**. It runs on the
-   default of its seat until somebody sets one, and a reset drops what was
-   set rather than copying a default in.
-3. The lifecycle briefings are Ariadne's own constants, the same for every
-   profile, read from the code on every launch and every resume. No route
-   reads or writes one, and no row holds one.
-4. Because nothing is ever copied into the database, rewording a default
-   reaches every profile still on it — including profiles created long before.
+2. The system prompt is the code's, one text per seat. Nothing an agent runs
+   under carries a lifecycle text of its own: what makes one agent differ from
+   another in the same seat is the skills it holds.
+3. The skill index is one line per skill — its name, the summary its
+   frontmatter states, and the path of its document in the run directory — and
+   the instruction to read a document before doing the work it covers. The
+   document itself stays on disk, so a broad set of skills costs an agent a
+   few lines rather than a few pages. How each CLI is pointed at those files
+   is 007.
+4. The lifecycle briefings are Ariadne's own constants, read from the code on
+   every launch and every resume. No route reads or writes one, and no row
+   holds one. Because nothing is copied into the database, rewording a default
+   reaches every session started after it.
 5. A briefing is rendered by substituting `{name}` tokens. Rendering is
    lenient by construction: an unknown token, an unclosed brace and an empty
    template all render to something, and none of them fails a spawn.
@@ -65,10 +71,12 @@ they describe (003, 004, 005).
 9. STE binds what the agents write too — turn text and visible reasoning, task
    titles and descriptions, review summaries, verdicts, failure reasons, commit
    subjects and bodies, and pull request text — and that rule lives in the
-   session rules, where no profile edit can remove it.
+   session rules, where no edit of a skill can remove it.
 10. Every default text is capped in size, per text and in total, and the caps
     come down to what a rewrite fits in. Moving a cap is a decision argued in
-    the test's own documentation, never a way round a failing assertion.
+    the test's own documentation, never a way round a failing assertion. The
+    shipped skill documents are capped on their own scale, since a skill is
+    read once and on purpose rather than carried by every turn.
 
 ## Acceptance criteria
 
@@ -78,7 +86,7 @@ they describe (003, 004, 005).
   (`defaults.rs::size_caps_hold`).
 - A rule is stated in exactly one briefing
   (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`,
-  `::a_role_rule_is_stated_in_its_own_prompt_alone`), and no default repeats
+  `::a_seat_rule_is_stated_in_its_own_prompt_alone`), and no default repeats
   what the MCP server already tells every session
   (`::no_default_repeats_what_every_session_is_told_by_the_mcp_server`).
 - Every default names only placeholders its kind can fill in
@@ -88,17 +96,17 @@ they describe (003, 004, 005).
 - Broken template syntax still renders
   (`prompts.rs::broken_syntax_passes_through`,
   `::an_unknown_placeholder_travels_verbatim`).
-- A created profile starts on the default of its seat and stores none of it
-  (`profile_system_prompt.rs::a_created_profile_starts_on_the_default_of_its_role`,
-  `store.rs::a_new_profile_starts_on_the_role_defaults_and_stores_none_of_them`).
-- A system prompt is stored only while set, and a reset deletes the row
-  (`store.rs::a_system_prompt_is_stored_only_while_it_is_set_and_a_reset_deletes_it`).
-- No route reads or writes a lifecycle prompt
-  (`profile_system_prompt.rs::no_route_reads_or_writes_a_lifecycle_prompt`).
+- A seat's prompt carries what the seat owes and nothing of a skill
+  (`skill_documents.rs::a_seat_prompt_carries_only_what_the_seat_owes`).
+- The index adds one line per skill, and the path it names holds the document
+  (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
+- Every shipped skill document is within its cap
+  (`defaults.rs::skill_size_caps_hold`).
 
 ## Sources
 
 `crates/ariadne-store/src/defaults.rs` (every default text and the STE rules),
 `crates/ariadne-daemon/src/agents/prompts.rs` (assembly),
 `crates/ariadne-core/src/lib.rs` (`PromptKind`, placeholder validation),
-`crates/ariadne-cli/src/commands/mcp.rs` (session rules).
+`crates/ariadne-cli/src/commands/mcp.rs` (session rules),
+`crates/ariadne-daemon/src/agents/mod.rs` (`write_skills`).

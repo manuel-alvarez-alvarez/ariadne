@@ -7,6 +7,10 @@
 //!   starts and to a `--resume`d one alike (verified on 2.1.251)
 //! - System prompt: `--append-system-prompt <content>` (inline; the installed
 //!   CLI has no `-file` variant — a copy is kept in the run dir for debugging)
+//! - Skills: written to `<run>/skills/<name>/SKILL.md` and wrapped as a
+//!   plugin at `<run>/plugin`, passed with `--plugin-dir` — per-session and
+//!   repeatable, so nothing is installed and no repository is touched
+//!   (verified on 2.1.261)
 //! - MCP: `--mcp-config <run>/mcp.json`
 //! - Hooks: `--settings <run>/settings.json` (command hooks piping JSON into
 //!   `ariadne agent-event --kind claude_code`)
@@ -15,8 +19,13 @@
 //!   hook a `startup` or a `resume` fires with its own source (verified on
 //!   2.1.251)
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
+
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::symlink as symlink_dir;
 
 use ariadne_core::{AgentKind, Seat};
 
@@ -66,14 +75,51 @@ impl ClaudeAdapter {
         });
         std::fs::write(&settings_file, serde_json::to_string_pretty(&settings)?)?;
 
-        Ok(vec![
+        let mut flags = vec![
             "--append-system-prompt".into(),
             ctx.system_prompt.clone(),
             "--mcp-config".into(),
             mcp_file.display().to_string(),
             "--settings".into(),
             settings_file.display().to_string(),
-        ])
+        ];
+        if let Some(plugin) = self.write_plugin(ctx)? {
+            flags.push("--plugin-dir".into());
+            flags.push(plugin.display().to_string());
+        }
+        Ok(flags)
+    }
+
+    /// The agent's skills as a plugin Claude Code loads for this session
+    /// alone, or None where it carries none.
+    ///
+    /// A plugin rather than a copy into `.claude/skills`: `--plugin-dir` is
+    /// per-session and installs nothing, so the worktree stays exactly the
+    /// repository and two agents of one task can hold different skills.
+    fn write_plugin(&self, ctx: &SpawnCtx) -> Result<Option<PathBuf>> {
+        let Some(skills) = ctx.skills_dir.as_deref() else {
+            return Ok(None);
+        };
+        let plugin = ctx.run_dir.join("plugin");
+        let manifest = plugin.join(".claude-plugin");
+        std::fs::create_dir_all(&manifest)
+            .with_context(|| format!("creating {}", manifest.display()))?;
+        std::fs::write(
+            manifest.join("plugin.json"),
+            serde_json::to_string_pretty(&json!({
+                "name": "ariadne-skills",
+                "description": "The skills this agent was staffed with.",
+                "version": "1.0.0",
+            }))?,
+        )?;
+        // A link rather than a second copy, so the run dir holds one truth and
+        // the prompt's path and the plugin's point at the same files.
+        let linked = plugin.join("skills");
+        let _ = std::fs::remove_file(&linked);
+        let _ = std::fs::remove_dir_all(&linked);
+        symlink_dir(skills, &linked)
+            .with_context(|| format!("linking {} to {}", linked.display(), skills.display()))?;
+        Ok(Some(plugin))
     }
 
     fn common_tail(&self, ctx: &SpawnCtx, argv: &mut Vec<String>) {

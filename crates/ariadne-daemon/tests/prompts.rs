@@ -79,25 +79,32 @@ async fn a_spawned_author_is_briefed_from_the_builtin_template() {
     // The system layer is what the seat owes, and then the index of the skills
     // this agent loads: one line each, with the document left on disk for the
     // agent to read when it needs it.
-    let system = std::fs::read_to_string(
-        h.launcher
-            .cfg
-            .run_dir
-            .join(&session.id)
-            .join("system-prompt.md"),
-    )
-    .unwrap();
-    let (owed, index) = system.split_once("\n\nYour skills:").expect("a skill index");
+    let run_dir = h.launcher.cfg.run_dir.join(&session.id);
+    let system = std::fs::read_to_string(run_dir.join("system-prompt.md")).unwrap();
+    let (owed, index) = system
+        .split_once("\n\nYour skills. Read the document of a skill before you do the work it covers:")
+        .expect("a skill index");
     assert_eq!(
         owed,
         ariadne_store::defaults::default_system_prompt(Seat::Author).trim(),
         "the seat's own text, word for word out of the code"
     );
+    let document = run_dir.join("skills").join("coding").join("SKILL.md");
     assert_eq!(
         index.trim(),
-        "- coding: Implement a task from its specification, in the repository's own \
-         conventions, with the tests that prove it.",
-        "one line per skill, and the summary is the skill's own"
+        format!(
+            "- coding: Implement a task from its specification, in the repository's own \
+             conventions, with the tests that prove it. ({})",
+            document.display()
+        ),
+        "one line per skill: its summary, and where its document is"
+    );
+    // And the path the line names is a document, not a promise.
+    let written = std::fs::read_to_string(&document).expect("the skill document on disk");
+    assert_eq!(
+        written,
+        ariadne_store::defaults::default_skill_document("coding").unwrap(),
+        "the shipped document, written whole for the agent to open"
     );
 }
 

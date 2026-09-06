@@ -14,6 +14,13 @@
 //! - Effort: `-c model_reasoning_effort=<level>`, a config override like the
 //!   rest — codex has no flag for it
 //! - System prompt: no append-safe flag — prepended to the initial prompt
+//! - Skills: no per-session mechanism. Codex discovers `<name>/SKILL.md` only
+//!   under `$CODEX_HOME/skills` and under `.agents/skills` of the project
+//!   root, and the project root of an agent is its worktree (verified on
+//!   0.151.0 with `codex debug prompt-input`). Both would put one agent's
+//!   skills in front of every other, or files Ariadne wrote in a checkout
+//!   that belongs to the repository. So Codex reads its skills from the index
+//!   in the system prompt, which names each document by its run-dir path.
 //! - Resume: `codex resume <thread-id>`; flags must be re-passed (they are
 //!   not inherited from the original session)
 //! - Compaction: `/compact` typed into the composer — the command takes no
