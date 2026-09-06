@@ -55,19 +55,21 @@ same binary also serves (013).
    too: how it ends (`task create|update --landing`), whether it is reviewed
    (`--reviewer`, `--no-reviewer`), and whether the goal is over
    (`goal complete`).
-10. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
+10. What the agents said to each other is readable from here: `task messages`
+    lists the whole channel of a task, oldest first (018).
+11. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
    block, no transport detail, no repeated envelope. `--format json` prints
    the daemon's envelope instead, so a script keeps the status and code the
    human line drops.
-11. The exit code says what kind of failure it was, and every kind has one of
+12. The exit code says what kind of failure it was, and every kind has one of
    its own; it is documented in `ariadne --help`.
-12. Completions are generated for bash and zsh and complete against live data:
+13. Completions are generated for bash and zsh and complete against live data:
     candidates newest first, live sessions before ended ones when attaching,
     the efforts an entry lists and no others.
-13. `ariadne doctor` answers why the daemon will not start — including a
+14. `ariadne doctor` answers why the daemon will not start — including a
     database written by a release whose migrations this one no longer ships,
     which it names along with the file to delete (016).
-14. A tool is checked for its version as well as its presence where a version
+15. A tool is checked for its version as well as its presence where a version
     is what decides: git below 2.42 has no `worktree add --orphan` and so
     cannot start a task in a repository with no commits (002), which is a
     warning naming that one case, on this PATH and on the daemon's alike.

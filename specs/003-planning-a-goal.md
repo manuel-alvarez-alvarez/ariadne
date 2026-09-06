@@ -45,12 +45,15 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
    files run together.
 6. It staffs one author per task, on the skills that work needs (017), and
    sizes every agent from the model catalog (011).
-7. Three things are settled with the user rather than decided alone, because
+7. Four things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
    - which tasks are worth a review, and what each review is for — a task
      with nothing to review is staffed with no reviewer (017);
-   - how each task ends: `merge`, `pull_request` or `none` (005).
+   - how each task ends: `merge`, `pull_request` or `none` (005);
+   - what each agent runs on. The orchestrator sizes every one of them from
+     the catalog (011) and shows the user what it chose; the model the user
+     names instead is the one that is staffed.
 8. It shows the user the whole plan and revises it until they write an
    explicit yes. Nothing starts before that yes.
 9. It writes no specification of its own. Where a goal wants one, that is a
@@ -69,9 +72,12 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
     task that failed, a task that has gone quiet, or a goal with nothing left
     to do. Once per situation, on its own pane. Work in progress is what the
     orchestrator delegated, and it is not woken for that.
-14. It answers with `list_tasks`, and then with `retry_task`, `cancel_task`,
+14. Its pane is also open to the agents themselves. Any of them can write to
+    it about anything the task does not answer, and the message arrives as a
+    turn (018); it answers with `reply`.
+15. It answers with `list_tasks`, and then with `retry_task`, `cancel_task`,
     `update_task` or nothing at all.
-15. `complete_goal` ends the goal. Whether the goal is *met* is a judgement
+16. `complete_goal` ends the goal. Whether the goal is *met* is a judgement
     about the work, so the daemon does not make it — but it refuses the call
     while any task is still going, which is the part it can see. The user may
     make the same call, so a goal whose orchestrator will not start is still

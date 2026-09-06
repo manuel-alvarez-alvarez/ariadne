@@ -114,7 +114,8 @@ impl AppState {
         goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
-        landing::list_reviews, landing::post_review, landing::diff,
+        landing::list_task_messages, landing::post_task_message,
+        goals::list_goal_messages, goals::post_goal_message, landing::diff,
         landing::record_pull_request,
         sessions::list, sessions::get, sessions::kill, sessions::resume,
         sessions::input, sessions::resize, sessions::logs,
@@ -137,7 +138,7 @@ impl AppState {
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "goals", description = "Goals and their plans"),
-        (name = "tasks", description = "Tasks, transitions, reviews"),
+        (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions (tmux-hosted)"),
         (name = "events", description = "Raw agent events from hooks, and the live domain-event stream"),
         (name = "models", description = "Model catalogs per agent CLI"),
@@ -186,6 +187,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/goals/{id}/cancel", post(goals::cancel))
         .route("/v1/goals/{id}/finalize", post(goals::finalize))
         .route("/v1/goals/{id}/complete", post(goals::complete))
+        .route(
+            "/v1/goals/{id}/messages",
+            get(goals::list_goal_messages).post(goals::post_goal_message),
+        )
         .route("/v1/goals/{goal_id}/tasks", post(tasks::create))
         // tasks
         .route("/v1/tasks", get(tasks::list))
@@ -197,8 +202,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tasks/{id}/cancel", post(tasks::cancel))
         .route("/v1/tasks/{id}/retry", post(tasks::retry))
         .route(
-            "/v1/tasks/{id}/reviews",
-            get(landing::list_reviews).post(landing::post_review),
+            "/v1/tasks/{id}/messages",
+            get(landing::list_task_messages).post(landing::post_task_message),
         )
         .route("/v1/tasks/{id}/diff", get(landing::diff))
         .route(

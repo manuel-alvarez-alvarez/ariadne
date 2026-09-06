@@ -14,12 +14,12 @@ use ariadne_api::stream::{DeletedDto, DomainEvent};
 use ariadne_api::tasks::TaskDto;
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, ReviewVerdict, Seat, SessionStatus, TaskStatus,
+    Actor, AgentKind, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{EventFilter, NewReview, Task};
+use ariadne_store::{EventFilter, Task};
 
 use common::{Harness, TIMEOUT, expect_sse, get, harness, next_event, next_sse_message, post_json};
 
@@ -1059,17 +1059,8 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
     .await;
 
     // ...and once the verdict is in, the same prompt raises nothing.
-    h.store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: task.review_round,
-            reviewer_agent_id: cast.reviewer.id.clone(),
-            session_id: Some(session.id.clone()),
-            verdict: ReviewVerdict::Approve,
-            body: None,
-        })
-        .await
-        .unwrap();
+    h.verdict_from(&task, &session, MessageKind::Approve, "looks right")
+        .await;
     h.ingest(&session, "notification", permission_prompt()).await;
     let quiet = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(

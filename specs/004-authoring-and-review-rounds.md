@@ -3,7 +3,7 @@ id: authoring-and-review-rounds
 status: current
 updated: 2026-09-06
 areas: [daemon, store, prompts]
-commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e, 23d191a5]
+commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e, 23d191a5, 29e6d84e]
 tests:
   - crates/ariadne-daemon/tests/prompts.rs
   - crates/ariadne-daemon/tests/resume.rs
@@ -45,6 +45,8 @@ Out: the transition table itself (001), the landing that follows approval
 7. A reviewer verifies the change in its own worktree — installing what it
    needs, building, testing and linting there — and gives exactly one verdict
    per round through `submit_verdict`. Nothing else counts as a verdict.
+   Anything it cannot judge from the change it asks the author about instead
+   (018); a question is not a verdict, and asking one closes no round.
 8. Verdicts close a round before anything else is done with it: any request
    for changes moves the task to `changes_requested`, whatever else the round
    holds. Otherwise, approvals of the round are counted and the task is
@@ -56,7 +58,9 @@ Out: the transition table itself (001), the landing that follows approval
    people on a published request (005). The author answers every point and
    says why where the code stays.
 10. A reviewer that has already voted this round is nobody's blocker: no
-    attention is raised on it and no session is started for it.
+    attention is raised on it and no session is started for it. It stays up
+    all the same, until the task is over, because the author may still have
+    something to ask it (018).
 11. An author whose task is under review is likewise not the agent the work
     is waiting on (009).
 
@@ -76,7 +80,7 @@ Out: the transition table itself (001), the landing that follows approval
   agent id is spawned afresh
   (`::a_reviewer_without_an_agent_id_is_spawned_afresh`).
 - One verdict per reviewer per round is recorded
-  (`store.rs::one_review_verdict_per_round`).
+  (`store.rs::one_verdict_per_reviewer_per_round`).
 - The review summary is the reason of the latest review request
   (`store.rs::the_review_summary_is_the_reason_of_the_latest_review_request`).
 - A reviewer that already voted raises no attention

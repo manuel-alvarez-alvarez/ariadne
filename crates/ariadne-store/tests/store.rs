@@ -1,7 +1,7 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, MergeStrategy, ReviewVerdict, Seat,
+    Actor, AgentKind, AttentionReason, GoalStatus, MergeStrategy, MessageKind, Seat,
     SessionStatus, TaskStatus, TokenUsage,
 };
 use ariadne_store::defaults::{default_landing_prompt};
@@ -896,51 +896,115 @@ async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
     );
 }
 
+/// One channel carries everything the agents say, and the one uniqueness in
+/// it is the verdict: a reviewer votes once a round, and a question it asks
+/// in between is not a vote.
 #[tokio::test]
-async fn one_review_verdict_per_round() {
+async fn one_verdict_per_reviewer_per_round() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
     let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0).id;
+    let author = store.task_author(&task.id).await.unwrap().id;
+    let verdict = |round: i64, kind: MessageKind, body: &str| NewMessage {
+        goal_id: task.goal_id.clone(),
+        task_id: Some(task.id.clone()),
+        round,
+        kind,
+        from_actor: Actor::Reviewer,
+        from_agent_id: Some(reviewer.clone()),
+        from_session: None,
+        to_actor: Actor::Author,
+        to_agent_id: Some(author.clone()),
+        in_reply_to: None,
+        body: body.into(),
+    };
 
     store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: 1,
-            reviewer_agent_id: reviewer.clone(),
-            session_id: None,
-            verdict: ReviewVerdict::RequestChanges,
-            body: Some("please fix".into()),
-        })
+        .send_message(verdict(1, MessageKind::RequestChanges, "please fix"))
         .await
         .unwrap();
 
     let dup = store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: 1,
-            reviewer_agent_id: reviewer.clone(),
-            session_id: None,
-            verdict: ReviewVerdict::Approve,
-            body: None,
-        })
+        .send_message(verdict(1, MessageKind::Approve, "on second thoughts"))
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
 
-    // Next round is fine.
+    // A question in the same round is not a second verdict.
     store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: 2,
-            reviewer_agent_id: reviewer,
-            session_id: None,
-            verdict: ReviewVerdict::Approve,
-            body: None,
+        .send_message(NewMessage {
+            kind: MessageKind::Question,
+            ..verdict(1, MessageKind::Question, "what is the flag for?")
+        })
+        .await
+        .expect("a question is not a vote");
+
+    // And the next round takes a verdict of its own.
+    store
+        .send_message(verdict(2, MessageKind::Approve, "looks right now"))
+        .await
+        .unwrap();
+    assert_eq!(store.round_verdicts(&task.id, 2).await.unwrap().len(), 1);
+    assert_eq!(
+        store.round_verdicts(&task.id, 1).await.unwrap().len(),
+        1,
+        "the question is not counted as one"
+    );
+}
+
+/// A message goes to exactly one recipient and is delivered once: the stamp is
+/// what says which of them have reached a pane.
+#[tokio::test]
+async fn a_message_is_delivered_once_and_the_stamp_says_so() {
+    let w = World::new().await;
+    let (store, task) = (&w.store, &w.task);
+    let author = store.task_author(&task.id).await.unwrap().id;
+
+    let asked = store
+        .send_message(NewMessage {
+            goal_id: task.goal_id.clone(),
+            task_id: Some(task.id.clone()),
+            round: 0,
+            kind: MessageKind::Question,
+            from_actor: Actor::Reviewer,
+            from_agent_id: Some(store.list_task_reviewers(&task.id).await.unwrap()[0].id.clone()),
+            from_session: None,
+            to_actor: Actor::Author,
+            to_agent_id: Some(author.clone()),
+            in_reply_to: None,
+            body: "why the retry?".into(),
         })
         .await
         .unwrap();
-    assert_eq!(
-        store.list_reviews(&task.id, Some(2)).await.unwrap().len(),
-        1
+    assert!(!asked.is_delivered());
+
+    let waiting = store
+        .list_messages(MessageFilter {
+            task_id: Some(task.id.clone()),
+            undelivered_only: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(waiting.len(), 1);
+
+    store.mark_message_delivered(&asked.id).await.unwrap();
+    let delivered = store.get_message(&asked.id).await.unwrap();
+    let at = delivered.delivered_at.clone().expect("stamped");
+
+    // Stamping twice keeps the first time: a message typed twice is a bug in
+    // the caller, and overwriting the stamp would hide it.
+    store.mark_message_delivered(&asked.id).await.unwrap();
+    assert_eq!(store.get_message(&asked.id).await.unwrap().delivered_at, Some(at));
+    assert!(
+        store
+            .list_messages(MessageFilter {
+                task_id: Some(task.id.clone()),
+                undelivered_only: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty()
     );
 }
 

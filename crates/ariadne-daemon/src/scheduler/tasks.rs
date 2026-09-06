@@ -1,9 +1,11 @@
 //! What a task wants, by status: an author from `ready` to the merge, the
 //! reviewers a round is waiting on, and the cleanup its ending owes.
 
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
-use ariadne_core::{Actor, AttentionReason, GoalStatus, PromptKind, ReviewVerdict, Seat, TaskStatus};
+use ariadne_core::{
+    Actor, AttentionReason, GoalStatus, MessageKind, PromptKind, Seat, TaskStatus,
+};
 use ariadne_store::{AgentSession, SessionFilter, Task, TaskFilter};
 
 use crate::agents::prompts;
@@ -29,13 +31,19 @@ impl super::Scheduler {
             self.launcher.branches.unwatch(&task.id);
         }
 
-        // Reviewer sessions only belong to under_review: an agent whose part
-        // of the lifecycle has passed is not left running on the task. The
-        // author's is not one of them — it holds the worktree from the
-        // first commit to the merge.
-        if task.status() != TaskStatus::UnderReview {
-            self.end_reviewers(&task).await;
-        }
+        // Whatever the agents of this task have said to each other since the
+        // last pass, delivered before anything else is decided: a question
+        // answered is what unblocks the agent that asked, and the answer is
+        // no use to it a pass later than it could have had it.
+        self.deliver_task_messages(&task.id).await;
+
+        // Every agent of a task stays up until the task is over. A reviewer
+        // that has voted is not done with the task — the author may have
+        // something to ask it, and it may have something to ask the author —
+        // so it sits idle instead of being killed and started again for the
+        // next round. What ends them is the task ending, which the terminal
+        // arms below do through `cleanup_task`.
+        
         // A task that has left `approved` — landed, or sent back to the
         // reviewers with a revision — is one whose author wants briefing
         // again the next time it is approved.
@@ -95,9 +103,9 @@ impl super::Scheduler {
             }
             TaskStatus::UnderReview => {
                 let reviewers = self.store.list_task_reviewers(&task.id).await?;
-                let reviews = self
+                let verdicts = self
                     .store
-                    .list_reviews(&task.id, Some(task.review_round))
+                    .round_verdicts(&task.id, task.review_round)
                     .await?;
 
                 // Two hand-offs meet here, and each earns the session that
@@ -105,15 +113,15 @@ impl super::Scheduler {
                 // review, and every reviewer's whose verdict is in. Owed
                 // before the verdicts are read, so that a round they close
                 // ends the reviewers only once the compaction is done.
-                self.owe_review_compactions(&task, &reviews).await?;
+                self.owe_review_compactions(&task, &verdicts).await?;
 
                 // Verdicts first: they may close the round.
-                let changes_requested = reviews
+                let changes_requested = verdicts
                     .iter()
-                    .any(|r| r.verdict() == ReviewVerdict::RequestChanges);
-                let approvals = reviews
+                    .any(|m| m.kind() == Some(MessageKind::RequestChanges));
+                let approvals = verdicts
                     .iter()
-                    .filter(|r| r.verdict() == ReviewVerdict::Approve)
+                    .filter(|m| m.kind() == Some(MessageKind::Approve))
                     .count() as i64;
                 if changes_requested {
                     info!(task = %task.id, "changes requested");
@@ -145,9 +153,9 @@ impl super::Scheduler {
                 // so what runs for round two onwards is that same session
                 // resumed — its round is not part of its identity, only of
                 // the briefing it is woken with.
-                let verdict_by: std::collections::HashSet<_> = reviews
+                let verdict_by: std::collections::HashSet<_> = verdicts
                     .iter()
-                    .map(|r| r.reviewer_agent_id.clone())
+                    .filter_map(|m| m.from_agent_id.clone())
                     .collect();
                 let pending: Vec<String> = reviewers
                     .into_iter()
@@ -228,23 +236,20 @@ impl super::Scheduler {
                 }
             }
             TaskStatus::ChangesRequested => {
-                let reviews = self
+                let verdicts = self
                     .store
-                    .list_reviews(&task.id, Some(task.review_round))
+                    .round_verdicts(&task.id, task.review_round)
                     .await?;
                 // Who asked, as the author reads it. An agent has no name of
                 // its own, so it is named by the skills it reviewed with, and
                 // by its id where it is staffed no longer.
                 let mut feedback: Vec<(String, String)> = Vec::new();
-                for review in reviews
+                for verdict in verdicts
                     .iter()
-                    .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
+                    .filter(|m| m.kind() == Some(MessageKind::RequestChanges))
                 {
-                    let skills = self
-                        .store
-                        .agent_skills(&review.reviewer_agent_id)
-                        .await
-                        .unwrap_or_default();
+                    let agent_id = verdict.from_agent_id.clone().unwrap_or_default();
+                    let skills = self.store.agent_skills(&agent_id).await.unwrap_or_default();
                     let who = match skills.is_empty() {
                         false => format!(
                             "reviewer ({})",
@@ -254,12 +259,9 @@ impl super::Scheduler {
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         ),
-                        true => format!("reviewer {}", review.reviewer_agent_id),
+                        true => format!("reviewer {agent_id}"),
                     };
-                    feedback.push((
-                        who,
-                        review.body.clone().unwrap_or_else(|| "(no details)".into()),
-                    ));
+                    feedback.push((who, verdict.body.clone()));
                 }
                 // The author's pane is not killed under a compaction: the
                 // feedback goes out on the pass after it ends, and the task
@@ -335,7 +337,7 @@ impl super::Scheduler {
     async fn owe_review_compactions(
         &mut self,
         task: &Task,
-        reviews: &[ariadne_store::Review],
+        verdicts: &[ariadne_store::Message],
     ) -> anyhow::Result<()> {
         let situation = (task.status.clone(), task.review_round);
         let live = self
@@ -349,8 +351,8 @@ impl super::Scheduler {
         for author in live.iter().filter(|s| s.seat() == Seat::Author) {
             self.owe_compaction(author, situation.clone()).await;
         }
-        for review in reviews {
-            let Some(session_id) = &review.session_id else {
+        for verdict in verdicts {
+            let Some(session_id) = &verdict.from_session else {
                 continue;
             };
             if let Some(reviewer) = live.iter().find(|s| &s.id == session_id) {
@@ -375,39 +377,6 @@ impl super::Scheduler {
         Ok(live
             .into_iter()
             .find(|s| s.seat() == Seat::Author && self.compaction_in_flight(s)))
-    }
-
-    /// End the reviewers of a task whose review is over — but not one still
-    /// owed the compaction its verdict earned: the session serves every
-    /// round of the task, and what the compaction shortens is exactly what
-    /// the next round would otherwise replay. It is ended on the pass after
-    /// the compaction is done, or given up on.
-    async fn end_reviewers(&self, task: &Task) {
-        let live = match self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                live_only: true,
-                ..Default::default()
-            })
-            .await
-        {
-            Ok(live) => live,
-            Err(e) => {
-                warn!(task = %task.id, error = %e, "listing the reviewers to end failed");
-                return;
-            }
-        };
-        for reviewer in live.iter().filter(|s| s.seat() == Seat::Reviewer) {
-            if self.compaction_pending(reviewer) {
-                debug!(task = %task.id, session = %reviewer.id, "the reviewer is left up until the compaction it owes is done");
-                continue;
-            }
-            info!(session = %reviewer.id, seat = %reviewer.seat, "killing session: the reviewers' part of the lifecycle has passed");
-            if let Err(e) = self.launcher.kill_session(&reviewer.id).await {
-                warn!(session = %reviewer.id, error = %e, "killing the session failed");
-            }
-        }
     }
 
     pub(super) async fn record_spawn_failure(&mut self, task_id: &str) {

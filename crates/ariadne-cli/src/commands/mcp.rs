@@ -48,6 +48,10 @@ impl McpSeat {
                 "retry_task",
                 "cancel_task",
                 "complete_goal",
+                "ask",
+                "tell",
+                "reply",
+                "read_messages",
             ],
             McpSeat::Author => &[
                 "get_task",
@@ -55,8 +59,20 @@ impl McpSeat {
                 "fail_task",
                 "finish_task",
                 "record_pull_request",
+                "ask",
+                "tell",
+                "reply",
+                "read_messages",
             ],
-            McpSeat::Reviewer => &["get_task", "get_diff", "submit_verdict"],
+            McpSeat::Reviewer => &[
+                "get_task",
+                "get_diff",
+                "submit_verdict",
+                "ask",
+                "tell",
+                "reply",
+                "read_messages",
+            ],
         }
     }
 }
@@ -318,6 +334,10 @@ pub(crate) mod tests {
                     "retry_task",
                     "cancel_task",
                     "complete_goal",
+                    "ask",
+                    "tell",
+                    "reply",
+                    "read_messages",
                 ][..],
             ),
             (
@@ -328,11 +348,23 @@ pub(crate) mod tests {
                     "fail_task",
                     "finish_task",
                     "record_pull_request",
+                    "ask",
+                    "tell",
+                    "reply",
+                    "read_messages",
                 ][..],
             ),
             (
                 McpSeat::Reviewer,
-                &["get_task", "get_diff", "submit_verdict"][..],
+                &[
+                    "get_task",
+                    "get_diff",
+                    "submit_verdict",
+                    "ask",
+                    "tell",
+                    "reply",
+                    "read_messages",
+                ][..],
             ),
         ] {
             assert_eq!(seat.tools(), tools, "the tools of the {seat:?}");
@@ -341,6 +373,7 @@ pub(crate) mod tests {
         /// Every tool the three seats are allowed between them, in one list,
         /// so a tool added or dropped is a line of this file.
         const EVERY_TOOL: &[&str] = &[
+            "ask",
             "cancel_task",
             "complete_goal",
             "create_task",
@@ -352,10 +385,13 @@ pub(crate) mod tests {
             "list_models",
             "list_skills",
             "list_tasks",
+            "read_messages",
             "record_pull_request",
+            "reply",
             "request_review",
             "retry_task",
             "submit_verdict",
+            "tell",
             "update_task",
         ];
         assert_eq!(distinct_tools(), EVERY_TOOL);

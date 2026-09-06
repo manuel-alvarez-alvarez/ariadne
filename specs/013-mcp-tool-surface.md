@@ -43,6 +43,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    - **author**: `get_task`, `request_review`, `fail_task`, `finish_task`,
      `record_pull_request`
    - **reviewer**: `get_task`, `get_diff`, `submit_verdict`
+   - **every seat**: `ask`, `tell`, `reply`, `read_messages` — the channel
+     the agents talk to each other on (018)
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with

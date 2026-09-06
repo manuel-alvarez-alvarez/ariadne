@@ -46,11 +46,11 @@ export function taskQueryOptions(taskId: string) {
   })
 }
 
-export function taskReviewsQueryOptions(taskId: string) {
+export function taskMessagesQueryOptions(taskId: string) {
   return queryOptions({
-    queryKey: qk.tasks.reviews(taskId),
+    queryKey: qk.tasks.messages(taskId),
     queryFn: () =>
-      unwrap(api().GET("/v1/tasks/{id}/reviews", { params: { path: { id: taskId } } })),
+      unwrap(api().GET("/v1/tasks/{id}/messages", { params: { path: { id: taskId } } })),
   })
 }
 

@@ -69,8 +69,11 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(event.data.task_id) })
       break
     }
-    case "review_created": {
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.reviews(event.data.task_id) })
+    case "message_sent": {
+      // A message about the goal itself belongs to no task's channel.
+      if (event.data.task_id) {
+        void queryClient.invalidateQueries({ queryKey: qk.tasks.messages(event.data.task_id) })
+      }
       break
     }
     case "session_created": {

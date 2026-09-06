@@ -246,18 +246,53 @@ CREATE TABLE session_usage (
     PRIMARY KEY (session_id, source)
 );
 
-CREATE TABLE reviews (
-    id                  TEXT PRIMARY KEY,
-    task_id             TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
-    round               INTEGER NOT NULL,
-    reviewer_agent_id   TEXT NOT NULL REFERENCES task_agents (id) ON DELETE CASCADE,
-    session_id          TEXT REFERENCES agent_sessions (id),
-    verdict             TEXT NOT NULL CHECK (verdict IN ('approve', 'request_changes')),
-    body                TEXT,
-    created_at          TEXT NOT NULL,
-    UNIQUE (task_id, round, reviewer_agent_id)
+-- What one agent said to another.
+--
+-- One channel for everything the agents say between themselves: a question and
+-- its answer, an author asking for a review, a reviewer's verdict, a note. A
+-- verdict used to be a table of its own, which is why the only thing a
+-- reviewer could ever say was approve or request changes.
+--
+-- Every message has exactly one recipient, so a request that goes to three
+-- reviewers is three rows: `delivered_at` is per recipient, and one row with
+-- three readers could not say which of them has seen it.
+--
+-- `to_agent_id` names the staffed agent a message is for. It is NULL for the
+-- orchestrator, which is staffed on no task, and `to_actor` says which of the
+-- two it is.
+CREATE TABLE messages (
+    id            TEXT PRIMARY KEY,
+    goal_id       TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
+    -- NULL for a message about the goal rather than about one task.
+    task_id       TEXT REFERENCES tasks (id) ON DELETE CASCADE,
+    -- The review round this belongs to, so a verdict is counted in its own.
+    round         INTEGER NOT NULL DEFAULT 0,
+    kind          TEXT NOT NULL
+                  CHECK (kind IN ('question', 'answer', 'review_request',
+                                  'approve', 'request_changes', 'note')),
+    from_actor    TEXT NOT NULL
+                  CHECK (from_actor IN ('orchestrator', 'author', 'reviewer',
+                                        'daemon', 'user')),
+    from_agent_id TEXT REFERENCES task_agents (id) ON DELETE CASCADE,
+    -- The session that actually sent it, for the record; a message outlives it.
+    from_session  TEXT REFERENCES agent_sessions (id) ON DELETE SET NULL,
+    to_actor      TEXT NOT NULL
+                  CHECK (to_actor IN ('orchestrator', 'author', 'reviewer',
+                                      'daemon', 'user')),
+    to_agent_id   TEXT REFERENCES task_agents (id) ON DELETE CASCADE,
+    -- The message this answers, where it answers one.
+    in_reply_to   TEXT REFERENCES messages (id) ON DELETE SET NULL,
+    body          TEXT NOT NULL,
+    -- When it reached the recipient's pane. NULL while it is still waiting.
+    delivered_at  TEXT,
+    created_at    TEXT NOT NULL
 );
-CREATE INDEX idx_reviews_task ON reviews (task_id, round);
+CREATE INDEX idx_messages_task ON messages (task_id, id);
+CREATE INDEX idx_messages_goal ON messages (goal_id, id);
+-- One verdict per reviewer per round, which is what closes a round.
+CREATE UNIQUE INDEX idx_messages_one_verdict
+    ON messages (task_id, round, from_agent_id)
+    WHERE kind IN ('approve', 'request_changes');
 
 CREATE TABLE agent_events (
     id         TEXT PRIMARY KEY,

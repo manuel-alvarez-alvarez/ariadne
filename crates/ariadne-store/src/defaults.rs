@@ -147,6 +147,7 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
         PromptKind::OrchestratorBriefing => ORCHESTRATOR_BRIEFING,
         PromptKind::OrchestratorResume => ORCHESTRATOR_RESUME,
         PromptKind::GoalAttention => GOAL_ATTENTION,
+        PromptKind::IncomingMessage => INCOMING_MESSAGE,
         PromptKind::AuthorBriefing => AUTHOR_BRIEFING,
         PromptKind::AuthorResume => AUTHOR_RESUME,
         PromptKind::ChangesRequested => CHANGES_REQUESTED,
@@ -209,10 +210,10 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You turn an Ariadne goal into a plan
 4. Staff one author per task with `create_task`. Give each agent the skills its work needs (`list_skills`). It knows only its task and its skills.
 5. Ask the user which tasks are worth a review, and what each review is for. Staff those reviewers. Staff none on the rest.
 6. Ask the user how each task ends. `merge` lands it on the base branch. `pull_request` leaves a request for somebody. `none` lands nothing.
-7. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request.
+7. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Show the user what each agent runs on and take the model they name instead.
 8. Show the user the whole plan. Revise it until they write an explicit yes.
 9. Call `finalize_plan`. It starts every task and ends planning. Call it no earlier.
-10. Stay up for the rest of the goal. Answer what the user asks. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
+10. Stay up for the rest of the goal. Answer the user, and `reply` to every agent that writes to you. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
 
 /// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -223,7 +224,8 @@ const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first c
 2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Make small commits, their text in STE. Keep tests and linters green. Add the tests the task asks for.
 3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
 4. Call `request_review` with one short summary in STE: what changed, why, how you verified it. Apply every verdict on the same branch and call it again. Where you disagree, say why in that summary.
-5. Enough approvals, and Ariadne briefs you to end the task."#;
+5. `ask` a reviewer or the orchestrator what the task does not answer. `reply` to what they ask you. Work on while you wait.
+6. Every reviewer approves, and Ariadne briefs you to end the task."#;
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
 /// stated: one per round, through `submit_verdict`.
@@ -232,7 +234,8 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task
 1. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
 2. Verify the change here. Install what it needs. Build, test and lint in this worktree, never another.
 3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and name it.
-4. Call `submit_verdict` once per round. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
+4. `ask` the author what the change does not answer. `reply` to what it asks you. A question is not a verdict.
+5. Call `submit_verdict` once per round. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
 
 /// Initial briefing of an orchestrator session: the goal, the repositories it
 /// works in, and the one number a plan has to fit inside.
@@ -277,6 +280,22 @@ const GOAL_ATTENTION: &str = r#"The tasks of "{goal_title}" need you:
 {tasks}
 
 Read them with `list_tasks`. Retry, cancel or rewrite what you must. Call `complete_goal` once every task is done."#;
+
+/// What one agent said to another, as it arrives in the recipient's pane.
+///
+/// The agents talk to each other, and this is the whole of the transport: the
+/// message is typed into the composer and submitted, so it reaches the agent
+/// as a turn rather than as something it has to go and look for.
+///
+/// It carries the id an answer names, because `reply` is what sends one back
+/// to whoever asked — and the sender is named by its seat and its skills,
+/// which is the only thing about a generic agent that means anything to the
+/// reader.
+const INCOMING_MESSAGE: &str = r#"Message from your {from}, id {message_id}:
+
+{body}
+
+Answer it with `reply`, on that id. Go on with your work after."#;
 
 /// Initial briefing of an author session: the task, and the values its
 /// commands act on.
@@ -567,9 +586,15 @@ mod tests {
     /// is 1293 characters for 1155, and no other kind paid for it — the total
     /// went to 1350 for the second text, which is a situation the daemon
     /// could not report before rather than a rewording of one it could.
+    ///
+    /// Then the agents got a channel to each other, and one more kind with
+    /// it: what a message looks like when it lands in a pane. Every seat is
+    /// briefed with that one — anybody can be written to — and it is the
+    /// transport for a thing no text could carry before, so the total went to
+    /// 1500 rather than the kinds being squeezed to fit it.
     #[test]
     fn size_caps_hold() {
-        const KIND_TOTAL: usize = 1350;
+        const KIND_TOTAL: usize = 1500;
         const LANDING_TOTAL: usize = 2150;
         const GRAND_TOTAL: usize = 8000;
 
@@ -578,10 +603,16 @@ mod tests {
         // stay where they were. It was raised from 1500 to 1600 when staffing
         // arrived: the orchestrator now picks the skills of every agent it
         // creates, which is a step of the playbook and not a rewording of
-        // one.
+        // one. It went to 1650 when the agents got a channel: staying open to
+        // them for the whole goal is a step of its own, and so is showing the
+        // user what each agent runs on before anything starts.
+        //
+        // The author's and the reviewer's went to 1010 for the same channel:
+        // one step each about asking and answering, which is a thing neither
+        // could do before rather than a rewording of a thing it could.
         let system_cap = |seat: Seat| match seat {
-            Seat::Orchestrator => 1600,
-            Seat::Author | Seat::Reviewer => 950,
+            Seat::Orchestrator => 1650,
+            Seat::Author | Seat::Reviewer => 1010,
         };
         let cap = |kind: PromptKind| match kind {
             PromptKind::OrchestratorResume | PromptKind::AuthorResume | PromptKind::ReviewerResume => {

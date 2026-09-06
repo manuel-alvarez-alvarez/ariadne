@@ -5,9 +5,7 @@
 //! scheduler and the launcher all write through these methods, so no state
 //! change can reach the database unannounced.
 
-use crate::{
-    AgentEvent, AgentSession, Goal, Repository, Review, Skill, Task, TaskTransition,
-};
+use crate::{AgentEvent, AgentSession, Goal, Message, Repository, Skill, Task, TaskTransition};
 
 /// A committed write, carrying the row as it now stands.
 #[derive(Debug, Clone)]
@@ -21,7 +19,7 @@ pub enum Change {
         task: Task,
         transition: Option<TaskTransition>,
     },
-    ReviewCreated(Review),
+    MessageSent(Message),
     SessionCreated(AgentSession),
     SessionUpdated(AgentSession),
     AgentEventCreated(AgentEvent),

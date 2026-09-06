@@ -134,7 +134,7 @@ export function TaskSessionView({
 }
 
 /**
- * A session id mentioned elsewhere in the panel — who left a review — as a
+ * A session id mentioned elsewhere in the panel — who sent a message — as a
  * way into the view above.
  *
  * It replaces, like the rest of the navigation inside a panel: where the user

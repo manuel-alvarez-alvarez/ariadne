@@ -3,7 +3,7 @@ id: http-api-events-and-usage
 status: current
 updated: 2026-09-05
 areas: [api, daemon]
-commits: [d94042f4, 481a405d, 224370f4]
+commits: [d94042f4, 481a405d, 224370f4, 29e6d84e]
 tests:
   - crates/ariadne-daemon/tests/events.rs
   - crates/ariadne-daemon/tests/unknown_fields.rs

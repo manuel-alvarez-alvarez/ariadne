@@ -6,14 +6,14 @@ use anyhow::Result;
 use clap::Subcommand;
 use serde_json::json;
 
-use ariadne_api::reviews::ReviewDto;
+use ariadne_api::messages::MessageDto;
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto,
 };
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::{Client, SseEvent};
-use ariadne_core::{Landing, Seat, TaskStatus};
+use ariadne_core::{Actor, Landing, Seat, TaskStatus};
 
 use super::follow;
 use super::resolve::{self, Kind};
@@ -55,12 +55,13 @@ const LS: &[Column] = &[
 /// block that spills over several lines lines them all up under the first.
 const INDENT: &str = "\n              ";
 
-/// Columns of `task reviews`. A review body is prose, and only its opening
-/// belongs in a table — `task reviews --format json` has all of it.
-const REVIEWS: &[Column] = &[
-    col("round", UNCAPPED),
-    col("reviewer", 24).title(),
-    col("verdict", UNCAPPED),
+/// Columns of `task messages`. A message body is prose, and only its opening
+/// belongs in a table — `task messages --format json` has all of it.
+const MESSAGES: &[Column] = &[
+    col("kind", UNCAPPED),
+    col("from", 20).title(),
+    col("to", 20).rank(2),
+    col("round", UNCAPPED).rank(1),
     col("body", 60).rank(0),
 ];
 
@@ -210,8 +211,11 @@ pub enum TaskCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
     },
-    /// Show a task's reviews
-    Reviews {
+    /// Show what a task's agents have said to each other
+    ///
+    /// One channel for all of it: the questions and their answers, the
+    /// author's review requests, and the reviewers' verdicts, oldest first.
+    Messages {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
@@ -346,26 +350,27 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
             print(format, &t, || print_kv(&inspect_pairs(&t)))?;
         }
-        TaskCommand::Reviews { id } => {
+        TaskCommand::Messages { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
-            let reviews: Vec<ReviewDto> =
-                client.get_json(&format!("/v1/tasks/{id}/reviews")).await?;
-            // The reviewers of the task, so a verdict can be read as the
-            // skills that gave it rather than as an id.
+            let messages: Vec<MessageDto> =
+                client.get_json(&format!("/v1/tasks/{id}/messages")).await?;
+            // The agents of the task, so a message reads as the skills that
+            // sent it rather than as an id.
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
             print_list(
                 format,
-                &reviews,
-                REVIEWS,
-                |r| {
+                &messages,
+                MESSAGES,
+                |m| {
                     vec![
-                        r.round.to_string(),
-                        reviewer_label(&t, &r.reviewer_agent_id),
-                        r.verdict.as_str().into(),
-                        r.body.clone().unwrap_or_else(|| "-".into()),
+                        m.kind.as_str().into(),
+                        party_label(&t, m.from_actor, m.from_agent_id.as_deref()),
+                        party_label(&t, m.to_actor, m.to_agent_id.as_deref()),
+                        m.round.to_string(),
+                        m.body.clone(),
                     ]
                 },
-                "no reviews yet",
+                "nothing said yet",
             )?;
         }
         TaskCommand::History { id } => {
@@ -657,7 +662,15 @@ fn print_status(t: &TaskDto, format: Format) -> Result<()> {
 
 /// How a verdict names the agent that gave it: the skills that agent reviewed
 /// with, and the id where the task no longer staffs it.
-fn reviewer_label(task: &TaskDto, agent_id: &str) -> String {
+/// One end of a message, as a reader sees it.
+///
+/// An agent has no name, so it is named by the skills it works with, which is
+/// the only thing about it that says anything. The orchestrator has no skills
+/// and needs none: there is one of it.
+fn party_label(task: &TaskDto, actor: Actor, agent_id: Option<&str>) -> String {
+    let Some(agent_id) = agent_id else {
+        return actor.as_str().to_string();
+    };
     match task.agents.iter().find(|a| a.id == agent_id) {
         Some(agent) => agent_label(&agent.skills),
         None => agent_id.to_string(),
@@ -793,16 +806,21 @@ mod tests {
         );
     }
 
-    /// An agent has no name, so a verdict names it by the skills it reviewed
-    /// with — and by its id where the task staffs it no longer.
+    /// An agent has no name, so a message names its ends by the skills they
+    /// work with — by their id where the task staffs them no longer, and by
+    /// what they are where they hold no skills at all.
     #[test]
-    fn a_verdict_names_its_reviewer_by_the_skills_it_reviewed_with() {
+    fn a_message_names_its_ends_by_the_skills_they_work_with() {
         let t = TaskDto {
             agents: vec![reviewer("01REV", "code-review")],
             ..dto()
         };
-        assert_eq!(reviewer_label(&t, "01REV"), "code-review");
-        assert_eq!(reviewer_label(&t, "01GONE"), "01GONE");
+        assert_eq!(
+            party_label(&t, Actor::Reviewer, Some("01REV")),
+            "code-review"
+        );
+        assert_eq!(party_label(&t, Actor::Reviewer, Some("01GONE")), "01GONE");
+        assert_eq!(party_label(&t, Actor::Orchestrator, None), "orchestrator");
     }
 
     /// `task inspect` types its id, its goal, its title and its status the

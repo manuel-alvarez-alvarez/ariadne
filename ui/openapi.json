@@ -546,6 +546,122 @@
         }
       }
     },
+    "/v1/goals/{id}/messages": {
+      "get": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "The messages of a goal: what its agents said that was not about one task.",
+        "description": "A goal's channel is the orchestrator's inbox. Everything an agent says to\nit about a task is on that task instead, and this is where the rest goes.",
+        "operationId": "list_goal_messages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "round",
+            "in": "query",
+            "description": "Only the messages of this review round.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "to_agent_id",
+            "in": "query",
+            "description": "Only the messages for this staffed agent.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "undelivered",
+            "in": "query",
+            "description": "Only the ones that have not reached a pane yet.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MessageDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Send a message about the goal itself.",
+        "operationId": "post_goal_message",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/health": {
       "get": {
         "tags": [
@@ -1606,6 +1722,122 @@
         }
       }
     },
+    "/v1/tasks/{id}/messages": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "The messages of a task: what its agents have said to each other.",
+        "operationId": "list_task_messages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "round",
+            "in": "query",
+            "description": "Only the messages of this review round.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "to_agent_id",
+            "in": "query",
+            "description": "Only the messages for this staffed agent.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "undelivered",
+            "in": "query",
+            "description": "Only the ones that have not reached a pane yet.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MessageDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Send a message about a task.",
+        "description": "Who it is from is the session header's, never the body's: an agent cannot\nwrite as somebody else, and a call with no session behind it is the user\nspeaking.",
+        "operationId": "post_task_message",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/tasks/{id}/pull-request": {
       "post": {
         "tags": [
@@ -1689,84 +1921,6 @@
           },
           "403": {
             "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/tasks/{id}/reviews": {
-      "get": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Reviews of a task.",
-        "operationId": "list_reviews",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ReviewDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Submit a review verdict for the current round.",
-        "operationId": "post_review",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateReviewRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReviewDto"
-                }
-              }
-            }
           },
           "409": {
             "description": ""
@@ -1879,6 +2033,17 @@
   },
   "components": {
     "schemas": {
+      "Actor": {
+        "type": "string",
+        "description": "Who is attempting a transition: a seat, the daemon, or the user.",
+        "enum": [
+          "orchestrator",
+          "author",
+          "reviewer",
+          "daemon",
+          "user"
+        ]
+      },
       "AgentAssignment": {
         "type": "object",
         "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent_kind>[:<model>]`: the agent CLI on its own\nruns it on its own default model, an agent with a model after the `:` pins\nboth, and a string naming no agent CLI is refused — nothing here derives\none from the other. Omitted, the agent runs on the first installed CLI at\nspawn time, on that CLI's own default model.",
@@ -2183,31 +2348,6 @@
         },
         "additionalProperties": false
       },
-      "CreateReviewRequest": {
-        "type": "object",
-        "required": [
-          "verdict"
-        ],
-        "properties": {
-          "body": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "reviewer_agent_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Id of the reviewing task agent. Derived from the session context when\nthe call comes from an agent; required for user-submitted reviews."
-          },
-          "verdict": {
-            "$ref": "#/components/schemas/ReviewVerdict"
-          }
-        },
-        "additionalProperties": false
-      },
       "CreateSkillRequest": {
         "type": "object",
         "required": [
@@ -2460,18 +2600,20 @@
           },
           {
             "type": "object",
+            "description": "One agent said something to another.",
             "required": [
               "data",
               "event"
             ],
             "properties": {
               "data": {
-                "$ref": "#/components/schemas/ReviewDto"
+                "$ref": "#/components/schemas/MessageDto",
+                "description": "One agent said something to another."
               },
               "event": {
                 "type": "string",
                 "enum": [
-                  "review_created"
+                  "message_sent"
                 ]
               }
             }
@@ -2900,6 +3042,100 @@
           }
         }
       },
+      "MessageDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "goal_id",
+          "round",
+          "kind",
+          "from_actor",
+          "to_actor",
+          "body",
+          "created_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "delivered_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When it reached the recipient's pane, or None while it is still\nwaiting for one to be free."
+          },
+          "from_actor": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "from_agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The staffed agent that sent it, or None for the orchestrator, the\ndaemon and the user."
+          },
+          "from_session": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "goal_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "in_reply_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The message this answers, where it answers one."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MessageKind"
+          },
+          "round": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The review round it belongs to, read for a verdict and ignored\notherwise."
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The task it is about, or None for a message about the goal itself."
+          },
+          "to_actor": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "to_agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The staffed agent it is for, or None for the orchestrator."
+          }
+        }
+      },
+      "MessageKind": {
+        "type": "string",
+        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells the\nsix things they say apart. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what makes \"the reviewer asked the\nauthor something\" possible at all — before, the only thing a reviewer\ncould say was approve or request changes.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), one of them is answered, and the rest are said and left.",
+        "enum": [
+          "question",
+          "answer",
+          "review_request",
+          "approve",
+          "request_changes",
+          "note"
+        ]
+      },
       "ModelDto": {
         "type": "object",
         "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI\non its own, which is that CLI on its own default model.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything. The rest is what an orchestrator sizes a task from: what\nthis model is, what it costs and how fast it answers next to every other\nentry, the work it is and is not the choice for, and what each of its\nefforts buys.",
@@ -3092,59 +3328,6 @@
           }
         }
       },
-      "ReviewDto": {
-        "type": "object",
-        "required": [
-          "id",
-          "task_id",
-          "round",
-          "reviewer_agent_id",
-          "verdict",
-          "created_at"
-        ],
-        "properties": {
-          "body": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "reviewer_agent_id": {
-            "type": "string",
-            "description": "The task agent whose verdict this is."
-          },
-          "round": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "session_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "task_id": {
-            "type": "string"
-          },
-          "verdict": {
-            "$ref": "#/components/schemas/ReviewVerdict"
-          }
-        }
-      },
-      "ReviewVerdict": {
-        "type": "string",
-        "description": "Review verdict for one reviewer in one round.",
-        "enum": [
-          "approve",
-          "request_changes"
-        ]
-      },
       "Seat": {
         "type": "string",
         "description": "Where an agent sits: the orchestrator of a goal, or the author or a\nreviewer of one task.\n\nA seat is a position, not an identity. Every agent below the orchestrator\nis generic, and what it can do comes from the skills it loads; the seat is\nonly what the state machine and the launcher need to know about it.",
@@ -3153,6 +3336,42 @@
           "author",
           "reviewer"
         ]
+      },
+      "SendMessageRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/tasks/{id}/messages` and `POST /v1/goals/{id}/messages`.\n\nWho it is *from* comes from the session header rather than the body: an\nagent cannot send a message as somebody else, and a message with no session\nbehind it is the user's.",
+        "required": [
+          "kind",
+          "to_actor",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "in_reply_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The message this answers. Its recipient is where the answer goes, so\nan answer needs neither `to_actor` that disagrees with it nor an agent\nid of its own."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MessageKind"
+          },
+          "to_actor": {
+            "$ref": "#/components/schemas/Actor",
+            "description": "Who it is for. `orchestrator` needs no agent id — a goal has one."
+          },
+          "to_agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The staffed agent it is for, as `GET /v1/tasks/{id}` lists them.\nRequired for `author` and `reviewer`, refused for the orchestrator."
+          }
+        },
+        "additionalProperties": false
       },
       "SessionDto": {
         "type": "object",
@@ -3942,7 +4161,7 @@
     },
     {
       "name": "tasks",
-      "description": "Tasks, transitions, reviews"
+      "description": "Tasks, transitions, and what their agents say"
     },
     {
       "name": "sessions",

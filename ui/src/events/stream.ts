@@ -32,7 +32,7 @@ const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   task_created: true,
   task_updated: true,
   task_branch_updated: true,
-  review_created: true,
+  message_sent: true,
   session_created: true,
   session_updated: true,
   agent_event: true,

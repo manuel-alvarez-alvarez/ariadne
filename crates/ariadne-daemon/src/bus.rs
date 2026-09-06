@@ -19,7 +19,7 @@ use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
-    event_dto, goal_dto_of, skill_dto, repository_dto, review_dto, session_dto_of, task_dto_of,
+    event_dto, goal_dto_of, skill_dto, repository_dto, message_dto, session_dto_of, task_dto_of,
     transition_dto,
 };
 
@@ -138,16 +138,11 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
                 task_id: Some(keys.1),
             }
         }
-        Change::ReviewCreated(review) => {
-            // A review carries no goal id of its own; resolve it via the task
-            // so a `goal`-filtered stream still sees verdicts.
-            let goal_id = store.get_task(&review.task_id).await?.goal_id;
-            BusEvent {
-                goal_id: Some(goal_id),
-                task_id: Some(review.task_id.clone()),
-                event: DomainEvent::ReviewCreated(review_dto(review)),
-            }
-        }
+        Change::MessageSent(message) => BusEvent {
+            goal_id: Some(message.goal_id.clone()),
+            task_id: message.task_id.clone(),
+            event: DomainEvent::MessageSent(message_dto(message)),
+        },
         Change::SessionCreated(session) => {
             session_event(store, session, DomainEvent::SessionCreated).await?
         }

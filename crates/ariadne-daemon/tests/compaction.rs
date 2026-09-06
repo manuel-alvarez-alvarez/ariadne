@@ -18,9 +18,9 @@ use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use ariadne_core::{ReviewVerdict, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{MessageKind, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{AgentSession, EventFilter, Goal, NewReview, Task};
+use ariadne_store::{AgentSession, EventFilter, Goal, Task};
 
 use common::{Harness, HarnessBuilder, eventually, harness};
 
@@ -90,7 +90,7 @@ impl World {
 
     /// A reviewer of the task at its prompt, with its verdict in for the
     /// round the task is on now — going under review opened it.
-    async fn reviewer_that_voted(&self, verdict: ReviewVerdict) -> AgentSession {
+    async fn reviewer_that_voted(&self, verdict: MessageKind) -> AgentSession {
         let session = self
             .session(&self.goal, Some(&self.task), Seat::Reviewer, &self.reviewer)
             .await;
@@ -102,17 +102,10 @@ impl World {
             .await
             .unwrap()
             .review_round;
-        self.store
-            .create_review(NewReview {
-                task_id: self.task.id.clone(),
-                round,
-                reviewer_agent_id: self.reviewer.clone(),
-                session_id: Some(session.id.clone()),
-                verdict,
-                body: Some("Looks fine.".into()),
-            })
-            .await
-            .unwrap();
+        let _ = round;
+        self.h
+            .verdict_from(&self.task, &session, verdict, "Looks fine.")
+            .await;
         session
     }
 
@@ -269,7 +262,7 @@ async fn a_hand_off_is_paid_once_however_many_passes_see_it() {
 async fn a_verdict_given_owes_the_reviewer_a_compaction() {
     let w = World::reviewed_by(2).await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
-    let reviewer = w.reviewer_that_voted(ReviewVerdict::Approve).await;
+    let reviewer = w.reviewer_that_voted(MessageKind::Approve).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
@@ -286,16 +279,20 @@ async fn a_verdict_given_owes_the_reviewer_a_compaction() {
     );
 }
 
-/// A reviewer whose round has closed is ended — but not before the
-/// compaction its verdict earned is done, since its session serves the next
-/// round too. The pane is left up through the compaction, and killed on the
-/// pass after the CLI reports it over.
+/// A reviewer whose round has closed is compacted — and then left where it
+/// is.
+///
+/// Every agent of a task stays up until the task is over. A reviewer that has
+/// voted is not done with the task: the author may have something to ask it,
+/// and it may have something to ask the author, and an agent that was killed
+/// can be asked nothing. So its verdict buys it a shorter conversation for
+/// the next round rather than an ending.
 #[tokio::test]
-async fn a_reviewer_that_voted_is_ended_only_once_its_compaction_is_done() {
+async fn a_reviewer_that_voted_is_compacted_and_left_where_it_is() {
     let w = World::active().await;
     let _author = w.idle_author().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
-    let reviewer = w.reviewer_that_voted(ReviewVerdict::Approve).await;
+    let reviewer = w.reviewer_that_voted(MessageKind::Approve).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
@@ -304,26 +301,22 @@ async fn a_reviewer_that_voted_is_ended_only_once_its_compaction_is_done() {
     })
     .await;
     w.compaction_typed(&reviewer).await;
+
+    w.ingest(&reviewer, "session_start", compacted()).await;
+    // Several passes over the compacted reviewer, and it is still there.
+    for _ in 0..3 {
+        sched.task(&w.task);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
     assert!(
         w.pane_is_alive(&reviewer),
-        "the reviewer's pane is not killed under its compaction"
+        "the reviewer was killed once its round closed"
     );
     assert_eq!(
         w.session_status(&reviewer).await,
         SessionStatus::Idle,
-        "nor is the session retired"
+        "and it sits idle, ready for anything the author asks it"
     );
-
-    w.ingest(&reviewer, "session_start", compacted()).await;
-    eventually(
-        TIMEOUT,
-        "the reviewer to be ended after its compaction",
-        async || {
-            !w.pane_is_alive(&reviewer)
-                && w.session_status(&reviewer).await == SessionStatus::Exited
-        },
-    )
-    .await;
 }
 
 /// A plan finalized is the orchestrator's hand-off: it owes a compaction of
@@ -531,18 +524,13 @@ async fn a_compaction_reported_done_before_its_delivery_settles_is_over() {
 
     // Nothing lingers: feedback that arrives now reaches the author at
     // once, which it would not if the pane were still held for a compaction.
-    let round = w.store.get_task(&w.task.id).await.unwrap().review_round;
-    w.store
-        .create_review(NewReview {
-            task_id: w.task.id.clone(),
-            round,
-            reviewer_agent_id: w.reviewer.clone(),
-            session_id: None,
-            verdict: ReviewVerdict::RequestChanges,
-            body: Some("Rename the flag.".into()),
-        })
-        .await
-        .unwrap();
+    w.verdict(
+        &w.task,
+        &w.reviewer,
+        MessageKind::RequestChanges,
+        "Rename the flag.",
+    )
+    .await;
     sched.task(&w.task);
     eventually(
         TIMEOUT,
@@ -600,18 +588,13 @@ async fn a_resume_due_during_a_compaction_goes_out_after_it() {
     let launches_before = author_launches(&w);
 
     // The reviewer asks for changes while the compaction runs.
-    let round = w.store.get_task(&w.task.id).await.unwrap().review_round;
-    w.store
-        .create_review(NewReview {
-            task_id: w.task.id.clone(),
-            round,
-            reviewer_agent_id: w.reviewer.clone(),
-            session_id: None,
-            verdict: ReviewVerdict::RequestChanges,
-            body: Some("Rename the flag.".into()),
-        })
-        .await
-        .unwrap();
+    w.verdict(
+        &w.task,
+        &w.reviewer,
+        MessageKind::RequestChanges,
+        "Rename the flag.",
+    )
+    .await;
     sched.task(&w.task);
     eventually(TIMEOUT, "the changes to be requested", async || {
         w.status(&w.task.id).await == TaskStatus::ChangesRequested

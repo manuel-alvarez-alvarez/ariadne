@@ -367,12 +367,17 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
-        DomainEvent::ReviewCreated(r) => Line {
-            at: r.created_at.clone(),
+        DomainEvent::MessageSent(m) => Line {
+            at: m.created_at.clone(),
             kind,
-            subject: r.task_id.clone(),
-            detail: format!("round {} {}", r.round, r.verdict.as_str()),
-            session: r.session_id.clone(),
+            subject: m.task_id.clone().unwrap_or_else(|| m.goal_id.clone()),
+            detail: format!(
+                "{} -> {}: {}",
+                m.from_actor.as_str(),
+                m.to_actor.as_str(),
+                m.body.lines().next().unwrap_or_default()
+            ),
+            session: m.from_session.clone(),
             status: None,
         },
         DomainEvent::SessionCreated(s) | DomainEvent::SessionUpdated(s) => session_line(kind, s),

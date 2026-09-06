@@ -6,11 +6,12 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 
 use ariadne_api::goals::{CompleteGoalRequest, CreateGoalRequest, FinalizePlanRequest, GoalDto};
+use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
 use ariadne_core::{GoalStatus, TaskStatus};
-use ariadne_store::{Goal, NewGoal, SessionFilter, Store, TaskFilter};
+use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, Store, TaskFilter};
 
 use super::AppState;
-use super::convert::goal_dto_of;
+use super::convert::{goal_dto_of, message_dto};
 use super::error::{ApiError, ApiResult, Json};
 use super::pins::{self, Standing};
 use super::caller::call_ctx;
@@ -298,6 +299,50 @@ pub async fn complete(
         .await?;
     state.notify_scheduler_goal(&id);
     to_dto(&state.store, goal).await
+}
+
+/// The messages of a goal: what its agents said that was not about one task.
+///
+/// A goal's channel is the orchestrator's inbox. Everything an agent says to
+/// it about a task is on that task instead, and this is where the rest goes.
+#[utoipa::path(get, path = "/v1/goals/{id}/messages", tag = "goals",
+    params(("id" = String, Path, description = "goal id"), MessageListQuery),
+    responses((status = 200, body = [MessageDto])))]
+pub async fn list_goal_messages(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<MessageListQuery>,
+) -> ApiResult<Json<Vec<MessageDto>>> {
+    state.store.get_goal(&id).await?;
+    let rows = state
+        .store
+        .list_messages(MessageFilter {
+            goal_id: Some(id),
+            round: q.round,
+            to_agent_id: q.to_agent_id,
+            undelivered_only: q.undelivered,
+            ..Default::default()
+        })
+        .await?;
+    Ok(Json(rows.into_iter().map(message_dto).collect()))
+}
+
+/// Send a message about the goal itself.
+#[utoipa::path(post, path = "/v1/goals/{id}/messages", tag = "goals",
+    request_body = SendMessageRequest,
+    params(("id" = String, Path, description = "goal id")),
+    responses((status = 201, body = MessageDto), (status = 403), (status = 409)))]
+pub async fn post_goal_message(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<SendMessageRequest>,
+) -> ApiResult<(StatusCode, Json<MessageDto>)> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let goal = state.store.get_goal(&id).await?;
+    let message = super::landing::send(&state, &ctx, &goal.id, None, req).await?;
+    state.notify_scheduler_goal(&id);
+    Ok((StatusCode::CREATED, Json(message_dto(message))))
 }
 
 #[cfg(test)]

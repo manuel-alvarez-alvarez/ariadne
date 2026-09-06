@@ -43,12 +43,12 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
         // A reviewer is only owed to a round it has not voted in.
         Seat::Reviewer => match task_of(store, session).await {
             Some(task) if task.status() == TaskStatus::UnderReview => store
-                .list_reviews(&task.id, Some(task.review_round))
+                .round_verdicts(&task.id, task.review_round)
                 .await
-                .is_ok_and(|reviews| {
-                    !reviews
+                .is_ok_and(|verdicts| {
+                    !verdicts
                         .iter()
-                        .any(|r| Some(&r.reviewer_agent_id) == session.task_agent_id.as_ref())
+                        .any(|m| m.from_agent_id.as_ref() == session.task_agent_id.as_ref())
                 }),
             _ => false,
         },

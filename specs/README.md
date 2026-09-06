@@ -29,6 +29,7 @@ test that proves it.
 | 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, and its parity with the CLI |
 | 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, the migration policy |
 | 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and how a task is staffed |
+| 018 | [Agent messages](018-agent-messages.md) | the one channel the agents talk on, and how a message reaches a pane |
 
 ## Writing one
 

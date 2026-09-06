@@ -9,15 +9,15 @@
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
+use ariadne_api::messages::MessageDto;
 use ariadne_api::repositories::RepositoryDto;
-use ariadne_api::reviews::ReviewDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::skills::SkillDto;
 use ariadne_api::tasks::{
     AgentUsageDto, TaskAgentDto, TaskDto, TaskTransitionDto, TaskUsageDto,
 };
 use ariadne_api::usage::TokenUsageDto;
-use ariadne_core::{Seat, TokenUsage};
+use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
 use ariadne_store::{self as store, AgentUsage, Store, StoreError};
 
 use super::pins::spelled;
@@ -121,9 +121,15 @@ dto! {
         .. id, from_status, to_status, actor, reason, created_at
     }
 
-    pub fn review_dto(r: store::Review) -> ReviewDto {
-        verdict: r.verdict(),
-        .. id, task_id, round, reviewer_agent_id, session_id, body, created_at
+    pub fn message_dto(m: store::Message) -> MessageDto {
+        // A kind or an actor this build does not know is carried rather than
+        // dropped: the body is what somebody typed, and a listing that
+        // silently loses a message is worse than one that shows a `note`.
+        kind: m.kind().unwrap_or(MessageKind::Note),
+        from_actor: m.from_actor().unwrap_or(Actor::Daemon),
+        to_actor: m.to_actor().unwrap_or(Actor::Daemon),
+        .. id, goal_id, task_id, round, from_agent_id, from_session, to_agent_id,
+           in_reply_to, body, delivered_at, created_at
     }
 
     /// `usage` is what this session has spent, which the caller loads.

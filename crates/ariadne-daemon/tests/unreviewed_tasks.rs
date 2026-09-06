@@ -13,9 +13,9 @@
 
 mod common;
 
-use ariadne_core::{ReviewVerdict, TaskStatus};
+use ariadne_core::{MessageKind, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::NewReview;
+use ariadne_store::MessageFilter;
 
 use common::{TIMEOUT, eventually, harness};
 
@@ -39,15 +39,18 @@ async fn a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks() {
     })
     .await;
 
-    // And no review was invented to get it there: an approval nobody gave is
-    // not one the history should carry.
+    // And no verdict was invented to get it there: an approval nobody gave
+    // is not one the channel should carry.
     assert!(
         h.store
-            .list_reviews(&task.id, None)
+            .list_messages(MessageFilter {
+                task_id: Some(task.id.clone()),
+                ..Default::default()
+            })
             .await
             .unwrap()
             .is_empty(),
-        "a task with no reviewer collected a review"
+        "a task with no reviewer collected a verdict"
     );
 }
 
@@ -68,20 +71,10 @@ async fn a_task_needs_no_more_approvals_than_it_has_reviewers_to_give() {
         .remove(0);
     h.activate(&goal).await;
     h.advance(&task, TaskStatus::UnderReview).await;
-    // The round the request opened, not the one the task was created on:
-    // asking for review is what starts a round.
-    let under_review = h.store.get_task(&task.id).await.unwrap();
-    h.store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: under_review.review_round,
-            reviewer_agent_id: reviewer.id.clone(),
-            session_id: None,
-            verdict: ReviewVerdict::Approve,
-            body: None,
-        })
-        .await
-        .unwrap();
+    // `verdict` reads the round the request opened, not the one the task was
+    // created on: asking for review is what starts a round.
+    h.verdict(&task, &reviewer.id, MessageKind::Approve, "looks right")
+        .await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched

@@ -14,12 +14,12 @@ use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
-use ariadne_api::reviews::CreateReviewRequest;
+use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, RecordPullRequestRequest, TransitionRequest,
     UpdateTaskRequest,
 };
-use ariadne_core::{Landing, ReviewVerdict, Seat, TaskStatus};
+use ariadne_core::{Actor, Landing, MessageKind, Seat, TaskStatus};
 
 use super::{AriadneMcp, json_result, to_mcp_err};
 
@@ -190,6 +190,46 @@ pub struct SubmitVerdictReq {
     pub body: Option<String>,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct AskReq {
+    /// Who to ask: the id of an agent `get_task` lists, or the word
+    /// `orchestrator` for the one that planned this goal.
+    pub to: String,
+    /// The question, in one paragraph. Say what you need and why you are
+    /// blocked without it.
+    pub question: String,
+    /// The task it is about. Omit it for your own task.
+    pub task_id: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct TellReq {
+    /// Who to tell: the id of an agent `get_task` lists, or `orchestrator`.
+    pub to: String,
+    /// What to say. Nobody answers this.
+    pub body: String,
+    /// The task it is about. Omit it for your own task.
+    pub task_id: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ReplyReq {
+    /// The `message_id` of the message you are answering, as it reached you.
+    pub message_id: String,
+    /// The answer.
+    pub body: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ReadMessagesReq {
+    /// The task whose channel to read. Omit it for your own task.
+    pub task_id: Option<String>,
+}
+
 // ---------- helpers ----------
 
 /// One agent an orchestrator staffed, as the API takes it: where it sits,
@@ -217,26 +257,66 @@ fn of_agent(models: Vec<serde_json::Value>, agent_kind: Option<String>) -> Vec<s
         .collect()
 }
 
-/// The review the daemon records for a verdict, refusing a change request
-/// with nothing in it: the body is what the author is resumed with, so a
-/// round that asks for changes and says nothing asks for nothing.
-fn review_request(verdict: Verdict, body: Option<String>) -> Result<CreateReviewRequest, McpError> {
-    let body = body.filter(|b| !b.trim().is_empty());
-    let verdict = match verdict {
-        Verdict::Approve => ReviewVerdict::Approve,
-        Verdict::RequestChanges if body.is_none() => {
-            return Err(McpError::invalid_params(
-                "request_changes needs a body: the feedback the author is resumed with",
-                None,
-            ));
+/// The verdict the daemon records, refusing a change request with nothing in
+/// it: the body is what the author is resumed with, so a round that asks for
+/// changes and says nothing asks for nothing.
+///
+/// A verdict is a message to the author like any other. What makes it close a
+/// round is its kind.
+fn verdict_message(verdict: Verdict, body: Option<String>) -> Result<SendMessageRequest, McpError> {
+    let body = body.map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
+    let (kind, body) = match verdict {
+        Verdict::Approve => (
+            MessageKind::Approve,
+            body.unwrap_or_else(|| "Approved.".to_string()),
+        ),
+        Verdict::RequestChanges => {
+            let Some(body) = body else {
+                return Err(McpError::invalid_params(
+                    "request_changes needs a body: the feedback the author is resumed with",
+                    None,
+                ));
+            };
+            (MessageKind::RequestChanges, body)
         }
-        Verdict::RequestChanges => ReviewVerdict::RequestChanges,
     };
-    Ok(CreateReviewRequest {
-        verdict,
+    Ok(SendMessageRequest {
+        kind,
+        to_actor: Actor::Author,
+        // Filled in by the caller, which knows the task's author.
+        to_agent_id: None,
+        in_reply_to: None,
         body,
-        reviewer_agent_id: None,
     })
+}
+
+/// Who a message is for, as an agent spells it: `orchestrator`, or the id of
+/// an agent the task staffs.
+///
+/// The seat is looked up rather than asked for. An agent reading `get_task`
+/// has the ids in front of it and no reason to also work out which seat each
+/// one sits in — and a `to` that named the wrong seat would be refused for a
+/// reason nobody could act on.
+fn addressee(to: &str, agents: &[serde_json::Value]) -> Result<(Actor, Option<String>), McpError> {
+    if to.eq_ignore_ascii_case("orchestrator") {
+        return Ok((Actor::Orchestrator, None));
+    }
+    let Some(agent) = agents.iter().find(|a| a["id"] == to) else {
+        let known: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+        return Err(McpError::invalid_params(
+            format!(
+                "no agent {to} on this task. Say `orchestrator`, or one of: {}",
+                known.join(", ")
+            ),
+            None,
+        ));
+    };
+    let actor = match agent["seat"].as_str() {
+        Some("author") => Actor::Author,
+        Some("reviewer") => Actor::Reviewer,
+        _ => return Err(McpError::invalid_params(format!("agent {to} sits nowhere"), None)),
+    };
+    Ok((actor, Some(to.to_string())))
 }
 
 #[tool_router(vis = "pub(super)")]
@@ -458,19 +538,123 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Give your verdict on the change. Approve it, or request changes. A change request carries the feedback the author starts again on."
+        description = "Give your verdict on the change. Approve it, or request changes. A change request carries the feedback the author starts again on. Ask the author with `ask` where you need something before you can judge it."
     )]
     async fn submit_verdict(
         &self,
         Parameters(req): Parameters<SubmitVerdictReq>,
     ) -> Result<CallToolResult, McpError> {
-        let path = self.task_path(None, "/reviews")?;
-        let body = review_request(req.verdict, req.body)?;
+        let path = self.task_path(None, "/messages")?;
+        let mut body = verdict_message(req.verdict, req.body)?;
+        body.to_agent_id = Some(self.author_of(None).await?);
         json_result(self.post(&path, &body).await?)
+    }
+
+    // ---- everyone ----
+
+    #[tool(
+        description = "Ask another agent something you need answered before you can go on. `to` is an agent id from `get_task`, or `orchestrator`. The answer arrives in your session as a message. Go on with what you can do meanwhile."
+    )]
+    async fn ask(&self, Parameters(req): Parameters<AskReq>) -> Result<CallToolResult, McpError> {
+        self.write_message(
+            req.task_id,
+            MessageKind::Question,
+            &req.to,
+            req.question,
+            None,
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Tell another agent something nobody has to answer. Use `ask` where you need an answer. `to` is an agent id from `get_task`, or `orchestrator`."
+    )]
+    async fn tell(&self, Parameters(req): Parameters<TellReq>) -> Result<CallToolResult, McpError> {
+        self.write_message(req.task_id, MessageKind::Note, &req.to, req.body, None)
+            .await
+    }
+
+    #[tool(
+        description = "Answer a message somebody sent you, on the `message_id` it arrived with. The answer reaches whoever asked."
+    )]
+    async fn reply(
+        &self,
+        Parameters(req): Parameters<ReplyReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = req.body.trim();
+        if body.is_empty() {
+            return Err(McpError::invalid_params(
+                "reply needs a body: an empty answer answers nothing",
+                None,
+            ));
+        }
+        // Where it goes is the message being answered: back to whoever asked.
+        let path = self.task_path(self.task_id.clone(), "/messages")?;
+        let request = SendMessageRequest {
+            kind: MessageKind::Answer,
+            to_actor: Actor::Orchestrator,
+            to_agent_id: None,
+            in_reply_to: Some(req.message_id),
+            body: body.to_string(),
+        };
+        json_result(self.post(&path, &request).await?)
+    }
+
+    #[tool(
+        description = "Read everything the agents of a task have said to each other, oldest first: the questions, the answers, the review requests and the verdicts."
+    )]
+    async fn read_messages(
+        &self,
+        Parameters(req): Parameters<ReadMessagesReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = self.task_path(req.task_id, "/messages")?;
+        json_result(self.get::<serde_json::Value>(&path).await?)
     }
 }
 
 impl AriadneMcp {
+    /// Write one message about `task_id` — the session's own where it names
+    /// none — to whoever `to` spells.
+    async fn write_message(
+        &self,
+        task_id: Option<String>,
+        kind: MessageKind,
+        to: &str,
+        body: String,
+        in_reply_to: Option<String>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = body.trim();
+        if body.is_empty() {
+            return Err(McpError::invalid_params("a message needs a body", None));
+        }
+        let path = self.task_path(task_id.clone(), "/messages")?;
+        let (to_actor, to_agent_id) = addressee(to, &self.agents_of(task_id).await?)?;
+        let request = SendMessageRequest {
+            kind,
+            to_actor,
+            to_agent_id,
+            in_reply_to,
+            body: body.to_string(),
+        };
+        json_result(self.post(&path, &request).await?)
+    }
+
+    /// The agents staffed on a task, as `get_task` lists them.
+    async fn agents_of(&self, task_id: Option<String>) -> Result<Vec<serde_json::Value>, McpError> {
+        let task: serde_json::Value = self.get(&self.task_path(task_id, "")?).await?;
+        Ok(task["agents"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// The id of a task's author, which is who a verdict is for.
+    async fn author_of(&self, task_id: Option<String>) -> Result<String, McpError> {
+        self.agents_of(task_id)
+            .await?
+            .into_iter()
+            .find(|a| a["seat"] == "author")
+            .and_then(|a| a["id"].as_str().map(str::to_string))
+            .ok_or_else(|| McpError::internal_error("this task has no author", None))
+    }
+
     /// Move this session's own task, which is the only one an author may
     /// move.
     async fn transition(
@@ -628,15 +812,19 @@ mod tests {
         assert_eq!(seen[0].path, "/v1/tasks/01TASK");
     }
 
-    /// One tool for both verdicts writes the row each of the two it replaced
-    /// wrote: the same route, the same verdict word, the same body.
+    /// A verdict is a message to the author like any other, and what makes it
+    /// close a round is its kind. So it goes to the channel, addressed to the
+    /// agent the task's own staffing names as its author.
     #[tokio::test]
-    async fn a_verdict_is_recorded_the_way_each_of_the_two_tools_recorded_it() {
+    async fn a_verdict_is_a_message_to_the_author_of_the_kind_that_closes_a_round() {
         for (verdict, word) in [
             (Verdict::Approve, "approve"),
             (Verdict::RequestChanges, "request_changes"),
         ] {
-            let (endpoint, seen) = recording_daemon().await;
+            let (endpoint, seen) = recording_daemon_answering(
+                r#"{"agents":[{"id":"01AUTHOR","seat":"author","skills":["coding"]}]}"#,
+            )
+            .await;
             let mcp = server_at(
                 McpSeat::Reviewer,
                 Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
@@ -649,13 +837,124 @@ mod tests {
             .expect("verdict");
 
             let seen = seen.lock().expect("lock").clone();
-            assert_eq!(seen.len(), 1, "{seen:?}");
-            assert_eq!(seen[0].method, "POST");
-            assert_eq!(seen[0].path, "/v1/tasks/01TASK/reviews");
-            let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
-            assert_eq!(sent["verdict"], serde_json::json!(word));
-            assert_eq!(sent["body"], serde_json::json!("rebase first"));
+            // One read of the task to find its author, then the message.
+            let sent = seen.last().expect("the verdict");
+            assert_eq!(sent.method, "POST");
+            assert_eq!(sent.path, "/v1/tasks/01TASK/messages");
+            let body: serde_json::Value = serde_json::from_str(&sent.body).expect("json");
+            assert_eq!(body["kind"], serde_json::json!(word));
+            assert_eq!(body["to_actor"], serde_json::json!("author"));
+            assert_eq!(body["to_agent_id"], serde_json::json!("01AUTHOR"));
+            assert_eq!(body["body"], serde_json::json!("rebase first"));
         }
+    }
+
+    /// Any agent can ask any other, and the answer goes back to whoever asked
+    /// rather than to an address the answer has to name: `reply` carries the
+    /// id it arrived with, and the daemon reads the recipient off that.
+    #[tokio::test]
+    async fn asking_names_the_agent_and_answering_names_only_the_message() {
+        let (endpoint, seen) = recording_daemon_answering(
+            r#"{"agents":[{"id":"01AUTHOR","seat":"author","skills":["coding"]},
+                          {"id":"01REVIEWER","seat":"reviewer","skills":["code-review"]}]}"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::Reviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+
+        mcp.ask(Parameters(AskReq {
+            to: "01AUTHOR".into(),
+            question: "Why is the retry unbounded?".into(),
+            task_id: None,
+        }))
+        .await
+        .expect("ask");
+        let asked: serde_json::Value =
+            serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
+                .expect("json");
+        assert_eq!(asked["kind"], serde_json::json!("question"));
+        assert_eq!(asked["to_actor"], serde_json::json!("author"));
+        assert_eq!(asked["to_agent_id"], serde_json::json!("01AUTHOR"));
+
+        mcp.reply(Parameters(ReplyReq {
+            message_id: "01MSG".into(),
+            body: "Because the caller retries too.".into(),
+        }))
+        .await
+        .expect("reply");
+        let answered: serde_json::Value =
+            serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
+                .expect("json");
+        assert_eq!(answered["kind"], serde_json::json!("answer"));
+        assert_eq!(answered["in_reply_to"], serde_json::json!("01MSG"));
+        assert_eq!(
+            answered["to_agent_id"],
+            serde_json::Value::Null,
+            "an answer names the message, and the daemon reads the recipient off it"
+        );
+    }
+
+    /// The orchestrator is addressed by what it is: a goal has one, and it is
+    /// staffed on no task, so there is no id to name it by.
+    #[tokio::test]
+    async fn the_orchestrator_is_addressed_by_name_and_needs_no_agent_id() {
+        let (endpoint, seen) = recording_daemon_answering(
+            r#"{"agents":[{"id":"01AUTHOR","seat":"author","skills":["coding"]}]}"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+
+        mcp.ask(Parameters(AskReq {
+            to: "orchestrator".into(),
+            question: "Does this task cover the CLI too?".into(),
+            task_id: None,
+        }))
+        .await
+        .expect("ask");
+
+        let sent: serde_json::Value =
+            serde_json::from_str(&seen.lock().expect("lock").last().expect("sent").body)
+                .expect("json");
+        assert_eq!(sent["to_actor"], serde_json::json!("orchestrator"));
+        assert_eq!(sent["to_agent_id"], serde_json::Value::Null);
+    }
+
+    /// A `to` that names nobody is refused here, with the ids that would have
+    /// worked: the agent reading the refusal is the one that has to fix it.
+    #[tokio::test]
+    async fn a_message_to_nobody_is_refused_with_the_addresses_that_would_work() {
+        let (endpoint, seen) = recording_daemon_answering(
+            r#"{"agents":[{"id":"01AUTHOR","seat":"author","skills":["coding"]}]}"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::Reviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+
+        let err = mcp
+            .ask(Parameters(AskReq {
+                to: "01NOBODY".into(),
+                question: "anyone there?".into(),
+                task_id: None,
+            }))
+            .await
+            .expect_err("no such agent");
+        assert!(err.message.contains("01AUTHOR"), "{}", err.message);
+        assert!(err.message.contains("orchestrator"), "{}", err.message);
+        // The task was read to find that out, and nothing was written.
+        assert!(
+            seen.lock()
+                .expect("lock")
+                .iter()
+                .all(|call| call.method == "GET"),
+            "a message nobody could receive was sent anyway"
+        );
     }
 
     /// The body of a change request is what the author is resumed with, so
@@ -664,7 +963,7 @@ mod tests {
     #[tokio::test]
     async fn a_change_request_with_nothing_in_it_is_refused_before_it_is_sent() {
         for body in [None, Some(String::new()), Some("  \n ".into())] {
-            let err = review_request(Verdict::RequestChanges, body.clone())
+            let err = verdict_message(Verdict::RequestChanges, body.clone())
                 .expect_err("empty change request");
             assert!(err.message.contains("needs a body"), "{}", err.message);
             assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
@@ -683,11 +982,12 @@ mod tests {
             assert!(seen.lock().expect("lock").is_empty());
         }
 
-        // An approval carries a note or nothing: it is not what a round is
-        // resumed on.
-        let approved = review_request(Verdict::Approve, None).expect("approval");
-        assert_eq!(approved.verdict, ReviewVerdict::Approve);
-        assert!(approved.body.is_none());
+        // An approval carries a note or, where the reviewer wrote none, the
+        // one word that says what it is: a message with nothing in it is not
+        // one a pane can be handed.
+        let approved = verdict_message(Verdict::Approve, None).expect("approval");
+        assert_eq!(approved.kind, MessageKind::Approve);
+        assert_eq!(approved.body, "Approved.");
     }
 
     /// What an orchestrator may write per agent is the schema an agent reads,

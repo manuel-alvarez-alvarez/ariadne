@@ -111,7 +111,7 @@ the query cache and it stays live.
 | `goal_deleted` | remove `goals.detail`, invalidate `goals.lists` and every task and session key |
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists`, and `tasks.transitions` when the event carries a transition |
-| `review_created` | invalidate `tasks.reviews` |
+| `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
 | `session_created`, `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |
 | `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |

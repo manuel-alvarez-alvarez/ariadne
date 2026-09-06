@@ -1,6 +1,6 @@
 /**
  * One task in full, in a side panel over whatever screen it was opened from —
- * the `task inspect` equivalent, plus everything hanging off it: its reviews,
+ * the `task inspect` equivalent, plus everything hanging off it: its messages,
  * its transition log, its branch diff and the agents that ran it.
  *
  * The tab lives in the URL (like the panel itself) so a link can point at,
@@ -40,19 +40,19 @@ import { taskCopyEntries } from "@/lib/clipboard"
 import { cn, shortId } from "@/lib/format"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
-import { taskQueryOptions, taskReviewsQueryOptions } from "./queries"
+import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
 import { StalledBadge } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 import { TaskActions } from "./task-actions"
 import { TaskDiff } from "./task-diff"
 import { TaskFacts } from "./task-facts"
 import { TaskHistory } from "./task-history"
-import { TaskReviews } from "./task-reviews"
+import { TaskMessages } from "./task-messages"
 import { TaskSessions, TaskSessionView } from "./task-sessions"
 
 // Description leads the strip and is where the panel opens: it is what the
 // task *is*, and the first thing to read on a task just landed on.
-const TABS = ["description", "reviews", "history", "diff", "sessions"] as const
+const TABS = ["description", "messages", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
 export function TaskPanel({
@@ -80,7 +80,7 @@ export function TaskPanel({
   // one `TaskSessions` itself passes, or the tab's count and the tab's list
   // would be two cache entries and two requests.
   const sessions = useQuery(sessionsQueryOptions({ task: taskId }))
-  const reviews = useQuery(taskReviewsQueryOptions(taskId))
+  const messages = useQuery(taskMessagesQueryOptions(taskId))
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -149,9 +149,9 @@ export function TaskPanel({
                 {/* The verdicts, not the rounds they are grouped into: a
                     round is how the tab is laid out, and a task around for the
                     third time has said more than three things about itself. */}
-                <TabsTrigger value="reviews">
-                  Reviews
-                  <TabCount count={reviews.data?.length} noun="review" />
+                <TabsTrigger value="messages">
+                  Messages
+                  <TabCount count={messages.data?.length} noun="message" />
                 </TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="diff">Diff</TabsTrigger>
@@ -167,8 +167,8 @@ export function TaskPanel({
                   <EmptyState emphasis="quiet" title="This task has no description" />
                 )}
               </TabsContent>
-              <TabsContent value="reviews" className="pt-3">
-                <TaskReviews taskId={taskId} />
+              <TabsContent value="messages" className="pt-3">
+                <TaskMessages taskId={taskId} />
               </TabsContent>
               <TabsContent value="history" className="pt-3">
                 <TaskHistory taskId={taskId} />

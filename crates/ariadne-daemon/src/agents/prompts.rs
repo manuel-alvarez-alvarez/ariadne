@@ -23,7 +23,7 @@ use std::path::Path;
 
 use ariadne_core::{PromptKind, Seat};
 use ariadne_store::defaults::{default_prompt_text, default_system_prompt};
-use ariadne_store::{Goal, Repository, Skill, Task};
+use ariadne_store::{Goal, Message, Repository, Skill, Task};
 
 /// The template `kind` is rendered from: the built-in text of that kind,
 /// which every launch and every resume reads straight from the code.
@@ -150,6 +150,19 @@ pub fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> String {
 /// lines the scheduler wrote about the tasks that need it.
 pub fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) -> String {
     render(template, &[("goal_title", &goal.title), ("tasks", tasks)])
+}
+
+/// What one agent said to another, as the recipient reads it: who wrote it,
+/// the id an answer names, and what it says.
+pub fn incoming_message_briefing(template: &str, message: &Message, from: &str) -> String {
+    render(
+        template,
+        &[
+            ("from", from),
+            ("message_id", &message.id),
+            ("body", &message.body),
+        ],
+    )
 }
 
 /// Initial prompt for an author session.
@@ -309,6 +322,25 @@ mod tests {
         }
     }
 
+    fn message() -> Message {
+        Message {
+            id: "01msgxxxxxxxxxxxxxxxxxxxxx".into(),
+            goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
+            task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
+            round: 1,
+            kind: "question".into(),
+            from_actor: "reviewer".into(),
+            from_agent_id: Some("01agentxxxxxxxxxxxxxxxxxxx".into()),
+            from_session: None,
+            to_actor: "author".into(),
+            to_agent_id: Some("01authorxxxxxxxxxxxxxxxxxx".into()),
+            in_reply_to: None,
+            body: "Why is the retry unbounded?".into(),
+            delivered_at: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
     fn task() -> Task {
         Task {
             id: "01taskxxxxxxxxxxxxxxxxxxxx".into(),
@@ -400,6 +432,9 @@ mod tests {
                 PromptKind::OrchestratorResume => orchestrator_resume_briefing(&template, &goal),
                 PromptKind::GoalAttention => {
                     goal_attention_briefing(&template, &goal, "- one task failed")
+                }
+                PromptKind::IncomingMessage => {
+                    incoming_message_briefing(&template, &message(), "your reviewer")
                 }
                 PromptKind::AuthorBriefing => author_briefing(&template, &task, &goal, &repo, &[]),
                 PromptKind::AuthorResume => author_resume_briefing(&template, &task),

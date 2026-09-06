@@ -79,6 +79,15 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    `submit_verdict`, approving or requesting changes. Change requests resume
    the author with the feedback; every reviewer approving moves the task to
    `approved`.
+
+   The agents talk to each other while that happens. `ask` writes to another
+   agent of the task, or to the orchestrator; `reply` answers on the id a
+   message arrived with. There is no inbox to check: Ariadne types the message
+   into the recipient's pane and submits it, so it lands as a turn. A verdict
+   is a message of the kind that closes a round, and it all reads back as one
+   channel — `ariadne task messages <task-id>`, or the Messages tab of the
+   task panel. Every agent of a task stays up until the task is over, so a
+   reviewer that has voted is still there to be asked something.
 8. The task never leaves the author that wrote it: it keeps its session and
    its worktree, and is briefed with the procedure that ends the task — the
    whole thing, which the author then runs. A task ending the way its

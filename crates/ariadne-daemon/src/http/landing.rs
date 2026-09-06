@@ -2,18 +2,18 @@
 //! diff they are about, the request it was published as, and the proof that it
 //! landed.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
-use ariadne_api::reviews::{CreateReviewRequest, ReviewDto};
+use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
 use ariadne_api::tasks::{RecordPullRequestRequest, TaskDto};
-use ariadne_core::{AttentionReason, Landing, Seat, TaskStatus};
-use ariadne_store::{NewReview, Repository, Task};
+use ariadne_core::{Actor, AttentionReason, Landing, Seat, TaskStatus};
+use ariadne_store::{MessageFilter, NewMessage, Repository, Task};
 
 use super::AppState;
-use super::convert::{review_dto, task_dto_of};
+use super::convert::{message_dto, task_dto_of};
 use super::error::{ApiError, ApiResult, Json};
-use super::caller::{call_ctx, ensure_task_scope};
+use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 
 /// Git could not answer about the task's branch: a conflict, since what the
 /// caller asked for cannot be established rather than being wrong.
@@ -150,80 +150,154 @@ pub async fn record_pull_request(
     Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
-/// Reviews of a task.
-#[utoipa::path(get, path = "/v1/tasks/{id}/reviews", tag = "tasks",
-    params(("id" = String, Path, description = "task id")),
-    responses((status = 200, body = [ReviewDto])))]
-pub async fn list_reviews(
+/// The messages of a task: what its agents have said to each other.
+#[utoipa::path(get, path = "/v1/tasks/{id}/messages", tag = "tasks",
+    params(("id" = String, Path, description = "task id"), MessageListQuery),
+    responses((status = 200, body = [MessageDto])))]
+pub async fn list_task_messages(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> ApiResult<Json<Vec<ReviewDto>>> {
+    Query(q): Query<MessageListQuery>,
+) -> ApiResult<Json<Vec<MessageDto>>> {
     state.store.get_task(&id).await?;
-    let rows = state.store.list_reviews(&id, None).await?;
-    Ok(Json(rows.into_iter().map(review_dto).collect()))
+    let rows = state
+        .store
+        .list_messages(MessageFilter {
+            task_id: Some(id),
+            round: q.round,
+            to_agent_id: q.to_agent_id,
+            undelivered_only: q.undelivered,
+            ..Default::default()
+        })
+        .await?;
+    Ok(Json(rows.into_iter().map(message_dto).collect()))
 }
 
-/// Submit a review verdict for the current round.
-#[utoipa::path(post, path = "/v1/tasks/{id}/reviews", tag = "tasks",
-    request_body = CreateReviewRequest,
+/// Send a message about a task.
+///
+/// Who it is from is the session header's, never the body's: an agent cannot
+/// write as somebody else, and a call with no session behind it is the user
+/// speaking.
+#[utoipa::path(post, path = "/v1/tasks/{id}/messages", tag = "tasks",
+    request_body = SendMessageRequest,
     params(("id" = String, Path, description = "task id")),
-    responses((status = 201, body = ReviewDto), (status = 409)))]
-pub async fn post_review(
+    responses((status = 201, body = MessageDto), (status = 403), (status = 409)))]
+pub async fn post_task_message(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    Json(req): Json<CreateReviewRequest>,
-) -> ApiResult<(StatusCode, Json<ReviewDto>)> {
+    Json(req): Json<SendMessageRequest>,
+) -> ApiResult<(StatusCode, Json<MessageDto>)> {
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
     let task = state.store.get_task(&id).await?;
-    if task.status() != TaskStatus::UnderReview {
-        return Err(ApiError::conflict(format!(
-            "task is {}, reviews are only accepted under_review",
-            task.status
-        )));
-    }
+    let message = send(&state, &ctx, &task.goal_id, Some(&task), req).await?;
+    state.notify_scheduler(&id);
+    Ok((StatusCode::CREATED, Json(message_dto(message))))
+}
 
-    // Reviewer identity: from the session, or explicit for user-submitted
-    // reviews.
-    let reviewer_agent_id = match (&ctx.session, &req.reviewer_agent_id) {
-        (Some(session), _) => {
-            if session.seat() != Seat::Reviewer {
-                return Err(ApiError::forbidden(
-                    "only reviewer sessions may submit reviews",
+/// One message written, whoever wrote it and whatever it is about.
+///
+/// Three things are checked here, and they are the three an agent can get
+/// wrong: a recipient that is not on this task, a verdict from an agent that
+/// is not one of its reviewers, and a verdict on a task nobody asked to have
+/// reviewed. Everything else the channel carries as it stands — it is a
+/// conversation, and the daemon is not in it.
+pub(super) async fn send(
+    state: &AppState,
+    ctx: &CallCtx,
+    goal_id: &str,
+    task: Option<&Task>,
+    req: SendMessageRequest,
+) -> ApiResult<ariadne_store::Message> {
+    let body = req.body.trim();
+    if body.is_empty() {
+        return Err(ApiError::bad_request("a message needs a body"));
+    }
+    // Answering settles where the answer goes: it goes back to whoever asked.
+    let answering = match &req.in_reply_to {
+        Some(id) => Some(state.store.get_message(id).await?),
+        None => None,
+    };
+    let (to_actor, to_agent_id) = match &answering {
+        Some(asked) => (
+            asked.from_actor().unwrap_or(req.to_actor),
+            asked.from_agent_id.clone(),
+        ),
+        None => (req.to_actor, req.to_agent_id.clone()),
+    };
+    match to_actor {
+        Actor::Orchestrator => {
+            if to_agent_id.is_some() {
+                return Err(ApiError::bad_request(
+                    "the orchestrator is staffed on no task, so it has no agent id",
                 ));
             }
-            session.task_agent_id.clone().ok_or_else(|| {
-                ApiError::forbidden("this reviewer session is staffed on no agent")
-            })?
         }
-        (None, Some(agent_id)) => agent_id.clone(),
-        (None, None) => {
+        Actor::Author | Actor::Reviewer => {
+            let Some(agent_id) = &to_agent_id else {
+                return Err(ApiError::bad_request(format!(
+                    "a message to the {} needs the to_agent_id `get_task` lists",
+                    to_actor.as_str()
+                )));
+            };
+            let task = task.ok_or_else(|| {
+                ApiError::bad_request("a message to a task's agent needs a task")
+            })?;
+            let staffed = state.store.list_task_agents(&task.id).await?;
+            if !staffed.iter().any(|a| a.id == *agent_id) {
+                return Err(ApiError::bad_request(format!(
+                    "agent {agent_id} is not staffed on task {}",
+                    task.id
+                )));
+            }
+        }
+        Actor::Daemon | Actor::User => {
             return Err(ApiError::bad_request(
-                "reviewer_agent_id is required for user-submitted reviews",
+                "messages go to the orchestrator or to a task's agents",
             ));
         }
-    };
-    let staffed = state.store.list_task_reviewers(&id).await?;
-    if !staffed.iter().any(|a| a.id == reviewer_agent_id) {
-        return Err(ApiError::forbidden(format!(
-            "agent {reviewer_agent_id} is not a reviewer of task {id}"
-        )));
     }
 
-    let review = state
+    let from_agent_id = ctx.session.as_ref().and_then(|s| s.task_agent_id.clone());
+    if req.kind.is_verdict() {
+        let task = task.ok_or_else(|| ApiError::bad_request("a verdict needs a task"))?;
+        if task.status() != TaskStatus::UnderReview {
+            return Err(ApiError::conflict(format!(
+                "task is {}, a verdict is only taken under_review",
+                task.status
+            )));
+        }
+        let Some(agent_id) = &from_agent_id else {
+            return Err(ApiError::forbidden(
+                "a verdict comes from a reviewer staffed on the task",
+            ));
+        };
+        let reviewers = state.store.list_task_reviewers(&task.id).await?;
+        if !reviewers.iter().any(|a| a.id == *agent_id) {
+            return Err(ApiError::forbidden(format!(
+                "agent {agent_id} is not a reviewer of task {}",
+                task.id
+            )));
+        }
+    }
+
+    Ok(state
         .store
-        .create_review(NewReview {
-            task_id: id.clone(),
-            round: task.review_round,
-            reviewer_agent_id,
-            session_id: ctx.session.map(|s| s.id),
-            verdict: req.verdict,
-            body: req.body,
+        .send_message(NewMessage {
+            goal_id: goal_id.to_string(),
+            task_id: task.map(|t| t.id.clone()),
+            round: task.map_or(0, |t| t.review_round),
+            kind: req.kind,
+            from_actor: ctx.actor,
+            from_agent_id,
+            from_session: ctx.session.as_ref().map(|s| s.id.clone()),
+            to_actor,
+            to_agent_id,
+            in_reply_to: answering.map(|m| m.id),
+            body: body.to_string(),
         })
-        .await?;
-    state.notify_scheduler(&id);
-    Ok((StatusCode::CREATED, Json(review_dto(review))))
+        .await?)
 }
 
 /// Diff of the task branch against its base (`git diff base...branch`), or,

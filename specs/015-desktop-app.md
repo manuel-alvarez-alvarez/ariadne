@@ -29,7 +29,7 @@ Out: the daemon endpoints themselves (012).
 2. The shell is a sidebar and a main area; a panel opens beside a list rather
    than replacing it, and the URL carries which panel is open.
 3. Screens: the goals board (swimlanes plus an attention strip), the task
-   panel (facts, diff, reviews, history), sessions and a terminal, skills,
+   panel (facts, diff, messages, history), sessions and a terminal, skills,
    repositories, agent kinds and their launch flags, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
@@ -59,6 +59,9 @@ Out: the daemon endpoints themselves (012).
 
 - 69 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
+- The task's channel is grouped by round, every kind is told apart, and both
+  ends of a message are named by the skills they work with
+  (`ui/src/features/tasks/task-messages.test.tsx`).
 - Every judgement the orchestrator makes about a task can be made here too:
   how a task ends
   (`ui/src/features/tasks/task-form-dialog.test.tsx::sends how the task ends`),

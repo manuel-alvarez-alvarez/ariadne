@@ -13,10 +13,10 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::events::AgentEventDto;
 use crate::goals::GoalDto;
-use crate::skills::SkillDto;
+use crate::messages::MessageDto;
 use crate::repositories::RepositoryDto;
-use crate::reviews::ReviewDto;
 use crate::sessions::SessionDto;
+use crate::skills::SkillDto;
 use crate::tasks::{TaskDto, TaskTransitionDto};
 
 /// Payload of `task_updated`: the task as it now stands, plus the audit row
@@ -92,7 +92,8 @@ pub enum DomainEvent {
     /// Covers commits made in the task's worktree: the branch head moved, so
     /// the task's diff against its base is no longer the one a client holds.
     TaskBranchUpdated(TaskBranchDto),
-    ReviewCreated(ReviewDto),
+    /// One agent said something to another.
+    MessageSent(MessageDto),
     SessionCreated(SessionDto),
     /// Covers status changes: kill, resume, exit, activity.
     SessionUpdated(SessionDto),
@@ -116,7 +117,7 @@ impl DomainEvent {
             Self::TaskCreated(_) => "task_created",
             Self::TaskUpdated(_) => "task_updated",
             Self::TaskBranchUpdated(_) => "task_branch_updated",
-            Self::ReviewCreated(_) => "review_created",
+            Self::MessageSent(_) => "message_sent",
             Self::SessionCreated(_) => "session_created",
             Self::SessionUpdated(_) => "session_updated",
             Self::AgentEvent(_) => "agent_event",
@@ -141,7 +142,7 @@ impl DomainEvent {
             Self::TaskCreated(t) => json(t),
             Self::TaskUpdated(t) => json(t),
             Self::TaskBranchUpdated(b) => json(b),
-            Self::ReviewCreated(r) => json(r),
+            Self::MessageSent(m) => json(m),
             Self::SessionCreated(s) | Self::SessionUpdated(s) => json(s),
             Self::AgentEvent(e) => json(e),
             Self::SkillCreated(s) | Self::SkillUpdated(s) => json(s),

@@ -32,7 +32,8 @@ use ariadne_api::SESSION_HEADER;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, Seat, SessionStatus, TaskStatus,
+    Actor, AgentKind, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus,
+    TaskStatus,
 };
 use ariadne_daemon::branch::BranchWatchers;
 use ariadne_daemon::bus::{BusEvent, EventBus};
@@ -44,8 +45,8 @@ use ariadne_daemon::log::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
-    AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewRepository, NewSession, NewTask,
-    NewTaskAgent, Repository, SessionFilter, Store, Task, TaskAgent,
+    AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewMessage, NewRepository, NewSession,
+    NewTask, NewTaskAgent, Repository, SessionFilter, Store, Task, TaskAgent,
 };
 
 /// How long a test waits for something the daemon does off the request path —
@@ -619,6 +620,64 @@ impl Harness {
                 description: None,
                 merge_strategy: Default::default(),
                 landing_prompt: None,
+            })
+            .await
+            .unwrap()
+    }
+
+    /// One reviewer's verdict on the round a task stands in, as the reviewer
+    /// itself would send it: a message to the author, of the kind that closes
+    /// a round.
+    pub async fn verdict(
+        &self,
+        task: &Task,
+        reviewer_agent_id: &str,
+        kind: MessageKind,
+        body: &str,
+    ) -> ariadne_store::Message {
+        self.write_verdict(task, reviewer_agent_id, None, kind, body)
+            .await
+    }
+
+    /// The same, sent from a live reviewer session, so the compaction its
+    /// verdict earns has a pane to land in.
+    pub async fn verdict_from(
+        &self,
+        task: &Task,
+        session: &AgentSession,
+        kind: MessageKind,
+        body: &str,
+    ) -> ariadne_store::Message {
+        let agent_id = session.task_agent_id.clone().unwrap_or_default();
+        self.write_verdict(task, &agent_id, Some(&session.id), kind, body)
+            .await
+    }
+
+    /// The round is read off the task as it stands, not as the caller last
+    /// saw it: asking for review is what opens one.
+    async fn write_verdict(
+        &self,
+        task: &Task,
+        reviewer_agent_id: &str,
+        session_id: Option<&str>,
+        kind: MessageKind,
+        body: &str,
+    ) -> ariadne_store::Message {
+        let task = self.store.get_task(&task.id).await.unwrap();
+        let author = self.store.task_author(&task.id).await.unwrap();
+        self.store
+            .send_message(NewMessage {
+                goal_id: task.goal_id.clone(),
+                task_id: Some(task.id.clone()),
+                round: task.review_round,
+                kind,
+                from_actor: Actor::Reviewer,
+                from_agent_id: Some(reviewer_agent_id.to_string()),
+                from_session: session_id.map(str::to_string),
+                to_actor: Actor::Author,
+                to_agent_id: Some(author.id),
+                in_reply_to: None,
+                body: body.to_string(),
             })
             .await
             .unwrap()

@@ -8,7 +8,7 @@ use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto,
     TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, Seat, TaskStatus};
+use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
 use ariadne_store::{NewTask, NewTaskAgent, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
@@ -245,6 +245,13 @@ pub(crate) async fn apply_transition(
             req.merge_commit.as_deref(),
         )
         .await?;
+    // Asking for a review is the author writing to its reviewers, so the
+    // channel carries it like everything else the agents say. One message per
+    // reviewer, because one recipient each is what makes "has it seen this
+    // yet" answerable at all.
+    if req.to == TaskStatus::UnderReview {
+        announce_review(state, ctx, &task, req.reason.as_deref()).await;
+    }
     // A task going back to `ready` is a task starting over, and the only way
     // there is a retry of a failed one. Whatever it was published as is not
     // its request any more — a request closed unmerged is what fails a
@@ -330,4 +337,41 @@ pub async fn list_transitions(
     state.store.get_task(&id).await?;
     let rows = state.store.list_task_transitions(&id).await?;
     Ok(Json(rows.into_iter().map(transition_dto).collect()))
+}
+
+/// Tell every reviewer of `task` that there is a round to look at, carrying
+/// the summary the author asked with.
+///
+/// Best effort: the round is open whether or not the channel took the news,
+/// and a task that could not be announced is one the scheduler still starts
+/// its reviewers for.
+async fn announce_review(state: &AppState, ctx: &CallCtx, task: &Task, summary: Option<&str>) {
+    let Ok(reviewers) = state.store.list_task_reviewers(&task.id).await else {
+        return;
+    };
+    let body = summary
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("The author asks you to review this round.");
+    for reviewer in reviewers {
+        let sent = state
+            .store
+            .send_message(ariadne_store::NewMessage {
+                goal_id: task.goal_id.clone(),
+                task_id: Some(task.id.clone()),
+                round: task.review_round,
+                kind: MessageKind::ReviewRequest,
+                from_actor: ctx.actor,
+                from_agent_id: ctx.session.as_ref().and_then(|s| s.task_agent_id.clone()),
+                from_session: ctx.session.as_ref().map(|s| s.id.clone()),
+                to_actor: Actor::Reviewer,
+                to_agent_id: Some(reviewer.id.clone()),
+                in_reply_to: None,
+                body: body.to_string(),
+            })
+            .await;
+        if let Err(e) = sent {
+            tracing::warn!(task = %task.id, reviewer = %reviewer.id, error = %e, "announcing the review round failed");
+        }
+    }
 }

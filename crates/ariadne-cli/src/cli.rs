@@ -520,7 +520,7 @@ const LISTINGS: &[&str] = &[
     "repo ls",
     "session ls",
     "task ls",
-    "task reviews",
+    "task messages",
 ];
 
 /// Subcommands that print something long enough to page.

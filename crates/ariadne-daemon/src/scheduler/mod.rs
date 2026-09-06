@@ -15,6 +15,7 @@
 mod compaction;
 mod delivery;
 mod goals;
+mod messages;
 mod quiet;
 mod sweeps;
 mod tasks;

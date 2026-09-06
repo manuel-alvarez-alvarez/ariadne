@@ -22,12 +22,12 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 
-use ariadne_api::reviews::ReviewDto;
+use ariadne_api::messages::MessageDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_core::{
-    Actor, AttentionReason, Landing, MergeStrategy, ReviewVerdict, Seat, TaskStatus,
+    Actor, AttentionReason, Landing, MergeStrategy, MessageKind, Seat, TaskStatus,
 };
-use ariadne_store::{AgentSession, NewReview, RepositoryUpdate, Repository, NewTaskAgent, Task};
+use ariadne_store::{AgentSession, NewTaskAgent, Repository, RepositoryUpdate, Task};
 
 use common::{Cast, Harness, as_session, eventually, get, harness, sh};
 
@@ -89,17 +89,8 @@ async fn approve(h: &Harness, task: &Task, reviewer: &str) {
         )
         .await
         .unwrap();
-    h.store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: task.review_round,
-            reviewer_agent_id: reviewer.to_string(),
-            session_id: None,
-            verdict: ReviewVerdict::Approve,
-            body: Some("looks right".into()),
-        })
-        .await
-        .unwrap();
+    h.verdict(&task, reviewer, MessageKind::Approve, "looks right")
+        .await;
     h.notify(&task.id);
 }
 
@@ -393,32 +384,36 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
 
     // The reviewers judge it, and the approval hands it back to the author
     // to finish landing.
-    h.store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: revised.review_round,
-            reviewer_agent_id: cast.reviewer.id.clone(),
-            session_id: None,
-            verdict: ReviewVerdict::Approve,
-            body: Some("the answers read right".into()),
-        })
-        .await
-        .unwrap();
+    h.verdict(
+        &task,
+        &cast.reviewer.id,
+        MessageKind::Approve,
+        "the answers read right",
+    )
+    .await;
     h.notify(&task.id);
     eventually(TIMEOUT, "the task to come back to its author", async || {
         h.status(&task.id).await == TaskStatus::Approved
     })
     .await;
 
-    // One round of verdicts per reviewer, both rounds readable.
-    let reviews: Vec<ReviewDto> = h
-        .json(get(&format!("/v1/tasks/{}/reviews", task.id)), StatusCode::OK)
+    // One channel carries both rounds, and every verdict in it is this
+    // reviewer's.
+    let messages: Vec<MessageDto> = h
+        .json(
+            get(&format!("/v1/tasks/{}/messages", task.id)),
+            StatusCode::OK,
+        )
         .await;
-    assert_eq!(reviews.len(), 2, "{reviews:?}");
+    let verdicts: Vec<&MessageDto> = messages
+        .iter()
+        .filter(|m| m.kind == MessageKind::Approve || m.kind == MessageKind::RequestChanges)
+        .collect();
+    assert_eq!(verdicts.len(), 2, "{messages:?}");
     assert!(
-        reviews
+        verdicts
             .iter()
-            .all(|r| r.reviewer_agent_id == cast.reviewer.id)
+            .all(|m| m.from_agent_id.as_deref() == Some(cast.reviewer.id.as_str()))
     );
 }
 

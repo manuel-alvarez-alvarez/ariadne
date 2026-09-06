@@ -138,7 +138,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("task logs", true),
     ("task ls", true),
     ("task retry", true),
-    ("task reviews", true),
+    ("task messages", true),
     ("task update", true),
     ("version", true),
 ];

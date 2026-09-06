@@ -5,7 +5,7 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    AgentKind, AttentionReason, GoalStatus, Landing, MergeStrategy, ReviewVerdict, Seat,
+    Actor, AgentKind, AttentionReason, GoalStatus, Landing, MergeStrategy, MessageKind, Seat,
     SessionStatus, TaskStatus,
 };
 
@@ -54,7 +54,6 @@ enum_columns! {
         status: SessionStatus,
         attention_reason: [AttentionReason],
     }
-    Review { verdict: ReviewVerdict }
 }
 
 /// A skill: one document that tells a generic agent how to do one kind of
@@ -356,16 +355,58 @@ pub struct AgentSession {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct Review {
+pub struct Message {
     pub id: String,
-    pub task_id: String,
+    pub goal_id: String,
+    /// The task it is about, or None for a message about the goal itself.
+    pub task_id: Option<String>,
+    /// The review round it belongs to, read for a verdict and ignored
+    /// otherwise.
     pub round: i64,
-    /// The task agent whose verdict this is.
-    pub reviewer_agent_id: String,
-    pub session_id: Option<String>,
-    pub verdict: String,
-    pub body: Option<String>,
+    /// [`MessageKind`], as the wire spells it. Read through [`Message::kind`].
+    pub kind: String,
+    pub from_actor: String,
+    /// The staffed agent that sent it, or None for the orchestrator, the
+    /// daemon and the user.
+    pub from_agent_id: Option<String>,
+    /// The session it was sent from. None for a message the daemon wrote, and
+    /// for one whose session has since been deleted.
+    pub from_session: Option<String>,
+    pub to_actor: String,
+    /// The staffed agent it is for, or None for the orchestrator.
+    pub to_agent_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub body: String,
+    /// When it reached the recipient's pane, or None while it is still
+    /// waiting for one to be free.
+    pub delivered_at: Option<String>,
     pub created_at: String,
+}
+
+impl Message {
+    /// What this message is, or None for a row written by a build that knows
+    /// a kind this one does not. Such a row is carried and shown, and no
+    /// verdict is counted from it — the one place a spelling this build does
+    /// not know must not panic, since a message is what an agent typed about.
+    pub fn kind(&self) -> Option<MessageKind> {
+        MessageKind::from_str(&self.kind).ok()
+    }
+
+    /// Who sent it, or None for a row spelling an actor this build does not
+    /// know.
+    pub fn from_actor(&self) -> Option<Actor> {
+        Actor::from_str(&self.from_actor).ok()
+    }
+
+    /// Who it is for.
+    pub fn to_actor(&self) -> Option<Actor> {
+        Actor::from_str(&self.to_actor).ok()
+    }
+
+    /// Whether it is still waiting for the recipient's pane.
+    pub fn is_delivered(&self) -> bool {
+        self.delivered_at.is_some()
+    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

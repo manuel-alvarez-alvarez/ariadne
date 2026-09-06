@@ -198,6 +198,8 @@ pub enum PromptKind {
     /// tasks need it: one that failed, one that has gone quiet, or a goal
     /// with nothing left to do.
     GoalAttention,
+    /// What one agent said to another, as the recipient reads it.
+    IncomingMessage,
     /// Initial briefing of an author session.
     AuthorBriefing,
     /// What an author with unfinished work is picked up with, whether its
@@ -216,6 +218,7 @@ wire_enum! { PromptKind, "prompt kind", [
     OrchestratorBriefing = "orchestrator_briefing",
     OrchestratorResume = "orchestrator_resume",
     GoalAttention = "goal_attention",
+    IncomingMessage = "incoming_message",
     AuthorBriefing = "author_briefing",
     AuthorResume = "author_resume",
     ChangesRequested = "changes_requested",
@@ -230,6 +233,8 @@ impl PromptKind {
             PromptKind::OrchestratorBriefing
             | PromptKind::OrchestratorResume
             | PromptKind::GoalAttention => &[Seat::Orchestrator],
+            // Every seat can be written to, so every seat is briefed with it.
+            PromptKind::IncomingMessage => &[Seat::Orchestrator, Seat::Author, Seat::Reviewer],
             PromptKind::AuthorBriefing
             | PromptKind::AuthorResume
             | PromptKind::ChangesRequested => &[Seat::Author],
@@ -244,13 +249,19 @@ impl PromptKind {
                 PromptKind::OrchestratorBriefing,
                 PromptKind::OrchestratorResume,
                 PromptKind::GoalAttention,
+                PromptKind::IncomingMessage,
             ],
             Seat::Author => &[
                 PromptKind::AuthorBriefing,
                 PromptKind::AuthorResume,
                 PromptKind::ChangesRequested,
+                PromptKind::IncomingMessage,
             ],
-            Seat::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
+            Seat::Reviewer => &[
+                PromptKind::ReviewerBriefing,
+                PromptKind::ReviewerResume,
+                PromptKind::IncomingMessage,
+            ],
         }
     }
 
@@ -275,6 +286,8 @@ impl PromptKind {
             // What the tasks of this goal need: one line each, rendered by
             // the scheduler that noticed.
             PromptKind::GoalAttention => &["goal_title", "tasks"],
+            // What was said, who said it, and the id an answer names.
+            PromptKind::IncomingMessage => &["from", "message_id", "body"],
             PromptKind::AuthorBriefing => &[
                 "task_title",
                 "task_description",
@@ -644,18 +657,63 @@ impl AttentionReason {
     }
 }
 
-/// Review verdict for one reviewer in one round.
+/// What one agent is saying to another.
+///
+/// Agents talk to each other through one channel, and this is what tells the
+/// six things they say apart. A verdict used to be a row of its own; it is a
+/// message like the rest now, which is what makes "the reviewer asked the
+/// author something" possible at all — before, the only thing a reviewer
+/// could say was approve or request changes.
+///
+/// The kind is what the daemon reads. Two of them move the task
+/// ([`TaskStatus`]), one of them is answered, and the rest are said and left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(
+    feature = "clap",
+    derive(clap::ValueEnum),
+    value(rename_all = "kebab-case")
+)]
 #[serde(rename_all = "snake_case")]
-pub enum ReviewVerdict {
+pub enum MessageKind {
+    /// Something the sender needs answered before it can go on.
+    Question,
+    /// The answer to one.
+    Answer,
+    /// The author asking a reviewer to look at what it wrote.
+    ReviewRequest,
+    /// A reviewer's verdict: the round is closed for that reviewer.
     Approve,
+    /// A reviewer's verdict: the author starts again on this feedback.
     RequestChanges,
+    /// Anything worth saying that nobody has to answer.
+    Note,
 }
 
-wire_enum! { ReviewVerdict, "review verdict", [
-    Approve = "approve", RequestChanges = "request_changes",
+wire_enum! { MessageKind, "message kind", [
+    Question = "question",
+    Answer = "answer",
+    ReviewRequest = "review_request",
+    Approve = "approve",
+    RequestChanges = "request_changes",
+    Note = "note",
 ]}
+
+impl MessageKind {
+    /// Whether this kind is a reviewer's verdict on a round.
+    ///
+    /// The two that are is what the daemon counts when it decides whether a
+    /// round is closed, and one verdict per reviewer per round is what the
+    /// store holds them to.
+    pub fn is_verdict(&self) -> bool {
+        matches!(self, MessageKind::Approve | MessageKind::RequestChanges)
+    }
+
+    /// Whether the sender is waiting for an answer to this.
+    pub fn wants_an_answer(&self) -> bool {
+        matches!(self, MessageKind::Question)
+    }
+}
 
 #[cfg(test)]
 mod tests {

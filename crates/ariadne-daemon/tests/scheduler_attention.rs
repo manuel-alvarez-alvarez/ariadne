@@ -34,7 +34,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, ReviewVerdict, Seat, SessionStatus, TaskStatus,
+    Actor, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
 };
 // The watchdog's timeline and the orchestrator's budget come from the scheduler
 // rather than being written down again here, so that moving a threshold moves
@@ -45,7 +45,7 @@ use ariadne_daemon::scheduler::{
     QUIET_RELAUNCH_SECS as RELAUNCH_SECS, START_GRACE_SECS, SchedEvent,
 };
 use ariadne_store::{
-    AgentSession, Goal, NewReview, NewTaskAgent, SessionFilter, Task,
+    AgentSession, Goal, NewTaskAgent, SessionFilter, Task,
 };
 
 use common::{Harness, eventually, harness};
@@ -654,17 +654,8 @@ async fn a_vanished_pane_nobody_is_waiting_on_is_not_raised() {
     let voted = w
         .session(&w.goal, Some(&under_review), Seat::Reviewer, &w.reviewer)
         .await;
-    w.store
-        .create_review(NewReview {
-            task_id: under_review.id.clone(),
-            round: under_review.review_round,
-            reviewer_agent_id: w.reviewer.clone(),
-            session_id: Some(voted.id.clone()),
-            verdict: ReviewVerdict::Approve,
-            body: None,
-        })
-        .await
-        .unwrap();
+    w.verdict_from(&under_review, &voted, MessageKind::Approve, "looks right")
+        .await;
 
     let cancelled_task = w.extra_task("cancelled").await;
     let cancelled = w
