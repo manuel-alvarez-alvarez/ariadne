@@ -75,6 +75,15 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
     its completed goal is killed.
 15. A pass that has three agents to nudge does not wait on the keystrokes:
     delivery happens off the loop.
+16. A launch that works and an agent that runs are not the same thing. An
+    agent that comes up and is never heard from spends an attempt like one
+    that never came up at all, and the attempts are given back when an agent
+    reports rather than when a launch returns: without both halves the seat
+    is filled again every tick for as long as the work wants it, and nothing
+    reaches the user, since the alarm each death raises is cleared by the
+    replacement that dies the same way. A goal whose orchestrator dies that
+    way is left with its one alarm; a task whose author or reviewer does
+    fails, saying its agent stopped as soon as it started.
 
 ## Acceptance criteria
 
@@ -114,6 +123,11 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
   `::a_silent_agent_whose_pane_cannot_be_read_is_left_for_the_next_pass`).
 - A session outliving its completed goal is killed
   (`scheduler_attention.rs::a_session_that_outlived_its_completed_goal_is_killed`).
+- An orchestrator that dies the moment it starts is given up on, with one
+  alarm and nothing started again
+  (`scheduler_attention.rs::an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on`),
+  and a task whose agent does fails with the reason on it
+  (`::a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it`).
 - A pass with three agents to nudge does not wait on the keystrokes
   (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes`).
 

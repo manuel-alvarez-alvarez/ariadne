@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use ariadne_core::{GoalStatus, Seat};
-use ariadne_store::{SessionFilter, Store, TaskFilter};
+use ariadne_store::{AgentSession, SessionFilter, Store, TaskFilter};
 
 use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
@@ -139,6 +139,13 @@ pub struct Scheduler {
     /// restart, which is fine — a restart is exactly when a retry is
     /// warranted).
     spawn_failures: HashMap<String, u32>,
+    /// The launch each seat's last death on arrival was already counted for,
+    /// keyed like the map above and holding the `launch_id` that died: an
+    /// agent that came up and was never heard from is counted once, not once
+    /// per pass over the row it left, and a session put back on its feet
+    /// under its own id is counted again for the run that died next. Cleared,
+    /// like the count it guards, when a launch is heard from.
+    dead_launch: HashMap<String, String>,
     /// What the quiet-clock watchdog has done about each session it has had
     /// to act on, by session id (in memory like the map above).
     quiet: HashMap<String, Quiet>,
@@ -200,6 +207,7 @@ pub fn start(
         store,
         launcher,
         spawn_failures: HashMap::new(),
+        dead_launch: HashMap::new(),
         quiet: HashMap::new(),
         goal_told: HashMap::new(),
         landing_briefed: HashSet::new(),
@@ -265,7 +273,8 @@ impl Scheduler {
             }
             Target::Task(id) => {
                 warn!(task = %id, error = %format!("{e:#}"), "task reconciliation failed");
-                self.record_spawn_failure(id).await;
+                self.record_spawn_failure(id, "the agent could not be started")
+                    .await;
             }
         }
     }
@@ -378,5 +387,76 @@ impl Scheduler {
             Some(task) => self.reconcile(Target::Task(task)).await,
             None => self.reconcile(Target::Goal(&session.goal_id)).await,
         }
+    }
+}
+
+/// Whether this session has said anything since the launch it is in.
+///
+/// `last_activity_at` is stamped by what the agent reports and by the restart
+/// that puts a row back on its feet, so it is only news where it is later than
+/// the launch itself: an agent is heard from when it reports, and a revival is
+/// not the agent.
+pub(super) fn heard_from(session: &AgentSession) -> bool {
+    let stamped = |at: Option<&str>| {
+        at.and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| at.with_timezone(&chrono::Utc))
+    };
+    let Some(launched) = stamped(session.launched_at.as_deref()) else {
+        return false;
+    };
+    stamped(session.last_activity_at.as_deref()).is_some_and(|heard| heard > launched)
+}
+
+/// Whether this session came up and died without ever being heard from.
+///
+/// The launch worked and the agent did not: a CLI that exits on a dialog it
+/// was shown, a model it will not take, a folder it will not open. What tells
+/// it from a session that ended having done its work is that nothing was ever
+/// reported under this launch, and from one still starting that it is over.
+pub(super) fn died_on_arrival(session: &AgentSession) -> bool {
+    session.launched_at.is_some() && !session.status().is_live() && !heard_from(session)
+}
+
+impl Scheduler {
+    /// Count this seat's last launch if it died on arrival, and say whether
+    /// the budget for starting another has run out.
+    ///
+    /// An agent that comes up and dies without a word is not one more launch
+    /// away from working, and the seat it left empty is one the daemon wants
+    /// filled: the two together are a loop that starts an agent every tick for
+    /// as long as the goal lives, and the user is never told, because every
+    /// alarm the sweep raises is cleared by the replacement that goes on to
+    /// die the same way. So the deaths are counted against the same budget a
+    /// spawn that never got off the ground spends, one per launch, and the
+    /// caller says what running out of it means for the seat.
+    /// `seat` names the seat the launch was for — the goal for an
+    /// orchestrator, the task for its author, the session row for one of
+    /// several reviewers — and `budget` the count it spends, which for every
+    /// agent of a task is the task's own.
+    pub(super) fn spent_on_a_dead_launch(
+        &mut self,
+        seat: &str,
+        budget: &str,
+        last: &AgentSession,
+    ) -> bool {
+        if heard_from(last) {
+            self.spawn_failures.remove(budget);
+            self.dead_launch.remove(seat);
+            return false;
+        }
+        if !died_on_arrival(last) {
+            return false;
+        }
+        // Once per launch, and per launch rather than per row: an author and
+        // a reviewer are put back on their feet under the id they already
+        // have, so the row says nothing about which run of it died. Every
+        // pass over the same dead launch would otherwise spend the budget
+        // again, and no relaunch of a session would ever spend it once.
+        let launch = last.launch_id.clone().unwrap_or_else(|| last.id.clone());
+        if self.dead_launch.get(seat) == Some(&launch) {
+            return false;
+        }
+        self.dead_launch.insert(seat.to_string(), launch);
+        true
     }
 }

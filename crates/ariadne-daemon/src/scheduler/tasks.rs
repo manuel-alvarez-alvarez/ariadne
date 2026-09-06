@@ -92,7 +92,6 @@ impl super::Scheduler {
                 {
                     info!(task = %task.id, "spawning author");
                     self.launcher.spawn_author(&task.id).await?;
-                    self.spawn_failures.remove(&task.id);
                 }
                 self.store
                     .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
@@ -206,6 +205,10 @@ impl super::Scheduler {
                     // the others is not a stall. There is no task-level flag
                     // for this — the session's own is the signal.
                     if let Some(reviewer) = running {
+                        // Up and reporting: what earlier attempts at starting
+                        // this reviewer spent of the task's budget comes back
+                        // here rather than at the launch that started it.
+                        self.spent_on_a_dead_launch(&reviewer.id, &task.id, &reviewer);
                         self.check_session_quiet(
                             &reviewer,
                             (task.status.clone(), task.review_round),
@@ -225,13 +228,34 @@ impl super::Scheduler {
                         // the compaction ends.
                         info!(task = %task.id, session = %compacting.id, "the reviewer is compacting its conversation; its next round starts after it");
                     } else {
+                        // A reviewer that came up and was never heard from
+                        // spends an attempt of the task's, like its author
+                        // does: a round whose reviewer exits the moment it
+                        // starts is not a round to start one for every tick.
+                        if let Some(last) = self
+                            .last_session(&task.id, |s| {
+                                s.task_agent_id.as_deref() == Some(agent_id.as_str())
+                            })
+                            .await
+                            && self.spent_on_a_dead_launch(&last.id, &task.id, &last)
+                        {
+                            warn!(task = %task.id, session = %last.id, "the reviewer came up and was never heard from");
+                            if self
+                                .record_spawn_failure(
+                                    &task.id,
+                                    "its agent stopped as soon as it started",
+                                )
+                                .await
+                            {
+                                return Ok(());
+                            }
+                        }
                         info!(task = %task.id, reviewer = %agent_id, round = task.review_round, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
                         // one, spawns a first for it otherwise.
                         self.launcher
                             .resume_reviewer(&task.id, &agent_id, &resume)
                             .await?;
-                        self.spawn_failures.remove(&task.id);
                     }
                 }
             }
@@ -278,7 +302,6 @@ impl super::Scheduler {
                         &prompts::changes_requested_briefing(template, &feedback),
                     )
                     .await?;
-                self.spawn_failures.remove(&task.id);
                 self.store
                     .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
                     .await?;
@@ -300,7 +323,6 @@ impl super::Scheduler {
                 if self.landing_briefed.insert(task.id.clone()) {
                     info!(task = %task.id, "approved: briefing the author to land it");
                     self.start_author(&task).await?;
-                    self.spawn_failures.remove(&task.id);
                 } else {
                     self.check_stall(&task).await?;
                 }
@@ -379,23 +401,26 @@ impl super::Scheduler {
             .find(|s| s.seat() == Seat::Author && self.compaction_in_flight(s)))
     }
 
-    pub(super) async fn record_spawn_failure(&mut self, task_id: &str) {
+    /// Count an attempt at giving this task an agent that came to nothing, and
+    /// say whether that was the last one there was.
+    ///
+    /// `why` is what the task will carry if it was: a launch that could not be
+    /// performed and an agent that died the moment it started are both a task
+    /// nobody is coming back to, and the two are worth telling apart by the
+    /// user reading it afterwards.
+    pub(super) async fn record_spawn_failure(&mut self, task_id: &str, why: &str) -> bool {
         let failures = self.spawn_failures.entry(task_id.to_string()).or_insert(0);
         *failures += 1;
-        if *failures >= SPAWN_RETRY_BUDGET {
-            warn!(task = %task_id, failures, "retry budget exhausted, failing task");
-            let _ = self
-                .store
-                .transition_task(
-                    task_id,
-                    TaskStatus::Failed,
-                    Actor::Daemon,
-                    Some("the agent could not be started"),
-                    None,
-                )
-                .await;
-            self.spawn_failures.remove(task_id);
+        if *failures < SPAWN_RETRY_BUDGET {
+            return false;
         }
+        warn!(task = %task_id, failures, why, "retry budget exhausted, failing task");
+        let _ = self
+            .store
+            .transition_task(task_id, TaskStatus::Failed, Actor::Daemon, Some(why), None)
+            .await;
+        self.spawn_failures.remove(task_id);
+        true
     }
 
     /// The sessions for this seat that are still running — including the ones
@@ -478,6 +503,25 @@ impl super::Scheduler {
             })
             .await?;
         let Some(agent) = sessions.iter().find(|s| s.seat() == Seat::Author) else {
+            // An author that came up and was never heard from spends an
+            // attempt like a launch that never got off the ground. Without
+            // that, a CLI that exits the moment it starts — a dialog nobody
+            // answered, a folder it will not open — is a task that starts an
+            // agent every tick for as long as its goal is active, and says so
+            // to nobody.
+            if let Some(last) = self
+                .last_session(&task.id, |s| s.seat() == Seat::Author)
+                .await
+                && self.spent_on_a_dead_launch(&task.id, &task.id, &last)
+            {
+                warn!(task = %task.id, session = %last.id, "the author came up and was never heard from");
+                if self
+                    .record_spawn_failure(&task.id, "its agent stopped as soon as it started")
+                    .await
+                {
+                    return Ok(());
+                }
+            }
             info!(task = %task.id, "the task is waiting on an author and has none live, starting one");
             if let Err(e) = self.start_author(task).await {
                 // The task still wants this agent and could not get one: the
@@ -485,9 +529,12 @@ impl super::Scheduler {
                 self.flag_last_disconnected(task).await;
                 return Err(e);
             }
-            self.spawn_failures.remove(&task.id);
             return Ok(());
         };
+        // What the attempts before this one spent comes back here, where the
+        // author is up and has said something, rather than at the launch that
+        // started it: a launch that worked is not yet an agent that runs.
+        self.spent_on_a_dead_launch(&task.id, &task.id, agent);
         // The same words it would be started again with: an agent that has
         // gone quiet with the work still in front of it and one whose session
         // ended are in the same situation, and there is one text for it.
@@ -576,6 +623,25 @@ impl super::Scheduler {
         }
         let template = prompts::template_for(PromptKind::AuthorResume);
         Ok(prompts::author_resume_briefing(template, task))
+    }
+
+    /// The session that was last this task's, of the ones `which` picks out,
+    /// whatever state it ended in: the author's seat, or the one staffed
+    /// agent's among several reviewers.
+    async fn last_session(
+        &self,
+        task_id: &str,
+        which: impl Fn(&AgentSession) -> bool,
+    ) -> Option<AgentSession> {
+        let sessions = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task_id.to_string()),
+                ..Default::default()
+            })
+            .await
+            .ok()?;
+        sessions.into_iter().rev().find(|s| which(s))
     }
 
     /// Raise `disconnected` on the author session that was last on this

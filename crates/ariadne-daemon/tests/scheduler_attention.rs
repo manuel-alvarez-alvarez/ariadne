@@ -1073,6 +1073,18 @@ async fn a_task_that_could_never_be_started_fails_with_the_reason_on_it() {
     );
 }
 
+/// Every session this goal has, which on a goal with no tasks is every
+/// orchestrator it ever tried to start.
+async fn orchestrators(h: &Harness, goal: &Goal) -> Vec<AgentSession> {
+    h.store
+        .list_sessions(SessionFilter {
+            goal_id: Some(goal.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+}
+
 /// A goal in planning always wants an orchestrator, and its row goes in
 /// before the launch: a spawn that cannot get off the ground — a model the
 /// agent CLI does not know, a CLI that is not installed — used to leave a
@@ -1085,18 +1097,6 @@ async fn a_task_that_could_never_be_started_fails_with_the_reason_on_it() {
 /// starts again from there.
 #[tokio::test]
 async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
-    /// Every session this goal has, which on a goal with no tasks is every
-    /// orchestrator it ever tried to start.
-    async fn orchestrators(h: &Harness, goal: &Goal) -> Vec<AgentSession> {
-        h.store
-            .list_sessions(SessionFilter {
-                goal_id: Some(goal.id.clone()),
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-    }
-
     let h = harness().cannot_spawn().await;
     let goal = h.planning_goal().await;
     // The orchestrator's cwd has to exist for an attempt to get as far as the
@@ -1157,6 +1157,112 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
         orchestrators(&h, &goal).await.len() > rows.len()
     })
     .await;
+}
+
+/// A launch that works and an agent that runs are not the same thing. An
+/// orchestrator whose CLI comes up and exits — a dialog it was shown and
+/// nobody answered, a folder it will not open — leaves the seat empty again
+/// within a tick, and a goal always wants that seat filled: the daemon spawned
+/// one every five seconds for as long as the goal lived, and the user was
+/// never told, because the alarm each death raised was cleared by the
+/// replacement that went on to die the same way.
+///
+/// So a death on arrival spends an attempt like a launch that never got off
+/// the ground, and it ends where that one ends: one alarm, on one row, and
+/// nothing started again. Here every launch works — the stub takes the
+/// `new-session` — and no pane is ever alive under it, which is exactly an
+/// agent that exits the moment it starts.
+#[tokio::test]
+async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+    // The cwd of a launch has to exist for the launch to be performed at all.
+    std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
+
+    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    sched.goal(&goal);
+    // Every death is flagged by the sweep and cleared by the launch that
+    // replaces it, so the flag alone says nothing: what is waited for is the
+    // budget out — as many launches as it is worth, every one of them over,
+    // and the last of them still carrying its alarm.
+    eventually(TIMEOUT, "the deaths to run the budget out", async || {
+        let rows = orchestrators(&h, &goal).await;
+        rows.len() >= SPAWN_RETRY_BUDGET
+            && rows.iter().all(|s| !s.status().is_live())
+            && rows
+                .iter()
+                .any(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
+    })
+    .await;
+
+    let rows = orchestrators(&h, &goal).await;
+    assert_eq!(
+        rows.iter()
+            .filter(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
+            .count(),
+        1,
+        "one goal, one row that says anything: {rows:?}"
+    );
+
+    // And a tick later nothing has been started again: given up on, rather
+    // than between two launches.
+    for _ in 0..3 {
+        sched.goal(&goal);
+    }
+    tokio::time::sleep(Duration::from_secs(scheduler::TICK_SECS + 2)).await;
+    let after = orchestrators(&h, &goal).await;
+    assert_eq!(
+        after.len(),
+        rows.len(),
+        "an orchestrator that was given up on is not spawned again: {after:?}"
+    );
+    assert_eq!(
+        after
+            .iter()
+            .filter(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
+            .count(),
+        1,
+        "and the alarm the user answers stands: {after:?}"
+    );
+}
+
+/// The same for the agent of a task, which has a task to fail rather than an
+/// alarm to leave: an author that comes up and is never heard from spends the
+/// task's budget, and what the user reads afterwards is the task saying that
+/// its agent stopped as soon as it started — not that it could not be started,
+/// which is a different thing that has already been ruled out.
+#[tokio::test]
+async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it() {
+    let h = harness().await;
+    // A real repository: an author is launched in a worktree of it, and the
+    // launch has to work for the death that follows to be the thing under
+    // test.
+    h.git_repo("repo");
+    let cast = h.cast().await;
+    let goal = h.activate(&cast.goal).await;
+
+    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    sched.goal(&goal);
+    sched.task(&cast.task);
+    eventually(TIMEOUT, "the deaths to run the task's budget out", async || {
+        h.store.get_task(&cast.task.id).await.unwrap().status() == TaskStatus::Failed
+    })
+    .await;
+
+    let ended: Vec<_> = h
+        .store
+        .list_task_transitions(&cast.task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|t| t.to_status == TaskStatus::Failed.as_str())
+        .collect();
+    assert_eq!(ended.len(), 1, "{ended:?}");
+    assert_eq!(
+        ended[0].reason.as_deref(),
+        Some("its agent stopped as soon as it started"),
+        "the task does not say what stopped it"
+    );
 }
 
 /// A goal the user cancelled takes its tasks with it, and every one of them

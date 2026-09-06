@@ -204,17 +204,33 @@ impl super::Scheduler {
     /// Make sure this goal has an orchestrator, whatever it is doing.
     ///
     /// One per goal, for the whole goal: the agent the user talks to, and the
-    /// only one that holds the plan. A goal that has one gives back whatever
-    /// earlier attempts spent; one that has none gets another go, until
-    /// [`Self::orchestrator_wanted`] says the budget is out.
+    /// only one that holds the plan. A goal whose orchestrator has been heard
+    /// from gives back whatever earlier attempts spent; one that has none gets
+    /// another go, until [`Self::orchestrator_wanted`] says the budget is out.
+    ///
+    /// Heard from, rather than merely started, because a launch that works and
+    /// an agent that runs are not the same thing. An agent that comes up and
+    /// exits on a dialog nobody answered leaves the seat empty again within a
+    /// tick, and a budget handed back at every launch is no budget at all: the
+    /// goal starts an orchestrator every five seconds for as long as it lives,
+    /// and nothing ever reaches the user, since the alarm each death raises is
+    /// cleared by the replacement that dies the same way. So a death on
+    /// arrival spends an attempt like a launch that never got off the ground,
+    /// and ends the same way — one alarm, on one row, and the daemon stops.
     async fn keep_orchestrator(&mut self, goal: &Goal) -> anyhow::Result<()> {
-        if !self
+        let live = self
             .live_sessions(&goal.id, None, Seat::Orchestrator)
-            .await?
-            .is_empty()
-        {
-            self.spawn_failures.remove(&goal.id);
+            .await?;
+        if let Some(orchestrator) = live.first() {
+            self.spent_on_a_dead_launch(&goal.id, &goal.id, orchestrator);
             return Ok(());
+        }
+        if let Some(orchestrators) = self.orchestrator_sessions(&goal.id).await
+            && let Some(last) = orchestrators.last()
+            && self.spent_on_a_dead_launch(&goal.id, &goal.id, last)
+        {
+            warn!(goal = %goal.id, session = %last.id, "the orchestrator came up and was never heard from");
+            self.orchestrator_could_not_start(goal).await;
         }
         if !self.orchestrator_wanted(goal).await {
             return Ok(());
@@ -224,7 +240,6 @@ impl super::Scheduler {
             self.orchestrator_could_not_start(goal).await;
             return Err(e);
         }
-        self.spawn_failures.remove(&goal.id);
         Ok(())
     }
 
