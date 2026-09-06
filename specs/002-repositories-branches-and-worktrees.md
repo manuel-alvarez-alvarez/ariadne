@@ -46,7 +46,9 @@ agent is briefed with in its worktree (006).
    from the base branch of the task's repository. When that base has no
    commits the task branch is cut orphan, the author's first commit is the
    repository's first, and the task's diff is read against the empty tree
-   because there is no merge base to read it against. Cutting orphan needs
+   because there is no merge base to read it against. It is read against the
+   empty tree once it has landed too: that commit is the one the repository
+   starts from, so it has no first parent either. Cutting orphan needs
    git 2.42, which is the floor `ariadne doctor` warns below (014).
 8. A reviewer gets a **detached, read-only** worktree pinned to the branch
    under review, and it is refreshed between rounds so each round reads the
@@ -85,7 +87,7 @@ agent is briefed with in its worktree (006).
   between rounds (`managers.rs::git_worktree_lifecycle_and_merge_verification`,
   `::reviewer_worktree_refresh_between_rounds`); a base branch with no commits
   gives an orphan worktree that has nothing to review until it commits, and
-  then diffs and lands
+  then diffs, lands, and diffs again as a landed task
   (`::a_worktree_is_cut_from_a_base_branch_with_no_commits`).
 - A commit on a task branch reaches the stream
   (`task_branches.rs::a_commit_on_the_task_branch_reaches_the_stream`), the

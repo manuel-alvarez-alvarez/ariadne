@@ -432,7 +432,9 @@ fn session_names_are_stable_and_short() {
 
 /// A repository nobody has committed to yet: the base branch is unborn, so the
 /// author's worktree is cut orphan and its first commit is the repository's.
-/// The diff has no merge base to be read against, and is the whole branch.
+/// The diff has no merge base to be read against, and is the whole branch —
+/// nor, once it has landed, a first parent, since it is the commit the
+/// repository starts from.
 #[tokio::test]
 #[ignore = "requires git"]
 async fn a_worktree_is_cut_from_a_base_branch_with_no_commits() {
@@ -475,5 +477,16 @@ async fn a_worktree_is_cut_from_a_base_branch_with_no_commits() {
             .await
             .unwrap()
     );
+
+    // What the landed task reads as afterwards, which is the only diff of it
+    // left once the branch and the worktree are cleaned up. Its commit has no
+    // parent to be read against, so it is read against the empty tree.
+    let landed = sh(&repo, "git rev-parse HEAD");
+    let diff = git
+        .diff_against_first_parent(&repo, landed.trim())
+        .await
+        .unwrap();
+    assert!(diff.contains("+v1"), "{diff}");
+
     git.remove_worktree(&repo, &wt).await.unwrap();
 }

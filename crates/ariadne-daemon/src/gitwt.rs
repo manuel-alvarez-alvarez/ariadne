@@ -199,8 +199,27 @@ impl GitManager {
     /// What `commit` brought into the branch it landed on: the diff against
     /// its first parent. For a task's merge commit that is the task's whole
     /// change as merged; works for fast-forward (single-parent) commits too.
+    ///
+    /// A root commit has no first parent, and `{commit}^1` names nothing at
+    /// all there — git refuses the revision rather than reading it as empty.
+    /// It is reachable: a repository with no commits is one Ariadne works in
+    /// (002), and the first task to land in one lands the commit the whole
+    /// repository starts from. So the empty tree stands in, the same way it
+    /// does for the orphan branch that commit was written on ([`diff`]) —
+    /// without it the diff of that task is a 409 for as long as the task
+    /// exists, and after the cleanup there is nothing else left to read.
     pub async fn diff_against_first_parent(&self, repo: &Path, commit: &str) -> Result<String> {
-        self.git(repo, &["diff", &format!("{commit}^1"), commit])
+        let parent = format!("{commit}^1");
+        // `--verify --quiet` answers the question and prints nothing when the
+        // answer is no: a root commit is not an error to report, it is the
+        // other branch of this method.
+        let before = match self
+            .git(repo, &["rev-parse", "--verify", "--quiet", &parent])
             .await
+        {
+            Ok(_) => parent,
+            Err(_) => EMPTY_TREE.to_string(),
+        };
+        self.git(repo, &["diff", &before, commit]).await
     }
 }
