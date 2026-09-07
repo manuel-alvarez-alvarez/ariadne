@@ -24,13 +24,11 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
 1. `ariadne goal create` — you describe a goal, pick the registered
    repositories it works in (`ariadne repo add`). The daemon spawns the
    **orchestrator** in tmux; `ariadne goal attach` drops you into its terminal.
-   `--model` runs that orchestrator on something other than the first installed
-   agent CLI, and it is the whole choice: a model is spelled
-   `<agent>[:<model>]` — the agent CLI that runs it (`claude_code`, `codex`,
+   `--model` is required, and it is the whole choice: a model is spelled
+   `<agent_kind>:<model>` — the agent CLI that runs it (`claude_code`, `codex`,
    `opencode`) and, after a colon, one model of that CLI (`--model
-   codex:gpt-5.6-sol`). The agent CLI on its own (`--model codex`) runs it on
-   that CLI's own default model, and a model naming no CLI is a usage error,
-   since nothing says which CLI would run it. `--effort` goes beside it and
+   codex:gpt-5.6-sol`). A bare CLI name or `default` is refused because every
+   run must name its model. `--effort` goes beside it and
    says how deeply that model reasons — one of the efforts `ariadne models ls`
    lists for it (`--effort xhigh`); left out, the model runs at whatever its
    agent CLI runs it at.
@@ -60,11 +58,10 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    sizing the model and the effort to the task it wrote; the last word is
    yours, with `ariadne task update <task-id> --model claude_code:claude-opus-5
    --effort xhigh --reviewer code-review=codex:gpt-5.6-luna@high`, which a task
-   takes while it is still pending or ready (`--model default` hands it back
-   to the first installed CLI, `--effort default` back to the CLI's own). A
-   reviewer is spelled `<skills>[=<model>][@<effort>]` — `code-review` on auto,
-   `code-review=codex` on codex's default model, `code-review@high` reasoned
-   harder — and `ariadne task create` takes the same flags, plus
+   takes while it is still pending or ready. A reviewer is spelled
+   `SKILLS=MODEL[@EFFORT]` — `code-review=codex:gpt-5.6-luna` without a chosen
+   effort, or `code-review=codex:gpt-5.6-luna@high` to reason harder — and
+   `ariadne task create` takes the same flags, plus
    `--no-reviewer` and `--landing`. `list_models` describes what the
    orchestrator sizes a task from: each model's tier, a cost and a speed band,
    what task shapes it is and is not a fit for, and what each of its efforts
@@ -272,12 +269,12 @@ cargo build --release          # builds `ariadned` and `ariadne`
 
 ariadne daemon start           # unix socket at ~/.ariadne/ariadne.sock
 
-# Nothing is pinned by default: at spawn time the first installed CLI is
-# used, in order claude_code -> codex -> opencode. A repository is registered
-# once and referenced by every goal that works in it (--branch defaults to the
-# checked-out branch), so this already works:
+# A model is required for every run. Register a repository once and reference
+# it from every goal that works in it (--branch defaults to the checked-out
+# branch), so this already works:
 ariadne repo add ~/projects/api --description "the public API"
-ariadne goal create --title "Add rate limiting" --repo ~/projects/api
+ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
+    --model claude_code:claude-sonnet-5
 ariadne goal attach <goal-id>
 
 # what an agent can do is the skills it loads; Ariadne ships a catalog and you
@@ -292,17 +289,16 @@ ariadne skill reset coding
 ariadne repo add ~/projects/ui --branch next
 ariadne repo ls
 
-# an agent CLI of your own, a model of it where you want one, and how deeply
-# it reasons there
+# an explicit agent CLI, its model, and how deeply it reasons there
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
     --model codex:gpt-5.6-sol --effort xhigh
 ariadne task update <task-id> --model claude_code:claude-opus-5 --effort xhigh \
     --reviewer code-review=codex:gpt-5.6-luna@high
-ariadne task update <task-id> --model default   # back to the first installed CLI
 ariadne task update <task-id> --effort default  # at whatever the CLI reasons it at
 
 # how a task ends, and whether it is reviewed at all
-ariadne task create <goal-id> --title "Cut 0.6.0" --author release \
+ariadne task create <goal-id> --title "Cut 0.6.0" \
+    --author release=claude_code:claude-sonnet-5 \
     --no-reviewer --landing none
 ariadne task update <task-id> --landing pull-request
 ariadne goal complete <goal-id>        # once its tasks are all done
