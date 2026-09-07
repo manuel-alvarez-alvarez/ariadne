@@ -373,8 +373,8 @@ pub fn agent_kinds() -> Vec<CompletionCandidate> {
 // ---- models --------------------------------------------------------------
 
 /// Model candidates for `--model`: everything an agent can be pinned to, in
-/// the one spelling that pins it — `<agent_kind>[:<model>]`, the bare agent
-/// CLI included, which is that CLI on its own default model.
+/// the one spelling that pins it — `<agent_kind>:<model>`. No bare agent CLI
+/// and no `default`: a model is required, so neither pins anything.
 ///
 /// The catalog is the daemon's (`GET /v1/models`, the list the UI offers,
 /// opencode discovery included), kept on disk so that pressing TAB again
@@ -386,18 +386,6 @@ pub fn models() -> Vec<CompletionCandidate> {
         Some(catalog) => catalog.iter().map(model_candidate).collect(),
         None => curated_catalog(),
     }
-}
-
-/// The same, plus the word an update writes to pin nothing at all: `task
-/// update --model` and `profile update --model`.
-pub fn models_or_default() -> Vec<CompletionCandidate> {
-    let mut out = models();
-    out.push(
-        CompletionCandidate::new(crate::commands::DEFAULT).help(Some(
-            "pin nothing: run on whatever the profile is on".into(),
-        )),
-    );
-    out
 }
 
 /// Effort candidates for `--effort`: every effort the catalog knows, once
@@ -696,31 +684,15 @@ fn band(n: Option<u8>) -> String {
 }
 
 /// The compiled-in catalog, for a machine that has never reached a daemon:
-/// each agent CLI, and the models ariadne-core knows it can be pinned to,
-/// qualified here the way the daemon qualifies them. What an agent discovers
-/// for itself is not in here — that is the daemon's job, and asking
-/// `opencode` to list its own models on a TAB cost seconds every time the
-/// daemon was down.
+/// the models ariadne-core knows each agent CLI can be pinned to, qualified
+/// here the way the daemon qualifies them. No bare-CLI entry — a model is
+/// required, so a CLI on its own pins nothing. What an agent discovers for
+/// itself is not in here — that is the daemon's job, and asking `opencode` to
+/// list its own models on a TAB cost seconds every time the daemon was down.
 fn curated_catalog() -> Vec<CompletionCandidate> {
     AgentKind::ALL
         .into_iter()
-        .flat_map(|kind| {
-            // The bare CLI carries no bands of its own — it is every model of
-            // that CLI at once, not one of them — so it gets the same
-            // "unknown · cost - · speed -" a fetched catalog gives an entry
-            // nothing has ranked, rather than the description on its own.
-            let mut out = vec![candidate(
-                kind.as_str(),
-                model_help(
-                    "unknown",
-                    None,
-                    None,
-                    &format!("{} on its own default model", kind.as_str()),
-                ),
-            )];
-            out.extend(curated_models(kind));
-            out
-        })
+        .flat_map(curated_models)
         .collect()
 }
 
@@ -740,7 +712,7 @@ fn curated_models(kind: AgentKind) -> Vec<CompletionCandidate> {
 fn qualified(kind: AgentKind, model: &str) -> String {
     ModelRef {
         agent_kind: kind,
-        model: Some(model.to_string()),
+        model: model.to_string(),
     }
     .to_string()
 }
@@ -898,19 +870,20 @@ mod tests {
     }
 
     /// A machine that has never reached a daemon offers the compiled-in
-    /// catalog, and its bare-CLI entries carry the same "unknown · cost - ·
-    /// speed -" bands a fetched catalog gives an entry nothing has ranked,
-    /// rather than the description on its own.
+    /// catalog, every entry a CLI and a model of it: no bare CLI and no
+    /// `default`, since a model is required and neither pins one.
     #[test]
-    fn the_curated_fallback_bands_its_bare_cli_entries_too() {
-        let claude_code = curated_catalog()
-            .into_iter()
-            .find(|c| c.get_value().to_string_lossy() == "claude_code")
-            .expect("claude_code is offered on its own");
-        assert_eq!(
-            claude_code.get_help().expect("help").to_string(),
-            "unknown · cost - · speed - — claude_code on its own default model"
-        );
+    fn the_curated_fallback_offers_no_bare_cli_and_no_default() {
+        let catalog = curated_catalog();
+        assert!(!catalog.is_empty());
+        for candidate in catalog {
+            let value = candidate.get_value().to_string_lossy().into_owned();
+            assert!(
+                value.contains(':'),
+                "{value} pins no model, and completion must not offer it"
+            );
+            assert_ne!(value, crate::commands::DEFAULT);
+        }
     }
 
     /// An effort every entry that lists it agrees about is described once;

@@ -3,13 +3,13 @@
 //! The pins live on `task_agents` and `goals`, and the launcher spawns from
 //! them. There is nothing behind a pin to fall back to: what the orchestrator
 //! sized an agent at, or what the user chose instead, is the whole of the
-//! answer, and `default` puts it back on auto rather than on somebody else's
-//! choice.
+//! answer, and a model is required wherever an agent is pinned — no CLI
+//! default stands in for one.
 //!
-//! One field carries the whole choice, `<agent_kind>[:<model>]`, on the way in
-//! and on the way out: an agent CLI on its own is that CLI on its own default
-//! model, and null is auto. The effort rides in the field beside it, checked
-//! against the model it is to run at before anything is written.
+//! One field carries the whole choice, `<agent_kind>:<model>`, on the way in
+//! and on the way out. The effort rides in the field beside it, checked
+//! against the model it is to run at before anything is written; `default`
+//! stays legal for the effort alone.
 
 mod common;
 
@@ -75,80 +75,207 @@ fn agent(task: &TaskDto, seat: Seat) -> &ariadne_api::tasks::TaskAgentDto {
 async fn a_goal_created_with_an_agent_and_a_model_plans_on_them() {
     let h = harness().await;
     let goal = goal_on(&h, serde_json::json!({ "model": "codex:gpt-5.3-codex" })).await;
-    assert_eq!(goal.model.as_deref(), Some("codex:gpt-5.3-codex"));
+    assert_eq!(goal.model, "codex:gpt-5.3-codex");
 
     let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
     assert_eq!(session.agent_kind(), AgentKind::Codex);
-    assert_eq!(session.model.as_deref(), Some("gpt-5.3-codex"));
+    assert_eq!(session.model, "gpt-5.3-codex");
     let argv = h.spawn_argv(&session.id);
     assert!(argv.starts_with("codex "), "{argv}");
     assert!(argv.contains("gpt-5.3-codex"), "{argv}");
 }
 
-/// The agent is the choice and the model only narrows it: an agent named on
-/// its own pins that CLI with no model, which is what runs it on its own
-/// default — on a goal and on either agent of a task alike.
+/// A goal or a task with no model at all, an empty one, or the word `default`
+/// is refused, and the refusal says a model is required.
 #[tokio::test]
-async fn an_agent_alone_pins_it_with_no_model_of_its_own() {
+async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
     let h = harness().await;
-    let goal = goal_on(&h, serde_json::json!({ "model": "claude_code" })).await;
-    assert_eq!(goal.model.as_deref(), Some("claude_code"));
+    let repo = h.repository(&h.dir.path().join("plain-repo")).await;
 
+    // A goal with the field missing entirely never deserializes: the field is
+    // required on the wire.
+    let err = h
+        .error(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({ "title": "Ship it", "repository_ids": [repo.id] }),
+            ),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("model"),
+        "the refusal names the missing field: {}",
+        err.error.message
+    );
+
+    // Empty, whitespace-only and `default` deserialize, and are refused by
+    // the rule — a colon followed by whitespace alone is an empty model too.
+    for model in ["", " ", "default", "codex: ", "codex:   "] {
+        let err = h
+            .error(
+                post_json(
+                    "/v1/goals",
+                    serde_json::json!({
+                        "title": "Ship it",
+                        "repository_ids": [repo.id],
+                        "model": model,
+                    }),
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(
+            err.error.message.contains("a model is required"),
+            "{model:?}: {}",
+            err.error.message
+        );
+    }
+
+    // An agent assignment is held to the same rule: the field is required on
+    // the wire, and the words that used to clear it are refused by the rule.
+    let goal = goal_on(
+        &h,
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+    )
+    .await;
+    for (author, status) in [
+        (
+            serde_json::json!({ "seat": "author", "skills": ["coding"] }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            serde_json::json!({ "seat": "author", "skills": ["coding"], "model": "" }),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            serde_json::json!({ "seat": "author", "skills": ["coding"], "model": "default" }),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            serde_json::json!({ "seat": "author", "skills": ["coding"], "model": "codex: " }),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let err = h
+            .error(
+                post_json(
+                    &format!("/v1/goals/{}/tasks", goal.id),
+                    serde_json::json!({ "title": "A task", "agents": [author] }),
+                ),
+                status,
+            )
+            .await;
+        assert!(err.error.message.contains("model"), "{}", err.error.message);
+    }
+
+    // And so is an edit: `default` used to clear the pin, and there is no
+    // longer anything to clear it to.
     let task = task_on(
         &h,
         &goal,
-        serde_json::json!({ "model": "codex" }),
-        serde_json::json!({ "model": "opencode" }),
+        serde_json::json!({ "model": "codex:gpt-5.3-codex" }),
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
     )
     .await;
-    assert_eq!(agent(&task, Seat::Author).model.as_deref(), Some("codex"));
+    for model in ["", " ", "default", "codex: "] {
+        let err = h
+            .error(
+                patch_json(
+                    &format!("/v1/tasks/{}", task.id),
+                    serde_json::json!({ "model": model }),
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(
+            err.error.message.contains("a model is required"),
+            "{model:?}: {}",
+            err.error.message
+        );
+    }
+    let untouched: TaskDto = h.json(get_task(&task.id), StatusCode::OK).await;
     assert_eq!(
-        agent(&task, Seat::Reviewer).model.as_deref(),
-        Some("opencode")
-    );
-
-    let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
-    assert_eq!(session.agent_kind(), AgentKind::ClaudeCode);
-    assert_eq!(
-        session.model, None,
-        "an agent with no model runs on that CLI's own default"
+        agent(&untouched, Seat::Author).model,
+        "codex:gpt-5.3-codex",
+        "a refused edit moved nothing"
     );
 }
 
-/// Every agent of a task answers for itself, and an agent left out of the
-/// request is on auto: null, which the launcher resolves at spawn time.
+fn get_task(id: &str) -> axum::http::Request<axum::body::Body> {
+    common::get(&format!("/v1/tasks/{id}"))
+}
+
+/// A bare agent CLI parses nowhere: it names no model, and a model is
+/// required.
+#[tokio::test]
+async fn a_bare_agent_cli_is_refused_wherever_a_model_is_written() {
+    let h = harness().await;
+    let repo = h.repository(&h.dir.path().join("repo")).await;
+
+    let err = h
+        .error(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "model": "codex",
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("`codex` names no model")
+            && err.error.message.contains("a model is required"),
+        "{}",
+        err.error.message
+    );
+}
+
+/// Every agent of a task answers for itself: the author's pin and the
+/// reviewer's are each read off their own row.
 #[tokio::test]
 async fn a_task_staffs_each_agent_on_its_own_pin() {
     let h = harness().await;
-    let goal = goal_on(&h, serde_json::json!({ "model": "claude_code" })).await;
+    let goal = goal_on(
+        &h,
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+    )
+    .await;
     let task = task_on(
         &h,
         &goal,
         serde_json::json!({ "model": "codex:gpt-5.3-codex", "effort": "high" }),
-        serde_json::json!({}),
+        serde_json::json!({ "model": "claude_code:claude-opus-5" }),
     )
     .await;
 
     let author = agent(&task, Seat::Author);
-    assert_eq!(author.model.as_deref(), Some("codex:gpt-5.3-codex"));
+    assert_eq!(author.model, "codex:gpt-5.3-codex");
     assert_eq!(author.effort.as_deref(), Some("high"));
 
     let reviewer = agent(&task, Seat::Reviewer);
-    assert_eq!(reviewer.model, None, "nothing chosen is auto");
-    assert_eq!(reviewer.effort, None);
+    assert_eq!(reviewer.model, "claude_code:claude-opus-5");
+    assert_eq!(reviewer.effort, None, "no effort chosen is the CLI's own");
 }
 
-/// An edit moves the author's pin, and `default` hands it back to auto —
-/// there is nothing else for it to go back to.
+/// An edit moves the author's pin whole: the new model, and no effort left
+/// behind from the model that was.
 #[tokio::test]
-async fn an_edit_moves_the_pin_and_default_hands_it_back_to_auto() {
+async fn an_edit_moves_the_pin_whole() {
     let h = harness().await;
-    let goal = goal_on(&h, serde_json::json!({ "model": "claude_code" })).await;
+    let goal = goal_on(
+        &h,
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+    )
+    .await;
     let task = task_on(
         &h,
         &goal,
         serde_json::json!({ "model": "codex:gpt-5.3-codex", "effort": "high" }),
-        serde_json::json!({}),
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
     )
     .await;
 
@@ -162,22 +289,11 @@ async fn an_edit_moves_the_pin_and_default_hands_it_back_to_auto() {
         )
         .await;
     let author = agent(&moved, Seat::Author);
-    assert_eq!(author.model.as_deref(), Some("claude_code:claude-opus-5"));
+    assert_eq!(author.model, "claude_code:claude-opus-5");
     assert_eq!(
         author.effort, None,
         "the effort belonged to the model that was left behind"
     );
-
-    let cleared: TaskDto = h
-        .json(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
-                serde_json::json!({ "model": "default" }),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(agent(&cleared, Seat::Author).model, None);
 }
 
 /// A model is one field, and it names the agent CLI that runs it: a string
@@ -234,10 +350,102 @@ async fn a_model_is_stored_as_typed_whatever_the_catalogs_list() {
         serde_json::json!({ "model": "opencode:ollama/llama3:8b" }),
     )
     .await;
-    assert_eq!(goal.model.as_deref(), Some("opencode:ollama/llama3:8b"));
+    assert_eq!(goal.model, "opencode:ollama/llama3:8b");
 
     let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
-    assert_eq!(session.model.as_deref(), Some("ollama/llama3:8b"));
+    assert_eq!(session.model, "ollama/llama3:8b");
+}
+
+/// An opencode model is `provider/model` — that is the spelling opencode
+/// itself takes back — so one with no provider prefix is refused when it is
+/// pinned, wherever that is.
+#[tokio::test]
+async fn an_opencode_model_with_no_provider_prefix_is_refused() {
+    let h = harness().await;
+    let repo = h.repository(&h.dir.path().join("plain-repo")).await;
+
+    let err = h
+        .error(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "model": "opencode:llama3",
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("`llama3` names no provider")
+            && err.error.message.contains("provider/model"),
+        "{}",
+        err.error.message
+    );
+
+    // The same rule on a staffed agent and on an edit.
+    let goal = goal_on(
+        &h,
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+    )
+    .await;
+    let err = h
+        .error(
+            post_json(
+                &format!("/v1/goals/{}/tasks", goal.id),
+                serde_json::json!({
+                    "title": "A task",
+                    "agents": [{ "seat": "author", "skills": ["coding"],
+                                 "model": "opencode:llama3" }],
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("provider/model"),
+        "{}",
+        err.error.message
+    );
+
+    let task = task_on(
+        &h,
+        &goal,
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+    )
+    .await;
+    let err = h
+        .error(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({ "model": "opencode:llama3" }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("provider/model"),
+        "{}",
+        err.error.message
+    );
+
+    // With the prefix it is stored as typed.
+    let pinned: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "model": "opencode:ollama/llama3",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(pinned.model, "opencode:ollama/llama3");
 }
 
 /// An effort belongs to a model, so it is checked against the one it will run
@@ -266,38 +474,24 @@ async fn an_effort_is_checked_against_the_model_it_runs_at() {
         "the refusal names the effort: {}",
         err.error.message
     );
-
-    // An effort with no model beside it has nothing to be run at.
-    let err = h
-        .error(
-            post_json(
-                "/v1/goals",
-                serde_json::json!({
-                    "title": "Ship it",
-                    "repository_ids": [repo.id],
-                    "effort": "high",
-                }),
-            ),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-    assert!(
-        !err.error.message.is_empty(),
-        "an effort with no model is refused with a reason"
-    );
 }
 
 /// The effort rides beside the model and moves with it: an edit that names an
-/// effort alone leaves the model where it is.
+/// effort alone leaves the model where it is, and `default` — still legal for
+/// the effort — clears it back to the CLI's own.
 #[tokio::test]
 async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
     let h = harness().await;
-    let goal = goal_on(&h, serde_json::json!({ "model": "claude_code" })).await;
+    let goal = goal_on(
+        &h,
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+    )
+    .await;
     let task = task_on(
         &h,
         &goal,
         serde_json::json!({ "model": "claude_code:claude-opus-5", "effort": "high" }),
-        serde_json::json!({}),
+        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
     )
     .await;
 
@@ -312,8 +506,7 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
         .await;
     let author = agent(&deeper, Seat::Author);
     assert_eq!(
-        author.model.as_deref(),
-        Some("claude_code:claude-opus-5"),
+        author.model, "claude_code:claude-opus-5",
         "the model stayed where it was"
     );
     assert_eq!(author.effort.as_deref(), Some("xhigh"));
@@ -328,7 +521,7 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
         )
         .await;
     let author = agent(&plain, Seat::Author);
-    assert_eq!(author.model.as_deref(), Some("claude_code:claude-opus-5"));
+    assert_eq!(author.model, "claude_code:claude-opus-5");
     assert_eq!(author.effort, None);
 }
 
@@ -443,6 +636,6 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
         .iter()
         .find(|a| a.seat == Seat::Author)
         .expect("the task keeps its author");
-    assert_eq!(author.model.as_deref(), Some(off));
+    assert_eq!(author.model, off);
     assert_eq!(author.effort.as_deref(), Some("high"));
 }

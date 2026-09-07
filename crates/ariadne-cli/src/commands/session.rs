@@ -461,10 +461,7 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
         ("agent", s.agent_kind.as_str().into()),
         // Recorded at launch, so it is what this session runs on even if the
         // agent has been re-pinned since.
-        (
-            "model",
-            s.model.clone().unwrap_or_else(|| "default".into()).into(),
-        ),
+        ("model", s.model.clone().into()),
         // How deeply it reasons there, recorded with the model it belongs
         // to; `default` is whatever the agent CLI runs that model at.
         (

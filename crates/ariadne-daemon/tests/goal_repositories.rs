@@ -30,8 +30,8 @@ use common::{Harness, delete, harness, post_json, put_json, sh};
 /// runner, spawning fails outright. What is under test here is the worktree a
 /// spawn cuts, not the agent it starts, so the CLI is named and never looked
 /// up.
-fn pinned() -> &'static str {
-    AgentKind::ClaudeCode.as_str()
+fn pinned() -> String {
+    format!("{}:claude-sonnet-5", AgentKind::ClaudeCode.as_str())
 }
 
 async fn pinned_harness() -> Harness {

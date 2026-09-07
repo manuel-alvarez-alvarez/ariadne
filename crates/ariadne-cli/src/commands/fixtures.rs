@@ -26,7 +26,7 @@ pub fn goal(id: &str, title: &str) -> GoalDto {
         title: title.into(),
         description: String::new(),
         status: GoalStatus::Active,
-        model: None,
+        model: "claude_code:claude-sonnet-5".into(),
         effort: None,
         repos: Vec::new(),
         usage: Default::default(),
@@ -72,7 +72,7 @@ pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
         },
         task_agent_id: Some("01AUTHOR".into()),
         agent_kind: AgentKind::ClaudeCode,
-        model: None,
+        model: "claude-sonnet-5".into(),
         effort: None,
         internal_session_id: None,
         tmux_session: format!("ariadne-{id}"),
@@ -87,14 +87,14 @@ pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
     }
 }
 
-/// One agent staffed on a task: the seat it sits in and the skills it carries,
-/// on no particular CLI.
+/// One agent staffed on a task: the seat it sits in, the skills it carries,
+/// and the model it runs on.
 pub fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
     TaskAgentDto {
         id: id.into(),
         seat,
         skills: skills.iter().map(|s| s.to_string()).collect(),
-        model: None,
+        model: "claude_code:claude-sonnet-5".into(),
         effort: None,
         brief: None,
     }

@@ -13,6 +13,21 @@ async fn test_store() -> (Store, tempfile::TempDir) {
     (store, dir)
 }
 
+/// The pin every seeded agent runs on: a model is required everywhere, so the
+/// fixtures name one and the tests that care name their own.
+fn pin(agent_kind: AgentKind, model: &str) -> AgentPin {
+    AgentPin {
+        agent_kind,
+        model: model.into(),
+        effort: None,
+    }
+}
+
+/// The claude_code pin the fixtures default to.
+fn default_pin() -> AgentPin {
+    pin(AgentKind::ClaudeCode, "claude-sonnet-5")
+}
+
 /// A registered repository, on a path of its own so goals can be seeded side
 /// by side (one registration per path and base branch).
 async fn seed_repository(store: &Store) -> Repository {
@@ -33,7 +48,7 @@ async fn seed_goal(store: &Store) -> (Goal, Repository) {
             title: "Test goal".into(),
             description: "desc".into(),
             repository_ids: vec![repo.id.clone()],
-            pin: None,
+            pin: default_pin(),
         })
         .await
         .unwrap();
@@ -81,7 +96,7 @@ impl World {
                 seat,
                 task_agent_id: agent_id.map(str::to_string),
                 agent_kind: AgentKind::ClaudeCode,
-                model: None,
+                model: "claude-sonnet-5".into(),
                 effort: None,
                 tmux_session: tmux.into(),
                 worktree_path: Some("/tmp/wt".into()),
@@ -152,12 +167,8 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             title: "task".into(),
             description: "do things".into(),
             agents: vec![
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
-                },
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                },
+                NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: deps,
             landing: None,
@@ -327,15 +338,15 @@ async fn a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say() {
             title: "Ship it".into(),
             description: String::new(),
             repository_ids: vec![repo.id.clone()],
-            pin: None,
+            pin: default_pin(),
         })
         .await
         .unwrap();
 
     let staffed = || {
         vec![
-            NewTaskAgent::new(Seat::Author, ["coding"]),
-            NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
+            NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
+            NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
         ]
     };
     // Nothing said: a task lands on the base branch, which is what most work
@@ -391,7 +402,7 @@ async fn a_goal_reads_its_repositories_live() {
             description: "desc".into(),
             // The same repository named twice is one reference.
             repository_ids: vec![api.id.clone(), ui.id.clone(), api.id.clone()],
-            pin: None,
+            pin: default_pin(),
         })
         .await
         .unwrap();
@@ -430,7 +441,7 @@ async fn a_goal_needs_repositories_that_exist() {
         title: "Goal".into(),
         description: "desc".into(),
         repository_ids,
-        pin: None,
+        pin: default_pin(),
     };
 
     assert!(matches!(
@@ -458,12 +469,8 @@ async fn a_goal_needs_repositories_that_exist() {
                 title: "task".into(),
                 description: "do things".into(),
                 agents: vec![
-                    NewTaskAgent {
-                        ..NewTaskAgent::new(Seat::Author, ["coding"])
-                    },
-                    NewTaskAgent {
-                        ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                    },
+                    NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
+                    NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
                 ],
                 depends_on: vec![],
                 landing: None,
@@ -505,12 +512,8 @@ async fn task_branch_is_named_after_the_title() {
             title: "Fix the landing briefing: real fetch/rebase".into(),
             description: "d".into(),
             agents: vec![
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
-                },
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                },
+                NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: vec![],
             landing: None,
@@ -1933,20 +1936,20 @@ async fn built_ins_are_not_recreated_on_reopen() {
     );
 }
 
-/// A pin is written exactly as it was given, and nothing at all is auto.
+/// A pin is written exactly as it was given, whole: the agent CLI, the model,
+/// and the effort where one was chosen.
 ///
-/// There is no longer anything behind a pin to inherit from: what the
-/// orchestrator sized an agent at, or what the user chose instead, is the
-/// whole of the answer. This is the rule that replaced the profile-effort
-/// inheritance the store used to run.
+/// There is nothing behind a pin to inherit from and no auto to fall back to:
+/// what the orchestrator sized an agent at, or what the user chose instead,
+/// is the whole of the answer, and every agent names its CLI and its model.
 #[tokio::test]
-async fn an_agent_is_written_on_the_pin_it_was_given_and_auto_where_it_was_given_none() {
+async fn an_agent_is_written_on_the_pin_it_was_given_whole() {
     let (store, _dir) = test_store().await;
     let (goal, repo) = seed_goal(&store).await;
 
     let pinned = AgentPin {
         agent_kind: AgentKind::Codex,
-        model: Some("gpt-5.6-luna".into()),
+        model: "gpt-5.6-luna".into(),
         effort: Some("max".into()),
     };
     let task = store
@@ -1957,10 +1960,10 @@ async fn an_agent_is_written_on_the_pin_it_was_given_and_auto_where_it_was_given
             description: "do things".into(),
             agents: vec![
                 NewTaskAgent {
-                    pin: Some(pinned.clone()),
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                    pin: pinned.clone(),
+                    ..NewTaskAgent::new(Seat::Author, ["coding"], default_pin())
                 },
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: vec![],
             landing: None,
@@ -1969,36 +1972,33 @@ async fn an_agent_is_written_on_the_pin_it_was_given_and_auto_where_it_was_given
         .unwrap();
 
     let author = store.task_author(&task.id).await.unwrap();
-    assert_eq!(author.agent_kind(), Some(AgentKind::Codex));
-    assert_eq!(author.model.as_deref(), Some("gpt-5.6-luna"));
+    assert_eq!(author.agent_kind(), AgentKind::Codex);
+    assert_eq!(author.model, "gpt-5.6-luna");
     assert_eq!(author.effort.as_deref(), Some("max"));
 
     let reviewers = store.list_task_reviewers(&task.id).await.unwrap();
-    assert_eq!(reviewers[0].agent_kind(), None, "nothing chosen is auto");
-    assert_eq!(reviewers[0].model, None);
+    assert_eq!(reviewers[0].agent_kind(), AgentKind::ClaudeCode);
+    assert_eq!(reviewers[0].model, "claude-sonnet-5");
     assert_eq!(reviewers[0].effort, None);
 
     // And the user's later choice replaces it whole, with no half left behind.
     let moved = store
         .set_agent_pin(
             &author.id,
-            Some(&AgentPin {
+            &AgentPin {
                 agent_kind: AgentKind::ClaudeCode,
-                model: None,
+                model: "claude-opus-5".into(),
                 effort: None,
-            }),
+            },
         )
         .await
         .unwrap();
-    assert_eq!(moved.agent_kind(), Some(AgentKind::ClaudeCode));
-    assert_eq!(moved.model, None, "that CLI's own default model");
+    assert_eq!(moved.agent_kind(), AgentKind::ClaudeCode);
+    assert_eq!(moved.model, "claude-opus-5");
     assert_eq!(
         moved.effort, None,
         "the effort belonged to the model that was left behind"
     );
-
-    let cleared = store.set_agent_pin(&author.id, None).await.unwrap();
-    assert_eq!(cleared.agent_kind(), None, "back on auto");
 }
 
 /// A database written by a release from before the schema was squashed into
@@ -2390,8 +2390,8 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
             title: "Shape it".into(),
             description: "do things".into(),
             agents: vec![
-                NewTaskAgent::new(Seat::Author, ["api-design"]),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
+                NewTaskAgent::new(Seat::Author, ["api-design"], default_pin()),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: vec![],
             landing: None,
@@ -2420,8 +2420,8 @@ async fn an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to() {
             title: "Guess".into(),
             description: "do things".into(),
             agents: vec![
-                NewTaskAgent::new(Seat::Author, ["telepathy"]),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
+                NewTaskAgent::new(Seat::Author, ["telepathy"], default_pin()),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
             ],
             depends_on: vec![],
             landing: None,

@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -43,10 +43,14 @@ same binary also serves (013).
 6. A status filter takes only the values the daemon knows, spelled in kebab or
    in snake case, several on one flag; a value that is no spelling of one
    lists the real ones.
-7. A model can be chosen for every agent on the line, with an effort beside
-   it; a model naming no agent, a model on an agent that is no CLI, an effort
-   with no meaning and a reviewer naming no real agent are usage errors,
-   refused before anything is sent.
+7. A model is chosen for every agent on the line, with an effort beside it,
+   and it is required: `goal create --model` and the `=MODEL` half of every
+   `--author`/`--reviewer` slot must be written, a bare agent CLI names no
+   model, and `task update --model` refuses `default` — only `--effort`
+   still takes that word. A missing model, a model naming no agent, a model
+   on an agent that is no CLI, an effort with no meaning and a reviewer
+   naming no real agent are usage errors, refused before anything is sent.
+   Completions offer neither a bare CLI nor `default` as a model.
 8. The empty list is a flag of its own wherever a repeatable flag names one,
    since a repeatable flag cannot be given zero times on purpose:
    `--no-reviewer` for a task with nothing to review, `--clear-depends-on` for
@@ -94,7 +98,10 @@ same binary also serves (013).
   (`::a_model_naming_no_agent_is_a_usage_error`,
   `::a_model_on_an_agent_that_is_no_cli_is_a_usage_error`,
   `::an_effort_that_says_nothing_is_a_usage_error`,
-  `::a_reviewer_that_names_no_real_agent_is_a_usage_error`).
+  `::a_reviewer_that_names_no_real_agent_is_a_usage_error`), and so is a line
+  with no model (`::a_line_with_no_model_is_a_usage_error`).
+- Completion offers no bare CLI and no `default` for a model
+  (`complete.rs::the_curated_fallback_offers_no_bare_cli_and_no_default`).
 - A failure is one line, and JSON keeps the envelope
   (`error.rs::a_bare_message_is_the_whole_line`,
   `::a_local_failure_reads_as_context_then_cause`,

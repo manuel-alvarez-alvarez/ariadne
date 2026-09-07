@@ -52,7 +52,7 @@ pub enum ModelsCommand {
     },
     /// Show what one model is, costs and is for
     Show {
-        /// Model id, `<agent_kind>[:<model>]` — the same spelling `--model`
+        /// Model id, `<agent_kind>:<model>` — the same spelling `--model`
         /// takes
         #[arg(value_parser = parse_model,
               add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
@@ -286,8 +286,8 @@ mod tests {
 
     fn catalogue() -> Vec<ModelDto> {
         vec![
-            model("claude_code", AgentKind::ClaudeCode),
             model("claude_code:claude-fable-5", AgentKind::ClaudeCode),
+            model("claude_code:claude-opus-5", AgentKind::ClaudeCode),
             model("codex:gpt-5.6-luna", AgentKind::Codex),
         ]
     }
@@ -296,14 +296,14 @@ mod tests {
         models.into_iter().map(|m| m.id).collect()
     }
 
-    /// The whole catalogue by default, and one CLI's share of it — the entry
-    /// for the CLI on its own default model included — when one is named.
+    /// The whole catalogue by default, and one CLI's share of it when one is
+    /// named.
     #[test]
     fn an_agent_narrows_the_catalogue_to_its_own() {
         assert_eq!(ids(of_agent(catalogue(), None)).len(), 3);
         assert_eq!(
             ids(of_agent(catalogue(), Some(AgentKind::ClaudeCode))),
-            ["claude_code", "claude_code:claude-fable-5"]
+            ["claude_code:claude-fable-5", "claude_code:claude-opus-5"]
         );
         assert_eq!(
             ids(of_agent(catalogue(), Some(AgentKind::Opencode))),

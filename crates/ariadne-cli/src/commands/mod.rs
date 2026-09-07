@@ -178,11 +178,10 @@ pub fn agent_label(skills: &[String]) -> String {
 /// An effort that was never pinned says nothing at all rather than a word for
 /// it: the model is then run at whatever its agent CLI runs it at, and a `@`
 /// with a guess after it would read as a choice somebody made.
-pub fn agent_pin_label(skills: &[String], model: Option<&str>, effort: Option<&str>) -> String {
-    let pin = model.unwrap_or("auto");
+pub fn agent_pin_label(skills: &[String], model: &str, effort: Option<&str>) -> String {
     match effort {
-        Some(effort) => format!("{} · {pin} @ {effort}", agent_label(skills)),
-        None => format!("{} · {pin}", agent_label(skills)),
+        Some(effort) => format!("{} · {model} @ {effort}", agent_label(skills)),
+        None => format!("{} · {model}", agent_label(skills)),
     }
 }
 
@@ -224,15 +223,16 @@ pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
     })
 }
 
-/// The word every `--model` that takes one writes for "pin nothing at all",
-/// which is also how the daemon reads it: `task update --model default` puts
-/// the task's author back on auto — the first installed CLI at spawn time, on
-/// its own default model.
+/// The word `--effort` writes for "the CLI's own", which is also how the
+/// daemon reads it: `task update --effort default` runs the model at whatever
+/// its agent CLI runs it at. Efforts only — a model is required, so no
+/// `--model` takes it.
 pub const DEFAULT: &str = "default";
 
-/// One `--model <agent>[:<model>]` off the command line, as the daemon spells
-/// it back: the agent CLI is the choice, and a `:` after it narrows that CLI to
-/// one model of it.
+/// One `--model <agent>:<model>` off the command line, as the daemon spells
+/// it back: the agent CLI that runs it, and after the `:` one model of it —
+/// both required, since a model is required and no CLI default stands in for
+/// one.
 ///
 /// [`ModelRef`] is where the spelling lives, so a typo is refused here in the
 /// same words the daemon would have refused it in — and never leaves the shell.
@@ -240,14 +240,6 @@ pub const DEFAULT: &str = "default";
 /// travels as the daemon writes it.
 pub fn parse_model(s: &str) -> Result<String, String> {
     s.parse::<ModelRef>().map(|m| m.to_string())
-}
-
-/// The same, plus the one word an update takes beside a model: [`DEFAULT`].
-pub fn parse_model_or_default(s: &str) -> Result<String, String> {
-    if s == DEFAULT {
-        return Ok(DEFAULT.to_string());
-    }
-    parse_model(s).map_err(|e| format!("{e}; or \"{DEFAULT}\" to pin nothing at all"))
 }
 
 /// One `--effort <EFFORT>` off the command line: the reasoning effort the
@@ -422,28 +414,20 @@ mod tests {
         assert!(err.contains("\"default\""), "{err}");
     }
 
-    /// An agent reads as the two things it is: the skills it carries, and —
-    /// only where one was pinned — how deeply it reasons where it runs.
+    /// An agent reads as the two things it is: the skills it carries and the
+    /// model it runs on — and, only where one was pinned, how deeply it
+    /// reasons there.
     #[test]
     fn an_agent_label_says_the_skills_and_the_pin_beside_them() {
         let skills = ["code-review".to_string(), "security-review".to_string()];
         assert_eq!(
-            agent_pin_label(&skills, Some("codex:gpt-5.6-luna"), Some("high")),
+            agent_pin_label(&skills, "codex:gpt-5.6-luna", Some("high")),
             "code-review, security-review · codex:gpt-5.6-luna @ high"
         );
         assert_eq!(
-            agent_pin_label(&skills, Some("codex:gpt-5.6-luna"), None),
+            agent_pin_label(&skills, "codex:gpt-5.6-luna", None),
             "code-review, security-review · codex:gpt-5.6-luna",
             "no effort pinned is the CLI's own, which is not a choice to print"
-        );
-        assert_eq!(
-            agent_pin_label(&skills, None, Some("max")),
-            "code-review, security-review · auto @ max",
-            "an effort stands on its own: auto, run deeper"
-        );
-        assert_eq!(
-            agent_pin_label(&skills, None, None),
-            "code-review, security-review · auto"
         );
 
         // An agent with no skills is legal, and rarely what anybody wanted.

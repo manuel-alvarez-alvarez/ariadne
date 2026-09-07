@@ -20,9 +20,8 @@ use super::pins::{self, Repin, Standing};
 
 /// The agents an assignment list asks for, in the order it names them.
 ///
-/// An agent has nothing behind it to fall back to, so "nothing chosen" is
-/// auto: no agent CLI, and so no model of one either — which is also no model
-/// an effort of its own could be run at.
+/// An agent has nothing behind it to fall back to: every assignment names its
+/// CLI and its model, and one that names no model is refused.
 async fn resolve_agents(
     store: &Store,
     assignments: &[AgentAssignment],
@@ -32,13 +31,7 @@ async fn resolve_agents(
         agents.push(NewTaskAgent {
             seat: assignment.seat,
             skills: assignment.skills.clone(),
-            pin: pins::chosen(
-                store,
-                assignment.model.as_deref(),
-                assignment.effort.as_deref(),
-                Standing::auto(),
-            )
-            .await?,
+            pin: pins::chosen(store, Some(&assignment.model), assignment.effort.as_deref()).await?,
             brief: assignment.brief.clone(),
         });
     }
@@ -183,14 +176,13 @@ pub async fn update(
         req.effort.as_deref(),
         Standing {
             agent_kind: author.agent_kind(),
-            model: author.model.as_deref(),
+            model: &author.model,
         },
     )
     .await?
     {
         Repin::Untouched => (None, None),
-        Repin::Auto => (Some(None), None),
-        Repin::To(pin) => (Some(Some(pin)), None),
+        Repin::To(pin) => (Some(pin), None),
         Repin::Effort(effort) => (None, Some(effort)),
     };
     let task = state

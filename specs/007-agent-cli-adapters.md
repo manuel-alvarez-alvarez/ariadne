@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -31,18 +31,22 @@ what a skill says (017).
 1. Three agent CLIs are supported: **Claude Code**, **OpenAI Codex CLI** and
    **OpenCode**. An adapter turns a spawn or resume request into argv, env and
    generated config files for one of them.
-2. Where no agent is pinned, the first installed CLI is used, in the order
-   `claude_code`, `codex`, `opencode`.
+2. Every session names its agent CLI and its model: both come off the pin
+   its seat carries, and there is no auto — nothing detects an installed CLI,
+   and no launch falls back to a CLI default model.
 3. Permissions are bypassed per CLI — `--dangerously-skip-permissions`,
    `--dangerously-bypass-approvals-and-sandbox`, and `--auto` plus an
    allow-everything permission block. Those flags are **configuration**, read
    from the per-agent config on every launch, not constants in the adapters.
 4. Per-agent flags are replaced whole when they are edited, and an unknown
    agent kind is refused by name.
-5. A model is spelled `<agent>[:<model>]`; the agent alone runs that CLI's own
-   default model. The effort is passed the way each CLI spells it: after the
-   model for Claude, as a config override for Codex, and as the agent's
-   variant for OpenCode.
+5. The model is always passed, the way each CLI takes it: `--model` for
+   Claude, `-m` for Codex, and the agent's `model` key in the generated
+   config for OpenCode — which is why an opencode model is held to the
+   `provider/model` spelling when it is pinned (011). A model is never
+   dropped silently. The effort is passed the same way: after the model for
+   Claude, as a config override for Codex, and as the agent's variant for
+   OpenCode.
 6. Every session is launched with its Ariadne identity in the environment —
    session, goal, seat and task — which is what the MCP server and the hook
    sink read to act as that session.
@@ -87,7 +91,8 @@ what a skill says (017).
 - The adapters hardcode no bypass flag
   (`adapters.rs::the_adapters_hardcode_no_bypass_flag`) and pass the configured
   flags once (`::the_configured_flags_are_passed_once`).
-- The effort reaches each CLI the way that CLI spells it
+- Each spawn plan carries its model, and the effort reaches each CLI the way
+  that CLI spells it
   (`adapters.rs::claude_passes_the_effort_after_the_model`,
   `::codex_passes_the_effort_as_a_config_override`,
   `::opencode_writes_the_effort_as_the_agents_variant`).

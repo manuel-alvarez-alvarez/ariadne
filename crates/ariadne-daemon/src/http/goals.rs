@@ -14,7 +14,7 @@ use super::AppState;
 use super::caller::call_ctx;
 use super::convert::{goal_dto_of, message_dto};
 use super::error::{ApiError, ApiResult, Json};
-use super::pins::{self, Standing};
+use super::pins;
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct GoalListQuery {
@@ -63,25 +63,17 @@ pub async fn create(
     if req.repository_ids.is_empty() {
         return Err(ApiError::bad_request("a goal needs at least one repo"));
     }
-    // Refused before anything is looked up: a model that names no agent CLI is
-    // a fact about the request rather than about anything it refers to.
-    pins::readable(req.model.as_deref())?;
+    // Refused before anything is looked up: a missing model, or one that
+    // names no agent CLI, is a fact about the request rather than about
+    // anything it refers to.
+    pins::readable(Some(&req.model))?;
 
     // Resolved here as well as in the store, so an unknown id is a 404 about
     // the repository rather than a goal that half-exists.
     for id in &req.repository_ids {
         state.store.get_repository(id).await?;
     }
-    // A goal chooses the same way everything else does, and its "nothing
-    // chosen" is auto: no agent CLI, and so no model of one either — which is
-    // also no model an effort of its own could be run at.
-    let pin = pins::chosen(
-        &state.store,
-        req.model.as_deref(),
-        req.effort.as_deref(),
-        Standing::auto(),
-    )
-    .await?;
+    let pin = pins::chosen(&state.store, Some(&req.model), req.effort.as_deref()).await?;
 
     let goal = state
         .store

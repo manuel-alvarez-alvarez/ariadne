@@ -18,8 +18,8 @@ use ariadne_core::{Actor, Landing, Seat, TaskStatus};
 use super::follow;
 use super::resolve::{self, Kind};
 use super::{
-    Subject, agent_label, agent_pin_label, confirm, one_of, parse_effort_or_default,
-    parse_model_or_default, query_path,
+    Subject, agent_label, agent_pin_label, confirm, one_of, parse_effort_or_default, parse_model,
+    query_path,
 };
 use crate::cli::values::Spelling;
 use crate::output::{
@@ -66,18 +66,18 @@ const MESSAGES: &[Column] = &[
 /// What `task create --help` ends with.
 const CREATE_EXAMPLES: &str = "\
 Examples:
-  ariadne task create <goal-id> --title \"Add the rate limiter middleware\"
+  ariadne task create <goal-id> --title \"Add the rate limiter middleware\" \\
+      --author coding,testing=claude_code:claude-sonnet-5 \\
+      --reviewer code-review=codex:gpt-5.6-luna
 
-  # after another task, with an author and a reviewer of your own
+  # after another task, reasoned deeply
   ariadne task create <goal-id> --title \"Wire it up\" --depends-on <task-id> \\
       --author coding,testing=codex:gpt-5.6-sol@xhigh \\
-      --reviewer code-review=claude_code@high
+      --reviewer code-review=claude_code:claude-opus-5@high
 
   # nothing to review: approved as soon as the author asks
-  ariadne task create <goal-id> --title \"Cut 0.6.0\" --author release --no-reviewer
-
-  # in one of the goal's repositories, when it has several
-  ariadne task create <goal-id> --title \"Document it\" --repo ~/projects/ui
+  ariadne task create <goal-id> --title \"Cut 0.6.0\" \\
+      --author release=claude_code:claude-sonnet-5 --no-reviewer
 ";
 
 /// What `task update --help` ends with.
@@ -87,7 +87,6 @@ Examples:
   ariadne task update <task-id> --model claude_code:claude-opus-5 --effort xhigh
   ariadne task update <task-id> --reviewer code-review=codex:gpt-5.6-luna@high
   ariadne task update <task-id> --no-reviewer          # nothing left to review
-  ariadne task update <task-id> --model default        # back to the first installed CLI
   ariadne task update <task-id> --effort default       # at whatever the CLI reasons it at
   ariadne task update <task-id> --clear-depends-on     # free it to start now
 ";
@@ -110,14 +109,16 @@ pub enum TaskCommand {
         /// Task description: the brief the author works from
         #[arg(short = 'd', long, default_value = "", hide_default_value = true)]
         description: String,
-        /// The author's skills, comma-separated, and what it runs on: add
-        /// `=MODEL` to pick the agent CLI and model, and `@EFFORT` to say how
-        /// deeply it reasons there (`--author coding,testing=codex@xhigh`)
-        #[arg(long, value_name = "SKILLS[=MODEL][@EFFORT]", default_value = "coding", value_parser = parse_author)]
+        /// The author's skills, comma-separated, then `=MODEL` — the agent
+        /// CLI and model it runs on, required — and `@EFFORT` to say how
+        /// deeply it reasons there
+        /// (`--author coding,testing=codex:gpt-5.6-sol@xhigh`)
+        #[arg(long, value_name = "SKILLS=MODEL[@EFFORT]", value_parser = parse_author)]
         author: AgentAssignment,
-        /// One reviewer's skills, in review order; repeatable. Spelled the
-        /// same way as `--author` (`--reviewer code-review=codex@xhigh`)
-        #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", default_value = "code-review", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
+        /// One reviewer's skills and its model, in review order; repeatable.
+        /// Spelled the same way as `--author`
+        /// (`--reviewer code-review=codex:gpt-5.6-luna@high`)
+        #[arg(long = "reviewer", value_name = "SKILLS=MODEL[@EFFORT]", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
         reviewers: Vec<AgentAssignment>,
         /// Staff no reviewer: the task is approved as soon as its author asks
         /// for review. For work with nothing to review, such as a release
@@ -154,21 +155,21 @@ pub enum TaskCommand {
         /// New description
         #[arg(short = 'd', long)]
         description: Option<String>,
-        /// What the author runs on: AGENT[:MODEL] — an agent CLI
-        /// (claude_code | codex | opencode) on its own default model, or one
-        /// model of it after the colon (codex:gpt-5.3-codex); "default" hands
-        /// it back to the author profile's own
-        #[arg(long, value_name = "MODEL|default", value_parser = parse_model_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models_or_default))]
+        /// What the author runs on: AGENT:MODEL — an agent CLI
+        /// (claude_code | codex | opencode) and, after the colon, one model
+        /// of it (codex:gpt-5.3-codex). A model is required, so "default" is
+        /// refused: there is nothing to hand the pin back to
+        #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// The reasoning effort that model is run at: one of the efforts
         /// `ariadne models ls` lists for it; "default" runs it at whatever
         /// the agent CLI runs it at
         #[arg(long, value_name = "EFFORT|default", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts_or_default))]
         effort: Option<String>,
-        /// One reviewer's skills, optionally `=MODEL` and `@EFFORT`, in
+        /// One reviewer's skills and its model, optionally `@EFFORT`, in
         /// review order; repeatable, and replaces the task's reviewers rather
         /// than adding to them
-        #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
+        #[arg(long = "reviewer", value_name = "SKILLS=MODEL[@EFFORT]", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
         reviewers: Vec<AgentAssignment>,
         /// Take every reviewer off the task, leaving it approved as soon as
         /// its author asks for review
@@ -563,7 +564,7 @@ fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
         (
             "author",
             match t.agents.iter().find(|a| a.seat == Seat::Author) {
-                Some(a) => agent_pin_label(&a.skills, a.model.as_deref(), a.effort.as_deref()),
+                Some(a) => agent_pin_label(&a.skills, &a.model, a.effort.as_deref()),
                 None => "-".to_string(),
             }
             .into(),
@@ -575,7 +576,7 @@ fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
             t.agents
                 .iter()
                 .filter(|a| a.seat == Seat::Reviewer)
-                .map(|a| agent_pin_label(&a.skills, a.model.as_deref(), a.effort.as_deref()))
+                .map(|a| agent_pin_label(&a.skills, &a.model, a.effort.as_deref()))
                 .collect::<Vec<_>>()
                 .join(INDENT)
                 .into(),

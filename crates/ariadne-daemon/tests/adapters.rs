@@ -33,7 +33,7 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
         system_prompt: "SYSTEM PROMPT".into(),
         skills_dir: None,
         initial_prompt: "DO THE TASK".into(),
-        model: Some("test-model".into()),
+        model: "test-model".into(),
         effort: None,
         extra_flags,
     }
@@ -41,9 +41,9 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
 
 /// The context a session pinned to `model` at `effort` assembles: both are
 /// frozen on the session row, so every launch of it carries the same pair.
-fn ctx_with_pin(run_dir: PathBuf, model: Option<&str>, effort: Option<&str>) -> SpawnCtx {
+fn ctx_with_pin(run_dir: PathBuf, model: &str, effort: Option<&str>) -> SpawnCtx {
     SpawnCtx {
-        model: model.map(str::to_string),
+        model: model.to_string(),
         effort: effort.map(str::to_string),
         ..ctx_with_flags(run_dir, vec!["--extra".into()])
     }
@@ -226,8 +226,9 @@ fn opencode_spawn_plan() {
     assert_eq!(config["agent"]["ariadne"]["mode"], "primary");
     assert_eq!(config["agent"]["build"]["disable"], true);
     assert_eq!(config["agent"]["plan"]["disable"], true);
-    // Model without provider prefix is skipped (opencode wants provider/model).
-    assert!(config["agent"]["ariadne"].get("model").is_none());
+    // The model is always written: pin validation holds an opencode model to
+    // the provider/model spelling this key takes, and nothing drops one.
+    assert_eq!(config["agent"]["ariadne"]["model"], "test-model");
     assert_eq!(
         config["mcp"]["ariadne"]["command"][0],
         "/usr/local/bin/ariadne"
@@ -333,7 +334,7 @@ fn the_configured_flags_are_passed_once() {
 #[test]
 fn claude_passes_the_effort_after_the_model() {
     let dir = tempfile::tempdir().unwrap();
-    let pinned = ctx_with_pin(dir.path().into(), Some("test-model"), Some("xhigh"));
+    let pinned = ctx_with_pin(dir.path().into(), "test-model", Some("xhigh"));
     let adapter = adapter_for(AgentKind::ClaudeCode);
     for plan in [
         adapter.plan_spawn(&pinned).unwrap(),
@@ -359,7 +360,7 @@ fn claude_passes_the_effort_after_the_model() {
     }
 
     // No effort pinned, no flag: the CLI runs the model at its own.
-    let bare = ctx_with_pin(dir.path().into(), Some("test-model"), None);
+    let bare = ctx_with_pin(dir.path().into(), "test-model", None);
     for plan in [
         adapter.plan_spawn(&bare).unwrap(),
         adapter
@@ -379,7 +380,7 @@ fn claude_passes_the_effort_after_the_model() {
 #[test]
 fn codex_passes_the_effort_as_a_config_override() {
     let dir = tempfile::tempdir().unwrap();
-    let pinned = ctx_with_pin(dir.path().into(), Some("test-model"), Some("xhigh"));
+    let pinned = ctx_with_pin(dir.path().into(), "test-model", Some("xhigh"));
     let adapter = adapter_for(AgentKind::Codex);
     for plan in [
         adapter.plan_spawn(&pinned).unwrap(),
@@ -396,7 +397,7 @@ fn codex_passes_the_effort_as_a_config_override() {
         );
     }
 
-    let bare = ctx_with_pin(dir.path().into(), Some("test-model"), None);
+    let bare = ctx_with_pin(dir.path().into(), "test-model", None);
     for plan in [
         adapter.plan_spawn(&bare).unwrap(),
         adapter.plan_resume(&bare, "thread-1", "merge now").unwrap(),
@@ -428,11 +429,7 @@ fn opencode_writes_the_effort_as_the_agents_variant() {
         config["agent"]["ariadne"]["variant"].clone()
     };
 
-    let pinned = ctx_with_pin(
-        dir.path().into(),
-        Some("opencode/test-model"),
-        Some("xhigh"),
-    );
+    let pinned = ctx_with_pin(dir.path().into(), "opencode/test-model", Some("xhigh"));
     for plan in [
         adapter.plan_spawn(&pinned).unwrap(),
         adapter
@@ -443,7 +440,7 @@ fn opencode_writes_the_effort_as_the_agents_variant() {
     }
 
     // No effort pinned: no variant key at all, rather than an empty one.
-    let bare = ctx_with_pin(dir.path().into(), Some("opencode/test-model"), None);
+    let bare = ctx_with_pin(dir.path().into(), "opencode/test-model", None);
     for plan in [
         adapter.plan_spawn(&bare).unwrap(),
         adapter
@@ -451,14 +448,6 @@ fn opencode_writes_the_effort_as_the_agents_variant() {
             .unwrap(),
     ] {
         assert_eq!(variant(&plan), serde_json::Value::Null);
-    }
-
-    // An effort with no model of the agent's own is dropped, not written: a
-    // variant beside a model OpenCode resolves elsewhere is ignored anyway.
-    for model in [Some("test-model"), None] {
-        let unpinned = ctx_with_pin(dir.path().into(), model, Some("xhigh"));
-        let plan = adapter.plan_spawn(&unpinned).unwrap();
-        assert_eq!(variant(&plan), serde_json::Value::Null, "{model:?}");
     }
 }
 

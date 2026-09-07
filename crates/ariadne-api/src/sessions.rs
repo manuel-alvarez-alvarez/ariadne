@@ -17,8 +17,8 @@ pub struct SessionDto {
     /// which no task staffs.
     pub task_agent_id: Option<String>,
     pub agent_kind: AgentKind,
-    /// Model requested at launch; null = the agent CLI's default.
-    pub model: Option<String>,
+    /// Model requested at launch.
+    pub model: String,
     /// Effort that model was launched at, off the same pin as `model`; null =
     /// whatever the agent CLI runs it at.
     #[schema(example = "high")]

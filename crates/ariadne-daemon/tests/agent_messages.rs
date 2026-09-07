@@ -14,10 +14,10 @@ use axum::http::StatusCode;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::messages::MessageDto;
-use ariadne_core::{Actor, MessageKind, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, AgentKind, MessageKind, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 
-use common::{Cast, TIMEOUT, as_session, eventually, get, harness};
+use common::{Cast, TIMEOUT, as_session, eventually, get, harness, test_pin};
 
 fn messages_uri(cast: &Cast) -> String {
     format!("/v1/tasks/{}/messages", cast.task.id)
@@ -323,8 +323,16 @@ async fn a_review_request_reaches_every_reviewer_as_a_message() {
             &cast.task.id,
             ariadne_store::TaskUpdate {
                 reviewers: Some(vec![
-                    ariadne_store::NewTaskAgent::new(Seat::Reviewer, ["code-review"]),
-                    ariadne_store::NewTaskAgent::new(Seat::Reviewer, ["security-review"]),
+                    ariadne_store::NewTaskAgent::new(
+                        Seat::Reviewer,
+                        ["code-review"],
+                        test_pin(AgentKind::ClaudeCode),
+                    ),
+                    ariadne_store::NewTaskAgent::new(
+                        Seat::Reviewer,
+                        ["security-review"],
+                        test_pin(AgentKind::ClaudeCode),
+                    ),
                 ]),
                 ..Default::default()
             },

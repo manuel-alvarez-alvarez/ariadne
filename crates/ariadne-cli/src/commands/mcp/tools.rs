@@ -44,9 +44,9 @@ pub struct AgentReq {
     /// The names of the skills this agent loads, from `list_skills`. They are
     /// the whole of what it can do.
     pub skills: Vec<String>,
-    /// What it runs on, `<agent_kind>[:<model>]` as `list_models` spells it.
-    /// Omit it for the first installed agent CLI.
-    pub model: Option<String>,
+    /// What it runs on, `<agent_kind>:<model>` as `list_models` spells it.
+    /// Required: every agent names its CLI and its model.
+    pub model: String,
     /// An `efforts[].id` `list_models` lists for that model. Omit it for the
     /// default effort.
     pub effort: Option<String>,
@@ -84,8 +84,8 @@ pub struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the author runs on. `default` puts it back on the first
-    /// installed agent CLI.
+    /// What the author runs on, `<agent_kind>:<model>`. Omit it to keep the
+    /// model it has; a model is required, so `default` is refused.
     pub author_model: Option<String>,
     /// An `efforts[].id` for that model. `default` puts it back on the
     /// default effort.
@@ -326,7 +326,7 @@ impl AriadneMcp {
     // ---- orchestrator ----
 
     #[tool(
-        description = "Create one task in the goal. Staff one author, and the reviewers the user agreed it needs. Give each agent the skills its work needs (`list_skills`) and the model and effort it deserves (`list_models`). Say how it ends with `landing`."
+        description = "Create one task in the goal. Staff one author, and the reviewers the user agreed it needs. Give each agent the skills its work needs (`list_skills`) and one model from `list_models` — every agent names its model. Say how it ends with `landing`."
     )]
     async fn create_task(
         &self,
@@ -351,12 +351,22 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Edit a task that has not started: its title, description, reviewers, dependencies, ending, or the model and effort of its author. `reviewers` replaces the whole list. `default` puts the author back on the first installed agent CLI."
+        description = "Edit a task that has not started: its title, description, reviewers, dependencies, ending, or the model and effort of its author. `reviewers` replaces the whole list. A model is required, so `default` is no model; an omitted `author_model` keeps the one the task has."
     )]
     async fn update_task(
         &self,
         Parameters(req): Parameters<UpdateTaskReq>,
     ) -> Result<CallToolResult, McpError> {
+        // Refused here, where the agent that typed it reads the answer: the
+        // word used to clear a model, and there is no longer anything to
+        // clear one to.
+        if req.author_model.as_deref() == Some("default") {
+            return Err(McpError::invalid_params(
+                "`default` is no model — a model is required, so name one from \
+                 `list_models`, or omit `author_model` to keep the task's own",
+                None,
+            ));
+        }
         let body = UpdateTaskRequest {
             title: req.title,
             description: req.description,
@@ -1014,13 +1024,13 @@ mod tests {
                 description: "Beside the model.".into(),
                 author: AgentReq {
                     skills: vec!["coding".into()],
-                    model: Some("codex:gpt-5.6-sol".into()),
+                    model: "codex:gpt-5.6-sol".into(),
                     effort: Some("xhigh".into()),
                     brief: None,
                 },
                 reviewers: vec![AgentReq {
                     skills: vec!["code-review".into()],
-                    model: None,
+                    model: "claude_code:claude-haiku-4-5".into(),
                     effort: Some("low".into()),
                     brief: None,
                 }],
@@ -1049,7 +1059,7 @@ mod tests {
                 {
                     "seat": "reviewer",
                     "skills": ["code-review"],
-                    "model": null,
+                    "model": "claude_code:claude-haiku-4-5",
                     "effort": "low",
                     "brief": null,
                 },
@@ -1057,11 +1067,13 @@ mod tests {
         );
     }
 
-    /// The word that puts an agent back on auto travels as it was written:
-    /// the daemon is what knows "default" clears a pin, so anything resolving
-    /// it here would be a second answer to the same question.
+    /// The word that clears an *effort* travels as it was written — the
+    /// daemon is what knows "default" runs the model at the CLI's own — while
+    /// the same word as a model is refused here, where the agent that typed
+    /// it reads the answer: a model is required, and there is nothing to
+    /// clear one to.
     #[tokio::test]
-    async fn an_edit_hands_a_slot_back_with_the_word_the_daemon_clears_it_by() {
+    async fn an_edit_takes_default_for_the_effort_and_refuses_it_as_a_model() {
         let (endpoint, seen) = recording_daemon().await;
         orchestrator_at(&endpoint)
             .update_task(Parameters(UpdateTaskReq {
@@ -1072,7 +1084,7 @@ mod tests {
                 author_effort: Some("default".into()),
                 reviewers: Some(vec![AgentReq {
                     skills: vec!["code-review".into()],
-                    model: Some("default".into()),
+                    model: "codex:gpt-5.6-luna".into(),
                     effort: None,
                     brief: None,
                 }]),
@@ -1088,16 +1100,40 @@ mod tests {
         assert_eq!(seen[0].path, "/v1/tasks/01TASK");
         let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
         assert_eq!(sent["effort"], serde_json::json!("default"));
-        assert_eq!(sent["model"], serde_json::Value::Null);
+        assert_eq!(sent["model"], serde_json::Value::Null, "left alone");
         assert_eq!(
             sent["reviewers"],
             serde_json::json!([{
                 "seat": "reviewer",
                 "skills": ["code-review"],
-                "model": "default",
+                "model": "codex:gpt-5.6-luna",
                 "effort": null,
                 "brief": null,
             }])
+        );
+
+        let (endpoint, seen) = recording_daemon().await;
+        let err = orchestrator_at(&endpoint)
+            .update_task(Parameters(UpdateTaskReq {
+                task_id: "01TASK".into(),
+                title: None,
+                description: None,
+                author_model: Some("default".into()),
+                author_effort: None,
+                reviewers: None,
+                depends_on: None,
+                landing: None,
+            }))
+            .await
+            .expect_err("default is no model");
+        assert!(
+            err.message.contains("a model is required"),
+            "{}",
+            err.message
+        );
+        assert!(
+            seen.lock().expect("lock").is_empty(),
+            "nothing was sent for the daemon to refuse"
         );
     }
 

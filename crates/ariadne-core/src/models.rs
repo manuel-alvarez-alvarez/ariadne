@@ -18,39 +18,26 @@ use std::str::FromStr;
 use crate::{AgentKind, ModelTier};
 
 /// What an agent runs on, as the single string that names it:
-/// `<agent_kind>[:<model>]` — the agent CLI, and after a `:` one model of it.
+/// `<agent_kind>:<model>` — the agent CLI, and after the `:` one model of it.
 ///
 /// The agent half is structure and the model half is free text the CLI is
 /// handed as typed, so what splits the two is the *first* colon and never a
 /// later one: `opencode:ollama/llama3:8b` is that opencode id whole, tag and
-/// all. A string with no colon names an agent CLI on its own default model
-/// (`codex`), and a model that names no CLI has no spelling here at all —
-/// nothing derives one from the other, and a refusal says so by name.
+/// all. Both halves are required: an agent CLI on its own is refused, because
+/// a model is required and no CLI default stands in for one, and a model that
+/// names no CLI has no spelling here at all — nothing derives one from the
+/// other, and a refusal says so by name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRef {
-    /// The agent CLI, which is the choice.
+    /// The agent CLI, which runs the model.
     pub agent_kind: AgentKind,
-    /// The model it runs; None = that CLI's own default.
-    pub model: Option<String>,
-}
-
-impl ModelRef {
-    /// The agent CLI on its own default model.
-    pub fn of(agent_kind: AgentKind) -> Self {
-        Self {
-            agent_kind,
-            model: None,
-        }
-    }
+    /// The model it runs.
+    pub model: String,
 }
 
 impl fmt::Display for ModelRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.agent_kind.as_str())?;
-        match &self.model {
-            Some(model) => write!(f, ":{model}"),
-            None => Ok(()),
-        }
+        write!(f, "{}:{}", self.agent_kind.as_str(), self.model)
     }
 }
 
@@ -59,15 +46,18 @@ impl FromStr for ModelRef {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let Some((agent, model)) = s.split_once(':') else {
-            return match agent_kind(s) {
-                Some(agent_kind) => Ok(Self::of(agent_kind)),
-                None => Err(format!(
-                    "`{s}` names no agent CLI — write the CLI it runs on first, \
-                     as in `{}:{s}` (agents: {})",
+            return Err(match agent_kind(s) {
+                Some(_) => format!(
+                    "`{s}` names no model — a model is required, so write one of \
+                     that CLI's after a `:`, as in `{s}:<model>`"
+                ),
+                None => format!(
+                    "`{s}` names no agent CLI — a model is required and it is \
+                     written `<agent_kind>:<model>`, as in `{}:{s}` (agents: {})",
                     AgentKind::ClaudeCode.as_str(),
                     kinds()
-                )),
-            };
+                ),
+            });
         };
         let Some(agent_kind) = agent_kind(agent) else {
             return Err(format!(
@@ -76,15 +66,17 @@ impl FromStr for ModelRef {
                 kinds()
             ));
         };
-        if model.is_empty() {
+        // Whitespace alone is an empty model too: it would create a pin and
+        // launch a model no CLI has.
+        if model.trim().is_empty() {
             return Err(format!(
-                "no model after the `:` in `{s}` — write `{agent}` on its own to \
-                 run that CLI on its own default model"
+                "no model after the `:` in `{s}` — a model is required, so write \
+                 one of that CLI's after the `:`"
             ));
         }
         Ok(Self {
             agent_kind,
-            model: Some(model.to_string()),
+            model: model.to_string(),
         })
     }
 }
@@ -856,28 +848,27 @@ const OPENCODE: &[(&str, ModelProfile)] = &[
 mod tests {
     use super::*;
 
-    /// The three forms a model is written in, printed back the way the daemon
-    /// spells them: an agent CLI on its own, an agent and a model, and an
-    /// opencode id whose own colon is data rather than structure.
+    /// The two forms a model is written in, printed back the way the daemon
+    /// spells them: an agent and a model, and an opencode id whose own colon
+    /// is data rather than structure.
     #[test]
     fn a_model_is_the_agent_cli_and_then_the_model() {
         for (text, agent_kind, model) in [
-            ("codex", AgentKind::Codex, None),
-            ("codex:o3", AgentKind::Codex, Some("o3")),
+            ("codex:o3", AgentKind::Codex, "o3"),
             (
                 "claude_code:claude-opus-5",
                 AgentKind::ClaudeCode,
-                Some("claude-opus-5"),
+                "claude-opus-5",
             ),
             (
                 "opencode:ollama/llama3:8b",
                 AgentKind::Opencode,
-                Some("ollama/llama3:8b"),
+                "ollama/llama3:8b",
             ),
         ] {
             let parsed: ModelRef = text.parse().expect(text);
             assert_eq!(parsed.agent_kind, agent_kind, "{text}");
-            assert_eq!(parsed.model.as_deref(), model, "{text}");
+            assert_eq!(parsed.model, model, "{text}");
             assert_eq!(parsed.to_string(), text, "and printed back as it was read");
         }
     }
@@ -889,10 +880,17 @@ mod tests {
         let parsed: ModelRef = "claude-code:claude-opus-5".parse().expect("a spelling");
         assert_eq!(parsed.agent_kind, AgentKind::ClaudeCode);
         assert_eq!(parsed.to_string(), "claude_code:claude-opus-5");
-        assert_eq!(
-            "claude-code".parse::<ModelRef>().expect("a CLI"),
-            ModelRef::of(AgentKind::ClaudeCode)
-        );
+    }
+
+    /// A bare agent CLI parses nowhere: a model is required, and the refusal
+    /// writes out the form that carries one.
+    #[test]
+    fn a_bare_agent_cli_is_refused_because_a_model_is_required() {
+        for text in ["codex", "claude_code", "claude-code", "opencode"] {
+            let err = text.parse::<ModelRef>().expect_err(text);
+            assert!(err.contains("a model is required"), "{text}: {err}");
+            assert!(err.contains(&format!("`{text}:<model>`")), "{text}: {err}");
+        }
     }
 
     /// A model that names no CLI is refused by name, and the refusal writes
@@ -916,13 +914,18 @@ mod tests {
         assert!(err.contains("claude_code, codex, opencode"), "{err}");
     }
 
-    /// A colon with nothing after it is a model somebody meant to write, not
-    /// a way to say "that CLI's default" — which is the agent on its own.
+    /// A colon with nothing after it is a model somebody meant to write, and
+    /// there is no default to fall back to. Whitespace alone is nothing too.
     #[test]
     fn a_colon_with_no_model_after_it_is_refused() {
-        let err = "codex:".parse::<ModelRef>().expect_err("no model");
-        assert!(err.contains("no model after the `:` in `codex:`"), "{err}");
-        assert!(err.contains("write `codex` on its own"), "{err}");
+        for text in ["codex:", "codex: ", "codex:   "] {
+            let err = text.parse::<ModelRef>().expect_err(text);
+            assert!(
+                err.contains(&format!("no model after the `:` in `{text}`")),
+                "{text}: {err}"
+            );
+            assert!(err.contains("a model is required"), "{text}: {err}");
+        }
     }
 
     /// Every curated model's efforts, cheapest first, and what its CLI runs it

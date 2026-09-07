@@ -30,9 +30,9 @@ pub struct NewTask {
 pub struct TaskUpdate {
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the author runs on: `Some(Some(pin))` moves it there,
-    /// `Some(None)` puts it back on auto, None leaves it alone.
-    pub pin: Option<Option<AgentPin>>,
+    /// What the author runs on: `Some(pin)` moves it there, None leaves it
+    /// alone.
+    pub pin: Option<AgentPin>,
     /// The effort alone, for an edit that leaves the model where it is:
     /// `Some(Some(effort))` runs the pinned model at it, `Some(None)` runs it
     /// at whatever the CLI runs it at, None says nothing. Read only where
@@ -347,7 +347,7 @@ impl Store {
                     .clone()
                     .unwrap_or_else(|| author.effort.clone()),
             ),
-            Some(pin) => AgentPin::columns(pin.as_ref()),
+            Some(pin) => AgentPin::columns(pin),
         };
         sqlx::query("UPDATE task_agents SET agent_kind = ?, model = ?, effort = ? WHERE id = ?")
             .bind(&agent_kind)

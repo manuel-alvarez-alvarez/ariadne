@@ -55,10 +55,8 @@ impl CodexAdapter {
         // Byte-identical to what `ariadne setup codex-hooks` had the user
         // trust; anything else and the session stalls at a trust prompt.
         flags.extend(ariadne_core::codex_hooks::config_flags(&ctx.cli_bin));
-        if let Some(model) = &ctx.model {
-            flags.push("-m".into());
-            flags.push(model.clone());
-        }
+        flags.push("-m".into());
+        flags.push(ctx.model.clone());
         if let Some(effort) = &ctx.effort {
             // No flag of its own: the config override is how codex takes an
             // effort. Quoted, like every other string value here — a bare

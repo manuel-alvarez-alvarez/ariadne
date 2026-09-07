@@ -12,9 +12,9 @@ pub struct NewGoal {
     /// Ids of registered repositories the goal works in; each must exist.
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
-    /// What this goal's orchestrator runs on. None = auto CLI, that CLI's
-    /// default model, and whatever it runs the model at.
-    pub pin: Option<AgentPin>,
+    /// What this goal's orchestrator runs on: its agent CLI and its model,
+    /// and the effort where one was chosen.
+    pub pin: AgentPin,
 }
 
 impl Store {
@@ -34,7 +34,7 @@ impl Store {
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
-        let (agent_kind, model, effort) = AgentPin::columns(new.pin.as_ref());
+        let (agent_kind, model, effort) = AgentPin::columns(&new.pin);
         sqlx::query(
             "INSERT INTO goals (id, title, description, status,
                                 agent_kind, model, effort, created_at, updated_at)

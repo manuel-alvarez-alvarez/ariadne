@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -45,9 +45,10 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 5. `depends_on` is for real dependencies only; tasks that merely touch nearby
    files run together.
 6. It staffs one author per task, on the skills that work needs (017), and
-   sizes every agent from the model catalog (011). Across a plan it spreads
-   the agent CLIs evenly over the tasks, and never onto a task the CLI does
-   not suit: fit is the first question, and an even mix is the second.
+   gives every agent one model from the catalog (011) — a model is required,
+   so no agent is staffed without one. Across a plan it spreads the agent
+   CLIs evenly over the tasks, and never onto a task the CLI does not suit:
+   fit is the first question, and an even mix is the second.
 7. Four things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);

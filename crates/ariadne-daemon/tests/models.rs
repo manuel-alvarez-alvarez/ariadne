@@ -1,13 +1,13 @@
 //! Integration tests for the model catalog endpoint.
 //!
 //! The contract is that `GET /v1/models` returns everything an agent can be
-//! pinned to, each entry's id spelled the way a request writes it: every agent
-//! CLI on its own — that CLI on its own default model — and then the curated
-//! models of it, `<agent_kind>:<model>`. Nothing scopes the catalog any more,
-//! so there is one answer and it is the union. Each entry says what the model
-//! is for and carries the efforts it can be run at. OpenCode discovery is not
-//! exercised here: it depends on an installed `opencode` binary, and its
-//! parser is unit-tested in the daemon.
+//! pinned to, each entry's id spelled the way a request writes it: the
+//! curated models of each agent CLI, `<agent_kind>:<model>`, and no bare-CLI
+//! entry — a model is required wherever an agent is pinned. Nothing scopes
+//! the catalog any more, so there is one answer and it is the union. Each
+//! entry says what the model is for and carries the efforts it can be run
+//! at. OpenCode discovery is not exercised here: it depends on an installed
+//! `opencode` binary, and its parser is unit-tested in the daemon.
 //!
 //! Every entry also says whether an agent can be staffed on it. The catalog
 //! is code and discovery, so what the database holds is the user's
@@ -102,32 +102,34 @@ async fn a_curated_model_carries_its_efforts_and_its_default() {
     }
 }
 
-/// Each agent CLI is offered on its own as well, which is that CLI on whatever
-/// model it defaults to — the pin a picker offers where no model is chosen.
+/// No agent CLI is offered on its own: a model is required wherever an agent
+/// is pinned, so a bare-CLI entry would be an id no request may write. Every
+/// entry names both halves, `<agent_kind>:<model>`.
 #[tokio::test]
-async fn each_agent_is_offered_on_its_own_default_model() {
+async fn no_bare_cli_entry_is_listed() {
     let h = harness().await;
     let got = models(&h).await;
-    for kind in AgentKind::ALL {
-        let found = got
-            .iter()
-            .find(|m| m.id == kind.as_str())
-            .unwrap_or_else(|| panic!("missing {}", kind.as_str()));
-        assert_eq!(found.agent_kind, kind);
+    assert!(!got.is_empty());
+    for entry in &got {
         assert!(
-            found
-                .description
-                .as_deref()
-                .is_some_and(|d| d.contains("its own default model")),
-            "{:?}",
-            found.description
+            entry.id.contains(':'),
+            "`{}` names no model, and nothing may pin it",
+            entry.id
         );
-        // Which model it is, is the CLI's own business, so nothing here
-        // claims to know what it is like or what it is run at.
-        assert_eq!(found.tier, ModelTier::Unknown);
-        assert_eq!((found.cost, found.speed), (None, None));
-        assert!(found.best_for.is_empty() && found.avoid_for.is_empty());
-        assert!(found.efforts.is_empty());
+        assert!(
+            entry
+                .id
+                .starts_with(&format!("{}:", entry.agent_kind.as_str())),
+            "`{}` and its agent_kind disagree",
+            entry.id
+        );
+    }
+    for kind in AgentKind::ALL {
+        assert!(
+            !got.iter().any(|m| m.id == kind.as_str()),
+            "{} is offered bare",
+            kind.as_str()
+        );
     }
 }
 
@@ -225,7 +227,7 @@ async fn a_model_the_catalog_does_not_carry_cannot_be_turned_off() {
 #[tokio::test]
 async fn the_last_model_left_on_cannot_be_turned_off() {
     let h = harness().await;
-    let keep = "codex";
+    let keep = "codex:gpt-5.6-sol";
     // Everything but one, off — however many passes the catalog takes to
     // stop offering another.
     loop {

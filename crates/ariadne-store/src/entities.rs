@@ -42,9 +42,9 @@ macro_rules! enum_columns {
 
 enum_columns! {
     AgentConfig { agent_kind: AgentKind }
-    Goal { status: GoalStatus, agent_kind: [AgentKind] }
+    Goal { status: GoalStatus, agent_kind: AgentKind }
     Task { status: TaskStatus }
-    TaskAgent { seat: Seat, agent_kind: [AgentKind] }
+    TaskAgent { seat: Seat, agent_kind: AgentKind }
     AgentSession {
         seat: Seat,
         agent_kind: AgentKind,
@@ -142,38 +142,30 @@ pub struct Repository {
     pub updated_at: String,
 }
 
-/// The agent CLI, and optionally the model and the effort, that a goal's
+/// The agent CLI, the model, and optionally the effort, that a goal's
 /// orchestrator or one of a task's agents runs on.
 ///
-/// The agent is the choice: a pin with no model runs that CLI on its own
-/// default, and a pin with no effort runs the model at whatever the CLI runs
-/// it at. There is nothing behind a pin to fall back to: what the
-/// orchestrator sized the agent at, or what the user chose instead, is the
-/// whole of the answer.
+/// The CLI and the model are both required — every agent names both, and no
+/// CLI default stands in for a model. Only the effort may be left out, which
+/// runs the model at whatever the CLI runs it at. There is nothing behind a
+/// pin to fall back to: what the orchestrator sized the agent at, or what the
+/// user chose instead, is the whole of the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentPin {
     pub agent_kind: AgentKind,
-    /// None = the agent CLI's own default model.
-    pub model: Option<String>,
+    pub model: String,
     /// None = whatever the agent CLI runs that model at.
     pub effort: Option<String>,
 }
 
 impl AgentPin {
-    /// The `(agent_kind, model, effort)` a row is written with: the pin's own
-    /// where there is one, and all-auto where there is none — auto CLI, the
-    /// CLI's default model, and whatever it runs that model at.
-    pub(crate) fn columns(
-        pin: Option<&AgentPin>,
-    ) -> (Option<String>, Option<String>, Option<String>) {
-        match pin {
-            Some(pin) => (
-                Some(pin.agent_kind.as_str().to_string()),
-                pin.model.clone(),
-                pin.effort.clone(),
-            ),
-            None => (None, None, None),
-        }
+    /// The `(agent_kind, model, effort)` a row is written with.
+    pub(crate) fn columns(pin: &AgentPin) -> (String, String, Option<String>) {
+        (
+            pin.agent_kind.as_str().to_string(),
+            pin.model.clone(),
+            pin.effort.clone(),
+        )
     }
 }
 
@@ -183,12 +175,10 @@ pub struct Goal {
     pub title: String,
     pub description: String,
     pub status: String,
-    /// Agent CLI this goal's orchestrator runs on. None = auto, resolved at
-    /// spawn time to the first installed CLI.
-    pub agent_kind: Option<String>,
-    /// Model this goal's orchestrator runs on. None = the agent CLI's own
-    /// default.
-    pub model: Option<String>,
+    /// Agent CLI this goal's orchestrator runs on.
+    pub agent_kind: String,
+    /// Model this goal's orchestrator runs on.
+    pub model: String,
     /// Effort that model is run at. None = whatever the agent CLI runs it at.
     pub effort: Option<String>,
     pub created_at: String,
@@ -255,10 +245,10 @@ pub struct TaskAgent {
     pub seat: String,
     /// The order the orchestrator listed this agent in, 0-based within a seat.
     pub ordinal: i64,
-    /// Agent CLI this agent runs on. None = auto.
-    pub agent_kind: Option<String>,
-    /// Model it runs on. None = the agent CLI's own default.
-    pub model: Option<String>,
+    /// Agent CLI this agent runs on.
+    pub agent_kind: String,
+    /// Model it runs on.
+    pub model: String,
     /// Effort that model is run at. None = whatever the CLI runs it at.
     pub effort: Option<String>,
     /// What the orchestrator told this agent beyond the task itself, where it
@@ -276,11 +266,11 @@ pub struct AgentSession {
     /// which no task staffs.
     pub task_agent_id: Option<String>,
     pub agent_kind: String,
-    /// Model this session runs on. None = the CLI's own default. Taken from
-    /// the pin its seat carries — the goal for an orchestrator, the staffed
-    /// agent otherwise — when the session is created, and never rewritten, so
-    /// no later edit moves a running conversation onto another model.
-    pub model: Option<String>,
+    /// Model this session runs on. Taken from the pin its seat carries — the
+    /// goal for an orchestrator, the staffed agent otherwise — when the
+    /// session is created, and never rewritten, so no later edit moves a
+    /// running conversation onto another model.
+    pub model: String,
     /// Effort this session's model is run at, copied off the same pin as
     /// `model` and never rewritten either. None = the CLI's own.
     pub effort: Option<String>,

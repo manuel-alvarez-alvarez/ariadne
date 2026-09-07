@@ -1,10 +1,11 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 areas: [core, api, daemon, cli]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
+  - crates/ariadne-core/src/models.rs
   - crates/ariadne-daemon/tests/models.rs
   - crates/ariadne-daemon/tests/pins.rs
   - crates/ariadne-store/tests/store.rs
@@ -22,7 +23,7 @@ who gets to choose at each level.
 ## Scope
 
 In: the model catalog and what it describes, which of it the user allows, the
-`<agent>[:<model>]` spelling, effort levels, where a pin may be set (the goal's
+`<agent>:<model>` spelling, effort levels, where a pin may be set (the goal's
 orchestrator, each agent a task staffs), and how a running session keeps what
 it started on.
 
@@ -31,28 +32,35 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
 
 ## Behavior
 
-1. A model is spelled `<agent>[:<model>]`: the agent CLI that runs it, and
-   optionally one model of that CLI. The agent alone runs that CLI's own
-   default model. A model naming no CLI is a usage error, since nothing says
-   which CLI would run it.
+1. A model is spelled `<agent>:<model>`: the agent CLI that runs it, and one
+   model of that CLI. Both halves are required — a model is required wherever
+   an agent is pinned, and no CLI default stands in for one — so a bare agent
+   CLI parses nowhere, and a model naming no CLI is a usage error, since
+   nothing says which CLI would run it. A request with no model, an empty or
+   whitespace-only one, or the word `default` as a model is refused, and the
+   refusal says a model is required; a model half that is whitespace alone
+   after the colon is an empty model too.
 2. An effort says how deeply a model reasons, and belongs to the model it runs
    at: a pin naming a model and no effort runs at the CLI's own default, and
    an effort set on its own is run at the model already pinned.
 3. The catalog describes each curated model as its agent runs it: tier, a cost
    and a speed band, what task shapes it is and is not a fit for
-   (`best_for` / `avoid_for`), and what each of its efforts buys. Each agent is
-   also offered on its own default model.
+   (`best_for` / `avoid_for`), and what each of its efforts buys. No agent is
+   offered bare: every entry names its CLI and its model.
 4. A goal carries the orchestrator's pin; every other pin sits on the agent
    the task staffs (017), one per author and per reviewer.
 5. A pin is written on the agent when the task is staffed, and a session
    freezes it at its first launch: a re-pin steers the next spawn, never the
    conversation already running.
-6. `default` hands a pin back: `--model default` runs the agent CLI's own
-   default model, `--effort default` runs it at the CLI's own effort.
+6. `default` is a word for efforts alone: `--effort default` runs the model
+   at the CLI's own effort, and `default` written as a model is refused —
+   there is no default to hand a model back to.
 7. The orchestrator sizes each agent it staffs from the catalog and the user
    has the last word, on a task that is still `pending` or `ready`.
 8. A model is stored as typed, whatever the catalog lists, so a CLI that
-   gained a model since the release still runs. An effort, by contrast, is
+   gained a model since the release still runs — except that an opencode
+   model must carry its `provider/` prefix, the spelling opencode itself
+   takes back, and one without it is refused when it is pinned. An effort is
    checked against the model it would run at.
 9. Each entry of the catalog can be turned off, and every model is on until it
    is. The catalog itself is code and discovery, so what is stored is the
@@ -74,29 +82,34 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
 - Every curated model is listed as its agent runs it
   (`models.rs::every_curated_model_is_listed_as_its_agent_runs_it`), carries its
   efforts and default (`::a_curated_model_carries_its_efforts_and_its_default`),
-  and each agent is offered on its own default model
-  (`::each_agent_is_offered_on_its_own_default_model`).
+  and no bare-CLI entry is listed (`::no_bare_cli_entry_is_listed`).
 - A goal plans on the pin it was created with
   (`pins.rs::a_goal_created_with_an_agent_and_a_model_plans_on_them`), and a
   task staffs each agent on its own
   (`::a_task_staffs_each_agent_on_its_own_pin`,
-  `store.rs::an_agent_is_written_on_the_pin_it_was_given_and_auto_where_it_was_given_none`).
+  `store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`).
 - A session keeps what it started on for every seat
   (`resume.rs::a_resumed_author_stays_on_the_model_its_session_started_on`,
   `::a_running_reviewer_keeps_the_model_its_session_started_on`,
   `::an_orchestrator_respawn_stays_on_the_goals_pin`).
-- An agent alone pins with no model of its own
-  (`pins.rs::an_agent_alone_pins_it_with_no_model_of_its_own`,
-  `resume.rs::a_pin_of_no_model_stays_the_agents_own_default`).
+- A request with no model, an empty or whitespace-only one, or `default` as a
+  model is refused, and the refusal says a model is required
+  (`pins.rs::a_request_with_no_model_is_refused_because_a_model_is_required`,
+  `models.rs (core)::a_colon_with_no_model_after_it_is_refused`).
+- A bare agent CLI parses nowhere
+  (`models.rs (core)::a_bare_agent_cli_is_refused_because_a_model_is_required`,
+  `pins.rs::a_bare_agent_cli_is_refused_wherever_a_model_is_written`).
 - A model naming no agent is refused by name
   (`pins.rs::a_model_naming_no_agent_is_refused_by_name`), and a model is stored
-  as typed (`::a_model_is_stored_as_typed_whatever_the_catalogs_list`).
+  as typed (`::a_model_is_stored_as_typed_whatever_the_catalogs_list`) — except
+  an opencode model with no `provider/` prefix, which is refused when pinned
+  (`::an_opencode_model_with_no_provider_prefix_is_refused`).
 - An effort is checked against the model it runs at
   (`pins.rs::an_effort_is_checked_against_the_model_it_runs_at`), and an effort
-  of its own is run at the model already pinned
+  of its own is run at the model already pinned, `default` clearing it back to
+  the CLI's own
   (`::an_effort_of_its_own_is_run_at_the_model_already_pinned`).
-- An edit moves the pin and `default` hands it back to auto
-  (`pins.rs::an_edit_moves_the_pin_and_default_hands_it_back_to_auto`).
+- An edit moves the pin whole (`pins.rs::an_edit_moves_the_pin_whole`).
 - A model turned off stays in the catalog and out of use
   (`models.rs::a_model_turned_off_stays_in_the_catalog_and_out_of_use`), and
   what is stored is the subtraction from a catalog nothing else holds

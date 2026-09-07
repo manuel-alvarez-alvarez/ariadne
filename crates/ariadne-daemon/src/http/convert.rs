@@ -71,7 +71,7 @@ dto! {
         usage: GoalUsageDto,
     ) -> GoalDto {
         status: g.status(),
-        model: spelled(g.agent_kind(), g.model.as_deref()),
+        model: spelled(g.agent_kind(), &g.model),
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
         .. id, title, description, effort,
@@ -82,7 +82,7 @@ dto! {
     /// loads beside the row.
     fn task_agent_dto(a: store::TaskAgent, skills: Vec<String>) -> TaskAgentDto {
         seat: a.seat(),
-        model: spelled(a.agent_kind(), a.model.as_deref()),
+        model: spelled(a.agent_kind(), &a.model),
         skills: skills,
         .. id, effort, brief
     }

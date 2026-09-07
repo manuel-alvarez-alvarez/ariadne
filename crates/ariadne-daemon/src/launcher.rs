@@ -13,14 +13,10 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
-use ariadne_core::{
-    AgentKind, AttentionReason, PromptKind, Seat, SessionStatus, TaskStatus, probe,
-};
+use ariadne_core::{AttentionReason, PromptKind, Seat, SessionStatus, TaskStatus, probe};
 use ariadne_store::{AgentSession, NewSession, Repository, SessionFilter, Store, Task, TaskFilter};
 
-use crate::agents::{
-    SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts, write_skills,
-};
+use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, prompts, write_skills};
 use crate::branch::BranchWatchers;
 use crate::config::Config;
 use crate::gitwt::GitManager;
@@ -99,25 +95,6 @@ impl Launcher {
             .await
             .ok()?;
         crate::tmux::parse_size(raw.trim())
-    }
-
-    /// Agent kind for a pinned value: the pin itself, or the first installed
-    /// CLI (claude_code, then codex, then opencode) when the pin is auto.
-    ///
-    /// The pin is the one taken from the profile when the work was defined —
-    /// the task's for an author, the reviewer slot's for a reviewer, the
-    /// goal's for an orchestrator — never the profile as it reads now.
-    /// `owner` names the row it came from, for the error a missing CLI
-    /// raises.
-    fn resolve_agent_kind(&self, pinned: Option<AgentKind>, owner: &str) -> Result<AgentKind> {
-        match pinned {
-            Some(kind) => Ok(kind),
-            None => detect_first_available().ok_or_else(|| {
-                anyhow!(
-                    "{owner} is pinned to no agent kind (auto) and no coding agent CLI (claude, codex, opencode) was found on PATH"
-                )
-            }),
-        }
     }
 
     /// Refuse to double-spawn: one live session per (task, seat) —
@@ -613,8 +590,7 @@ impl Launcher {
                 task_id: None,
                 seat: Seat::Orchestrator,
                 task_agent_id: None,
-                agent_kind: self
-                    .resolve_agent_kind(goal.agent_kind(), &format!("goal {}", goal.id))?,
+                agent_kind: goal.agent_kind(),
                 model: goal.model.clone(),
                 effort: goal.effort.clone(),
                 tmux_session,
@@ -652,8 +628,7 @@ impl Launcher {
                 task_id: Some(task.id.clone()),
                 seat: Seat::Author,
                 task_agent_id: Some(author.id.clone()),
-                agent_kind: self
-                    .resolve_agent_kind(author.agent_kind(), &format!("task {}", task.id))?,
+                agent_kind: author.agent_kind(),
                 model: author.model.clone(),
                 effort: author.effort.clone(),
                 tmux_session,
@@ -786,10 +761,7 @@ impl Launcher {
                 task_id: Some(task.id.clone()),
                 seat: Seat::Reviewer,
                 task_agent_id: Some(reviewer.id.clone()),
-                agent_kind: self.resolve_agent_kind(
-                    reviewer.agent_kind(),
-                    &format!("reviewer {} of task {}", reviewer.id, task.id),
-                )?,
+                agent_kind: reviewer.agent_kind(),
                 model: reviewer.model.clone(),
                 effort: reviewer.effort.clone(),
                 tmux_session,

@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 areas: [daemon, store]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
@@ -31,7 +31,8 @@ Out: when the daemon decides to type something (009, 010), and what it types
 
 1. A session belongs to a goal, a seat and — for authors and reviewers — a
    task, and holds the tmux session name, the worktree, the agent kind, the
-   model and effort it runs on, and its internal agent id.
+   model it runs on — always named, frozen off its seat's pin at creation —
+   the effort where one was pinned, and its internal agent id.
 2. Sessions are long-lived: one author per task, one reviewer per task
    across every review of it, one orchestrator per goal. Restarting one reopens the same
    row, and every launch of it is dated and named.

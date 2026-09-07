@@ -20,20 +20,24 @@ pub struct NewTaskAgent {
     /// none is a generic agent with nothing but its task, which is legal and
     /// rarely what anybody wants.
     pub skills: Vec<String>,
-    /// What it runs on. None = auto CLI, that CLI's default model, and
-    /// whatever it runs the model at.
-    pub pin: Option<AgentPin>,
+    /// What it runs on: its agent CLI and its model, and the effort where one
+    /// was chosen.
+    pub pin: AgentPin,
     /// What the orchestrator tells this agent beyond the task itself.
     pub brief: Option<String>,
 }
 
 impl NewTaskAgent {
-    /// An agent in `seat` on the named skills, sized by whoever staffs it.
-    pub fn new(seat: Seat, skills: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    /// An agent in `seat` on the named skills, on `pin`.
+    pub fn new(
+        seat: Seat,
+        skills: impl IntoIterator<Item = impl Into<String>>,
+        pin: AgentPin,
+    ) -> Self {
         Self {
             seat,
             skills: skills.into_iter().map(Into::into).collect(),
-            pin: None,
+            pin,
             brief: None,
         }
     }
@@ -69,7 +73,7 @@ impl Store {
                 }
             };
             let id = new_id();
-            let (agent_kind, model, effort) = AgentPin::columns(agent.pin.as_ref());
+            let (agent_kind, model, effort) = AgentPin::columns(&agent.pin);
             sqlx::query(
                 "INSERT INTO task_agents (id, task_id, seat, ordinal, agent_kind, model,
                                           effort, brief)
@@ -157,9 +161,9 @@ impl Store {
         .await?)
     }
 
-    /// Move an agent onto another CLI, model and effort, or, with None, back
-    /// onto auto. What the user chose replaces what the orchestrator sized.
-    pub async fn set_agent_pin(&self, agent_id: &str, pin: Option<&AgentPin>) -> Result<TaskAgent> {
+    /// Move an agent onto another CLI, model and effort. What the user chose
+    /// replaces what the orchestrator sized.
+    pub async fn set_agent_pin(&self, agent_id: &str, pin: &AgentPin) -> Result<TaskAgent> {
         self.get_task_agent(agent_id).await?;
         let (agent_kind, model, effort) = AgentPin::columns(pin);
         sqlx::query("UPDATE task_agents SET agent_kind = ?, model = ?, effort = ? WHERE id = ?")

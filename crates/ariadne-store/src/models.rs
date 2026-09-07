@@ -11,7 +11,7 @@
 //! there are usually none.
 //!
 //! A model is named by the one string it is chosen by,
-//! `<agent_kind>[:<model>]` (`ariadne_core::ModelRef`) — the same spelling
+//! `<agent_kind>:<model>` (`ariadne_core::ModelRef`) — the same spelling
 //! `--model` takes, so the id in a row is the id a request is refused by.
 
 use std::collections::BTreeSet;

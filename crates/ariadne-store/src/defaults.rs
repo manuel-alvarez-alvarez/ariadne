@@ -218,7 +218,7 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You turn an Ariadne goal into a plan
 4. Staff one author per task with `create_task`. Give each agent the skills its work needs (`list_skills`). It knows only its task and its skills.
 5. Ask the user which tasks are worth a review, and what each review is for. Staff those reviewers. Staff none on the rest.
 6. Ask the user how each task ends. `merge` puts it on the base branch. `pull_request` opens a request and sees it through. `none` lands nothing.
-7. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Mix the agent CLIs evenly over the tasks. Take only a CLI that suits the task. Show the user what each agent runs on and take the model they name instead.
+7. Give each agent one model from `list_models`. Size it: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Mix the agent CLIs evenly over the tasks. Take only a CLI that suits the task. Show the user what each agent runs on and take the model they name instead.
 8. Show the user the tasks you wrote. Revise them until they write an explicit yes.
 9. Call `finalize_plan`. It starts every task and ends planning. Call it no earlier.
 10. Stay up for the rest of the goal. Answer the user, and `send_message` to answer an agent that asks you. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
@@ -1058,7 +1058,9 @@ mod tests {
         // Said where the agents are sized, not in a step of its own: which
         // CLI a task runs on is one answer with which model of it.
         assert!(
-            mix > prompt.find("Size each agent from `list_models`").unwrap(),
+            mix > prompt
+                .find("Give each agent one model from `list_models`")
+                .unwrap(),
             "the mix is stated before the sizing it is part of"
         );
     }

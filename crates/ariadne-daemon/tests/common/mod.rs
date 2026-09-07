@@ -104,6 +104,22 @@ pub struct HarnessBuilder {
 }
 
 /// A daemon in a temporary directory: a stub `tmux`, no scheduler.
+/// The pin the fixtures staff an agent of `agent_kind` on: a model is
+/// required everywhere, so every seeded row names one, and a test that cares
+/// which model it is names its own.
+pub fn test_pin(agent_kind: AgentKind) -> AgentPin {
+    let model = match agent_kind {
+        AgentKind::ClaudeCode => "claude-sonnet-5",
+        AgentKind::Codex => "gpt-5.6-terra",
+        AgentKind::Opencode => "opencode/hy3-free",
+    };
+    AgentPin {
+        agent_kind,
+        model: model.into(),
+        effort: None,
+    }
+}
+
 pub fn harness() -> HarnessBuilder {
     HarnessBuilder {
         tmux: Tmux::Stub,
@@ -667,30 +683,15 @@ impl Harness {
             .unwrap()
     }
 
-    /// A goal still in planning, on a repository of its own.
-    ///
-    /// Pinned to an agent CLI, as [`Self::cast_reviewed_by`] pins its own: a
-    /// goal left on `auto` is resolved by asking PATH for a coding-agent CLI,
-    /// so an unpinned one turns every spawn in the test into a question about
-    /// what happens to be installed on the machine running it. No test here is
-    /// about that resolution, and a machine without `claude` — every CI runner
-    /// — failed the spawn before the test reached what it was about.
+    /// A goal still in planning, on a repository of its own, pinned to
+    /// claude_code as [`Self::cast_reviewed_by`] pins its own.
     pub async fn goal(&self) -> (Goal, Repository) {
         let repo = self.repository(&self.at("repo")).await;
-        let goal = self
-            .goal_on(
-                &repo,
-                Some(AgentPin {
-                    agent_kind: AgentKind::ClaudeCode,
-                    model: None,
-                    effort: None,
-                }),
-            )
-            .await;
+        let goal = self.goal_on(&repo, test_pin(AgentKind::ClaudeCode)).await;
         (goal, repo)
     }
 
-    pub async fn goal_on(&self, repo: &Repository, pin: Option<AgentPin>) -> Goal {
+    pub async fn goal_on(&self, repo: &Repository, pin: AgentPin) -> Goal {
         self.store
             .create_goal(NewGoal {
                 title: "Ship the UI".into(),
@@ -710,12 +711,10 @@ impl Harness {
         repo: &Repository,
         title: &str,
         reviewers: usize,
-        pin: Option<AgentPin>,
+        pin: AgentPin,
     ) -> Task {
-        let agent = |seat: Seat, skills: &[&str]| NewTaskAgent {
-            pin: pin.clone(),
-            ..NewTaskAgent::new(seat, skills.to_vec())
-        };
+        let agent =
+            |seat: Seat, skills: &[&str]| NewTaskAgent::new(seat, skills.to_vec(), pin.clone());
         let mut agents = vec![agent(Seat::Author, &["coding"])];
         agents.extend((0..reviewers).map(|_| agent(Seat::Reviewer, &["code-review"])));
         self.store
@@ -745,31 +744,29 @@ impl Harness {
         self.cast_reviewed_by(1).await
     }
 
-    /// The same on another agent CLI, or on a model: what a goal and a task's
-    /// agents run on is what they were pinned to when they were created.
+    /// The same on another agent CLI, on that CLI's test model: what a goal
+    /// and a task's agents run on is what they were pinned to when they were
+    /// created.
     pub async fn cast_on(&self, agent_kind: AgentKind) -> Cast {
-        self.cast_pinned(Some(agent_kind), None, 1).await
+        let pin = test_pin(agent_kind);
+        self.cast_pinned(agent_kind, &pin.model, 1).await
     }
 
     /// The same, with `reviewers` reviewers on the task. A task is approved
     /// when every one of them has approved, so two of them is where a round
     /// one verdict does not close — a reviewer sitting with its work done.
     pub async fn cast_reviewed_by(&self, reviewers: usize) -> Cast {
-        self.cast_pinned(Some(AgentKind::ClaudeCode), None, reviewers)
+        let pin = test_pin(AgentKind::ClaudeCode);
+        self.cast_pinned(AgentKind::ClaudeCode, &pin.model, reviewers)
             .await
     }
 
-    pub async fn cast_pinned(
-        &self,
-        agent_kind: Option<AgentKind>,
-        model: Option<&str>,
-        reviewers: usize,
-    ) -> Cast {
-        let pin = agent_kind.map(|agent_kind| AgentPin {
+    pub async fn cast_pinned(&self, agent_kind: AgentKind, model: &str, reviewers: usize) -> Cast {
+        let pin = AgentPin {
             agent_kind,
-            model: model.map(str::to_string),
+            model: model.to_string(),
             effort: None,
-        });
+        };
         let repo = self.repository(&self.at("repo")).await;
         let goal = self.goal_on(&repo, pin.clone()).await;
         let task = self.task_on(&goal, &repo, "task", reviewers, pin).await;
@@ -791,21 +788,13 @@ impl Harness {
 
     /// Move a staffed agent onto another agent CLI and another model, which is
     /// what a `PATCH /v1/tasks/{id}` from the UI amounts to.
-    pub async fn move_agent(
-        &self,
-        agent_id: &str,
-        agent_kind: Option<AgentKind>,
-        model: Option<&str>,
-    ) {
-        let pin = agent_kind.map(|agent_kind| AgentPin {
+    pub async fn move_agent(&self, agent_id: &str, agent_kind: AgentKind, model: &str) {
+        let pin = AgentPin {
             agent_kind,
-            model: model.map(str::to_string),
+            model: model.to_string(),
             effort: None,
-        });
-        self.store
-            .set_agent_pin(agent_id, pin.as_ref())
-            .await
-            .unwrap();
+        };
+        self.store.set_agent_pin(agent_id, &pin).await.unwrap();
     }
 
     /// The same, with the goal out of planning: reconciliation only acts on an
@@ -859,7 +848,7 @@ impl Harness {
         let repo = self
             .repository(&self.at(&format!("repo-{tmux_name}")))
             .await;
-        let goal = self.goal_on(&repo, None).await;
+        let goal = self.goal_on(&repo, test_pin(AgentKind::ClaudeCode)).await;
         // An orchestrator is staffed on no task, so its session carries no
         // agent: the pane name is what tells this one apart.
         self.orchestrator_session(&goal, tmux_name).await
@@ -938,7 +927,7 @@ impl Harness {
                 seat,
                 task_agent_id: agent_id.map(str::to_string),
                 agent_kind,
-                model: None,
+                model: test_pin(agent_kind).model,
                 effort: None,
                 tmux_session: tmux_session.to_string(),
                 worktree_path: Some(worktree.display().to_string()),

@@ -13,12 +13,10 @@ pub struct GoalDto {
     pub title: String,
     pub description: String,
     pub status: GoalStatus,
-    /// What the orchestrator runs on, `<agent_kind>[:<model>]`: the agent CLI
-    /// and, after a `:`, the model of it (`codex`,
-    /// `claude_code:claude-opus-5`). None = auto: the first installed CLI,
-    /// resolved at spawn time, on its own default model.
+    /// What the orchestrator runs on, `<agent_kind>:<model>`: the agent CLI
+    /// and, after the `:`, the model of it (`claude_code:claude-opus-5`).
     #[schema(example = "claude_code:claude-opus-5")]
-    pub model: Option<String>,
+    pub model: String,
     /// The reasoning effort that model is run at, pinned like `model`. None =
     /// whatever the agent CLI runs it at on its own.
     #[schema(example = "high")]
@@ -70,20 +68,17 @@ pub struct CreateGoalRequest {
     pub description: String,
     /// Ids of registered repositories (`POST /v1/repositories`); at least one.
     pub repository_ids: Vec<String>,
-    /// What the orchestrator runs on, `<agent_kind>[:<model>]` — the agent
-    /// CLI and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
-    /// `opencode:ollama/llama3:8b`. The model half is free text, handed to
-    /// that CLI as typed; an agent CLI on its own runs it on its own default
-    /// model, and a string naming no agent CLI is refused. Omitted (or
-    /// "default") = auto: the first installed CLI, on its own default model.
-    #[serde(default)]
+    /// What the orchestrator runs on, `<agent_kind>:<model>` — the agent CLI
+    /// and, after the `:`, the model of it: `codex:gpt-5.3-codex`,
+    /// `opencode:ollama/llama3:8b`. Required — a model is required, and no
+    /// CLI default stands in for one. The model half is free text, handed to
+    /// that CLI as typed; a string naming no agent CLI is refused, and so are
+    /// the empty string and the word "default".
     #[schema(example = "codex:gpt-5.3-codex")]
-    pub model: Option<String>,
+    pub model: String,
     /// The reasoning effort to run that model at, one of the efforts `GET
     /// /v1/models` lists for it; anything else is refused. Omitted (or
-    /// "default") = whatever the agent CLI runs the model at. An effort is
-    /// run at a model, so an effort written where `model` names none is
-    /// refused.
+    /// "default") = whatever the agent CLI runs the model at.
     #[serde(default)]
     #[schema(example = "high")]
     pub effort: Option<String>,

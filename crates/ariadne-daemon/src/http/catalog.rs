@@ -85,10 +85,11 @@ pub mod models {
     use crate::http::AppState;
     use crate::http::error::{ApiError, ApiResult, Json};
 
-    /// Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:
-    /// each agent CLI on its own — that CLI on its own default model — and
-    /// then the models of it, curated for claude_code and codex, discovered
-    /// live (`opencode models --verbose`) for opencode.
+    /// Everything an agent can be pinned to, `<agent_kind>:<model>` apiece:
+    /// the models of each agent CLI, curated for claude_code and codex,
+    /// discovered live (`opencode models --verbose`) for opencode. No
+    /// bare-CLI entry: a model is required wherever an agent is pinned, so
+    /// there is nothing a CLI on its own could be staffed as.
     ///
     /// The union always, and grouped by agent CLI: a model is chosen by one
     /// string that carries its CLI, so nothing scopes this catalog any more.
@@ -162,21 +163,6 @@ pub mod models {
     async fn catalog() -> Vec<ModelDto> {
         let mut out = Vec::new();
         for kind in AgentKind::ALL {
-            out.push(ModelDto {
-                id: ModelRef::of(kind).to_string(),
-                agent_kind: kind,
-                description: Some(format!("{} on its own default model", kind.as_str())),
-                // Which model that is, is the CLI's own business — so neither
-                // what it is like, nor what it is run at, is this catalog's
-                // to say.
-                tier: ModelTier::Unknown,
-                cost: None,
-                speed: None,
-                best_for: Vec::new(),
-                avoid_for: Vec::new(),
-                efforts: Vec::new(),
-                enabled: true,
-            });
             match kind {
                 AgentKind::Opencode => out.extend(opencode_models().await),
                 _ => out.extend(curated_models(kind).iter().map(|m| curated(kind, m))),
@@ -216,16 +202,14 @@ pub mod models {
     /// curated entry for claude_code and codex, and, for opencode, whatever
     /// discovery prints right now.
     ///
-    /// None where nothing here lists the model — a hand-typed id, or an agent
-    /// CLI on its own default model — which is what
-    /// [`ariadne_core::models::effort_error`] reads as "hold it to everything
-    /// that CLI accepts".
+    /// None where nothing here lists the model — a hand-typed id — which is
+    /// what [`ariadne_core::models::effort_error`] reads as "hold it to
+    /// everything that CLI accepts".
     ///
     /// Discovery is re-run rather than cached: it is asked only where a write
     /// names an opencode effort, which is rare, and a remembered list would
     /// start refusing the variants a newly configured model really takes.
-    pub async fn efforts_of(kind: AgentKind, model: Option<&str>) -> Option<Vec<String>> {
-        let model = model?;
+    pub async fn efforts_of(kind: AgentKind, model: &str) -> Option<Vec<String>> {
         let names = |efforts: Vec<EffortDto>| efforts.into_iter().map(|e| e.id).collect();
         match kind {
             AgentKind::Opencode => opencode_models()
@@ -512,7 +496,7 @@ pub mod models {
     fn qualified(kind: AgentKind, model: &str) -> String {
         ModelRef {
             agent_kind: kind,
-            model: Some(model.to_string()),
+            model: model.to_string(),
         }
         .to_string()
     }

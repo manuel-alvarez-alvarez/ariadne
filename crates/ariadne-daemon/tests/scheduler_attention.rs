@@ -34,7 +34,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
+    Actor, AgentKind, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
 };
 // The watchdog's timeline and the orchestrator's budget come from the scheduler
 // rather than being written down again here, so that moving a threshold moves
@@ -46,7 +46,7 @@ use ariadne_daemon::scheduler::{
 };
 use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
-use common::{Harness, eventually, harness};
+use common::{Harness, eventually, harness, test_pin};
 
 /// The budget the goal's orchestrator spends: how many attempts starting one is
 /// worth, as the scheduler has it.
@@ -128,12 +128,12 @@ impl World {
                 title: title.into(),
                 description: "do things".into(),
                 agents: vec![
-                    NewTaskAgent {
-                        ..NewTaskAgent::new(Seat::Author, ["coding"])
-                    },
-                    NewTaskAgent {
-                        ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                    },
+                    NewTaskAgent::new(Seat::Author, ["coding"], test_pin(AgentKind::ClaudeCode)),
+                    NewTaskAgent::new(
+                        Seat::Reviewer,
+                        ["code-review"],
+                        test_pin(AgentKind::ClaudeCode),
+                    ),
                 ],
                 depends_on: vec![],
                 landing: None,
@@ -842,7 +842,15 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
     let author_session = h
         .session(&goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
-    let review = h.task_on(&goal, &cast.repo, "under review", 1, None).await;
+    let review = h
+        .task_on(
+            &goal,
+            &cast.repo,
+            "under review",
+            1,
+            test_pin(AgentKind::ClaudeCode),
+        )
+        .await;
     h.advance(&review, TaskStatus::UnderReview).await;
     let reviewer_session = h
         .session(&goal, Some(&review), Seat::Reviewer, &cast.reviewer.id)

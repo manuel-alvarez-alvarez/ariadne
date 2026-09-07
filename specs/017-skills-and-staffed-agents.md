@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -32,9 +32,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
    that tells a generic agent how to do one kind of work. It is named in
    kebab-case, and the name is how a task loads it.
 2. An **agent** has no identity: it is an agent CLI, a model, an effort, a
-   brief and a set of skills. A **seat** says only where it sits. The author
-   of a specification, of a fix and of a release are all `author`, and differ
-   only in the skills they hold.
+   brief and a set of skills — and the CLI and the model are required, so
+   every agent names both (011). A **seat** says only where it sits. The
+   author of a specification, of a fix and of a release are all `author`,
+   and differ only in the skills they hold.
 3. There are three seats. `orchestrator` belongs to a goal; `author` and
    `reviewer` belong to a task. A task takes exactly one author, and the
    schema holds it to that. Reviewers are not required: the orchestrator
@@ -60,10 +61,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
    cannot be staffed on a skill nothing answers to.
 9. A skill document obeys the STE rules and the size caps of spec 006, the
    same as every other default text.
-10. The orchestrator staffs each task: it names the skills of each agent, and
-    may size the model and effort per agent (011) and add a brief that the
-    task itself does not carry. How the task ends is agreed the same way
-    (005).
+10. The orchestrator staffs each task: it names the skills of each agent and
+    the model each runs on (011), may size the effort beside it, and may add
+    a brief that the task itself does not carry. How the task ends is agreed
+    the same way (005).
 11. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
 
@@ -88,8 +89,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - Every shipped skill is named once and describes itself
   (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`), and
   every document is within its cap (`defaults.rs::skill_size_caps_hold`).
-- An agent is written on the pin it was given, and auto where it was given
-  none (`store.rs::an_agent_is_written_on_the_pin_it_was_given_and_auto_where_it_was_given_none`).
+- An agent is written on the pin it was given, whole
+  (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`).
 - A staffed agent's skills reach it as an index and as documents on disk
   (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
 

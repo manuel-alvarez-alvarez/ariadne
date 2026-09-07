@@ -47,31 +47,20 @@ impl OpencodeAdapter {
             "description": "Ariadne-orchestrated agent",
             "mode": "primary",
             "prompt": ctx.system_prompt,
+            // Always written: a model is required, and pin validation holds an
+            // opencode model to the `provider/model` spelling this key takes.
+            "model": ctx.model,
         });
-        // OpenCode expects provider/model; skip when the profile model has no
-        // provider prefix so the user default applies.
-        if let Some(model) = &ctx.model
-            && model.contains('/')
-        {
-            agent["model"] = json!(model);
-            // The effort is the model's variant, and the schema's "applies
-            // only when using the agent's configured model" is literal:
-            // verified on 1.18.15, an `ariadne` agent carrying `variant` and
-            // `model` together starts a session recorded as
-            // `{"id":"hy3-free","providerID":"opencode","variant":"high"}`,
-            // while the same agent carrying the variant alone — its model
-            // left to the user's config — starts one recorded as
-            // `"variant":"default"`. So the variant goes in beside a model we
-            // write, and nowhere else.
-            if let Some(effort) = &ctx.effort {
-                agent["variant"] = json!(effort);
-            }
-        } else if ctx.effort.is_some() {
-            tracing::warn!(
-                session = %ctx.session_id,
-                model = ?ctx.model,
-                "opencode ignores an effort with no provider-prefixed model to hang it on; the session runs at the model's default variant"
-            );
+        // The effort is the model's variant, and the schema's "applies only
+        // when using the agent's configured model" is literal: verified on
+        // 1.18.15, an `ariadne` agent carrying `variant` and `model` together
+        // starts a session recorded as
+        // `{"id":"hy3-free","providerID":"opencode","variant":"high"}`, while
+        // the same agent carrying the variant alone — its model left to the
+        // user's config — starts one recorded as `"variant":"default"`. The
+        // agent's model is always written now, so the variant lands beside it.
+        if let Some(effort) = &ctx.effort {
+            agent["variant"] = json!(effort);
         }
 
         let mut config = json!({

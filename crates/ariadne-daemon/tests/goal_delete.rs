@@ -34,7 +34,8 @@ async fn goal(h: &Harness, name: &str) -> GoalDto {
     h.json(
         post_json(
             "/v1/goals",
-            serde_json::json!({"title": "Ship it", "repository_ids": [registered.id]}),
+            serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
+                               "model": "claude_code:claude-sonnet-5"}),
         ),
         StatusCode::CREATED,
     )
@@ -46,8 +47,10 @@ async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
         post_json(
             &format!("/v1/goals/{}/tasks", goal.id),
             serde_json::json!({"title": "Do the thing", "agents": [
-                {"seat": "author", "skills": ["coding"]},
-                {"seat": "reviewer", "skills": ["code-review"]}]}),
+                {"seat": "author", "skills": ["coding"],
+                 "model": "claude_code:claude-sonnet-5"},
+                {"seat": "reviewer", "skills": ["code-review"],
+                 "model": "claude_code:claude-sonnet-5"}]}),
         ),
         StatusCode::CREATED,
     )

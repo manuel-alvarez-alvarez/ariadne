@@ -390,6 +390,8 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
         "01GOAL",
         "--title",
         "t",
+        "--author",
+        "coding=claude_code:claude-sonnet-5",
         "--landing",
         "pull-request",
     ])
@@ -449,8 +451,9 @@ fn task_statuses(values: &[&str]) -> Vec<TaskStatus> {
 }
 
 /// What each agent runs on is chosen on the way in, as one string: `--model`
-/// for the orchestrator and the author, `--reviewer PROFILE=MODEL` per reviewer
-/// slot, and every spelling lands in the field the request is built from.
+/// for the orchestrator and the author, `--reviewer SKILLS=MODEL` per
+/// reviewer slot, and every spelling lands in the field the request is built
+/// from. A model is required, so every spelling carries one.
 #[test]
 fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     let orchestrator = |args: &[&str]| {
@@ -467,18 +470,12 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         model
     };
     assert_eq!(
-        orchestrator(&["--model", "codex:gpt-5.3-codex"]).as_deref(),
-        Some("codex:gpt-5.3-codex")
+        orchestrator(&["--model", "codex:gpt-5.3-codex"]),
+        "codex:gpt-5.3-codex"
     );
     assert_eq!(
-        orchestrator(&["--model", "codex"]).as_deref(),
-        Some("codex"),
-        "an agent CLI on its own runs it on its own default model"
-    );
-    assert_eq!(orchestrator(&[]), None, "and nothing at all is auto");
-    assert_eq!(
-        orchestrator(&["--model", "claude-code"]).as_deref(),
-        Some("claude_code"),
+        orchestrator(&["--model", "claude-code:claude-opus-5"]),
+        "claude_code:claude-opus-5",
         "the hyphenated spelling names the same CLI, and travels as the daemon \
          spells it"
     );
@@ -499,25 +496,22 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         "--reviewer",
         "code-review=codex:o3",
         "--reviewer",
-        "security-review=opencode",
-        "--reviewer",
-        "performance-review",
+        "security-review=opencode:ollama/llama3:8b",
     ])
     .command
     else {
         panic!("task create")
     };
     assert_eq!(author.skills, ["coding", "testing"]);
-    assert_eq!(author.model.as_deref(), Some("claude_code:claude-opus-5"));
+    assert_eq!(author.model, "claude_code:claude-opus-5");
     assert_eq!(
         reviewers
             .iter()
-            .map(|r| (r.skills.join(","), r.model.as_deref()))
+            .map(|r| (r.skills.join(","), r.model.as_str()))
             .collect::<Vec<_>>(),
         [
-            ("code-review".to_string(), Some("codex:o3")),
-            ("security-review".to_string(), Some("opencode")),
-            ("performance-review".to_string(), None),
+            ("code-review".to_string(), "codex:o3"),
+            ("security-review".to_string(), "opencode:ollama/llama3:8b"),
         ],
         "in the order they were typed, which is review order"
     );
@@ -534,20 +528,73 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         model
     };
     assert_eq!(
-        edited(&["--model", "default"]).as_deref(),
-        Some("default"),
-        "\"default\" puts the task's author back on auto"
-    );
-    assert_eq!(
-        edited(&["--model", "claude-code"]).as_deref(),
-        Some("claude_code"),
-        "and a CLI travels in the spelling the daemon reads"
+        edited(&["--model", "claude-code:claude-opus-5"]).as_deref(),
+        Some("claude_code:claude-opus-5"),
+        "a CLI travels in the spelling the daemon reads"
     );
     assert_eq!(
         edited(&["--model", "codex:gpt-5.3-codex"]).as_deref(),
         Some("codex:gpt-5.3-codex")
     );
     assert_eq!(edited(&["--title", "Do it better"]), None);
+}
+
+/// A model is required wherever an agent is chosen: `goal create` refuses a
+/// line with no `--model`, `task create` a line with no `--author`, an agent
+/// slot the `=MODEL` half, and `task update --model` the word `default` —
+/// there is no longer anything to hand a pin back to.
+#[test]
+fn a_line_with_no_model_is_a_usage_error() {
+    assert!(
+        try_parse(&[
+            "ariadne", "goal", "create", "--title", "Ship it", "--repo", "01REPO",
+        ])
+        .is_err(),
+        "goal create parses with no --model"
+    );
+
+    assert!(
+        try_parse(&["ariadne", "task", "create", "01GOAL", "--title", "Do it"]).is_err(),
+        "task create parses with no --author"
+    );
+
+    let err = try_parse(&[
+        "ariadne",
+        "task",
+        "create",
+        "01GOAL",
+        "--title",
+        "Do it",
+        "--author",
+        "coding,testing",
+    ])
+    .map(|_| ())
+    .expect_err("an author with no model")
+    .to_string();
+    assert!(err.contains("a model is required"), "{err}");
+    assert!(err.contains("SKILLS=MODEL"), "{err}");
+
+    // A bare agent CLI parses nowhere: it names no model.
+    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "codex"])
+        .map(|_| ())
+        .expect_err("a bare CLI")
+        .to_string();
+    assert!(err.contains("`codex` names no model"), "{err}");
+
+    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "default"])
+        .map(|_| ())
+        .expect_err("default is no model")
+        .to_string();
+    assert!(err.contains("names no agent CLI"), "{err}");
+
+    // Whitespace after the colon is an empty model too: it would create a
+    // pin and launch a model no CLI has.
+    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "codex: "])
+        .map(|_| ())
+        .expect_err("whitespace is no model")
+        .to_string();
+    assert!(err.contains("no model after the `:`"), "{err}");
+    assert!(err.contains("a model is required"), "{err}");
 }
 
 /// The other half of a pin, on every line a model is chosen on: `--effort`
@@ -574,7 +621,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
     else {
         panic!("goal create")
     };
-    assert_eq!(model.as_deref(), Some("codex:gpt-5.6-sol"));
+    assert_eq!(model, "codex:gpt-5.6-sol");
     assert_eq!(effort.as_deref(), Some("xhigh"));
 
     let Command::Task {
@@ -589,13 +636,13 @@ fn an_effort_can_be_chosen_beside_every_model() {
         "--title",
         "Do it",
         "--author",
-        "coding@xhigh",
+        "coding=claude_code:claude-opus-5@xhigh",
         "--reviewer",
         "code-review=codex:gpt-5.6-sol@xhigh",
         "--reviewer",
-        "security-review@high",
+        "security-review=claude_code:claude-sonnet-5@high",
         "--reviewer",
-        "performance-review=codex",
+        "performance-review=codex:gpt-5.6-luna",
     ])
     .command
     else {
@@ -605,19 +652,23 @@ fn an_effort_can_be_chosen_beside_every_model() {
     assert_eq!(
         reviewers
             .iter()
-            .map(|r| (r.skills.join(","), r.model.as_deref(), r.effort.as_deref()))
+            .map(|r| (r.skills.join(","), r.model.as_str(), r.effort.as_deref()))
             .collect::<Vec<_>>(),
         [
             (
                 "code-review".to_string(),
-                Some("codex:gpt-5.6-sol"),
+                "codex:gpt-5.6-sol",
                 Some("xhigh")
             ),
-            ("security-review".to_string(), None, Some("high")),
-            ("performance-review".to_string(), Some("codex"), None),
+            (
+                "security-review".to_string(),
+                "claude_code:claude-sonnet-5",
+                Some("high")
+            ),
+            ("performance-review".to_string(), "codex:gpt-5.6-luna", None),
         ],
-        "an agent says a model, an effort, or both — and neither is guessed \
-         from the other"
+        "an agent names its model, and the effort beside it where one was \
+         chosen"
     );
 
     let edited = |args: &[&str]| {
@@ -633,7 +684,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
     };
     assert_eq!(edited(&["--effort", "ultra"]).as_deref(), Some("ultra"));
     assert_eq!(edited(&["--effort", "default"]).as_deref(), Some("default"));
-    assert_eq!(edited(&["--model", "codex"]), None);
+    assert_eq!(edited(&["--model", "codex:gpt-5.3-codex"]), None);
 }
 
 /// An effort is the model's to accept, and the daemon holds the catalogue —
@@ -723,9 +774,9 @@ fn a_model_naming_no_agent_is_a_usage_error() {
     );
 }
 
-/// `task update --model` takes a model or the word "default" and nothing else:
-/// an agent CLI Ariadne does not run is refused on the line it was typed on,
-/// never sent for the daemon to turn down.
+/// `task update --model` takes a model and nothing else: an agent CLI
+/// Ariadne does not run is refused on the line it was typed on, never sent
+/// for the daemon to turn down.
 #[test]
 fn a_model_on_an_agent_that_is_no_cli_is_a_usage_error() {
     let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "llama:x"])
@@ -734,7 +785,6 @@ fn a_model_on_an_agent_that_is_no_cli_is_a_usage_error() {
         .to_string();
     assert!(err.contains("unknown agent `llama`"), "{err}");
     assert!(err.contains("claude_code, codex, opencode"), "{err}");
-    assert!(err.contains("default"), "{err}");
 }
 
 /// A `--reviewer` that says half of what it means is a typo, and it is
@@ -762,8 +812,13 @@ fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
     assert!(err.contains("claude_code, codex, opencode"), "{err}");
     assert!(refused("code-review=").contains("no model after the ="));
     assert!(refused("code-review=codex:").contains("no model after the `:`"));
+    // Skills with no `=MODEL` at all are half a slot too, `@EFFORT` or not.
+    let err = refused("code-review");
+    assert!(err.contains("a model is required"), "{err}");
+    let err = refused("Reviewer@high");
+    assert!(err.contains("a model is required"), "{err}");
     // And the half after the `@`, which the forms in the refusal spell out.
-    let err = refused("Reviewer@");
+    let err = refused("code-review=codex:o3@");
     assert!(err.contains("no effort was named"), "{err}");
     assert!(refused("code-review=@high").contains("SKILLS=MODEL@EFFORT"));
 }
@@ -1112,7 +1167,12 @@ fn models_show_takes_a_model_in_the_spelling_dash_dash_model_takes() {
         model(&["ariadne", "models", "show", "codex:gpt-5.6-luna"]),
         "codex:gpt-5.6-luna"
     );
-    assert_eq!(model(&["ariadne", "models", "show", "codex"]), "codex");
+    // The catalog has no bare-CLI entry any more, so a bare CLI is refused
+    // the way `--model` refuses it.
+    let Err(err) = try_parse(&["ariadne", "models", "show", "codex"]) else {
+        panic!("a bare CLI names no model");
+    };
+    assert!(err.to_string().contains("names no model"), "{err}");
     let Err(err) = try_parse(&["ariadne", "models", "show", "gemini:nope"]) else {
         panic!("\"gemini\" is not an agent CLI");
     };

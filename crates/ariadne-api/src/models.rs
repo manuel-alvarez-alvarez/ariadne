@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// One thing an agent can be pinned to, as served by `GET /v1/models`: an
-/// agent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI
-/// on its own, which is that CLI on its own default model.
+/// agent CLI on a model of it (`claude_code:claude-fable-5`). Every entry
+/// names both halves — there is no bare-CLI entry, because a model is
+/// required wherever an agent is pinned.
 ///
 /// The id is what a request writes as its `model`, whole. `agent_kind` is the
 /// same fact taken apart, so a picker can group the catalog by CLI without
@@ -23,8 +24,8 @@ pub struct ModelDto {
     /// One line about the model, which is what a picker shows beside the id.
     pub description: Option<String>,
     /// The capability class this entry belongs to, or `unknown` where nothing
-    /// says — a bare agent CLI, or a model discovered at runtime that nothing
-    /// has been written about.
+    /// says — a model discovered at runtime that nothing has been written
+    /// about.
     pub tier: ModelTier,
     /// What it costs to run: 1 (free) to 5 (frontier), ranked across the whole
     /// catalog so entries of different agent CLIs compare. `null` where

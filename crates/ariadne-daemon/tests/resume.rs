@@ -42,11 +42,11 @@ async fn author_session(h: &Harness) -> (Cast, AgentSession) {
 }
 
 /// A task under review for real: a repo on disk with a commit on the task
-/// branch, its profiles carrying `model` at the moment it was created — so
+/// branch, its agents carrying `model` at the moment it was created — so
 /// that is what the task and the reviewer slot are pinned to.
-async fn under_review(h: &Harness, model: Option<&str>) -> Cast {
+async fn under_review(h: &Harness, model: &str) -> Cast {
     let repo_path = h.git_repo("repo");
-    let cast = h.cast_pinned(Some(AgentKind::ClaudeCode), model, 1).await;
+    let cast = h.cast_pinned(AgentKind::ClaudeCode, model, 1).await;
     sh(&repo_path, &format!("git branch {}", cast.task.branch));
     h.advance(&cast.task, TaskStatus::UnderReview).await;
     let task = h.store.get_task(&cast.task.id).await.unwrap();
@@ -110,7 +110,7 @@ fn argv_of(h: &Harness, session_id: &str) -> String {
 #[tokio::test]
 async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
     let h = harness().await;
-    let cast = under_review(&h, Some("opus")).await;
+    let cast = under_review(&h, "opus").await;
     let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
 
     // Nothing to resume yet, so this is the reviewer's first spawn.
@@ -119,7 +119,7 @@ async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
         .resume_reviewer(&task.id, &reviewer, "(unused: no session yet)")
         .await
         .unwrap();
-    assert_eq!(first.model.as_deref(), Some("opus"));
+    assert_eq!(first.model, "opus");
     assert!(
         argv_of(&h, &first.id).contains("--model opus"),
         "the launch asked for the pinned model"
@@ -127,16 +127,10 @@ async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
 
     // The agent is re-pinned to another CLI and another model while the
     // session is alive. The row is not rewritten behind it.
-    h.move_agent(&reviewer, Some(AgentKind::Codex), Some("sonnet"))
-        .await;
+    h.move_agent(&reviewer, AgentKind::Codex, "sonnet").await;
     assert_eq!(
-        h.store
-            .get_session(&first.id)
-            .await
-            .unwrap()
-            .model
-            .as_deref(),
-        Some("opus"),
+        h.store.get_session(&first.id).await.unwrap().model,
+        "opus",
         "a re-pin rewrote a running session's model"
     );
 
@@ -151,7 +145,7 @@ async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
         .unwrap();
     assert_eq!(second.id, first.id, "the second review reused the session");
     assert_eq!(second.agent_kind(), AgentKind::ClaudeCode);
-    assert_eq!(second.model.as_deref(), Some("opus"));
+    assert_eq!(second.model, "opus");
     let argv = argv_of(&h, &second.id);
     assert!(
         argv.contains("--model opus"),
@@ -173,7 +167,7 @@ async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
         AgentKind::Codex,
         "a fresh session reads the agent's pin as it stands"
     );
-    assert_eq!(third.model.as_deref(), Some("sonnet"));
+    assert_eq!(third.model, "sonnet");
 }
 
 /// The same for the author, whose pin is the task's: the spawn that starts
@@ -182,16 +176,16 @@ async fn a_running_reviewer_keeps_the_model_its_session_started_on() {
 #[tokio::test]
 async fn a_resumed_author_stays_on_the_model_its_session_started_on() {
     let h = harness().await;
-    let cast = under_review(&h, Some("opus")).await;
+    let cast = under_review(&h, "opus").await;
     let task = cast.task.clone();
 
     let first = h.launcher.spawn_author(&task.id).await.unwrap();
     assert_eq!(first.agent_kind(), AgentKind::ClaudeCode);
-    assert_eq!(first.model.as_deref(), Some("opus"));
+    assert_eq!(first.model, "opus");
 
     // Re-pinned under a session that is already running: what it was launched
     // with is what every relaunch of it carries.
-    h.move_agent(&cast.author.id, Some(AgentKind::Codex), Some("sonnet"))
+    h.move_agent(&cast.author.id, AgentKind::Codex, "sonnet")
         .await;
     h.launcher.kill_session(&first.id).await.unwrap();
     let resumed = h
@@ -200,7 +194,7 @@ async fn a_resumed_author_stays_on_the_model_its_session_started_on() {
         .await
         .unwrap();
     assert_eq!(resumed.id, first.id, "the resume reused the session");
-    assert_eq!(resumed.model.as_deref(), Some("opus"));
+    assert_eq!(resumed.model, "opus");
     let argv = argv_of(&h, &resumed.id);
     assert!(
         argv.contains("--model opus"),
@@ -217,17 +211,17 @@ async fn an_orchestrator_respawn_stays_on_the_goals_pin() {
     let goal = h
         .goal_on(
             &repo,
-            Some(ariadne_store::AgentPin {
+            ariadne_store::AgentPin {
                 agent_kind: AgentKind::ClaudeCode,
-                model: Some("opus".into()),
+                model: "opus".into(),
                 effort: None,
-            }),
+            },
         )
         .await;
     let goal = goal.id;
 
     let first = h.launcher.spawn_orchestrator(&goal).await.unwrap();
-    assert_eq!(first.model.as_deref(), Some("opus"));
+    assert_eq!(first.model, "opus");
 
     h.launcher.kill_session(&first.id).await.unwrap();
 
@@ -237,7 +231,7 @@ async fn an_orchestrator_respawn_stays_on_the_goals_pin() {
         "an orchestrator respawn is a fresh session"
     );
     assert_eq!(second.agent_kind(), AgentKind::ClaudeCode);
-    assert_eq!(second.model.as_deref(), Some("opus"));
+    assert_eq!(second.model, "opus");
     assert!(
         argv_of(&h, &second.id).contains("--model opus"),
         "the respawn read the profile instead of the goal's pin"
@@ -256,7 +250,7 @@ async fn an_orchestrator_respawn_stays_on_the_goals_pin() {
 #[tokio::test]
 async fn every_launch_of_a_session_reports_under_a_new_id() {
     let h = harness().await;
-    let cast = under_review(&h, None).await;
+    let cast = under_review(&h, "opus").await;
     let task = cast.task.clone();
 
     let first = h.launcher.spawn_author(&task.id).await.unwrap();
@@ -295,17 +289,14 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
 async fn a_pane_left_behind_is_taken_rather_than_spawned_around() {
     let h = harness().await;
     let repo = h.repository(&h.at("repo")).await;
-    // Pinned rather than left on `auto`: resolving `auto` asks PATH for a
-    // coding-agent CLI, and a machine without one — every CI runner — fails
-    // the spawn before this test reaches what it is about.
     let goal = h
         .goal_on(
             &repo,
-            Some(ariadne_store::AgentPin {
+            ariadne_store::AgentPin {
                 agent_kind: AgentKind::ClaudeCode,
-                model: None,
+                model: "opus".into(),
                 effort: None,
-            }),
+            },
         )
         .await;
 
@@ -328,39 +319,6 @@ async fn a_pane_left_behind_is_taken_rather_than_spawned_around() {
         2,
         "one row per orchestrator that was started, and no row for an attempt that was not"
     );
-}
-
-/// A pin of "no model" is a pin too: the work runs on the agent CLI's own
-/// default, and a session launched on it stays there however the agent is
-/// re-pinned afterwards.
-#[tokio::test]
-async fn a_pin_of_no_model_stays_the_agents_own_default() {
-    let h = harness().await;
-    let cast = under_review(&h, None).await;
-    let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
-
-    let session = h
-        .launcher
-        .spawn_reviewer(&task.id, &reviewer)
-        .await
-        .unwrap();
-    assert_eq!(session.model, None);
-    assert!(
-        !argv_of(&h, &session.id).contains("--model"),
-        "no model was asked for"
-    );
-
-    // Re-pinned under it: the running session keeps the nothing it started on.
-    h.move_agent(&reviewer, Some(AgentKind::ClaudeCode), Some("sonnet"))
-        .await;
-    h.launcher.kill_session(&session.id).await.unwrap();
-    let resumed = h
-        .launcher
-        .resume_reviewer(&task.id, &reviewer, "Another look.")
-        .await
-        .unwrap();
-    assert_eq!(resumed.id, session.id, "the resume reused the session");
-    assert_eq!(resumed.model, None, "still the agent CLI's own default");
 }
 
 /// The changes-requested bounce, twice over: the task panel's Sessions tab
@@ -482,7 +440,7 @@ async fn a_launch_hands_tmux_nothing_that_can_outgrow_it() {
 #[tokio::test]
 async fn a_reviewer_reuses_its_session_across_reviews() {
     let h = harness().await;
-    let cast = under_review(&h, None).await;
+    let cast = under_review(&h, "opus").await;
     let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
 
     // Nothing to resume, so this is the reviewer's first spawn.
@@ -578,7 +536,7 @@ async fn a_reviewer_reuses_its_session_across_reviews() {
 #[tokio::test]
 async fn a_reviewer_without_an_agent_id_is_spawned_afresh() {
     let h = harness().await;
-    let cast = under_review(&h, None).await;
+    let cast = under_review(&h, "opus").await;
     let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
     let stillborn = h
         .session(&cast.goal, Some(&task), Seat::Reviewer, &reviewer)
@@ -637,12 +595,12 @@ async fn a_relaunch_announces_the_session_as_updated() {
 #[tokio::test]
 async fn reviving_a_session_revives_it_in_place() {
     let h = harness().await;
-    let cast = under_review(&h, Some("opus")).await;
+    let cast = under_review(&h, "opus").await;
     let task = cast.task.clone();
     let session = h.launcher.spawn_author(&task.id).await.unwrap();
     h.launcher.kill_session(&session.id).await.unwrap();
 
-    h.move_agent(&cast.author.id, Some(AgentKind::Codex), Some("sonnet"))
+    h.move_agent(&cast.author.id, AgentKind::Codex, "sonnet")
         .await;
 
     let revived = h.launcher.revive_session(&session.id, None).await.unwrap();
@@ -652,7 +610,7 @@ async fn reviving_a_session_revives_it_in_place() {
     assert_eq!(revived.worktree_path, session.worktree_path);
     assert_eq!(h.sessions_of(&task.id).await.len(), 1);
     assert_eq!(revived.agent_kind(), AgentKind::ClaudeCode);
-    assert_eq!(revived.model.as_deref(), Some("opus"));
+    assert_eq!(revived.model, "opus");
     let argv = argv_of(&h, &revived.id);
     assert!(
         argv.contains("--model opus"),

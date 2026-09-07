@@ -46,7 +46,7 @@ CREATE TABLE agent_configs (
 -- says otherwise, so the catalog — curated per CLI, and discovered live for
 -- opencode — keeps every entry it grows usable without a write here.
 --
--- The id is `<agent_kind>[:<model>]`, the one string a model is chosen by
+-- The id is `<agent_kind>:<model>`, the one string a model is chosen by
 -- (`ariadne_core::ModelRef`). The catalog itself is code and discovery, so
 -- nothing joins on this: it is read as a set and subtracted.
 CREATE TABLE disabled_models (
@@ -74,9 +74,9 @@ CREATE TABLE repositories (
 
 -- The agent, model and effort columns on `goals` and `task_agents` are pins:
 -- the orchestrator sizes each agent it staffs and writes the answer here, and
--- the row is what the launcher reads from there on. All three NULLs are
--- meaningful — NULL agent_kind means auto (resolved at spawn time to the first
--- installed CLI), NULL model means that CLI's own default, NULL effort means
+-- the row is what the launcher reads from there on. The agent CLI and the
+-- model are required — every agent names both, `<agent_kind>:<model>`, and no
+-- CLI default stands in for a model. Only the effort may be NULL, which means
 -- whatever the CLI runs the model at. The user's later choice overwrites them,
 -- while the task has not started.
 CREATE TABLE goals (
@@ -87,9 +87,9 @@ CREATE TABLE goals (
                         CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
-    agent_kind          TEXT
+    agent_kind          TEXT NOT NULL
                         CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
-    model               TEXT,
+    model               TEXT NOT NULL,
     effort              TEXT
 );
 
@@ -141,9 +141,9 @@ CREATE TABLE task_agents (
     task_id    TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
     seat       TEXT NOT NULL CHECK (seat IN ('author', 'reviewer')),
     ordinal    INTEGER NOT NULL,
-    agent_kind TEXT
+    agent_kind TEXT NOT NULL
                CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
-    model      TEXT,
+    model      TEXT NOT NULL,
     effort     TEXT,
     -- What this agent is told beyond the task itself, where the orchestrator
     -- has something to add. NULL = the task is the whole of it.
@@ -209,7 +209,7 @@ CREATE TABLE agent_sessions (
                                                     'waiting_user', 'agent_error',
                                                     'disconnected', 'stalled')),
     attention_since     TEXT,
-    model               TEXT,
+    model               TEXT NOT NULL,
     -- Copied off the pin the session's seat carries, beside its model.
     effort              TEXT,
     launched_at         TEXT,

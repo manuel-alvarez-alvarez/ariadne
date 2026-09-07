@@ -83,10 +83,9 @@ pub struct TaskAgentDto {
     /// The skills this agent loads, in the order they reach it.
     #[schema(example = json!(["coding", "testing"]))]
     pub skills: Vec<String>,
-    /// What this agent runs on, `<agent_kind>[:<model>]`. None = auto: the
-    /// first installed CLI, resolved at spawn time, on its own default model.
+    /// What this agent runs on, `<agent_kind>:<model>`.
     #[schema(example = "codex:o3")]
-    pub model: Option<String>,
+    pub model: String,
     /// The reasoning effort that model is run at. None = whatever the agent
     /// CLI runs it at on its own.
     #[schema(example = "high")]
@@ -99,11 +98,10 @@ pub struct TaskAgentDto {
 /// One agent to staff on a task: where it sits, the skills it loads, and what
 /// it is to run on.
 ///
-/// The model is written `<agent_kind>[:<model>]`: the agent CLI on its own
-/// runs it on its own default model, an agent with a model after the `:` pins
-/// both, and a string naming no agent CLI is refused — nothing here derives
-/// one from the other. Omitted, the agent runs on the first installed CLI at
-/// spawn time, on that CLI's own default model.
+/// The model is written `<agent_kind>:<model>`: the agent CLI, and after the
+/// `:` one model of it. Both halves are required — a model is required, and
+/// no CLI default stands in for one — and a string naming no agent CLI is
+/// refused: nothing here derives one from the other.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentAssignment {
@@ -114,11 +112,10 @@ pub struct AgentAssignment {
     #[serde(default)]
     #[schema(example = json!(["coding", "testing"]))]
     pub skills: Vec<String>,
-    /// What this agent runs on, `<agent_kind>[:<model>]`; omitted (or
-    /// "default") = auto.
-    #[serde(default)]
+    /// What this agent runs on, `<agent_kind>:<model>`. Required; the empty
+    /// string and the word "default" are refused.
     #[schema(example = "codex:o3")]
-    pub model: Option<String>,
+    pub model: String,
     /// The reasoning effort to run that model at, one of the efforts
     /// `GET /v1/models` lists for it; anything else is refused. Omitted (or
     /// "default") = whatever the agent CLI runs the model at.
@@ -132,12 +129,16 @@ pub struct AgentAssignment {
 }
 
 impl AgentAssignment {
-    /// An agent in `seat` on the named skills, on auto.
-    pub fn new(seat: Seat, skills: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    /// An agent in `seat` on the named skills, on `model`.
+    pub fn new(
+        seat: Seat,
+        skills: impl IntoIterator<Item = impl Into<String>>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
             seat,
             skills: skills.into_iter().map(Into::into).collect(),
-            model: None,
+            model: model.into(),
             effort: None,
             brief: None,
         }
@@ -170,9 +171,10 @@ pub struct CreateTaskRequest {
 pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the author runs on, `<agent_kind>[:<model>]`: absent leaves the
-    /// author's pins alone, "default" (or the empty string) puts them back on
-    /// auto, and anything else pins what it spells.
+    /// What the author runs on, `<agent_kind>:<model>`: absent leaves the
+    /// author's pins alone, and anything else pins what it spells. A model is
+    /// required, so "default" and the empty string are refused — there is no
+    /// default to hand the pin back to.
     #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
     /// The reasoning effort to run the model at: absent leaves it alone,

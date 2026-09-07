@@ -123,10 +123,8 @@ impl ClaudeAdapter {
     }
 
     fn common_tail(&self, ctx: &SpawnCtx, argv: &mut Vec<String>) {
-        if let Some(model) = &ctx.model {
-            argv.push("--model".into());
-            argv.push(model.clone());
-        }
+        argv.push("--model".into());
+        argv.push(ctx.model.clone());
         if let Some(effort) = &ctx.effort {
             argv.push("--effort".into());
             argv.push(effort.clone());

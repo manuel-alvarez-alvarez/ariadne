@@ -16,11 +16,11 @@ mod common;
 
 use std::ops::Deref;
 
-use ariadne_core::{Actor, Seat, TaskStatus};
+use ariadne_core::{Actor, AgentKind, Seat, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_store::{Goal, NewTask, NewTaskAgent, Task};
 
-use common::{Harness, TIMEOUT, eventually, harness, post};
+use common::{Harness, TIMEOUT, eventually, harness, post, test_pin};
 
 /// An active goal with two tasks on it: one the other waits for.
 struct World {
@@ -46,7 +46,15 @@ impl World {
 
     async fn on(h: Harness) -> World {
         let (goal, repo) = h.goal().await;
-        let first = h.task_on(&goal, &repo, "Build the engine", 1, None).await;
+        let first = h
+            .task_on(
+                &goal,
+                &repo,
+                "Build the engine",
+                1,
+                test_pin(AgentKind::ClaudeCode),
+            )
+            .await;
         let second = h
             .store
             .create_task(NewTask {
@@ -55,12 +63,12 @@ impl World {
                 title: "Drive what the engine built".into(),
                 description: "do things".into(),
                 agents: vec![
-                    NewTaskAgent {
-                        ..NewTaskAgent::new(Seat::Author, ["coding"])
-                    },
-                    NewTaskAgent {
-                        ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                    },
+                    NewTaskAgent::new(Seat::Author, ["coding"], test_pin(AgentKind::ClaudeCode)),
+                    NewTaskAgent::new(
+                        Seat::Reviewer,
+                        ["code-review"],
+                        test_pin(AgentKind::ClaudeCode),
+                    ),
                 ],
                 depends_on: vec![first.id.clone()],
                 landing: None,

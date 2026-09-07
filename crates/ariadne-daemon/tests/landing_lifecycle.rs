@@ -24,10 +24,10 @@ use axum::http::StatusCode;
 
 use ariadne_api::messages::MessageDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{Actor, AttentionReason, Landing, MessageKind, Seat, TaskStatus};
+use ariadne_core::{Actor, AgentKind, AttentionReason, Landing, MessageKind, Seat, TaskStatus};
 use ariadne_store::{AgentSession, NewTaskAgent, Repository, Task};
 
-use common::{Cast, Harness, as_session, eventually, get, harness, sh};
+use common::{Cast, Harness, as_session, eventually, get, harness, sh, test_pin};
 
 /// How long a test waits for the scheduler to reach a state.
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -152,12 +152,12 @@ async fn an_approved_task_is_landed_by_its_own_author() {
             title: "Use what the first one built".into(),
             description: "do things".into(),
             agents: vec![
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Author, ["coding"])
-                },
-                NewTaskAgent {
-                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
-                },
+                NewTaskAgent::new(Seat::Author, ["coding"], test_pin(AgentKind::ClaudeCode)),
+                NewTaskAgent::new(
+                    Seat::Reviewer,
+                    ["code-review"],
+                    test_pin(AgentKind::ClaudeCode),
+                ),
             ],
             depends_on: vec![task.id.clone()],
             landing: None,

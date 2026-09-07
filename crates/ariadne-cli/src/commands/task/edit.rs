@@ -17,42 +17,34 @@ use ariadne_core::{Landing, Seat};
 
 use crate::commands::{parse_effort, parse_model, resolve};
 
-/// One `--author` or `--reviewer` argument, `SKILLS[=MODEL][@EFFORT]`: what
-/// the agent knows, and — after an `=` — what it runs on, in the one spelling
-/// a model is chosen by, `<agent_kind>[:<model>]`, and — after an `@` — the
-/// effort that model is reasoned at.
+/// One `--author` or `--reviewer` argument, `SKILLS=MODEL[@EFFORT]`: what
+/// the agent knows, then — after the `=`, required — what it runs on, in the
+/// one spelling a model is chosen by, `<agent_kind>:<model>`, and — after an
+/// `@` — the effort that model is reasoned at.
 ///
 /// The skills are comma-separated and in the order they reach the agent:
-/// `--author coding,testing` is an agent that codes and tests, and that is the
-/// whole of what it is. A name no skill answers to is the daemon's to refuse,
-/// which is where the list of them lives.
+/// `--author coding,testing=…` is an agent that codes and tests, and that is
+/// the whole of what it is. A name no skill answers to is the daemon's to
+/// refuse, which is where the list of them lives.
 ///
 /// The `=` splits first and the last `@` after it splits the effort off, and
 /// nothing else splits at all: an opencode id carries `/` and `:` of its own,
 /// so `code-review=opencode:ollama/llama3:8b` reaches the request as that one
-/// id, tag and all. An `@` with no `=` before it is an agent on auto at an
-/// effort of its own: `code-review@high`.
+/// id, tag and all. The `=MODEL` half is mandatory — a model is required, and
+/// no CLI default stands in for one — so skills on their own, with or without
+/// an `@EFFORT`, are refused.
 ///
 /// What is after the `=` is the same string `--model` takes, and it is refused
 /// here in the same words; what is after the `@` is only checked for being
 /// something, since which efforts a model takes is the daemon's to know.
 fn parse_agent(seat: Seat, s: &str) -> Result<AgentAssignment, String> {
-    let (skills, model) = match s.split_once('=') {
-        None => (s, None),
-        Some((skills, model)) => (skills, Some(model)),
+    let Some((skills, model)) = s.split_once('=') else {
+        return Err(format!(
+            "no model in \"{s}\" — a model is required, so {}",
+            accepted()
+        ));
     };
-    // The effort is cut off whichever half ends the string, so an agent with
-    // no model of its own can still be run deeper: `code-review@high`.
-    let (skills, model, effort) = match model {
-        Some(model) => {
-            let (model, effort) = split_effort(model);
-            (skills, Some(model), effort)
-        }
-        None => {
-            let (skills, effort) = split_effort(skills);
-            (skills, None, effort)
-        }
-    };
+    let (model, effort) = split_effort(model);
     let skills: Vec<String> = skills
         .split(',')
         .map(str::trim)
@@ -66,19 +58,9 @@ fn parse_agent(seat: Seat, s: &str) -> Result<AgentAssignment, String> {
         Some(effort) => Some(parse_effort(effort).map_err(|e| format!("in \"{s}\": {e}"))?),
         None => None,
     };
-    let Some(model) = model else {
-        return Ok(AgentAssignment {
-            seat,
-            skills,
-            model: None,
-            effort,
-            brief: None,
-        });
-    };
     if model.is_empty() {
         return Err(format!(
-            "no model after the = in \"{s}\" — {}, or the skills on their own to \
-             run the agent on the first installed CLI",
+            "no model after the = in \"{s}\" — a model is required, so {}",
             accepted()
         ));
     }
@@ -86,18 +68,18 @@ fn parse_agent(seat: Seat, s: &str) -> Result<AgentAssignment, String> {
     Ok(AgentAssignment {
         seat,
         skills,
-        model: Some(model),
+        model,
         effort,
         brief: None,
     })
 }
 
-/// One `--author SKILLS[=MODEL][@EFFORT]`.
+/// One `--author SKILLS=MODEL[@EFFORT]`.
 pub fn parse_author(s: &str) -> Result<AgentAssignment, String> {
     parse_agent(Seat::Author, s)
 }
 
-/// One `--reviewer SKILLS[=MODEL][@EFFORT]`, in review order.
+/// One `--reviewer SKILLS=MODEL[@EFFORT]`, in review order.
 pub fn parse_reviewer(s: &str) -> Result<AgentAssignment, String> {
     parse_agent(Seat::Reviewer, s)
 }
@@ -113,12 +95,12 @@ fn split_effort(half: &str) -> (&str, Option<&str>) {
 }
 
 /// What an agent argument missing one of its halves is told it may write: the
-/// four forms, and the spelling each half is in.
+/// two forms, and the spelling each half is in.
 fn accepted() -> String {
-    "write SKILLS, SKILLS=MODEL, SKILLS@EFFORT or SKILLS=MODEL@EFFORT, where \
-     SKILLS is one or more skill names separated by commas, MODEL is an agent \
-     CLI (claude_code, codex, opencode) and, after a colon, one model of it, \
-     and EFFORT is one of the efforts `ariadne models ls` lists for that model"
+    "write SKILLS=MODEL or SKILLS=MODEL@EFFORT, where SKILLS is one or more \
+     skill names separated by commas, MODEL is an agent CLI (claude_code, \
+     codex, opencode) and, after a colon, one model of it, and EFFORT is one \
+     of the efforts `ariadne models ls` lists for that model"
         .to_string()
 }
 
@@ -162,11 +144,12 @@ pub fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
     let req = UpdateTaskRequest {
         title,
         description,
-        // Whatever was typed, in the daemon's own spelling — `default`
-        // included, which is its word for putting the author back on auto.
+        // Whatever was typed, in the daemon's own spelling. There is no
+        // `default` for a model: a model is required, so the flag is already
+        // parsed as one.
         model,
-        // The same three answers the model has, about how deeply it reasons:
-        // nothing said, `default` for the CLI's own, or one effort of it.
+        // Three answers, about how deeply the model reasons: nothing said,
+        // `default` for the CLI's own, or one effort of it.
         effort,
         reviewers: match (no_reviewer, reviewers.is_empty()) {
             (true, _) => Some(Vec::new()),
@@ -260,90 +243,41 @@ mod tests {
     /// both travel as written, since the daemon is what knows the catalog.
     #[test]
     fn an_agent_keeps_its_skills_and_what_it_runs_on() {
-        let plain = parse_reviewer("code-review").expect("skills alone");
-        assert_eq!(plain.skills, ["code-review"]);
-        assert_eq!(plain.model, None);
-        assert_eq!(plain.effort, None);
-
         let pinned =
             parse_reviewer("code-review,security-review=opencode:ollama/llama3:8b@thinking")
                 .expect("skills, a model and an effort");
         assert_eq!(pinned.skills, ["code-review", "security-review"]);
-        assert_eq!(pinned.model.as_deref(), Some("opencode:ollama/llama3:8b"));
+        assert_eq!(pinned.model, "opencode:ollama/llama3:8b");
         assert_eq!(pinned.effort.as_deref(), Some("thinking"));
 
-        // An `@` with no `=` before it is an agent on auto at an effort.
-        let deeper = parse_reviewer("code-review@high").expect("an effort alone");
-        assert_eq!(deeper.model, None);
-        assert_eq!(deeper.effort.as_deref(), Some("high"));
-
-        assert!(parse_reviewer("=codex").is_err(), "no skills at all");
-        assert!(
-            parse_reviewer("code-review=").is_err(),
-            "no model after the ="
-        );
-    }
-
-    /// A reviewer is its skills, and after an `=` what it runs on: an agent
-    /// CLI, or one model of that CLI after the colon — the three forms
-    /// `task create` and `task update` both take.
-    #[test]
-    fn a_reviewer_is_its_skills_and_what_it_runs_on() {
-        let plain = parse_reviewer("code-review").expect("skills on their own");
-        assert_eq!(plain.skills, ["code-review"]);
-        assert_eq!(plain.model, None);
-
-        let agent = parse_reviewer("code-review=codex").expect("an agent CLI");
-        assert_eq!(agent.skills, ["code-review"]);
-        assert_eq!(
-            agent.model.as_deref(),
-            Some("codex"),
-            "codex on its own default model"
-        );
-
-        let both = parse_reviewer("code-review=codex:gpt-5.3-codex").expect("a model of it");
-        assert_eq!(both.model.as_deref(), Some("codex:gpt-5.3-codex"));
-
-        // An opencode id is `provider/model` and may carry a tag of its own,
-        // so what splits the model off is the `=` and the id arrives whole.
-        let opencode = parse_reviewer("security-review=opencode:ollama/llama3:8b").expect("an id");
-        assert_eq!(opencode.skills, ["security-review"]);
-        assert_eq!(opencode.model.as_deref(), Some("opencode:ollama/llama3:8b"));
+        let both = parse_reviewer("code-review=codex:gpt-5.3-codex").expect("a model");
+        assert_eq!(both.skills, ["code-review"]);
+        assert_eq!(both.model, "codex:gpt-5.3-codex");
+        assert_eq!(both.effort, None, "no effort at all is the CLI's own");
 
         // The agent CLI answers to the hyphenated spelling too, the way
         // `--model` does, and travels as the daemon spells it.
-        let hyphenated = parse_reviewer("code-review=claude-code").expect("a spelling");
-        assert_eq!(hyphenated.model.as_deref(), Some("claude_code"));
+        let hyphenated =
+            parse_reviewer("code-review=claude-code:claude-opus-5").expect("a spelling");
+        assert_eq!(hyphenated.model, "claude_code:claude-opus-5");
     }
 
-    /// The other half an agent may carry: the effort after the `@`, on a
-    /// model of its own or on auto — and the `@` is the last one, so a model
-    /// id keeps every `:` and `/` it came with.
+    /// The other half an agent may carry: the effort after the `@` — and the
+    /// `@` is the last one, so a model id keeps every `:` and `/` it came
+    /// with.
     #[test]
     fn a_reviewer_runs_at_the_effort_after_the_at_sign() {
         let both =
             parse_reviewer("code-review=codex:gpt-5.6-sol@xhigh").expect("a model and an effort");
         assert_eq!(both.skills, ["code-review"]);
-        assert_eq!(both.model.as_deref(), Some("codex:gpt-5.6-sol"));
+        assert_eq!(both.model, "codex:gpt-5.6-sol");
         assert_eq!(both.effort.as_deref(), Some("xhigh"));
-
-        let effort = parse_reviewer("code-review@high").expect("an effort on its own");
-        assert_eq!(effort.skills, ["code-review"]);
-        assert_eq!(effort.model, None, "on auto, reasoned deeper");
-        assert_eq!(effort.effort.as_deref(), Some("high"));
-
-        let model = parse_reviewer("code-review=codex").expect("a model on its own");
-        assert_eq!(model.model.as_deref(), Some("codex"));
-        assert_eq!(
-            model.effort, None,
-            "and no effort at all is codex's own default"
-        );
 
         // The model half is cut at the last `@` and nothing else: an opencode
         // id is `provider/model` with a tag of its own, and all of it is model.
         let opencode =
             parse_reviewer("code-review=opencode:openrouter/x/y:z@high").expect("an opencode id");
-        assert_eq!(opencode.model.as_deref(), Some("opencode:openrouter/x/y:z"));
+        assert_eq!(opencode.model, "opencode:openrouter/x/y:z");
         assert_eq!(opencode.effort.as_deref(), Some("high"));
 
         // Which efforts a model takes is the daemon's to know: anything that
@@ -355,18 +289,36 @@ mod tests {
 
     /// Half a form is a typo, and it is refused where it was typed — with the
     /// forms it accepts, and, for the model half, the same words `--model`
-    /// would have been refused in.
+    /// would have been refused in. A model is required, so a slot with no
+    /// `=MODEL` at all is half a form too.
     #[test]
     fn a_reviewer_missing_a_half_is_refused_before_it_is_sent() {
+        let err = parse_reviewer("code-review").expect_err("no model at all");
+        assert!(err.contains("no model in \"code-review\""), "{err}");
+        assert!(err.contains("a model is required"), "{err}");
+        assert!(err.contains("SKILLS=MODEL"), "{err}");
+
+        // Skills at an effort still name no model, and an agent needs one.
+        let err = parse_reviewer("code-review@high").expect_err("no model at all");
+        assert!(err.contains("a model is required"), "{err}");
+
         let err = parse_reviewer("code-review=").expect_err("no model");
         assert!(err.contains("no model after the ="), "{err}");
-        assert!(err.contains("the skills on their own"), "{err}");
+        assert!(err.contains("a model is required"), "{err}");
         assert!(err.contains("SKILLS=MODEL"), "{err}");
         assert!(err.contains("claude_code, codex, opencode"), "{err}");
 
         let err = parse_reviewer("code-review=codex:").expect_err("no model after the colon");
         assert!(err.contains("in \"code-review=codex:\""), "{err}");
         assert!(err.contains("no model after the `:`"), "{err}");
+
+        // Whitespace after the colon is an empty model too.
+        let err = parse_reviewer("code-review=codex: ").expect_err("whitespace is no model");
+        assert!(err.contains("no model after the `:`"), "{err}");
+        assert!(err.contains("a model is required"), "{err}");
+
+        let err = parse_reviewer("code-review=codex").expect_err("a bare CLI");
+        assert!(err.contains("`codex` names no model"), "{err}");
 
         let err = parse_reviewer("code-review=llama").expect_err("no such agent");
         assert!(err.contains("names no agent CLI"), "{err}");
@@ -376,13 +328,13 @@ mod tests {
         let err = parse_reviewer("code-review=llama:x").expect_err("no such agent");
         assert!(err.contains("unknown agent `llama`"), "{err}");
 
-        let err = parse_reviewer("=codex").expect_err("no skills");
+        let err = parse_reviewer("=codex:o3").expect_err("no skills");
         assert!(err.contains("no skills"), "{err}");
 
         // An `@` that says nothing after it is the same kind of typo, and the
         // refusal names the forms one of which was meant.
-        let err = parse_reviewer("code-review@").expect_err("no effort");
-        assert!(err.contains("in \"code-review@\""), "{err}");
+        let err = parse_reviewer("code-review=codex:o3@").expect_err("no effort");
+        assert!(err.contains("in \"code-review=codex:o3@\""), "{err}");
         assert!(err.contains("no effort was named"), "{err}");
         assert!(err.contains("ariadne models ls"), "{err}");
 
@@ -412,7 +364,7 @@ mod tests {
 
         let req = update_request(Edits {
             reviewers: vec![
-                parse_reviewer("code-review").expect("skills alone"),
+                parse_reviewer("code-review=claude_code:claude-sonnet-5").expect("a model"),
                 parse_reviewer("security-review=codex:gpt-5.6-luna@high").expect("a model"),
             ],
             depends_on: vec!["01TASK".into()],
@@ -422,13 +374,17 @@ mod tests {
         assert_eq!(
             req.reviewers.as_ref().map(|r| r
                 .iter()
-                .map(|a| (a.skills.join(","), a.model.as_deref(), a.effort.as_deref()))
+                .map(|a| (a.skills.join(","), a.model.as_str(), a.effort.as_deref()))
                 .collect::<Vec<_>>()),
             Some(vec![
-                ("code-review".to_string(), None, None),
+                (
+                    "code-review".to_string(),
+                    "claude_code:claude-sonnet-5",
+                    None
+                ),
                 (
                     "security-review".to_string(),
-                    Some("codex:gpt-5.6-luna"),
+                    "codex:gpt-5.6-luna",
                     Some("high")
                 )
             ])

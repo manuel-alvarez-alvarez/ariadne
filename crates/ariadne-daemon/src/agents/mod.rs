@@ -44,7 +44,9 @@ pub struct SpawnCtx {
     pub skills_dir: Option<PathBuf>,
     /// Task/goal briefing delivered as the first user prompt.
     pub initial_prompt: String,
-    pub model: Option<String>,
+    /// The model the session is pinned to, as the CLI itself names it. Always
+    /// passed on: a launch never falls back to a CLI default.
+    pub model: String,
     /// The effort that model is run at, as the session pinned it. None = the
     /// CLI's own default.
     pub effort: Option<String>,
@@ -126,23 +128,6 @@ pub fn adapter_for(kind: AgentKind) -> &'static dyn AgentAdapter {
         AgentKind::Codex => &codex::CodexAdapter,
         AgentKind::Opencode => &opencode::OpencodeAdapter,
     }
-}
-
-/// Preference order used when a profile has no explicit agent kind.
-pub const AGENT_PREFERENCE: [AgentKind; 3] =
-    [AgentKind::ClaudeCode, AgentKind::Codex, AgentKind::Opencode];
-
-/// The executable each agent kind is launched with.
-pub fn binary_for(kind: AgentKind) -> &'static str {
-    kind.binary()
-}
-
-/// First agent CLI installed on this machine, in [`AGENT_PREFERENCE`] order.
-pub fn detect_first_available() -> Option<AgentKind> {
-    let path = std::env::var_os("PATH")?;
-    AGENT_PREFERENCE
-        .into_iter()
-        .find(|kind| std::env::split_paths(&path).any(|dir| dir.join(binary_for(*kind)).is_file()))
 }
 
 /// Env vars common to every agent kind. The MCP server and the event hook

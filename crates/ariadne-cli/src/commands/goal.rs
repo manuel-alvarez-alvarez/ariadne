@@ -45,16 +45,17 @@ const INDENT: &str = "\n             ";
 /// most often said on the same line.
 const CREATE_EXAMPLES: &str = "\
 Examples:
-  # a goal in one registered repository, planned on the first installed agent CLI
-  ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
+  # a goal in one registered repository
+  ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
+      --model claude_code:claude-sonnet-5
 
-  # an orchestrator on one model of one agent CLI, reasoned deeply
+  # an orchestrator reasoned deeply
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
       --model codex:gpt-5.6-sol --effort xhigh
 
   # a goal that works in two repositories
   ariadne goal create --title \"Split the API\" --repo ~/projects/api \\
-      --repo ~/projects/ui
+      --repo ~/projects/ui --model claude_code:claude-sonnet-5
 ";
 
 #[derive(Subcommand)]
@@ -77,12 +78,12 @@ pub enum GoalCommand {
         /// (`ariadne repo add`); repeatable
         #[arg(long = "repo", required = true, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
         repos: Vec<String>,
-        /// What the orchestrator runs on: AGENT[:MODEL] — an agent CLI
-        /// (claude_code | codex | opencode) on its own default model, or one
-        /// model of it after the colon (codex:gpt-5.3-codex). Default: the
-        /// first installed CLI, on its own default model
+        /// What the orchestrator runs on: AGENT:MODEL — an agent CLI
+        /// (claude_code | codex | opencode) and, after the colon, one model
+        /// of it (codex:gpt-5.3-codex). Required: a model is required, and no
+        /// CLI default stands in for one
         #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
-        model: Option<String>,
+        model: String,
         /// The reasoning effort that model is run at: one of the efforts
         /// `ariadne models ls` lists for it. Default: whatever the agent CLI
         /// runs it at
@@ -214,7 +215,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     ("status", Kv::status(g.status.as_str())),
                     (
                         "orchestrator",
-                        pin_label(g.model.as_deref(), g.effort.as_deref()).into(),
+                        pin_label(&g.model, g.effort.as_deref()).into(),
                     ),
                     (
                         "repos",
@@ -462,11 +463,10 @@ fn by_short_id(repos: &[RepositoryDto], spec: &str) -> Result<String> {
 /// An effort that was never pinned says nothing at all: the model is run at
 /// whatever its agent CLI runs it at, and a `@` with a guess after it would
 /// read as a choice somebody made.
-fn pin_label(model: Option<&str>, effort: Option<&str>) -> String {
-    let pin = model.unwrap_or("auto");
+fn pin_label(model: &str, effort: Option<&str>) -> String {
     match effort {
-        Some(effort) => format!("{pin} @ {effort}"),
-        None => pin.to_string(),
+        Some(effort) => format!("{model} @ {effort}"),
+        None => model.to_string(),
     }
 }
 

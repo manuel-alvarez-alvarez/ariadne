@@ -34,8 +34,8 @@ pub struct NewSession {
     /// The staffed agent this session runs; None for an orchestrator.
     pub task_agent_id: Option<String>,
     pub agent_kind: AgentKind,
-    /// Model to launch with; None = the agent CLI's own default.
-    pub model: Option<String>,
+    /// Model to launch with.
+    pub model: String,
     /// Effort to run that model at; None = whatever the CLI runs it at.
     pub effort: Option<String>,
     pub tmux_session: String,
