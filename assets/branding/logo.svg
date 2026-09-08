@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Ariadne logo">
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#264698"/>
+  <path d="M 368 224 L 732 224 A 68 68 0 0 1 800 292 L 800 732 A 68 68 0 0 1 732 800 L 292 800 A 68 68 0 0 1 224 732 L 224 436 A 68 68 0 0 1 292 368 L 588 368 A 68 68 0 0 1 656 436 L 656 588 A 68 68 0 0 1 588 656 L 436 656 A 68 68 0 0 1 368 588 L 368 580 A 68 68 0 0 1 436 512 L 512 512" fill="none" stroke="#f7faff" stroke-width="70" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
