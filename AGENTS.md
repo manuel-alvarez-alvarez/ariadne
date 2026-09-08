@@ -3,8 +3,8 @@
 Ariadne is a docker-style orchestrator for AI coding agents: a daemon
 (`ariadned`) that breaks goals into tasks and runs orchestrator, author and
 reviewer agents on them until each one is finished, a CLI (`ariadne`) that
-drives it, and a desktop app. What it is and how it is used is
-[`README.md`](README.md).
+drives it, and a desktop app. What it is is [`README.md`](README.md), and how
+it is used is the manual under [`docs/`](docs/README.md).
 
 The conventions for changing it are split by area. This file holds what applies
 everywhere; each area keeps its own, and names the checks to run there.
@@ -22,8 +22,10 @@ is a file an agent may never see.
   the shadcn setup, and the npm commands that check it.
 - [`.github/RELEASING.md`](.github/RELEASING.md) — the release loop: how
   release-please turns commits into versions, tags and release notes.
-- [`README.md`](README.md) — the user-facing manual: installing, configuring
-  and running Ariadne, and the top-level tree.
+- [`docs/`](docs/README.md) — the user-facing manual: installing, configuring
+  and running Ariadne, and how a goal becomes a landed change. Every page a
+  user reads lives here, and [`README.md`](README.md) is the front page over
+  it: the pitch, the demos, a quick start, the top-level tree and the links.
 - [`specs/`](specs/README.md) — what each subsystem does, as it stands, with
   every acceptance criterion tied to the test that proves it. Read the spec of
   the area you are changing, and change it in the same commit as the code.
