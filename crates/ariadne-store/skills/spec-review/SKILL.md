@@ -1,36 +1,52 @@
 ---
 name: spec-review
-description: Review a specification for completeness, testability and scope, before anybody writes code against it.
+description: Review a specification for completeness, testability and scope. Use when a proposal or requirement set needs a verdict.
 ---
 
 # Spec review
 
-A spec is ready when two people cannot read it two ways.
+A spec is ready when two people cannot read it two ways. Turn each open meaning
+into a question.
 
 ## Steps
 
-1. Read the goal, then read the spec against it.
-2. Check that every rule is testable. Name the test that would prove each one.
-3. Look for what is missing: error paths, empty and boundary cases, limits, and
-   who is allowed to do what.
-4. Check the scope. Find anything the spec adds that the goal did not ask for.
-5. Write the verdict once.
+1. Read the goal and the specification. Map each rule to the goal.
+   Done when every rule is inside the goal or marked as added scope.
+2. Test each rule in thought. Name the test that proves it.
+   Done when every rule has an observable pass condition.
+3. Find each missing decision. Check error paths, empty cases, boundaries,
+   limits and permissions.
+   Done when each gap has one direct question.
+4. Find ambiguous words and conflicting rules. Write the competing readings.
+   Done when each ambiguity has two concrete interpretations.
+5. Write one verdict. Separate blocking questions from later improvements.
+   Done when every finding has a weight and a location.
 
 ## What to look for
 
-- A rule two readers can read differently.
-- A criterion with no test behind it.
-- A number with no reason.
-- A behavior stated twice, which will go stale in one place.
-- A promise about the future in place of a description of now.
+- Ambiguity: Find a rule that two readers can interpret differently.
+- Tests: Find a criterion with no observable proof.
+- Reasons: Find a number with no stated basis.
+- Duplication: Find behavior stated twice, where one copy can become stale.
+- Time: Find a future promise in place of current behavior.
+- Scope: Find a requirement that the goal did not request.
 
 ## Rules
 
-- Judge the spec, not the implementation nobody has written.
-- Give every finding the question a reader is left with.
-- Request changes where a rule cannot be tested as written.
+- Judge the specification without inventing its implementation.
+- Give every finding the question a reader must answer.
+- Request changes when a rule cannot be tested as written.
+- Keep each requirement in one authoritative place.
+
+## Do not tell yourself
+
+- "The implementer will know what this means." -> Different readings create
+  different products.
+- "We can choose the edge cases later." -> An unanswered boundary question
+  moves risk into implementation.
+- "More detail is always safer." -> Added scope can hide the goal.
 
 ## Done
 
-Every rule is testable, stated once, and inside the goal's scope. The verdict
-names what is left open.
+Every rule is testable, stated once and inside the goal. Every open question
+has a location and a weight. The verdict names all remaining decisions.

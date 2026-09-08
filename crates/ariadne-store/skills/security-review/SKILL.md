@@ -1,41 +1,53 @@
 ---
 name: security-review
-description: Find the vulnerabilities in a change or a component, each with its severity, its impact and its fix.
+description: Find reachable vulnerabilities with severity, impact and fixes. Use when code, a data flow, or dependency needs security review.
 ---
 
 # Security review
 
-Work out what an attacker controls, then follow it through the code.
+Find what an attacker controls. Follow each path through the code.
 
 ## Steps
 
-1. Name the assets, the trust boundaries and the untrusted input.
-2. Follow each untrusted input to every place it is used.
-3. Check the classes below against the code you read.
-4. Confirm each finding against the real code path. Discard what cannot be
-   reached.
-5. Report each finding with its severity, its impact and its fix.
+1. Name the assets, trust boundaries and untrusted inputs.
+   Done when every in-scope entry path crosses a named boundary.
+2. Follow each untrusted input to every use. Record validation and ownership
+   checks along its path.
+   Done when each input reaches a terminal use or a trusted conversion.
+3. Check every vulnerability class below against each reachable path.
+   Done when every class has evidence or a recorded absence.
+4. Confirm each candidate against the real code path. Remove unreachable
+   candidates from the findings.
+   Done when every finding has a reproducible path.
+5. Report severity, impact and fix. Report each area you could not check.
+   Done when every finding has all four parts.
 
 ## What to look for
 
-- Injection: SQL, shell, template, path traversal, deserialization.
-- Authentication: who is allowed in, and how that is checked.
-- Authorization: an object reference the caller does not own.
-- Secrets: a key, a token or a password in code, in logs or in an error.
-- Cryptography: a home-made scheme, a weak algorithm, a fixed nonce or salt.
-- Input validation: a length, a type or a range nobody checks.
-- Dependencies: a version with a known vulnerability.
-- Output: data returned to a caller who is not allowed to see it.
+- Injection: Check SQL, shell, templates, paths and deserialization.
+- Authentication: Check who enters and how the code proves identity.
+- Authorization: Check whether the caller owns each referenced object.
+- Secrets: Check code, logs and errors for keys, tokens and passwords.
+- Cryptography: Check algorithms, nonces, salts and custom schemes.
+- Input validation: Check lengths, types and ranges.
+- Dependencies: Check each changed version for known vulnerabilities.
+- Output: Check whether the caller can receive each returned value.
 
 ## Rules
 
-- Report the class of problem and the fix. Write no working exploit.
-- Give every finding a reachable path. An unreachable one is a note, not a
-  finding.
-- Rate severity by impact and by how easily the path is reached.
-- Report what you could not check.
+- Give every finding a reachable path.
+- Record an unreachable candidate as a note.
+- Rate severity from impact and path accessibility.
+- Describe the vulnerability class and the fix.
+- Never provide a working exploit.
+
+## Do not tell yourself
+
+- "The input is internal." -> Every trust boundary needs evidence.
+- "The framework handles it." -> Confirm the protection on the real path.
+- "The path looks unlikely." -> Reachability and impact determine severity.
 
 ## Done
 
-Each finding names its path, its impact, its severity and its fix. The report
-says what was in scope and what was not.
+Each finding names its path, impact, severity and fix. The report names the
+reviewed scope, all unchecked areas and all unreachable notes.
