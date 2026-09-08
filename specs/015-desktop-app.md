@@ -64,6 +64,8 @@ Out: the daemon endpoints themselves (012).
     agent; the orchestrator's own playbook is not among them, for the author
     or a reviewer. The skills screen marks that playbook beside its built-in
     mark, staying editable and resettable like any other shipped skill.
+15. The agent activity feed shows each event's one-line summary from the
+    daemon; its raw payload stays available under the row.
 
 ## Acceptance criteria
 
@@ -103,6 +105,9 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/goals/create-goal-dialog.test.tsx`,
   `ui/src/features/tasks/task-form-dialog.test.tsx`,
   `ui/src/features/models/pin-picker.test.tsx`).
+- The agent activity feed shows the daemon's summary and opens and closes the
+  raw payload under its row
+  (`ui/src/features/sessions/session-activity.test.tsx`).
 
 ## Sources
 

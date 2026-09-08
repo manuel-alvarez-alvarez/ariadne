@@ -2111,6 +2111,7 @@
           "id",
           "kind",
           "payload",
+          "summary",
           "created_at"
         ],
         "properties": {
@@ -2136,6 +2137,10 @@
               "string",
               "null"
             ]
+          },
+          "summary": {
+            "type": "string",
+            "description": "The one-line gist of `payload`, built by the daemon from the CLI's own\nvocabulary rather than stored: an action and its subject for a tool\ncall, the agent's own words where it left any, and `…` where nothing\nof it can be read."
           },
           "task_id": {
             "type": [

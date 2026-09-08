@@ -103,7 +103,6 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
 
 function ActivityRow({ event }: { event: AgentEventDto }) {
   const [open, setOpen] = useState(false)
-  const summary = summarize(event.payload)
 
   return (
     <li className="py-1.5">
@@ -123,7 +122,7 @@ function ActivityRow({ event }: { event: AgentEventDto }) {
           {event.kind}
         </Badge>
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-          {summary}
+          {event.summary}
         </span>
         <When
           at={event.created_at}
@@ -164,25 +163,6 @@ async function sweep(sessionId: string, after: string | undefined): Promise<Agen
     if (cursor === undefined) break
   }
   return collected.slice(-MAX_KEPT)
-}
-
-/**
- * One line of whatever the hook sent. Payload shapes differ per agent and per
- * event kind, so the useful fields are picked when present and the rest is
- * shown as compact JSON — the full payload is one click away either way.
- */
-function summarize(payload: unknown): string {
-  if (payload === null || payload === undefined) return ""
-  if (typeof payload !== "object") return String(payload)
-  const record = payload as Record<string, unknown>
-  const parts: string[] = []
-  for (const key of ["tool_name", "message", "reason", "type", "cwd"]) {
-    const value = record[key]
-    if (typeof value === "string" && value.length > 0) parts.push(`${key}=${value}`)
-  }
-  if (parts.length > 0) return parts.join(" · ")
-  const json = stringify(payload)
-  return json.length > 160 ? `${json.slice(0, 160)}…` : json
 }
 
 function stringify(payload: unknown, indent?: number): string {

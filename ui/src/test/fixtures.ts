@@ -14,6 +14,7 @@
 
 import type {
   AgentConfigDto,
+  AgentEventDto,
   EffortDto,
   GoalDto,
   ModelDto,
@@ -109,6 +110,20 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     usage: NO_TOKENS,
     created_at: STAMP,
     ended_at: null,
+    ...overrides,
+  }
+}
+
+export function anAgentEvent(overrides: Partial<AgentEventDto> = {}): AgentEventDto {
+  return {
+    id: "01JEVENT000000000000000001",
+    session_id: SESSION_ID,
+    task_id: TASK_ID,
+    agent_kind: "claude_code",
+    kind: "post_tool_use",
+    summary: "Read AGENTS.md.",
+    payload: { tool_name: "Read", cwd: "/Users/me/dev/ariadne" },
+    created_at: STAMP,
     ...overrides,
   }
 }
