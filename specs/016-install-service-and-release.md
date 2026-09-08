@@ -40,7 +40,10 @@ Out: what the daemon does once running (009, 012).
    step replacing what a previous run installed. What was installed where is
    recorded in `~/.ariadne/install.env`, which `uninstall.sh` reads.
 3. Binaries come from a GitHub release by default, and from a local build with
-   `--build-from-source`. Release assets are unsigned but carry a build
+   `--build-from-source`. A local build is taken from the directory cargo
+   wrote it to, `CARGO_TARGET_DIR` included: a checkout that builds elsewhere
+   would otherwise install whatever stale binaries `target/release` still
+   holds. Release assets are unsigned but carry a build
    provenance attestation, so every downloaded file is checked with
    `gh attestation verify` before anything is installed — which makes the
    GitHub CLI a hard requirement of the default flow — and the macOS quarantine
@@ -80,6 +83,9 @@ Out: what the daemon does once running (009, 012).
   tail (`scripts/install.sh`, covered by
   `fix(scripts): keep --purge unprompted and fail late on an unsupported OS`,
   `fix(scripts): show the log tail when an unsupported OS fails the service step`).
+- A source build installs the binaries cargo wrote, under `CARGO_TARGET_DIR`
+  as much as under `target/` (`scripts/install.sh`, covered by
+  `fix(install): install the binaries cargo actually built`).
 
 ## Known gap
 

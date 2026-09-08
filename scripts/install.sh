@@ -92,7 +92,11 @@ ui_locations
 LOG_FILE="$ARIADNE_HOME/install.log"
 APP_NAME="Ariadne Desktop"
 APP_SRC_DIR="$REPO_DIR/ui"
-APP_TARGET_DIR="$APP_SRC_DIR/src-tauri/target/release"
+# Where cargo writes, which is not always where the manifest sits: a
+# CARGO_TARGET_DIR in the environment redirects every build, the workspace's
+# and the app's alike. Read it here, or a build that went elsewhere would
+# leave the install copying whatever stale binaries the default path holds.
+APP_TARGET_DIR="${CARGO_TARGET_DIR:-$APP_SRC_DIR/src-tauri/target}/release"
 
 # Download-mode state; all empty when building from source.
 TARGET=""          # the release target triple this machine runs
@@ -346,7 +350,7 @@ fi
 # --- build, or download and verify ---------------------------------------------
 # Where the binaries to install come from: the release build in this checkout,
 # or the assets unpacked out of the staging directory.
-BIN_SRC_DIR="$REPO_DIR/target/release"
+BIN_SRC_DIR="${CARGO_TARGET_DIR:-$REPO_DIR/target}/release"
 if [ "$BUILD_FROM_SOURCE" = 1 ]; then
     step_begin
     run_logged cargo build --release --manifest-path "$REPO_DIR/Cargo.toml" \
