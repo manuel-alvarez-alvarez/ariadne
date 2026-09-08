@@ -59,6 +59,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 8. The tool listing carries cache hints (fresh for 0 ms, private to this
    session), because clients of protocol 2026-07-28 reject a listing without
    them and the tools then silently never load.
+9. `list_skills` lists only skills that can staff a task agent. The
+   orchestrator's own skill stays available through the API and CLI, but is
+   not a task staffing choice.
 
 ## Acceptance criteria
 
@@ -77,6 +80,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
 - A refused call reaches the agent in the daemon's words
   (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`).
+- The skill catalog excludes orchestrator-only skills
+  (`tools.rs::the_skill_catalog_excludes_orchestrator_only_skills`).
 
 ## Sources
 

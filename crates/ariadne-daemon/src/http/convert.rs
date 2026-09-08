@@ -11,7 +11,7 @@ use ariadne_api::goals::{GoalDto, GoalUsageDto};
 use ariadne_api::messages::MessageDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
-use ariadne_api::skills::SkillDto;
+use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{AgentUsageDto, TaskAgentDto, TaskDto, TaskTransitionDto, TaskUsageDto};
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
@@ -45,6 +45,10 @@ macro_rules! dto {
 
 dto! {
     pub fn skill_dto(s: store::Skill) -> SkillDto {
+        seat: match s.seat() {
+            store::SkillSeat::Orchestrator => SkillSeat::Orchestrator,
+            store::SkillSeat::Task => SkillSeat::Task,
+        },
         summary: s.summary().to_string(),
         document: s.document_text().to_string(),
         document_is_default: s.document_is_default(),

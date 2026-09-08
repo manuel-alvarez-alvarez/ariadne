@@ -32,7 +32,8 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
    optionally, on a TCP address for the desktop app.
 2. DTOs and the error shape live in one crate (`ariadne-api`) and are the
    single source of truth for the OpenAPI document every client generates
-   from. Every endpoint appears in that document.
+   from. A skill DTO names the seat its skill serves. Every endpoint appears
+   in that document.
 3. A refusal is an envelope with a machine-readable code and one sentence a
    person can act on — the state machine's own explanation where a transition
    was refused (001). Every request DTO denies unknown fields, so a body that

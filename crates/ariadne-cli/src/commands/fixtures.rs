@@ -12,7 +12,7 @@
 use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
-use ariadne_api::skills::SkillDto;
+use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{TaskAgentDto, TaskDto};
 use ariadne_core::{AgentKind, GoalStatus, Landing, Seat, SessionStatus, TaskStatus};
 
@@ -104,6 +104,7 @@ pub fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
 pub fn skill(name: &str, summary: &str) -> SkillDto {
     SkillDto {
         name: name.into(),
+        seat: SkillSeat::Task,
         summary: summary.into(),
         document: format!("---\nname: {name}\ndescription: {summary}\n---\n"),
         document_is_default: true,

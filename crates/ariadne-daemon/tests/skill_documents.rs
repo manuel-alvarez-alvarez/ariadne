@@ -11,7 +11,7 @@ mod common;
 
 use axum::http::StatusCode;
 
-use ariadne_api::skills::SkillDto;
+use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_core::Seat;
 use ariadne_store::defaults::{
     BUILTIN_SKILLS, ORCHESTRATION_SKILL, default_skill_document, default_system_prompt,
@@ -73,6 +73,21 @@ async fn every_shipped_skill_is_seeded_and_describes_itself() {
             found.name
         );
     }
+}
+
+/// The API carries the seat a skill serves, so clients can keep the
+/// orchestrator's playbook visible without offering it for task staffing.
+#[tokio::test]
+async fn a_skill_dto_names_the_seat_it_serves() {
+    let h = harness().await;
+
+    let orchestration: SkillDto = h
+        .json(get("/v1/skills/orchestration"), StatusCode::OK)
+        .await;
+    let coding: SkillDto = h.json(get("/v1/skills/coding"), StatusCode::OK).await;
+
+    assert_eq!(orchestration.seat, SkillSeat::Orchestrator);
+    assert_eq!(coding.seat, SkillSeat::Task);
 }
 
 /// A skill of the user's own carries its own text, because nothing Ariadne

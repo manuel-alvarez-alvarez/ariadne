@@ -3,11 +3,22 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Where a skill is used: by the orchestrator, or to staff a task agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillSeat {
+    Orchestrator,
+    Task,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SkillDto {
     /// Kebab-case; how an agent loads the skill and how a task names it.
     #[schema(example = "code-review")]
     pub name: String,
+    /// The seat this skill serves. An `orchestrator` skill cannot staff a
+    /// task agent.
+    pub seat: SkillSeat,
     /// The one line the skill says about itself, read off the `description`
     /// of its frontmatter. It is what an agent sees before it opens the
     /// document, and what a listing shows.

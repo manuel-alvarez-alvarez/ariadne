@@ -15,6 +15,7 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::messages::SendMessageRequest;
+use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, RecordPullRequestRequest, TransitionRequest,
     UpdateTaskRequest,
@@ -406,7 +407,16 @@ impl AriadneMcp {
         &self,
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        json_result(self.get("/v1/skills").await?)
+        let skills: Vec<SkillDto> = self.get("/v1/skills").await?;
+        json_result(
+            serde_json::to_value(
+                skills
+                    .into_iter()
+                    .filter(|skill| skill.seat == SkillSeat::Task)
+                    .collect::<Vec<_>>(),
+            )
+            .expect("skills serialize"),
+        )
     }
 
     #[tool(
@@ -717,6 +727,36 @@ mod tests {
             McpSeat::Orchestrator,
             Client::resolve(Some(endpoint), None).with_session("01SESSION"),
         )
+    }
+
+    /// The skill catalog staffs task agents, so the orchestrator's own
+    /// playbook stays out of this list even though the API lists it for edits.
+    #[tokio::test]
+    async fn the_skill_catalog_excludes_orchestrator_only_skills() {
+        let (endpoint, seen) = recording_daemon_answering(
+            r#"[
+                {"name":"orchestration","seat":"orchestrator","summary":"Plan a goal.","document":"","document_is_default":true,"builtin":true,"created_at":"","updated_at":""},
+                {"name":"coding","seat":"task","summary":"Write code.","document":"","document_is_default":true,"builtin":true,"created_at":"","updated_at":""}
+            ]"#,
+        )
+        .await;
+
+        let answered = orchestrator_at(&endpoint)
+            .list_skills(Parameters(Empty {}))
+            .await
+            .expect("list skills");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "GET");
+        assert_eq!(seen[0].path, "/v1/skills");
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the skill catalog came back as something other than text");
+        };
+        let skills: Vec<serde_json::Value> =
+            serde_json::from_str(&text.text).expect("the skill catalog is json");
+        assert_eq!(skills.len(), 1, "{skills:?}");
+        assert_eq!(skills[0]["name"], serde_json::json!("coding"));
     }
 
     /// An author submits its work in one request, and the summary travels

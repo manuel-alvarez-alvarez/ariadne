@@ -77,6 +77,8 @@ same binary also serves (013).
     is what decides: git below 2.42 has no `worktree add --orphan` and so
     cannot start a task in a repository with no commits (002), which is a
     warning naming that one case, on this PATH and on the daemon's alike.
+16. `skill ls` marks an orchestrator-only skill while leaving it available to
+    inspect, edit and reset.
 
 ## Acceptance criteria
 
@@ -119,6 +121,8 @@ same binary also serves (013).
   version line is read down to its major and minor
   (`checks.rs::a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits`,
   `::a_version_line_reads_down_to_its_major_and_minor`).
+- The skill listing marks an orchestrator-only skill
+  (`skill.rs::a_listing_marks_an_orchestrator_only_skill`).
 
 ## Sources
 

@@ -13,7 +13,7 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use serde_json::json;
 
-use ariadne_api::skills::{CreateSkillRequest, SkillDto, UpdateSkillRequest};
+use ariadne_api::skills::{CreateSkillRequest, SkillDto, SkillSeat, UpdateSkillRequest};
 use ariadne_client::Client;
 
 use super::{Subject, confirm, path_segment};
@@ -27,6 +27,7 @@ use crate::output::{
 const LS: &[Column] = &[
     col("name", 24).title(),
     col("summary", 64).rank(3),
+    col("scope", UNCAPPED).rank(2),
     col("source", UNCAPPED).rank(2),
     col("age", UNCAPPED).rank(1),
 ];
@@ -102,6 +103,7 @@ pub async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<(
                     vec![
                         s.name.clone(),
                         s.summary.clone(),
+                        seat_label(s),
                         source_label(s),
                         age(&s.created_at, now),
                     ]
@@ -115,6 +117,7 @@ pub async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<(
                 print_kv(&[
                     ("name", Kv::title(s.name.clone())),
                     ("summary", s.summary.clone().into()),
+                    ("scope", seat_label(&s).into()),
                     ("source", source_label(&s).into()),
                     ("created", Kv::meta(moment(&s.created_at))),
                     ("document", format!("\n---\n{}", s.document).into()),
@@ -200,6 +203,15 @@ fn source_label(s: &SkillDto) -> String {
     }
 }
 
+/// Who can load a skill. The orchestrator's playbook stays listed so it can
+/// be inspected, edited and reset, but its mark says it is not staffable.
+fn seat_label(s: &SkillDto) -> String {
+    match s.seat {
+        SkillSeat::Orchestrator => "orchestrator only".into(),
+        SkillSeat::Task => "task agents".into(),
+    }
+}
+
 /// The document a `create` or a `set` writes: a file where one was named, and
 /// stdin otherwise — but never a terminal nobody piped anything into, which
 /// would hang with no sign of why.
@@ -258,6 +270,16 @@ mod tests {
             "shipped (edited)"
         );
         assert_eq!(source_label(&skill("ours", false, false)), "yours");
+    }
+
+    /// The orchestrator's playbook is visible to the person who can edit it,
+    /// but its listing mark says that task staffing cannot load it.
+    #[test]
+    fn a_listing_marks_an_orchestrator_only_skill() {
+        let mut orchestration = skill("orchestration", true, true);
+        orchestration.seat = SkillSeat::Orchestrator;
+        assert_eq!(seat_label(&orchestration), "orchestrator only");
+        assert_eq!(seat_label(&skill("coding", true, true)), "task agents");
     }
 
     /// Both questions name the skill: the last thing between the caller and a
