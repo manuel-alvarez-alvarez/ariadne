@@ -20,8 +20,13 @@ import { TaskMessages } from "./task-messages"
 
 const TASK: TaskDto = aTask({
   agents: [
-    { id: "01AUTHOR", seat: "author", skills: ["coding"] },
-    { id: "01REVIEWER", seat: "reviewer", skills: ["code-review"] },
+    { id: "01AUTHOR", seat: "author", skills: ["coding"], model: "codex:gpt-5.6" },
+    {
+      id: "01REVIEWER",
+      seat: "reviewer",
+      skills: ["code-review"],
+      model: "codex:gpt-5.6",
+    },
   ],
 })
 

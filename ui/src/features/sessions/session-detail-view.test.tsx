@@ -18,10 +18,8 @@
  *
  * And two things a session says about itself that are neither: what it runs
  * on, which is the tail of the Agent fact and no longer a Model row saying
- * the same thing again — including the `auto` a session launched without one
- * reads as, which means the agent CLI chose and is a fact rather than a blank —
- * and what it has spent, which is zero rather than blank for an agent that has
- * reported nothing yet.
+ * the same thing again — and what it has spent, which is zero rather than
+ * blank for an agent that has reported nothing yet.
  *
  * xterm needs a browser this environment only half is, so `matchMedia` and
  * `ResizeObserver` are stubbed for it, as in `session-terminal.test.tsx`.
@@ -206,15 +204,6 @@ it("shows the model the session was launched with, once", async () => {
   // And it says it once: a Model row under this one carried the same tail with
   // the agent CLI taken off it.
   expect(screen.queryByText("Model")).toBeNull()
-})
-
-it("names the agent CLI's own choice where no model was recorded", async () => {
-  renderView({ ...SESSION, model: null, effort: null })
-
-  // `claude_code` on its own is that CLI on its own default model, which is
-  // what the session was launched with — not the profile's pin.
-  await waitFor(() => expect(detail("Agent")).toContain("claude_code"))
-  expect(detail("Agent")).not.toContain("claude-sonnet-5")
 })
 
 it("shows what the session's agent has spent, as the pair it is", () => {

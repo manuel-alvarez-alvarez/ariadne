@@ -13,7 +13,7 @@
  * Neither half changes what goes on the wire. The value is still two strings,
  * held by the form:
  *
- * - the model, `<agent_kind>[:<model>]` — the agent CLI and, after the first
+ * - the model, `<agent_kind>:<model>` — the agent CLI and, after the first
  *   `:`, the model of it (see `model-ref.ts`) — free text the daemon hands to
  *   the CLI as typed, which is why the catalog only suggests and the "Other…"
  *   row at the end of the list is a first-class way to answer;
@@ -23,25 +23,15 @@
  *   whichever variants it alone was configured with, so nothing here can name
  *   them and the strip becomes a text box.
  *
- * Empty means something in both, and the two empties are not the same: no
- * model is this slot on its profile's own (or, in the profile form itself,
- * auto — the first installed CLI), which the trigger says in words where the
- * form knows what that resolves to; no effort is the agent CLI's own, which
- * the strip offers as `auto (high)` rather than as a blank.
+ * A model is required. No effort is the model's default effort, which the
+ * strip offers as `auto (high)` rather than as a blank.
  *
- * The two are pinned separately because the daemon takes them separately: an
- * effort with no model beside it runs the model the slot would have run on
- * anyway, at that effort (`http/pins.rs`, `chosen`), which is why the strip is
- * scoped by the *effective* model — the pin where there is one, the fallback
- * where there is not — and why the trigger says `Profile's own — <model> ·
- * <effort>` rather than pretending nothing was chosen. Nothing to fall back on
- * is the one case where an effort has no model to run at, and there the strip
- * says so instead of offering one.
+ * The two are pinned separately because the daemon takes them separately. The
+ * strip is scoped by the chosen model and says so until one is chosen.
  *
  * The rules the daemon enforces (`ariadne_core::models::effort_error`,
  * `http/pins.rs`) are applied here rather than after a round trip: an effort
- * is dropped when the model moves out from under it, and handing the model
- * back to the profile hands its effort back too.
+ * is dropped when the model moves out from under it.
  */
 
 import { Popover } from "@base-ui/react/popover"
@@ -62,11 +52,11 @@ import {
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/format"
 import { AGENT_KINDS, agentKindLabel } from "./labels"
-import { modelRefError, modelRefLabel, parseModelRef, pinLabel } from "./model-ref"
+import { modelRefError, parseModelRef } from "./model-ref"
 
 /** The whole choice, which is what the forms hold and what a pick yields. */
 interface Pin {
-  /** `<agent_kind>[:<model>]`, or the empty string for the profile's own. */
+  /** `<agent_kind>:<model>`. */
   model: string
   /** One of that model's efforts, or the empty string for the CLI's own. */
   effort: string
@@ -75,16 +65,10 @@ interface Pin {
 /** What an unpinned effort is called, in the strip and on the trigger. */
 const AUTO_EFFORT_LABEL = "auto"
 
-/** Shown for an agent CLI pinned with no model after it. */
-const DEFAULT_MODEL_LABEL = "default model"
-
 /**
- * cmdk keys its items by value and refuses an empty one, so the two rows that
- * are not catalog entries need names of their own. Both are force-mounted —
- * handing the pin back and typing one the catalog does not carry are answers
- * to every search, not only to a search that happens to match their words.
+ * cmdk keys its items by value and refuses an empty one, so the free-text row
+ * needs a name of its own and stays mounted through every search.
  */
-const UNPINNED_ROW = "__unpinned__"
 const OTHER_ROW = "__other__"
 
 export function PinPicker({
@@ -92,30 +76,20 @@ export function PinPicker({
   effort,
   onChange,
   models,
-  fallback = null,
   label,
-  unpinnedLabel = AUTO_EFFORT_LABEL,
   invalid,
   id,
   className,
 }: {
-  /** The pinned model, or the empty string for the profile's own. */
+  /** The chosen model, or the empty string until one is chosen. */
   model: string
   /** The pinned effort, or the empty string for the agent CLI's own. */
   effort: string
   onChange: (pin: Pin) => void
   /** The catalog, or undefined while it is loading or failed to load. */
   models: ModelDto[] | undefined
-  /**
-   * What an empty pin resolves to, where the form knows it: the profile this
-   * slot is filled from. Null where nothing can say — the profile form's own
-   * field, whose empty is auto and nothing else.
-   */
-  fallback?: { model: string | null; effort: string | null } | null
   /** The control's accessible name; several pickers on one form each need theirs. */
   label: string
-  /** What an empty pin is called where there is no fallback to name. */
-  unpinnedLabel?: string
   invalid?: boolean
   /** The trigger's id, for a field label's `for`. */
   id?: string
@@ -124,24 +98,17 @@ export function PinPicker({
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
   /** cmdk's highlight, so an open list starts on what is already pinned. */
-  const [highlight, setHighlight] = useState(UNPINNED_ROW)
+  const [highlight, setHighlight] = useState(OTHER_ROW)
   const searchRef = useRef<HTMLInputElement>(null)
   /** Groups the effort radios, which sit in a portal outside the form. */
   const effortName = useId()
 
   const pinned = model.trim()
-  /**
-   * The model this slot will actually run on, which is the one an effort is
-   * offered against: the pin where there is one, and what the empty pin
-   * resolves to where there is not.
-   */
-  const running = pinned.length > 0 ? pinned : (fallback?.model ?? "")
-  const choices = useMemo(() => effortChoices(running, models), [running, models])
+  const choices = useMemo(() => effortChoices(pinned, models), [pinned, models])
 
   /**
    * The catalog under one heading per agent CLI, in the order the daemon
-   * probes them, and inside each the CLI on its own default model first: the
-   * shortest id of the group is also the one a slot most often wants.
+   * probes them.
    *
    * A model turned off on the models screen is not offered at all. It is not
    * a choice — the daemon refuses it as a pin — and a row that can be picked
@@ -155,14 +122,13 @@ export function PinPicker({
         kind,
         models: (models ?? [])
           .filter((entry) => entry.agent_kind === kind)
-          .filter((entry) => entry.enabled || entry.id === pinned)
-          .sort((a, b) => Number(a.id.includes(":")) - Number(b.id.includes(":"))),
+          .filter((entry) => entry.enabled || entry.id === pinned),
       })).filter((group) => group.models.length > 0),
     [models, pinned],
   )
 
   // An effort belongs to the model it runs at, so a model moved out from under
-  // one that does not take it leaves the pin at auto — the daemon's own rule
+  // one that does not take it clears the effort — the daemon's own rule
   // for a repin whose effort does not travel with it, applied where it can
   // still be seen rather than refused on submit. The model can move from
   // outside too (a reviewer row's profile changed under an empty pin), which
@@ -197,12 +163,6 @@ export function PinPicker({
 
   function pick(next: string) {
     const trimmed = next.trim()
-    // The profile's model comes with the profile's effort: an effort beside a
-    // model handed back is refused outright.
-    if (trimmed.length === 0) {
-      onChange({ model: "", effort: "" })
-      return
-    }
     const moved = effortChoices(trimmed, models)
     const travels =
       effort.length > 0 &&
@@ -223,7 +183,7 @@ export function PinPicker({
         // Every open starts from the whole catalog, on whatever is pinned.
         if (next) {
           setSearch("")
-          setHighlight(pinned.length > 0 ? pinned : UNPINNED_ROW)
+          setHighlight(pinned.length > 0 ? pinned : OTHER_ROW)
         }
       }}
       modal={false}
@@ -241,12 +201,7 @@ export function PinPicker({
         }
       >
         <span className="min-w-0 flex-1 truncate text-left">
-          <TriggerLabel
-            model={pinned}
-            effort={effort}
-            fallback={fallback}
-            unpinnedLabel={unpinnedLabel}
-          />
+          <TriggerLabel model={pinned} effort={effort} />
         </span>
         <ChevronsUpDownIcon className="shrink-0 opacity-50" />
       </Popover.Trigger>
@@ -272,23 +227,6 @@ export function PinPicker({
                 onMouseDown={(event) => event.preventDefault()}
               >
                 <CommandEmpty>Nothing in the catalog matches.</CommandEmpty>
-                <CommandGroup>
-                  <CommandItem
-                    forceMount
-                    value={UNPINNED_ROW}
-                    data-checked={pinned.length === 0 ? "true" : "false"}
-                    onSelect={() => pick("")}
-                  >
-                    <span className="flex min-w-0 flex-col">
-                      <span className="truncate">{fallback ? "Profile's own" : unpinnedLabel}</span>
-                      {fallback ? (
-                        <span className="truncate font-mono text-xs text-muted-foreground">
-                          {pinLabel(fallback.model, fallback.effort)}
-                        </span>
-                      ) : null}
-                    </span>
-                  </CommandItem>
-                </CommandGroup>
                 {groups.map((group) => (
                   <CommandGroup key={group.kind} heading={agentKindLabel(group.kind)}>
                     {group.models.map((entry) => (
@@ -374,36 +312,8 @@ export function PinPicker({
  * picked under — and the model is the part that identifies the choice, so
  * that is what survives the truncation of a narrow row.
  */
-function TriggerLabel({
-  model,
-  effort,
-  fallback,
-  unpinnedLabel,
-}: {
-  model: string
-  effort: string
-  fallback: { model: string | null; effort: string | null } | null
-  unpinnedLabel: string
-}) {
-  if (model.length === 0) {
-    if (!fallback) return <span className="text-muted-foreground">{unpinnedLabel}</span>
-    return (
-      <span className="text-muted-foreground">
-        Profile's own —{" "}
-        {effort.length > 0 ? (
-          // An effort of this slot's own over a model that is not: what runs is
-          // the profile's *model*, at this effort, so the profile's own effort
-          // is not what it is run at and has no business on the line.
-          <>
-            <span className="font-mono">{modelRefLabel(fallback.model)}</span> ·{" "}
-            <span className="font-mono text-foreground">{effort}</span>
-          </>
-        ) : (
-          <span className="font-mono">{pinLabel(fallback.model, fallback.effort)}</span>
-        )}
-      </span>
-    )
-  }
+function TriggerLabel({ model, effort }: { model: string; effort: string }) {
+  if (model.length === 0) return <span className="text-muted-foreground">Choose a model</span>
   const ref = parseModelRef(model)
   // Text the daemon will judge: shown as typed, since nothing here can split
   // an id it does not recognise.
@@ -411,7 +321,7 @@ function TriggerLabel({
   return (
     <>
       <span className="text-muted-foreground">{agentKindLabel(ref.agentKind)} </span>
-      <span className="font-mono">{ref.model ?? DEFAULT_MODEL_LABEL}</span>
+      <span className="font-mono">{ref.model}</span>
       {effort.length > 0 ? (
         <>
           <span className="text-muted-foreground"> · </span>
@@ -577,9 +487,8 @@ type EffortChoices =
 /**
  * What the chosen model can be run at, as the catalog says.
  *
- * `model` is the *effective* model — the one this slot will actually run on,
- * which for an empty pin is the profile's own — because that is the model the
- * daemon checks the effort against.
+ * `model` is the chosen model because that is the model the daemon checks the
+ * effort against.
  */
 function effortChoices(model: string, models: ModelDto[] | undefined): EffortChoices {
   // What is pinned is answered first, and without the catalog: that there is
@@ -602,7 +511,7 @@ function effortChoices(model: string, models: ModelDto[] | undefined): EffortCho
   const entry = models.find((candidate) => candidate.id === id)
   // A model the catalog knows is held to its own efforts, empty ones included:
   // that is the model saying it takes none at all.
-  if (entry && ref.model !== null) {
+  if (entry) {
     if (entry.efforts.length === 0) {
       return { kind: "none", reason: `${id} takes no effort at all.` }
     }
@@ -617,13 +526,8 @@ function effortChoices(model: string, models: ModelDto[] | undefined): EffortCho
   // for opencode).
   if (ref.agentKind === "opencode") return { kind: "free" }
 
-  // Any other model the catalog does not carry, or an agent CLI on its own
-  // default model — which one that is, is the CLI's own business. Everything
-  // that CLI accepts, then, which is the union of what its models take. Which
-  // model's own description that id belongs to is not asked here — the ids
-  // are the only fact every model of the CLI agrees on — so the strip shows
-  // these with no description line rather than one that may not fit the model
-  // actually run.
+  // Any other model the catalog does not carry takes an effort from the union
+  // its CLI accepts. The strip does not claim a model-specific description.
   const union = unionOfEfforts(models, ref.agentKind)
   if (union.length === 0) return { kind: "free" }
   return {

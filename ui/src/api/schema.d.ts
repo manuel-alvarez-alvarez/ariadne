@@ -340,10 +340,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:
-         *     each agent CLI on its own — that CLI on its own default model — and
-         *     then the models of it, curated for claude_code and codex, discovered
-         *     live (`opencode models --verbose`) for opencode.
+         * Everything an agent can be pinned to, `<agent_kind>:<model>` apiece:
+         *     the models of each agent CLI, curated for claude_code and codex,
+         *     discovered live (`opencode models --verbose`) for opencode. No
+         *     bare-CLI entry: a model is required wherever an agent is pinned, so
+         *     there is nothing a CLI on its own could be staffed as.
          * @description The union always, and grouped by agent CLI: a model is chosen by one
          *     string that carries its CLI, so nothing scopes this catalog any more.
          *     Each entry says what the model is for — its tier, its cost and speed
@@ -890,11 +891,10 @@ export interface components {
          * @description One agent to staff on a task: where it sits, the skills it loads, and what
          *     it is to run on.
          *
-         *     The model is written `<agent_kind>[:<model>]`: the agent CLI on its own
-         *     runs it on its own default model, an agent with a model after the `:` pins
-         *     both, and a string naming no agent CLI is refused — nothing here derives
-         *     one from the other. Omitted, the agent runs on the first installed CLI at
-         *     spawn time, on that CLI's own default model.
+         *     The model is written `<agent_kind>:<model>`: the agent CLI, and after the
+         *     `:` one model of it. Both halves are required — a model is required, and
+         *     no CLI default stands in for one — and a string naming no agent CLI is
+         *     refused: nothing here derives one from the other.
          */
         AgentAssignment: {
             /**
@@ -910,11 +910,11 @@ export interface components {
              */
             effort?: string | null;
             /**
-             * @description What this agent runs on, `<agent_kind>[:<model>]`; omitted (or
-             *     "default") = auto.
+             * @description What this agent runs on, `<agent_kind>:<model>`. Required; the empty
+             *     string and the word "default" are refused.
              * @example codex:o3
              */
-            model?: string | null;
+            model: string;
             /** @description `author` or `reviewer`. A task takes exactly one author. */
             seat: components["schemas"]["Seat"];
             /**
@@ -1014,22 +1014,20 @@ export interface components {
             /**
              * @description The reasoning effort to run that model at, one of the efforts `GET
              *     /v1/models` lists for it; anything else is refused. Omitted (or
-             *     "default") = whatever the agent CLI runs the model at. An effort is
-             *     run at a model, so an effort written where `model` names none is
-             *     refused.
+             *     "default") = whatever the agent CLI runs the model at.
              * @example high
              */
             effort?: string | null;
             /**
-             * @description What the orchestrator runs on, `<agent_kind>[:<model>]` — the agent
-             *     CLI and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
-             *     `opencode:ollama/llama3:8b`. The model half is free text, handed to
-             *     that CLI as typed; an agent CLI on its own runs it on its own default
-             *     model, and a string naming no agent CLI is refused. Omitted (or
-             *     "default") = auto: the first installed CLI, on its own default model.
+             * @description What the orchestrator runs on, `<agent_kind>:<model>` — the agent CLI
+             *     and, after the `:`, the model of it: `codex:gpt-5.3-codex`,
+             *     `opencode:ollama/llama3:8b`. Required — a model is required, and no
+             *     CLI default stands in for one. The model half is free text, handed to
+             *     that CLI as typed; a string naming no agent CLI is refused, and so are
+             *     the empty string and the word "default".
              * @example codex:gpt-5.3-codex
              */
-            model?: string | null;
+            model: string;
             /** @description Ids of registered repositories (`POST /v1/repositories`); at least one. */
             repository_ids: string[];
             title: string;
@@ -1217,13 +1215,11 @@ export interface components {
             effort?: string | null;
             id: string;
             /**
-             * @description What the orchestrator runs on, `<agent_kind>[:<model>]`: the agent CLI
-             *     and, after a `:`, the model of it (`codex`,
-             *     `claude_code:claude-opus-5`). None = auto: the first installed CLI,
-             *     resolved at spawn time, on its own default model.
+             * @description What the orchestrator runs on, `<agent_kind>:<model>`: the agent CLI
+             *     and, after the `:`, the model of it (`claude_code:claude-opus-5`).
              * @example claude_code:claude-opus-5
              */
-            model?: string | null;
+            model: string;
             /**
              * @description The registered repositories the goal works in, as they stand now: a
              *     goal references them, so an edit to one shows up here.
@@ -1355,13 +1351,12 @@ export interface components {
          *     message like the rest now, which is what carries a review's whole
          *     conversation in one place.
          *
-         *     Nothing here is answered. Every message is one agent telling another what
-         *     it needs from it, and the recipient acts on it — there is no question, no
-         *     answer and no reply, because each of them arrives in a pane as a turn, and
-         *     a channel that invites one back spends two turns saying nothing. An agent
-         *     that cannot go on has the ways out its seat already gives it: an author
-         *     calls `fail_task` with the reason, and a reviewer requests changes naming
-         *     what blocks it. Both move the task, which writing at each other does not.
+         *     One kind carries everything the agents say outside a review, whether it
+         *     asks something or answers it. There is no `answer` kind and no `reply`
+         *     tool: an answer is a message to whoever asked, addressed the way the
+         *     question was, so nothing threads. Each message arrives in a pane as a turn
+         *     — which is why the tool that sends one takes questions and answers and
+         *     nothing else, no acknowledgement and no thanks.
          *
          *     The kind is what the daemon reads. Two of them move the task
          *     ([`TaskStatus`]), and the rest are said and left.
@@ -1370,8 +1365,9 @@ export interface components {
         MessageKind: "review_request" | "approve" | "request_changes" | "message";
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: an
-         *     agent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI
-         *     on its own, which is that CLI on its own default model.
+         *     agent CLI on a model of it (`claude_code:claude-fable-5`). Every entry
+         *     names both halves — there is no bare-CLI entry, because a model is
+         *     required wherever an agent is pinned.
          *
          *     The id is what a request writes as its `model`, whole. `agent_kind` is the
          *     same fact taken apart, so a picker can group the catalog by CLI without
@@ -1430,8 +1426,8 @@ export interface components {
             speed?: number | null;
             /**
              * @description The capability class this entry belongs to, or `unknown` where nothing
-             *     says — a bare agent CLI, or a model discovered at runtime that nothing
-             *     has been written about.
+             *     says — a model discovered at runtime that nothing has been written
+             *     about.
              */
             tier: components["schemas"]["ModelTier"];
         };
@@ -1542,8 +1538,8 @@ export interface components {
              */
             internal_session_id?: string | null;
             last_activity_at?: string | null;
-            /** @description Model requested at launch; null = the agent CLI's default. */
-            model?: string | null;
+            /** @description Model requested at launch. */
+            model: string;
             seat: components["schemas"]["Seat"];
             status: components["schemas"]["SessionStatus"];
             /**
@@ -1698,11 +1694,10 @@ export interface components {
             effort?: string | null;
             id: string;
             /**
-             * @description What this agent runs on, `<agent_kind>[:<model>]`. None = auto: the
-             *     first installed CLI, resolved at spawn time, on its own default model.
+             * @description What this agent runs on, `<agent_kind>:<model>`.
              * @example codex:o3
              */
-            model?: string | null;
+            model: string;
             /** @description `author` or `reviewer`. */
             seat: components["schemas"]["Seat"];
             /**
@@ -1873,9 +1868,10 @@ export interface components {
             effort?: string | null;
             landing?: null | components["schemas"]["Landing"];
             /**
-             * @description What the author runs on, `<agent_kind>[:<model>]`: absent leaves the
-             *     author's pins alone, "default" (or the empty string) puts them back on
-             *     auto, and anything else pins what it spells.
+             * @description What the author runs on, `<agent_kind>:<model>`: absent leaves the
+             *     author's pins alone, and anything else pins what it spells. A model is
+             *     required, so "default" and the empty string are refused — there is no
+             *     default to hand the pin back to.
              * @example codex:gpt-5.3-codex
              */
             model?: string | null;

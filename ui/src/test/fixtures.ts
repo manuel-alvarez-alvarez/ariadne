@@ -41,6 +41,7 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     id: GOAL_ID,
     title: "Ship the board",
     description: "",
+    model: "claude_code:claude-sonnet-5",
     repos: [],
     status: "active",
     usage: {
@@ -67,8 +68,18 @@ export function aTask(overrides: Partial<TaskDto> = {}): TaskDto {
     repo_id: REPO_ID,
     stalled: false,
     agents: [
-      { id: AUTHOR_ID, seat: "author", skills: ["coding"] },
-      { id: REVIEWER_ID, seat: "reviewer", skills: ["code-review"] },
+      {
+        id: AUTHOR_ID,
+        seat: "author",
+        skills: ["coding"],
+        model: "claude_code:claude-sonnet-5",
+      },
+      {
+        id: REVIEWER_ID,
+        seat: "reviewer",
+        skills: ["code-review"],
+        model: "claude_code:claude-sonnet-5",
+      },
     ],
     depends_on: [],
     usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [] },
@@ -87,7 +98,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     seat: "author",
     task_agent_id: AUTHOR_ID,
     agent_kind: "claude_code",
-    model: null,
+    model: "claude-sonnet-5",
     internal_session_id: null,
     tmux_session: `ariadne-${id}`,
     worktree_path: null,

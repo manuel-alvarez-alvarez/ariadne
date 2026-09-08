@@ -34,6 +34,7 @@ function goal(status: GoalStatus): GoalDto {
     id: "01JGOAL0000000000000000001",
     title: "Ship the board",
     description: "",
+    model: "claude_code:claude-sonnet-5",
     repos: [],
     status,
     usage: {

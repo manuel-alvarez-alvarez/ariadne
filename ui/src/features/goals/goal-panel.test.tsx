@@ -151,12 +151,6 @@ it("shows the effort that model is run at, beside it", () => {
   expect(detail("Orchestrator").textContent).toContain("codex:gpt-5.3-codex @ high")
 })
 
-it("says `auto` for a goal that pinned nothing, rather than the profile's own", () => {
-  mount(aGoal({ model: null }))
-
-  expect(detail("Orchestrator").textContent).toContain("auto")
-})
-
 describe("which tab the panel opens on", () => {
   it("opens a goal still being planned on its tasks, the list still growing", () => {
     mount(aGoal({ status: "planning" }))

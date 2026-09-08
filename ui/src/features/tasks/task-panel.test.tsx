@@ -11,8 +11,7 @@
  * way.
  *
  * So both rows are read here against profiles that have since moved, including
- * the two reviewer slots that share nothing but their order, and the slot with
- * no pin, which says `auto` rather than borrowing the profile's answer.
+ * the two reviewer slots that share nothing but their order.
  *
  * The pull request row is here because it exists only sometimes.
  *
@@ -65,9 +64,12 @@ const TASK: TaskDto = {
       model: "claude_code:claude-sonnet-5",
       effort: "high",
     },
-    // Staffed with no model at all: the agent CLI is resolved at spawn time
-    // and it takes that CLI's default. A pin like any other.
-    { id: "01AGENTAUTO", seat: "reviewer", skills: ["security-review"] },
+    {
+      id: "01AGENTSTRICT2",
+      seat: "reviewer",
+      skills: ["security-review"],
+      model: "codex:gpt-5.6-luna",
+    },
   ],
   stalled: false,
   usage: {
@@ -203,14 +205,20 @@ it("shows each reviewer slot's own pin, in review order", () => {
 
   const reviewers = fact("Reviewers")
   expect(reviewers).toContain("code-review · claude_code:claude-sonnet-5 @ high")
-  // The second reviewer was staffed on nothing in particular: auto.
-  expect(reviewers).toContain("security-review · auto")
+  expect(reviewers).toContain("security-review · codex:gpt-5.6-luna")
 })
 
 it("says a task has no reviewers rather than showing an empty list", () => {
   mount({
     ...TASK,
-    agents: [{ id: "01AGENTAUTHOR", seat: "author", skills: ["coding"] }],
+    agents: [
+      {
+        id: "01AGENTAUTHOR",
+        seat: "author",
+        skills: ["coding"],
+        model: "codex:gpt-5",
+      },
+    ],
   })
 
   expect(fact("Reviewers")).toBe("none staffed")

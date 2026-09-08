@@ -19,10 +19,8 @@
  *
  * What the orchestrator runs on is the other field with a rule of its own, and one
  * control makes the whole choice: a model that names the agent CLI running it,
- * and the effort that model is run at — each on the wire when it was pinned
- * and left out entirely when it was not, which is what runs the orchestrator on its
- * profile's own. A model naming no CLI never reaches the daemon: the field
- * refuses it first.
+ * and the effort that model is run at. A model naming no CLI never reaches the
+ * daemon: the field refuses it first.
  */
 
 import { screen, waitFor, within } from "@testing-library/react"
@@ -157,6 +155,13 @@ async function openList(user: ReturnType<typeof userEvent.setup>): Promise<HTMLE
   return await options()
 }
 
+async function chooseModel(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "Orchestrator runs on" }))
+  const models = await screen.findByRole("listbox", { name: "Models" })
+  await user.click(within(models).getByText("codex:gpt-5.3-codex"))
+  await user.keyboard("{Escape}")
+}
+
 /** One repository's row, found the way it reads: by its path. */
 function row(list: HTMLElement, repository: RepositoryDto): HTMLElement {
   return within(list).getByRole("option", { name: new RegExp(repository.path) })
@@ -209,6 +214,7 @@ describe("picking the goal's repositories", () => {
     await user.click(row(list, ARIADNE))
     await user.click(row(list, SANDBOX))
     await user.keyboard("{Escape}")
+    await chooseModel(user)
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     await waitFor(() => {
@@ -232,6 +238,7 @@ describe("picking the goal's repositories", () => {
     const list = await openList(user)
     await user.click(row(list, ARIADNE))
     await user.keyboard("{Escape}")
+    await chooseModel(user)
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     await waitFor(() => {
@@ -240,6 +247,7 @@ describe("picking the goal's repositories", () => {
     expect(lastWrite()?.body).toEqual({
       title: "Repositories",
       description: "",
+      model: "codex:gpt-5.3-codex",
       repository_ids: [ARIADNE.id],
     })
     expect(screen.queryByLabelText("Max tasks")).toBeNull()
@@ -255,6 +263,7 @@ describe("picking the goal's repositories", () => {
     await user.click(row(list, ARIADNE))
     await user.click(row(list, SANDBOX))
     await user.keyboard("{Escape}")
+    await chooseModel(user)
 
     await user.click(screen.getByRole("button", { name: `Remove ${ARIADNE.path}` }))
     expect(screen.queryByRole("button", { name: `Remove ${ARIADNE.path}` })).toBeNull()
@@ -286,6 +295,7 @@ describe("picking the goal's repositories", () => {
 
     await user.type(screen.getByLabelText("Title"), "Repositories")
     await repositoryBox()
+    await chooseModel(user)
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     expect(await screen.findByText("Pick at least one repository.")).toBeDefined()
@@ -350,7 +360,7 @@ describe("dismissing the dialog", () => {
 /**
  * The orchestrator is pinned with one control, whose value carries the agent CLI,
  * the model of it and the effort it is run at: what was pinned goes on the
- * wire, and nothing pinned is left out rather than sent empty.
+ * wire, and an empty effort uses the model default.
  */
 describe("choosing what the orchestrator runs on", () => {
   /** Fills the required fields, so the submit is about the pin alone. */
@@ -359,6 +369,7 @@ describe("choosing what the orchestrator runs on", () => {
     const list = await openList(user)
     await user.click(row(list, ARIADNE))
     await user.keyboard("{Escape}")
+    await chooseModel(user)
   }
 
   /** The one control the choice is made in, catalog and all. */
@@ -400,12 +411,11 @@ describe("choosing what the orchestrator runs on", () => {
     expect(within(models).getByText("claude_code:claude-opus-5")).toBeDefined()
   })
 
-  it("says what an unpinned orchestrator will run on, which is its profile's own", async () => {
+  it("disables submit until the orchestrator has a model", async () => {
     renderDialog()
 
-    // Nothing behind the pin any more: an untouched control says auto, which
-    // is the first installed CLI on its own default model.
-    await waitFor(async () => expect((await pinButton()).textContent).toContain("auto"))
+    expect((await pinButton()).textContent).toContain("Choose a model")
+    expect(submitButton().disabled).toBe(true)
   })
 
   it("sends the picked id, which names the CLI and the model together", async () => {
@@ -427,33 +437,16 @@ describe("choosing what the orchestrator runs on", () => {
     expect(lastWrite()?.body).toMatchObject({ model: "codex:gpt-5.3-codex" })
   })
 
-  it("sends an agent CLI on its own, which is that CLI's own default model", async () => {
+  it("refuses a bare agent CLI before the daemon is asked", async () => {
     const user = userEvent.setup()
     renderDialog()
 
     await fillRequired(user)
-    // Typed rather than picked: the catalog does not carry a bare CLI here,
-    // and the daemon takes one all the same.
     await typePin(user, "codex")
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body?.model).toBe("codex")
-  })
-
-  it("sends no model when the orchestrator is left on its profile's own", async () => {
-    const user = userEvent.setup()
-    renderDialog()
-
-    await fillRequired(user)
-    await user.click(screen.getByRole("button", { name: "Create goal" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body).not.toHaveProperty("model")
+    expect(await screen.findByText(/codex:<model>/)).toBeDefined()
+    expect(lastWrite()).toBeUndefined()
   })
 
   it("sends the effort the chosen model is to be run at", async () => {
@@ -482,7 +475,7 @@ describe("choosing what the orchestrator runs on", () => {
     renderDialog()
 
     await fillRequired(user)
-    await typePin(user, "codex")
+    await typePin(user, "codex:gpt-5.6")
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     await waitFor(() => {
@@ -516,6 +509,7 @@ describe("writing the goal's brief", () => {
     const list = await openList(user)
     await user.click(row(list, ARIADNE))
     await user.keyboard("{Escape}")
+    await chooseModel(user)
   }
 
   it("keeps a plain Enter in the brief a newline, and the form open", async () => {

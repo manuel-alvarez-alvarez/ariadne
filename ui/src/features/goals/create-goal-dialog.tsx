@@ -8,10 +8,9 @@
  * empty state pointing there.
  *
  * What the orchestrator runs on is one choice made in one control: a model, written
- * `<agent_kind>[:<model>]` — the agent CLI and, after a `:`, the model of it —
- * and the effort that model is run at. Nothing pinned carries a meaning of its
- * own, the orchestrator on its profile's own, so it is left out of the request
- * rather than sent empty.
+ * `<agent_kind>:<model>` — the agent CLI and, after a `:`, the model of it —
+ * and the effort that model is run at. A model is required and the empty effort
+ * uses the model's default effort.
  *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
@@ -104,9 +103,7 @@ export function CreateGoalDialog({
     const body: CreateGoalRequest = {
       title: values.title.trim(),
       description: values.description,
-      // No field at all where a box was left empty: that is the orchestrator
-      // on the first installed agent CLI, at that CLI's own effort.
-      ...(model.length > 0 ? { model } : {}),
+      model,
       ...(effort.length > 0 ? { effort } : {}),
       repository_ids: values.repository_ids,
     }
@@ -134,6 +131,7 @@ export function CreateGoalDialog({
         }
         submitLabel="Create goal"
         pending={createGoal.isPending}
+        submitDisabled={form.watch("model").trim().length === 0}
         onKeyDown={submitOnChord}
       >
         <FormDialogBody>
@@ -220,7 +218,6 @@ export function CreateGoalDialog({
                   }}
                   models={models.data}
                   invalid={errors.model ? true : undefined}
-                  unpinnedLabel="auto — first installed CLI, on its own default model"
                 />
               )}
             />
@@ -228,8 +225,7 @@ export function CreateGoalDialog({
               <FieldError>{errors.model.message}</FieldError>
             ) : (
               <FieldDescription>
-                The agent CLI and, after a <code>:</code>, the model of it. Empty is auto: the first
-                installed CLI, on its own default model.
+                The agent CLI and, after a <code>:</code>, the model of it.
               </FieldDescription>
             )}
           </Field>

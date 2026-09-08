@@ -733,7 +733,7 @@
         "tags": [
           "models"
         ],
-        "summary": "Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:\neach agent CLI on its own — that CLI on its own default model — and\nthen the models of it, curated for claude_code and codex, discovered\nlive (`opencode models --verbose`) for opencode.",
+        "summary": "Everything an agent can be pinned to, `<agent_kind>:<model>` apiece:\nthe models of each agent CLI, curated for claude_code and codex,\ndiscovered live (`opencode models --verbose`) for opencode. No\nbare-CLI entry: a model is required wherever an agent is pinned, so\nthere is nothing a CLI on its own could be staffed as.",
         "description": "The union always, and grouped by agent CLI: a model is chosen by one\nstring that carries its CLI, so nothing scopes this catalog any more.\nEach entry says what the model is for — its tier, its cost and speed\nnext to every other entry, the work it suits and the work it does not\n— and carries the efforts it can be run at, cheapest first, each with\nwhat spending it buys and whether it is the one its CLI runs by\ndefault.\nEvery entry says whether an agent can be staffed on it. A model the\nuser turned off stays in the list, off: a catalog that hid it would\nleave nothing to turn back on, and nothing to say why a pin naming it\nis refused.",
         "operationId": "list",
         "responses": {
@@ -2033,9 +2033,10 @@
       },
       "AgentAssignment": {
         "type": "object",
-        "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent_kind>[:<model>]`: the agent CLI on its own\nruns it on its own default model, an agent with a model after the `:` pins\nboth, and a string naming no agent CLI is refused — nothing here derives\none from the other. Omitted, the agent runs on the first installed CLI at\nspawn time, on that CLI's own default model.",
+        "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent_kind>:<model>`: the agent CLI, and after the\n`:` one model of it. Both halves are required — a model is required, and\nno CLI default stands in for one — and a string naming no agent CLI is\nrefused: nothing here derives one from the other.",
         "required": [
-          "seat"
+          "seat",
+          "model"
         ],
         "properties": {
           "brief": {
@@ -2054,11 +2055,8 @@
             "example": "high"
           },
           "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What this agent runs on, `<agent_kind>[:<model>]`; omitted (or\n\"default\") = auto.",
+            "type": "string",
+            "description": "What this agent runs on, `<agent_kind>:<model>`. Required; the empty\nstring and the word \"default\" are refused.",
             "example": "codex:o3"
           },
           "seat": {
@@ -2247,7 +2245,8 @@
         "type": "object",
         "required": [
           "title",
-          "repository_ids"
+          "repository_ids",
+          "model"
         ],
         "properties": {
           "description": {
@@ -2258,15 +2257,12 @@
               "string",
               "null"
             ],
-            "description": "The reasoning effort to run that model at, one of the efforts `GET\n/v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at. An effort is\nrun at a model, so an effort written where `model` names none is\nrefused.",
+            "description": "The reasoning effort to run that model at, one of the efforts `GET\n/v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at.",
             "example": "high"
           },
           "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What the orchestrator runs on, `<agent_kind>[:<model>]` — the agent\nCLI and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,\n`opencode:ollama/llama3:8b`. The model half is free text, handed to\nthat CLI as typed; an agent CLI on its own runs it on its own default\nmodel, and a string naming no agent CLI is refused. Omitted (or\n\"default\") = auto: the first installed CLI, on its own default model.",
+            "type": "string",
+            "description": "What the orchestrator runs on, `<agent_kind>:<model>` — the agent CLI\nand, after the `:`, the model of it: `codex:gpt-5.3-codex`,\n`opencode:ollama/llama3:8b`. Required — a model is required, and no\nCLI default stands in for one. The model half is free text, handed to\nthat CLI as typed; a string naming no agent CLI is refused, and so are\nthe empty string and the word \"default\".",
             "example": "codex:gpt-5.3-codex"
           },
           "repository_ids": {
@@ -2785,6 +2781,7 @@
           "title",
           "description",
           "status",
+          "model",
           "repos",
           "usage",
           "created_at",
@@ -2809,11 +2806,8 @@
             "type": "string"
           },
           "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What the orchestrator runs on, `<agent_kind>[:<model>]`: the agent CLI\nand, after a `:`, the model of it (`codex`,\n`claude_code:claude-opus-5`). None = auto: the first installed CLI,\nresolved at spawn time, on its own default model.",
+            "type": "string",
+            "description": "What the orchestrator runs on, `<agent_kind>:<model>`: the agent CLI\nand, after the `:`, the model of it (`claude_code:claude-opus-5`).",
             "example": "claude_code:claude-opus-5"
           },
           "repos": {
@@ -3041,7 +3035,7 @@
       },
       "MessageKind": {
         "type": "string",
-        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells a\nmessage from the three steps of a review. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what carries a review's whole\nconversation in one place.\n\nNothing here is answered. Every message is one agent telling another what\nit needs from it, and the recipient acts on it — there is no question, no\nanswer and no reply, because each of them arrives in a pane as a turn, and\na channel that invites one back spends two turns saying nothing. An agent\nthat cannot go on has the ways out its seat already gives it: an author\ncalls `fail_task` with the reason, and a reviewer requests changes naming\nwhat blocks it. Both move the task, which writing at each other does not.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), and the rest are said and left.",
+        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells a\nmessage from the three steps of a review. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what carries a review's whole\nconversation in one place.\n\nOne kind carries everything the agents say outside a review, whether it\nasks something or answers it. There is no `answer` kind and no `reply`\ntool: an answer is a message to whoever asked, addressed the way the\nquestion was, so nothing threads. Each message arrives in a pane as a turn\n— which is why the tool that sends one takes questions and answers and\nnothing else, no acknowledgement and no thanks.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), and the rest are said and left.",
         "enum": [
           "review_request",
           "approve",
@@ -3051,7 +3045,7 @@
       },
       "ModelDto": {
         "type": "object",
-        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI\non its own, which is that CLI on its own default model.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything. The rest is what an orchestrator sizes a task from: what\nthis model is, what it costs and how fast it answers next to every other\nentry, the work it is and is not the choice for, and what each of its\nefforts buys.",
+        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`). Every entry\nnames both halves — there is no bare-CLI entry, because a model is\nrequired wherever an agent is pinned.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything. The rest is what an orchestrator sizes a task from: what\nthis model is, what it costs and how fast it answers next to every other\nentry, the work it is and is not the choice for, and what each of its\nefforts buys.",
         "required": [
           "id",
           "agent_kind",
@@ -3132,7 +3126,7 @@
           },
           "tier": {
             "$ref": "#/components/schemas/ModelTier",
-            "description": "The capability class this entry belongs to, or `unknown` where nothing\nsays — a bare agent CLI, or a model discovered at runtime that nothing\nhas been written about."
+            "description": "The capability class this entry belongs to, or `unknown` where nothing\nsays — a model discovered at runtime that nothing has been written\nabout."
           }
         }
       },
@@ -3276,6 +3270,7 @@
           "goal_id",
           "seat",
           "agent_kind",
+          "model",
           "tmux_session",
           "status",
           "usage",
@@ -3340,11 +3335,8 @@
             ]
           },
           "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Model requested at launch; null = the agent CLI's default."
+            "type": "string",
+            "description": "Model requested at launch."
           },
           "seat": {
             "$ref": "#/components/schemas/Seat"
@@ -3559,7 +3551,8 @@
         "required": [
           "id",
           "seat",
-          "skills"
+          "skills",
+          "model"
         ],
         "properties": {
           "brief": {
@@ -3581,11 +3574,8 @@
             "type": "string"
           },
           "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What this agent runs on, `<agent_kind>[:<model>]`. None = auto: the\nfirst installed CLI, resolved at spawn time, on its own default model.",
+            "type": "string",
+            "description": "What this agent runs on, `<agent_kind>:<model>`.",
             "example": "codex:o3"
           },
           "seat": {
@@ -3982,7 +3972,7 @@
               "string",
               "null"
             ],
-            "description": "What the author runs on, `<agent_kind>[:<model>]`: absent leaves the\nauthor's pins alone, \"default\" (or the empty string) puts them back on\nauto, and anything else pins what it spells.",
+            "description": "What the author runs on, `<agent_kind>:<model>`: absent leaves the\nauthor's pins alone, and anything else pins what it spells. A model is\nrequired, so \"default\" and the empty string are refused — there is no\ndefault to hand the pin back to.",
             "example": "codex:gpt-5.3-codex"
           },
           "reviewers": {

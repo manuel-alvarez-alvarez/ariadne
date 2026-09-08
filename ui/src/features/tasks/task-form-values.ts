@@ -16,18 +16,14 @@
  * refuses a name no skill answers to, and the picker offers the ones it has —
  * because the catalog is the user's to extend.
  *
- * **What an agent runs on** is one string, `<agent_kind>[:<model>]` — the CLI
+ * **What an agent runs on** is one string, `<agent_kind>:<model>` — the CLI
  * and, after a `:`, the model of it (see `features/models/model-ref.ts`) — and
- * beside it the effort that model is run at. An empty box is auto, and there
- * is nothing behind it to agree or disagree with: an agent has no profile any
- * more, so a pin is simply the pin, and this file no longer has to work out
- * which of two answers won.
+ * beside it the effort that model is run at. A model is required, and an empty
+ * effort uses the model's default effort.
  *
- * On edit, `UpdateTaskRequest.model` is a tri-state — absent leaves the pin
- * alone, `"default"` puts it back on auto — so an untouched box sends nothing
- * and one emptied sends the sentinel. Which of the two it is can only be
- * answered against what the form was *seeded* with, hence the `initial`
- * argument. `effort` is the same tri-state, with one tie between them: the
+ * On edit, an absent `UpdateTaskRequest.model` leaves the pin alone. Which
+ * fields moved is answered against what the form was *seeded* with, hence the
+ * `initial` argument. `effort` has one tie to the model: the
  * daemon drops the effort from a pin whose model moves, so a model on the wire
  * takes the effort box with it whether that box changed or not.
  *
@@ -43,12 +39,6 @@ import { modelRefField } from "@/features/models/model-ref"
 import { parseSkillNames as parseSkills } from "@/features/skills/parse"
 
 import { taskAuthor, taskReviewers } from "./agents"
-
-/**
- * What the daemon reads as "not my choice": for a model, the agent back on
- * auto; for the effort beside it, the agent CLI's own.
- */
-const DEFAULT_SENTINEL = "default"
 
 /** The skills of one agent, as the form holds them and as it reads them back. */
 function formatSkills(skills: readonly string[]): string {
@@ -94,16 +84,13 @@ export function makeTaskFormSchema(opts: { creating: boolean; requireRepo: boole
 
 export type TaskFormValues = z.infer<ReturnType<typeof makeTaskFormSchema>>
 
-/** The agent on auto, which is where a form starts. */
-const NO_PIN = ""
-
 const CREATE_DEFAULTS: TaskFormValues = {
   title: "",
   description: "",
   author_skills: "coding",
-  author_model: NO_PIN,
-  author_effort: NO_PIN,
-  reviewers: [{ skills: "code-review", model: NO_PIN, effort: NO_PIN }],
+  author_model: "",
+  author_effort: "",
+  reviewers: [{ skills: "code-review", model: "", effort: "" }],
   // The way most repositories take a change, and the way the daemon defaults
   // a task nobody said otherwise about.
   landing: "merge",
@@ -119,12 +106,12 @@ export function taskToFormValues(task: TaskDto | undefined): TaskFormValues {
     title: task.title,
     description: task.description,
     author_skills: formatSkills(author?.skills ?? []),
-    author_model: author?.model ?? NO_PIN,
-    author_effort: author?.effort ?? NO_PIN,
+    author_model: author?.model ?? "",
+    author_effort: author?.effort ?? "",
     reviewers: taskReviewers(task).map((reviewer) => ({
       skills: formatSkills(reviewer.skills),
-      model: reviewer.model ?? NO_PIN,
-      effort: reviewer.effort ?? NO_PIN,
+      model: reviewer.model,
+      effort: reviewer.effort ?? "",
     })),
     landing: task.landing,
     repo_id: "",
@@ -138,16 +125,12 @@ function dependsOn(values: TaskFormValues): string[] {
 }
 
 /**
- * The pin of an agent that is given one, or nothing at all where it runs on
- * auto.
- *
- * The two travel separately: an effort with no model beside it is refused by
- * the daemon, since there is no model left for it to be run at.
+ * The pin of an agent. The model is always present and effort stays optional.
  */
-function pinFields(model: string, effort: string): { model?: string; effort?: string } {
+function pinFields(model: string, effort: string): { model: string; effort?: string } {
   const pin = model.trim()
   const at = effort.trim()
-  return { ...(pin.length > 0 ? { model: pin } : {}), ...(at.length > 0 ? { effort: at } : {}) }
+  return { model: pin, ...(at.length > 0 ? { effort: at } : {}) }
 }
 
 /** The reviewers as the daemon staffs them, in review order. */
@@ -164,9 +147,7 @@ function reviewers(values: TaskFormValues): AgentAssignment[] {
  * repository.
  *
  * `initial` is the author's model and effort as the form was last seeded —
- * what the user found in the boxes. It is what says whether a box reading
- * "auto" was emptied, which asks for the sentinel, or was empty all along,
- * which asks for nothing.
+ * what the user found in the boxes.
  */
 export function toUpdateTaskRequest(
   values: TaskFormValues,
@@ -186,13 +167,11 @@ export function toUpdateTaskRequest(
   if (!movedModel && !movedEffort) return body
   return {
     ...body,
-    // Emptied: the sentinel, which puts the author back on auto. Otherwise
-    // the pin as it reads.
-    ...(movedModel ? { model: pin.length > 0 ? pin : DEFAULT_SENTINEL } : {}),
+    ...(movedModel ? { model: pin } : {}),
     // An effort belongs to the model it is run at, and the daemon drops it
     // from a pin whose model moves — so a model on the wire takes the effort
     // box with it, and what is stored is what the form said.
-    ...(movedModel || movedEffort ? { effort: at.length > 0 ? at : DEFAULT_SENTINEL } : {}),
+    ...(movedModel || movedEffort ? { effort: at } : {}),
   }
 }
 

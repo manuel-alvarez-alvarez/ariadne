@@ -28,10 +28,9 @@ export function AgentSummary({
   /** The skills this agent loads, in the order they reach it. */
   skills: string[]
   /**
-   * What it runs on, as the one qualified id that says it. Null is `auto` —
-   * the first installed CLI, resolved at spawn time, on its own default model.
+   * What it runs on, as the one qualified id that says it.
    */
-  model?: string | null
+  model: string
   /**
    * The effort that model is run at: null is the agent CLI's own, which shows
    * as nothing at all — an effort nobody pinned is not a fact about this
@@ -79,7 +78,7 @@ export function SeatSummary({
   className,
 }: {
   seat: Seat
-  model?: string | null
+  model: string
   effort?: string | null
   className?: string
 }) {

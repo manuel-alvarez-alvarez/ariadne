@@ -184,6 +184,17 @@ describe("AgentsPage", () => {
     expect(await screen.findByText("3 agents, 2 models, 1 turned off")).toBeDefined()
   })
 
+  it("shows only concrete model ids in the agent tables", async () => {
+    const user = userEvent.setup()
+    renderScreen(<AgentsPage />)
+
+    expect(await screen.findByText("claude_code:claude-opus-5")).toBeDefined()
+    expect(screen.queryByText(/^claude_code$/)).toBeNull()
+    await selectAgent(user, "OpenCode")
+    expect(await screen.findByText("opencode:anthropic/claude-sonnet-4")).toBeDefined()
+    expect(screen.queryByText(/^opencode$/)).toBeNull()
+  })
+
   /**
    * The list is the daemon's, and a daemon that answers with none leaves a
    * headed table over nothing — so the table says it is empty rather than

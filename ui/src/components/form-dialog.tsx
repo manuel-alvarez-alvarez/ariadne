@@ -130,6 +130,7 @@ export function FormDialogContent({
   error,
   submitLabel,
   pending,
+  submitDisabled = false,
   className,
   onKeyDown,
   children,
@@ -142,6 +143,8 @@ export function FormDialogContent({
   submitLabel: ReactNode
   /** The submit is spinning and both buttons are out of reach. */
   pending: boolean
+  /** The form cannot submit until its required local choice is made. */
+  submitDisabled?: boolean
   /** Sizing for the dialog box; forms differ in how much they have to hold. */
   className?: string
   /**
@@ -155,7 +158,11 @@ export function FormDialogContent({
 }) {
   return (
     <DialogContent className={className}>
-      <form onSubmit={onSubmit} onKeyDown={pending ? undefined : onKeyDown} className="grid gap-4">
+      <form
+        onSubmit={onSubmit}
+        onKeyDown={pending || submitDisabled ? undefined : onKeyDown}
+        className="grid gap-4"
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -173,7 +180,7 @@ export function FormDialogContent({
           <DialogClose render={<Button type="button" variant="outline" disabled={pending} />}>
             Cancel
           </DialogClose>
-          <Button type="submit" pending={pending}>
+          <Button type="submit" pending={pending} disabled={submitDisabled}>
             {submitLabel}
           </Button>
         </DialogFooter>

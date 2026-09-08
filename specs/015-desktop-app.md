@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -55,6 +55,11 @@ Out: the daemon endpoints themselves (012).
     verified there, not only in a browser.
 11. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
     `npm run check:unused` before a commit.
+12. A goal, task author and task reviewer each name a concrete
+    `<agent_kind>:<model>` before their form can submit. An empty effort stays
+    valid and uses that model's default effort (011).
+13. The model picker lists concrete catalog entries only. No screen shows an
+    automatic or default model; `auto` is an effort choice only.
 
 ## Acceptance criteria
 
@@ -83,6 +88,11 @@ Out: the daemon endpoints themselves (012).
 - The attention strip holds a placeholder while its lists load and survives a
   partial failure (`ui/src/features/goals/attention-strip.test.tsx`).
 - Unused exports fail `npm run check:unused`.
+- The goal dialog and task dialog refuse a missing model, and the picker lists
+  only concrete model ids
+  (`ui/src/features/goals/create-goal-dialog.test.tsx`,
+  `ui/src/features/tasks/task-form-dialog.test.tsx`,
+  `ui/src/features/models/pin-picker.test.tsx`).
 
 ## Sources
 

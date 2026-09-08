@@ -22,8 +22,7 @@
  * the author's and every reviewer's. The pin is a model — the agent CLI and,
  * after a `:`, the model of it — and the effort that model is run at, and one
  * picker holds both, so a reviewer row stays three controls wide: the skills,
- * what they run on, and the remove. Nothing pinned is auto, which the picker
- * is told so it can say so.
+ * what they run on, and the remove. Every agent must name a model.
  *
  * The reviewers can be none: most work is worth a second pair of eyes and the
  * form starts with one, but a task with nothing to review — a release, say —
@@ -163,6 +162,9 @@ function TaskFormDialog({
   // model: one control, two fields.
   const authorEffort = form.watch("author_effort")
   const reviewerRowValues = form.watch("reviewers")
+  const hasModel =
+    form.watch("author_model").trim().length > 0 &&
+    reviewerRowValues.every((reviewer) => reviewer.model.trim().length > 0)
   /** Every skill name the daemon knows, as the boxes suggest them. */
   const skillNames = useMemo(() => (skills.data ?? []).map((skill) => skill.name), [skills.data])
 
@@ -172,10 +174,9 @@ function TaskFormDialog({
   async function onSubmit(values: TaskFormValues) {
     try {
       if (editing) {
-        // The baseline is what the form was last *reset* with, which react-hook-form
-        // keeps for us — not `defaultValues`, which goes on changing as the
-        // profiles arrive even where the form was left alone on purpose (see
-        // the re-seed effect above, and `toUpdateTaskRequest`).
+        // The baseline is what the form was last *reset* with, which
+        // react-hook-form keeps for us. It distinguishes an untouched pin
+        // from one the user changed before `toUpdateTaskRequest` makes a patch.
         const seeded = form.formState.defaultValues
         const task = await updateTask.mutateAsync(
           toUpdateTaskRequest(values, {
@@ -220,6 +221,7 @@ function TaskFormDialog({
         }
         submitLabel={editing ? "Save changes" : "Create task"}
         pending={submit.isPending}
+        submitDisabled={!hasModel}
         onKeyDown={submitOnChord}
       >
         <FormDialogBody>
@@ -292,7 +294,6 @@ function TaskFormDialog({
                   }}
                   models={models.data}
                   invalid={form.formState.errors.author_model ? true : undefined}
-                  unpinnedLabel="auto — first installed CLI, on its own default model"
                 />
               )}
             />
@@ -300,7 +301,7 @@ function TaskFormDialog({
               <FieldError>{form.formState.errors.author_model.message}</FieldError>
             ) : (
               <FieldDescription>
-                The agent CLI and, after a <code>:</code>, the model of it. Empty is auto.
+                The agent CLI and, after a <code>:</code>, the model of it.
               </FieldDescription>
             )}
           </Field>

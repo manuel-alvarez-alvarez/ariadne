@@ -26,8 +26,8 @@ function effort(id: string, overrides: Partial<EffortDto> = {}): EffortDto {
 }
 
 /**
- * A slice of the daemon's catalog: each agent CLI on its own and models of it,
- * deliberately not in agent order, since the picker groups it itself.
+ * A slice of the daemon's concrete-model catalog, deliberately not in agent
+ * order, since the picker groups it itself.
  */
 const CATALOG: ModelDto[] = [
   aModel({
@@ -47,16 +47,6 @@ const CATALOG: ModelDto[] = [
       effort("max"),
       effort("ultra"),
     ],
-  }),
-  aModel({
-    id: "codex",
-    agent_kind: "codex",
-    description: "codex on its own default model",
-  }),
-  aModel({
-    id: "claude_code",
-    agent_kind: "claude_code",
-    description: "claude_code on its own default model",
   }),
   aModel({
     id: "claude_code:claude-sonnet-5",
@@ -83,11 +73,6 @@ const CATALOG: ModelDto[] = [
     speed: 5,
   }),
   aModel({
-    id: "opencode",
-    agent_kind: "opencode",
-    description: "opencode on its own default model",
-  }),
-  aModel({
     // Discovered, with the variants that model was configured with: an
     // opencode effort belongs to its own model and to nothing else.
     id: "opencode:zai-coding-plan/glm-4.6",
@@ -102,12 +87,10 @@ const LABEL = "Reviewer 2 runs on"
 function renderPicker({
   model = "",
   effort = "",
-  fallback = null,
   catalog = true,
 }: {
   model?: string
   effort?: string
-  fallback?: { model: string | null; effort: string | null } | null
   catalog?: boolean
 } = {}) {
   const pin = { model, effort }
@@ -122,7 +105,6 @@ function renderPicker({
         effort={value.effort}
         onChange={setValue}
         models={catalog ? CATALOG : undefined}
-        fallback={fallback}
       />
     )
   }
@@ -191,7 +173,7 @@ async function search(user: ReturnType<typeof userEvent.setup>, text: string) {
   await user.type(screen.getByRole("combobox", { name: LABEL }), text)
 }
 
-it("offers the whole catalog, grouped by agent CLI, each group led by the CLI itself", async () => {
+it("offers only concrete catalog models, grouped by agent CLI", async () => {
   const user = userEvent.setup()
   renderPicker()
 
@@ -202,10 +184,9 @@ it("offers the whole catalog, grouped by agent CLI, each group led by the CLI it
   expect(within(await listbox()).getByText("Claude Code")).toBeDefined()
   expect(within(await listbox()).getByText("Codex")).toBeDefined()
   expect(within(await listbox()).getByText("OpenCode")).toBeDefined()
-  // The unpinned row first, then each group with the bare CLI id ahead of its
-  // models, then the row that takes whatever was typed.
-  expect(ids[1]).toContain("claude_code")
-  expect(ids[2]).toContain("claude_code:claude-sonnet-5")
+  const catalogIds = ids.filter((id) => !id.startsWith("Other"))
+  expect(catalogIds.some((id) => id.includes("claude_code:claude-sonnet-5"))).toBe(true)
+  expect(catalogIds.every((id) => id.includes(":"))).toBe(true)
   expect(ids.at(-1)).toContain("Other")
 })
 
@@ -309,9 +290,7 @@ it("picks with the keyboard: search, arrow, enter", async () => {
 
   await openPicker(user)
   await search(user, "sonnet")
-  // The row that hands the pin back is always the first, so the first arrow
-  // lands on the first match.
-  await user.keyboard("{ArrowDown}{Enter}")
+  await user.keyboard("{Enter}")
 
   expect(pin.model).toBe("claude_code:claude-sonnet-5")
 })
@@ -397,71 +376,20 @@ it("keeps an effort the model moved to takes as well", async () => {
   expect(pin).toEqual({ model: "codex:gpt-5.5", effort: "max" })
 })
 
-it("hands the pin back to the profile, effort and all", async () => {
-  const user = userEvent.setup()
-  const pin = renderPicker({
-    model: "claude_code:claude-sonnet-5",
-    effort: "medium",
-    fallback: { model: "codex:gpt-5.6-luna", effort: null },
-  })
-
-  await openPicker(user)
-  await user.click(within(await listbox()).getByText("Profile's own"))
-
-  expect(pin).toEqual({ model: "", effort: "" })
-  expect(reads()).toBe("Profile's own — codex:gpt-5.6-luna")
-})
-
-/**
- * The two halves are pinned separately because the daemon takes them
- * separately: an effort with no model beside it runs the model the slot would
- * have run on anyway, at that effort (`http/pins.rs`, `chosen`). So the strip
- * is offered against the profile's own model, and what it stores is an effort
- * with an empty model — which the trigger has to say out loud.
- */
-it("pins an effort of its own over the profile's model, and says so", async () => {
-  const user = userEvent.setup()
-  const pin = renderPicker({ fallback: { model: "codex:gpt-5.5", effort: "high" } })
-
-  await openPicker(user)
-  expect(efforts()).toEqual(["auto (medium)", "low", "medium", "high", "xhigh", "max", "ultra"])
-  expect(effortDescription("medium")).toBe("Balanced reasoning for everyday work")
-
-  await user.click(effortRadio("medium"))
-
-  expect(pin).toEqual({ model: "", effort: "medium" })
-  // The profile's own `high` is not what it is run at any more, so the line
-  // names the model it runs on and the effort actually chosen.
-  expect(reads()).toBe("Profile's own — codex:gpt-5.5 · medium")
-})
-
-it("takes that effort back with the row that hands the pin over", async () => {
-  const user = userEvent.setup()
-  const pin = renderPicker({ effort: "medium", fallback: { model: "codex:gpt-5.5", effort: null } })
-
-  await openPicker(user)
-  await user.click(within(await listbox()).getByText("Profile's own"))
-
-  expect(pin).toEqual({ model: "", effort: "" })
-  expect(reads()).toBe("Profile's own — codex:gpt-5.5")
-})
-
-it("has no effort to offer where nothing says what an empty pin runs on", async () => {
+it("requires a model before it offers effort choices", async () => {
   const user = userEvent.setup()
   renderPicker()
 
   await openPicker(user)
 
-  // Auto is resolved at spawn time, so there is no model here for an effort to
-  // be run at — which the daemon refuses outright.
   expect(screen.queryAllByRole("radio")).toHaveLength(0)
-  expect(screen.getByText(/An effort is run at a model/)).toBeDefined()
+  expect(screen.getByText(/choose one first/)).toBeDefined()
 })
 
-it("says auto where nothing can name what an empty pin resolves to", () => {
+it("asks the user to choose a model before one is picked", () => {
   renderPicker()
 
-  expect(reads()).toBe("auto")
+  expect(reads()).toBe("Choose a model")
 })
 
 it("takes a model the catalog does not carry, as typed", async () => {

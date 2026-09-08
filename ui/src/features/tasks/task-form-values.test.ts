@@ -4,8 +4,8 @@
  * The pins are the whole of the subject here. An agent has no profile behind
  * it any more, so a pin is simply the pin — what used to need a rule about
  * which of two answers won is now a straight read, and what is left to pin
- * down is the tri-state an edit sends: absent leaves the pin alone, the
- * sentinel puts it back on auto, anything else is the pin.
+ * down is the update an edit sends: absent leaves the pin alone and a changed
+ * value sends the concrete model.
  */
 
 import { describe, expect, it } from "vitest"
@@ -26,6 +26,7 @@ function agent(seat: "author" | "reviewer", over: Partial<TaskAgentDto> = {}): T
     seat,
     skills: seat === "author" ? ["coding"] : ["code-review"],
     ...over,
+    model: over.model ?? "codex:gpt-5.6",
   }
 }
 
@@ -37,9 +38,9 @@ const BLANK: TaskFormValues = {
   title: "Wire it",
   description: "",
   author_skills: "coding",
-  author_model: "",
+  author_model: "codex:gpt-5.6",
   author_effort: "",
-  reviewers: [{ skills: "code-review", model: "", effort: "" }],
+  reviewers: [{ skills: "code-review", model: "codex:gpt-5.6", effort: "" }],
   landing: "merge",
   repo_id: "",
   depends_on: [],
@@ -50,18 +51,20 @@ describe("seeding the form from a task", () => {
     const values = taskToFormValues(
       task([
         agent("author", { skills: ["coding", "testing"], model: "codex:o3", effort: "high" }),
-        agent("reviewer", { skills: ["code-review"], model: "claude_code" }),
+        agent("reviewer", { skills: ["code-review"], model: "claude_code:claude-sonnet-5" }),
       ]),
     )
     expect(values.author_skills).toBe("coding, testing")
     expect(values.author_model).toBe("codex:o3")
     expect(values.author_effort).toBe("high")
-    expect(values.reviewers).toEqual([{ skills: "code-review", model: "claude_code", effort: "" }])
+    expect(values.reviewers).toEqual([
+      { skills: "code-review", model: "claude_code:claude-sonnet-5", effort: "" },
+    ])
   })
 
-  it("shows an agent on auto as an empty box", () => {
+  it("uses each agent's required model from the task", () => {
     const values = taskToFormValues(task([agent("author"), agent("reviewer")]))
-    expect(values.author_model).toBe("")
+    expect(values.author_model).toBe("codex:gpt-5.6")
     expect(values.author_effort).toBe("")
   })
 
@@ -82,16 +85,16 @@ describe("creating a task", () => {
         author_model: "codex:o3",
         author_effort: "high",
         reviewers: [
-          { skills: "code-review", model: "claude_code", effort: "" },
-          { skills: "security-review", model: "", effort: "" },
+          { skills: "code-review", model: "claude_code:claude-sonnet-5", effort: "" },
+          { skills: "security-review", model: "codex:gpt-5.6", effort: "" },
         ],
       },
       null,
     )
     expect(body.agents).toEqual([
       { seat: "author", skills: ["coding", "testing"], model: "codex:o3", effort: "high" },
-      { seat: "reviewer", skills: ["code-review"], model: "claude_code" },
-      { seat: "reviewer", skills: ["security-review"] },
+      { seat: "reviewer", skills: ["code-review"], model: "claude_code:claude-sonnet-5" },
+      { seat: "reviewer", skills: ["security-review"], model: "codex:gpt-5.6" },
     ])
   })
 
@@ -103,9 +106,9 @@ describe("creating a task", () => {
     expect(body.agents[0]?.skills).toEqual(["coding", "testing"])
   })
 
-  it("leaves the model out when no box was filled in", () => {
+  it("sends the concrete model where effort is empty", () => {
     const body = toCreateTaskRequest(BLANK, null)
-    expect(body.agents[0]).not.toHaveProperty("model")
+    expect(body.agents[0]).toHaveProperty("model", "codex:gpt-5.6")
     expect(body.agents[0]).not.toHaveProperty("effort")
   })
 })
@@ -122,10 +125,13 @@ describe("updating a task", () => {
     expect(body).not.toHaveProperty("effort")
   })
 
-  it("sends the sentinel for a box emptied back to auto", () => {
-    const body = toUpdateTaskRequest({ ...BLANK, author_model: "", author_effort: "" }, seeded)
-    expect(body.model).toBe("default")
-    expect(body.effort).toBe("default")
+  it("sends an empty effort to restore the model default", () => {
+    const body = toUpdateTaskRequest(
+      { ...BLANK, author_model: "codex:o3", author_effort: "" },
+      seeded,
+    )
+    expect(body).not.toHaveProperty("model")
+    expect(body.effort).toBe("")
   })
 
   it("sends the model chosen, trimmed", () => {
@@ -149,10 +155,10 @@ describe("updating a task", () => {
     // The daemon drops the effort from a pin whose model moves, so the form's
     // reading of it has to travel with the model or it is silently lost.
     const body = toUpdateTaskRequest(
-      { ...BLANK, author_model: "claude_code", author_effort: "high" },
+      { ...BLANK, author_model: "claude_code:claude-opus-5", author_effort: "high" },
       seeded,
     )
-    expect(body.model).toBe("claude_code")
+    expect(body.model).toBe("claude_code:claude-opus-5")
     expect(body.effort).toBe("high")
   })
 
@@ -163,15 +169,15 @@ describe("updating a task", () => {
         author_model: "codex:o3",
         author_effort: "high",
         reviewers: [
-          { skills: "code-review", model: "claude_code", effort: "" },
-          { skills: "performance-review", model: "", effort: "" },
+          { skills: "code-review", model: "claude_code:claude-sonnet-5", effort: "" },
+          { skills: "performance-review", model: "codex:gpt-5.6", effort: "" },
         ],
       },
       seeded,
     )
     expect(body.reviewers).toEqual([
-      { seat: "reviewer", skills: ["code-review"], model: "claude_code" },
-      { seat: "reviewer", skills: ["performance-review"] },
+      { seat: "reviewer", skills: ["code-review"], model: "claude_code:claude-sonnet-5" },
+      { seat: "reviewer", skills: ["performance-review"], model: "codex:gpt-5.6" },
     ])
   })
 })
