@@ -1663,6 +1663,11 @@ export interface components {
              */
             name: string;
             /**
+             * @description The seat this skill serves. An `orchestrator` skill cannot staff a
+             *     task agent.
+             */
+            seat: components["schemas"]["SkillSeat"];
+            /**
              * @description The one line the skill says about itself, read off the `description`
              *     of its frontmatter. It is what an agent sees before it opens the
              *     document, and what a listing shows.
@@ -1670,6 +1675,11 @@ export interface components {
             summary: string;
             updated_at: string;
         };
+        /**
+         * @description Where a skill is used: by the orchestrator, or to staff a task agent.
+         * @enum {string}
+         */
+        SkillSeat: "orchestrator" | "task";
         /**
          * @description One agent staffed on a task: where it sits, what it knows, and what it
          *     runs on.

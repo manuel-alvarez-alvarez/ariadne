@@ -60,6 +60,10 @@ Out: the daemon endpoints themselves (012).
     valid and uses that model's default effort (011).
 13. The model picker lists concrete catalog entries only. No screen shows an
     automatic or default model; `auto` is an effort choice only.
+14. The task form's skill boxes suggest only skills that can staff a task
+    agent; the orchestrator's own playbook is not among them, for the author
+    or a reviewer. The skills screen marks that playbook beside its built-in
+    mark, staying editable and resettable like any other shipped skill.
 
 ## Acceptance criteria
 
@@ -82,6 +86,12 @@ Out: the daemon endpoints themselves (012).
   first and delete for the second and never the other way round
   (`ui/src/features/skills/skill-editor.test.tsx`) — the rule of 017 read from
   the client side.
+- The orchestrator's own playbook is marked beside the built-in mark
+  (`ui/src/features/skills/skill-editor.test.tsx::marks the orchestrator's own
+  playbook as not a task staffing choice`) and left out of the task form's
+  skill suggestions, for the author and every reviewer
+  (`ui/src/features/tasks/task-form-dialog.test.tsx::suggests no
+  orchestrator-only skill for the author or a reviewer`).
 - The repository dialog puts a placeholder refusal on the landing-briefing
   field rather than on the branch its message also names
   (`ui/src/features/repositories/repository-form-dialog.test.tsx`).

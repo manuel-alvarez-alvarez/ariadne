@@ -12,6 +12,12 @@ import { CreateTaskDialog, EditTaskDialog } from "./task-form-dialog"
 const GOAL: GoalDto = aGoal()
 const CODING: SkillDto = aSkill({ name: "coding" })
 const REVIEWING: SkillDto = aSkill({ name: "code-review" })
+/** The orchestrator's own playbook: not a task staffing choice. */
+const ORCHESTRATION: SkillDto = aSkill({
+  name: "orchestration",
+  seat: "orchestrator",
+  summary: "Plan a goal.",
+})
 const CATALOG: ModelDto[] = [
   aModel({
     id: "codex:gpt-5.6",
@@ -53,7 +59,7 @@ beforeEach(() => {
       writePaths.push(`${request.method} ${pathname}`)
       writes.push(await request.clone().json())
     }
-    if (pathname === "/v1/skills") return jsonResponse([CODING, REVIEWING])
+    if (pathname === "/v1/skills") return jsonResponse([CODING, REVIEWING, ORCHESTRATION])
     if (pathname === "/v1/models") return jsonResponse(CATALOG)
     if (pathname === "/v1/tasks") return jsonResponse([])
     if (request.method === "PATCH" && pathname === `/v1/tasks/${TASK.id}`) return jsonResponse(TASK)
@@ -90,6 +96,12 @@ function renderDialog() {
 function renderEdit(task: TaskDto = TASK, onOpenChange = vi.fn()) {
   renderScreen(<EditTaskDialog task={task} open onOpenChange={onOpenChange} />)
   return onOpenChange
+}
+
+/** The names a skills box suggests, read off the `<datalist>` behind it. */
+function suggestionsOf(input: HTMLInputElement): (string | null)[] {
+  const list = document.getElementById(input.getAttribute("list") ?? "")
+  return [...(list?.children ?? [])].map((option) => option.getAttribute("value"))
 }
 
 async function pickModel(user: ReturnType<typeof userEvent.setup>, slot: string, model: string) {
@@ -221,6 +233,15 @@ describe("editing a pending task", () => {
 })
 
 describe("the rest of the task form", () => {
+  it("suggests no orchestrator-only skill for the author or a reviewer", async () => {
+    renderDialog()
+
+    const author = (await screen.findByLabelText("Author skills")) as HTMLInputElement
+    const reviewer = (await screen.findByLabelText("Reviewer 1 skills")) as HTMLInputElement
+    expect(suggestionsOf(author)).toEqual(["coding", "code-review"])
+    expect(suggestionsOf(reviewer)).toEqual(["coding", "code-review"])
+  })
+
   it("asks before discarding a dirty draft and keeps it when dismissed", async () => {
     const user = userEvent.setup()
     renderDialog()

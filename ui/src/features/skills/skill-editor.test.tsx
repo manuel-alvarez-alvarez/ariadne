@@ -29,6 +29,13 @@ const REWRITTEN: SkillDto = aSkill({
   document_is_default: false,
 })
 
+/** The orchestrator's own playbook, not a task staffing choice. */
+const ORCHESTRATION: SkillDto = aSkill({
+  name: "orchestration",
+  seat: "orchestrator",
+  summary: "Plan a goal.",
+})
+
 const MINE: SkillDto = aSkill({
   name: "api-design",
   summary: "Design an HTTP interface.",
@@ -85,6 +92,16 @@ describe("the document", () => {
   it("says a shipped skill has been written over, rather than calling it shipped", () => {
     renderEditor(REWRITTEN)
     expect(screen.getByText("shipped · edited")).toBeDefined()
+  })
+
+  it("marks the orchestrator's own playbook as not a task staffing choice", () => {
+    renderEditor(ORCHESTRATION)
+    expect(screen.getByText("orchestrator only")).toBeDefined()
+  })
+
+  it("says nothing extra beside a skill that staffs task agents", () => {
+    renderEditor(SHIPPED)
+    expect(screen.queryByText("orchestrator only")).toBeNull()
   })
 
   it("saves nothing until the text differs, and sends the whole document", async () => {

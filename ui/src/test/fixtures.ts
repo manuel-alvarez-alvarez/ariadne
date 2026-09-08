@@ -116,6 +116,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
 export function aSkill(overrides: Partial<SkillDto> = {}): SkillDto {
   return {
     name: "coding",
+    seat: "task",
     summary: "Implement a task from its specification.",
     document: "---\nname: coding\ndescription: Implement a task from its specification.\n---\n",
     document_is_default: true,

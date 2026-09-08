@@ -165,8 +165,14 @@ function TaskFormDialog({
   const hasModel =
     form.watch("author_model").trim().length > 0 &&
     reviewerRowValues.every((reviewer) => reviewer.model.trim().length > 0)
-  /** Every skill name the daemon knows, as the boxes suggest them. */
-  const skillNames = useMemo(() => (skills.data ?? []).map((skill) => skill.name), [skills.data])
+  /**
+   * Every skill name a task agent can be staffed with, as the boxes suggest
+   * them — the orchestrator's own playbook is not a task staffing choice.
+   */
+  const skillNames = useMemo(
+    () => (skills.data ?? []).filter((skill) => skill.seat === "task").map((skill) => skill.name),
+    [skills.data],
+  )
 
   const submitError = ApiError.is(submit.error) ? submit.error : null
   useClearErrorOnEdit(form, submit)

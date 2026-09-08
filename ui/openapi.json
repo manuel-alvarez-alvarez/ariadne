@@ -3508,6 +3508,7 @@
         "type": "object",
         "required": [
           "name",
+          "seat",
           "summary",
           "document",
           "document_is_default",
@@ -3536,6 +3537,10 @@
             "description": "Kebab-case; how an agent loads the skill and how a task names it.",
             "example": "code-review"
           },
+          "seat": {
+            "$ref": "#/components/schemas/SkillSeat",
+            "description": "The seat this skill serves. An `orchestrator` skill cannot staff a\ntask agent."
+          },
           "summary": {
             "type": "string",
             "description": "The one line the skill says about itself, read off the `description`\nof its frontmatter. It is what an agent sees before it opens the\ndocument, and what a listing shows."
@@ -3544,6 +3549,14 @@
             "type": "string"
           }
         }
+      },
+      "SkillSeat": {
+        "type": "string",
+        "description": "Where a skill is used: by the orchestrator, or to staff a task agent.",
+        "enum": [
+          "orchestrator",
+          "task"
+        ]
       },
       "TaskAgentDto": {
         "type": "object",

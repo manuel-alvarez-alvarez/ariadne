@@ -47,6 +47,9 @@ export function SkillEditor({ skill, onDeleted }: { skill: SkillDto; onDeleted: 
         <Badge variant={skill.builtin ? "secondary" : "outline"}>
           {skill.builtin ? (skill.document_is_default ? "shipped" : "shipped · edited") : "yours"}
         </Badge>
+        {/* The orchestrator's own playbook stays here to inspect, edit and
+            reset, but it is not a task staffing choice — this says so. */}
+        {skill.seat === "orchestrator" ? <Badge variant="outline">orchestrator only</Badge> : null}
         <p className="w-full text-muted-foreground text-sm">{skill.summary}</p>
       </header>
 
