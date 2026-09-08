@@ -66,9 +66,10 @@ same binary also serves (013).
     as the detail: `<agent kind> · <summary>` — the same `summary` the
     daemon builds onto the event's DTO (012), whichever CLI reported it.
 12. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
-   block, no transport detail, no repeated envelope. `--format json` prints
-   the daemon's envelope instead, so a script keeps the status and code the
-   human line drops.
+   block, no transport detail, no repeated envelope. Attach failures keep
+   recovery commands in the rendered hint on that same line. `--format json`
+   prints the daemon's envelope instead, so a script keeps the status and code
+   the human line drops.
 13. The exit code says what kind of failure it was, and every kind has one of
    its own; it is documented in `ariadne --help`.
 14. Completions are generated for bash and zsh and complete against live data:
@@ -110,8 +111,9 @@ same binary also serves (013).
   (`complete.rs::the_curated_fallback_offers_no_bare_cli_and_no_default`).
 - `ariadne events` prints the daemon's summary in an agent event's detail
   (`commands/events.rs::an_agent_event_reads_the_same_recorded_as_it_does_live`).
-- A failure is one line, and JSON keeps the envelope
-  (`error.rs::a_bare_message_is_the_whole_line`,
+- A failure is one line, attach hints stay on that line, and JSON keeps the
+  envelope (`error.rs::a_bare_message_is_the_whole_line`,
+  `::an_attach_failure_is_one_line_with_recovery_commands`,
   `::a_local_failure_reads_as_context_then_cause`,
   `::json_output_keeps_the_machine_readable_half`), with an exit code per kind
   (`::every_kind_of_failure_has_an_exit_code_of_its_own`).

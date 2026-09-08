@@ -81,8 +81,8 @@ that is the CLI reference, and it is the one this binary actually implements.
 `ariadne doctor` is what to run when something is not working — it reports what
 your shell sees *and* what the daemon sees, because a daemon started by launchd
 or systemd carries the PATH its service file was written with. Every command
-that prints data takes `--format json` (the ones that hand the terminal to
-another program — `attach`, `daemon logs`, `completions`, `setup` — do not).
+that prints data takes `--format json`. The no-JSON exceptions hand the terminal
+to another program: `attach`, `daemon logs`, `completions` and `setup`.
 The daemon serves its full API as OpenAPI at `/api-docs/openapi.json`, Swagger
 UI at `/docs`, and a live event stream at `/v1/events/stream`.
 

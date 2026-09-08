@@ -132,14 +132,15 @@ async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
         && matches!(task.status, TaskStatus::Finished | TaskStatus::Cancelled)
         && task.worktree_path.is_none()
     {
-        bail!(
-            "task {id} is {status} — its agents and worktrees have been cleaned up.\n\
-             Inspect what happened instead:\n\
-             \x20 ariadne task history {id}\n\
-             \x20 ariadne task reviews {id}\n\
-             \x20 ariadne session ls --all --task {id}   (then: ariadne session logs <session-id>)",
+        return Err(crate::error::Failure::conflict(format!(
+            "task {id} is {status} — its agents and worktrees have been cleaned up",
             status = task.status.as_str()
-        );
+        ))
+        .hint(format!(
+            "inspect with: ariadne task history {id}; ariadne task messages {id}; ariadne \
+             session ls --all --task {id} (then: ariadne session logs <session-id>)"
+        ))
+        .err());
     }
     Ok(())
 }
@@ -188,8 +189,8 @@ pub async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) -> Result
     if let Some(session) = found::<SessionDto>(client, &format!("/v1/sessions/{id}")).await? {
         if seat.is_some() {
             bail!(
-                "--seat does not apply to a session id: {id} is already the {} session \
-                 of that agent (pass the task or goal id to pick a seat)",
+                "--seat does not apply to a session id: {id} is already the {} session of that agent \
+                 (pass the task or goal id to pick a seat)",
                 session.seat.as_str()
             );
         }

@@ -324,6 +324,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_attach_failure_is_one_line_with_recovery_commands() {
+        let err = Failure::conflict(
+            "task 01TASK is finished — its agents and worktrees have been cleaned up",
+        )
+        .hint("inspect with: ariadne task history 01TASK; ariadne task messages 01TASK")
+        .err();
+        assert_eq!(
+            error_line(false, &err),
+            "error: task 01TASK is finished — its agents and worktrees have been cleaned up \
+             (inspect with: ariadne task history 01TASK; ariadne task messages 01TASK)"
+        );
+    }
+
     /// The whole point of the codes: a script tells a missing id from a
     /// daemon that is not there from a refusal, without reading the line.
     #[test]

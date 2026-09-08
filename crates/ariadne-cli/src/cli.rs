@@ -81,7 +81,7 @@ const TASK_EXAMPLES: &str = "\
 Examples:
   ariadne task ls --goal <goal-id>
   ariadne task ls --status in-progress,under-review
-  ariadne task inspect <task-id>           # and: diff, reviews, history
+  ariadne task inspect <task-id>           # and: diff, messages, history
   ariadne task attach <task-id>            # the author's terminal
 ";
 
@@ -334,7 +334,7 @@ pub enum Command {
     ///
     /// A task is one unit of a goal, owned by an author agent in a worktree
     /// of its own from its first commit to the end, with reviewer agents
-    /// gating it. Its diff, its reviews and its history are all here.
+    /// gating it. Its diff, its messages and its history are all here.
     #[command(after_help = TASK_EXAMPLES)]
     Task {
         #[command(subcommand)]
