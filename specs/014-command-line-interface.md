@@ -12,6 +12,7 @@ tests:
   - crates/ariadne-cli/src/commands/doctor.rs
   - crates/ariadne-cli/src/commands/doctor/checks.rs
   - crates/ariadne-cli/src/commands/events.rs
+  - crates/ariadne-cli/src/commands/task.rs
 ---
 
 # Command-line interface
@@ -62,31 +63,35 @@ same binary also serves (013).
    (`--reviewer`, `--no-reviewer`), and whether the goal is over
    (`goal complete`).
 10. What the agents said to each other is readable from here: `task messages`
-    lists the whole channel of a task, oldest first (018).
-11. `ariadne events` prints the daemon's own gist of an agent event's payload
+    lists the whole channel of a task, oldest first (018); `--full` prints
+    each one whole, through `$PAGER`, since the table cuts a body to its
+    opening.
+11. `task history` is a table too: each row is one transition, `from` and
+    `to` painted with the same status glyphs every other status cell carries.
+12. `ariadne events` prints the daemon's own gist of an agent event's payload
     as the detail: `<agent kind> · <summary>` — the same `summary` the
     daemon builds onto the event's DTO (012), whichever CLI reported it.
-12. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
+13. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
    block, no transport detail, no repeated envelope. Attach failures keep
    recovery commands in the rendered hint on that same line. `--format json`
    prints the daemon's envelope instead, so a script keeps the status and code
    the human line drops.
-13. The exit code says what kind of failure it was, and every kind has one of
+14. The exit code says what kind of failure it was, and every kind has one of
    its own; it is documented in `ariadne --help`.
-14. Completions are generated for bash and zsh and complete against live data:
+15. Completions are generated for bash and zsh and complete against live data:
     candidates newest first, live sessions before ended ones when attaching,
     the efforts an entry lists and no others.
-15. `ariadne doctor` answers why the daemon will not start — including a
+16. `ariadne doctor` answers why the daemon will not start — including a
     database written by a release whose migrations this one no longer ships,
     which it names along with the file to delete (016).
-16. A tool is checked for its version as well as its presence where a version
+17. A tool is checked for its version as well as its presence where a version
     is what decides: git below 2.42 has no `worktree add --orphan` and so
     cannot start a task in a repository with no commits (002), which is a
     warning naming that one case, on this PATH and on the daemon's alike.
-17. `skill ls` marks an orchestrator-only skill while leaving it available to
-   inspect, edit and reset.
-18. Each `doctor` section is a shared output table: its check, verdict and
-   detail columns fit the terminal, and `--no-trunc` prints their cells whole.
+18. `skill ls` marks an orchestrator-only skill while leaving it available to
+    inspect, edit and reset.
+19. Each `doctor` section is a shared output table: its check, verdict and
+    detail columns fit the terminal, and `--no-trunc` prints their cells whole.
 
 ## Acceptance criteria
 
@@ -114,6 +119,13 @@ same binary also serves (013).
   (`complete.rs::the_curated_fallback_offers_no_bare_cli_and_no_default`).
 - `ariadne events` prints the daemon's summary in an agent event's detail
   (`commands/events.rs::an_agent_event_reads_the_same_recorded_as_it_does_live`).
+- `task history` paints `from` and `to`, and a row carries a dash for a
+  transition with no reason
+  (`commands/task.rs::history_paints_the_from_and_to_statuses`,
+  `::a_history_row_carries_the_transition_and_a_dash_for_no_reason`).
+- `task messages --full` prints a message's header and its whole body, every
+  message of the channel, not just the first
+  (`commands/task.rs::a_full_message_carries_its_header_and_its_whole_body`).
 - A failure is one line, attach hints stay on that line, and JSON keeps the
   envelope (`error.rs::a_bare_message_is_the_whole_line`,
   `::an_attach_failure_is_one_line_with_recovery_commands`,

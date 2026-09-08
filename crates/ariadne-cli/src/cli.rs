@@ -515,12 +515,14 @@ const LISTINGS: &[&str] = &[
     "skill ls",
     "repo ls",
     "session ls",
+    "task history",
     "task ls",
     "task messages",
 ];
 
-/// Subcommands that print something long enough to page.
-const PAGED: &[&str] = &["session logs", "task diff", "task logs"];
+/// Subcommands that print something long enough to page. `task messages`
+/// only does so with `--full`, but that is still what `--no-pager` is for.
+const PAGED: &[&str] = &["session logs", "task diff", "task logs", "task messages"];
 
 /// The clap command, with each global flag hidden wherever it does nothing.
 ///

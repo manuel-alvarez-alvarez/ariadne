@@ -55,12 +55,25 @@ const LS: &[Column] = &[
 const INDENT: &str = "\n              ";
 
 /// Columns of `task messages`. A message body is prose, and only its opening
-/// belongs in a table — `task messages --format json` has all of it.
+/// belongs in a table — `task messages --format json` has all of it, and
+/// `task messages --full` pages every body whole.
 const MESSAGES: &[Column] = &[
     col("kind", UNCAPPED),
     col("from", 20).title(),
     col("to", 20).rank(1),
     col("body", 60).rank(0),
+];
+
+/// Columns of `task history`. `time` is when each transition happened rather
+/// than how long ago, since a run of them is read as a sequence and the exact
+/// times are what line one up against the daemon's own log; `from` and `to`
+/// carry the same colour and glyph a status cell always does.
+const HISTORY: &[Column] = &[
+    col("time", UNCAPPED),
+    col("from", UNCAPPED).status(),
+    col("to", UNCAPPED).status(),
+    col("actor", UNCAPPED).rank(1),
+    col("reason", 60).rank(0),
 ];
 
 /// What `task create --help` ends with.
@@ -218,6 +231,11 @@ pub enum TaskCommand {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
+        /// Print each message in full, through the pager, instead of the
+        /// table's truncated body — no effect on `--format json`, which
+        /// already carries every body whole
+        #[arg(long)]
+        full: bool,
     },
     /// Show a task's transition history
     History {
@@ -349,7 +367,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
             print(format, &t, || print_kv(&inspect_pairs(&t)))?;
         }
-        TaskCommand::Messages { id } => {
+        TaskCommand::Messages { id, full } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let mut messages: Vec<MessageDto> =
                 client.get_json(&format!("/v1/tasks/{id}/messages")).await?;
@@ -361,6 +379,13 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             // The agents of the task, so a message reads as the skills that
             // sent it rather than as an id.
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
+            if full && format == Format::Table {
+                match messages.is_empty() {
+                    true => note("nothing said yet"),
+                    false => pager::page(&full_messages(&t, &messages))?,
+                }
+                return Ok(());
+            }
             print_list(
                 format,
                 &messages,
@@ -381,24 +406,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let rows: Vec<TaskTransitionDto> = client
                 .get_json(&format!("/v1/tasks/{id}/transitions"))
                 .await?;
-            print(format, &rows, || {
-                for t in &rows {
-                    println!(
-                        "[{}] {} -> {} by {}{}",
-                        local_time(&t.created_at),
-                        t.from_status,
-                        t.to_status,
-                        t.actor,
-                        t.reason
-                            .as_ref()
-                            .map(|r| format!(" ({r})"))
-                            .unwrap_or_default()
-                    );
-                }
-                if rows.is_empty() {
-                    note("no transitions yet");
-                }
-            })?;
+            print_list(format, &rows, HISTORY, history_row, "no transitions yet")?;
         }
         TaskCommand::Cancel { id, yes } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
@@ -529,6 +537,17 @@ fn ls_row(t: &TaskDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
         yes_no(t.pr_url.is_some(), "-"),
         usage_cell(&t.usage.total),
         t.branch.clone(),
+    ]
+}
+
+/// One row of `task history`, in [`HISTORY`]'s order.
+fn history_row(t: &TaskTransitionDto) -> Vec<String> {
+    vec![
+        local_time(&t.created_at),
+        t.from_status.clone(),
+        t.to_status.clone(),
+        t.actor.clone(),
+        dash(t.reason.as_deref()),
     ]
 }
 
@@ -678,14 +697,39 @@ fn party_label(task: &TaskDto, actor: Actor, agent_id: Option<&str>) -> String {
     }
 }
 
+/// One message of `task messages --full`: the same header its row of the
+/// table carries, over the body exactly as it came — no cut, since printing
+/// it whole is the point of `--full`.
+fn full_message(t: &TaskDto, m: &MessageDto) -> String {
+    format!(
+        "{} {} -> {} ({})\n{}",
+        local_time(&m.created_at),
+        party_label(t, m.from_actor, m.from_agent_id.as_deref()),
+        party_label(t, m.to_actor, m.to_agent_id.as_deref()),
+        m.kind.as_str(),
+        m.body
+    )
+}
+
+/// Every message of `task messages --full`, in the order they were passed —
+/// one text handed to the pager, rather than a page per message.
+fn full_messages(t: &TaskDto, messages: &[MessageDto]) -> String {
+    messages
+        .iter()
+        .map(|m| full_message(t, m))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use ariadne_api::tasks::{AgentUsageDto, TaskUsageDto};
+    use ariadne_core::MessageKind;
 
     use crate::commands::fixtures;
-    use crate::output::{View, kv_block, style};
+    use crate::output::{View, kv_block, render_table, style};
 
     /// Three hours after every fixture was created, so an `AGE` cell is a
     /// figure a test can name.
@@ -912,6 +956,123 @@ mod tests {
             ls_row(&dto(), now())[5],
             "-",
             "and a task nobody published says nothing"
+        );
+    }
+
+    /// A transition, in [`HISTORY`]'s order — and a dash where it carries no
+    /// reason, the way every optional cell in this CLI reads.
+    #[test]
+    fn a_history_row_carries_the_transition_and_a_dash_for_no_reason() {
+        let t = TaskTransitionDto {
+            id: "01TRANS".into(),
+            from_status: "in_progress".into(),
+            to_status: "under_review".into(),
+            actor: "author".into(),
+            reason: None,
+            created_at: fixtures::NOW.into(),
+        };
+        let row = history_row(&t);
+        assert_eq!(
+            row.len(),
+            HISTORY.len(),
+            "a row per column, in HISTORY's order"
+        );
+        assert_eq!(row[0], local_time(fixtures::NOW));
+        assert_eq!(row[1], "in_progress");
+        assert_eq!(row[2], "under_review");
+        assert_eq!(row[3], "author");
+        assert_eq!(row[4], "-");
+
+        let reasoned = TaskTransitionDto {
+            reason: Some("asked for review".into()),
+            ..t
+        };
+        assert_eq!(history_row(&reasoned)[4], "asked for review");
+    }
+
+    /// `task history` colours `from` and `to` the way every status cell is —
+    /// glyph inside the colour — the same contract `task ls`'s status column
+    /// keeps; with colour off, the row is bare words and no escapes.
+    #[test]
+    fn history_paints_the_from_and_to_statuses() {
+        let row = history_row(&TaskTransitionDto {
+            id: "01TRANS".into(),
+            from_status: "in_progress".into(),
+            to_status: "under_review".into(),
+            actor: "author".into(),
+            reason: None,
+            created_at: fixtures::NOW.into(),
+        });
+        let rows = vec![row];
+
+        let coloured = render_table(
+            HISTORY,
+            &rows,
+            &View {
+                color: true,
+                ..View::plain()
+            },
+        )
+        .expect("render");
+        assert!(
+            coloured.contains(&style::paint(
+                true,
+                style::status("in_progress").0,
+                "● in_progress"
+            )),
+            "{coloured}"
+        );
+        assert!(
+            coloured.contains(&style::paint(
+                true,
+                style::status("under_review").0,
+                "● under_review"
+            )),
+            "{coloured}"
+        );
+
+        let plain = render_table(HISTORY, &rows, &View::plain()).expect("render");
+        assert!(!plain.contains('\u{1b}'), "{plain}");
+        assert_eq!(strip_escapes(&coloured), plain, "colour adds only escapes");
+    }
+
+    /// `--full` prints the same header a table row carries, over the body
+    /// exactly as it came — proven directly, with no pager or terminal
+    /// behind it.
+    #[test]
+    fn a_full_message_carries_its_header_and_its_whole_body() {
+        let t = TaskDto {
+            agents: vec![reviewer("01REV", "code-review")],
+            ..dto()
+        };
+        let whole_body = "a".repeat(200);
+        let m = MessageDto {
+            id: "01MSG".into(),
+            goal_id: t.goal_id.clone(),
+            task_id: Some(t.id.clone()),
+            kind: MessageKind::Message,
+            from_actor: Actor::Reviewer,
+            from_agent_id: Some("01REV".into()),
+            from_session: None,
+            to_actor: Actor::Author,
+            to_agent_id: None,
+            body: whole_body.clone(),
+            delivered_at: None,
+            created_at: fixtures::NOW.into(),
+        };
+
+        let text = full_message(&t, &m);
+        assert!(text.contains(&whole_body), "the body is not cut: {text}");
+        assert!(
+            text.contains("code-review -> author"),
+            "the header names both ends: {text}"
+        );
+
+        let joined = full_messages(&t, &[m.clone(), m]);
+        assert_eq!(
+            joined.matches(&whole_body).count(),
+            2,
+            "every message is printed, not just the first: {joined}"
         );
     }
 }

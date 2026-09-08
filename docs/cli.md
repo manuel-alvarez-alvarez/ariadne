@@ -71,6 +71,8 @@ ariadne session send <session-id> y    # type into a live agent, as the UI does
 ariadne task ls -o wide                # every column, however narrow the terminal
 ariadne task ls --columns id,title,age # or exactly the ones you name
 ariadne task ls -q | xargs -n1 ariadne task inspect
+ariadne task history <task-id>         # every status transition, timestamped and coloured
+ariadne task messages <task-id> --full # each message whole, through $PAGER
 ariadne task diff <task-id>            # coloured, and through $PAGER on a terminal
 ```
 
@@ -101,5 +103,6 @@ Statuses are coloured and carry a glyph — `●` running, `○` pending, `✓` 
 or ok, `✗` failed or cancelled, `?` waiting on you, `!` a warning worth a look
 — so a table reads the same without colour. `--color auto|always|never`
 decides, `NO_COLOR` is honoured, and a pipe is plain unless you ask otherwise
-(`--color always`). `task diff` and the `logs` snapshots go through `$PAGER`
-(`less -R`) on a terminal; `--no-pager` streams them instead.
+(`--color always`). `task diff`, the `logs` snapshots and `task messages
+--full` go through `$PAGER` (`less -R`) on a terminal; `--no-pager` streams
+them instead.
