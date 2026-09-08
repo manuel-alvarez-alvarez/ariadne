@@ -8,9 +8,10 @@ use serde_json::json;
 use ariadne_api::goals::{CreateGoalRequest, GoalDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
-use ariadne_client::Client;
+use ariadne_client::{Client, SseEvent};
 use ariadne_core::GoalStatus;
 
+use super::follow;
 use super::query_path;
 use super::resolve::{self, Kind};
 use super::{Subject, confirm, parse_effort, parse_model};
@@ -102,6 +103,9 @@ pub enum GoalCommand {
         /// nothing to add once --status names one
         #[arg(short, long)]
         all: bool,
+        /// Redraw the table whenever a goal changes, until Ctrl-C
+        #[arg(long)]
+        watch: bool,
     },
     /// Show a goal
     Inspect {
@@ -173,38 +177,11 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                 .await?;
             print(format, &goal, || println!("{}", goal.id))?;
         }
-        GoalCommand::Ls { statuses, all } => {
-            let goals: Vec<GoalDto> = client.get_json(&goals_path(&statuses)?).await?;
-            let goals = visible(goals, all, &statuses);
-            let now = chrono::Utc::now();
-            print_list(
-                format,
-                &goals,
-                LS,
-                |g| {
-                    vec![
-                        g.id.clone(),
-                        g.title.clone(),
-                        g.status.as_str().into(),
-                        age(&g.created_at, now),
-                        usage_cell(&g.usage.total),
-                        g.repos
-                            .iter()
-                            .map(|r| r.path.as_str())
-                            .collect::<Vec<_>>()
-                            .join(","),
-                    ]
-                },
-                // An empty list under a filter is not an empty system, and
-                // telling the reader to create a goal would hide the ones that
-                // are right there.
-                match (statuses.is_empty(), all) {
-                    (false, _) => "no goals match that filter",
-                    (true, true) => "no goals yet — create one with: ariadne goal create",
-                    (true, false) => "no goals under way — finished ones are behind --all",
-                },
-            )?;
-        }
+        GoalCommand::Ls {
+            statuses,
+            all,
+            watch,
+        } => ls(client, statuses, all, watch, format).await?,
         GoalCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Goal, &id).await?;
             let g: GoalDto = client.get_json(&goal_path(&id)).await?;
@@ -330,6 +307,65 @@ fn visible(goals: Vec<GoalDto>, all: bool, statuses: &[GoalStatus]) -> Vec<GoalD
 
 fn goal_path(id: &str) -> String {
     format!("/v1/goals/{id}")
+}
+
+/// The events that change what `goal ls` shows.
+fn relevant(frame: &SseEvent) -> bool {
+    matches!(
+        frame.event.as_str(),
+        "goal_created" | "goal_updated" | "goal_deleted"
+    )
+}
+
+/// `goal ls [--watch]`: the table, and with `--watch` the table again every
+/// time a goal changes.
+async fn ls(
+    client: &Client,
+    statuses: Vec<GoalStatus>,
+    all: bool,
+    watch: bool,
+    format: Format,
+) -> Result<()> {
+    if !watch {
+        return render(client, &statuses, all, format).await;
+    }
+    follow::watch(client, "/v1/events/stream", relevant, async || {
+        render(client, &statuses, all, format).await
+    })
+    .await
+}
+
+/// The table as it stands, read afresh.
+async fn render(client: &Client, statuses: &[GoalStatus], all: bool, format: Format) -> Result<()> {
+    let goals: Vec<GoalDto> = client.get_json(&goals_path(statuses)?).await?;
+    let goals = visible(goals, all, statuses);
+    let now = chrono::Utc::now();
+    print_list(
+        format,
+        &goals,
+        LS,
+        |g| {
+            vec![
+                g.id.clone(),
+                g.title.clone(),
+                g.status.as_str().into(),
+                age(&g.created_at, now),
+                usage_cell(&g.usage.total),
+                g.repos
+                    .iter()
+                    .map(|r| r.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ]
+        },
+        // An empty list under a filter is not an empty system, and telling the
+        // reader to create a goal would hide the ones that are right there.
+        match (statuses.is_empty(), all) {
+            (false, _) => "no goals match that filter",
+            (true, true) => "no goals yet — create one with: ariadne goal create",
+            (true, false) => "no goals under way — finished ones are behind --all",
+        },
+    )
 }
 
 /// What a goal-level transition prints: the goal it produced, or where it got

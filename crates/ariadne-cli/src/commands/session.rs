@@ -9,8 +9,9 @@ use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{
     SessionDto, SessionInputRequest, SessionListQuery, SessionLogChunk, SessionLogsResponse,
 };
+use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::TaskDto;
-use ariadne_client::Client;
+use ariadne_client::{Client, SseEvent};
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use super::attention::reason_label;
@@ -91,6 +92,9 @@ pub enum SessionCommand {
         /// nothing to add once --status names one
         #[arg(short, long)]
         all: bool,
+        /// Redraw the table whenever a session changes, until Ctrl-C
+        #[arg(long)]
+        watch: bool,
     },
     /// Show a session
     Inspect {
@@ -148,65 +152,8 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             seat,
             attention,
             all,
-        } => {
-            let filtered = goal.is_some()
-                || task.is_some()
-                || !statuses.is_empty()
-                || seat.is_some()
-                || attention;
-            let goal = match goal {
-                Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
-                None => None,
-            };
-            let task = match task {
-                Some(task) => Some(resolve::id(client, Kind::Task, &task).await?),
-                None => None,
-            };
-            let query = SessionListQuery {
-                goal,
-                task,
-                status: one_of(&statuses),
-                // A flag that is not set is not a filter for sessions that
-                // want nobody: it is no filter at all.
-                attention: attention.then_some(true),
-            };
-            let sessions: Vec<SessionDto> = client
-                .get_json(&query_path("/v1/sessions", &query)?)
-                .await?;
-            let sessions = visible(sessions, all, &statuses, seat);
-            let context = match format {
-                Format::Table => SessionContext::fetch_for(client, &sessions).await,
-                Format::Json => SessionContext::default(),
-            };
-            let now = chrono::Utc::now();
-            print_list(
-                format,
-                &sessions,
-                LS,
-                |s| {
-                    vec![
-                        s.id.clone(),
-                        context.label(s),
-                        s.status.as_str().into(),
-                        attention_label(s.attention_reason),
-                        age(&s.created_at, now),
-                        s.seat.as_str().into(),
-                        s.agent_kind.as_str().into(),
-                        usage_cell(&s.usage),
-                    ]
-                },
-                // A named status already says which sessions were asked for,
-                // so --all has nothing left to offer.
-                match (filtered, all || !statuses.is_empty()) {
-                    (true, true) => "no sessions match that filter",
-                    (true, false) => {
-                        "no live sessions match that filter — finished ones are behind --all"
-                    }
-                    (false, true) => "no sessions yet",
-                    (false, false) => "no live sessions — finished ones are behind --all",
-                },
-            )?;
-        }
+            watch,
+        } => ls(client, task, goal, statuses, seat, attention, all, watch, format).await?,
         SessionCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
             let s: SessionDto = client.get_json(&session_path(&id)).await?;
@@ -297,6 +244,138 @@ fn keystrokes(text: &str, no_newline: bool) -> String {
 
 fn session_path(id: &str) -> String {
     format!("/v1/sessions/{id}")
+}
+
+/// The events that change what `session ls` shows. A goal going takes its
+/// sessions with it, which no `session_*` event says.
+fn relevant(frame: &SseEvent) -> bool {
+    matches!(
+        frame.event.as_str(),
+        "session_created" | "session_updated" | "goal_deleted"
+    )
+}
+
+/// Where a `session ls --watch` subscribes: scoped to the goal alone, never
+/// to the task, even though `session ls` itself also takes `--task`.
+///
+/// `BusEvent::matches` in the daemon requires a task id to equal the
+/// filter's, and `goal_deleted` carries none — so a stream asked for one
+/// task would never hear that the goal it belongs to, and so the task and
+/// its sessions, is gone. The goal alone still keeps a watch from being
+/// woken by every other goal in the system; narrowing to the one task is
+/// `render`'s job, on what the stream only signalled had changed.
+fn watch_path(goal: Option<&str>) -> Result<String> {
+    query_path(
+        "/v1/events/stream",
+        &EventStreamQuery {
+            goal: goal.map(str::to_string),
+            task: None,
+        },
+    )
+}
+
+/// `session ls [--watch]`: the table, and with `--watch` the table again
+/// every time a session changes.
+#[allow(clippy::too_many_arguments)]
+async fn ls(
+    client: &Client,
+    task: Option<String>,
+    goal: Option<String>,
+    statuses: Vec<SessionStatus>,
+    seat: Option<Seat>,
+    attention: bool,
+    all: bool,
+    watch: bool,
+    format: Format,
+) -> Result<()> {
+    // Resolved once rather than per redraw: what the caller typed names the
+    // same goal and task every time round, and a watch is not a new question.
+    let goal = match goal {
+        Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
+        None => None,
+    };
+    let task = match task {
+        Some(task) => Some(resolve::id(client, Kind::Task, &task).await?),
+        None => None,
+    };
+    if !watch {
+        return render(client, goal, task, &statuses, seat, attention, all, format).await;
+    }
+    let path = watch_path(goal.as_deref())?;
+    follow::watch(client, &path, relevant, async || {
+        render(
+            client,
+            goal.clone(),
+            task.clone(),
+            &statuses,
+            seat,
+            attention,
+            all,
+            format,
+        )
+        .await
+    })
+    .await
+}
+
+/// The table as it stands, read afresh.
+#[allow(clippy::too_many_arguments)]
+async fn render(
+    client: &Client,
+    goal: Option<String>,
+    task: Option<String>,
+    statuses: &[SessionStatus],
+    seat: Option<Seat>,
+    attention: bool,
+    all: bool,
+    format: Format,
+) -> Result<()> {
+    let filtered =
+        goal.is_some() || task.is_some() || !statuses.is_empty() || seat.is_some() || attention;
+    let query = SessionListQuery {
+        goal,
+        task,
+        status: one_of(statuses),
+        // A flag that is not set is not a filter for sessions that want
+        // nobody: it is no filter at all.
+        attention: attention.then_some(true),
+    };
+    let sessions: Vec<SessionDto> = client
+        .get_json(&query_path("/v1/sessions", &query)?)
+        .await?;
+    let sessions = visible(sessions, all, statuses, seat);
+    let context = match format {
+        Format::Table => SessionContext::fetch_for(client, &sessions).await,
+        Format::Json => SessionContext::default(),
+    };
+    let now = chrono::Utc::now();
+    print_list(
+        format,
+        &sessions,
+        LS,
+        |s| {
+            vec![
+                s.id.clone(),
+                context.label(s),
+                s.status.as_str().into(),
+                attention_label(s.attention_reason),
+                age(&s.created_at, now),
+                s.seat.as_str().into(),
+                s.agent_kind.as_str().into(),
+                usage_cell(&s.usage),
+            ]
+        },
+        // A named status already says which sessions were asked for, so
+        // --all has nothing left to offer.
+        match (filtered, all || !statuses.is_empty()) {
+            (true, true) => "no sessions match that filter",
+            (true, false) => {
+                "no live sessions match that filter — finished ones are behind --all"
+            }
+            (false, true) => "no sessions yet",
+            (false, false) => "no live sessions — finished ones are behind --all",
+        },
+    )
 }
 
 /// `session logs` and `task logs`: the pane's recent output, and with
@@ -552,6 +631,21 @@ mod tests {
         assert_eq!(
             empty.label(&session("01SESS", "01GOAL", None)),
             "goal: 01GOAL"
+        );
+    }
+
+    /// The `--watch` stream is scoped to the goal alone: the daemon's routing
+    /// filter drops a `goal_deleted` event for any subscriber that named a
+    /// task, since the event carries no task id of its own, and a watch that
+    /// missed it would show a goal's sessions long after the goal — and the
+    /// task and its sessions with it — was deleted. Taking no `task` at all
+    /// is what keeps that mistake from being made again.
+    #[test]
+    fn the_watch_stream_is_scoped_to_the_goal_alone_never_the_task() {
+        assert_eq!(watch_path(None).unwrap(), "/v1/events/stream");
+        assert_eq!(
+            watch_path(Some("01GOAL")).unwrap(),
+            "/v1/events/stream?goal=01GOAL"
         );
     }
 

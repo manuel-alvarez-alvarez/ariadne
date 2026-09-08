@@ -92,6 +92,12 @@ same binary also serves (013).
     inspect, edit and reset.
 19. Each `doctor` section is a shared output table: its check, verdict and
     detail columns fit the terminal, and `--no-trunc` prints their cells whole.
+20. `task ls`, `goal ls`, `session ls` and `attention` take `--watch`: the
+    table is redrawn whole on every event the command cares about, coalesced
+    over a short settle window so one change is one redraw, until Ctrl-C.
+    Every filter the command takes still narrows what a redraw shows, the
+    redraw escapes only reach a real terminal, and `--watch` is advertised
+    only on these four commands.
 
 ## Acceptance criteria
 
@@ -149,6 +155,9 @@ same binary also serves (013).
   `::a_version_line_reads_down_to_its_major_and_minor`).
 - The skill listing marks an orchestrator-only skill
   (`skill.rs::a_listing_marks_an_orchestrator_only_skill`).
+- `--watch` is advertised on exactly `task ls`, `goal ls`, `session ls` and
+  `attention`, and nowhere else
+  (`cli/tests.rs::the_watch_flag_is_advertised_exactly_where_it_is_honored`).
 
 ## Sources
 

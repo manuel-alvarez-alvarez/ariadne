@@ -202,6 +202,32 @@ fn the_listing_flags_are_advertised_exactly_where_they_are_honored() {
     }
 }
 
+/// `--watch` belongs to the commands whose table is a live picture of state —
+/// redrawn on every event through `follow::watch` — and nowhere else, so
+/// `ariadne task cancel --help` never advertises a flag it ignores.
+///
+/// Every path [`WATCHED`] names is checked against the real tree too: a
+/// renamed subcommand would otherwise quietly stop advertising its own flag.
+#[test]
+fn the_watch_flag_is_advertised_exactly_where_it_is_honored() {
+    let cmd = built();
+    let leaves = leaf_paths();
+    for named in WATCHED {
+        assert!(
+            leaves.iter().any(|leaf| leaf == named),
+            "no such command: {named}"
+        );
+    }
+    for leaf in &leaves {
+        let path: Vec<&str> = leaf.split(' ').collect();
+        assert_eq!(
+            advertises(&cmd, &path, "watch"),
+            WATCHED.contains(&leaf.as_str()),
+            "--watch on {leaf:?}"
+        );
+    }
+}
+
 /// The display flags are global, so they may be typed before the subcommand
 /// or after it, and every one of them lands in the field the renderer reads.
 #[test]

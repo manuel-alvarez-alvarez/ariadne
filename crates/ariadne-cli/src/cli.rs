@@ -524,6 +524,14 @@ const LISTINGS: &[&str] = &[
 /// only does so with `--full`, but that is still what `--no-pager` is for.
 const PAGED: &[&str] = &["session logs", "task diff", "task logs", "task messages"];
 
+/// Subcommands whose table is a picture of live state and so take `--watch`:
+/// each declares the flag itself rather than through a global, since (unlike
+/// the listing flags) it means something to redraw for and nothing to parse
+/// with on every other command. Test-only: nothing at runtime hides the flag
+/// on the caller's behalf, so nothing at runtime needs the list.
+#[cfg(test)]
+const WATCHED: &[&str] = &["attention", "goal ls", "session ls", "task ls"];
+
 /// The clap command, with each global flag hidden wherever it does nothing.
 ///
 /// The colour of clap's own help and usage errors is settled here too, from

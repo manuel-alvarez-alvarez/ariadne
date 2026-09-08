@@ -15,6 +15,8 @@ ariadne daemon logs -f                 # the daemon's own log, over the API
 
 ariadne attention --watch              # redrawn whenever something needs you
 ariadne task ls --watch --goal <id>    # redrawn whenever a task moves
+ariadne goal ls --watch                # redrawn whenever a goal moves
+ariadne session ls --watch --seat reviewer  # redrawn whenever a session moves
 ```
 
 `-f` prints as it goes; `--watch` redraws the whole table, `watch(1)`-style,
