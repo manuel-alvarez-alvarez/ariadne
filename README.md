@@ -4,9 +4,9 @@
 
 <p align="center">
   <a href="https://github.com/manuel-alvarez-alvarez/ariadne/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/manuel-alvarez-alvarez/ariadne/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white" alt="CI"></a>
-  <a href="https://github.com/manuel-alvarez-alvarez/ariadne/releases/latest"><img src="https://img.shields.io/github/v/release/manuel-alvarez-alvarez/ariadne?style=flat-square&label=release&color=264698" alt="Latest release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-264698?style=flat-square" alt="Apache-2.0 license"></a>
-  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/built%20with-Rust-264698?style=flat-square&logo=rust&logoColor=white" alt="Built with Rust"></a>
+  <a href="https://github.com/manuel-alvarez-alvarez/ariadne/releases/latest"><img src="https://img.shields.io/github/v/release/manuel-alvarez-alvarez/ariadne?style=flat-square&label=release&color=295984" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-295984?style=flat-square" alt="Apache-2.0 license"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/built%20with-Rust-295984?style=flat-square&logo=rust&logoColor=white" alt="Built with Rust"></a>
 </p>
 
 <p align="center">
