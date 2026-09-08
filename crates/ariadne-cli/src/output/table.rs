@@ -44,6 +44,8 @@ pub enum Cell {
     Title,
     /// A lifecycle status — coloured, and prefixed with its glyph.
     Status,
+    /// A doctor verdict — coloured, and prefixed with its glyph.
+    Check,
     /// Why a row wants a person, in `ariadne attention`'s words.
     Attention,
 }
@@ -95,6 +97,13 @@ impl Column {
     pub const fn status(self) -> Self {
         Self {
             cell: Cell::Status,
+            ..self
+        }
+    }
+
+    pub const fn check(self) -> Self {
+        Self {
+            cell: Cell::Check,
             ..self
         }
     }
@@ -225,6 +234,7 @@ fn cells(
                         Cell::Id => (style::ID, None),
                         Cell::Title => (style::TITLE, None),
                         Cell::Status => style::status(raw),
+                        Cell::Check => style::check(raw),
                         Cell::Attention => style::attention(raw),
                         Cell::Plain => (Style::new(), None),
                     };

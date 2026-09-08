@@ -16,7 +16,6 @@ mod checks;
 
 use std::process::ExitCode;
 
-use anstyle::Style;
 use anyhow::Result;
 use serde::Serialize;
 
@@ -24,7 +23,15 @@ use ariadne_api::doctor::{BinaryDto, DaemonReportDto};
 use ariadne_client::{Client, endpoint};
 use ariadne_core::AgentKind;
 
-use crate::output::{Format, View, note, print, style, view};
+use crate::output::{Column, Format, UNCAPPED, View, col, note, print, render_table, style, view};
+
+/// The check and verdict identify the row; the explanatory detail is what
+/// yields when the terminal is narrow.
+const COLUMNS: &[Column] = &[
+    col("status", UNCAPPED).check(),
+    col("check", 28),
+    col("detail", 72),
+];
 
 /// Which agent binaries can actually be launched, from both points of view.
 #[derive(Debug, Default, Clone)]
@@ -217,8 +224,12 @@ impl Report {
 pub async fn run(client: &Client, format: Format) -> Result<ExitCode> {
     let report = examine(client).await;
     let view = view();
+    let lines = match format {
+        Format::Table => Some(render(&report, view)?),
+        Format::Json => None,
+    };
     print(format, &report, || {
-        for line in render(&report, view) {
+        for line in lines.as_ref().expect("table lines") {
             println!("{line}");
         }
         let verdict_style = style::check(report.status.label()).0;
@@ -290,40 +301,10 @@ async fn examine(client: &Client) -> Report {
     )
 }
 
-/// A check's status word, painted in `style::check`'s colour and prefixed
-/// with its glyph: `✓ ok`, `! warn`, `✗ fail`.
-fn verdict(status: Status) -> (Style, String) {
-    let (style, glyph) = style::check(status.label());
-    let text = match glyph {
-        Some(glyph) => format!("{glyph} {}", status.label()),
-        None => status.label().to_string(),
-    };
-    (style, text)
-}
-
-/// The report as lines: a heading per section, a line per check, and the hint
-/// of anything that is not `ok` under it.
-///
-/// The status column is padded on its unpainted text — glyph included — so
-/// the escapes colour adds never throw off `name` and `detail`, which start
-/// at the same offset whatever the verdict.
-fn render(report: &Report, view: &View) -> Vec<String> {
-    let checks: Vec<&Check> = report
-        .sections
-        .iter()
-        .flat_map(|s| s.checks.iter())
-        .collect();
-    let name_width = checks
-        .iter()
-        .map(|c| c.name.chars().count())
-        .max()
-        .unwrap_or(0);
-    let status_width = checks
-        .iter()
-        .map(|c| verdict(c.status).1.chars().count())
-        .max()
-        .unwrap_or(0);
-
+/// The report as section headings and shared tables. A hint is a second table
+/// row with empty status and check cells, so it remains below the check and
+/// fits or truncates with its detail column.
+fn render(report: &Report, view: &View) -> Result<Vec<String>> {
     let mut lines = Vec::new();
     for section in &report.sections {
         if !lines.is_empty() {
@@ -334,26 +315,35 @@ fn render(report: &Report, view: &View) -> Vec<String> {
             style::HEADING,
             &section.name.to_uppercase(),
         ));
-        for check in &section.checks {
-            let (style, text) = verdict(check.status);
-            let painted = style::paint(view.color, style, &text);
-            let pad = " ".repeat(status_width - text.chars().count() + 2);
-            lines.push(format!(
-                "  {painted}{pad}{:<name_width$}   {}",
-                check.name, check.detail
-            ));
-            if let Some(hint) = &check.hint {
-                let hint = style::paint(view.color, style::META, hint);
-                lines.push(format!(
-                    "  {:<status_width$}{:<name_width$}   {hint}",
-                    "",
-                    "",
-                    status_width = status_width + 2
-                ));
-            }
+        let rows: Vec<Vec<String>> = section
+            .checks
+            .iter()
+            .flat_map(|check| {
+                let check_row = vec![
+                    check.status.label().into(),
+                    check.name.clone(),
+                    check.detail.clone(),
+                ];
+                let hint_row = check
+                    .hint
+                    .as_ref()
+                    .map(|hint| vec![String::new(), String::new(), hint.clone()]);
+                std::iter::once(check_row).chain(hint_row)
+            })
+            .collect();
+        if !rows.is_empty() {
+            let table = render_table(COLUMNS, &rows, view)?;
+            let mut table_lines = table.lines();
+            lines.push(table_lines.next().expect("table header").to_string());
+            lines.extend(rows.iter().zip(table_lines).map(|(row, line)| {
+                match row[0].is_empty() && row[1].is_empty() {
+                    true => style::paint(view.color, style::META, line),
+                    false => line.to_string(),
+                }
+            }));
         }
     }
-    lines
+    Ok(lines)
 }
 
 /// The one line that says whether to act on any of this.
@@ -399,6 +389,10 @@ pub(crate) mod tests {
         Report::new("/tmp/ariadne.sock", vec![Section::new("s", checks)])
     }
 
+    fn rendered(report: &Report, view: &View) -> Vec<String> {
+        render(report, view).expect("render")
+    }
+
     /// The report takes the worst status of its checks, and only a failure —
     /// a broken install, as against something to look at — exits nonzero.
     #[test]
@@ -420,7 +414,7 @@ pub(crate) mod tests {
 
     #[test]
     fn every_check_prints_under_its_section_with_its_hint() {
-        let lines = render(
+        let lines = rendered(
             &Report::new(
                 "/tmp/ariadne.sock",
                 vec![Section::new(
@@ -431,10 +425,56 @@ pub(crate) mod tests {
             &View::plain(),
         );
         assert_eq!(lines[0], "CLIENT");
-        assert!(lines[1].contains("✗ fail"), "{lines:?}");
-        assert!(lines[1].contains("ariadned"), "{lines:?}");
-        assert!(lines[2].contains("install it"), "{lines:?}");
+        assert!(lines[2].contains("✗ fail"), "{lines:?}");
+        assert!(lines[2].contains("ariadned"), "{lines:?}");
+        assert!(lines[3].contains("install it"), "{lines:?}");
         assert!(!lines.join("\n").contains('\u{1b}'), "{lines:?}");
+    }
+
+    /// The detail is the long column of a doctor report, so it yields to a
+    /// narrow terminal with the same ellipsis every other table uses.
+    #[test]
+    fn a_narrow_terminal_truncates_doctor_details() {
+        let detail = "a detailed explanation that is too long for this terminal";
+        let lines = rendered(
+            &Report::new(
+                "/tmp/ariadne.sock",
+                vec![Section::new("client", vec![Check::ok("daemon", detail)])],
+            ),
+            &View::at(36),
+        );
+
+        assert!(lines[1].contains("STATUS"), "{lines:?}");
+        assert!(lines.join("\n").contains('…'), "{lines:?}");
+        assert!(!lines.join("\n").contains(detail), "{lines:?}");
+        assert!(
+            lines.iter().all(|line| line.chars().count() <= 36),
+            "{lines:?}"
+        );
+    }
+
+    /// `--no-trunc` leaves a doctor detail whole, even where it would exceed
+    /// the terminal, and keeps the columns that explain it.
+    #[test]
+    fn no_trunc_keeps_doctor_details_and_columns_whole() {
+        let detail = "a detailed explanation that is too long for this terminal";
+        let view = View {
+            no_trunc: true,
+            ..View::at(36)
+        };
+        let lines = rendered(
+            &Report::new(
+                "/tmp/ariadne.sock",
+                vec![Section::new("client", vec![Check::ok("daemon", detail)])],
+            ),
+            &view,
+        );
+
+        assert!(lines[1].contains("STATUS"), "{lines:?}");
+        assert!(lines[1].contains("CHECK"), "{lines:?}");
+        assert!(lines[1].contains("DETAIL"), "{lines:?}");
+        assert!(lines[2].contains(detail), "{lines:?}");
+        assert!(!lines.join("\n").contains('…'), "{lines:?}");
     }
 
     /// With colour on: the section heading is bold, each status word carries
@@ -459,8 +499,8 @@ pub(crate) mod tests {
             color: true,
             ..View::plain()
         };
-        let lines = render(&report, &colour);
-        let [heading, ok_line, warn_line, fail_line, hint_line]: [&String; 5] =
+        let lines = rendered(&report, &colour);
+        let [heading, _header, ok_line, warn_line, fail_line, hint_line]: [&String; 6] =
             lines.iter().collect::<Vec<_>>().try_into().unwrap();
 
         assert_eq!(*heading, style::paint(true, style::HEADING, "TOOLS"));
@@ -476,10 +516,7 @@ pub(crate) mod tests {
             fail_line.contains(&style::paint(true, style::check("fail").0, "✗ fail")),
             "{fail_line}"
         );
-        assert!(
-            hint_line.contains(&style::paint(true, style::META, "install tmux")),
-            "{hint_line}"
-        );
+        assert!(visible(hint_line).contains("install tmux"), "{hint_line}");
 
         // `name` starts in the same column on every row, escapes and all —
         // a character offset, since a multi-byte glyph like `✗` would throw
@@ -493,15 +530,15 @@ pub(crate) mod tests {
 
         // Plain is the same report, minus every escape — and the glyphs,
         // which are the one thing colour is allowed to have added.
-        let plain = render(&report, &View::plain());
+        let plain = rendered(&report, &View::plain());
         let stripped: Vec<String> = lines.iter().map(|l| visible(l)).collect();
         assert_eq!(stripped, plain);
         for line in &plain {
             assert!(!line.contains('\u{1b}'), "{line:?}");
         }
-        assert!(plain[1].contains("✓ ok"), "{plain:?}");
-        assert!(plain[2].contains("! warn"), "{plain:?}");
-        assert!(plain[3].contains("✗ fail"), "{plain:?}");
+        assert!(plain[2].contains("✓ ok"), "{plain:?}");
+        assert!(plain[3].contains("! warn"), "{plain:?}");
+        assert!(plain[4].contains("✗ fail"), "{plain:?}");
     }
 
     /// A line as the reader sees it: the escapes taken back out.

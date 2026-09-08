@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-cli/src/error.rs
   - crates/ariadne-cli/src/complete.rs
   - crates/ariadne-daemon/tests/doctor.rs
+  - crates/ariadne-cli/src/commands/doctor.rs
   - crates/ariadne-cli/src/commands/doctor/checks.rs
   - crates/ariadne-cli/src/commands/events.rs
 ---
@@ -83,7 +84,9 @@ same binary also serves (013).
     cannot start a task in a repository with no commits (002), which is a
     warning naming that one case, on this PATH and on the daemon's alike.
 17. `skill ls` marks an orchestrator-only skill while leaving it available to
-    inspect, edit and reset.
+   inspect, edit and reset.
+18. Each `doctor` section is a shared output table: its check, verdict and
+   detail columns fit the terminal, and `--no-trunc` prints their cells whole.
 
 ## Acceptance criteria
 
@@ -124,7 +127,10 @@ same binary also serves (013).
   need, and a worktree root it cannot write
   (`doctor.rs::every_agent_kind_is_reported`,
   `::the_tools_a_session_and_a_published_task_need_are_reported`,
-  `::a_worktree_root_the_daemon_cannot_write_is_reported_as_such`).
+  `::a_worktree_root_the_daemon_cannot_write_is_reported_as_such`), with
+  details truncated to a narrow terminal unless `--no-trunc` asks for them
+  whole (`commands/doctor.rs::a_narrow_terminal_truncates_doctor_details`,
+  `::no_trunc_keeps_doctor_details_and_columns_whole`).
 - A git below the floor is a warning that names what it cannot do, and a
   version line is read down to its major and minor
   (`checks.rs::a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits`,
