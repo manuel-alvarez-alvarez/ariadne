@@ -27,7 +27,7 @@ use ariadne_client::{Client, SseEvent};
 use super::attention::reason_label;
 use super::follow::{self, Next};
 use super::query_path;
-use crate::output::{Format, local_time, note, style, view};
+use crate::output::{Format, empty_state, local_time, note, style, view};
 
 /// How many recorded events the snapshot asks for. The daemon caps a page at
 /// 200, and a tail wants the recent past rather than all of it.
@@ -176,10 +176,14 @@ pub async fn run(client: &Client, filters: Filters, follow_it: bool, format: For
             // there. Nothing at all is said when a follow is about to start:
             // the list is not over, it has not begun.
             if recorded.is_empty() && !follow_it {
-                note(match filters.narrowed() {
-                    true => "no recorded events match that filter",
-                    false => "no events recorded yet",
-                });
+                let empty = match filters.narrowed() {
+                    true => empty_state(
+                        "No recorded events match that filter.",
+                        Some("ariadne events"),
+                    ),
+                    false => empty_state("No events are recorded yet.", None),
+                };
+                note(&empty);
             }
         }
     }

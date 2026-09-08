@@ -93,9 +93,9 @@ UI at `/docs`, and a live event stream at `/v1/events/stream`.
 Tables are laid out for the terminal they are printed in: the least important
 columns are dropped until the row fits, and `-o wide` puts them all back.
 `--columns a,b,c` prints exactly the ones you name, `--no-trunc` prints the
-cells whole, and `-q` prints one id per line and nothing else — the flag to
-pipe a listing into whatever acts on it. `ariadne goal ls`, `task ls` and
-`session ls` show what is going on rather than everything there has ever been;
+cells whole, and `-q` prints one id per line and nothing else. A mutation also
+prints only its affected id with `-q`, ready for a script. `ariadne goal ls`,
+`task ls` and `session ls` show current work instead of the complete history;
 `-a/--all` includes the finished work, and `--status` names the statuses
 precisely. A pipe or a file gets every column, since there is no screen to fit.
 A screen of several tables is laid out once for all of them: `ariadne
@@ -106,6 +106,13 @@ is one error, printed before any of it.
 Headings are one style: a section heading and the column header of a table are
 both bold and uppercase, so a reader's eye reads them as the same thing. Every
 table follows it.
+
+A mutation prints one styled line on stdout. Create, update, delete, reset and
+send lines start with that verb; lifecycle changes state the new status.
+Inspect keys use lowercase words separated by spaces. Every row-subject column
+is named `title`, except `agent`, which names an agent CLI kind. Boolean table
+cells use the shared `yes` or absent-value wording. An empty listing prints a
+short sentence, followed by `Next:` and a useful command when one exists.
 
 Statuses are coloured and carry a glyph — `●` running, `○` pending, `✓` done
 or ok, `✗` failed or cancelled, `?` waiting on you, `!` a warning worth a look

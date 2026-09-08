@@ -165,9 +165,8 @@ fn format_is_advertised_exactly_where_it_is_honored() {
     }
 }
 
-/// The listing flags belong to the commands that print a table, and the
-/// pager flag to the ones that print something long — advertised there and
-/// nowhere else, so `ariadne task cancel --help` is still four lines.
+/// Table flags belong to listings, quiet belongs to listings and mutations,
+/// and the pager flag belongs to long output.
 ///
 /// Every path they name is checked against the real tree at the same time: a
 /// renamed subcommand would otherwise quietly stop advertising its own flags.
@@ -184,9 +183,14 @@ fn the_listing_flags_are_advertised_exactly_where_they_are_honored() {
     for leaf in &leaves {
         let path: Vec<&str> = leaf.split(' ').collect();
         let listing = LISTINGS.contains(&leaf.as_str());
-        for id in ["quiet", "no_trunc", "layout", "columns"] {
+        for id in ["no_trunc", "layout", "columns"] {
             assert_eq!(advertises(&cmd, &path, id), listing, "{id} on {leaf:?}");
         }
+        assert_eq!(
+            advertises(&cmd, &path, "quiet"),
+            QUIET_OUTPUT.contains(&leaf.as_str()),
+            "quiet on {leaf:?}"
+        );
         assert_eq!(
             advertises(&cmd, &path, "no_pager"),
             PAGED.contains(&leaf.as_str()),
@@ -275,6 +279,17 @@ fn the_display_flags_parse_on_either_side_of_the_subcommand() {
         try_parse(&["ariadne", "task", "ls", "--color", "purple"]).is_err(),
         "a colour choice is one of three words"
     );
+}
+
+#[test]
+fn quiet_parses_after_a_mutation() {
+    assert!(
+        parse(&[
+            "ariadne", "goal", "create", "-q", "--title", "x", "--repo", "r", "--model", "codex:m"
+        ])
+        .quiet
+    );
+    assert!(parse(&["ariadne", "session", "send", "01SESSION", "yes", "-q"]).quiet);
 }
 
 /// Every `ls` that hides finished work behind `--all` takes the same short

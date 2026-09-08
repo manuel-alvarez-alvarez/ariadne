@@ -10,14 +10,15 @@ use serde_json::json;
 use super::resolve::{self, Kind};
 use super::{Subject, confirm};
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list, view,
+    Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv,
+    print_list, view,
 };
 
 /// Columns of `repo ls`. The path is what a repository is, so it stays
 /// whatever the terminal's width; the description is the first thing to go.
 const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
-    col("path", 48).title(),
+    col("title", 48).title(),
     col("age", UNCAPPED).rank(4),
     col("branch", 24).rank(3),
     col("description", 40).rank(1),
@@ -87,7 +88,12 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                     },
                 )
                 .await?;
-            print(format, &repo, || println!("{}", repo.id))?;
+            print(format, &repo, || {
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "created", &repo.id)
+                )
+            })?;
         }
         RepoCommand::Ls => {
             let repos: Vec<RepositoryDto> = client.get_json("/v1/repositories").await?;
@@ -105,7 +111,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                         r.description.clone().unwrap_or_else(|| "-".into()),
                     ]
                 },
-                "no repositories yet — add one with: ariadne repo add <path>",
+                empty_state("No repositories yet.", Some("ariadne repo add <path>")),
             )?;
         }
         RepoCommand::Inspect { id } => {
@@ -142,7 +148,12 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                     },
                 )
                 .await?;
-            print(format, &r, || println!("{}", r.id))?;
+            print(format, &r, || {
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "updated", &r.id)
+                )
+            })?;
         }
         RepoCommand::Rm { id, yes } => {
             let id = resolve::id(client, Kind::Repo, &id).await?;
@@ -155,7 +166,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
             // The repository is gone, so there is no DTO left to print: what
             // the caller asked about, and that it happened.
             print(format, &json!({"repository": id, "deleted": true}), || {
-                println!("{}", ok_id_line(view().color, "deleted", &id))
+                println!("{}", ok_id_line(view().color, view().quiet, "deleted", &id))
             })?;
         }
     }
@@ -174,4 +185,22 @@ fn rm_question(r: &RepositoryDto, subject: &Subject) -> String {
         subject.named(),
         r.base_branch
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_repository_subject_column_is_title() {
+        let table = crate::output::render_table(
+            LS,
+            &[vec![String::new(); LS.len()]],
+            &crate::output::View::plain(),
+        )
+        .expect("table");
+        let header = table.lines().next().expect("header");
+        assert!(header.contains("TITLE"), "{table}");
+        assert!(!header.contains("PATH"), "{table}");
+    }
 }

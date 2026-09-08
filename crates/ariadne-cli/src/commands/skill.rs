@@ -18,14 +18,15 @@ use ariadne_client::Client;
 
 use super::{Subject, confirm, path_segment};
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list, view,
+    Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv,
+    print_list, view,
 };
 
 /// Columns of `skill ls`. A skill is its name and the line it says about
 /// itself; whether it is one Ariadne ships matters next, because that is what
 /// says whether it can be reset or deleted.
 const LS: &[Column] = &[
-    col("name", 24).title(),
+    col("title", 24).title(),
     col("summary", 64).rank(3),
     col("scope", UNCAPPED).rank(2),
     col("source", UNCAPPED).rank(2),
@@ -108,7 +109,7 @@ pub async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<(
                         age(&s.created_at, now),
                     ]
                 },
-                "no skills — the shipped ones are seeded into a fresh database",
+                empty_state("No skills are available.", Some("ariadne doctor")),
             )?;
         }
         SkillCommand::Inspect { name } => {
@@ -144,7 +145,12 @@ pub async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<(
                     },
                 )
                 .await?;
-            print(format, &skill, || println!("{}", skill.name))?;
+            print(format, &skill, || {
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "created", &skill.name)
+                )
+            })?;
         }
         SkillCommand::Set { name, file } => {
             let document = read_document(file)?;
@@ -156,7 +162,12 @@ pub async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<(
                     },
                 )
                 .await?;
-            print(format, &skill, || println!("{}", skill.name))?;
+            print(format, &skill, || {
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "updated", &skill.name)
+                )
+            })?;
         }
         SkillCommand::Reset { name, yes } => {
             let skill = get_skill(client, &name).await?;
@@ -164,7 +175,10 @@ pub async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<(
             confirm("reset", &subject, &reset_question(&skill), yes)?;
             let skill = client.reset_skill(&path_segment(&name)).await?;
             print(format, &skill, || {
-                println!("{} is back on the document Ariadne ships", skill.name)
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "reset", &skill.name)
+                )
             })?;
         }
         SkillCommand::Rm { name, yes } => {
@@ -177,7 +191,10 @@ pub async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<(
             // The skill is gone, so there is no DTO left to print: what the
             // caller asked about, and that it happened.
             print(format, &json!({ "skill": name, "deleted": true }), || {
-                println!("{}", ok_id_line(view().color, "deleted", &name))
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "deleted", &name)
+                )
             })?;
         }
     }
@@ -257,6 +274,19 @@ mod tests {
             builtin,
             ..crate::commands::fixtures::skill(name, "one line")
         }
+    }
+
+    #[test]
+    fn the_skill_subject_column_is_title() {
+        let table = crate::output::render_table(
+            LS,
+            &[vec![String::new(); LS.len()]],
+            &crate::output::View::plain(),
+        )
+        .expect("table");
+        let header = table.lines().next().expect("header");
+        assert!(header.contains("TITLE"), "{table}");
+        assert!(!header.contains("NAME"), "{table}");
     }
 
     /// The three things a reader needs off a listing: whether Ariadne ships

@@ -9,9 +9,12 @@ use ariadne_client::Client;
 use ariadne_core::AgentKind;
 
 use super::parse_model;
-use crate::output::{Column, Format, Kv, UNCAPPED, col, note, print, print_kv, print_list, view};
+use crate::output::{
+    Column, Format, Kv, UNCAPPED, col, empty_state, note, print, print_kv, print_list, status_line,
+    view, yes_no,
+};
 
-/// Columns of `models ls`. `model` is the whole id — `claude_code:o3`, not
+/// Columns of `models ls`. The title is the whole id — `claude_code:o3`, not
 /// `o3` — because that is the string `--model` takes, and a column somebody
 /// copies out of has to be copyable. `agent` repeats the half of it that
 /// groups the table, which is what the eye scans by.
@@ -26,7 +29,7 @@ use crate::output::{Column, Format, Kv, UNCAPPED, col, note, print, print_kv, pr
 /// to make, and are kept longest.
 const LS: &[Column] = &[
     col("agent", UNCAPPED),
-    col("model", UNCAPPED).title(),
+    col("title", UNCAPPED).title(),
     // Never dropped: a row a reader cannot pin is a row they have to be able
     // to tell apart, whatever the terminal is wide enough for.
     col("on", UNCAPPED),
@@ -96,7 +99,22 @@ async fn set_enabled(client: &Client, model: &str, enabled: bool, format: Format
         enabled,
     };
     let updated: ModelDto = client.put_json("/v1/models/enabled", &body).await?;
-    print(format, &updated, || print_card(&updated))?;
+    print(format, &updated, || {
+        println!(
+            "{}",
+            status_line(
+                view().color,
+                view().quiet,
+                "model",
+                &updated.id,
+                if updated.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+            )
+        )
+    })?;
     Ok(())
 }
 
@@ -115,10 +133,12 @@ async fn ls(client: &Client, agent: Option<AgentKind>, format: Format) -> Result
             // opencode's half of the catalogue is whatever `opencode models`
             // answered, which is nothing at all when it is not installed.
             Some(kind) => match kind {
-                AgentKind::Opencode => "no opencode models — is opencode installed and signed in?",
-                _ => "no models for that agent",
+                AgentKind::Opencode => {
+                    empty_state("No OpenCode models are available.", Some("ariadne doctor"))
+                }
+                _ => empty_state("No models exist for that agent.", Some("ariadne models ls")),
             },
-            None => "no models — is the daemon of a version that serves them?",
+            None => empty_state("No models are available.", Some("ariadne doctor")),
         },
     )?;
     // The star is only ever printed on a table a person is reading, and only
@@ -142,10 +162,7 @@ fn row(m: &ModelDto) -> Vec<String> {
     vec![
         m.agent_kind.as_str().to_string(),
         m.id.clone(),
-        match m.enabled {
-            true => "yes".into(),
-            false => "no".into(),
-        },
+        yes_no(m.enabled, "no"),
         m.tier.as_str().to_string(),
         band(m.cost),
         band(m.speed),
@@ -193,8 +210,8 @@ fn card_pairs(m: &ModelDto) -> Vec<(&'static str, Kv)> {
             "description",
             m.description.clone().unwrap_or_else(|| "-".into()).into(),
         ),
-        ("best_for", shapes(&m.best_for, &indent).into()),
-        ("avoid_for", shapes(&m.avoid_for, &indent).into()),
+        ("best for", shapes(&m.best_for, &indent).into()),
+        ("avoid for", shapes(&m.avoid_for, &indent).into()),
         ("efforts", efforts_block(&m.efforts, &indent).into()),
     ]
 }
@@ -454,7 +471,7 @@ mod tests {
             headers(&View::plain()),
             [
                 "AGENT",
-                "MODEL",
+                "TITLE",
                 "ON",
                 "TIER",
                 "COST",
@@ -471,8 +488,8 @@ mod tests {
             "{narrow:?}"
         );
         assert!(
-            narrow.contains(&"AGENT".to_string()) && narrow.contains(&"MODEL".to_string()),
-            "agent and model never drop: {narrow:?}"
+            narrow.contains(&"AGENT".to_string()) && narrow.contains(&"TITLE".to_string()),
+            "agent and title never drop: {narrow:?}"
         );
         assert!(
             narrow.contains(&"ON".to_string()),
@@ -496,13 +513,15 @@ mod tests {
 
     /// The card carries every field the acceptance criteria name, in order:
     /// id, whether an agent can be staffed on it, tier, cost, speed,
-    /// description, `best_for`, `avoid_for`, then every effort with what it
+    /// description, `best for`, `avoid for`, then every effort with what it
     /// buys and the default one marked.
     #[test]
     fn the_card_carries_every_field_and_marks_the_default_effort() {
         let indent = format!("\n{}", " ".repeat(SHOW_KEY_WIDTH + 2));
+        let pairs = card_pairs(&fixture()[0]);
+        assert!(pairs.iter().all(|(key, _)| !key.contains('_')), "{pairs:?}");
         assert_eq!(
-            card_pairs(&fixture()[0]),
+            pairs,
             vec![
                 ("id", Kv::id("codex:gpt-5.6-luna")),
                 ("enabled", "yes".into()),
@@ -510,8 +529,8 @@ mod tests {
                 ("cost", "3/5".into()),
                 ("speed", "3/5".into()),
                 ("description", "balanced coding model".into()),
-                ("best_for", "well-specified fixes".into()),
-                ("avoid_for", "cross-subsystem design".into()),
+                ("best for", "well-specified fixes".into()),
+                ("avoid for", "cross-subsystem design".into()),
                 (
                     "efforts",
                     format!("low — lighter reasoning{indent}medium — balanced reasoning (default)")
@@ -538,8 +557,8 @@ mod tests {
                 ("cost", "-".into()),
                 ("speed", "-".into()),
                 ("description", "-".into()),
-                ("best_for", "-".into()),
-                ("avoid_for", "-".into()),
+                ("best for", "-".into()),
+                ("avoid for", "-".into()),
                 ("efforts", "-".into()),
             ]
         );

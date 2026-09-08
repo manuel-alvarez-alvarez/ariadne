@@ -503,8 +503,8 @@ const NO_FORMAT: &[&[&str]] = &[
     &["task", "attach"],
 ];
 
-/// Subcommands that render a table, and so are the ones the listing flags —
-/// `--no-trunc`, `-q`, `-o` and `--columns` — mean anything to. They are
+/// Subcommands that render a table, and so are the ones the table flags —
+/// `--no-trunc`, `-o` and `--columns` — mean anything to. They are
 /// global so `ariadne -o wide task ls` works; that is also what would
 /// otherwise advertise `--columns` on `task cancel`.
 const LISTINGS: &[&str] = &[
@@ -518,6 +518,41 @@ const LISTINGS: &[&str] = &[
     "task history",
     "task ls",
     "task messages",
+];
+
+/// Commands where `-q` prints only each affected row's subject.
+const QUIET_OUTPUT: &[&str] = &[
+    "agent ls",
+    "agent update",
+    "attention",
+    "goal cancel",
+    "goal complete",
+    "goal create",
+    "goal ls",
+    "goal rm",
+    "models disable",
+    "models enable",
+    "models ls",
+    "repo add",
+    "repo ls",
+    "repo rm",
+    "repo update",
+    "session kill",
+    "session ls",
+    "session resume",
+    "session send",
+    "skill create",
+    "skill ls",
+    "skill reset",
+    "skill rm",
+    "skill set",
+    "task cancel",
+    "task create",
+    "task history",
+    "task ls",
+    "task messages",
+    "task retry",
+    "task update",
 ];
 
 /// Subcommands that print something long enough to page. `task messages`
@@ -545,6 +580,7 @@ pub fn command() -> clap::Command {
     let cmd = listing_args()
         .into_iter()
         .fold(cmd, |cmd, arg| hide_unless(cmd, "", LISTINGS, arg));
+    let cmd = hide_unless(cmd, "", QUIET_OUTPUT, quiet_arg());
     hide_unless(cmd, "", PAGED, pager_arg())
 }
 
@@ -623,11 +659,6 @@ fn listing_args() -> Vec<clap::Arg> {
             .long("no-trunc")
             .hide(true)
             .action(clap::ArgAction::SetTrue),
-        clap::Arg::new("quiet")
-            .long("quiet")
-            .short('q')
-            .hide(true)
-            .action(clap::ArgAction::SetTrue),
         clap::Arg::new("layout")
             .long("output")
             .short('o')
@@ -640,6 +671,14 @@ fn listing_args() -> Vec<clap::Arg> {
             .value_delimiter(',')
             .action(clap::ArgAction::Append),
     ]
+}
+
+fn quiet_arg() -> clap::Arg {
+    clap::Arg::new("quiet")
+        .long("quiet")
+        .short('q')
+        .hide(true)
+        .action(clap::ArgAction::SetTrue)
 }
 
 #[cfg(test)]

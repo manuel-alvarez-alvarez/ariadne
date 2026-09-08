@@ -7,7 +7,9 @@ use ariadne_api::agents::AgentConfigDto;
 use ariadne_client::Client;
 use ariadne_core::AgentKind;
 
-use crate::output::{Column, Format, UNCAPPED, col, note, print, print_list};
+use crate::output::{
+    Column, Format, UNCAPPED, col, empty_state, ok_id_line, print, print_list, view,
+};
 
 /// Columns of `agent ls`. There are three agent CLIs and no ids: the row is
 /// the agent, and the two flag lists are what there is to read.
@@ -113,7 +115,7 @@ pub async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<(
                         flags_cell(&c.default_flags),
                     ]
                 },
-                "",
+                empty_state("No agent CLIs are configured.", Some("ariadne doctor")),
             )?;
         }
         AgentCommand::Update {
@@ -131,8 +133,15 @@ pub async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<(
             };
             let config = client.update_agent_config(kind, extra_flags).await?;
             print(format, &config, || {
-                println!("{}", config.agent_kind.as_str());
-                note(&format!("flags: {}", flags_cell(&config.extra_flags)));
+                println!(
+                    "{}",
+                    ok_id_line(
+                        view().color,
+                        view().quiet,
+                        "updated",
+                        config.agent_kind.as_str()
+                    )
+                );
             })?;
         }
     }
@@ -173,5 +182,18 @@ mod tests {
             flags_cell(&["--auto".into(), "--verbose".into()]),
             "--auto --verbose"
         );
+    }
+
+    #[test]
+    fn the_agent_kind_keeps_the_agent_column_name() {
+        let table = crate::output::render_table(
+            LS,
+            &[vec![String::new(); LS.len()]],
+            &crate::output::View::plain(),
+        )
+        .expect("table");
+        let header = table.lines().next().expect("header");
+        assert!(header.contains("AGENT"), "{table}");
+        assert!(!header.contains("TITLE"), "{table}");
     }
 }

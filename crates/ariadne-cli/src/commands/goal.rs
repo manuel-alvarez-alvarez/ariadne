@@ -17,8 +17,8 @@ use super::resolve::{self, Kind};
 use super::{Subject, confirm, parse_effort, parse_model};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list,
-    status_line, usage_block, usage_cell, view,
+    Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv,
+    print_list, status_line, usage_block, usage_cell, view,
 };
 
 /// Columns of `goal ls`. `tokens` is what every agent of the goal spent
@@ -175,7 +175,12 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     },
                 )
                 .await?;
-            print(format, &goal, || println!("{}", goal.id))?;
+            print(format, &goal, || {
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "created", &goal.id)
+                )
+            })?;
         }
         GoalCommand::Ls {
             statuses,
@@ -256,7 +261,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             // Nothing is left to print: what the caller asked about, and that
             // it happened.
             print(format, &json!({"goal": id, "deleted": true}), || {
-                println!("{}", ok_id_line(view().color, "deleted", &id))
+                println!("{}", ok_id_line(view().color, view().quiet, "deleted", &id))
             })?;
         }
         GoalCommand::Attach { id } => {
@@ -361,9 +366,9 @@ async fn render(client: &Client, statuses: &[GoalStatus], all: bool, format: For
         // An empty list under a filter is not an empty system, and telling the
         // reader to create a goal would hide the ones that are right there.
         match (statuses.is_empty(), all) {
-            (false, _) => "no goals match that filter",
-            (true, true) => "no goals yet — create one with: ariadne goal create",
-            (true, false) => "no goals under way — finished ones are behind --all",
+            (false, _) => empty_state("No goals match that filter.", Some("ariadne goal ls")),
+            (true, true) => empty_state("No goals yet.", Some("ariadne goal create --help")),
+            (true, false) => empty_state("No goals are under way.", Some("ariadne goal ls --all")),
         },
     )
 }
@@ -374,7 +379,7 @@ fn print_status(g: &GoalDto, format: Format) -> Result<()> {
     print(format, g, || {
         println!(
             "{}",
-            status_line(view().color, "goal", &g.id, g.status.as_str())
+            status_line(view().color, view().quiet, "goal", &g.id, g.status.as_str())
         )
     })
 }

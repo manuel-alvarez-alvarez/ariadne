@@ -6,6 +6,10 @@ areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
   - crates/ariadne-cli/src/cli/tests.rs
+  - crates/ariadne-cli/src/output.rs
+  - crates/ariadne-cli/src/commands/models.rs
+  - crates/ariadne-cli/src/commands/session.rs
+  - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/src/error.rs
   - crates/ariadne-cli/src/complete.rs
   - crates/ariadne-daemon/tests/doctor.rs
@@ -109,6 +113,11 @@ same binary also serves (013).
     of a table are both bold and uppercase. `-q` prints the first cell of
     every row of every group, and nothing else — and, like every other `-q`
     listing, it reads no `--columns` and so refuses none.
+23. Human mutation output is one styled line. Quiet mutation output is only
+    the affected id. Inspect keys use lowercase space-separated words. A row's
+    subject column is `title`, except the agent CLI kind remains `agent`.
+    Boolean columns use the shared `yes_no` wording. Every empty listing states
+    what is empty, then gives the next command when one exists.
 
 ## Acceptance criteria
 
@@ -185,6 +194,16 @@ same binary also serves (013).
   (`attention.rs::quiet_output_is_the_ids_of_every_group`), and only a run
   that prints a table refuses a `--columns`
   (`::a_columns_flag_is_refused_only_where_a_table_is_printed`).
+- Mutation lines and empty listings share their output forms
+  (`output.rs::quiet_mutations_print_only_the_id`,
+  `::an_empty_state_puts_the_next_command_on_its_own_line`).
+- Quiet output parses on mutations (`cli/tests.rs::quiet_parses_after_a_mutation`).
+- Inspect keys contain no underscores
+  (`task.rs::the_inspect_block_types_its_id_title_and_status`).
+- Session and model subject columns use `title`, and model booleans use
+  `yes` or `no` (`session.rs::the_session_subject_column_is_title`,
+  `models.rs::the_bands_drop_before_efforts_and_description_do`,
+  `::a_row_carries_the_bands_and_stars_the_default_effort`).
 
 ## Sources
 

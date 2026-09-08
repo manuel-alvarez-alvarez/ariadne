@@ -23,8 +23,9 @@ use super::{
 };
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, col, dash, local_time, moment, note, ok_id_line, pager,
-    print, print_json, print_kv, print_list, status_line, usage_block, usage_cell, view, yes_no,
+    Column, Format, Kv, UNCAPPED, age, col, dash, empty_state, local_time, moment, note,
+    ok_id_line, pager, print, print_json, print_kv, print_list, status_line, usage_block,
+    usage_cell, view, yes_no,
 };
 use edit::{Edits, parse_author, parse_reviewer, resolve_repo, update_request};
 
@@ -50,7 +51,7 @@ const LS: &[Column] = &[
 ];
 
 /// Where a continuation line of `task inspect` starts: [`print_kv`] pads its
-/// keys to the longest one — `pull_request` — and then two spaces, and a
+/// keys to the longest one — `pull request` — and then two spaces, and a
 /// block that spills over several lines lines them all up under the first.
 const INDENT: &str = "\n              ";
 
@@ -324,7 +325,12 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                     },
                 )
                 .await?;
-            print(format, &t, || println!("{}", t.id))?;
+            print(format, &t, || {
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "created", &t.id)
+                )
+            })?;
         }
         TaskCommand::Update {
             id,
@@ -353,7 +359,10 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             })?;
             let t: TaskDto = client.patch_json(&task_path(&id), &body).await?;
             print(format, &t, || {
-                println!("{}", ok_id_line(view().color, "updated", &t.id))
+                println!(
+                    "{}",
+                    ok_id_line(view().color, view().quiet, "updated", &t.id)
+                )
             })?;
         }
         TaskCommand::Ls {
@@ -519,9 +528,9 @@ async fn render(
         // An empty list under a filter is not an empty system, and saying so
         // would send the reader looking for tasks that are right there.
         match (filtered, all) {
-            (true, _) => "no tasks match that filter",
-            (false, true) => "no tasks yet — the orchestrator creates them from a goal",
-            (false, false) => "no tasks under way — finished ones are behind --all",
+            (true, _) => empty_state("No tasks match that filter.", Some("ariadne task ls")),
+            (false, true) => empty_state("No tasks yet.", Some("ariadne goal create --help")),
+            (false, false) => empty_state("No tasks are under way.", Some("ariadne task ls --all")),
         },
     )
 }
@@ -601,7 +610,7 @@ fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
                 .into(),
         ),
         (
-            "depends_on",
+            "depends on",
             Kv::id(match t.depends_on.is_empty() {
                 true => "-".into(),
                 false => t.depends_on.join(", "),
@@ -617,7 +626,7 @@ fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
         ("reason", dash(t.reason.as_deref()).into()),
         // The forge's own link, where the rest of a published task's story
         // is; only an author that opened one reports it.
-        ("pull_request", dash(t.pr_url.as_deref()).into()),
+        ("pull request", dash(t.pr_url.as_deref()).into()),
         ("created", Kv::meta(moment(&t.created_at))),
         ("description", format!("\n---\n{}", t.description).into()),
     ]
@@ -675,7 +684,7 @@ fn print_status(t: &TaskDto, format: Format) -> Result<()> {
     print(format, t, || {
         println!(
             "{}",
-            status_line(view().color, "task", &t.id, t.status.as_str())
+            status_line(view().color, view().quiet, "task", &t.id, t.status.as_str())
         )
     })
 }
@@ -881,6 +890,10 @@ mod tests {
             ..dto()
         };
         let pairs = inspect_pairs(&t);
+        let keys: Vec<_> = pairs.iter().map(|(key, _)| *key).collect();
+        assert!(keys.contains(&"depends on"), "{keys:?}");
+        assert!(keys.contains(&"pull request"), "{keys:?}");
+        assert!(keys.iter().all(|key| !key.contains('_')), "{keys:?}");
 
         let coloured = kv_block(
             &pairs,
@@ -903,7 +916,7 @@ mod tests {
         );
         assert!(
             coloured.contains(&style::paint(true, style::ID, "01DEP")),
-            "depends_on is a list of ids, painted whole: {coloured}"
+            "depends on is a list of ids, painted whole: {coloured}"
         );
         assert!(coloured.contains("add-the-frobnicator"), "{coloured}");
 

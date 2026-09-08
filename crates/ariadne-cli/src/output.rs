@@ -131,7 +131,7 @@ pub fn print_list<T: Serialize>(
     items: &[T],
     columns: &[Column],
     row: impl Fn(&T) -> Vec<String>,
-    empty: &str,
+    empty: impl AsRef<str>,
 ) -> anyhow::Result<()> {
     if let Format::Json = format {
         return print_json(&items);
@@ -142,8 +142,8 @@ pub fn print_list<T: Serialize>(
         true => {}
         false => print_table(columns, &rows)?,
     }
-    if items.is_empty() && !empty.is_empty() {
-        note(empty);
+    if items.is_empty() && !empty.as_ref().is_empty() {
+        note(empty.as_ref());
     }
     Ok(())
 }
@@ -568,8 +568,11 @@ pub fn yes_no(flag: bool, no_word: &str) -> String {
 /// colour, exactly as `style::status` gives them to a cell. With colour off
 /// this is the bare line the CLI has always printed: the glyph is part of
 /// the colour here, not a stand-in for it — unlike a table, this line
-/// already spells the status out in words.
-pub fn status_line(color: bool, kind: &str, id: &str, status: &str) -> String {
+/// already spells the status out in words. Quiet output is the id alone.
+pub fn status_line(color: bool, quiet: bool, kind: &str, id: &str, status: &str) -> String {
+    if quiet {
+        return id.to_string();
+    }
     let (sty, glyph) = style::status(status);
     let word = match (color, glyph) {
         (true, Some(glyph)) => format!("{glyph} {status}"),
@@ -583,14 +586,26 @@ pub fn status_line(color: bool, kind: &str, id: &str, status: &str) -> String {
 }
 
 /// `<verb> <id>`: the confirmation a mutation with nothing left to show ends
-/// on — `deleted`, `posted`, `updated`, `typed into session` — the verb in
-/// green, the id dimmed the way every table's id column is.
-pub fn ok_id_line(color: bool, verb: &str, id: &str) -> String {
+/// on — `created`, `updated`, `deleted`, `reset`, `sent` — with the verb in
+/// green and the id dimmed. Quiet output is the id alone.
+pub fn ok_id_line(color: bool, quiet: bool, verb: &str, id: &str) -> String {
+    if quiet {
+        return id.to_string();
+    }
     format!(
         "{} {}",
         style::paint(color, style::OK, verb),
         style::paint(color, style::ID, id)
     )
+}
+
+/// An empty listing's sentence, followed by the command that moves the reader
+/// on when there is one.
+pub fn empty_state(statement: &str, next: Option<&str>) -> String {
+    match next {
+        Some(command) => format!("{statement}\nNext: {command}"),
+        None => statement.to_string(),
+    }
 }
 
 /// A note that something looks wrong, in the same place and the same colour
@@ -649,10 +664,10 @@ mod tests {
     #[test]
     fn a_status_line_agrees_with_the_table_row_it_echoes() {
         assert_eq!(
-            status_line(false, "task", ID, "finished"),
+            status_line(false, false, "task", ID, "finished"),
             format!("task {ID} is now finished")
         );
-        let painted = status_line(true, "task", ID, "finished");
+        let painted = status_line(true, false, "task", ID, "finished");
         assert!(
             painted.contains(&style::paint(true, style::ID, ID)),
             "{painted}"
@@ -672,11 +687,11 @@ mod tests {
     #[test]
     fn a_status_line_leaves_an_unknown_status_alone() {
         assert_eq!(
-            status_line(false, "task", ID, "integrating"),
+            status_line(false, false, "task", ID, "integrating"),
             format!("task {ID} is now integrating")
         );
         assert_eq!(
-            status_line(true, "task", ID, "integrating"),
+            status_line(true, false, "task", ID, "integrating"),
             format!(
                 "task {} is now integrating",
                 style::paint(true, style::ID, ID)
@@ -688,8 +703,11 @@ mod tests {
     /// green, the id dimmed, and nothing at all when colour is off.
     #[test]
     fn an_ok_id_line_paints_the_verb_and_the_id() {
-        assert_eq!(ok_id_line(false, "deleted", ID), format!("deleted {ID}"));
-        let painted = ok_id_line(true, "deleted", ID);
+        assert_eq!(
+            ok_id_line(false, false, "deleted", ID),
+            format!("deleted {ID}")
+        );
+        let painted = ok_id_line(true, false, "deleted", ID);
         assert!(
             painted.contains(&style::paint(true, style::OK, "deleted")),
             "{painted}"
@@ -697,6 +715,24 @@ mod tests {
         assert!(
             painted.contains(&style::paint(true, style::ID, ID)),
             "{painted}"
+        );
+    }
+
+    #[test]
+    fn quiet_mutations_print_only_the_id() {
+        assert_eq!(ok_id_line(true, true, "created", ID), ID);
+        assert_eq!(status_line(true, true, "task", ID, "finished"), ID);
+    }
+
+    #[test]
+    fn an_empty_state_puts_the_next_command_on_its_own_line() {
+        assert_eq!(
+            empty_state("No repositories yet.", Some("ariadne repo add <path>")),
+            "No repositories yet.\nNext: ariadne repo add <path>"
+        );
+        assert_eq!(
+            empty_state("Nothing needs attention.", None),
+            "Nothing needs attention."
         );
     }
 

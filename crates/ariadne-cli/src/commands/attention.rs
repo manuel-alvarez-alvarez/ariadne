@@ -30,7 +30,7 @@ use ariadne_core::{AttentionReason, TaskStatus};
 use super::follow;
 
 use crate::output::table::{check_columns, heading as heading_style, quiet_lines, render_groups};
-use crate::output::{Format, View, note, print_json, view};
+use crate::output::{Format, View, empty_state, note, print_json, view};
 use board::{Attention, Group, ROWS, group, heading, rows, task_titles};
 
 /// Why a row is on the list — the task reasons and the session reasons in one
@@ -235,7 +235,9 @@ async fn render(client: &Client, format: Format) -> Result<()> {
                 println!("{}", quiet_lines(&rows));
             }
         }
-        Format::Table if attention.goals.is_empty() => note("nothing needs attention"),
+        Format::Table if attention.goals.is_empty() => {
+            note(&empty_state("Nothing needs attention.", None));
+        }
         Format::Table => println!("{}", board(&attention, &titles, now, view())?),
     }
     Ok(())

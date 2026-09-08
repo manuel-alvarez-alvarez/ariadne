@@ -20,11 +20,11 @@ use super::resolve::{self, Kind};
 use super::{Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, at, col, dash, moment, note, ok_id_line, pager, print,
-    print_json, print_kv, print_list, short_id, status_line, style, usage_block, usage_cell, view,
+    Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, note, ok_id_line, pager,
+    print, print_json, print_kv, print_list, short_id, status_line, usage_block, usage_cell, view,
 };
 
-/// Columns of `session ls`. `context` is the one written by a human, so it is
+/// Columns of `session ls`. `title` is the one written by a human, so it is
 /// capped the way `task ls` caps its titles. `attention` is next to `status`
 /// because the two are orthogonal: an agent blocked on a permission prompt is
 /// still `running`, and the status alone says nothing about it.
@@ -39,7 +39,7 @@ use crate::output::{
 /// of a row nobody reads them from.
 const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
-    col("context", 40).title(),
+    col("title", 40).title(),
     col("status", UNCAPPED).status(),
     col("attention", UNCAPPED).attention().rank(4),
     col("age", UNCAPPED).rank(3),
@@ -153,7 +153,12 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             attention,
             all,
             watch,
-        } => ls(client, task, goal, statuses, seat, attention, all, watch, format).await?,
+        } => {
+            ls(
+                client, task, goal, statuses, seat, attention, all, watch, format,
+            )
+            .await?
+        }
         SessionCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
             let s: SessionDto = client.get_json(&session_path(&id)).await?;
@@ -175,7 +180,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             print(
                 format,
                 &serde_json::json!({"sent": true, "session": id}),
-                || println!("{}", ok_id_line(view().color, "typed into session", &id)),
+                || println!("{}", ok_id_line(view().color, view().quiet, "sent", &id)),
             )?;
         }
         SessionCommand::Logs { id, follow } => {
@@ -196,17 +201,17 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             print(
                 format,
                 &serde_json::json!({"resumed": resumed, "session": s}),
-                || match resumed {
-                    true => println!(
-                        "session {} {} ({})",
-                        style::paint(view().color, style::ID, &s.id),
-                        style::paint(view().color, style::OK, "resumed"),
-                        s.tmux_session
-                    ),
-                    false => println!(
-                        "session {} already has a running agent ({}); nothing to resume",
-                        s.id, s.tmux_session
-                    ),
+                || {
+                    println!(
+                        "{}",
+                        status_line(
+                            view().color,
+                            view().quiet,
+                            "session",
+                            &s.id,
+                            s.status.as_str(),
+                        )
+                    )
                 },
             )?;
         }
@@ -221,7 +226,13 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             print(format, &s, || {
                 println!(
                     "{}",
-                    status_line(view().color, "session", &s.id, s.status.as_str())
+                    status_line(
+                        view().color,
+                        view().quiet,
+                        "session",
+                        &s.id,
+                        s.status.as_str(),
+                    )
                 )
             })?;
         }
@@ -368,12 +379,15 @@ async fn render(
         // A named status already says which sessions were asked for, so
         // --all has nothing left to offer.
         match (filtered, all || !statuses.is_empty()) {
-            (true, true) => "no sessions match that filter",
-            (true, false) => {
-                "no live sessions match that filter — finished ones are behind --all"
+            (true, true) => {
+                empty_state("No sessions match that filter.", Some("ariadne session ls"))
             }
-            (false, true) => "no sessions yet",
-            (false, false) => "no live sessions — finished ones are behind --all",
+            (true, false) => empty_state(
+                "No live sessions match that filter.",
+                Some("ariadne session ls --all"),
+            ),
+            (false, true) => empty_state("No sessions yet.", Some("ariadne goal create --help")),
+            (false, false) => empty_state("No live sessions.", Some("ariadne session ls --all")),
         },
     )
 }
@@ -592,13 +606,37 @@ mod tests {
     use ariadne_core::Seat;
 
     use crate::commands::fixtures::session;
-    use crate::output::{View, kv_block};
+    use crate::output::{View, kv_block, style};
 
     fn context() -> SessionContext {
         SessionContext {
             goals: HashMap::from([("01GOAL".to_string(), "Ship the board".to_string())]),
             tasks: HashMap::from([("01TASK".to_string(), "Wire the screen".to_string())]),
         }
+    }
+
+    #[test]
+    fn the_session_subject_column_is_title() {
+        let table = crate::output::render_table(
+            LS,
+            &[vec![String::new(); LS.len()]],
+            &crate::output::View::plain(),
+        )
+        .expect("table");
+        assert!(
+            table
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains("TITLE")),
+            "{table}"
+        );
+        assert!(
+            !table
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains("CONTEXT")),
+            "{table}"
+        );
     }
 
     #[test]
