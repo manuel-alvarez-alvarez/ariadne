@@ -141,10 +141,24 @@ dto! {
            tmux_session, worktree_path, attention_since,
            last_activity_at, created_at, ended_at
     }
+}
 
-    pub fn event_dto(e: store::AgentEvent) -> AgentEventDto {
-        payload: serde_json::from_str(&e.payload).unwrap_or(serde_json::Value::Null),
-        .. id, session_id, task_id, agent_kind, kind, created_at
+/// Not in the [`dto!`] block above: `summary` is built from both `kind` and
+/// `payload` together, which the macro's one-expression-per-field shape has
+/// no room for.
+pub fn event_dto(e: store::AgentEvent) -> AgentEventDto {
+    let payload: serde_json::Value =
+        serde_json::from_str(&e.payload).unwrap_or(serde_json::Value::Null);
+    let summary = super::classify::summarize(&e.kind, &payload);
+    AgentEventDto {
+        id: e.id,
+        session_id: e.session_id,
+        task_id: e.task_id,
+        agent_kind: e.agent_kind,
+        kind: e.kind,
+        payload,
+        summary,
+        created_at: e.created_at,
     }
 }
 

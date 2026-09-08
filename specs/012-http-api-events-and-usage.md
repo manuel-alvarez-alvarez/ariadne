@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-daemon/tests/unknown_fields.rs
   - crates/ariadne-daemon/tests/logs.rs
   - crates/ariadne-daemon/tests/doctor.rs
+  - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-store/tests/store.rs
 ---
 
@@ -53,21 +54,35 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
    stall and the error and nothing else, and a question is held until it is
    answered or the turn moves on. A malformed report is dropped and its event
    still lands.
-9. An event is believed about the pane only where it comes from the launch the
-   session is on (008): a relaunched agent shares its session id — and, on a
-   resumed conversation, its internal id — with the process it replaced, whose
-   exit is still to report. A report from the launch before is recorded and
-   changes nothing, since believing it would retire a session whose agent is
-   working. An agent that names no launch is believed, having none to
-   disagree with.
-10. Token usage is reported per session and per source, and a source replaces
+9. Every agent event's DTO carries a `summary`: one line built from its
+   payload when the DTO is built, never stored. A Claude Code or Codex tool
+   call reads as its action and its subject — `Bash: cargo nextest run`,
+   `Edit: crates/ariadne-api/src/events.rs` — off `tool_name` and the first
+   recognized field of `tool_input` (`command`, `file_path`, `path`,
+   `pattern`, `url`, `prompt`, `description`); an OpenCode
+   `tool.execute.before`/`.after` reads the same way off `tool`/`title`. Where
+   the payload carries the agent's own words instead — the prompt that began
+   the turn, the last assistant message a turn ended on, a notification's
+   text, an OpenCode `session.error`'s — those are shown verbatim. A path
+   under the payload's `cwd` is printed relative to it, the cwd itself is
+   never printed, the summary is flattened to one line, and it is cut at 200
+   characters with a trailing `…` — which is also what a payload nothing of
+   this can read summarizes to, visibly.
+10. An event is believed about the pane only where it comes from the launch
+    the session is on (008): a relaunched agent shares its session id — and,
+    on a resumed conversation, its internal id — with the process it
+    replaced, whose exit is still to report. A report from the launch before
+    is recorded and changes nothing, since believing it would retire a
+    session whose agent is working. An agent that names no launch is
+    believed, having none to disagree with.
+11. Token usage is reported per session and per source, and a source replaces
     its own totals rather than adding to them. Usage rolls up to the task and
     the goal; every session of one reviewer groups together; a session that has
     reported nothing reads as zeros; and usage goes when its session does.
-11. The daemon's own log is served both as a snapshot (with a tail limit) and
+12. The daemon's own log is served both as a snapshot (with a tail limit) and
     as a stream that opens with a snapshot and follows with deltas, from a
     ring buffer that evicts its oldest lines.
-12. `doctor` reports the environment the daemon actually runs in — its own
+13. `doctor` reports the environment the daemon actually runs in — its own
     paths, the agent CLIs and tools a session and a published task need, and a
     worktree root it cannot write.
 
@@ -97,6 +112,18 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
 - An event from a launch the session has moved past is recorded and changes
   nothing
   (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`).
+- An agent event's `summary` reads a tool call as its action and its subject,
+  the agent's own words where the payload carries any, a path relative to the
+  cwd and never the cwd itself, one flattened line cut at 200 characters, and
+  `…` where nothing of it can be read
+  (`http/classify.rs::a_tool_call_reads_as_its_action_and_its_subject`,
+  `::an_opencode_tool_call_reads_as_its_tool_and_its_title`,
+  `::the_agents_own_words_are_shown_where_the_payload_carries_them`,
+  `::a_payload_with_nothing_readable_but_its_cwd_summarizes_to_an_ellipsis`,
+  `::a_path_under_the_cwd_prints_relative_and_the_cwd_never_appears`,
+  `::a_long_summary_is_cut_at_200_characters`), and it reaches both
+  `GET /v1/events` and the SSE stream
+  (`events.rs::an_events_summary_reaches_the_snapshot_and_the_stream_alike`).
 - Usage rolls up to the task and the goal
   (`events.rs::reported_usage_rolls_up_to_the_task_and_the_goal`,
   `store.rs::a_tasks_usage_groups_every_round_of_a_reviewer_together`,

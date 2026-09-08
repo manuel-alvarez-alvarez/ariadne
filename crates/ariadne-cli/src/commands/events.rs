@@ -316,8 +316,9 @@ fn domain_event(frame: &SseEvent) -> Option<DomainEvent> {
     serde_json::from_value(serde_json::json!({"event": frame.event, "data": data})).ok()
 }
 
-/// One recorded agent event as a line: its own kind, the session that reported
-/// it, and which agent that was.
+/// One recorded agent event as a line: its own kind, the session that
+/// reported it, and which agent that was — with the daemon's own gist of its
+/// payload beside it, `<agent kind> · <summary>`.
 fn agent_line(e: &AgentEventDto) -> Line {
     Line {
         at: e.created_at.clone(),
@@ -327,7 +328,7 @@ fn agent_line(e: &AgentEventDto) -> Line {
             .clone()
             .or_else(|| e.task_id.clone())
             .unwrap_or_else(|| "-".into()),
-        detail: e.agent_kind.clone().unwrap_or_default(),
+        detail: format!("{} · {}", e.agent_kind.as_deref().unwrap_or("-"), e.summary),
         session: e.session_id.clone(),
         status: None,
     }
@@ -667,8 +668,9 @@ mod tests {
     }
 
     /// A recorded agent event and the same event arriving live read
-    /// identically — kind, session and agent — so the history and the tail are
-    /// one list and `--kind stop` means one thing in both.
+    /// identically — kind, session, agent and the daemon's own summary of its
+    /// payload — so the history and the tail are one list and `--kind stop`
+    /// means one thing in both.
     #[test]
     fn an_agent_event_reads_the_same_recorded_as_it_does_live() {
         let event = AgentEventDto {
@@ -678,9 +680,10 @@ mod tests {
             agent_kind: Some("claude_code".into()),
             kind: "stop".into(),
             payload: serde_json::json!({}),
+            summary: "ran cargo nextest run".into(),
             created_at: AT.into(),
         };
-        let expected = "<time> · stop · 01SESS · claude_code";
+        let expected = "<time> · stop · 01SESS · claude_code · ran cargo nextest run";
         assert_eq!(rendered(&agent_line(&event)), expected);
         assert_eq!(
             rendered(&domain_line(&DomainEvent::AgentEvent(event))),

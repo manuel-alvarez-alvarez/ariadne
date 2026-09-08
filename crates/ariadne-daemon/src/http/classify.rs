@@ -224,11 +224,138 @@ fn attention_for_notification(
     }
 }
 
+// -- summary ------------------------------------------------------------
+
+/// How long a summary may run before [`summarize`] cuts it, ellipsis
+/// character included.
+const MAX_SUMMARY_LEN: usize = 200;
+
+/// The `tool_input` fields that say what a Claude Code or Codex tool call
+/// does, tried in this order — the first one present is the summary's
+/// subject.
+const TOOL_INPUT_FIELDS: [&str; 7] = [
+    "command",
+    "file_path",
+    "path",
+    "pattern",
+    "url",
+    "prompt",
+    "description",
+];
+
+/// The one line an event's payload is worth, for `ariadne events` and the
+/// desktop app's agent-activity tab alike: an action and its subject for a
+/// tool call, the agent's own words where it left any — and `…`, visibly,
+/// where nothing here can be read.
+///
+/// Built once, when the DTO is built, from the three vocabularies the CLIs
+/// and the plugin report in (this module's own docs): Claude Code and Codex
+/// share `tool_name`/`tool_input` on every tool event, and OpenCode's own
+/// `tool`/`title`. `cwd` is read only to relativize a path already read off
+/// one of those — it is never a summary of its own, and it never appears in
+/// one.
+pub(super) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
+    let text = tool_call_summary(payload)
+        .or_else(|| opencode_tool_summary(payload))
+        .or_else(|| agent_text(kind, payload));
+    finish(&text.unwrap_or_else(|| "…".to_string()))
+}
+
+/// A payload's field, where it holds a non-empty string.
+fn non_empty_str(value: Option<&serde_json::Value>) -> Option<&str> {
+    value.and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+}
+
+/// A Claude Code or Codex tool call, off the two fields both CLIs put on
+/// every one, whichever hook sent it and whichever half of the pre/post pair
+/// it is: `Bash: cargo nextest run`, `Edit: crates/ariadne-api/src/events.rs`.
+///
+/// The permission dialog codex puts up before a call carries the same two
+/// fields, so the same reading covers it: `PermissionRequest` is a tool
+/// event too, just one whose outcome is not known yet.
+fn tool_call_summary(payload: &serde_json::Value) -> Option<String> {
+    let tool = non_empty_str(payload.get("tool_name"))?;
+    let input = payload.get("tool_input")?;
+    let (field, value) = TOOL_INPUT_FIELDS
+        .iter()
+        .find_map(|field| non_empty_str(input.get(field)).map(|v| (*field, v)))?;
+    let subject = match field {
+        "file_path" | "path" => relative_to_cwd(value, payload),
+        _ => value.to_string(),
+    };
+    Some(format!("{tool}: {subject}"))
+}
+
+/// An OpenCode `tool.execute.before`/`.after`: the tool it ran and the title
+/// it gave the call, the same shape as [`tool_call_summary`] in OpenCode's
+/// own field names. Read by field rather than gated on the kind, so either
+/// half of the pair is covered the moment it carries both — `.after`'s shape
+/// is the one captured, off the plugin's own dedicated hook
+/// (`{tool: input?.tool, title: output?.title}`).
+fn opencode_tool_summary(payload: &serde_json::Value) -> Option<String> {
+    let tool = non_empty_str(payload.get("tool"))?;
+    let title = non_empty_str(payload.get("title"))?;
+    Some(format!("{tool}: {title}"))
+}
+
+/// The agent's own words, wherever the payload carries any: the prompt that
+/// began the turn, the message it ended on, a notification's text, or an
+/// OpenCode error's — `{name, data: {message, …}}`, the shape `session.error`
+/// carries it in.
+fn agent_text(kind: &str, payload: &serde_json::Value) -> Option<String> {
+    let text = match kind {
+        "user_prompt_submit" => non_empty_str(payload.get("prompt")),
+        "stop" | "turn_complete" => non_empty_str(payload.get("last_assistant_message")),
+        "notification" => non_empty_str(payload.get("message")),
+        "session.error" => non_empty_str(
+            payload
+                .get("error")
+                .and_then(|e| e.get("data"))
+                .and_then(|d| d.get("message")),
+        ),
+        _ => None,
+    }?;
+    Some(text.to_string())
+}
+
+/// `value` relative to the `cwd` the payload names, when it lies inside it;
+/// `value` unchanged otherwise — an absolute path elsewhere, or one already
+/// relative. `cwd` is never what ends up in the summary, only ever the base
+/// a path under it is trimmed against.
+fn relative_to_cwd(value: &str, payload: &serde_json::Value) -> String {
+    let Some(cwd) = non_empty_str(payload.get("cwd")) else {
+        return value.to_string();
+    };
+    let cwd = cwd.trim_end_matches('/');
+    match value.strip_prefix(cwd) {
+        Some("") => ".".to_string(),
+        Some(rest) if rest.starts_with('/') => rest.trim_start_matches('/').to_string(),
+        _ => value.to_string(),
+    }
+}
+
+/// One line, cut at [`MAX_SUMMARY_LEN`] characters and marked where it was —
+/// counted, like every other cut in Ariadne, so an accent is never split in
+/// half.
+fn finish(text: &str) -> String {
+    let flat: String = text
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    if flat.chars().count() <= MAX_SUMMARY_LEN {
+        return flat;
+    }
+    flat.chars()
+        .take(MAX_SUMMARY_LEN - 1)
+        .chain(['…'])
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         QUESTION_TOOL, Question, attention_for_event, extract_internal_id, question_for_event,
-        status_for_event, usage_for_event,
+        status_for_event, summarize, usage_for_event,
     };
 
     use ariadne_core::{AgentKind, AttentionReason, SessionStatus, TokenUsage};
@@ -605,5 +732,155 @@ mod tests {
         ] {
             assert_eq!(usage_for_event(&payload), None, "{payload}");
         }
+    }
+
+    /// Rules 1 and 2: a Claude Code or Codex tool call reads as its action
+    /// and its subject, off `tool_name` and `tool_input` alone — the same
+    /// two fields whichever hook sent them and whichever half of the
+    /// pre/post pair it is.
+    #[test]
+    fn a_tool_call_reads_as_its_action_and_its_subject() {
+        let claude = |tool: &str, input: serde_json::Value| {
+            json!({
+                "hook_event_name": "PreToolUse",
+                "cwd": "/tmp/wt",
+                "tool_name": tool,
+                "tool_input": input,
+            })
+        };
+        for (payload, expected) in [
+            (
+                claude("Bash", json!({"command": "cargo nextest run"})),
+                "Bash: cargo nextest run",
+            ),
+            (
+                claude(
+                    "Edit",
+                    json!({"file_path": "/tmp/wt/crates/ariadne-api/src/events.rs"}),
+                ),
+                "Edit: crates/ariadne-api/src/events.rs",
+            ),
+            (
+                claude("Grep", json!({"pattern": "fn summarize"})),
+                "Grep: fn summarize",
+            ),
+        ] {
+            assert_eq!(summarize("pre_tool_use", &payload), expected, "{payload}");
+        }
+
+        // Codex spells the same two fields the same way, on its own tool
+        // call and on the permission dialog it puts up before one.
+        let codex_tool_call = json!({
+            "session_id": "01a01a24-e62e-71c1-ba23-96c62f6acee1",
+            "cwd": "/tmp/wt",
+            "hook_event_name": "PreToolUse",
+            "model": "gpt-5.6-sol",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/tmp/wt/src/main.rs"},
+        });
+        assert_eq!(
+            summarize("pre_tool_use", &codex_tool_call),
+            "Read: src/main.rs"
+        );
+        assert_eq!(
+            summarize("permission_request", &codex_permission_request()),
+            "Bash: touch /tmp/probe"
+        );
+    }
+
+    /// Rule 3: OpenCode's own vocabulary for a tool call — `tool` and
+    /// `title` — off either half of the `tool.execute.before`/`.after` pair:
+    /// the reading is by field, not gated on which one sent it.
+    #[test]
+    fn an_opencode_tool_call_reads_as_its_tool_and_its_title() {
+        let payload = json!({
+            "tool": "bash",
+            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
+            "title": "List files",
+        });
+        for kind in ["tool.execute.before", "tool.execute.after"] {
+            assert_eq!(summarize(kind, &payload), "bash: List files", "{kind}");
+        }
+    }
+
+    /// Rule 4: the agent's own words, wherever the payload carries any —
+    /// read verbatim and flattened to one line, with never a hint that a
+    /// cwd sits behind any of them.
+    #[test]
+    fn the_agents_own_words_are_shown_where_the_payload_carries_them() {
+        for (kind, payload, expected) in [
+            (
+                "user_prompt_submit",
+                json!({"hook_event_name": "UserPromptSubmit", "prompt": "run the tests"}),
+                "run the tests",
+            ),
+            (
+                "stop",
+                json!({"hook_event_name": "Stop",
+                       "last_assistant_message": "Which of the two do you want?"}),
+                "Which of the two do you want?",
+            ),
+            // A newline in the words themselves is flattened, not cut short.
+            (
+                "stop",
+                json!({"hook_event_name": "Stop", "last_assistant_message": "Line one\nLine two"}),
+                "Line one Line two",
+            ),
+            (
+                "notification",
+                json!({"hook_event_name": "Notification",
+                       "message": "Claude needs your permission to use Bash"}),
+                "Claude needs your permission to use Bash",
+            ),
+            (
+                "session.error",
+                json!({"sessionID": "ses_x",
+                       "error": {"name": "UnknownError", "data": {"message": "rate limited"}}}),
+                "rate limited",
+            ),
+        ] {
+            assert_eq!(summarize(kind, &payload), expected, "{kind}");
+        }
+    }
+
+    /// Rule 9: a payload nothing above can read — here, one carrying only its
+    /// `cwd` — summarizes to `…`, visibly, rather than to nothing.
+    #[test]
+    fn a_payload_with_nothing_readable_but_its_cwd_summarizes_to_an_ellipsis() {
+        let payload = json!({"hook_event_name": "SessionStart", "cwd": "/tmp/wt"});
+        assert_eq!(summarize("session_start", &payload), "…");
+    }
+
+    /// Rules 5 and 6: a path under the payload's `cwd` prints relative to
+    /// it, one outside is left exactly as it came, and the cwd itself is
+    /// never what ends up in the summary either way.
+    #[test]
+    fn a_path_under_the_cwd_prints_relative_and_the_cwd_never_appears() {
+        let inside = json!({
+            "cwd": "/tmp/wt",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/tmp/wt/crates/ariadne-api/src/events.rs"},
+        });
+        let summary = summarize("pre_tool_use", &inside);
+        assert_eq!(summary, "Edit: crates/ariadne-api/src/events.rs");
+        assert!(!summary.contains("/tmp/wt"), "{summary}");
+
+        let outside = json!({
+            "cwd": "/tmp/wt",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/etc/hosts"},
+        });
+        assert_eq!(summarize("pre_tool_use", &outside), "Read: /etc/hosts");
+    }
+
+    /// Rule 8: a summary longer than 200 characters is cut there, and the
+    /// cut is marked.
+    #[test]
+    fn a_long_summary_is_cut_at_200_characters() {
+        let payload = json!({"tool_name": "Bash", "tool_input": {"command": "x".repeat(250)}});
+        let summary = summarize("pre_tool_use", &payload);
+        assert_eq!(summary.chars().count(), 200);
+        assert!(summary.starts_with("Bash: "), "{summary}");
+        assert!(summary.ends_with('…'), "{summary}");
     }
 }

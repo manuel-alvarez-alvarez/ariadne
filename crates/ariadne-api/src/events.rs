@@ -13,6 +13,11 @@ pub struct AgentEventDto {
     /// e.g. session_start, post_tool_use, stop, turn_complete
     pub kind: String,
     pub payload: serde_json::Value,
+    /// The one-line gist of `payload`, built by the daemon from the CLI's own
+    /// vocabulary rather than stored: an action and its subject for a tool
+    /// call, the agent's own words where it left any, and `…` where nothing
+    /// of it can be read.
+    pub summary: String,
     pub created_at: String,
 }
 

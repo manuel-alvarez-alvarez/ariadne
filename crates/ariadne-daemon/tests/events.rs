@@ -8,6 +8,7 @@ mod common;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 
+use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::stream::{DeletedDto, DomainEvent};
@@ -473,6 +474,54 @@ async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
     .await;
     assert_eq!(h.session_status(&session).await, SessionStatus::Exited);
     assert_eq!(recorded(&h, &session, "session_end").await, 2);
+}
+
+/// The summary the daemon builds from a payload is never stored — it is
+/// built when the DTO is built — so both surfaces that hand one out have to
+/// agree: the recorded snapshot `GET /v1/events` answers, and the live event
+/// the SSE stream carries for the same report.
+#[tokio::test]
+async fn an_events_summary_reaches_the_snapshot_and_the_stream_alike() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    // Synced on the bus directly, so the session's own `session_created`
+    // reaches the daemon's async relay before the SSE stream subscribes —
+    // otherwise it can still be in flight once the stream opens.
+    let mut sync = h.bus.subscribe();
+    let session = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    next_event(
+        &mut sync,
+        |e| matches!(&e.event, DomainEvent::SessionCreated(s) if s.id == session.id),
+    )
+    .await;
+    drop(sync);
+
+    let mut body = h.stream(get("/v1/events/stream")).await;
+    expect_sse(&mut body, "heartbeat").await;
+
+    h.ingest(
+        &session,
+        "pre_tool_use",
+        serde_json::json!({
+            "cwd": "/tmp/wt",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo nextest run"},
+        }),
+    )
+    .await;
+
+    let events: Vec<AgentEventDto> = h.get(&format!("/v1/events?session={}", session.id)).await;
+    let recorded = events
+        .iter()
+        .find(|e| e.kind == "pre_tool_use")
+        .expect("the tool call was recorded");
+    assert_eq!(recorded.summary, "Bash: cargo nextest run");
+
+    let live = expect_sse(&mut body, "agent_event").await;
+    assert_eq!(live["summary"], "Bash: cargo nextest run");
 }
 
 /// Attention rides the same ingestion path as liveness: an agent that reports
