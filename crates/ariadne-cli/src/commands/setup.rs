@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 
 use crate::codex_trust::Trust;
 use crate::commands::on_path;
-use crate::output::{style, view};
+use crate::output::{Kv, print_kv, style, view};
 
 /// `ariadne setup codex-hooks` — have the user trust Ariadne's Codex hooks.
 ///
@@ -30,14 +30,7 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
             "Codex hooks report session ids, liveness and approval waits to Ariadne:"
         )
     );
-    println!(
-        "  command: {}",
-        ariadne_core::codex_hooks::command(&cli_bin)
-    );
-    println!(
-        "  events:  {}",
-        ariadne_core::codex_hooks::EVENTS.join(", ")
-    );
+    print_kv(&hook_pairs(&cli_bin));
     println!(
         "\nThey are passed to every session Ariadne spawns, but codex runs them \
          only\nonce you have trusted them — and it asks at the start of a \
@@ -72,7 +65,8 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
          with /quit.\nNothing else is needed, and the trust survives every later \
          session."
     );
-    print!("\nPress Enter to start codex (Ctrl-C to skip)... ");
+    // The prompt is not output: it belongs on stderr with the other notes.
+    eprint!("\nPress Enter to start codex (Ctrl-C to skip)... ");
     flush();
     let mut line = String::new();
     std::io::stdin()
@@ -131,6 +125,21 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
     Ok(())
 }
 
+/// The pairs `codex-hooks` renders through [`print_kv`]: the exact command
+/// codex will run under, and which events it reports.
+fn hook_pairs(cli_bin: &str) -> Vec<(&'static str, Kv)> {
+    vec![
+        (
+            "command",
+            ariadne_core::codex_hooks::command(cli_bin).into(),
+        ),
+        (
+            "events",
+            ariadne_core::codex_hooks::EVENTS.join(", ").into(),
+        ),
+    ]
+}
+
 /// What codex records of the declaration, or nothing when its home is not
 /// where it can be found.
 fn trust() -> Option<Trust> {
@@ -154,7 +163,7 @@ fn report_trust(trust: &Trust) {
 
 fn flush() {
     use std::io::Write;
-    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
 }
 
 /// The `ariadne` the hook command points at. Must be the same binary the
@@ -165,4 +174,32 @@ fn default_cli_bin() -> String {
         .ok()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "ariadne".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::{View, kv_block};
+
+    /// The command and events values line up under the shared `kv_block`
+    /// padding, not the hand-picked spacing the raw `println!`s once faked.
+    #[test]
+    fn the_hook_block_aligns_command_and_events_through_kv_block() {
+        let pairs = hook_pairs("ariadne");
+        let block = kv_block(&pairs, &View::plain());
+        let lines: Vec<&str> = block.lines().collect();
+        assert_eq!(lines.len(), 2, "{block}");
+
+        let command = ariadne_core::codex_hooks::command("ariadne");
+        let events = ariadne_core::codex_hooks::EVENTS.join(", ");
+        assert!(lines[0].ends_with(&command), "{block}");
+        assert!(lines[1].ends_with(&events), "{block}");
+
+        let value_offset = |line: &str, value: &str| line.len() - value.len();
+        assert_eq!(
+            value_offset(lines[0], &command),
+            value_offset(lines[1], &events),
+            "both values should start in the same column: {block}"
+        );
+    }
 }

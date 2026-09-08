@@ -3,7 +3,7 @@ id: command-line-interface
 status: current
 updated: 2026-09-08
 areas: [cli]
-commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10]
+commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
   - crates/ariadne-cli/src/cli/tests.rs
   - crates/ariadne-cli/src/output.rs
@@ -19,6 +19,7 @@ tests:
   - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/src/output/table.rs
   - crates/ariadne-cli/src/commands/attention.rs
+  - crates/ariadne-cli/src/commands/setup.rs
 ---
 
 # Command-line interface
@@ -118,6 +119,10 @@ same binary also serves (013).
     subject column is `title`, except the agent CLI kind remains `agent`.
     Boolean columns use the shared `yes_no` wording. Every empty listing states
     what is empty, then gives the next command when one exists.
+24. `ariadne setup codex-hooks` renders the command and events it reports
+    through the same key/value block every inspect command uses, rather than
+    hand-picked spacing, and its confirmation prompt goes to stderr with every
+    other prompt, so a piped stdout carries only that block.
 
 ## Acceptance criteria
 
@@ -204,6 +209,9 @@ same binary also serves (013).
   `yes` or `no` (`session.rs::the_session_subject_column_is_title`,
   `models.rs::the_bands_drop_before_efforts_and_description_do`,
   `::a_row_carries_the_bands_and_stars_the_default_effort`).
+- `setup codex-hooks` aligns its command and events values through the shared
+  key/value block
+  (`setup.rs::the_hook_block_aligns_command_and_events_through_kv_block`).
 
 ## Sources
 
