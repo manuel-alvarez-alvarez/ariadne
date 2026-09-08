@@ -101,6 +101,7 @@ pub struct HarnessBuilder {
     spawns: bool,
     logs: Option<LogBuffer>,
     typed_input_window: Option<Duration>,
+    opencode_bin: Option<String>,
 }
 
 /// A daemon in a temporary directory: a stub `tmux`, no scheduler.
@@ -128,6 +129,7 @@ pub fn harness() -> HarnessBuilder {
         spawns: true,
         logs: None,
         typed_input_window: None,
+        opencode_bin: None,
     }
 }
 
@@ -172,6 +174,15 @@ impl HarnessBuilder {
         self
     }
 
+    /// Point the model catalog's opencode discovery at another binary: a
+    /// stub, so a test can drive what discovery answers, and when it answers
+    /// it, rather than take whatever the real, live `opencode` says at that
+    /// moment. See [`vanishing_opencode_stub`].
+    pub fn opencode_bin(mut self, bin: impl Into<String>) -> Self {
+        self.opencode_bin = Some(bin.into());
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -186,6 +197,9 @@ impl HarnessBuilder {
         }
         if let Some(window) = self.typed_input_window {
             config.typed_input_window = window;
+        }
+        if let Some(bin) = self.opencode_bin {
+            config.opencode_bin = bin;
         }
         let tmux = match self.tmux {
             Tmux::Stub => write_tmux_stub(dir.path()),
@@ -294,6 +308,35 @@ fn write_script(path: &Path, script: &str) {
 
     std::fs::write(path, script).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A stub `opencode` for [`HarnessBuilder::opencode_bin`]: it answers `models
+/// --verbose` with `first_call` once, and with nothing — no models at all —
+/// every time after.
+///
+/// This is the shape a test wants of the real, live discovery when it wants
+/// to prove something about a model that leaves the catalog between two
+/// calls: `first_call` is the listing that names it, and every call after is
+/// the write that no longer finds it there — on demand, rather than on the
+/// real catalog's own chance.
+pub fn vanishing_opencode_stub(dir: &Path, first_call: &str) -> String {
+    let bin = dir.join("opencode-stub.sh");
+    let calls = dir.join("opencode-calls");
+    let first = dir.join("opencode-first-call.txt");
+    std::fs::write(&first, first_call).unwrap();
+    write_script(
+        &bin,
+        &format!(
+            "#!/bin/sh\n\
+             n=$(( $(cat '{calls}' 2>/dev/null || echo 0) + 1 ))\n\
+             echo \"$n\" > '{calls}'\n\
+             [ \"$n\" = 1 ] && cat '{first}'\n\
+             exit 0\n",
+            calls = calls.display(),
+            first = first.display(),
+        ),
+    );
+    bin.display().to_string()
 }
 
 /// The one stub `tmux`, whose every answer is a file in the harness directory.

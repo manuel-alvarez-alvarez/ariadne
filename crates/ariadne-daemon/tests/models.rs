@@ -6,8 +6,11 @@
 //! entry — a model is required wherever an agent is pinned. Nothing scopes
 //! the catalog any more, so there is one answer and it is the union. Each
 //! entry says what the model is for and carries the efforts it can be run
-//! at. OpenCode discovery is not exercised here: it depends on an installed
-//! `opencode` binary, and its parser is unit-tested in the daemon.
+//! at. OpenCode discovery's parser is unit-tested in the daemon; here it is
+//! exercised only by one test that needs a catalog it can change out from
+//! under a write, and that one points discovery at a stub rather than an
+//! installed `opencode` binary, whose live answer can differ between two
+//! calls by chance rather than on demand.
 //!
 //! Every entry also says whether an agent can be staffed on it. The catalog
 //! is code and discovery, so what the database holds is the user's
@@ -24,7 +27,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::error::ErrorBody;
 
-use common::{Harness, harness, put_json};
+use common::{Harness, harness, put_json, vanishing_opencode_stub};
 
 async fn models(h: &Harness) -> Vec<ModelDto> {
     h.get("/v1/models").await
@@ -217,16 +220,36 @@ async fn a_model_the_catalog_does_not_carry_cannot_be_turned_off() {
     );
 }
 
+/// What `opencode models --verbose` prints for one model, `vanishing`: the
+/// [`vanishing_opencode_stub`] answers with this once, and with nothing after.
+const VANISHING_MODEL: &str = r#"opencode/vanishing
+{
+  "id": "vanishing",
+  "providerID": "opencode",
+  "name": "Vanishing"
+}
+"#;
+
 /// The last model left on cannot be turned off. A daemon that can staff
 /// nothing is not a state to leave a user in, and it is the one state this
 /// endpoint could put them in.
 ///
 /// The catalog is re-read between writes rather than listed once: opencode's
 /// half of it is whatever discovery answers at that moment, so what "every
-/// other entry" means is a question with a fresh answer each time.
+/// other entry" means is a question with a fresh answer each time. A model
+/// the listing just named can be gone from the catalog by the time the write
+/// reaches it — discovery ran again in between and dropped it — and that is
+/// churn, not a failure: the listing is stale, not the assertion.
+///
+/// Discovery here is the stub, not the real `opencode`: it answers once with
+/// a model this test never named, `vanishing`, and with nothing ever after —
+/// gone from the catalog by the time anything tries to turn it off, on
+/// demand rather than by the real catalog's own chance.
 #[tokio::test]
 async fn the_last_model_left_on_cannot_be_turned_off() {
-    let h = harness().await;
+    let stub_dir = tempfile::tempdir().unwrap();
+    let opencode_bin = vanishing_opencode_stub(stub_dir.path(), VANISHING_MODEL);
+    let h = harness().opencode_bin(opencode_bin).await;
     let keep = "codex:gpt-5.6-sol";
     // Everything but one, off — however many passes the catalog takes to
     // stop offering another.
@@ -241,15 +264,22 @@ async fn the_last_model_left_on_cannot_be_turned_off() {
             break;
         }
         for id in others {
-            let _: ModelDto = h
-                .json(
-                    put_json(
-                        "/v1/models/enabled",
-                        serde_json::json!({"id": id, "enabled": false}),
-                    ),
-                    StatusCode::OK,
-                )
+            let (status, body) = h
+                .send(put_json(
+                    "/v1/models/enabled",
+                    serde_json::json!({"id": id, "enabled": false}),
+                ))
                 .await;
+            match status {
+                StatusCode::OK => {}
+                // Gone from the catalog since it was listed: re-list rather
+                // than fail on a model nothing offers any more.
+                StatusCode::NOT_FOUND => break,
+                other => panic!(
+                    "turning {id} off: {other} {}",
+                    String::from_utf8_lossy(&body)
+                ),
+            }
         }
     }
 

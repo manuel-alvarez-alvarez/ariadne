@@ -105,7 +105,7 @@ pub mod models {
     #[utoipa::path(get, path = "/v1/models", tag = "models",
         responses((status = 200, body = [ModelDto])))]
     pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<ModelDto>>> {
-        let mut out = catalog().await;
+        let mut out = catalog(&state.launcher.cfg.opencode_bin).await;
         let off = state.store.disabled_models().await?;
         for entry in &mut out {
             entry.enabled = !off.contains(&entry.id);
@@ -130,7 +130,7 @@ pub mod models {
         State(state): State<AppState>,
         Json(req): Json<SetModelEnabledRequest>,
     ) -> ApiResult<Json<ModelDto>> {
-        let mut catalog = catalog().await;
+        let mut catalog = catalog(&state.launcher.cfg.opencode_bin).await;
         let off = state.store.disabled_models().await?;
         if !catalog.iter().any(|entry| entry.id == req.id) {
             return Err(ApiError::new(
@@ -160,11 +160,14 @@ pub mod models {
 
     /// The catalog as the CLIs and the discovery describe it, before anything
     /// the user turned off is read over it: every entry comes back `enabled`.
-    async fn catalog() -> Vec<ModelDto> {
+    ///
+    /// `opencode_bin` is the binary discovery shells out to — always
+    /// `"opencode"` outside a test (`Config::opencode_bin`).
+    async fn catalog(opencode_bin: &str) -> Vec<ModelDto> {
         let mut out = Vec::new();
         for kind in AgentKind::ALL {
             match kind {
-                AgentKind::Opencode => out.extend(opencode_models().await),
+                AgentKind::Opencode => out.extend(opencode_models(opencode_bin).await),
                 _ => out.extend(curated_models(kind).iter().map(|m| curated(kind, m))),
             }
         }
@@ -212,7 +215,7 @@ pub mod models {
     pub async fn efforts_of(kind: AgentKind, model: &str) -> Option<Vec<String>> {
         let names = |efforts: Vec<EffortDto>| efforts.into_iter().map(|e| e.id).collect();
         match kind {
-            AgentKind::Opencode => opencode_models()
+            AgentKind::Opencode => opencode_models(DEFAULT_OPENCODE_BIN)
                 .await
                 .into_iter()
                 .find(|m| m.id == qualified(kind, model))
@@ -224,13 +227,19 @@ pub mod models {
         }
     }
 
+    /// What `efforts_of` discovers on, since checking an effort carries no
+    /// `AppState` to read `Config::opencode_bin` from. Always the real
+    /// binary: nothing here needs the write-time catalog `set_enabled` reads
+    /// past a fresh listing, which is what a test seam would be for.
+    const DEFAULT_OPENCODE_BIN: &str = "opencode";
+
     /// OpenCode lists its models natively, and `--verbose` lists what each one
     /// can be run at: a `provider/model` line, then that model's JSON.
     /// Fail-soft: a missing or hung binary yields no models, never an error.
-    async fn opencode_models() -> Vec<ModelDto> {
+    async fn opencode_models(bin: &str) -> Vec<ModelDto> {
         let output = tokio::time::timeout(
             Duration::from_secs(3),
-            tokio::process::Command::new("opencode")
+            tokio::process::Command::new(bin)
                 .args(["models", "--verbose"])
                 .kill_on_drop(true)
                 .output(),

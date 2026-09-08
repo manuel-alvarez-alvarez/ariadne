@@ -24,6 +24,13 @@ pub struct Config {
     pub tcp_listen: Option<SocketAddr>,
     pub log_filter: String,
     pub cli_bin: String,
+    /// The binary the model catalog shells out to for `opencode models
+    /// --verbose`. Always `"opencode"` outside a test: there is no
+    /// `config.toml` key for it, since nothing about it is the user's to
+    /// choose. A test harness overrides it directly to point discovery at a
+    /// stub, the way `typed_input_window` below is set past anything a user
+    /// would configure.
+    pub opencode_bin: String,
     pub delete_merged_branches: bool,
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
@@ -79,6 +86,7 @@ impl Config {
             tcp_listen: file.tcp_listen,
             log_filter: file.log_filter.unwrap_or_else(|| "info".to_string()),
             cli_bin: file.cli_bin.unwrap_or_else(default_cli_bin),
+            opencode_bin: "opencode".to_string(),
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
