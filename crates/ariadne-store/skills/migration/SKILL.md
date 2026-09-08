@@ -1,31 +1,49 @@
 ---
 name: migration
-description: Change a schema or move data forward, in one direction, without losing anything.
+description: Move a schema or data shape forward without loss. Use when schema shapes change, data moves, or old callers retire.
 ---
 
 # Migration
 
-Data outlives code. A migration that loses data is not undone by a revert.
+Data outlives code. Use the expand-contract sequence to protect each data
+shape.
 
 ## Steps
 
-1. Write down the shape before and the shape after.
-2. Write the migration forward. Make it safe to run again.
-3. Say what happens to rows that do not fit the new shape.
-4. Test it on a copy of real data, never on an empty database.
-5. Measure how long it takes at real size.
-6. Write down the way back: a reverse migration, or a backup taken first.
+1. Write the old shape, new shape and every caller.
+   Done when each caller names the shape it reads and writes.
+2. Expand first. Add the new shape beside the old shape.
+   Done when old and new callers both run against the expanded shape.
+3. Write both shapes while callers overlap.
+   Done when each new write fills both shapes.
+4. Migrate existing data in batches.
+   Done when every existing row holds the new shape.
+5. Switch callers to read the new shape.
+   Done when every active caller reads the new shape.
+6. Contract last. Retire the old shape in a later deploy.
+   Done when search and usage data show no caller remains.
+7. Test the expand-contract sequence on a copy of real data.
+   Done when the test preserves every row and its required values.
+8. Measure the migration at real size.
+   Done when you record the duration and resource use.
+9. Write the recovery path before destructive migration work.
+   Done when a tested reverse path or a backup is ready.
 
 ## Rules
 
-- Never drop a column and add its replacement in one step. Add, backfill,
-  switch the reads, then drop.
-- Keep the old shape and the new shape readable while both versions run.
-- Batch a large backfill. One long transaction locks the table.
-- Never write a migration that depends on the application code of one version.
-- Back up before anything destructive.
+- Keep old and new shapes readable while callers overlap.
+- Run large expand-contract backfills in batches off the hot path.
+- Put destructive contract work in a separate later deploy.
+- Back up before destructive shape work.
+- Never drop or rename a live shape.
+
+## Do not tell yourself
+
+- "One rename is safe." -> Expand first, migrate in batches, then contract.
+- "One update will finish fast." -> Run batches to protect table access.
+- "Old callers are gone." -> Prove no caller remains with search and usage.
 
 ## Done
 
-The migration ran on a copy of real data, its duration is known, no row was
-lost, and the way back is written down.
+The expand-contract sequence preserves every row. The duration is known. No
+caller uses the old shape. A recovery path is ready.
