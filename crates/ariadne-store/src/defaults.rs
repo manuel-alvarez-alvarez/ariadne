@@ -11,8 +11,9 @@
 //! Each rule is written once, in the layer it belongs to. A system prompt
 //! states what a seat owes, from its first read to the call that ends its
 //! turn, and says nothing about the work itself — what an agent can do comes
-//! from its skills. A skill states how one kind of work is done, and nothing
-//! about Ariadne. A briefing template carries the values of one goal, task or
+//! from its skills. A skill states how one kind of work is done; for the
+//! orchestrator that work is Ariadne's own planning loop, so its playbook is
+//! a skill too ([`ORCHESTRATION_SKILL`]). A briefing template carries the values of one goal, task or
 //! task and whatever is only true of this moment — the changes a review
 //! asked for, the landing procedure — and nothing of the playbook that reached
 //! the agent. A resume is a nudge: where the work stands and what ends it.
@@ -53,12 +54,26 @@ pub struct BuiltinSkill {
     pub document: &'static str,
 }
 
+/// The one skill that is the orchestrator's rather than a task agent's: the
+/// playbook a goal is planned and seen through on. The name is the whole of
+/// the marking — [`crate::Skill::seat`] reads it, no column stores it — and
+/// the launcher loads this skill for every orchestrator session.
+pub const ORCHESTRATION_SKILL: &str = "orchestration";
+
 /// The skills a fresh database is seeded with, grouped by what they are for:
-/// producing work, reviewing it, and operating what it produced.
+/// orchestrating a goal, producing work, reviewing it, and operating what it
+/// produced.
 ///
 /// The catalog is the whole of what an agent can be, so adding a skill here is
-/// adding a kind of work Ariadne knows how to staff.
-pub const BUILTIN_SKILLS: [BuiltinSkill; 16] = [
+/// adding a kind of work Ariadne knows how to staff. One skill is nobody's to
+/// staff: [`ORCHESTRATION_SKILL`] belongs to the orchestrator's seat, and the
+/// store refuses a task agent staffed on it.
+pub const BUILTIN_SKILLS: [BuiltinSkill; 17] = [
+    // Orchestrating.
+    builtin(
+        ORCHESTRATION_SKILL,
+        include_str!("../skills/orchestration/SKILL.md"),
+    ),
     // Producing.
     builtin(
         "spec-writing",
@@ -183,45 +198,21 @@ pub fn default_landing_prompt(landing: Landing) -> &'static str {
     }
 }
 
-/// Orchestrator persona and playbook, and the one place `finalize_plan` is
-/// explained: it starts every task at once, and the orchestrator makes that
-/// call itself once the user has agreed the plan.
+/// Orchestrator seat text: what the seat owes, and no step of the playbook.
 ///
-/// The tasks are written before that yes, not after it. A task created while
-/// the goal is in `planning` runs nothing — the scheduler reconciles the
-/// tasks of active goals alone — so the plan the user is shown is the tasks
-/// themselves, in Ariadne, to read and to edit. What the yes buys is
-/// `finalize_plan`.
+/// The playbook — the ten phases from reading the goal to `complete_goal`,
+/// and the one place `finalize_plan` is explained — is the
+/// [`ORCHESTRATION_SKILL`] document, which the launcher loads for every
+/// orchestrator session the way a task agent's skills reach it: indexed in
+/// the system prompt, written into the run directory. So the playbook is
+/// editable and resettable like any shipped skill, and this text is
+/// Ariadne's own like the other two seats'.
 ///
-/// The orchestrator's whole job is the plan, and it gets there by talking to
-/// the user — which no other seat does. It writes one question in its turn
-/// text and waits for the answer in the terminal, and the daemon holds its
-/// quiet nudge back while a session waits on an answer.
-///
-/// Three things are settled with the user rather than decided alone, because
-/// each of them is a judgement about the work rather than about the code: what
-/// the goal actually asks for, which tasks are worth a review, and how each
-/// task ends. The last one is why a task carries its own way of finishing
-/// (`Landing`): a change that lands on the base branch, a request somebody
-/// else takes over, and a piece of work with nothing to land at all are three
-/// different endings, and only the user knows which one this goal wants.
-///
-/// It writes no specification of its own. Where a goal wants one, that is a
-/// task like any other, staffed with the `spec-writing` skill and reviewed
-/// with `spec-review` — which is what makes "write the specification" a goal
-/// Ariadne can be given rather than a phase every goal pays for.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You turn an Ariadne goal into a plan of small tasks, with the user. Never write code.
-
-1. Read the goal. Explore its repositories.
-2. Ask the user about every unclear point, until nothing about the goal is open. Write one question in your turn text. Wait for the answer in the terminal.
-3. Split the goal into tasks: small, finishable alone, one repository. Write each ticket in STE: context, what to do, what not to touch, acceptance criteria. Add `depends_on` only for a real dependency. The rest run together: keep them off the same code.
-4. Staff one author per task with `create_task`. Give each agent the skills its work needs (`list_skills`). It knows only its task and its skills.
-5. Ask the user which tasks are worth a review, and what each review is for. Staff those reviewers. Staff none on the rest.
-6. Ask the user how each task ends. `merge` puts it on the base branch. `pull_request` opens a request and sees it through. `none` lands nothing.
-7. Give each agent one model from `list_models`. Size it: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Mix the agent CLIs evenly over the tasks. Take only a CLI that suits the task. Show the user what each agent runs on and take the model they name instead.
-8. Show the user the tasks you wrote. Revise them until they write an explicit yes.
-9. Call `finalize_plan`. It starts every task and ends planning. Call it no earlier.
-10. Stay up for the rest of the goal. Answer the user, and `send_message` to answer an agent that asks you. Ariadne wakes you when a task fails, stalls or finishes. Call `complete_goal` once every task is done."#;
+/// What is owed is what no skill edit is allowed to take away: the plan is
+/// made *with* the user — the orchestrator is the one seat that talks to
+/// them — it writes no code, and a point it cannot settle goes to the user
+/// rather than being decided alone.
+const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan one Ariadne goal into tasks, with the user. Never write code. Ask the user where you are blocked."#;
 
 /// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -614,6 +605,13 @@ mod tests {
     /// every agent going on whichever one the orchestrator likes. That is a
     /// decision nothing else in the system makes, and the two sentences it
     /// takes are the shortest it has been said in.
+    ///
+    /// Then the playbook moved out. The ten phases are the `orchestration`
+    /// skill now, capped with the skills (`skill_size_caps_hold`), and what
+    /// the seat text keeps is the three things no skill edit is allowed to
+    /// take away. So the orchestrator's cap fell from 1750 to 200 — under
+    /// the other two seats' for the first time — and the grand total came
+    /// down from 8000 to 6500 with it.
     #[test]
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 1500;
@@ -622,24 +620,18 @@ mod tests {
         // never that one. Nothing rewrites any of them now, so they are one
         // set, and the total is the two plus the third at its own cap.
         const LANDING_TOTAL: usize = 2570;
-        const GRAND_TOTAL: usize = 8000;
+        const GRAND_TOTAL: usize = 6500;
 
-        // A cap per seat, not one for the three: the orchestrator alone
-        // carries the conversation with the user, and the two that never grew
-        // stay where they were. It was raised from 1500 to 1600 when staffing
-        // arrived: the orchestrator now picks the skills of every agent it
-        // creates, which is a step of the playbook and not a rewording of
-        // one. It went to 1650 when the agents got a channel: staying open to
-        // them for the whole goal is a step of its own, and so is showing the
-        // user what each agent runs on before anything starts. And to 1750
-        // for the mix of agent CLIs across a plan, which is a judgement about
-        // the plan rather than about any one task of it.
+        // A cap per seat, not one for the three. The orchestrator's carried
+        // its playbook up to 1750; the playbook is the `orchestration` skill
+        // now, and 200 holds what is left to the seat text it is.
         //
-        // The author's and the reviewer's went to 1010 for the same channel:
-        // one step each about asking and answering, which is a thing neither
-        // could do before rather than a rewording of a thing it could.
+        // The author's and the reviewer's went to 1010 for the channel the
+        // agents talk on: one step each about asking and answering, which is
+        // a thing neither could do before rather than a rewording of a thing
+        // it could.
         let system_cap = |seat: Seat| match seat {
-            Seat::Orchestrator => 1750,
+            Seat::Orchestrator => 200,
             Seat::Author | Seat::Reviewer => 1060,
         };
         let cap = |kind: PromptKind| match kind {
@@ -794,7 +786,7 @@ mod tests {
         for (owner, rule) in [
             (Seat::Reviewer, "It is the verdict, and nothing else counts"),
             (Seat::Author, "Ariadne briefs you to end the task"),
-            (Seat::Orchestrator, "It starts every task and ends planning"),
+            (Seat::Orchestrator, "Never write code"),
         ] {
             for seat in Seat::ALL {
                 let prompt = default_system_prompt(seat);
@@ -933,10 +925,10 @@ mod tests {
     /// Every rule an agent is briefed with is written down once.
     ///
     /// The briefings are one prompt system — a nudge, a resume and a wake
-    /// instruction are templates like the briefings that start a session — and
-    /// the way that stays readable is that each rule lives in the layer that
-    /// needs it. A rule restated in a second one is a rule that goes stale in
-    /// one of them.
+    /// instruction are templates like the briefings that start a session, and
+    /// the shipped skills are read beside them — and the way that stays
+    /// readable is that each rule lives in the layer that needs it. A rule
+    /// restated in a second one is a rule that goes stale in one of them.
     ///
     /// The landing briefings count as one place between them all: a
     /// repository has one merge strategy, and a session has one seat, so the
@@ -946,7 +938,8 @@ mod tests {
     fn each_rule_is_stated_in_exactly_one_briefing() {
         // What a published branch may be done to, what ends a piece of
         // engineering work, and what each of the three calls that move a task
-        // along is *for* — named elsewhere, explained here.
+        // along is *for* — named elsewhere, explained here. The last one
+        // lives in the orchestration skill now, with the playbook it ends.
         for marker in [
             "git merge --no-edit",
             "push plainly",
@@ -957,6 +950,7 @@ mod tests {
         ] {
             let places = all_defaults()
                 .into_iter()
+                .chain(all_skills())
                 .filter(|(_, text)| text.contains(marker))
                 .map(|(name, _)| match name.ends_with("landing briefing") {
                     true => "a landing briefing".to_string(),
@@ -1002,29 +996,37 @@ mod tests {
     ///
     /// Staffing stands before the yes and the start stands after it, which is
     /// the whole of the arrangement: the user agrees to tasks that already
-    /// exist, and agreeing is what starts them
+    /// exist — a task created while the goal is in `planning` runs nothing —
+    /// and agreeing is what starts them
     /// (`plan_finalize.rs::the_tasks_of_a_plan_wait_for_the_yes_that_finalizes_it`).
     ///
-    /// A phase out of order is an orchestrator that staffs reviewers nobody
-    /// asked for, or that starts a plan the user has not seen.
+    /// The phases of the playbook, in the order the conversation runs them.
+    /// Named once, because two assertions read them: the skill document holds
+    /// all of them in this order, and the seat text holds none.
+    const PLAYBOOK_PHASES: [&str; 12] = [
+        "Read the goal. Explore its repositories.",
+        "Ask the user about every unclear point",
+        "Write one question in your turn text.",
+        "Wait for the answer in the terminal.",
+        "Split the goal into tasks",
+        "Staff one author per task with `create_task`",
+        "Ask the user which tasks are worth a review",
+        "Ask the user how each task ends",
+        "Mix the agent CLIs evenly over the tasks.",
+        "Revise them until they write an explicit yes.",
+        "Call `finalize_plan`",
+        "Stay up for the rest of the goal.",
+    ];
+
+    /// The playbook is the `orchestration` skill, so the document read here
+    /// is the shipped skill rather than the seat text, which carries no step
+    /// of it. A phase out of order is an orchestrator that staffs reviewers
+    /// nobody asked for, or that starts a plan the user has not seen.
     #[test]
     fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
-        let prompt = default_system_prompt(Seat::Orchestrator);
+        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
         let mut at = 0;
-        for phase in [
-            "Read the goal. Explore its repositories.",
-            "Ask the user about every unclear point",
-            "Write one question in your turn text.",
-            "Wait for the answer in the terminal.",
-            "Split the goal into tasks",
-            "Staff one author per task with `create_task`",
-            "Ask the user which tasks are worth a review",
-            "Ask the user how each task ends",
-            "Mix the agent CLIs evenly over the tasks.",
-            "Revise them until they write an explicit yes.",
-            "Call `finalize_plan`",
-            "Stay up for the rest of the goal.",
-        ] {
+        for phase in PLAYBOOK_PHASES {
             let found = prompt[at..]
                 .find(phase)
                 .unwrap_or_else(|| panic!("the orchestrator prompt has no \"{phase}\" after {at}"));
@@ -1035,16 +1037,35 @@ mod tests {
         assert!(prompt.contains("Call it no earlier."), "{prompt}");
     }
 
+    /// The seat text carries no playbook step: not one of the phases, and no
+    /// numbered step at all — a step that crept back in would be a rule
+    /// stated in two layers, and the skill's copy going stale under it.
+    #[test]
+    fn the_orchestrator_seat_text_holds_no_playbook_step() {
+        let seat = default_system_prompt(Seat::Orchestrator);
+        for phase in PLAYBOOK_PHASES {
+            assert!(
+                !seat.contains(phase),
+                "the seat text carries \"{phase}\", which is the playbook's"
+            );
+        }
+        assert!(
+            !seat.contains('\n') && !seat.contains("1."),
+            "the seat text is one line with no step in it: {seat}"
+        );
+    }
+
     /// A plan is staffed on a mix of agent CLIs, and fit comes first.
     ///
     /// Every agent on one CLI is a plan that stands or falls with that CLI:
     /// its rate limit, its outage, its blind spot on a kind of work. So the
     /// orchestrator is told to spread them — and told in the same breath not
     /// to spread them onto a CLI the task does not suit, which is the failure
-    /// an instruction to mix invites.
+    /// an instruction to mix invites. The telling is the `orchestration`
+    /// skill's, where the playbook lives.
     #[test]
     fn the_orchestrator_staffs_a_plan_on_a_mix_of_agent_clis() {
-        let prompt = default_system_prompt(Seat::Orchestrator);
+        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
         let mix = prompt
             .find("Mix the agent CLIs evenly over the tasks.")
             .expect("the orchestrator is not told to mix the agent CLIs");
@@ -1086,18 +1107,18 @@ mod tests {
     }
 
     /// `finalize_plan` is what the orchestrator calls once the plan is
-    /// written, and it is the only call there is about a plan: every
-    /// orchestrator default names it, and a default naming any other would be
+    /// written, and it is the only call there is about a plan: the playbook
+    /// and the resume both name it, and a text naming any other would be
     /// briefing an agent to make a call the daemon does not answer.
     #[test]
     fn the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call() {
         for text in [
-            default_system_prompt(Seat::Orchestrator),
+            default_skill_document(ORCHESTRATION_SKILL).unwrap(),
             default_prompt_text(PromptKind::OrchestratorResume),
         ] {
             assert!(text.contains("`finalize_plan`"), "{text}");
         }
-        for (name, text) in all_defaults() {
+        for (name, text) in all_defaults().into_iter().chain(all_skills()) {
             // The backticked names are every other span of a default: what
             // the odd ones hold is what an agent is told to call.
             for call in text
@@ -1118,9 +1139,13 @@ mod tests {
     /// ([`default_spec_landing_prompt`]). A playbook that spelled out one of
     /// the two landings would be a second copy of that knowledge, going stale
     /// on its own, and an orchestrator running it in the wrong repository.
+    /// The orchestration skill is one of its texts, so it is read here too.
     #[test]
     fn the_orchestrator_is_told_nothing_of_forges_or_landing() {
         let orchestrator = std::iter::once(default_system_prompt(Seat::Orchestrator))
+            .chain(std::iter::once(
+                default_skill_document(ORCHESTRATION_SKILL).unwrap(),
+            ))
             .chain(
                 PromptKind::for_seat(Seat::Orchestrator)
                     .iter()
@@ -1194,20 +1219,32 @@ mod tests {
     /// on its own rather than against the briefings' total. The caps are still
     /// what a rewrite fits in: moving one is a decision, not a way round a
     /// failing assertion.
+    ///
+    /// One skill runs over the shared cap, and it is the orchestrator's. Its
+    /// document is the ten-phase playbook that was a 1750-character system
+    /// prompt before it was a skill — the longest procedure Ariadne ships,
+    /// because it is the one seat that carries a whole conversation with the
+    /// user — and the skill format adds frontmatter, a title and a done line
+    /// on top. 2050 is what that move fits in; every task skill stays at
+    /// 1800, and the seventeenth document still fits under the old total.
     #[test]
     fn skill_size_caps_hold() {
-        const PER_SKILL: usize = 1800;
         const TOTAL: usize = 20_000;
+        let cap = |name: &str| match name {
+            ORCHESTRATION_SKILL => 2050,
+            _ => 1800,
+        };
 
         for skill in &BUILTIN_SKILLS {
             println!("{:5}  {}", skill.document.len(), skill.name);
         }
         for skill in &BUILTIN_SKILLS {
             assert!(
-                skill.document.len() <= PER_SKILL,
-                "the {} skill is {} characters, over its {PER_SKILL}",
+                skill.document.len() <= cap(skill.name),
+                "the {} skill is {} characters, over its {}",
                 skill.name,
-                skill.document.len()
+                skill.document.len(),
+                cap(skill.name)
             );
         }
         let total: usize = BUILTIN_SKILLS.iter().map(|s| s.document.len()).sum();

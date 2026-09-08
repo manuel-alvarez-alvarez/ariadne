@@ -1913,10 +1913,53 @@ async fn goal_cascade_delete_cleans_children() {
     ));
 }
 
-/// Seeding keys off an empty `profiles` table only: deleting a built-in is
-/// permanent, and a reopened database is not re-seeded behind the user's back.
+/// Seeding is by name and overwrites no document the database holds: an
+/// edited document is not seeded back over on a reopen, and a deleted skill
+/// of the user's own stays deleted — nothing ships under its name to bring
+/// it back.
 #[tokio::test]
-async fn built_ins_are_not_recreated_on_reopen() {
+async fn a_reopen_reseeds_no_row_the_database_already_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    store
+        .set_skill_document("coding", "---\nname: coding\ndescription: mine\n---\n")
+        .await
+        .unwrap();
+    store
+        .create_skill(NewSkill {
+            name: "api-design".into(),
+            document: "---\nname: api-design\ndescription: mine too\n---\n".into(),
+        })
+        .await
+        .unwrap();
+    store.delete_skill("api-design").await.unwrap();
+    drop(store);
+
+    let store = Store::open(&path).await.unwrap();
+    let coding = store.get_skill("coding").await.unwrap();
+    assert_eq!(coding.summary(), "mine", "the edit survived the reopen");
+    assert!(
+        !coding.document_is_default(),
+        "and was not seeded back over"
+    );
+    assert!(
+        matches!(
+            store.get_skill("api-design").await,
+            Err(StoreError::NotFound { .. })
+        ),
+        "a deleted skill of the user's own stays deleted"
+    );
+}
+
+/// A release that ships a new skill reaches a database seeded before it:
+/// seeding runs by name on every open, so the one row the database lacks is
+/// added on the shipped text, and every row it holds stays as it was. A
+/// database that kept its sixteen-skill catalog would otherwise refuse every
+/// orchestrator launch, whose skill the launcher reads by name.
+#[tokio::test]
+async fn a_new_shipped_skill_reaches_an_existing_database_on_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.db");
 
@@ -1927,12 +1970,82 @@ async fn built_ins_are_not_recreated_on_reopen() {
         .unwrap();
     drop(store);
 
+    // The sixteen-skill era, reproduced: the row this release ships is taken
+    // back out, the way a database written before it never had it.
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM skills WHERE name = 'orchestration'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
     let store = Store::open(&path).await.unwrap();
-    let coding = store.get_skill("coding").await.unwrap();
-    assert_eq!(coding.summary(), "mine", "the edit survived the reopen");
+    let orchestration = store.get_skill("orchestration").await.unwrap();
     assert!(
-        !coding.document_is_default(),
-        "and was not seeded back over"
+        orchestration.is_builtin() && orchestration.document_is_default(),
+        "the missing skill arrived on the shipped text"
+    );
+    assert_eq!(
+        store.list_skills().await.unwrap().len(),
+        ariadne_store::defaults::BUILTIN_SKILLS.len()
+    );
+    let coding = store.get_skill("coding").await.unwrap();
+    assert_eq!(
+        coding.summary(),
+        "mine",
+        "and nothing the database held was touched"
+    );
+}
+
+/// A database from before a release can hold a skill of the user's own under
+/// the name that release ships. The seed adopts it: the row becomes a
+/// built-in, its text stays on it as the override — so the orchestrator runs
+/// on the user's text the way it runs on an edited built-in — and a reset
+/// goes to the shipped document instead of being refused.
+#[tokio::test]
+async fn a_user_skill_under_a_shipped_name_becomes_a_built_in_on_its_own_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    drop(Store::open(&path).await.unwrap());
+
+    // The old era, reproduced: no shipped `orchestration`, and a skill of the
+    // user's own under that name — which `create_skill` can no longer write,
+    // since the seeded row now takes it.
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM skills WHERE name = 'orchestration'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+         VALUES ('orchestration', '---\nname: orchestration\ndescription: mine\n---\n', 0,
+                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    let adopted = store.get_skill("orchestration").await.unwrap();
+    assert!(adopted.is_builtin(), "the row was adopted into the catalog");
+    assert_eq!(adopted.summary(), "mine", "on the user's text, kept whole");
+    assert!(
+        !adopted.document_is_default(),
+        "the text stands as an override, not as the shipped document"
+    );
+
+    // Which is what buys the reset: the override drops, the shipped text is
+    // what is left.
+    let reset = store.reset_skill("orchestration").await.unwrap();
+    assert!(reset.document_is_default());
+    assert_eq!(
+        reset.document_text(),
+        ariadne_store::defaults::default_skill_document("orchestration").unwrap()
     );
 }
 
@@ -2429,4 +2542,44 @@ async fn an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to() {
         .await;
     let message = format!("{:?}", refused.expect_err("no such skill"));
     assert!(message.contains("telepathy"), "{message}");
+}
+
+/// The `orchestration` skill is the orchestrator's own playbook, marked by
+/// name and nothing stored: a task agent staffed on it — at creation, or by a
+/// later edit of its skills — is refused, and the refusal says whose the
+/// skill is.
+#[tokio::test]
+async fn a_task_agent_cannot_be_staffed_on_the_orchestrators_skill() {
+    let (store, _dir) = test_store().await;
+    let (goal, repo) = seed_goal(&store).await;
+
+    let refused = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Plan it".into(),
+            description: "do things".into(),
+            agents: vec![
+                NewTaskAgent::new(Seat::Author, ["orchestration"], default_pin()),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin()),
+            ],
+            depends_on: vec![],
+            landing: None,
+        })
+        .await;
+    let message = format!("{:?}", refused.expect_err("the orchestrator's skill"));
+    assert!(message.contains("orchestration"), "{message}");
+    assert!(message.contains("orchestrator"), "{message}");
+
+    // The same door is closed on a re-staff: a reviewer cannot be moved onto
+    // it either.
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0);
+    let refused = store
+        .set_agent_skills(&reviewer.id, &["orchestration".to_string()])
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::Conflict(_))),
+        "{refused:?}"
+    );
 }

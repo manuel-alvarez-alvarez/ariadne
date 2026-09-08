@@ -9,7 +9,7 @@
 use ariadne_core::{Seat, id::new_id};
 use sqlx::{Sqlite, Transaction};
 
-use crate::{AgentPin, Result, Skill, Store, StoreError, TaskAgent, not_found};
+use crate::{AgentPin, Result, Skill, SkillSeat, Store, StoreError, TaskAgent, not_found};
 
 /// One agent to staff on a task, as the orchestrator describes it.
 #[derive(Debug, Clone)]
@@ -101,6 +101,14 @@ impl Store {
         skills: &[String],
     ) -> Result<()> {
         for (ordinal, name) in skills.iter().enumerate() {
+            // The orchestrator's skill is nobody's to staff: its seat is a
+            // fact of the name, so the refusal reads it the same way the
+            // launcher does, and no schema has to know it.
+            if SkillSeat::of(name) == SkillSeat::Orchestrator {
+                return Err(StoreError::Conflict(format!(
+                    "skill {name} is the orchestrator's; a task agent cannot load it"
+                )));
+            }
             sqlx::query(
                 "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal) VALUES (?, ?, ?)",
             )

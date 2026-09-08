@@ -13,7 +13,9 @@ use axum::http::StatusCode;
 
 use ariadne_api::skills::SkillDto;
 use ariadne_core::Seat;
-use ariadne_store::defaults::{BUILTIN_SKILLS, default_skill_document, default_system_prompt};
+use ariadne_store::defaults::{
+    BUILTIN_SKILLS, ORCHESTRATION_SKILL, default_skill_document, default_system_prompt,
+};
 
 use common::{delete, get, harness, post, post_json, put_json};
 
@@ -110,6 +112,78 @@ async fn a_shipped_skill_cannot_be_deleted() {
     let h = harness().await;
     let (status, _) = h.send(delete("/v1/skills/coding")).await;
     assert_eq!(status, StatusCode::CONFLICT);
+}
+
+/// The orchestrator's playbook is the `orchestration` skill, and it reaches
+/// an orchestrator session the way a task agent's skills reach it: the system
+/// prompt is the seat text and then an index naming the skill, and the path
+/// the index names holds the document in the run directory.
+#[tokio::test]
+async fn an_orchestrator_session_indexes_the_orchestration_skill() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+    let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
+
+    let run_dir = h.launcher.cfg.run_dir.join(&session.id);
+    let system = std::fs::read_to_string(run_dir.join("system-prompt.md")).unwrap();
+    let (owed, index) = system
+        .split_once(
+            "\n\nYour skills. Read the document of a skill before you do the work it covers:",
+        )
+        .expect("a skill index");
+    assert_eq!(
+        owed,
+        default_system_prompt(Seat::Orchestrator).trim(),
+        "the seat's own text, word for word out of the code"
+    );
+    let document = run_dir
+        .join("skills")
+        .join(ORCHESTRATION_SKILL)
+        .join("SKILL.md");
+    assert!(
+        index.contains(&format!("- {ORCHESTRATION_SKILL}: "))
+            && index.contains(&document.display().to_string()),
+        "one line naming the skill and where its document is: {index}"
+    );
+    // And the path the line names is the document, not a promise.
+    assert_eq!(
+        std::fs::read_to_string(&document).expect("the document on disk"),
+        default_skill_document(ORCHESTRATION_SKILL).unwrap(),
+        "the shipped playbook, written whole for the agent to open"
+    );
+}
+
+/// The playbook is editable like any shipped skill, and an edit reaches the
+/// next launch rather than the ones already running: the document written for
+/// a fresh orchestrator session is what the store holds at that moment.
+#[tokio::test]
+async fn an_edited_orchestration_skill_reaches_the_next_launch() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+
+    let first = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
+    h.launcher.kill_session(&first.id).await.unwrap();
+
+    const EDITED: &str = "---\nname: orchestration\ndescription: our playbook\n---\nAsk twice.\n";
+    h.store
+        .set_skill_document(ORCHESTRATION_SKILL, EDITED)
+        .await
+        .unwrap();
+
+    let second = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
+    let document = h
+        .launcher
+        .cfg
+        .run_dir
+        .join(&second.id)
+        .join("skills")
+        .join(ORCHESTRATION_SKILL)
+        .join("SKILL.md");
+    assert_eq!(
+        std::fs::read_to_string(&document).unwrap(),
+        EDITED,
+        "the next launch reads the edited document"
+    );
 }
 
 /// The system prompt of a seat is Ariadne's own and says nothing about the

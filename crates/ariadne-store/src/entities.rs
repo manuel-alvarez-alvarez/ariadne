@@ -9,7 +9,9 @@ use ariadne_core::{
     TaskStatus,
 };
 
-use crate::defaults::{default_landing_prompt, default_skill_document, skill_summary};
+use crate::defaults::{
+    ORCHESTRATION_SKILL, default_landing_prompt, default_skill_document, skill_summary,
+};
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
 /// and the column share a name; brackets mark a nullable column, which reads
@@ -103,6 +105,36 @@ impl Skill {
     /// document names none.
     pub fn summary(&self) -> &str {
         skill_summary(self.document_text()).unwrap_or(&self.name)
+    }
+
+    /// The seat this skill serves, read off the name and stored nowhere:
+    /// `orchestration` is the orchestrator's own playbook, and every other
+    /// skill is a task agent's to be staffed on.
+    pub fn seat(&self) -> SkillSeat {
+        SkillSeat::of(&self.name)
+    }
+}
+
+/// Where a skill's work sits: the orchestrator's seat, or a task agent's.
+///
+/// A skill's seat is a fact of its name, not of any row — which is what lets
+/// the shipped playbook stay a skill like the rest, resettable and editable,
+/// without a column saying whose it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillSeat {
+    /// Loaded by every orchestrator session, staffable on nothing.
+    Orchestrator,
+    /// Staffed on a task's author or reviewers.
+    Task,
+}
+
+impl SkillSeat {
+    /// The seat of the skill called `name`.
+    pub fn of(name: &str) -> Self {
+        match name == ORCHESTRATION_SKILL {
+            true => Self::Orchestrator,
+            false => Self::Task,
+        }
     }
 }
 

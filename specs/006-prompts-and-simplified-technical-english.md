@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-09-06
+updated: 2026-09-08
 areas: [prompts, store, core, mcp]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -36,14 +36,19 @@ they describe (003, 004, 005) — and what a skill is (017).
      English to write in (013);
    - the **system prompt**, which states what a seat owes from its first read
      to the call that ends its turn, and then indexes the skills this agent
-     was staffed with (017);
+     was staffed with (017) — for the orchestrator, the one skill its seat
+     fixes by name;
    - the **lifecycle briefing**, which carries the values of one goal, task or
      task and whatever is only true of this moment;
    - the **landing briefing**, which carries the procedure that ends a task,
      one per ending (005).
 2. The system prompt is the code's, one text per seat. Nothing an agent runs
    under carries a lifecycle text of its own: what makes one agent differ from
-   another in the same seat is the skills it holds.
+   another in the same seat is the skills it holds. No seat text carries a
+   playbook step — the orchestrator's ten phases are the `orchestration`
+   skill (017), and its seat text keeps only what no skill edit may take
+   away: the plan is made with the user, no code is written, a blocked point
+   goes to the user.
 3. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. The
@@ -98,6 +103,12 @@ they describe (003, 004, 005) — and what a skill is (017).
   `::an_unknown_placeholder_travels_verbatim`).
 - A seat's prompt carries what the seat owes and nothing of a skill
   (`skill_documents.rs::a_seat_prompt_carries_only_what_the_seat_owes`).
+- The orchestrator system prompt holds no playbook step; the phases and their
+  order are the `orchestration` skill's
+  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
+  `::the_orchestrator_staffs_a_plan_on_a_mix_of_agent_clis`), and an
+  orchestrator session indexes that skill
+  (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).
 - The index adds one line per skill, and the path it names holds the document
   (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
 - Every shipped skill document is within its cap

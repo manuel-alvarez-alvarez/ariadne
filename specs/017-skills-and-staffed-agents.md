@@ -14,8 +14,9 @@ tests:
 
 # Skills and staffed agents
 
-Ariadne defines one agent type, the orchestrator. Every other agent is
-generic, and becomes what its task needs by loading skills.
+Ariadne defines one agent type, the orchestrator — and even its playbook is a
+skill, fixed by name rather than staffed. Every other agent is generic, and
+becomes what its task needs by loading skills.
 
 ## Scope
 
@@ -42,30 +43,42 @@ written into the system prompt (006), and the lifecycle the seats sit in
    agrees the review with the user task by task (003), and a task with
    nothing to review — a release, a dependency bump the suite already judged —
    is staffed with none and approved as soon as its author asks (001).
-4. Ariadne ships a catalog of sixteen skills, in three scopes:
+4. Ariadne ships a catalog of seventeen skills, in four scopes:
+   - **orchestrate** — `orchestration`, the orchestrator's own playbook;
    - **produce** — `spec-writing`, `coding`, `debugging`, `refactoring`,
      `testing`, `documentation`, `research`;
    - **review** — `code-review`, `spec-review`, `security-review`,
      `performance-review`, `architecture-review`;
    - **operate** — `release`, `dependency-upgrade`, `migration`, `triage`.
 5. Each shipped document lives in the code
-   (`crates/ariadne-store/skills/<name>/SKILL.md`) and is seeded into an empty
-   database with a `NULL` document. So a reworded skill reaches every database
-   without a migration, and a reset drops the row's document rather than
-   copying a default into it.
-6. Seeding runs only while the table is empty. Once a database holds skills, a
-   deleted skill stays deleted and an edited document stays edited.
+   (`crates/ariadne-store/skills/<name>/SKILL.md`) and is seeded with a `NULL`
+   document. So a reworded skill reaches every database without a migration,
+   and a reset drops the row's document rather than copying a default into it.
+6. Seeding is by name and runs on every open: a shipped skill the database
+   lacks is added on the shipped text, and no document the database holds is
+   touched — an edited document stays edited, and a deleted skill of the
+   user's own stays deleted. A skill of the user's own under a name the
+   catalog gained is adopted: the row becomes a built-in, its text stays as
+   the override, and a reset of it goes to the shipped document. That is what
+   carries an old database across a release that ships a new skill.
 7. A skill Ariadne ships is reset, never deleted. A skill of the user's own is
    deleted, never reset: nothing ships under its name to go back to.
 8. A skill still loaded by a staffed agent cannot be deleted, and an agent
    cannot be staffed on a skill nothing answers to.
-9. A skill document obeys the STE rules and the size caps of spec 006, the
-   same as every other default text.
-10. The orchestrator staffs each task: it names the skills of each agent and
+9. A skill has a seat, read off its name and stored in no column
+   (`Skill::seat`): `orchestration` is the orchestrator's, every other skill
+   a task agent's. The store refuses a task agent staffed on the
+   orchestrator's skill, and the launcher loads that skill from the store for
+   every orchestrator session — indexed and written to disk the way a task
+   agent's skills are (006, 007) — so an edit or a reset of it reaches the
+   next launch.
+10. A skill document obeys the STE rules and the size caps of spec 006, the
+    same as every other default text.
+11. The orchestrator staffs each task: it names the skills of each agent and
     the model each runs on (011), may size the effort beside it, and may add
     a brief that the task itself does not carry. How the task ends is agreed
     the same way (005).
-11. Every user-facing skill action exists in both the CLI (`ariadne skill`)
+12. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
 
 ## Acceptance criteria
@@ -84,6 +97,19 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`store.rs::a_skill_an_agent_still_loads_cannot_be_deleted`), and an agent
   cannot be staffed on a skill nothing answers to
   (`store.rs::an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to`).
+- A task agent cannot be staffed on the orchestrator's skill, at creation or
+  by a later edit
+  (`store.rs::a_task_agent_cannot_be_staffed_on_the_orchestrators_skill`).
+- A new shipped skill reaches an existing database on its next open, and
+  nothing the database held is touched
+  (`store.rs::a_new_shipped_skill_reaches_an_existing_database_on_reopen`,
+  `::a_reopen_reseeds_no_row_the_database_already_holds`,
+  `::a_user_skill_under_a_shipped_name_becomes_a_built_in_on_its_own_text`).
+- An orchestrator session indexes `orchestration` and holds its document in
+  the run directory
+  (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`),
+  and an edit of it reaches the next launch
+  (`skill_documents.rs::an_edited_orchestration_skill_reaches_the_next_launch`).
 - A task staffed with no reviewer is approved as soon as its author asks
   (`unreviewed_tasks.rs::a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks`).
 - Every shipped skill is named once and describes itself
@@ -98,5 +124,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
 
 `crates/ariadne-store/skills/` (the shipped documents),
 `crates/ariadne-store/src/skills.rs`, `crates/ariadne-store/src/task_agents.rs`,
-`crates/ariadne-store/src/defaults.rs` (`BUILTIN_SKILLS`),
-`crates/ariadne-core/src/lib.rs` (`Seat`).
+`crates/ariadne-store/src/defaults.rs` (`BUILTIN_SKILLS`,
+`ORCHESTRATION_SKILL`), `crates/ariadne-store/src/entities.rs`
+(`Skill::seat`), `crates/ariadne-daemon/src/launcher.rs` (the orchestrator's
+skill), `crates/ariadne-core/src/lib.rs` (`Seat`).

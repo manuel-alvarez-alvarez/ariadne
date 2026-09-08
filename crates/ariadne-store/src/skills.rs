@@ -7,7 +7,9 @@
 //!
 //! A built-in is stored with a `NULL` document while it runs on the text
 //! Ariadne ships, so a reworded skill reaches every database without a
-//! migration, and a reset is a `NULL` rather than a copy of the default.
+//! migration, and a reset is a `NULL` rather than a copy of the default. A
+//! skill the catalog gains is seeded into existing databases on their next
+//! open, the same way.
 
 use crate::defaults::BUILTIN_SKILLS;
 use crate::query::Filtered;
@@ -22,25 +24,31 @@ pub struct NewSkill {
 }
 
 impl Store {
-    /// Seed the shipped skills into an empty database, each with a NULL
-    /// document, so a rewritten default reaches them without a row being
-    /// touched.
+    /// Seed the shipped skills, by name: a skill the database lacks is
+    /// inserted with a NULL document, and no document the database holds is
+    /// ever touched — an edit stays an edit, a reset stays a reset.
     ///
-    /// Emptiness is the only trigger: once a database has skills, a deleted
-    /// built-in stays deleted and an edited document stays edited.
+    /// Run on every open rather than only into an empty database, which is
+    /// what carries an old database across a release that ships a new skill:
+    /// the launcher reads the orchestrator's skill by name, so a database
+    /// missing it would refuse every orchestrator launch. A skill of the
+    /// user's own under a name the catalog gained is adopted rather than
+    /// skipped: the row becomes a built-in and its text stays on it as the
+    /// override, so a reset of it goes to the shipped document instead of
+    /// being refused for having no default behind it. There is no deliberate
+    /// absence for this to overwrite — a built-in refuses deletion
+    /// ([`Store::delete_skill`]) — and a deleted skill of the user's own is
+    /// not in the catalog, so it stays deleted.
     pub(crate) async fn seed_builtin_skills(&self) -> Result<()> {
         let mut tx = self.w().begin().await?;
-        let skills: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM skills")
-            .fetch_one(&mut *tx)
-            .await?;
-        if skills > 0 {
-            return Ok(());
-        }
         let ts = now();
         for builtin in &BUILTIN_SKILLS {
             sqlx::query(
                 "INSERT INTO skills (name, document, builtin, created_at, updated_at)
-                 VALUES (?, NULL, 1, ?, ?)",
+                 VALUES (?, NULL, 1, ?, ?)
+                 ON CONFLICT (name) DO UPDATE
+                 SET builtin = 1, updated_at = excluded.updated_at
+                 WHERE skills.builtin = 0",
             )
             .bind(builtin.name)
             .bind(&ts)

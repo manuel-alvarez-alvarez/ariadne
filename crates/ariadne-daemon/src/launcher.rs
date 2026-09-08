@@ -305,9 +305,19 @@ impl Launcher {
         // What this agent knows, read here rather than passed in: one place
         // decides what a session is briefed with, and the index in the prompt
         // and the documents on disk are then the same list by construction.
-        let skills = match &session.task_agent_id {
-            Some(id) => self.store.agent_skills(id).await?,
-            None => Vec::new(),
+        // The orchestrator is staffed by nobody, so its one skill — the
+        // playbook — is named in code, and an edit to it reaches the next
+        // launch the way any task agent's skill does.
+        let skills = match session.seat() {
+            Seat::Orchestrator => vec![
+                self.store
+                    .get_skill(ariadne_store::defaults::ORCHESTRATION_SKILL)
+                    .await?,
+            ],
+            Seat::Author | Seat::Reviewer => match &session.task_agent_id {
+                Some(id) => self.store.agent_skills(id).await?,
+                None => Vec::new(),
+            },
         };
         let run_dir = self.run_dir(&session.id);
         // Written before the adapter plans anything, and by the same call that
