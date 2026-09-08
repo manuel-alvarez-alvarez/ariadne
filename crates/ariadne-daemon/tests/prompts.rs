@@ -95,8 +95,8 @@ async fn a_spawned_author_is_briefed_from_the_builtin_template() {
     assert_eq!(
         index.trim(),
         format!(
-            "- coding: Implement a task from its specification, in the repository's own \
-             conventions, with the tests that prove it. ({})",
+            "- coding: Implement a task from its specification, with the tests that \
+             prove it. Use when a task asks for new code, a feature, or a fix. ({})",
             document.display()
         ),
         "one line per skill: its summary, and where its document is"
