@@ -680,8 +680,8 @@ mod tests {
         // An entry from a daemon that says nothing about it is offered: an
         // older daemon serves no `enabled` at all, and a catalog that went
         // empty against one would leave nothing to staff.
-        let older = vec![serde_json::json!({"id": "codex", "agent_kind": "codex"})];
-        assert_eq!(ids(of_agent(older, None)), ["codex"]);
+        let older = vec![serde_json::json!({"id": "codex:gpt-5.6-sol", "agent_kind": "codex"})];
+        assert_eq!(ids(of_agent(older, None)), ["codex:gpt-5.6-sol"]);
     }
 
     /// The schema of one tool, as the agent reading the listing gets it.

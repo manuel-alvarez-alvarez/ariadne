@@ -849,7 +849,7 @@ mod tests {
             Vec::<String>::new()
         );
         assert_eq!(
-            catalog_efforts(&json!({"id": "claude_code"})),
+            catalog_efforts(&json!({"id": "claude_code:claude-opus-5"})),
             Vec::<String>::new()
         );
     }
@@ -931,8 +931,8 @@ mod tests {
     fn a_catalog_of_the_old_shape_is_no_catalog() {
         let current = json!([
             {"id": "codex:gpt-5.6-sol", "efforts": [{"id": "low", "default": true}]},
-            {"id": "codex", "efforts": []},
-            {"id": "claude_code"},
+            {"id": "codex:gpt-5.6-luna", "efforts": []},
+            {"id": "claude_code:claude-fable-5"},
         ]);
         assert!(current_shape(current.as_array().expect("an array")));
         for stale in [

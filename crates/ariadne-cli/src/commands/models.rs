@@ -494,15 +494,6 @@ mod tests {
         assert!(err.contains("models ls"), "{err}");
     }
 
-    /// A bare-CLI id (`codex`) is found by the same exact match — it is one
-    /// entry in the catalogue like any other.
-    #[test]
-    fn show_finds_a_bare_cli_entry_too() {
-        let bare = model("codex", AgentKind::Codex);
-        let models = vec![bare.clone(), fixture()[0].clone()];
-        assert_eq!(find(models, "codex").expect("found").id, bare.id);
-    }
-
     /// The card carries every field the acceptance criteria name, in order:
     /// id, whether an agent can be staffed on it, tier, cost, speed,
     /// description, `best_for`, `avoid_for`, then every effort with what it
