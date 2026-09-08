@@ -68,7 +68,7 @@ pub const ORCHESTRATION_SKILL: &str = "orchestration";
 /// adding a kind of work Ariadne knows how to staff. One skill is nobody's to
 /// staff: [`ORCHESTRATION_SKILL`] belongs to the orchestrator's seat, and the
 /// store refuses a task agent staffed on it.
-pub const BUILTIN_SKILLS: [BuiltinSkill; 17] = [
+pub const BUILTIN_SKILLS: [BuiltinSkill; 18] = [
     // Orchestrating.
     builtin(
         ORCHESTRATION_SKILL,
@@ -120,6 +120,10 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 17] = [
     ),
     builtin("migration", include_str!("../skills/migration/SKILL.md")),
     builtin("triage", include_str!("../skills/triage/SKILL.md")),
+    builtin(
+        "conflict-resolution",
+        include_str!("../skills/conflict-resolution/SKILL.md"),
+    ),
 ];
 
 const fn builtin(name: &'static str, document: &'static str) -> BuiltinSkill {
@@ -1220,19 +1224,32 @@ mod tests {
     /// what a rewrite fits in: moving one is a decision, not a way round a
     /// failing assertion.
     ///
-    /// One skill runs over the shared cap, and it is the orchestrator's. Its
-    /// document is the ten-phase playbook that was a 1750-character system
-    /// prompt before it was a skill — the longest procedure Ariadne ships,
-    /// because it is the one seat that carries a whole conversation with the
-    /// user — and the skill format adds frontmatter, a title and a done line
-    /// on top. 2050 is what that move fits in; every task skill stays at
-    /// 1800, and the seventeenth document still fits under the old total.
+    /// This is that decision, taken once for the suite rather than a skill at
+    /// a time. The catalog is being rewritten to one template — a description
+    /// that says when to load the skill as well as what it does, a checkable
+    /// bound on every step that can end early, one anchor word carried through
+    /// the body, and the two or three excuses the agent talks itself into —
+    /// and the old 1800 held none of that. The numbers below are the budget of
+    /// that rewrite: what a document of the template costs, not what the
+    /// documents happen to weigh today.
+    ///
+    /// Three tiers, by how much procedure the skill carries. `orchestration`
+    /// and `debugging` get 3200: one runs the ten phases of a whole goal, the
+    /// other a feedback loop the agent is talked out of at every step, and
+    /// both spend their length on the excuses rather than on the steps.
+    /// `coding`, `testing` and `code-review` get 3000, as the three skills
+    /// almost every task loads and the three whose failure modes are worth
+    /// spelling out. Every other skill gets 2400, which is a template document
+    /// with room for its rules. The total of 50000 is the eighteen at their
+    /// tiers with slack left over, so a skill that grows costs a decision here
+    /// rather than a quiet raid on another skill's share.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 20_000;
+        const TOTAL: usize = 50_000;
         let cap = |name: &str| match name {
-            ORCHESTRATION_SKILL => 2050,
-            _ => 1800,
+            ORCHESTRATION_SKILL | "debugging" => 3200,
+            "coding" | "testing" | "code-review" => 3000,
+            _ => 2400,
         };
 
         for skill in &BUILTIN_SKILLS {

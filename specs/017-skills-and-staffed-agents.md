@@ -43,13 +43,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
    agrees the review with the user task by task (003), and a task with
    nothing to review — a release, a dependency bump the suite already judged —
    is staffed with none and approved as soon as its author asks (001).
-4. Ariadne ships a catalog of seventeen skills, in four scopes:
+4. Ariadne ships a catalog of eighteen skills, in four scopes:
    - **orchestrate** — `orchestration`, the orchestrator's own playbook;
    - **produce** — `spec-writing`, `coding`, `debugging`, `refactoring`,
      `testing`, `documentation`, `research`;
    - **review** — `code-review`, `spec-review`, `security-review`,
      `performance-review`, `architecture-review`;
-   - **operate** — `release`, `dependency-upgrade`, `migration`, `triage`.
+   - **operate** — `release`, `dependency-upgrade`, `migration`, `triage`,
+     `conflict-resolution`.
 5. Each shipped document lives in the code
    (`crates/ariadne-store/skills/<name>/SKILL.md`) and is seeded with a `NULL`
    document. So a reworded skill reaches every database without a migration,
