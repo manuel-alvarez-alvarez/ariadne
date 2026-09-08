@@ -23,7 +23,9 @@ use ariadne_api::doctor::{BinaryDto, DaemonReportDto};
 use ariadne_client::{Client, endpoint};
 use ariadne_core::AgentKind;
 
-use crate::output::{Column, Format, UNCAPPED, View, col, note, print, render_table, style, view};
+use crate::output::{
+    Column, Format, UNCAPPED, View, col, note, print, render_table, style, table, view,
+};
 
 /// The check and verdict identify the row; the explanatory detail is what
 /// yields when the terminal is narrow.
@@ -310,11 +312,7 @@ fn render(report: &Report, view: &View) -> Result<Vec<String>> {
         if !lines.is_empty() {
             lines.push(String::new());
         }
-        lines.push(style::paint(
-            view.color,
-            style::HEADING,
-            &section.name.to_uppercase(),
-        ));
+        lines.push(table::heading(&section.name, view.color));
         let rows: Vec<Vec<String>> = section
             .checks
             .iter()

@@ -13,6 +13,8 @@ tests:
   - crates/ariadne-cli/src/commands/doctor/checks.rs
   - crates/ariadne-cli/src/commands/events.rs
   - crates/ariadne-cli/src/commands/task.rs
+  - crates/ariadne-cli/src/output/table.rs
+  - crates/ariadne-cli/src/commands/attention.rs
 ---
 
 # Command-line interface
@@ -98,6 +100,15 @@ same binary also serves (013).
     Every filter the command takes still narrows what a redraw shows, the
     redraw escapes only reach a real terminal, and `--watch` is advertised
     only on these four commands.
+21. A screen of several tables is fitted once, across every group of rows:
+    `ariadne attention` prints a section per goal, and a column is the same
+    width under every heading — on a `--watch` redraw too. A `--columns`
+    naming a column the table does not have is refused once, before any of
+    the screen is printed.
+22. A heading is one style everywhere: a section heading and the column header
+    of a table are both bold and uppercase. `-q` prints the first cell of
+    every row of every group, and nothing else — and, like every other `-q`
+    listing, it reads no `--columns` and so refuses none.
 
 ## Acceptance criteria
 
@@ -158,8 +169,25 @@ same binary also serves (013).
 - `--watch` is advertised on exactly `task ls`, `goal ls`, `session ls` and
   `attention`, and nowhere else
   (`cli/tests.rs::the_watch_flag_is_advertised_exactly_where_it_is_honored`).
+- Several row groups are fitted together, and drop and cut the same columns
+  (`table.rs::columns_are_fitted_once_across_every_group`,
+  `::every_group_drops_and_cuts_the_same_columns`), which is what aligns the
+  attention board across its goals
+  (`attention.rs::the_columns_align_across_every_goal_of_the_board`).
+- A `--columns` naming no column is refused before anything is printed
+  (`table.rs::a_bad_column_is_refused_before_a_group_is_rendered`,
+  `attention.rs::a_bad_columns_flag_is_refused_before_any_table`).
+- A section heading and a column header are one style
+  (`table.rs::a_header_is_printed_in_the_one_heading_style`,
+  `attention.rs::the_goal_heading_is_printed_in_the_one_heading_style`).
+- The board's `-q` is the ids of every group, from the same `quiet_lines`
+  every listing pipes through
+  (`attention.rs::quiet_output_is_the_ids_of_every_group`), and only a run
+  that prints a table refuses a `--columns`
+  (`::a_columns_flag_is_refused_only_where_a_table_is_printed`).
 
 ## Sources
 
 `crates/ariadne-cli/src/cli.rs`, `crates/ariadne-cli/src/commands/`,
-`crates/ariadne-cli/src/error.rs`, `crates/ariadne-cli/src/complete.rs`.
+`crates/ariadne-cli/src/error.rs`, `crates/ariadne-cli/src/complete.rs`,
+`crates/ariadne-cli/src/output/`.

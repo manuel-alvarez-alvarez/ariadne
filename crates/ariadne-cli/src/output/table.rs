@@ -9,7 +9,9 @@
 //!
 //! [`render_table`] returns the table rather than printing it, so a screen
 //! that redraws — a follow mode, a watch — renders the same rows the same way
-//! without going through stdout.
+//! without going through stdout. A screen of several tables asks
+//! [`render_groups`] for all of them at once, so one fit covers the lot and a
+//! column lands in the same place in every one.
 
 use anstyle::Style;
 use anyhow::Result;
@@ -156,31 +158,78 @@ impl View {
     }
 }
 
-/// The table as one string: the uppercase header, then one line per row.
+/// One heading, in the one style every heading is printed in: uppercase, and
+/// bold.
+///
+/// A table's header row and the section heading a screen is broken into are
+/// the same thing to a reader's eye, so they look the same: the header row
+/// below goes through the same rule, and a command that breaks its output
+/// into sections — `doctor`, `attention` — paints each heading through here.
+pub fn heading(text: &str, color: bool) -> String {
+    style::paint(color, style::HEADING, &text.to_uppercase())
+}
+
+/// The table as one string: the header, then one line per row.
 ///
 /// Fails only on a `--columns` naming a column the table does not have —
 /// which is a typo worth refusing, since silently printing a different table
 /// is worse than saying so.
 pub fn render_table(columns: &[Column], rows: &[Vec<String>], view: &View) -> Result<String> {
+    let mut tables = render_groups(columns, &[rows], view)?;
+    Ok(tables.remove(0))
+}
+
+/// One table per row group, all fitted together: the columns are measured
+/// across every group at once, so a header lands in the same place in each of
+/// them.
+///
+/// `ariadne attention` prints a section per goal, and fitting each section on
+/// its own is what made its columns jump between two goals of one screen.
+/// The groups come back in the order they were given, one string each.
+pub fn render_groups(
+    columns: &[Column],
+    groups: &[&[Vec<String>]],
+    view: &View,
+) -> Result<Vec<String>> {
     let picked = pick(columns, &view.columns)?;
-    let mut cells = cells(columns, rows, &picked, view);
-    let widths = fit(columns, &cells, &picked, view);
-    for row in &mut cells {
-        for (cell, width) in row.iter_mut().zip(&widths) {
-            cell.text = cut(&cell.text, *width);
-        }
-    }
+    let mut groups: Vec<Vec<Vec<Painted>>> = groups
+        .iter()
+        .map(|rows| cells(columns, rows, &picked, view))
+        .collect();
+    let widths = fit(columns, &groups, &picked, view);
 
     let header: Vec<Painted> = picked
         .iter()
+        // The rule of [`heading`], applied to a column header: `line` paints
+        // it with the rows under it.
         .map(|i| Painted {
             text: columns[*i].header.to_uppercase(),
-            style: Style::new(),
+            style: style::HEADING,
         })
         .collect();
-    let mut out = vec![line(&header, &widths, view.color)];
-    out.extend(cells.iter().map(|row| line(row, &widths, view.color)));
-    Ok(out.join("\n"))
+    Ok(groups
+        .iter_mut()
+        .map(|cells| {
+            for row in cells.iter_mut() {
+                for (cell, width) in row.iter_mut().zip(&widths) {
+                    cell.text = cut(&cell.text, *width);
+                }
+            }
+            let mut out = vec![line(&header, &widths, view.color)];
+            out.extend(cells.iter().map(|row| line(row, &widths, view.color)));
+            out.join("\n")
+        })
+        .collect())
+}
+
+/// Refuse a `--columns` naming a column this table does not have, before
+/// anything at all is printed.
+///
+/// [`render_table`] refuses the same thing, but only once it is asked for a
+/// table: a screen made of several tables, or one that redraws, asks here
+/// first so the typo is one error rather than one per table.
+pub fn check_columns(columns: &[Column], view: &View) -> Result<()> {
+    pick(columns, &view.columns).map(|_| ())
 }
 
 /// A cell as it will be printed: the text, and what colours it.
@@ -256,20 +305,26 @@ fn cells(
         .collect()
 }
 
-/// The width of every printed column: what the content asks for, narrowed
-/// until the row fits the terminal.
+/// The width of every printed column: what the content of every group asks
+/// for, narrowed until the row fits the terminal.
 ///
 /// Nothing is narrowed when there is no terminal to fit (a pipe gets the whole
 /// table), when `-o wide` or `--columns` asked for these columns by name, or
 /// when `--no-trunc` asked for the cells whole.
-fn fit(columns: &[Column], cells: &[Vec<Painted>], picked: &[usize], view: &View) -> Vec<usize> {
+fn fit(
+    columns: &[Column],
+    groups: &[Vec<Vec<Painted>>],
+    picked: &[usize],
+    view: &View,
+) -> Vec<usize> {
     let mut widths: Vec<usize> = picked
         .iter()
         .enumerate()
         .map(|(printed, i)| {
             let header = width(columns[*i].header);
-            cells
+            groups
                 .iter()
+                .flatten()
                 .filter_map(|row| row.get(printed))
                 .map(|cell| width(&cell.text))
                 .fold(header, usize::max)
@@ -636,6 +691,108 @@ mod tests {
         assert_eq!(cut("ááááááááááá", 10), "ááááááááá…");
         assert_eq!(cut("first second", UNCAPPED), "first second");
         assert_eq!(flatten("first\nsecond"), "first second");
+    }
+
+    /// A screen of several tables is fitted once: every group is measured
+    /// together, so a column is the same width — and the header lands in the
+    /// same place — in all of them.
+    #[test]
+    fn columns_are_fitted_once_across_every_group() {
+        let first = [row("short")];
+        let second = [row(
+            "A title that runs on and on and on and would set this column much wider",
+        )];
+        let tables = render_groups(COLS, &[&first, &second], &View::plain()).expect("render");
+
+        assert_eq!(tables.len(), 2);
+        let header = |table: &str| table.lines().next().expect("a header").to_string();
+        assert_eq!(header(&tables[0]), header(&tables[1]));
+        // Fitted on its own, the short group would have been narrower: the
+        // long title of the second group is what set the width of both.
+        let alone = render(&first, &View::plain());
+        assert_ne!(header(&alone), header(&tables[0]));
+        assert!(
+            width(&header(&tables[0])) > width(&header(&alone)),
+            "{tables:?}"
+        );
+    }
+
+    /// Narrowing and dropping are decided across the groups too: a column is
+    /// dropped from all of them or from none, and the cut is the same width
+    /// everywhere.
+    #[test]
+    fn every_group_drops_and_cuts_the_same_columns() {
+        let first = [row("short")];
+        let second = [row(
+            "A title that runs on and on and would push the status off the screen",
+        )];
+        let tables = render_groups(COLS, &[&first, &second], &View::at(80)).expect("render");
+        assert_eq!(headers(&tables[0]), headers(&tables[1]));
+        for table in &tables {
+            for line in table.lines() {
+                assert!(width(line) <= 80, "{} columns: {line:?}", width(line));
+            }
+        }
+        assert!(
+            tables[1].contains('…'),
+            "the long title was cut: {tables:?}"
+        );
+        // What is dropped is what the whole screen needs dropped, not what
+        // the group being printed needs: the short group alone would have
+        // kept a column the long one cannot afford.
+        assert_eq!(
+            headers(&tables[0]),
+            headers(&render(&second, &View::at(80)))
+        );
+        assert_ne!(headers(&tables[0]), headers(&render(&first, &View::at(80))));
+    }
+
+    /// A `--columns` naming a column the table does not have is refused up
+    /// front, by the check a screen of several tables runs before it prints
+    /// any of them — one error, not one per group.
+    #[test]
+    fn a_bad_column_is_refused_before_a_group_is_rendered() {
+        let view = View {
+            columns: vec!["colour".into()],
+            ..View::plain()
+        };
+        let err = check_columns(COLS, &view).expect_err("no such column");
+        assert!(err.to_string().contains("no column \"colour\""), "{err}");
+        let err = render_groups(COLS, &[&[], &[]], &view).expect_err("no such column");
+        assert!(err.to_string().contains("no column \"colour\""), "{err}");
+
+        let view = View {
+            columns: vec!["status".into()],
+            ..View::plain()
+        };
+        check_columns(COLS, &view).expect("a column the table has");
+        assert!(check_columns(COLS, &View::plain()).is_ok(), "no --columns");
+    }
+
+    /// One style for the two things a reader reads as a heading: a section
+    /// heading and the column header of a table are both bold and uppercase.
+    #[test]
+    fn a_header_is_printed_in_the_one_heading_style() {
+        assert_eq!(heading("Ship the board", false), "SHIP THE BOARD");
+        assert_eq!(
+            heading("Ship the board", true),
+            style::paint(true, style::HEADING, "SHIP THE BOARD")
+        );
+
+        let view = View {
+            color: true,
+            ..View::plain()
+        };
+        let table = render(&[row("short")], &view);
+        let header = table.lines().next().expect("a header");
+        assert!(
+            header.contains(&style::paint(true, style::HEADING, "ID")),
+            "{header:?}"
+        );
+        assert!(
+            header.contains(&style::paint(true, style::HEADING, "TITLE")),
+            "{header:?}"
+        );
     }
 
     /// `-q` is the whole point of a pipe: one id per line, nothing else.

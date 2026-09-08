@@ -98,6 +98,14 @@ pipe a listing into whatever acts on it. `ariadne goal ls`, `task ls` and
 `session ls` show what is going on rather than everything there has ever been;
 `-a/--all` includes the finished work, and `--status` names the statuses
 precisely. A pipe or a file gets every column, since there is no screen to fit.
+A screen of several tables is laid out once for all of them: `ariadne
+attention` prints a section per goal, and the same column is in the same place
+under every one of them. A `--columns` naming a column the table does not have
+is one error, printed before any of it.
+
+Headings are one style: a section heading and the column header of a table are
+both bold and uppercase, so a reader's eye reads them as the same thing. Every
+table follows it.
 
 Statuses are coloured and carry a glyph — `●` running, `○` pending, `✓` done
 or ok, `✗` failed or cancelled, `?` waiting on you, `!` a warning worth a look

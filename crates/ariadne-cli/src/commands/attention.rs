@@ -16,6 +16,8 @@
 
 mod board;
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use serde::Serialize;
 
@@ -27,8 +29,9 @@ use ariadne_core::{AttentionReason, TaskStatus};
 
 use super::follow;
 
-use crate::output::{Format, note, print_json, print_table, style, view};
-use board::{Group, ROWS, group, heading, rows, task_titles};
+use crate::output::table::{check_columns, heading as heading_style, quiet_lines, render_groups};
+use crate::output::{Format, View, note, print_json, view};
+use board::{Attention, Group, ROWS, group, heading, rows, task_titles};
 
 /// Why a row is on the list — the task reasons and the session reasons in one
 /// vocabulary, since one table lists both. `failed` is a task's alone: a
@@ -138,14 +141,60 @@ fn relevant(frame: &SseEvent) -> bool {
     )
 }
 
-/// The heading a goal's table stands under, in `HEADING`'s bold — the same
-/// section-break seat it plays in `ariadne doctor`. With colour off it is
-/// exactly [`heading`]'s own string, byte for byte.
+/// The heading a goal's table stands under, in the one style every heading
+/// is printed in — the same seat it plays in `ariadne doctor`, and the same
+/// look the column header under it has.
 fn heading_line(group: &Group, color: bool) -> String {
-    style::paint(color, style::HEADING, &heading(group))
+    heading_style(&heading(group), color)
+}
+
+/// The whole board as one screen: a heading over each goal's table, one blank
+/// line between two goals, and one fit across the lot.
+///
+/// The fit is the point of rendering it in one go: a table fitted per goal
+/// puts the same column in a different place under every heading, which is
+/// unreadable on a screen a reader scans down.
+fn board(
+    attention: &Attention,
+    titles: &HashMap<String, String>,
+    now: chrono::DateTime<chrono::Utc>,
+    view: &View,
+) -> Result<String> {
+    let groups: Vec<Vec<Vec<String>>> = attention
+        .goals
+        .iter()
+        .map(|group| rows(group, titles, now))
+        .collect();
+    let borrowed: Vec<&[Vec<String>]> = groups.iter().map(Vec::as_slice).collect();
+    let tables = render_groups(ROWS, &borrowed, view)?;
+    Ok(attention
+        .goals
+        .iter()
+        .zip(tables)
+        .map(|(group, table)| format!("{}\n{table}", heading_line(group, view.color)))
+        .collect::<Vec<_>>()
+        .join("\n\n"))
+}
+
+/// Whether this run prints a table, which is what makes a `--columns` worth
+/// refusing.
+///
+/// JSON has no columns at all, and `-q` prints the first cell of every row
+/// whatever `--columns` names — so neither reads the flag, and neither may
+/// refuse it. Every other `-q` listing goes through [`super::super::output::print_list`],
+/// which skips the table and never looks at `--columns`; refusing here alone
+/// would fail one command where the rest of the CLI does not.
+fn prints_a_table(format: Format, view: &View) -> bool {
+    matches!(format, Format::Table) && !view.quiet
 }
 
 pub async fn run(client: &Client, watch: bool, format: Format) -> Result<()> {
+    // Before the first request, let alone the first table: a `--columns` this
+    // board does not have is one error, not one per goal — and on a `--watch`
+    // it is an error rather than a cleared screen saying it forever.
+    if prints_a_table(format, view()) {
+        check_columns(ROWS, view())?;
+    }
     if !watch {
         return render(client, format).await;
     }
@@ -177,25 +226,17 @@ async fn render(client: &Client, format: Format) -> Result<()> {
         // line, so what is stuck can be piped into whatever unsticks it. The
         // goal headings are for eyes and go with the table.
         Format::Table if view().quiet => {
-            for group in &attention.goals {
-                for row in rows(group, &titles, now) {
-                    println!("{}", row[0]);
-                }
+            let rows: Vec<Vec<String>> = attention
+                .goals
+                .iter()
+                .flat_map(|group| rows(group, &titles, now))
+                .collect();
+            if !rows.is_empty() {
+                println!("{}", quiet_lines(&rows));
             }
         }
-        Format::Table => {
-            let color = view().color;
-            for (i, group) in attention.goals.iter().enumerate() {
-                if i > 0 {
-                    println!();
-                }
-                println!("{}", heading_line(group, color));
-                print_table(ROWS, &rows(group, &titles, now))?;
-            }
-            if attention.goals.is_empty() {
-                note("nothing needs attention");
-            }
-        }
+        Format::Table if attention.goals.is_empty() => note("nothing needs attention"),
+        Format::Table => println!("{}", board(&attention, &titles, now, view())?),
     }
     Ok(())
 }
@@ -207,6 +248,7 @@ pub(crate) mod tests {
     use ariadne_core::SessionStatus;
 
     use crate::commands::fixtures::{self, NOW};
+    use crate::output::style;
 
     /// A failed session the daemon raised nothing for — which is nobody's
     /// business. `flagged` and `dead` are the ones that are on the list.
@@ -343,20 +385,104 @@ pub(crate) mod tests {
         assert_eq!(session_at(&dead("01S", "01GA", None)), NOW);
     }
 
-    /// With colour off the heading is exactly `heading`'s own string; with
-    /// it on the whole thing is `HEADING`'s bold.
+    /// A goal heading is printed in the one heading style — bold and
+    /// uppercase — which is the style of the column header under it.
     #[test]
-    fn the_goal_heading_is_bold_when_colour_is_on() {
+    fn the_goal_heading_is_printed_in_the_one_heading_style() {
         let g = Group {
             goal_id: "01GA".into(),
             goal: Some(goal("01GA", "Ship the board")),
             tasks: Vec::new(),
             sessions: Vec::new(),
         };
-        assert_eq!(heading_line(&g, false), heading(&g));
+        assert_eq!(heading_line(&g, false), "SHIP THE BOARD (01GA)");
         assert_eq!(
             heading_line(&g, true),
-            style::paint(true, style::HEADING, &heading(&g))
+            style::paint(true, style::HEADING, "SHIP THE BOARD (01GA)")
         );
+    }
+
+    /// A board of two goals: each goal keeps its own heading and its own
+    /// table, and the tables are fitted together — so the column header lands
+    /// in the same place under every heading, whatever a goal's rows hold.
+    #[test]
+    fn the_columns_align_across_every_goal_of_the_board() {
+        let tasks = vec![
+            task("01T1", "01GA", TaskStatus::Failed, false),
+            TaskDto {
+                title: "A title that runs on and on and would set this column much wider".into(),
+                ..task("01T2", "01GB", TaskStatus::Failed, false)
+            },
+        ];
+        let titles = task_titles(&tasks);
+        let attention = group(
+            vec![goal("01GA", "Older goal"), goal("01GB", "Newer goal")],
+            tasks,
+            Vec::new(),
+        );
+        let screen = board(&attention, &titles, chrono::Utc::now(), &View::plain()).expect("board");
+
+        let lines: Vec<&str> = screen.lines().collect();
+        assert_eq!(lines[0], "NEWER GOAL (01GB)");
+        let header = lines[1];
+        assert!(header.starts_with("ID"), "{screen}");
+        // The blank line between two goals, then the second heading and the
+        // same header row under it, byte for byte.
+        assert_eq!(lines[3], "");
+        assert_eq!(lines[4], "OLDER GOAL (01GA)");
+        assert_eq!(lines[5], header, "{screen}");
+    }
+
+    /// A `--columns` this board does not have is one error, raised before
+    /// anything is printed — the same check `--watch` runs before it opens
+    /// the stream.
+    #[test]
+    fn a_bad_columns_flag_is_refused_before_any_table() {
+        let bad = View {
+            columns: vec!["colour".into()],
+            ..View::plain()
+        };
+        let err = check_columns(ROWS, &bad).expect_err("no such column");
+        assert!(err.to_string().contains("no column \"colour\""), "{err}");
+        check_columns(ROWS, &View::plain()).expect("no --columns names nothing wrong");
+    }
+
+    /// Only the run that prints a table refuses a `--columns`: `-q` prints
+    /// the first cell of every row whatever the flag names, and JSON has no
+    /// columns at all. This is what every other `-q` listing does, so one
+    /// command does not fail on a flag the rest of the CLI ignores.
+    #[test]
+    fn a_columns_flag_is_refused_only_where_a_table_is_printed() {
+        let quiet = View {
+            quiet: true,
+            ..View::plain()
+        };
+        assert!(prints_a_table(Format::Table, &View::plain()));
+        assert!(!prints_a_table(Format::Table, &quiet));
+        assert!(!prints_a_table(Format::Json, &View::plain()));
+        assert!(!prints_a_table(Format::Json, &quiet));
+    }
+
+    /// `-q` is the ids of every goal's rows, one per line: the same
+    /// `quiet_lines` every other listing pipes through.
+    #[test]
+    fn quiet_output_is_the_ids_of_every_group() {
+        let tasks = vec![
+            task("01T1", "01GA", TaskStatus::Failed, false),
+            task("01T2", "01GB", TaskStatus::Failed, false),
+        ];
+        let titles = task_titles(&tasks);
+        let now = chrono::Utc::now();
+        let attention = group(
+            vec![goal("01GA", "Older goal"), goal("01GB", "Newer goal")],
+            tasks,
+            vec![dead("01S1", "01GA", Some("01T1"))],
+        );
+        let all: Vec<Vec<String>> = attention
+            .goals
+            .iter()
+            .flat_map(|group| rows(group, &titles, now))
+            .collect();
+        assert_eq!(quiet_lines(&all), "01T2\n01T1\n01S1");
     }
 }
