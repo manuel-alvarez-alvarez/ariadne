@@ -4,23 +4,32 @@
 # the commits since the last tag and keeps a single "chore(main): release
 # X.Y.Z" pull request open. Merging that PR bumps every version location
 # listed in `release-please-config.json`, writes `CHANGELOG.md`, tags `vX.Y.Z`
-# and publishes the matching GitHub Release.
+# and publishes the matching GitHub Release. The assets that hang off that
+# Release are built by a second workflow, `.github/workflows/release.yml`,
+# which the `release: published` event starts on its own.
 #
-# The assets that hang off that Release are built by a second workflow,
-# `.github/workflows/release.yml`, which this one dispatches explicitly. It
-# cannot simply trigger on the Release: GitHub never fires workflow triggers
-# for events created with the default `GITHUB_TOKEN`, so the `release:
-# published` trigger in release.yml never sees a release-please release at
-# all. Hence the dispatch step below, and the `actions: write` scope it needs.
+# All of this acts as `RELEASE_PLEASE_TOKEN`, a personal access token, rather
+# than as the default `GITHUB_TOKEN`, for two reasons:
+#
+#   * A pull request opened with `GITHUB_TOKEN` is authored by
+#     `github-actions[bot]`, which is no repository collaborator but a plain
+#     contributor. Under the "require approval for first-time contributors"
+#     Actions setting that makes every CI run on the release branch sit in
+#     `action_required` until a maintainer approves it by hand. Opened under a
+#     token of our own, the release PR is an owner's PR and its CI just runs.
+#   * GitHub fires no workflow triggers at all for events created with
+#     `GITHUB_TOKEN`, so a Release published with it would never start
+#     release.yml. A Release published with a PAT does.
+#
+# The token, the scopes it needs and how to replace it when it expires are in
+# .github/RELEASING.md. Without the secret this workflow fails outright on bad
+# credentials — it does not silently fall back to `GITHUB_TOKEN`.
 #
 # Only conventional-commit subjects reach the notes and move the version:
 # `feat:` (minor), `fix:`/`perf:`/`revert:` (patch), and `feat!:` or a
 # `BREAKING CHANGE:` footer (minor while we are pre-1.0). `chore:`, `docs:`
 # and friends ride along in a release but never trigger one; anything that is
 # not a conventional commit is ignored entirely.
-#
-# See .github/RELEASING.md, including the one-time repository setting that
-# lets Actions open the release PR.
 name: release-please
 
 on:
@@ -28,11 +37,9 @@ on:
     branches:
       - main
 
-# The default GITHUB_TOKEN is enough; no PAT is needed.
-permissions:
-  contents: write # create tags, releases and the release branch
-  pull-requests: write # open and update the release PR
-  actions: write # dispatch the release assets build
+# Every call below is made with the PAT, so the job's own `GITHUB_TOKEN` needs
+# no scope of its own.
+permissions: {}
 
 # Two pushes in quick succession must not race to create the release PR.
 concurrency:
@@ -43,27 +50,8 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - id: release
-        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-
-      # The one package in the manifest is the repository root, so v5 writes
-      # its outputs unprefixed: `release_created` is set only on the runs that
-      # actually published a Release, and `tag_name` is the tag it was cut
-      # from — the tag release.yml checks out and uploads to.
-      #
-      # `--ref "$TAG"` runs release.yml *on the tag*, not on main: the run
-      # takes the workflow file from the tag as well as the sources, and
-      # `github.ref` — which is what the build provenance attestation records
-      # as the origin of the assets — is the tag ref rather than
-      # refs/heads/main. Without it a release cut today would be attested as
-      # having been built from whatever main happened to be.
-      - name: Build the release assets
-        if: steps.release.outputs.release_created == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ steps.release.outputs.tag_name }}
-        run: gh workflow run release.yml --ref "$TAG" --field tag="$TAG"

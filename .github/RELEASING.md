@@ -13,13 +13,11 @@ does all three from the commit history.
    push, so it is always the current pending release.
 3. Merging that PR makes release-please tag `vX.Y.Z` and publish a GitHub
    Release whose notes are the changelog entry. Attaching binaries to that
-   Release is a separate workflow, `.github/workflows/release.yml`, which
-   release-please dispatches on the new tag (a Release it publishes with the
-   default `GITHUB_TOKEN` fires no `release: published` event of its own).
-   Running it on the tag rather than on `main` is what makes the build
-   provenance attestation name the tag as the origin of the assets; a rerun
-   started by hand should pick the tag in the ref dropdown for the same reason,
-   and warns if it does not.
+   Release is a separate workflow, `.github/workflows/release.yml`, started by
+   the `release: published` event. A release event runs on the tag rather than
+   on `main`, which is what makes the build provenance attestation name the
+   tag as the origin of the assets; a rerun started by hand should pick the tag
+   in the ref dropdown for the same reason, and warns if it does not.
 4. Not merging it costs nothing — commits accumulate into the same PR.
 
 ## Commit messages
@@ -69,14 +67,49 @@ release-please's source of truth and is updated by the release PR too.
 
 `CHANGELOG.md` is created by the first release PR — it is not hand-written.
 
-## One-time repository settings
+## The release token
 
-After pushing this to GitHub, in **Settings → Actions → General**:
+release-please acts as `RELEASE_PLEASE_TOKEN`, a fine-grained personal access
+token, and not as the default `GITHUB_TOKEN`. Two things depend on that:
 
-- **Workflow permissions** → tick **Allow GitHub Actions to create and approve
-  pull requests**. Without it the workflow fails with
-  `GitHub Actions is not permitted to create or approve pull requests` and no
-  release PR ever appears.
+- **CI runs on the release PR.** A PR opened with `GITHUB_TOKEN` is authored by
+  `github-actions[bot]`, whose author association is `CONTRIBUTOR` and not
+  `OWNER`. With **Settings → Actions → General → Approval for running fork
+  pull request workflows from contributors** set to *first-time contributors* —
+  the default — every CI run on the release branch stops at `action_required`
+  and waits for a maintainer to press approve. A release PR opened with a token
+  of ours is our own PR, and its CI starts by itself.
+- **The assets get built.** GitHub fires no workflow trigger for any event
+  created with `GITHUB_TOKEN`, so a Release published with it would never start
+  `release.yml`. A Release published with a PAT does.
 
-No personal access token is needed: the workflow runs on the default
-`GITHUB_TOKEN` with `contents: write` and `pull-requests: write`.
+Create the token at **Settings → Developer settings → Personal access tokens →
+Fine-grained tokens**:
+
+| Field | Value |
+| --- | --- |
+| Repository access | Only select repositories → this one |
+| Repository permissions → Contents | Read and write (branches, tags, releases) |
+| Repository permissions → Pull requests | Read and write (open and update the release PR) |
+| Expiration | up to a year; the release workflow starts failing on bad credentials the day it lapses |
+
+Nothing else: release-please touches no workflow file here, so it needs no
+`Workflows` permission.
+
+Then store it on the repository, as a secret named exactly that:
+
+```sh
+gh secret set RELEASE_PLEASE_TOKEN --repo <owner>/<repo>
+```
+
+The **Allow GitHub Actions to create and approve pull requests** setting under
+**Settings → Actions → General → Workflow permissions** is no longer required —
+it gates `GITHUB_TOKEN`, which no longer opens the PR — but leaving it ticked
+costs nothing.
+
+### Replacing it
+
+When the token expires, `release-please.yml` fails with a credentials error and
+no release PR is updated; nothing else in the repository is affected. Issue a
+new token with the same two permissions, run the `gh secret set` above again,
+and re-run the failed workflow.

@@ -1,12 +1,13 @@
 # Attaches the compiled artifacts to a published GitHub Release.
 #
-# release-please cuts the tag and publishes the release, then dispatches this
-# workflow *on that tag* — a release it publishes with the default
-# `GITHUB_TOKEN` fires no `release: published` event, so the trigger below
-# would never see it. That trigger stays for releases published by hand, which
-# do fire it. Either way the run is anchored to the tag and never to main:
-# the sources, this workflow file and `github.ref` all come from the tag, so
-# the provenance attestation names the tag as the origin of the assets.
+# release-please cuts the tag and publishes the release under a personal
+# access token rather than the default `GITHUB_TOKEN` (see
+# release-please.yml), so the release fires `published` and starts this
+# workflow; one published with `GITHUB_TOKEN` would have fired nothing.
+# Publishing a release by hand starts it too. Either way the run is anchored
+# to the tag and never to main: the sources, this workflow file and
+# `github.ref` all come from the tag, so the provenance attestation names the
+# tag as the origin of the assets.
 #
 # This workflow builds every supported target on its own native runner (no
 # cross-compilation) and uploads the assets the installer script downloads by
@@ -24,13 +25,12 @@
 name: Release assets
 
 on:
-  # Only for releases published by hand: see the header.
+  # The path every release takes, release-please's and a hand-published one's.
   release:
     types: [published]
-  # The path release-please takes, and reruns: point at an existing tag when a
-  # matrix leg failed or a runner image broke mid-release. Run it *from* that
-  # tag — the ref dropdown, not main — or the assets are attested against the
-  # ref the run happened on.
+  # Reruns: point at an existing tag when a matrix leg failed or a runner
+  # image broke mid-release. Run it *from* that tag — the ref dropdown, not
+  # main — or the assets are attested against the ref the run happened on.
   workflow_dispatch:
     inputs:
       tag:
