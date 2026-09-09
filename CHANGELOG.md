@@ -1,5 +1,83 @@
 # Changelog
 
+## [0.6.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.5.0...v0.6.0) (2026-09-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ui:** require models for desktop staffing
+* make the model mandatory across the Rust workspace
+* **ui:** the Models screen is gone; `/models` redirects to `/agents`.
+* **core:** the `ask` MCP tool is gone, and the `question`, `answer` and `note` message kinds are one `message`.
+* **mcp:** the `reply` MCP tool, the `answer` message kind and `in_reply_to` are gone.
+* **core:** `review_round` and a message's `round` are gone from the API, the CLI columns and the desktop app.
+* **daemon:** `compact_owed_at` is gone from the sessions table.
+* **store:** `max_tasks` is gone from the goal API, the `ariadne goal create --max-tasks` flag and the desktop app.
+* **store:** a repository takes nothing about landing. The `merge_strategy` and `landing_prompt` fields, the `/v1/merge-strategies` endpoint, `ariadne repo prompt`, and the `--merge-strategy`, `--landing-prompt`, `--landing-prompt-file` and `--reset-landing-prompt` flags are gone.
+* **core:** the `reviews` table, `GET/POST /v1/tasks/{id}/reviews`, the `review_created` event and `ariadne task reviews` are gone. Messages replace them.
+* **daemon:** a goal is no longer completed automatically when its last task lands. Its orchestrator or the user closes it.
+* **core:** `required_approvals` is gone from the goal API, the `ariadne goal create --approvals` flag and the desktop app.
+* **ui:** replace the profiles screen with skills, and staff tasks with agents
+* **store:** `~/.ariadne` must be recreated. The schema has no profiles table, and tasks carry their agents in `task_agents` instead.
+* **core:** an existing database cannot be carried over. The task status and actor CHECK constraints no longer accept `merged`, `planner` or `engineer`, and the squashed init migration is rewritten in place, so `~/.ariadne` must be recreated.
+
+### Features
+
+* adopt the new labyrinth mark across the icon, favicon and banner ([c41c36f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c41c36fc057ac29ccc3bb4d4041cb2023d84ae28))
+* **api:** mark orchestrator-only skills ([2fe7d7a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2fe7d7a2dd0c28bbbd3b73bd1954d75920d83241))
+* **cli:** add --watch to goal ls and session ls ([ac233d4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ac233d421c62b3e35fd29a9a3a0cd4ad3e48c3c1))
+* **cli:** render task history as a table and add task messages --full ([81a5c20](https://github.com/manuel-alvarez-alvarez/ariadne/commit/81a5c20dafe7bb957581032e466b8f8a7b40a35e))
+* **core:** drop review rounds; a review is bounded by its own request ([598998d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/598998d7ed2e9001e088ad81859e4b6bafd6b9f6))
+* **core:** let the agents talk to each other, and drop the reviews table ([1b09ac1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1b09ac10979132a98567c69f8ed1df135cf8bc3d))
+* **core:** let the orchestrator agree the review and the ending of each task ([23d191a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/23d191a5ec0a704e7e416bfe15e252371c2fbaa5))
+* **core:** make it one message, and nothing answers it ([c11aba0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c11aba026d3e6f31dbe2b14ec89b83fe511d12fd))
+* **core:** replace agent roles with seats and finish tasks instead of merging them ([a69b953](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a69b953f6992422c8be5f2b262d779fc3b57d905))
+* **daemon:** give each agent the skill documents it was staffed with ([03f9c8b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/03f9c8b79b2dd535c6dcb11f38c33a87671f0e51))
+* **daemon:** keep the orchestrator for the whole goal, and let it end one ([29e6d84](https://github.com/manuel-alvarez-alvarez/ariadne/commit/29e6d84e1ba606c527a276e7e80ccbe3cbe711dc))
+* **daemon:** stop asking agents to compact their conversations ([6555652](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6555652a7d82e2ee62a6323bdae22f511cdf16a8))
+* **daemon:** summarize an agent event's payload ([bba2e81](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bba2e81ef0a49ed3192837e412a0183c1a718cf4))
+* **install:** register Ariadne Desktop with GNOME on Linux ([b5624be](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b5624beb0bd67dd41944b0ffd1f3cd6eec022444))
+* make the model mandatory across the Rust workspace ([6817b83](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6817b83919cd9f226167057f046c5e3c31a84c15))
+* **mcp:** drop reply, and write only when you need something ([d45bbb5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d45bbb524e3d7bab8ce77bceed6a7bd9387366b3))
+* **models:** let a model be turned off so nothing is staffed on it ([1c00916](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1c00916fd7c5e81ff8cc5e80a6a2900d6c8286cd))
+* **prompts:** add the conflict-resolution skill ([647fd5a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/647fd5a1830072d9f63d65551bbac633281c1f4d))
+* **prompts:** deepen the operate skills ([a8288f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a8288f76dd453cce238b9d993059667206b13ff6))
+* **prompts:** deepen the orchestration skill ([76c1a03](https://github.com/manuel-alvarez-alvarez/ariadne/commit/76c1a03490cdb23cee1d8fafbf09fd10561a15b3))
+* **prompts:** deepen the produce skills ([3be5e4e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3be5e4e4671c61de958e1e838e8d72ae7191806c))
+* **prompts:** deepen the review skills ([1ed3aec](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1ed3aecb24faa63c1c5d332b07012e3d723247cd))
+* **prompts:** ship the orchestrator playbook as an orchestration skill ([2ee2677](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2ee26778c28ab67319a894f881ae22f54181febe))
+* **prompts:** staff a plan on a mix of agent CLIs ([e3ec01c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e3ec01c254a4f9340e8fe5d73fcd99d1a0f5e6f8))
+* **store:** a repository is a checkout and a base branch, and nothing else ([a4d7da9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a4d7da957d96199059819fe23a8293c6f04b8de9))
+* **store:** drop the goal's task cap ([faa2278](https://github.com/manuel-alvarez-alvarez/ariadne/commit/faa22780b4112647d7e0fbfe53eb35a4c74edc7b))
+* **store:** replace agent profiles with skills and staffed task agents ([083c313](https://github.com/manuel-alvarez-alvarez/ariadne/commit/083c3132e91c404e9444126732e9e8ed8cfcec0d))
+* **ui:** filter orchestrator-only skills from task staffing ([8c1b820](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8c1b820bdf2971ee8c2ff8724bd8ab78f610813d))
+* **ui:** fold the models into the agents screen ([414671f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/414671f70de01840e824cd29a292e55c426b947a))
+* **ui:** name the goal's tab Sessions and the session column Model ([2cc0c10](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2cc0c10f844cd03f639c4a9b623a960689afa7ad))
+* **ui:** replace the profiles screen with skills, and staff tasks with agents ([e7997a4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e7997a4fd951480773153d47db428dc8b950670a))
+* **ui:** require models for desktop staffing ([6a79821](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6a7982184ca91c1f32b5f56b495f9eca8bb5eb79))
+* **ui:** show daemon event summaries ([0a1f2ee](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0a1f2eee4408279f636c3e9f2c26fe9e49a34682))
+
+
+### Bug Fixes
+
+* **cli:** align the attention board across its goals ([921f014](https://github.com/manuel-alvarez-alvarez/ariadne/commit/921f014cf07dce3cadd3bc1ea8b6864d44db5341))
+* **cli:** keep attach errors on one line ([afdd651](https://github.com/manuel-alvarez-alvarez/ariadne/commit/afdd6511b0331b31e0f390799b5fd2c0ca0540f6))
+* **cli:** render doctor with shared tables ([f40f1e6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f40f1e63501fa6c6db33c90529654ad51074151c))
+* **cli:** render setup codex-hooks through the shared kv block ([2a65c9c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2a65c9cb9744255b9bee6e9e466f946a873fc041))
+* **cli:** say skills where the help still said profiles ([26f4963](https://github.com/manuel-alvarez-alvarez/ariadne/commit/26f49633e4c526e4fb3edf8053471b780088e692))
+* **cli:** unify command output language ([0598f0b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0598f0b31417f69d1b9168f4ec46e53738ebaa0e))
+* **core:** finish saying what a pull_request task does ([98d3ff3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/98d3ff3dd801808d9ab1278fb7bcdae683c0c99b))
+* **core:** say what a pull_request task actually does ([f79c8e1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f79c8e15716424e7f9e76e5e41c39de7be6e520d))
+* **daemon:** let the user answer the dialog their agent is waiting on ([c9f3b8e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c9f3b8ec61fdd5339e6ec762e5fc92769ef502fb))
+* **daemon:** read a landed root commit against the empty tree ([f895bdb](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f895bdba90157fb5aeae33583606bf63c7ea3736))
+* **daemon:** stop a relaunched agent being retired by the one it replaced ([344311a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/344311a5d311296333dee951c60b999a90eb1857))
+* **daemon:** stop starting an agent that dies the moment it starts ([565d0ce](https://github.com/manuel-alvarez-alvarez/ariadne/commit/565d0ce30726474ce485f6ead930bfb41ab5be44))
+* **install:** install the binaries cargo actually built ([d5d971a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d5d971a5826b75db940744578a57e5f6637c428c))
+* **install:** show the app's own icon in the Linux dash ([28fc13a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/28fc13af9c5c3a04295254c71d30488f26913c9f))
+* **prompts:** a message asks and answers; it carries nothing else ([63ee0e8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/63ee0e8b50f297e16558f5cbeb74122b97520307))
+* **ui:** keep a skill name on the baseline of the mention around it ([a99f10a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a99f10a3f6d08bb3a10aeeba795a4509b2cad904))
+* **ui:** stop the EGL abort on Linux ([666ca40](https://github.com/manuel-alvarez-alvarez/ariadne/commit/666ca403b0846ea4cef4fe2571765675c6d2fa51))
+
 ## [0.5.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.4.0...v0.5.0) (2026-09-03)
 
 
