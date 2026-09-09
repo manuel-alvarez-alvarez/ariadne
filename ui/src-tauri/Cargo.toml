@@ -1,6 +1,6 @@
 [package]
 name = "ariadne-ui"
-version = "0.5.0"
+version = "0.6.0"
 description = "Ariadne Desktop, the desktop client for ariadned"
 authors = ["Ariadne"]
 license = "MIT OR Apache-2.0"
