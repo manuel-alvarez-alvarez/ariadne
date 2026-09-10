@@ -984,6 +984,182 @@
         }
       }
     },
+    "/v1/repositories/{repository_id}/memories": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "repository_id",
+            "in": "path",
+            "description": "repository id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "repository_id",
+            "in": "path",
+            "description": "repository id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMemoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{repository_id}/memories/search": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "repository_id",
+            "in": "path",
+            "description": "repository id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Find entries that contain this text, without case sensitivity.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{repository_id}/memories/{id}": {
+      "delete": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "repository_id",
+            "in": "path",
+            "description": "repository id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "memory id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/sessions": {
       "get": {
         "tags": [
@@ -2372,6 +2548,23 @@
         },
         "additionalProperties": false
       },
+      "CreateMemoryRequest": {
+        "type": "object",
+        "required": [
+          "text",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "description": "The RFC 3339 time after which this entry stays hidden."
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateRepositoryRequest": {
         "type": "object",
         "required": [
@@ -2834,6 +3027,42 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/MemoryDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "memory_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DeletedDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "memory_deleted"
+                ]
+              }
+            }
           }
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
@@ -3055,6 +3284,47 @@
             "items": {
               "$ref": "#/components/schemas/LogLineDto"
             }
+          }
+        }
+      },
+      "MemoryDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "repository_id",
+          "text",
+          "source_session_id",
+          "source_goal_id",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "source_goal_id": {
+            "type": "string"
+          },
+          "source_session_id": {
+            "type": "string"
+          },
+          "source_task_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": "string"
           }
         }
       },
@@ -4166,6 +4436,10 @@
     {
       "name": "repositories",
       "description": "Git repositories registered with the daemon"
+    },
+    {
+      "name": "memories",
+      "description": "Searchable facts learned about one repository"
     },
     {
       "name": "goals",

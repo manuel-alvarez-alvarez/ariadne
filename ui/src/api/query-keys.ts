@@ -42,6 +42,12 @@ interface AgentEventFilters extends PageFilters {
   task?: string
 }
 
+interface MemoryFilters {
+  repository: string
+  /** A substring search hits the daemon's search endpoint instead of list. */
+  q?: string
+}
+
 export const qk = {
   goals: {
     all: () => ["goals"] as const,
@@ -113,5 +119,16 @@ export const qk = {
     all: () => ["agent-events"] as const,
     lists: () => ["agent-events", "list"] as const,
     list: (filters?: AgentEventFilters) => ["agent-events", "list", filters ?? {}] as const,
+  },
+  /**
+   * Facts learned about one repository (`GET
+   * /v1/repositories/{repository_id}/memories[/search]`). Always scoped to a
+   * repository, so unlike the other lists `list()` takes no default — a
+   * memory list with no repository names nothing the daemon can answer.
+   */
+  memories: {
+    all: () => ["memories"] as const,
+    lists: () => ["memories", "list"] as const,
+    list: (filters: MemoryFilters) => ["memories", "list", filters] as const,
   },
 } as const

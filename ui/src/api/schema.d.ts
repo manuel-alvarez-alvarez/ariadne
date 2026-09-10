@@ -446,6 +446,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/repositories/{repository_id}/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["memories_list"];
+        put?: never;
+        post: operations["memories_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{repository_id}/memories/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["memories_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{repository_id}/memories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["memories_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions": {
         parameters: {
             query?: never;
@@ -1081,6 +1129,11 @@ export interface components {
             repository_ids: string[];
             title: string;
         };
+        CreateMemoryRequest: {
+            /** @description The RFC 3339 time after which this entry stays hidden. */
+            expires_at: string;
+            text: string;
+        };
         CreateRepositoryRequest: {
             /** @description Omit for the repo's currently checked-out branch. */
             base_branch?: string | null;
@@ -1223,6 +1276,14 @@ export interface components {
             data: components["schemas"]["DeletedDto"];
             /** @enum {string} */
             event: "repository_deleted";
+        } | {
+            data: components["schemas"]["MemoryDto"];
+            /** @enum {string} */
+            event: "memory_created";
+        } | {
+            data: components["schemas"]["DeletedDto"];
+            /** @enum {string} */
+            event: "memory_deleted";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -1367,6 +1428,16 @@ export interface components {
         /** @description Response of `GET /v1/logs`: the in-memory ring buffer, oldest first. */
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
+        };
+        MemoryDto: {
+            created_at: string;
+            expires_at: string;
+            id: string;
+            repository_id: string;
+            source_goal_id: string;
+            source_session_id: string;
+            source_task_id?: string | null;
+            text: string;
         };
         MessageDto: {
             body: string;
@@ -2710,6 +2781,155 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memories_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description repository id */
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryDto"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memories_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description repository id */
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMemoryRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memories_search: {
+        parameters: {
+            query: {
+                /** @description Find entries that contain this text, without case sensitivity. */
+                q: string;
+            };
+            header?: never;
+            path: {
+                /** @description repository id */
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryDto"][];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memories_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description repository id */
+                repository_id: string;
+                /** @description memory id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

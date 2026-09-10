@@ -24,6 +24,7 @@ import { createHashRouter, Navigate, type RouteObject, useParams } from "react-r
 import { AppShell, type PageHandle } from "@/components/app-shell"
 import { AgentsPage } from "@/features/agents/agents-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
+import { MemoryPage } from "@/features/memory/memory-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { OutsideSessionsPage } from "@/features/sessions/outside-sessions-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
@@ -40,6 +41,11 @@ function GoalPanelRedirect() {
 function TaskPanelRedirect() {
   const { taskId = "" } = useParams<{ taskId: string }>()
   return <Navigate to={`${paths.goals()}?task=${taskId}`} replace />
+}
+
+function MemoryPageRoute() {
+  const { repositoryId = "" } = useParams<{ repositoryId: string }>()
+  return <MemoryPage repositoryId={repositoryId} />
 }
 
 const routes: RouteObject[] = [
@@ -59,6 +65,11 @@ const routes: RouteObject[] = [
   // The models were folded into the agents screen; the address outlives it.
   { path: "models", element: <Navigate to={paths.agents()} replace /> },
   { path: "repositories", element: <RepositoriesPage />, handle: { title: "Repositories" } },
+  {
+    path: "repositories/:repositoryId/memory",
+    element: <MemoryPageRoute />,
+    handle: { title: "Memory" },
+  },
   { path: "*", element: <NotFoundPage /> },
 ]
 

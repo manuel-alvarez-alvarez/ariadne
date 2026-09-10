@@ -30,17 +30,20 @@ import {
   createQueryClient,
   type DomainEvent,
   type GoalDto,
+  type MemoryDto,
   qk,
   type RepositoryDto,
   type TaskDto,
 } from "@/api"
-import { aGoal, aRepository, aTask } from "@/test/fixtures"
+import { aGoal, aMemory, aRepository, aTask } from "@/test/fixtures"
 import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
 const REPOSITORY: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
   description: null,
 })
+
+const MEMORY: MemoryDto = aMemory({ repository_id: REPOSITORY.id })
 
 const GOAL: GoalDto = aGoal({
   status: "completed",
@@ -105,6 +108,26 @@ describe("repository events", () => {
 
     expect(queryClient.getQueryData(qk.repositories.detail(REPOSITORY.id))).toBeUndefined()
     expect(stale(queryClient, qk.repositories.list())).toBe(true)
+  })
+})
+
+describe("memory events", () => {
+  it("refetches the list a saved memory belongs to", () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(qk.memories.list({ repository: REPOSITORY.id }), [])
+
+    dispatch(queryClient, { event: "memory_created", data: MEMORY })
+
+    expect(stale(queryClient, qk.memories.list({ repository: REPOSITORY.id }))).toBe(true)
+  })
+
+  it("refetches the list a deleted memory belonged to", () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(qk.memories.list({ repository: REPOSITORY.id }), [MEMORY])
+
+    dispatch(queryClient, { event: "memory_deleted", data: { id: MEMORY.id } })
+
+    expect(stale(queryClient, qk.memories.list({ repository: REPOSITORY.id }))).toBe(true)
   })
 })
 

@@ -56,6 +56,8 @@ export const paths = {
   outsideSessions: () => "/sessions/outside",
   agents: () => "/agents",
   repositories: () => "/repositories",
+  /** One repository's saved memory: the list, search and delete screen (019). */
+  repositoryMemory: (repositoryId: string) => `/repositories/${repositoryId}/memory`,
   /**
    * The goals board with this goal's panel open on one of its sessions.
    *

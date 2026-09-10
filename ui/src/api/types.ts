@@ -20,6 +20,8 @@ export type RepositoryDto = Schemas["RepositoryDto"]
 export type CreateRepositoryRequest = Schemas["CreateRepositoryRequest"]
 export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
 
+export type MemoryDto = Schemas["MemoryDto"]
+
 export type TaskDto = Schemas["TaskDto"]
 export type TaskAgentDto = Schemas["TaskAgentDto"]
 export type AgentAssignment = Schemas["AgentAssignment"]
