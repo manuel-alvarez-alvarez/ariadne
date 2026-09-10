@@ -72,6 +72,21 @@ CREATE TABLE repositories (
     UNIQUE (path, base_branch)
 );
 
+-- What past work learned about one repository. Source ids are kept as text,
+-- not foreign keys: a memory survives deletion of the session, task or goal
+-- that taught it. Deleting the repository removes its memories.
+CREATE TABLE memories (
+    id                TEXT PRIMARY KEY,
+    repository_id     TEXT NOT NULL REFERENCES repositories (id) ON DELETE CASCADE,
+    text              TEXT NOT NULL,
+    source_session_id TEXT NOT NULL,
+    source_task_id    TEXT,
+    source_goal_id    TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    expires_at        TEXT NOT NULL
+);
+CREATE INDEX idx_memories_repository ON memories (repository_id, id);
+
 -- The agent, model and effort columns on `goals` and `task_agents` are pins:
 -- the orchestrator sizes each agent it staffs and writes the answer here, and
 -- the row is what the launcher reads from there on. The agent CLI and the

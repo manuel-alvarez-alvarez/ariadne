@@ -38,12 +38,12 @@ same binary also serves (013).
 
 ## Behavior
 
-1. Every user-facing action exists both here and in the desktop app: neither
-   surface is a subset of the other.
+1. Every user-facing action except project memory exists both here and in the
+   desktop app. Project memory is currently CLI-only (019).
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
    `models`, `skill`, `repo`, `goal`, `task`, `session`, `events`,
-   `attention`, `doctor`, `completions`, plus the hidden plumbing the agents
-   use (`mcp serve`, `agent-event`).
+   `attention`, `memory`, `doctor`, `completions`, plus the hidden plumbing
+   the agents use (`mcp serve`, `agent-event`).
 3. The root and every group share one help-screen shape, and no help screen
    leaks the endpoint of the shell it runs in.
 4. Display flags (`--format`, and the listing flags) parse on either side of
@@ -126,6 +126,8 @@ same binary also serves (013).
 25. `ariadne session discover` lists sessions found in the supported CLI
     stores but not started by Ariadne. `ariadne session adopt` assigns one to
     a ready task through the same REST surface (020).
+26. `ariadne memory ls|search|delete` reads and removes active repository
+    memories. Each command names the repository by id or path (019).
 
 ## Acceptance criteria
 
@@ -215,6 +217,9 @@ same binary also serves (013).
 - `setup codex-hooks` aligns its command and events values through the shared
   key/value block
   (`setup.rs::the_hook_block_aligns_command_and_events_through_kv_block`).
+- The memory commands are classified like other lists and mutations
+  (`cli/tests.rs::every_command_in_the_tree_is_classified`), and delete takes
+  its entry and repository (`::memory_delete_takes_the_entry_and_its_repository`).
 
 ## Sources
 

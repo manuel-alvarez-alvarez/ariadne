@@ -403,9 +403,18 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
+        DomainEvent::MemoryCreated(memory) => Line {
+            at: memory.created_at.clone(),
+            kind,
+            subject: memory.id.clone(),
+            detail: memory.text.clone(),
+            session: Some(memory.source_session_id.clone()),
+            status: None,
+        },
         DomainEvent::GoalDeleted(DeletedDto { id })
         | DomainEvent::SkillDeleted(DeletedDto { id })
-        | DomainEvent::RepositoryDeleted(DeletedDto { id }) => Line {
+        | DomainEvent::RepositoryDeleted(DeletedDto { id })
+        | DomainEvent::MemoryDeleted(DeletedDto { id }) => Line {
             at: now(),
             kind,
             subject: id.clone(),

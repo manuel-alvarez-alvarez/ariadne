@@ -50,6 +50,8 @@ impl McpSeat {
                 "complete_goal",
                 "send_message",
                 "read_messages",
+                "save_memory",
+                "search_memory",
             ],
             McpSeat::Author => &[
                 "get_task",
@@ -59,6 +61,8 @@ impl McpSeat {
                 "record_pull_request",
                 "send_message",
                 "read_messages",
+                "save_memory",
+                "search_memory",
             ],
             McpSeat::Reviewer => &[
                 "get_task",
@@ -66,6 +70,8 @@ impl McpSeat {
                 "submit_verdict",
                 "send_message",
                 "read_messages",
+                "save_memory",
+                "search_memory",
             ],
         }
     }
@@ -120,6 +126,34 @@ impl AriadneMcp {
         body: &B,
     ) -> Result<serde_json::Value, McpError> {
         self.client.post_json(path, body).await.map_err(to_mcp_err)
+    }
+
+    /// Resolve the repository for a memory tool.
+    async fn memory_repository(&self, named: Option<String>) -> Result<String, McpError> {
+        if let Some(repository_id) = named {
+            return Ok(repository_id);
+        }
+        if let Some(task_id) = &self.task_id {
+            let task: serde_json::Value = self.get(&format!("/v1/tasks/{task_id}")).await?;
+            return task["repo_id"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| McpError::internal_error("the task names no repository", None));
+        }
+        let goal: serde_json::Value = self.get(&format!("/v1/goals/{}", self.goal_id)).await?;
+        let repositories = goal["repos"]
+            .as_array()
+            .ok_or_else(|| McpError::internal_error("the goal names no repository list", None))?;
+        match repositories.as_slice() {
+            [repository] => repository["id"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| McpError::internal_error("the repository has no id", None)),
+            _ => Err(McpError::invalid_params(
+                "pass repository_id because this goal does not have one repository",
+                None,
+            )),
+        }
     }
 }
 
@@ -330,6 +364,8 @@ pub(crate) mod tests {
                     "complete_goal",
                     "send_message",
                     "read_messages",
+                    "save_memory",
+                    "search_memory",
                 ][..],
             ),
             (
@@ -342,6 +378,8 @@ pub(crate) mod tests {
                     "record_pull_request",
                     "send_message",
                     "read_messages",
+                    "save_memory",
+                    "search_memory",
                 ][..],
             ),
             (
@@ -352,6 +390,8 @@ pub(crate) mod tests {
                     "submit_verdict",
                     "send_message",
                     "read_messages",
+                    "save_memory",
+                    "search_memory",
                 ][..],
             ),
         ] {
@@ -376,6 +416,8 @@ pub(crate) mod tests {
             "record_pull_request",
             "request_review",
             "retry_task",
+            "save_memory",
+            "search_memory",
             "send_message",
             "submit_verdict",
             "update_task",
@@ -621,6 +663,24 @@ pub(crate) mod tests {
     pub(crate) async fn recording_daemon_answering(
         answer: &'static str,
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
+        recording_daemon_with_answers(vec![answer.to_string()], true).await
+    }
+
+    /// The same daemon, with one answer per request in order.
+    pub(crate) async fn recording_daemon_answering_in_order(
+        answers: &[&str],
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
+        recording_daemon_with_answers(
+            answers.iter().map(|answer| answer.to_string()).collect(),
+            false,
+        )
+        .await
+    }
+
+    async fn recording_daemon_with_answers(
+        answers: Vec<String>,
+        repeat_last: bool,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -630,6 +690,8 @@ pub(crate) mod tests {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let recorded = seen.clone();
         tokio::spawn(async move {
+            let mut answers: std::collections::VecDeque<String> = answers.into();
+            let fallback = answers.back().cloned().unwrap_or_else(|| "{}".into());
             while let Ok((mut socket, _)) = listener.accept().await {
                 let mut raw = Vec::new();
                 let mut buf = [0u8; 1024];
@@ -667,6 +729,10 @@ pub(crate) mod tests {
                     });
                     break;
                 }
+                let answer = match repeat_last {
+                    true => fallback.clone(),
+                    false => answers.pop_front().unwrap_or_else(|| "{}".into()),
+                };
                 let response = format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{answer}",
                     answer.len()

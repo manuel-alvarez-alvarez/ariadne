@@ -13,6 +13,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::events::AgentEventDto;
 use crate::goals::GoalDto;
+use crate::memories::MemoryDto;
 use crate::messages::MessageDto;
 use crate::repositories::RepositoryDto;
 use crate::sessions::SessionDto;
@@ -105,6 +106,8 @@ pub enum DomainEvent {
     RepositoryCreated(RepositoryDto),
     RepositoryUpdated(RepositoryDto),
     RepositoryDeleted(DeletedDto),
+    MemoryCreated(MemoryDto),
+    MemoryDeleted(DeletedDto),
 }
 
 impl DomainEvent {
@@ -127,6 +130,8 @@ impl DomainEvent {
             Self::RepositoryCreated(_) => "repository_created",
             Self::RepositoryUpdated(_) => "repository_updated",
             Self::RepositoryDeleted(_) => "repository_deleted",
+            Self::MemoryCreated(_) => "memory_created",
+            Self::MemoryDeleted(_) => "memory_deleted",
         }
     }
 
@@ -149,6 +154,8 @@ impl DomainEvent {
             Self::SkillDeleted(d) => json(d),
             Self::RepositoryCreated(r) | Self::RepositoryUpdated(r) => json(r),
             Self::RepositoryDeleted(d) => json(d),
+            Self::MemoryCreated(m) => json(m),
+            Self::MemoryDeleted(d) => json(d),
         }
     }
 }

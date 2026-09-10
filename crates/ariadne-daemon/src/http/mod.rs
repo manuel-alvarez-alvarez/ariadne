@@ -10,6 +10,7 @@ mod events;
 mod goals;
 mod landing;
 mod logs;
+mod memories;
 mod pane;
 mod pins;
 mod repositories;
@@ -109,6 +110,7 @@ impl AppState {
         skills::reset_document,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
+        memories::create, memories::list, memories::search, memories::delete,
 
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
@@ -137,6 +139,7 @@ impl AppState {
         (name = "agents", description = "Per-agent-CLI launch configuration"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
+        (name = "memories", description = "Searchable facts learned about one repository"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions (tmux-hosted)"),
@@ -176,6 +179,18 @@ pub fn router(state: AppState) -> Router {
             get(repositories::get)
                 .put(repositories::update)
                 .delete(repositories::delete),
+        )
+        .route(
+            "/v1/repositories/{repository_id}/memories",
+            post(memories::create).get(memories::list),
+        )
+        .route(
+            "/v1/repositories/{repository_id}/memories/search",
+            get(memories::search),
+        )
+        .route(
+            "/v1/repositories/{repository_id}/memories/{id}",
+            axum::routing::delete(memories::delete),
         )
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))

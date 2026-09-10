@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-08
+updated: 2026-09-10
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/doctor.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-daemon/tests/memories.rs
 ---
 
 # HTTP API, event stream and usage
@@ -93,6 +94,8 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
   cause (`::http_transition_emits_task_updated_with_its_transition`), and a
   scheduler transition emits without HTTP
   (`::scheduler_transition_emits_task_updated_without_http`).
+- Memory creation emits its complete entry, and deletion emits its id
+  (`memories.rs::delete_removes_a_memory`).
 - The stream opens with a heartbeat, filters, and resyncs a lagging client
   (`events.rs::sse_stream_opens_with_a_heartbeat`,
   `::sse_stream_frames_events_and_honours_its_filters`,

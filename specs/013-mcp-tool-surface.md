@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-09-08
+updated: 2026-09-10
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -48,7 +48,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      `record_pull_request`
    - **reviewer**: `get_task`, `get_diff`, `submit_verdict`
    - **every seat**: `send_message`, `read_messages` — the channel
-     the agents talk to each other on (018)
+     the agents talk to each other on (018); `save_memory`, `search_memory` —
+     the repository facts agents choose to keep and retrieve (019)
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
@@ -82,6 +83,14 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`).
 - The skill catalog excludes orchestrator-only skills
   (`tools.rs::the_skill_catalog_excludes_orchestrator_only_skills`).
+- Memory tools save and search the repository they name
+  (`tools.rs::memory_tools_save_and_search_the_named_repository`).
+- Memory tools default to a task's repository
+  (`tools.rs::memory_tools_default_to_the_task_repository`), default to a
+  goal's only repository
+  (`::memory_search_defaults_to_the_goals_only_repository`), and require a
+  repository when the goal has several
+  (`::memory_search_needs_a_repository_when_the_goal_has_several`).
 
 ## Sources
 

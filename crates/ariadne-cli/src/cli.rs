@@ -9,6 +9,7 @@ pub mod values;
 use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
+use crate::commands::memory::MemoryCommand;
 use crate::commands::models::ModelsCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
@@ -67,6 +68,13 @@ Examples:
   ariadne repo add ~/projects/ui --branch next
   ariadne repo ls
   ariadne repo update <repo-id> --branch main
+";
+
+const MEMORY_EXAMPLES: &str = "\
+Examples:
+  ariadne memory ls --repo <repo-id>
+  ariadne memory search parser --repo <repo-id>
+  ariadne memory delete <memory-id> --repo <repo-id>
 ";
 
 const GOAL_EXAMPLES: &str = "\
@@ -322,6 +330,15 @@ pub enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
+    /// Read repository memory
+    ///
+    /// Agents save useful facts about a repository. These commands list,
+    /// search, and delete those facts without adding them to any prompt.
+    #[command(after_help = MEMORY_EXAMPLES)]
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommand,
+    },
     /// Manage goals
     ///
     /// A goal is a whole effort. An orchestrator agent breaks it into tasks
@@ -514,6 +531,8 @@ const LISTINGS: &[&str] = &[
     "attention",
     "goal ls",
     "models ls",
+    "memory ls",
+    "memory search",
     "skill ls",
     "repo ls",
     "session discover",
@@ -536,6 +555,9 @@ const QUIET_OUTPUT: &[&str] = &[
     "models disable",
     "models enable",
     "models ls",
+    "memory delete",
+    "memory ls",
+    "memory search",
     "repo add",
     "repo ls",
     "repo rm",
