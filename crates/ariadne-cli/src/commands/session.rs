@@ -141,7 +141,7 @@ pub enum SessionCommand {
         #[arg(long)]
         no_newline: bool,
     },
-    /// Show recent terminal output of a session
+    /// Show a session's terminal output or ACP transcript
     Logs {
         /// Session id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
@@ -477,6 +477,10 @@ async fn render(
 /// leaves no gap between the snapshot and the output that follows it. Reading
 /// both would print the overlap twice.
 pub async fn logs(client: &Client, id: &str, follow_it: bool, format: Format) -> Result<()> {
+    let session: SessionDto = client.get_json(&session_path(id)).await?;
+    if session.agent_kind == ariadne_core::AgentKind::Acp {
+        return crate::commands::console::logs(client, id, follow_it, format).await;
+    }
     if !follow_it {
         let logs: SessionLogsResponse = client.get_json(&format!("/v1/sessions/{id}/logs")).await?;
         return match format {

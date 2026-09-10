@@ -1,4 +1,4 @@
-//! Attach/logs helpers: resolve an Ariadne id to a tmux session and exec.
+//! Attach/logs helpers: resolve an Ariadne id to a tmux session or ACP console.
 //!
 //! The id is a session, task or goal id — a task or goal one resolves to the
 //! session of the wanted seat (default author for tasks, orchestrator for
@@ -10,7 +10,7 @@ use anyhow::{Result, bail};
 
 use ariadne_api::sessions::SessionDto;
 use ariadne_client::{Client, ClientError};
-use ariadne_core::Seat;
+use ariadne_core::{AgentKind, Seat};
 
 use crate::output::{style, view};
 
@@ -84,6 +84,25 @@ pub async fn resolve_tmux(client: &Client, id: &str, seat: Option<Seat>) -> Resu
         })
 }
 
+/// Find the live session for a task or goal seat. An ACP session is live
+/// through the daemon runtime rather than tmux, so its persisted status is
+/// the liveness check that takes the pane check's place.
+pub async fn resolve_live(client: &Client, id: &str, seat: Option<Seat>) -> Result<SessionDto> {
+    if let Ok(session) = resolve_tmux(client, id, seat).await {
+        return Ok(session);
+    }
+    let (sessions, wanted) = candidates(client, id, seat).await?;
+    sessions
+        .into_iter()
+        .find(|s| s.seat == wanted && s.status.is_live() && s.agent_kind == AgentKind::Acp)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no live {} session found for {id} (is the agent running?)",
+                wanted.as_str()
+            )
+        })
+}
+
 /// No live tmux: revive the most recent resumable session of the wanted seat.
 async fn revive(client: &Client, id: &str, seat: Option<Seat>) -> Result<SessionDto> {
     let (sessions, wanted) = candidates(client, id, seat).await?;
@@ -149,6 +168,16 @@ async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
 /// The tmux itself decides — the persisted status can be stale either way, and
 /// the daemon's resume treats tmux existence as authoritative too.
 async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
+    if session.agent_kind == AgentKind::Acp {
+        let session = if session.status.is_live() {
+            session
+        } else {
+            client
+                .post_empty(&format!("/v1/sessions/{}/resume", session.id))
+                .await?
+        };
+        return attach_to(client, &session).await;
+    }
     let session = if tmux_alive(&session.tmux_session) {
         session
     } else {
@@ -164,20 +193,20 @@ async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
             .post_empty(&format!("/v1/sessions/{}/resume", session.id))
             .await?
     };
-    attach_to(&session)
+    attach_to(client, &session).await
 }
 
 /// Attach to a task or goal id: the live tmux of the wanted seat, or the
 /// most recent resumable session of that seat revived.
 pub async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
-    let session = match resolve_tmux(client, id, seat).await {
+    let session = match resolve_live(client, id, seat).await {
         Ok(session) => session,
         Err(_) => {
             ensure_task_not_finished(client, id).await?;
             revive(client, id, seat).await?
         }
     };
-    attach_to(&session)
+    attach_to(client, &session).await
 }
 
 /// `ariadne attach <id>`: session, task or goal id.
@@ -199,7 +228,18 @@ pub async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) -> Result
     attach(client, id, seat).await
 }
 
-fn attach_to(session: &SessionDto) -> Result<()> {
+async fn attach_to(client: &Client, session: &SessionDto) -> Result<()> {
+    if session.agent_kind == AgentKind::Acp {
+        eprintln!(
+            "{}",
+            hint(&format!(
+                "attaching to ACP console ({} / {})",
+                session.seat.as_str(),
+                session.agent_kind.as_str()
+            ))
+        );
+        return crate::commands::console::attach(client, &session.id).await;
+    }
     eprintln!(
         "{}",
         hint(&format!(

@@ -403,11 +403,11 @@ pub enum Command {
         #[arg(long)]
         watch: bool,
     },
-    /// Attach to the tmux session of a session, task or goal id
+    /// Attach to the tmux session or ACP console of a session, task or goal id
     ///
-    /// The terminal of whichever agent that id names, revived first when its
-    /// tmux is gone. Leaving it is tmux's own detach (Ctrl-b d): the agent
-    /// keeps working.
+    /// The terminal or console of whichever agent that id names, revived
+    /// first when it is gone. Leave tmux with Ctrl-b d or the console with
+    /// Ctrl-C; the agent keeps working.
     #[command(after_help = ATTACH_EXAMPLES)]
     Attach {
         /// Session, task or goal id

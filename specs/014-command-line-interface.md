@@ -21,6 +21,7 @@ tests:
   - crates/ariadne-cli/src/output/table.rs
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/src/commands/setup.rs
+  - crates/ariadne-cli/src/commands/console.rs
 ---
 
 # Command-line interface
@@ -132,6 +133,11 @@ same binary also serves (013).
     a ready task through the same REST surface (020).
 26. `ariadne memory ls|search|delete` reads and removes active repository
     memories. Each command names the repository by id or path (019).
+27. `ariadne attach`, `goal attach` and `task attach` open an interactive
+    console for ACP sessions: it renders the event transcript, submits each
+    typed line as a prompt, and lists permission choices for numeric answers.
+    `session logs` reads that transcript, and `session logs -f` follows its
+    event stream. Tmux sessions keep their tmux attach and pane-log paths.
 
 ## Acceptance criteria
 
@@ -226,6 +232,10 @@ same binary also serves (013).
 - The memory commands are classified like other lists and mutations
   (`cli/tests.rs::every_command_in_the_tree_is_classified`), and delete takes
   its entry and repository (`::memory_delete_takes_the_entry_and_its_repository`).
+- The ACP console renders a stub-agent transcript and submits typed input, and
+  its permission question submits the selected option
+  (`commands/console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
+  `::a_permission_question_renders_and_delivers_the_selected_answer`).
 
 ## Sources
 

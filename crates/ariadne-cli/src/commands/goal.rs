@@ -146,7 +146,7 @@ pub enum GoalCommand {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Attach to the goal's orchestrator tmux session
+    /// Attach to the goal's orchestrator tmux session or ACP console
     Attach {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]

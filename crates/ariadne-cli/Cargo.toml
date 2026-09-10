@@ -43,6 +43,9 @@ tokio = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
+# The console tests run a small API server for the CLI client.
+axum = { workspace = true }
+futures-util = { workspace = true }
 # Only to plant the migration row that makes a database a pre-squash one, for
 # the doctor check that reports it.
 sqlx = { workspace = true }

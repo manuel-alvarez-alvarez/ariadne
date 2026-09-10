@@ -6,6 +6,7 @@ pub mod agent_event;
 pub mod attach;
 pub mod attention;
 pub mod completions;
+pub mod console;
 pub mod daemon;
 pub mod doctor;
 pub mod events;

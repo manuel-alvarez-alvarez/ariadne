@@ -267,7 +267,7 @@ pub enum TaskCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
     },
-    /// Attach to the task's agent tmux session
+    /// Attach to the task's agent tmux session or ACP console
     Attach {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -452,7 +452,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         }
         TaskCommand::Logs { id, seat, follow } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
-            let session = crate::commands::attach::resolve_tmux(client, &id, seat).await?;
+            let session = crate::commands::attach::resolve_live(client, &id, seat).await?;
             crate::commands::session::logs(client, &session.id, follow, format).await?;
         }
     }
