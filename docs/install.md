@@ -19,6 +19,19 @@ scripts/uninstall.sh --purge   # ...and deletes the data too
 `scripts/install.sh --help` lists every flag; below is what the flags do not
 say.
 
+## Agent CLIs
+
+Ariadne supports Claude Code, OpenAI Codex CLI, OpenCode, and
+[ACP-compatible agents](https://agentclientprotocol.com). Install each CLI
+separately and make its executable available to the daemon on `PATH`.
+
+For ACP, expose the selected agent as an executable named `acp`. A small
+wrapper can add the command or mode that starts its ACP server. Ariadne speaks
+ACP version 1 over standard input and output. The agent must offer a `model`
+session option. It must also offer a `thought_level` option when the pin has an
+effort. Ariadne's ACP flags are empty by default because agents use different
+permission flags. Configure them with `ariadne agent update acp`.
+
 ## Where the binaries come from
 
 By default the binaries and the desktop app come from the GitHub release named
