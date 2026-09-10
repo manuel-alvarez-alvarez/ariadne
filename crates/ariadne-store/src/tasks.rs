@@ -18,8 +18,9 @@ pub struct NewTask {
     pub repo_id: String,
     pub title: String,
     pub description: String,
-    /// The agents to staff: exactly one author, then the reviewers in review
-    /// order. What each one can do is the skills it carries.
+    /// The agents to staff: one author or more, then the reviewers in review
+    /// order. What each one can do is the skills it carries. Several authors
+    /// need at least one reviewer, to pick the winner.
     pub agents: Vec<NewTaskAgent>,
     pub depends_on: Vec<String>,
     /// How this task ends. None = the way its repository takes a change.
@@ -38,6 +39,10 @@ pub struct TaskUpdate {
     /// at whatever the CLI runs it at, None says nothing. Read only where
     /// `pin` says nothing — a pin that moves carries its own effort.
     pub effort: Option<Option<String>>,
+    /// The whole author list, replaced: every author is staffed afresh, with
+    /// the skills and the pin the caller gave it. Only a task that has not
+    /// started can be edited at all, so no author session is ever replaced.
+    pub authors: Option<Vec<NewTaskAgent>>,
     /// The whole reviewer list, replaced: every reviewer is staffed afresh,
     /// with the skills and the pin the caller gave it.
     pub reviewers: Option<Vec<NewTaskAgent>>,
@@ -89,6 +94,19 @@ fn id_tail(id: &str) -> String {
         .map(|c| c.to_ascii_lowercase())
         .collect();
     id[id.len().saturating_sub(ID_TAIL)..].to_string()
+}
+
+/// The branch one author of a task works on.
+///
+/// The first author holds the task branch itself, so a one-author task reads
+/// exactly as it always did. Every later author works beside it under the
+/// same name with an `-a<n>` tail, numbered the way the orchestrator listed
+/// them: `fix-the-parser-r9jr7c-a2` is the second author's branch.
+pub fn author_branch(task_branch: &str, ordinal: i64) -> String {
+    match ordinal {
+        0 => task_branch.to_string(),
+        n => format!("{task_branch}-a{}", n + 1),
+    }
 }
 
 /// A title as lowercase kebab-case, clipped to [`SLUG_MAX`] characters on a
@@ -328,42 +346,73 @@ impl Store {
         .bind(id)
         .execute(&mut *tx)
         .await?;
-        // The pins live on the author, which is the agent the task's own
-        // `--model` and `--effort` have always meant.
-        let author: TaskAgent =
-            sqlx::query_as("SELECT * FROM task_agents WHERE task_id = ? AND seat = 'author'")
+        if let Some(authors) = &update.authors {
+            // Reassigning authors staffs them afresh, each with the skills
+            // and the pin the caller gave it, the same way creation does. The
+            // task has not started, so no author session is replaced by this.
+            sqlx::query("DELETE FROM task_agents WHERE task_id = ? AND seat = 'author'")
                 .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or_else(|| not_found("author", id))?;
-        let (agent_kind, model, effort) = match &update.pin {
-            // The model stands, so an effort of its own moves alone: what it
-            // is run at is the model the author is already pinned to.
-            None => (
-                author.agent_kind.clone(),
-                author.model.clone(),
-                update
-                    .effort
-                    .clone()
-                    .unwrap_or_else(|| author.effort.clone()),
-            ),
-            Some(pin) => AgentPin::columns(pin),
-        };
-        sqlx::query("UPDATE task_agents SET agent_kind = ?, model = ?, effort = ? WHERE id = ?")
-            .bind(&agent_kind)
-            .bind(&model)
-            .bind(&effort)
-            .bind(&author.id)
-            .execute(&mut *tx)
-            .await?;
-        if let Some(reviewers) = update.reviewers {
+                .execute(&mut *tx)
+                .await?;
+            Self::staff_agents_in_tx(&mut tx, id, authors).await?;
+        }
+        if let Some(reviewers) = &update.reviewers {
             sqlx::query("DELETE FROM task_agents WHERE task_id = ? AND seat = 'reviewer'")
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
             // Reassigning reviewers staffs them afresh, each with the skills
             // and the pin the caller gave it, the same way creation does.
-            Self::staff_agents_in_tx(&mut tx, id, &reviewers).await?;
+            Self::staff_agents_in_tx(&mut tx, id, reviewers).await?;
+        }
+        // What the edits above left staffed, checked whole: an edit must not
+        // leave a task no creation would have taken.
+        let authors: Vec<TaskAgent> = sqlx::query_as(
+            "SELECT * FROM task_agents WHERE task_id = ? AND seat = 'author' ORDER BY ordinal",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let reviewers: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_agents WHERE task_id = ? AND seat = 'reviewer'",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        check_seat_counts(authors.len(), reviewers as usize)?;
+        // The pins live on the author, which is the agent the task's own
+        // `--model` and `--effort` have always meant. A task with several
+        // authors has no such agent: each one was named with its own pin.
+        if update.pin.is_some() || update.effort.is_some() {
+            let [author] = authors.as_slice() else {
+                return Err(StoreError::Conflict(
+                    "the task has several authors; replace the whole list with `authors`, \
+                     each with its own model"
+                        .into(),
+                ));
+            };
+            let (agent_kind, model, effort) = match &update.pin {
+                // The model stands, so an effort of its own moves alone: what
+                // it is run at is the model the author is already pinned to.
+                None => (
+                    author.agent_kind.clone(),
+                    author.model.clone(),
+                    update
+                        .effort
+                        .clone()
+                        .unwrap_or_else(|| author.effort.clone()),
+                ),
+                Some(pin) => AgentPin::columns(pin),
+            };
+            sqlx::query(
+                "UPDATE task_agents SET agent_kind = ?, model = ?, effort = ? WHERE id = ?",
+            )
+            .bind(&agent_kind)
+            .bind(&model)
+            .bind(&effort)
+            .bind(&author.id)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
         let task = self.get_task(id).await?;
@@ -667,22 +716,38 @@ impl Store {
     }
 }
 
-/// A task takes exactly one author. The author carries it from its first
-/// commit to the end, and nothing else about the staffing is the store's to
-/// insist on.
+/// A task takes one author or more, and nothing else about the staffing is
+/// the store's to insist on.
 ///
-/// Reviewers are not required. Most work is worth a second pair of eyes, and
-/// the orchestrator is told so; some has nothing to review — a release, a
-/// dependency bump the suite already judged — and a task staffed with no
-/// reviewer is approved as soon as its author asks, since there is nobody to
-/// ask (`scheduler::tasks`, `approvals_needed`).
+/// Reviewers are not required on a one-author task. Most work is worth a
+/// second pair of eyes, and the orchestrator is told so; some has nothing to
+/// review — a release, a dependency bump the suite already judged — and a
+/// task staffed with no reviewer is approved as soon as its author asks,
+/// since there is nobody to ask (`scheduler::tasks`, `approvals_needed`).
+///
+/// A task staffed with several authors is the exception: the reviewers are
+/// what picks the branch that lands, so it needs at least one.
 fn check_staffing(agents: &[NewTaskAgent]) -> Result<()> {
-    match agents.iter().filter(|a| a.seat == Seat::Author).count() {
-        1 => Ok(()),
-        authors => Err(StoreError::Invalid(format!(
-            "a task takes exactly one author, not {authors}"
-        ))),
+    check_seat_counts(
+        agents.iter().filter(|a| a.seat == Seat::Author).count(),
+        agents.iter().filter(|a| a.seat == Seat::Reviewer).count(),
+    )
+}
+
+/// The two staffing rules, on the counts alone: creation checks the list it
+/// was given, and an edit checks what its replacements left behind.
+fn check_seat_counts(authors: usize, reviewers: usize) -> Result<()> {
+    if authors == 0 {
+        return Err(StoreError::Invalid(
+            "a task takes at least one author".into(),
+        ));
     }
+    if authors > 1 && reviewers == 0 {
+        return Err(StoreError::Invalid(
+            "a task with several authors needs a reviewer to pick the winner".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

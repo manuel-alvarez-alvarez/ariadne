@@ -12,7 +12,7 @@
 
 use tracing::{debug, info, warn};
 
-use ariadne_core::{Actor, PromptKind, Seat};
+use ariadne_core::{Actor, MessageKind, PromptKind, Seat};
 use ariadne_store::{AgentSession, Message, MessageFilter, SessionFilter};
 
 use crate::agents::prompts;
@@ -61,6 +61,19 @@ impl super::Scheduler {
     async fn deliver(&mut self, waiting: Vec<Message>) {
         let mut typed: std::collections::HashSet<String> = std::collections::HashSet::new();
         for message in waiting {
+            // A contested task's review request is not a message to type: the
+            // summary alone names neither the author nor the branch, and it
+            // would land while the reviewer's worktree still stands on the
+            // review before it. The reviewer's full briefing is what carries
+            // it (`rouse_reviewer_for`), and that briefing stamps it
+            // delivered.
+            if message.kind() == Some(MessageKind::ReviewRequest)
+                && message.to_actor() == Some(Actor::Reviewer)
+                && self.contested(message.task_id.as_deref()).await
+            {
+                debug!(message = %message.id, "a contested review request travels as the reviewer's briefing");
+                continue;
+            }
             let Some(session) = self.recipient_session(&message).await else {
                 debug!(message = %message.id, "nothing live to deliver the message to yet");
                 continue;
@@ -87,6 +100,27 @@ impl super::Scheduler {
             }
             self.spawn_delivery(&session, text);
         }
+    }
+
+    /// Whether a message's task is contested: staffed with several authors,
+    /// and no winner picked yet. Once the pick settles — and on every
+    /// one-author task — the review flow is the lone author's, and its
+    /// requests travel the channel like any other message.
+    async fn contested(&self, task_id: Option<&str>) -> bool {
+        let Some(task_id) = task_id else {
+            return false;
+        };
+        let Ok(task) = self.store.get_task(task_id).await else {
+            return false;
+        };
+        if task.picked_agent_id.is_some() {
+            return false;
+        }
+        self.store
+            .list_task_authors(task_id)
+            .await
+            .map(|authors| authors.len() > 1)
+            .unwrap_or(false)
     }
 
     /// The live session a message is for, or None while there is none.

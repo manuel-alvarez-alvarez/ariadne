@@ -248,6 +248,10 @@ pub struct Task {
     /// URL of the pull or merge request this task was published as, once its
     /// author has reported one. None for a task landed directly.
     pub pr_url: Option<String>,
+    /// The author the reviewers picked, on a task staffed with several. Its
+    /// branch is what lands. None for a one-author task, and until the pick
+    /// settles.
+    pub picked_agent_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -299,6 +303,19 @@ pub struct TaskAgent {
     /// What the orchestrator told this agent beyond the task itself, where it
     /// had anything to add. None = the task is the whole of it.
     pub brief: Option<String>,
+}
+
+/// One reviewer's pick of the winning author, on a task staffed with several
+/// authors. The reviewers pick once every author is approved, and the author
+/// with the most picks lands.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TaskPick {
+    pub task_id: String,
+    /// The reviewer that picked. One pick per reviewer per task.
+    pub reviewer_agent_id: String,
+    /// The author it picked.
+    pub author_agent_id: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

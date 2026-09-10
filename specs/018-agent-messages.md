@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-09-06
+updated: 2026-09-10
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -56,7 +56,9 @@ and the wording of the text a message arrives in (006).
    - a recipient that the task does not staff is refused;
    - a verdict comes from a reviewer of that task, on a task that is
      `under_review`, and one reviewer votes once on each review it is asked
-     for (004).
+     for (004). On a task staffed with several authors the review a verdict
+     belongs to is the one its address names — the author whose change it
+     judges — and a verdict to an author that has not asked is refused.
 9. The daemon delivers a message by typing it into the recipient's pane and
    submitting it, so it arrives as a turn. There is no inbox to poll.
    `delivered_at` says which have gone; a pane that is busy is not typed into,
@@ -69,7 +71,11 @@ and the wording of the text a message arrives in (006).
     something it needs from it, and an agent that is gone can be told nothing.
 12. `request_review` writes one `review_request` per reviewer, carrying the
     summary the author asked with, so the channel holds the whole of the
-    review rather than the half of it that happened to be typed.
+    review rather than the half of it that happened to be typed. On a task
+    staffed with several authors whose pick is still open, that row is not
+    typed into the reviewer's pane as a bare message: the reviewer's full
+    briefing carries it — the summary with the author and its branch, after
+    its worktree has moved there (004) — and stamps it delivered.
 13. The MCP surface is two tools every seat has: `send_message` and
     `read_messages` (013).
 

@@ -39,16 +39,20 @@ async fn resolve_agents(
     Ok(agents)
 }
 
-/// The reviewers of an assignment list, refusing an author among them: the
-/// author of a task is the one agent an edit cannot replace.
-async fn resolve_reviewers(
+/// One seat's half of an edit's staffing, refusing an agent of the other
+/// seat among them: each list replaces one seat whole, and an agent filed
+/// under the wrong one would silently change the other list.
+async fn resolve_seat(
     store: &Store,
     assignments: &[AgentAssignment],
+    seat: Seat,
 ) -> ApiResult<Vec<NewTaskAgent>> {
-    if assignments.iter().any(|a| a.seat != Seat::Reviewer) {
-        return Err(ApiError::bad_request(
-            "only reviewers can be re-staffed; a task keeps the author it started with",
-        ));
+    if assignments.iter().any(|a| a.seat != seat) {
+        return Err(ApiError::bad_request(format!(
+            "the `{}s` list replaces that seat alone; every agent in it says seat `{}`",
+            seat.as_str(),
+            seat.as_str()
+        )));
     }
     resolve_agents(store, assignments).await
 }
@@ -205,8 +209,12 @@ pub async fn update(
             "only the orchestrator or the user may edit tasks",
         ));
     }
+    let authors = match &req.authors {
+        Some(assignments) => Some(resolve_seat(&state.store, assignments, Seat::Author).await?),
+        None => None,
+    };
     let reviewers = match &req.reviewers {
-        Some(assignments) => Some(resolve_reviewers(&state.store, assignments).await?),
+        Some(assignments) => Some(resolve_seat(&state.store, assignments, Seat::Reviewer).await?),
         None => None,
     };
     // What the author is pinned to now: an effort written on its own is run at
@@ -236,6 +244,7 @@ pub async fn update(
                 description: req.description,
                 pin,
                 effort,
+                authors,
                 reviewers,
                 landing: req.landing,
             },
@@ -277,6 +286,21 @@ pub(crate) async fn apply_transition(
         let repo = state.store.get_repository(&task.repo_id).await?;
         landing::verify_merged(state, &task, &repo, req.merge_commit.as_deref()).await?;
     }
+    // On a task staffed with several authors the reviews run side by side,
+    // and the task is `under_review` from the first request to the pick. A
+    // later author's `request_review` is therefore not a status change: it
+    // opens that author's own review on the channel, and the task stands
+    // where it is.
+    if req.to == TaskStatus::UnderReview && ctx.actor == Actor::Author {
+        let task = state.store.get_task(task_id).await?;
+        if task.status() == TaskStatus::UnderReview
+            && state.store.list_task_authors(task_id).await?.len() > 1
+        {
+            announce_review(state, ctx, &task, req.reason.as_deref()).await;
+            state.notify_scheduler(task_id);
+            return Ok(task);
+        }
+    }
     let task = state
         .store
         .transition_task(
@@ -303,6 +327,9 @@ pub(crate) async fn apply_transition(
     let task = match req.to == TaskStatus::Ready {
         true => {
             state.store.clear_task_pull_request(task_id).await?;
+            // A retried task reviews its authors afresh, so the picks of the
+            // run that failed say nothing about the one starting.
+            state.store.clear_task_picks(task_id).await?;
             state.store.get_task(task_id).await?
         }
         false => task,

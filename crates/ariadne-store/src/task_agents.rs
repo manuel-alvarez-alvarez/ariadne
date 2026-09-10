@@ -1,10 +1,10 @@
 //! The agents staffed on a task.
 //!
 //! An agent has no identity of its own: it is an agent CLI, a model, an
-//! effort, a brief and a set of skills. Its seat says only where it sits — the
-//! one author that carries the task from its first commit to the end, or one
-//! of the reviewers that vote on it — which is what the state machine and the
-//! launcher need to know and the whole of what they need.
+//! effort, a brief and a set of skills. Its seat says only where it sits —
+//! one of the authors that write the task, each on a branch of its own, or
+//! one of the reviewers that vote on it — which is what the state machine and
+//! the launcher need to know and the whole of what they need.
 
 use ariadne_core::{Seat, id::new_id};
 use sqlx::{Sqlite, Transaction};
@@ -14,7 +14,8 @@ use crate::{AgentPin, Result, Skill, SkillSeat, Store, StoreError, TaskAgent, no
 /// One agent to staff on a task, as the orchestrator describes it.
 #[derive(Debug, Clone)]
 pub struct NewTaskAgent {
-    /// `Author` or `Reviewer`. A task takes exactly one author.
+    /// `Author` or `Reviewer`. A task takes one author or more; several
+    /// authors need a reviewer to pick the winner.
     pub seat: Seat,
     /// The skills this agent loads, in the order they reach it. An agent with
     /// none is a generic agent with nothing but its task, which is legal and
@@ -88,8 +89,7 @@ impl Store {
             .bind(&effort)
             .bind(&agent.brief)
             .execute(&mut **tx)
-            .await
-            .map_err(|e| one_author(e, task_id))?;
+            .await?;
             Self::write_agent_skills_in_tx(tx, &id, &agent.skills).await?;
         }
         Ok(())
@@ -134,13 +134,30 @@ impl Store {
         .await?)
     }
 
-    /// The one agent that authors the task.
+    /// The first author of a task, which for most tasks is the only one.
+    ///
+    /// A task staffed with several authors is read with
+    /// [`Store::list_task_authors`]; this stays the answer for the paths that
+    /// hold for a one-author task alone.
     pub async fn task_author(&self, task_id: &str) -> Result<TaskAgent> {
-        sqlx::query_as("SELECT * FROM task_agents WHERE task_id = ? AND seat = 'author'")
-            .bind(task_id)
-            .fetch_optional(self.r())
-            .await?
-            .ok_or_else(|| not_found("author", task_id))
+        sqlx::query_as(
+            "SELECT * FROM task_agents WHERE task_id = ? AND seat = 'author'
+             ORDER BY ordinal LIMIT 1",
+        )
+        .bind(task_id)
+        .fetch_optional(self.r())
+        .await?
+        .ok_or_else(|| not_found("author", task_id))
+    }
+
+    /// The authors of a task, in the order the orchestrator listed them.
+    pub async fn list_task_authors(&self, task_id: &str) -> Result<Vec<TaskAgent>> {
+        Ok(sqlx::query_as(
+            "SELECT * FROM task_agents WHERE task_id = ? AND seat = 'author' ORDER BY ordinal",
+        )
+        .bind(task_id)
+        .fetch_all(self.r())
+        .await?)
     }
 
     /// The reviewers of a task, in the order the orchestrator listed them.
@@ -196,17 +213,6 @@ impl Store {
         Self::write_agent_skills_in_tx(&mut tx, agent_id, skills).await?;
         tx.commit().await?;
         Ok(())
-    }
-}
-
-/// The partial unique index that holds a task to one author, said in the
-/// terms the caller used.
-fn one_author(e: sqlx::Error, task_id: &str) -> StoreError {
-    match e {
-        sqlx::Error::Database(ref db) if db.is_unique_violation() => StoreError::Conflict(format!(
-            "task {task_id} already has an author; a task takes exactly one"
-        )),
-        other => StoreError::Db(other),
     }
 }
 

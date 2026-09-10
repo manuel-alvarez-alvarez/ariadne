@@ -118,7 +118,7 @@ impl AppState {
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         landing::list_task_messages, landing::post_task_message,
         goals::list_goal_messages, goals::post_goal_message, landing::diff,
-        landing::record_pull_request,
+        landing::record_pull_request, landing::pick_winner,
         sessions::list, sessions::list_outside, sessions::get, sessions::kill, sessions::resume,
         sessions::input, sessions::resize, sessions::logs,
         session_logs::logs_stream,
@@ -221,6 +221,7 @@ pub fn router(state: AppState) -> Router {
             get(landing::list_task_messages).post(landing::post_task_message),
         )
         .route("/v1/tasks/{id}/diff", get(landing::diff))
+        .route("/v1/tasks/{id}/pick", post(landing::pick_winner))
         .route(
             "/v1/tasks/{id}/pull-request",
             post(landing::record_pull_request),

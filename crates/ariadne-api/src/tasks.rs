@@ -15,8 +15,10 @@ pub struct TaskDto {
     pub title: String,
     pub description: String,
     pub status: TaskStatus,
-    /// The agents staffed on the task: the author first, then the reviewers
-    /// in review order. What each one can do is the skills it carries.
+    /// The agents staffed on the task: the authors first, then the reviewers
+    /// in review order. What each one can do is the skills it carries. Most
+    /// tasks staff one author; one staffed with several runs them in
+    /// parallel, and the reviewers pick the branch that lands.
     pub agents: Vec<TaskAgentDto>,
     /// Ids of tasks that must merge before this one starts.
     pub depends_on: Vec<String>,
@@ -31,6 +33,13 @@ pub struct TaskDto {
     /// URL of the pull or merge request the task was published as, once its
     /// author has reported one; None for a task landed directly.
     pub pr_url: Option<String>,
+    /// The author the reviewers picked, on a task staffed with several: the
+    /// one whose branch lands. None for a one-author task, and until the
+    /// pick settles.
+    pub picked_agent_id: Option<String>,
+    /// The picks the reviewers have recorded so far, oldest first. Empty for
+    /// a one-author task.
+    pub picks: Vec<TaskPickDto>,
     /// Why a `failed` or `cancelled` task ended — the author's own
     /// `fail_task` reason, a dependency that never landed, a cancelled goal.
     /// None for every other status, and for an ending nobody gave a reason
@@ -75,11 +84,26 @@ pub struct AgentUsageDto {
 /// sized by the orchestrator when it staffed the task, or chosen by the user
 /// since — either way it is what this agent runs on, and nothing behind it
 /// changes that.
+/// One reviewer's pick of the winning author, on a task staffed with several
+/// authors.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TaskPickDto {
+    /// The reviewer that picked. One pick per reviewer per task.
+    pub reviewer_agent_id: String,
+    /// The author it picked.
+    pub author_agent_id: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskAgentDto {
     pub id: String,
     /// `author` or `reviewer`.
     pub seat: Seat,
+    /// The branch this agent works on: the task branch for the first author,
+    /// a suffixed sibling of it for every later one. None for a reviewer,
+    /// which owns no branch.
+    pub branch: Option<String>,
     /// The skills this agent loads, in the order they reach it.
     #[schema(example = json!(["coding", "testing"]))]
     pub skills: Vec<String>,
@@ -105,7 +129,8 @@ pub struct TaskAgentDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentAssignment {
-    /// `author` or `reviewer`. A task takes exactly one author.
+    /// `author` or `reviewer`. A task takes one author or more; several
+    /// authors need at least one reviewer, to pick the winner.
     pub seat: Seat,
     /// The names of the skills this agent loads, in the order they reach it.
     /// A name no skill answers to is refused.
@@ -154,8 +179,9 @@ pub struct CreateTaskRequest {
     /// Id of one of the goal's repositories; may be omitted when the goal
     /// works in exactly one.
     pub repo_id: Option<String>,
-    /// The agents to staff: exactly one author, then the reviewers in review
-    /// order, at least one.
+    /// The agents to staff: the authors first — one or more, each with its
+    /// own model — then the reviewers in review order. Several authors need
+    /// at least one reviewer, to pick the winner.
     pub agents: Vec<AgentAssignment>,
     /// Task ids this task depends on.
     #[serde(default)]
@@ -186,6 +212,11 @@ pub struct UpdateTaskRequest {
     /// belonged to the model that was left behind.
     #[schema(example = "xhigh")]
     pub effort: Option<String>,
+    /// The whole author list, replaced: every author is staffed afresh, with
+    /// the skills and the model it names. The way to give a task several
+    /// authors, or to take them back to one. `model` and `effort` above are
+    /// refused while a task has several authors: each author names its own.
+    pub authors: Option<Vec<AgentAssignment>>,
     /// The whole reviewer list, replaced: every reviewer is staffed afresh,
     /// with the skills and the model it names.
     pub reviewers: Option<Vec<AgentAssignment>>,
@@ -201,6 +232,15 @@ pub struct TransitionRequest {
     pub reason: Option<String>,
     /// Required when `to` is `finished`, unless the task lands nothing.
     pub merge_commit: Option<String>,
+}
+
+/// One reviewer picking the winning author of a task staffed with several:
+/// the author whose branch lands.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PickWinnerRequest {
+    /// Id of the author picked, one of the task's authors.
+    pub author_agent_id: String,
 }
 
 /// The author reporting the pull or merge request it opened for a task, so

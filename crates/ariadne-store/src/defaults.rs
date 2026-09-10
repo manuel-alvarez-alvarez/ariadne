@@ -182,6 +182,7 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
         PromptKind::ChangesRequested => CHANGES_REQUESTED,
         PromptKind::ReviewerBriefing => REVIEWER_BRIEFING,
         PromptKind::ReviewerResume => REVIEWER_RESUME,
+        PromptKind::ReviewerPick => REVIEWER_PICK,
     }
 }
 
@@ -419,6 +420,17 @@ const REVIEWER_RESUME: &str = r#""{task_title}" needs your verdict. {branch} can
 
 Summary: {summary}"#;
 
+/// What a reviewer is asked with once every author of a several-author task
+/// is approved: an approval says a change is sound, and the pick says which
+/// of the sound changes lands. One line per author, rendered by the scheduler
+/// that saw the last approval arrive.
+const REVIEWER_PICK: &str = r#"Every author of "{task_title}" is approved. Pick the one change that lands.
+
+The authors:
+{authors}
+
+Compare the branches with `get_diff`. Then call `pick_winner` once, with the id of the author you pick."#;
+
 /// The two STE rules a text can be held to by reading it.
 ///
 /// Every text an agent reads here is ASD-STE100 Simplified Technical English:
@@ -618,7 +630,9 @@ mod tests {
     /// down from 8000 to 6500 with it.
     #[test]
     fn size_caps_hold() {
-        const KIND_TOTAL: usize = 1500;
+        // Raised from 1500 for the reviewer's pick briefing: a kind that did
+        // not exist before several authors could share a task.
+        const KIND_TOTAL: usize = 1750;
         // Three now rather than two: the ending that lands nothing used to be
         // counted apart, because a repository could rewrite the other two and
         // never that one. Nothing rewrites any of them now, so they are one
@@ -1013,7 +1027,7 @@ mod tests {
         "Write one question in your turn text.",
         "Wait for the answer in the terminal.",
         "Split the goal into tasks",
-        "Staff one author per task with `create_task`",
+        "Staff the authors of each task with `create_task`",
         "Ask the user which tasks are worth a review",
         "Ask the user how each task ends",
         "Mix the agent CLIs evenly over the tasks.",
@@ -1247,7 +1261,10 @@ mod tests {
     fn skill_size_caps_hold() {
         const TOTAL: usize = 50_000;
         let cap = |name: &str| match name {
-            ORCHESTRATION_SKILL | "debugging" => 3200,
+            // The orchestration playbook grew a step-4 choice — one author
+            // for most tasks, several where the reviewers pick a winner.
+            ORCHESTRATION_SKILL => 3600,
+            "debugging" => 3200,
             "coding" | "testing" | "code-review" => 3000,
             _ => 2400,
         };

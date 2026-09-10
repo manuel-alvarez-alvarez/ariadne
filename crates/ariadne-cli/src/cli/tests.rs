@@ -544,7 +544,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
 
     let Command::Task {
         command: TaskCommand::Create {
-            author, reviewers, ..
+            authors, reviewers, ..
         },
     } = parse(&[
         "ariadne",
@@ -564,8 +564,9 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     else {
         panic!("task create")
     };
-    assert_eq!(author.skills, ["coding", "testing"]);
-    assert_eq!(author.model, "claude_code:claude-opus-5");
+    assert_eq!(authors.len(), 1);
+    assert_eq!(authors[0].skills, ["coding", "testing"]);
+    assert_eq!(authors[0].model, "claude_code:claude-opus-5");
     assert_eq!(
         reviewers
             .iter()
@@ -688,7 +689,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
 
     let Command::Task {
         command: TaskCommand::Create {
-            author, reviewers, ..
+            authors, reviewers, ..
         },
     } = parse(&[
         "ariadne",
@@ -710,7 +711,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
     else {
         panic!("task create")
     };
-    assert_eq!(author.effort.as_deref(), Some("xhigh"));
+    assert_eq!(authors[0].effort.as_deref(), Some("xhigh"));
     assert_eq!(
         reviewers
             .iter()

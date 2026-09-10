@@ -179,6 +179,9 @@ pub enum PromptKind {
     ReviewerBriefing,
     /// What a reviewer that owes a verdict is picked up with.
     ReviewerResume,
+    /// What a reviewer is asked with once every author of a several-author
+    /// task is approved: pick the one whose change lands.
+    ReviewerPick,
 }
 
 wire_enum! { PromptKind, "prompt kind", [
@@ -191,6 +194,7 @@ wire_enum! { PromptKind, "prompt kind", [
     ChangesRequested = "changes_requested",
     ReviewerBriefing = "reviewer_briefing",
     ReviewerResume = "reviewer_resume",
+    ReviewerPick = "reviewer_pick",
 ]}
 
 impl PromptKind {
@@ -205,7 +209,9 @@ impl PromptKind {
             PromptKind::AuthorBriefing
             | PromptKind::AuthorResume
             | PromptKind::ChangesRequested => &[Seat::Author],
-            PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => &[Seat::Reviewer],
+            PromptKind::ReviewerBriefing
+            | PromptKind::ReviewerResume
+            | PromptKind::ReviewerPick => &[Seat::Reviewer],
         }
     }
 
@@ -227,6 +233,7 @@ impl PromptKind {
             Seat::Reviewer => &[
                 PromptKind::ReviewerBriefing,
                 PromptKind::ReviewerResume,
+                PromptKind::ReviewerPick,
                 PromptKind::IncomingMessage,
             ],
         }
@@ -280,6 +287,9 @@ impl PromptKind {
             // moved under it, and the goal and the repository are things it
             // read when it was briefed.
             PromptKind::ReviewerResume => &["task_title", "branch", "summary"],
+            // The authors to pick between, one line each, rendered by the
+            // scheduler that saw them all approved.
+            PromptKind::ReviewerPick => &["task_title", "authors"],
         }
     }
 

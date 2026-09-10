@@ -1,7 +1,7 @@
 ---
 id: goal-and-task-lifecycle
 status: current
-updated: 2026-09-06
+updated: 2026-09-10
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/scheduler_dependencies.rs
   - crates/ariadne-daemon/tests/task_failure.rs
   - crates/ariadne-daemon/tests/goal_delete.rs
+  - crates/ariadne-daemon/tests/multi_author_tasks.rs
 ---
 
 # Goal and task lifecycle
@@ -52,7 +53,11 @@ Out: how each state is *worked* — planning (003), engineering and review
    - `under_review → changes_requested` (daemon), on a change request
    - `under_review → approved` (daemon), once every reviewer staffed on the
      task has approved — none of them, for a task staffed with no reviewer.
-     A verdict is a message of the kind that settles a review (018)
+     A verdict is a message of the kind that settles a review (018).
+     A task staffed with several authors takes this edge later: it stays
+     `under_review` while each author's own review runs, and moves to
+     `approved` only once every author is approved and the reviewers have
+     picked the winner (004)
    - `changes_requested → in_progress` (daemon), when the author resumes
    - `approved → finished` (author), through `finish_task`
    - `approved → under_review` (author), when a published request is revised
@@ -110,6 +115,12 @@ Out: how each state is *worked* — planning (003), engineering and review
   `::a_reviewer_may_not_fail_the_task_it_is_reviewing`).
 - A goal takes as many tasks as its plan calls for
   (`store.rs::a_goal_takes_as_many_tasks_as_its_plan_calls_for`).
+- A task staffed with two authors runs two sessions in two worktrees
+  (`multi_author_tasks.rs::a_task_staffed_with_two_authors_runs_two_sessions_in_two_worktrees`),
+  its pick opens only once every author is approved
+  (`::the_pick_starts_only_after_every_author_is_approved`), and exactly the
+  picked branch lands, the losers gone with the landing
+  (`::exactly_one_branch_lands_and_the_losers_are_gone`).
 - An unfinished goal is refused deletion and keeps everything
   (`goal_delete.rs::an_unfinished_goal_is_refused_and_keeps_everything`); a
   finished one takes its children and reaches the event stream
