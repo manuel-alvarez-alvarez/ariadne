@@ -962,6 +962,27 @@ impl Launcher {
             .map_err(Into::into)
     }
 
+    /// Move a reviewer's detached worktree to the branch of the review it is
+    /// about to be briefed on, while its session stays up.
+    ///
+    /// The resume paths re-point the worktree by relaunching the session;
+    /// this is the same re-point for a pane that survived the last review —
+    /// a contested task hands a live reviewer the next author's review, and
+    /// the tree it verifies in has to be on that author's branch before the
+    /// briefing that names it lands. The reviewer is detached and read-only,
+    /// so between reviews there is nothing of its own in the tree to lose.
+    pub async fn refresh_reviewer_worktree(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        author: Option<&str>,
+    ) -> Result<PathBuf> {
+        let task = self.store.get_task(task_id).await?;
+        let branch = self.review_branch(&task, author).await?;
+        self.reviewer_worktree(&task, agent_id, branch.as_deref())
+            .await
+    }
+
     /// The branch one review is about: the named author's own, or `None` for
     /// the task's — a one-author task, or a caller that did not say.
     pub(crate) async fn review_branch(

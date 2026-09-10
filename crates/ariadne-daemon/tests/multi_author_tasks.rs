@@ -293,7 +293,8 @@ async fn exactly_one_branch_lands_and_the_losers_are_gone() {
     let c = contest(&h).await;
     h.notify(&c.task.id);
     eventually(TIMEOUT, "both authors to be spawned", async || {
-        live_authors(&h, &c.task.id).await.len() == 2
+        h.status(&c.task.id).await == TaskStatus::InProgress
+            && live_authors(&h, &c.task.id).await.len() == 2
     })
     .await;
 
@@ -422,4 +423,186 @@ async fn exactly_one_branch_lands_and_the_losers_are_gone() {
             ) == "0"
     })
     .await;
+}
+
+/// A reviewer whose pane survived the first review is handed the next
+/// author's review the moment it owes it: the full briefing, naming that
+/// author and its branch, typed straight into the live pane — not held for
+/// the quiet clock — and its detached worktree moved to that branch first.
+#[tokio::test]
+async fn a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock() {
+    let h = harness().scheduler().await;
+    // The panes stay up, so the reviewer that judged the first author is a
+    // live session when the second author's review opens.
+    h.every_pane_exists();
+    let c = contest(&h).await;
+    h.notify(&c.task.id);
+    eventually(TIMEOUT, "both authors to be spawned", async || {
+        h.status(&c.task.id).await == TaskStatus::InProgress
+            && live_authors(&h, &c.task.id).await.len() == 2
+    })
+    .await;
+
+    // Each author commits its own attempt, so the two branches have tips of
+    // their own for the reviewer's worktree to be pinned at.
+    let sessions = live_authors(&h, &c.task.id).await;
+    for (n, author) in c.authors.iter().enumerate() {
+        let session = sessions
+            .iter()
+            .find(|s| s.task_agent_id.as_deref() == Some(author.id.as_str()))
+            .expect("a session per author");
+        let worktree = PathBuf::from(session.worktree_path.as_deref().unwrap());
+        sh(
+            &worktree,
+            &format!(
+                "echo attempt-{n} > feature.txt && git add . && \
+                 git -c user.email=t@t -c user.name=t commit -qm 'wip: attempt {n}'"
+            ),
+        );
+    }
+
+    // The first author asks, and the reviewer is spawned for that review.
+    h.store
+        .transition_task(
+            &c.task.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    ask_for_review(&h, &c.task, &c.authors[0], "the first attempt").await;
+    h.notify(&c.task.id);
+    eventually(TIMEOUT, "the reviewer to be spawned", async || {
+        h.running_session(&c.task.id, Seat::Reviewer)
+            .await
+            .is_some()
+    })
+    .await;
+    let reviewer_session = h
+        .running_session(&c.task.id, Seat::Reviewer)
+        .await
+        .expect("a live reviewer session");
+    assert!(
+        h.spawn_argv(&reviewer_session.id)
+            .contains(&format!("Give your verdict to author {}", c.authors[0].id)),
+        "the reviewer was not spawned for the first author's review"
+    );
+
+    // The second author asks while the reviewer's pane stays up, and the
+    // reviewer settles the first review from that live session.
+    ask_for_review(&h, &c.task, &c.authors[1], "the second attempt").await;
+    h.notify(&c.task.id);
+    h.json::<ariadne_api::messages::MessageDto>(
+        as_session(
+            &format!("/v1/tasks/{}/messages", c.task.id),
+            &reviewer_session.id,
+            serde_json::json!({
+                "kind": "approve",
+                "to_actor": "author",
+                "to_agent_id": c.authors[0].id,
+                "body": "the first attempt reads right",
+            }),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+
+    // The verdict is the event that hands it the next review: the live pane
+    // is briefed at once, naming the second author and its branch. The wait
+    // here is seconds, an order of magnitude under the quiet clock — a
+    // briefing that waited for the nudge would fail this test.
+    let second_branch = author_branch(&c.task.branch, c.authors[1].ordinal);
+    eventually(TIMEOUT, "the live reviewer to be briefed", async || {
+        let pasted = h.pasted(&reviewer_session);
+        pasted.contains(&format!("Give your verdict to author {}", c.authors[1].id))
+            && pasted.contains(&second_branch)
+    })
+    .await;
+
+    // And the tree it verifies in moved first: the detached worktree stands
+    // on the second author's branch tip.
+    let reviewer_worktree = PathBuf::from(reviewer_session.worktree_path.as_deref().unwrap());
+    let repo = PathBuf::from(&c.repo.path);
+    assert_eq!(
+        sh(&reviewer_worktree, "git rev-parse HEAD"),
+        sh(&repo, &format!("git rev-parse {second_branch}")),
+    );
+}
+
+/// A settlement the daemon died in is finished by the daemon that comes
+/// back: the winner was written, the approval was not, and the losers still
+/// stand. The startup pass reads the picks and the approvals — all still on
+/// the store — and runs the settlement again.
+#[tokio::test]
+async fn a_restart_finishes_a_settlement_the_daemon_died_in() {
+    use ariadne_daemon::scheduler::{self, SchedEvent};
+
+    let h = harness().await;
+    let c = contest(&h).await;
+    // The authors as the first daemon left them: spawned, each with a commit
+    // of its own, both approved, the pick complete, and the winner written —
+    // then nothing, which is the crash.
+    let mut worktrees = Vec::new();
+    for (n, author) in c.authors.iter().enumerate() {
+        let session = h
+            .launcher
+            .spawn_author_agent(&c.task.id, &author.id)
+            .await
+            .unwrap();
+        let worktree = PathBuf::from(session.worktree_path.as_deref().unwrap());
+        sh(
+            &worktree,
+            &format!(
+                "echo attempt-{n} > feature.txt && git add . && \
+                 git -c user.email=t@t -c user.name=t commit -qm 'wip: attempt {n}'"
+            ),
+        );
+        worktrees.push(worktree);
+    }
+    h.advance(&c.task, TaskStatus::UnderReview).await;
+    for author in &c.authors {
+        ask_for_review(&h, &c.task, author, "an attempt").await;
+        verdict_on(&h, &c.task, &c.reviewer, author, MessageKind::Approve).await;
+    }
+    let winner = &c.authors[1];
+    let loser = &c.authors[0];
+    h.store
+        .record_pick(&c.task.id, &c.reviewer.id, &winner.id)
+        .await
+        .unwrap();
+    h.store
+        .set_task_picked(&c.task.id, &winner.id)
+        .await
+        .unwrap();
+
+    // The daemon that comes back: its first pass over the task finds the
+    // half-finished settlement and completes it.
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(c.task.id.clone()))
+        .unwrap();
+
+    let loser_branch = author_branch(&c.task.branch, loser.ordinal);
+    let repo = PathBuf::from(&c.repo.path);
+    let loser_worktree = worktrees[loser.ordinal as usize].clone();
+    eventually(TIMEOUT, "the settlement to be finished", async || {
+        let task = h.store.get_task(&c.task.id).await.unwrap();
+        task.status() == TaskStatus::Approved
+            && !loser_worktree.exists()
+            && sh(
+                &repo,
+                &format!("git branch --list {loser_branch} | wc -l | tr -d ' '"),
+            ) == "0"
+    })
+    .await;
+    // And the winner stands untouched, its worktree now the task's own.
+    let task = h.store.get_task(&c.task.id).await.unwrap();
+    assert_eq!(task.picked_agent_id.as_deref(), Some(winner.id.as_str()));
+    assert_eq!(
+        task.worktree_path.as_deref(),
+        Some(worktrees[winner.ordinal as usize].display().to_string()).as_deref()
+    );
+    assert!(worktrees[winner.ordinal as usize].exists());
 }

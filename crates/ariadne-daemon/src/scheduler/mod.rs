@@ -155,6 +155,12 @@ pub struct Scheduler {
     /// reviewer). In memory like `landing_briefed`, and for the same reason:
     /// a daemon that restarts over an open pick asks once more.
     pick_briefed: HashSet<(String, String)>,
+    /// Reviews a live reviewer has already been briefed on, by (reviewer,
+    /// review request). A contested task opens one review per author, and a
+    /// reviewer whose pane survived the last one is handed the next one's
+    /// briefing the moment it owes it — once, and in memory like the sets
+    /// above: a daemon that restarts over an open review says it once more.
+    review_briefed: HashSet<(String, String)>,
     /// Sessions with a delivery going into their pane right now, by session
     /// id: two pastes into one composer at once would interleave into
     /// something neither of them said.
@@ -188,6 +194,7 @@ pub fn start(
         goal_told: HashMap::new(),
         landing_briefed: HashSet::new(),
         pick_briefed: HashSet::new(),
+        review_briefed: HashSet::new(),
         typing: HashSet::new(),
         reports,
         sleep: SleepInhibitor::new(),

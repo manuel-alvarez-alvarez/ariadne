@@ -84,6 +84,26 @@ impl super::Scheduler {
             self.pick_briefed.retain(|(t, _)| t != &task.id);
         }
 
+        // A settlement interrupted between its writes: the winner is on the
+        // task, but the approval never committed. The picks and the
+        // approvals are all still there to read, so the settlement simply
+        // runs again — losers removed, task approved — on this pass, which
+        // after a daemon restart is the startup sweep. What this must not
+        // catch is the winner's own revision of a published request: that
+        // reopens the winner's review, so `authors_all_approved` is false
+        // there and the ordinary review flow below handles it.
+        if authors.len() > 1
+            && task.status() == TaskStatus::UnderReview
+            && let Some(winner_id) = task.picked_agent_id.clone()
+        {
+            let reviewers = self.store.list_task_reviewers(&task.id).await?;
+            let picks = self.store.list_task_picks(&task.id).await?;
+            if picks.len() >= reviewers.len() && self.store.authors_all_approved(&task.id).await? {
+                info!(task = %task.id, winner = %winner_id, "finishing an interrupted pick settlement");
+                return self.settle_pick(&task, &winner_id).await;
+            }
+        }
+
         match task.status() {
             TaskStatus::Pending => {
                 // A dependency that ended without merging is never going to,
@@ -381,6 +401,11 @@ impl super::Scheduler {
     /// One pass over a contested task under review: each author's own review
     /// runs to approval side by side, and once every one of them stands
     /// approved the reviewers are asked to pick the winner.
+    ///
+    /// A reviewer works one review at a time, so a pass rouses it for at
+    /// most one: the oldest it owes, in the order the authors were listed.
+    /// The verdict that settles that one is the event whose reconcile hands
+    /// it the next — at once, not on the quiet clock.
     async fn reconcile_contest(
         &mut self,
         task: &Task,
@@ -388,6 +413,9 @@ impl super::Scheduler {
     ) -> anyhow::Result<()> {
         let reviewers = self.store.list_task_reviewers(&task.id).await?;
         let mut all_approved = true;
+        // The first review each reviewer still owes a verdict on, by
+        // reviewer id: (the author under review, the request that opened it).
+        let mut owed: Vec<(&TaskAgent, &TaskAgent, String)> = Vec::new();
         for author in authors {
             let Some(request) = self
                 .store
@@ -426,9 +454,14 @@ impl super::Scheduler {
                 .iter()
                 .filter(|r| !approved_by.contains(r.id.as_str()))
             {
-                self.rouse_reviewer_for(task, reviewer, author, &request)
-                    .await?;
+                if !owed.iter().any(|(claimed, _, _)| claimed.id == reviewer.id) {
+                    owed.push((reviewer, author, request.clone()));
+                }
             }
+        }
+        for (reviewer, author, request) in owed {
+            self.rouse_reviewer_for(task, reviewer, author, &request)
+                .await?;
         }
         if !all_approved {
             // A review reopened is a pick to ask for afresh once it closes.
@@ -453,33 +486,7 @@ impl super::Scheduler {
             };
             info!(task = %task.id, winner = %winner.id, "every reviewer has picked; landing this author");
             self.store.set_task_picked(&task.id, &winner.id).await?;
-            // The winner's worktree becomes the task's own, which is what the
-            // landing resumes the author in.
-            if let Some(worktree) = self
-                .last_session(&task.id, |s| {
-                    s.task_agent_id.as_deref() == Some(winner.id.as_str())
-                        && s.worktree_path.is_some()
-                })
-                .await
-                .and_then(|s| s.worktree_path)
-            {
-                self.store
-                    .set_task_worktree(&task.id, Some(&worktree))
-                    .await?;
-            }
-            // The losers go now: their changes were judged and set aside, and
-            // nothing later comes back for their branches or worktrees.
-            self.launcher.cleanup_losing_authors(&task.id).await?;
-            self.store
-                .transition_task(
-                    &task.id,
-                    TaskStatus::Approved,
-                    Actor::Daemon,
-                    Some(&format!("the reviewers picked author {}", winner.id)),
-                    None,
-                )
-                .await?;
-            return Box::pin(self.reconcile_task(&task.id)).await;
+            return self.settle_pick(task, &winner.id.clone()).await;
         }
 
         let picked_by: HashSet<&str> = picks.iter().map(|p| p.reviewer_agent_id.as_str()).collect();
@@ -531,6 +538,46 @@ impl super::Scheduler {
             }
         }
         Ok(())
+    }
+
+    /// Finish a settled pick, from wherever the last pass got: the winner's
+    /// worktree onto the task, the losers removed, and the task moved to
+    /// `approved`.
+    ///
+    /// Idempotent by construction, because `picked_agent_id` is written
+    /// before any of it: a daemon that dies between the pick and the
+    /// approval leaves a task that is `under_review` with a winner on it,
+    /// and [`Self::reconcile_task`] routes that state straight back here —
+    /// on the startup pass, and on every tick until the approval commits.
+    async fn settle_pick(&mut self, task: &Task, winner_id: &str) -> anyhow::Result<()> {
+        // The winner's worktree becomes the task's own, which is what the
+        // landing resumes the author in.
+        if task.worktree_path.is_none()
+            && let Some(worktree) = self
+                .last_session(&task.id, |s| {
+                    s.task_agent_id.as_deref() == Some(winner_id) && s.worktree_path.is_some()
+                })
+                .await
+                .and_then(|s| s.worktree_path)
+        {
+            self.store
+                .set_task_worktree(&task.id, Some(&worktree))
+                .await?;
+        }
+        // The losers go before the approval: their changes were judged and
+        // set aside, and nothing later comes back for their branches or
+        // worktrees.
+        self.launcher.cleanup_losing_authors(&task.id).await?;
+        self.store
+            .transition_task(
+                &task.id,
+                TaskStatus::Approved,
+                Actor::Daemon,
+                Some(&format!("the reviewers picked author {winner_id}")),
+                None,
+            )
+            .await?;
+        Box::pin(self.reconcile_task(&task.id)).await
     }
 
     /// One author of a contested task, watched the way [`Self::check_stall`]
@@ -630,8 +677,10 @@ impl super::Scheduler {
     }
 
     /// One reviewer that owes a verdict on one author's review of a contested
-    /// task: resumed onto that author's branch where its session is gone, and
-    /// nudged where it has one and has gone quiet.
+    /// task: resumed onto that author's branch where its session is gone,
+    /// and — where its pane survived the last review — handed this one's
+    /// briefing the moment it owes it, its worktree moved to the branch the
+    /// briefing names first. The quiet clock watches it from there.
     async fn rouse_reviewer_for(
         &mut self,
         task: &Task,
@@ -651,9 +700,31 @@ impl super::Scheduler {
         let template = prompts::template_for(PromptKind::ReviewerResume);
         let resume = prompts::reviewer_resume_briefing(template, &seen, Some(&summary));
         let situation = format!("under_review:{request}");
+        let briefed = (reviewer.id.clone(), request.to_string());
 
         if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
             self.spent_on_a_dead_launch(&session.id, &task.id, &session);
+            if !self.pane_busy(&session.id) && !self.review_briefed.contains(&briefed) {
+                // A live pane is briefed the way a resumed one is, and at the
+                // same moment: when the verdict becomes owed, not when the
+                // quiet clock notices. Its detached worktree moves first, so
+                // the briefing lands in a tree already on the branch it
+                // names. A tree that cannot move yet — a branch with nothing
+                // on it — leaves the reviewer to the quiet clock and the
+                // next pass.
+                if let Err(e) = self
+                    .launcher
+                    .refresh_reviewer_worktree(&task.id, &reviewer.id, Some(&author.id))
+                    .await
+                {
+                    warn!(task = %task.id, reviewer = %reviewer.id, error = %format!("{e:#}"), "moving the reviewer's worktree failed");
+                    return self.check_session_quiet(&session, situation, &resume).await;
+                }
+                info!(task = %task.id, reviewer = %reviewer.id, author = %author.id, "briefing the live reviewer for this author's review");
+                self.review_briefed.insert(briefed);
+                self.spawn_delivery(&session, resume.clone());
+                return Ok(());
+            }
             self.check_session_quiet(&session, situation, &resume)
                 .await?;
         } else {
@@ -673,6 +744,9 @@ impl super::Scheduler {
                 }
             }
             info!(task = %task.id, reviewer = %reviewer.id, author = %author.id, "starting reviewer");
+            // The resume carries this briefing itself: the live path above
+            // must not say it again to the session that comes up with it.
+            self.review_briefed.insert(briefed);
             self.launcher
                 .resume_reviewer_for(&task.id, &reviewer.id, Some(&author.id), &resume)
                 .await?;

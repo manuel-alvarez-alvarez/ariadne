@@ -79,7 +79,13 @@ Out: the transition table itself (001), the landing that follows approval
     channel without moving the task, and a verdict is addressed to the
     author whose change it judges — one per reviewer per author's open
     review, and none for an author that has not asked. A change request
-    reaches that author as a message, and only that author revises.
+    reaches that author as a message, and only that author revises. A
+    reviewer works one review at a time, oldest first by author order, and
+    each verdict it gives is the event that hands it the next: a reviewer
+    whose pane survived the last review is briefed for the next one the
+    moment it owes it — the full briefing naming the author and its branch,
+    typed into the live pane, with its detached worktree moved to that
+    branch first — rather than waiting on the quiet clock (009).
 14. Approval says a change is sound; with several sound changes, the pick
     says which one lands. Once every author is approved, each reviewer is
     asked to pick a winner — `pick_winner`, once per reviewer, refused by
@@ -88,7 +94,11 @@ Out: the transition table itself (001), the landing that follows approval
     wins; a tie goes to the author listed first. The task then moves to
     `approved` with the winner recorded on it, the losing authors' sessions,
     worktrees and branches are removed, and the winner lands the task as a
-    lone author would (005).
+    lone author would (005). The winner is written before anything else of
+    the settlement, and the rest is idempotent: a daemon that dies between
+    the two leaves a task `under_review` with a winner on it, which the next
+    pass — a restart's first included — routes straight back through the
+    settlement.
 
 ## Acceptance criteria
 
@@ -123,6 +133,11 @@ Out: the transition table itself (001), the landing that follows approval
   (`::a_second_pick_from_the_same_reviewer_is_refused_by_name`), and exactly
   one branch lands with the losers gone after the landing
   (`::exactly_one_branch_lands_and_the_losers_are_gone`).
+- A live reviewer is briefed for the next author's review without the quiet
+  clock, its worktree moved to that author's branch first
+  (`multi_author_tasks.rs::a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock`),
+  and a settlement the daemon died in is finished by the daemon that comes
+  back (`::a_restart_finishes_a_settlement_the_daemon_died_in`).
 - One pick per reviewer is the store's own rule too, and the winner reads
   off the picks with a tie to the first listed
   (`store.rs::a_reviewer_picks_once_and_the_picks_settle_a_winner`).
