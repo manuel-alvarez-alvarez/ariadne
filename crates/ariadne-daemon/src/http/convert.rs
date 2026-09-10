@@ -8,6 +8,7 @@
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
+use ariadne_api::memories::MemoryDto;
 use ariadne_api::messages::MessageDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
@@ -65,6 +66,11 @@ dto! {
 
     pub fn repository_dto(r: store::Repository) -> RepositoryDto {
         .. id, path, base_branch, description, created_at, updated_at
+    }
+
+    pub fn memory_dto(m: store::Memory) -> MemoryDto {
+        .. id, repository_id, text, source_session_id, source_task_id,
+           source_goal_id, created_at, expires_at
     }
 
     /// `repos` are the goal's repositories and `usage` its rollup, both of

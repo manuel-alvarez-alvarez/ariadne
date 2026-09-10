@@ -124,6 +124,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Agent { command } => commands::agent::run(&client, command, format).await,
         Command::Skill { command } => commands::skill::run(&client, command, format).await,
         Command::Repo { command } => commands::repo::run(&client, command, format).await,
+        Command::Memory { command } => commands::memory::run(&client, command, format).await,
         Command::Goal { command } => commands::goal::run(&client, command, format).await,
         Command::Task { command } => commands::task::run(&client, command, format).await,
         Command::Session { command } => commands::session::run(&client, command, format).await,

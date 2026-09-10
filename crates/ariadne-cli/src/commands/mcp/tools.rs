@@ -14,6 +14,7 @@ use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
+use ariadne_api::memories::{CreateMemoryRequest, MemoryDto};
 use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
@@ -212,6 +213,26 @@ pub struct ReadMessagesReq {
     pub task_id: Option<String>,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct SaveMemoryReq {
+    /// Repository id. Omit it when this session works in one repository.
+    pub repository_id: Option<String>,
+    /// The useful fact to save.
+    pub text: String,
+    /// The RFC 3339 time after which this fact stays hidden.
+    pub expires_at: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct SearchMemoryReq {
+    /// Repository id. Omit it when this session works in one repository.
+    pub repository_id: Option<String>,
+    /// The text to find, without case sensitivity.
+    pub query: String,
+}
+
 // ---------- helpers ----------
 
 /// One agent an orchestrator staffed, as the API takes it: where it sits,
@@ -322,6 +343,44 @@ impl AriadneMcp {
         Parameters(req): Parameters<TaskIdOpt>,
     ) -> Result<CallToolResult, McpError> {
         json_result(self.get(&self.task_path(req.task_id, "")?).await?)
+    }
+
+    // ---- every seat ----
+
+    #[tool(
+        description = "Save a useful fact about this repository for later sessions. Use it for stable conventions, traps, or verification commands. Set when it expires."
+    )]
+    async fn save_memory(
+        &self,
+        Parameters(req): Parameters<SaveMemoryReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let repository_id = self.memory_repository(req.repository_id).await?;
+        let path = format!("/v1/repositories/{repository_id}/memories");
+        json_result(
+            self.post(
+                &path,
+                &CreateMemoryRequest {
+                    text: req.text,
+                    expires_at: req.expires_at,
+                },
+            )
+            .await?,
+        )
+    }
+
+    #[tool(
+        description = "Search facts saved about this repository. Use it before repeated discovery, or when past work can answer a repository question."
+    )]
+    async fn search_memory(
+        &self,
+        Parameters(req): Parameters<SearchMemoryReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let repository_id = self.memory_repository(req.repository_id).await?;
+        let query = serde_urlencoded::to_string([("q", req.query)])
+            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
+        let path = format!("/v1/repositories/{repository_id}/memories/search?{query}");
+        let memories: Vec<MemoryDto> = self.get(&path).await?;
+        json_result(serde_json::to_value(memories).expect("memories serialize"))
     }
 
     // ---- orchestrator ----
@@ -850,6 +909,51 @@ mod tests {
         assert_eq!(seen.len(), 1, "{seen:?}");
         assert_eq!(seen[0].method, "GET");
         assert_eq!(seen[0].path, "/v1/tasks/01TASK");
+    }
+
+    /// Every seat uses these tools through the repository endpoints.
+    #[tokio::test]
+    async fn memory_tools_save_and_search_the_named_repository() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.save_memory(Parameters(SaveMemoryReq {
+            repository_id: Some("01REPO".into()),
+            text: "Run the parser fixture.".into(),
+            expires_at: "2099-01-01T00:00:00Z".into(),
+        }))
+        .await
+        .expect("save memory");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].path, "/v1/repositories/01REPO/memories");
+        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(sent["text"], "Run the parser fixture.");
+        assert_eq!(sent["expires_at"], "2099-01-01T00:00:00Z");
+
+        let (endpoint, seen) = recording_daemon_answering("[]").await;
+        let mcp = server_at(
+            McpSeat::Reviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.search_memory(Parameters(SearchMemoryReq {
+            repository_id: Some("01REPO".into()),
+            query: "parser fixture".into(),
+        }))
+        .await
+        .expect("search memory");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "GET");
+        assert_eq!(
+            seen[0].path,
+            "/v1/repositories/01REPO/memories/search?q=parser+fixture"
+        );
     }
 
     /// A verdict is a message to the author like any other, and what makes it

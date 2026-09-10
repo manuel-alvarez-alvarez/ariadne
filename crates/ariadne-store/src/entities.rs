@@ -174,6 +174,19 @@ pub struct Repository {
     pub updated_at: String,
 }
 
+/// One fact learned about a repository, with the work that taught it.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Memory {
+    pub id: String,
+    pub repository_id: String,
+    pub text: String,
+    pub source_session_id: String,
+    pub source_task_id: Option<String>,
+    pub source_goal_id: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
 /// The agent CLI, the model, and optionally the effort, that a goal's
 /// orchestrator or one of a task's agents runs on.
 ///

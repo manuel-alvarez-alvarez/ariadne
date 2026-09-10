@@ -21,7 +21,7 @@ fn the_command_tree_is_well_formed() {
 /// The command groups: every one of them is a screen someone lands on from
 /// `ariadne --help`, so every one of them has to read the same way.
 const GROUPS: &[&str] = &[
-    "agent", "daemon", "goal", "repo", "session", "skill", "task",
+    "agent", "daemon", "goal", "memory", "repo", "session", "skill", "task",
 ];
 
 /// The root and every group say what they are for, list the two global flags
@@ -104,6 +104,9 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal ls", true),
     ("goal rm", true),
     ("mcp serve", false),
+    ("memory delete", true),
+    ("memory ls", true),
+    ("memory search", true),
     ("models disable", true),
     ("models enable", true),
     ("models ls", true),
@@ -292,6 +295,22 @@ fn quiet_parses_after_a_mutation() {
         .quiet
     );
     assert!(parse(&["ariadne", "session", "send", "01SESSION", "yes", "-q"]).quiet);
+}
+
+#[test]
+fn memory_delete_takes_the_entry_and_its_repository() {
+    let Command::Memory {
+        command: MemoryCommand::Delete { id, repo, yes },
+    } = parse(&[
+        "ariadne", "memory", "delete", "01MEMORY", "--repo", "01REPO", "--yes",
+    ])
+    .command
+    else {
+        panic!("memory delete");
+    };
+    assert_eq!(id, "01MEMORY");
+    assert_eq!(repo, "01REPO");
+    assert!(yes);
 }
 
 /// Every `ls` that hides finished work behind `--all` takes the same short

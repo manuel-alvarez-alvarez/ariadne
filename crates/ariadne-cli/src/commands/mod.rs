@@ -13,6 +13,7 @@ pub mod fixtures;
 pub mod follow;
 pub mod goal;
 pub mod mcp;
+pub mod memory;
 pub mod models;
 pub mod repo;
 pub mod resolve;

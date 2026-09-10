@@ -50,6 +50,8 @@ impl McpSeat {
                 "complete_goal",
                 "send_message",
                 "read_messages",
+                "save_memory",
+                "search_memory",
             ],
             McpSeat::Author => &[
                 "get_task",
@@ -59,6 +61,8 @@ impl McpSeat {
                 "record_pull_request",
                 "send_message",
                 "read_messages",
+                "save_memory",
+                "search_memory",
             ],
             McpSeat::Reviewer => &[
                 "get_task",
@@ -66,6 +70,8 @@ impl McpSeat {
                 "submit_verdict",
                 "send_message",
                 "read_messages",
+                "save_memory",
+                "search_memory",
             ],
         }
     }
@@ -120,6 +126,34 @@ impl AriadneMcp {
         body: &B,
     ) -> Result<serde_json::Value, McpError> {
         self.client.post_json(path, body).await.map_err(to_mcp_err)
+    }
+
+    /// Resolve the repository for a memory tool.
+    async fn memory_repository(&self, named: Option<String>) -> Result<String, McpError> {
+        if let Some(repository_id) = named {
+            return Ok(repository_id);
+        }
+        if let Some(task_id) = &self.task_id {
+            let task: serde_json::Value = self.get(&format!("/v1/tasks/{task_id}")).await?;
+            return task["repo_id"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| McpError::internal_error("the task names no repository", None));
+        }
+        let goal: serde_json::Value = self.get(&format!("/v1/goals/{}", self.goal_id)).await?;
+        let repositories = goal["repos"]
+            .as_array()
+            .ok_or_else(|| McpError::internal_error("the goal names no repository list", None))?;
+        match repositories.as_slice() {
+            [repository] => repository["id"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| McpError::internal_error("the repository has no id", None)),
+            _ => Err(McpError::invalid_params(
+                "pass repository_id because this goal does not have one repository",
+                None,
+            )),
+        }
     }
 }
 
@@ -330,6 +364,8 @@ pub(crate) mod tests {
                     "complete_goal",
                     "send_message",
                     "read_messages",
+                    "save_memory",
+                    "search_memory",
                 ][..],
             ),
             (
@@ -342,6 +378,8 @@ pub(crate) mod tests {
                     "record_pull_request",
                     "send_message",
                     "read_messages",
+                    "save_memory",
+                    "search_memory",
                 ][..],
             ),
             (
@@ -352,6 +390,8 @@ pub(crate) mod tests {
                     "submit_verdict",
                     "send_message",
                     "read_messages",
+                    "save_memory",
+                    "search_memory",
                 ][..],
             ),
         ] {
@@ -376,6 +416,8 @@ pub(crate) mod tests {
             "record_pull_request",
             "request_review",
             "retry_task",
+            "save_memory",
+            "search_memory",
             "send_message",
             "submit_verdict",
             "update_task",
