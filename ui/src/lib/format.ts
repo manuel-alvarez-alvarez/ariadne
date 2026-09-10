@@ -218,6 +218,7 @@ export const AGENT_KIND_LABELS: Record<AgentKind, string> = {
   claude_code: "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
+  acp: "ACP",
 }
 
 /**

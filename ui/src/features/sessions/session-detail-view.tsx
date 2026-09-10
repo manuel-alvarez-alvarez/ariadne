@@ -51,6 +51,7 @@ import { sessionCopyEntries } from "@/lib/clipboard"
 import { SEAT_LABELS } from "@/lib/format"
 import { paths, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
+import { AcpConsole } from "./acp-console"
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
 import { SessionBlockedBanner } from "./session-blocked-banner"
@@ -87,6 +88,9 @@ export function SessionDetailView({
   // a prompt: what it is waiting for is a keystroke, so the pane takes the
   // keyboard rather than waiting to be clicked. Read once, on arrival.
   const focusTerminal = useTerminalFocusRequest()
+  // No tmux pane exists for an `acp` session (021): it gets Ariadne's own
+  // console instead, on the same tab a pane would have used.
+  const isAcp = session.agent_kind === "acp"
 
   // Replaces rather than pushes: which half of a session is on screen is not a
   // step of its own, and Back should leave the session, not walk its tabs.
@@ -203,15 +207,22 @@ export function SessionDetailView({
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
         <TabsList>
-          <TabsTrigger value="terminal">Terminal</TabsTrigger>
+          {/* Still `?tab=terminal` on the wire either way, so a link built
+              for a tmux session keeps working the day its task's author is
+              restaffed onto an acp one — see `paths.ts`'s `sessionTerminalFrom`. */}
+          <TabsTrigger value="terminal">{isAcp ? "Console" : "Terminal"}</TabsTrigger>
           <TabsTrigger value="activity">Agent activity</TabsTrigger>
         </TabsList>
         <TabsContent value="terminal" className="pt-3">
-          <SessionTerminal
-            sessionId={session.id}
-            status={session.status}
-            autoFocus={focusTerminal}
-          />
+          {isAcp ? (
+            <AcpConsole sessionId={session.id} status={session.status} autoFocus={focusTerminal} />
+          ) : (
+            <SessionTerminal
+              sessionId={session.id}
+              status={session.status}
+              autoFocus={focusTerminal}
+            />
+          )}
         </TabsContent>
         <TabsContent value="activity" className="pt-3">
           <SessionActivity sessionId={session.id} />

@@ -22,6 +22,7 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 import {
   api,
   type CacheSnapshot,
+  type ConsoleInputRequest,
   cacheRow,
   type OutsideSessionDto,
   optimisticStatus,
@@ -231,6 +232,20 @@ export const sendSessionResize = coalesced<PaneSize>(
   (id, size) =>
     unwrap(api().POST("/v1/sessions/{id}/resize", { params: { path: { id } }, body: size })),
 )
+
+/**
+ * Post text into an `acp` session's console. Unlike {@link sendSessionInput}
+ * this is not coalesced: each call is a whole prompt of its own, sent at once
+ * or queued behind a running turn — never a keystroke accumulating into one.
+ */
+export function sendConsoleInput(id: string, text: string): Promise<void> {
+  return unwrap(
+    api().POST("/v1/sessions/{id}/console/input", {
+      params: { path: { id } },
+      body: { text } satisfies ConsoleInputRequest,
+    }),
+  )
+}
 
 /** Index a list response by id, for turning the ids on a session into names. */
 export function byId<T extends { id: string }>(items: T[] | undefined): Map<string, T> {

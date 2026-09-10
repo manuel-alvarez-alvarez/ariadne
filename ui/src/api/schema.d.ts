@@ -528,6 +528,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/console": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The session's events so far, in order: the whole transcript a console
+         *     opens on, since there is no pane to capture a snapshot from instead.
+         */
+        get: operations["sessions_snapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/console/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Type into an ACP session: the console's counterpart of `/input`.
+         * @description There is no pane for the text to land on, so it becomes a fresh
+         *     `session/prompt` instead — sent at once if the agent is between turns, or
+         *     queued, in order, behind whichever one is running and sent the moment it
+         *     ends.
+         *
+         *     Both halves of "live" matter, as they do for a pane: the row's status,
+         *     because a finished session takes no more input, and the runtime itself,
+         *     since a session of any other kind has no agent here to hand a prompt to.
+         */
+        post: operations["sessions_console_input_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/console/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Follow a session's console.
+         * @description Opens with a `snapshot` event carrying what `GET /console` would return —
+         *     every event recorded so far, oldest first — then an `event` per later one,
+         *     each an `AgentEventDto`. Subscribing happens before the snapshot is read
+         *     and every later event is compared against the snapshot's last id, so
+         *     nothing committed in between is ever missed or delivered twice.
+         *
+         *     There is no replay and no `Last-Event-ID`: reconnecting starts again from a
+         *     fresh snapshot. A client that falls too far behind gets a final `resync`
+         *     event and the connection closes, exactly as `/v1/events/stream` does.
+         */
+        get: operations["sessions_stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/input": {
         parameters: {
             query?: never;
@@ -551,7 +626,7 @@ export interface paths {
          *     because tmux names are reused and a `send-keys` at a stale name would land
          *     in a successor's pane.
          */
-        post: operations["sessions_input"];
+        post: operations["sessions_input_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1079,7 +1154,7 @@ export interface components {
          * @description Which coding-agent CLI a profile runs on.
          * @enum {string}
          */
-        AgentKind: "claude_code" | "codex" | "opencode";
+        AgentKind: "acp" | "claude_code" | "codex" | "opencode";
         /**
          * @description What one staffed agent spent on a task, named the way a reader addresses
          *     it: an agent has no name of its own, so its skills are what identify it.
@@ -1135,6 +1210,16 @@ export interface components {
          *     that itself.
          */
         CompleteGoalRequest: Record<string, never>;
+        /**
+         * @description Body of `POST /v1/sessions/{id}/console/input`.
+         *
+         *     An ACP session has no pane to type into: the text becomes a fresh
+         *     `session/prompt` instead, sent at once or queued behind the turn still
+         *     running.
+         */
+        ConsoleInputRequest: {
+            text: string;
+        };
         CreateGoalRequest: {
             description?: string;
             /**
@@ -1703,7 +1788,7 @@ export interface components {
             goal_id: string;
             id: string;
             /**
-             * @description Agent-internal id: claude session uuid / codex thread id / opencode
+             * @description Agent-internal id: ACP session id / claude session uuid / codex thread id / opencode
              *     session id.
              */
             internal_session_id?: string | null;
@@ -3072,7 +3157,101 @@ export interface operations {
             };
         };
     };
-    sessions_input: {
+    sessions_snapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentEventDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_console_input_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsoleInputRequest"];
+            };
+        };
+        responses: {
+            /** @description Prompt sent, or queued behind a running turn */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_stream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying every event recorded so far (`[AgentEventDto]`), then an `event` per new one (`AgentEventDto`) — message chunks, thoughts, tool calls, plans, permission requests and turn status all arrive this way, in whatever vocabulary the agent's adapter reports them in. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["AgentEventDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_input_post: {
         parameters: {
             query?: never;
             header?: never;

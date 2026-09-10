@@ -33,14 +33,34 @@ const BANNER = `/**
  * across tags (`goals::list` and `tasks::list` are both `list`) and OpenAPI
  * requires them to be unique. Qualify each one with its tag before generating;
  * the committed `openapi.json` stays the daemon's verbatim document.
+ *
+ * Two handlers can also share both a tag and a name — `sessions::input` (the
+ * pane) and `console::input` (an acp session's console) are both tagged
+ * `sessions` — so a tag alone does not always disambiguate. Anything still
+ * colliding after that first pass is qualified again, by its path instead:
+ * unlike the function name, no two routes answer to the same one.
  */
 function qualifyOperationIds(spec) {
-  for (const operations of Object.values(spec.paths ?? {})) {
-    for (const operation of Object.values(operations)) {
+  const operations = []
+  for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
+    for (const [method, operation] of Object.entries(pathItem)) {
       if (!operation || typeof operation !== "object" || !operation.operationId) continue
       const tag = operation.tags?.[0]
       if (tag) operation.operationId = `${tag}_${operation.operationId}`
+      operations.push({ operation, path, method })
     }
+  }
+  const counts = new Map()
+  for (const { operation } of operations) {
+    counts.set(operation.operationId, (counts.get(operation.operationId) ?? 0) + 1)
+  }
+  for (const { operation, path, method } of operations) {
+    if (counts.get(operation.operationId) === 1) continue
+    const fromPath = path
+      .split("/")
+      .filter((segment) => segment && segment !== "v1" && !segment.startsWith("{"))
+      .join("_")
+    operation.operationId = `${fromPath}_${method}`
   }
   return spec
 }

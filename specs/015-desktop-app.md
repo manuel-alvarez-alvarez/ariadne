@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-10
+updated: 2026-09-11
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -29,11 +29,11 @@ Out: the daemon endpoints themselves (012).
 2. The shell is a sidebar and a main area; a panel opens beside a list rather
    than replacing it, and the URL carries which panel is open.
 3. Screens: the goals board (swimlanes plus an attention strip), the task
-   panel (facts, diff, messages, history), sessions and a terminal, outside
-   sessions that a ready task can adopt as its author, skills, repositories,
-   one repository's memory (list, search, delete), agent kinds and their
-   launch flags, models and which of them may be staffed on, and a
-   daemon-logs drawer.
+   panel (facts, diff, messages, history), sessions with a terminal for a
+   tmux one and a console for an `acp` one, outside sessions that a ready
+   task can adopt as its author, skills, repositories, one repository's
+   memory (list, search, delete), agent kinds and their launch flags, models
+   and which of them may be staffed on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -77,10 +77,21 @@ Out: the daemon endpoints themselves (012).
     pick: the votes it has so far, or "Picked" once it is the one that won —
     and the reviewer pick itself: which author each reviewer chose. A task
     with one author shows the singular Author fact and no pick, unchanged.
+18. An `acp` session's own tab renders its console rather than a terminal:
+    the transcript from `GET /console` and `.../console/stream` (008), an
+    input line posting to `.../console/input`, and permission questions
+    answered inline. A message chunk, a thought, a tool call, a plan or
+    anything else the runtime reports gets a readable row of its own where
+    the console recognizes the kind, and the same one-line-summary-plus-
+    payload row the agent activity feed already gives every event otherwise —
+    the console carries no fixed list either. A message just sent is shown at
+    once, pending, until the event that confirms it arrives; the `?session=`
+    panel, the fullscreen dialog and the `?focus=` keyboard hand-off all work
+    the same as they do for a tmux session's terminal.
 
 ## Acceptance criteria
 
-- 73 test files cover the features, the API layer and the event stream; each
+- 75 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
 - A task staffed with several authors shows each one's branch and its own
   vote count, marks the one the reviewers picked, and lists what each
@@ -135,6 +146,10 @@ Out: the daemon endpoints themselves (012).
 - The outside-sessions view lists each discovered session and adopts one as the
   author of a matching ready task
   (`ui/src/features/sessions/outside-sessions-page.test.tsx`).
+- An `acp` session's console renders a transcript from its stream, sends
+  typed text to its input endpoint and shows it pending until confirmed, and
+  answers an inline permission question the same way
+  (`ui/src/features/sessions/acp-console.test.tsx`).
 
 ## Sources
 

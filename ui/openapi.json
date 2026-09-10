@@ -1273,6 +1273,122 @@
         }
       }
     },
+    "/v1/sessions/{id}/console": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "The session's events so far, in order: the whole transcript a console\nopens on, since there is no pane to capture a snapshot from instead.",
+        "operationId": "snapshot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentEventDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/console/input": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Type into an ACP session: the console's counterpart of `/input`.",
+        "description": "There is no pane for the text to land on, so it becomes a fresh\n`session/prompt` instead — sent at once if the agent is between turns, or\nqueued, in order, behind whichever one is running and sent the moment it\nends.\n\nBoth halves of \"live\" matter, as they do for a pane: the row's status,\nbecause a finished session takes no more input, and the runtime itself,\nsince a session of any other kind has no agent here to hand a prompt to.",
+        "operationId": "input",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsoleInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Prompt sent, or queued behind a running turn"
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/console/stream": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Follow a session's console.",
+        "description": "Opens with a `snapshot` event carrying what `GET /console` would return —\nevery event recorded so far, oldest first — then an `event` per later one,\neach an `AgentEventDto`. Subscribing happens before the snapshot is read\nand every later event is compared against the snapshot's last id, so\nnothing committed in between is ever missed or delivered twice.\n\nThere is no replay and no `Last-Event-ID`: reconnecting starts again from a\nfresh snapshot. A client that falls too far behind gets a final `resync`\nevent and the connection closes, exactly as `/v1/events/stream` does.",
+        "operationId": "stream",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream of console events (text/event-stream). A `snapshot` event carrying every event recorded so far (`[AgentEventDto]`), then an `event` per new one (`AgentEventDto`) — message chunks, thoughts, tool calls, plans, permission requests and turn status all arrive this way, in whatever vocabulary the agent's adapter reports them in. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentEventDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/sessions/{id}/input": {
       "post": {
         "tags": [
@@ -2484,6 +2600,7 @@
         "type": "string",
         "description": "Which coding-agent CLI a profile runs on.",
         "enum": [
+          "acp",
           "claude_code",
           "codex",
           "opencode"
@@ -2574,6 +2691,19 @@
       "CompleteGoalRequest": {
         "type": "object",
         "description": "Body of `POST /v1/goals/{id}/complete`: the orchestrator says the goal is\ndone. Its call, not the user's, and it carries nothing — every task being\nfinished or cancelled is the whole of the argument, and the daemon checks\nthat itself.",
+        "additionalProperties": false
+      },
+      "ConsoleInputRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/sessions/{id}/console/input`.\n\nAn ACP session has no pane to type into: the text becomes a fresh\n`session/prompt` instead, sent at once or queued behind the turn still\nrunning.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
         "additionalProperties": false
       },
       "CreateGoalRequest": {
@@ -3798,7 +3928,7 @@
               "string",
               "null"
             ],
-            "description": "Agent-internal id: claude session uuid / codex thread id / opencode\nsession id."
+            "description": "Agent-internal id: ACP session id / claude session uuid / codex thread id / opencode\nsession id."
           },
           "last_activity_at": {
             "type": [
@@ -4583,7 +4713,7 @@
     },
     {
       "name": "sessions",
-      "description": "Agent sessions (tmux-hosted)"
+      "description": "Agent sessions: tmux panes, and the acp session console"
     },
     {
       "name": "events",
