@@ -322,6 +322,13 @@ fn every_launch_reports_the_cli_events_to_the_daemon() {
                         "{kind:?}"
                     );
                 }
+                EventDelivery::Bridge { events, .. } => {
+                    assert_eq!(declared.len(), events.len(), "{kind:?}: {declared:?}");
+                    let command = format!("{CLI_BIN} agent-event --kind {}", contract.event_kind);
+                    for (event, text) in declared {
+                        assert!(text.contains(&command), "{kind:?} {event}: {text}");
+                    }
+                }
             }
         }
     }
@@ -372,8 +379,9 @@ fn a_resume_names_its_session_and_delivers_its_instruction_once() {
             Some("id-1"),
             "{kind:?}"
         );
-        assert!(
-            plan.argv.contains(&"id-1".to_string()),
+        assert_eq!(
+            contract.resume_session.read(&plan, launch.dir()).as_deref(),
+            Some("id-1"),
             "{kind:?}: {:?}",
             plan.argv
         );
@@ -391,6 +399,14 @@ fn a_resume_names_its_session_and_delivers_its_instruction_once() {
             InstructionDelivery::TypedIntoThePane => {
                 assert_eq!(on_argv, 0, "{kind:?}: {:?}", plan.argv);
                 assert_eq!(plan.post_launch_input.as_deref(), Some(INSTRUCTION));
+            }
+            InstructionDelivery::Config(spelling) => {
+                assert_eq!(on_argv, 0, "{kind:?}: {:?}", plan.argv);
+                assert_eq!(
+                    spelling.read(&plan, launch.dir()).as_deref(),
+                    Some(INSTRUCTION)
+                );
+                assert!(plan.post_launch_input.is_none(), "{kind:?}");
             }
         }
     }
@@ -417,7 +433,9 @@ fn an_interactive_resume_delivers_no_instruction() {
         // adapter's own in its place.
         let expected = match adapter.contract().resume_instruction {
             InstructionDelivery::Argv => &instructed.argv[..instructed.argv.len() - 1],
-            InstructionDelivery::TypedIntoThePane => &instructed.argv[..],
+            InstructionDelivery::TypedIntoThePane | InstructionDelivery::Config(_) => {
+                &instructed.argv[..]
+            }
         };
         assert_eq!(
             interactive.argv, expected,
@@ -523,10 +541,13 @@ fn a_spawn_types_nothing_into_the_pane() {
 fn each_cli_says_a_compaction_is_over_in_the_event_the_contract_names() {
     // The payload carries what Claude Code needs to tell a compacted session
     // start from a resumed one; the other two read no payload at all.
-    let compacted = serde_json::json!({ "source": "compact" });
     for kind in AgentKind::ALL {
         let adapter = adapter_for(kind);
         let event = adapter.contract().compaction_event;
+        let compacted = match kind {
+            AgentKind::Acp => serde_json::json!({ "status": "completed" }),
+            _ => serde_json::json!({ "source": "compact" }),
+        };
         assert!(adapter.compaction_done(event, &compacted), "{kind:?}");
         for other in AgentKind::ALL.map(|other| adapter_for(other).contract().compaction_event) {
             if other != event {

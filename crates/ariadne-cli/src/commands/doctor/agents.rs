@@ -200,7 +200,7 @@ mod tests {
 
     use super::super::tests::{binary, by_name};
 
-    /// The three agent CLIs in `AgentKind::ALL` order, `found` of them present.
+    /// The four agent CLIs in `AgentKind::ALL` order, `found` of them present.
     fn agent_binaries(found: &[AgentKind]) -> Vec<BinaryDto> {
         AgentKind::ALL
             .into_iter()
@@ -272,12 +272,13 @@ mod tests {
         let checks = agents(&some, &[], &Availability::new(None, &some));
         assert_eq!(
             checks.len(),
-            3,
+            4,
             "no summary failure while one agent is there"
         );
-        assert_eq!(checks[0].status, Status::Ok);
-        assert_eq!(checks[1].status, Status::Warn);
+        assert_eq!(checks[0].status, Status::Warn);
+        assert_eq!(checks[1].status, Status::Ok);
         assert_eq!(checks[2].status, Status::Warn);
+        assert_eq!(checks[3].status, Status::Warn);
 
         let none = agent_binaries(&[]);
         let checks = agents(&none, &[], &Availability::new(None, &none));

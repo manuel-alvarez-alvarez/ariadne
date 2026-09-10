@@ -179,6 +179,7 @@ impl AgentAdapter for ClaudeAdapter {
                 events: HOOK_EVENTS,
             },
             session_id_chosen_at_spawn: true,
+            resume_session: Spelling::Flag("--resume"),
             resume_instruction: InstructionDelivery::Argv,
             compaction_event: "session_start",
         }

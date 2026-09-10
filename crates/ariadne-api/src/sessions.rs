@@ -23,7 +23,7 @@ pub struct SessionDto {
     /// whatever the agent CLI runs it at.
     #[schema(example = "high")]
     pub effort: Option<String>,
-    /// Agent-internal id: claude session uuid / codex thread id / opencode
+    /// Agent-internal id: ACP session id / claude session uuid / codex thread id / opencode
     /// session id.
     pub internal_session_id: Option<String>,
     pub tmux_session: String,

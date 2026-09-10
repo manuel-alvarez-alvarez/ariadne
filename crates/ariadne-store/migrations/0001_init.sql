@@ -37,7 +37,7 @@ CREATE TABLE skills (
 -- a property of that CLI, not of the persona a profile describes. Read on
 -- every spawn and resume.
 CREATE TABLE agent_configs (
-    agent_kind  TEXT PRIMARY KEY CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
+    agent_kind  TEXT PRIMARY KEY CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
     extra_flags TEXT NOT NULL,                  -- JSON array of argv strings
     updated_at  TEXT NOT NULL
 );
@@ -103,7 +103,7 @@ CREATE TABLE goals (
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
     agent_kind          TEXT NOT NULL
-                        CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
+                        CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
     model               TEXT NOT NULL,
     effort              TEXT
 );
@@ -162,7 +162,7 @@ CREATE TABLE task_agents (
     seat       TEXT NOT NULL CHECK (seat IN ('author', 'reviewer')),
     ordinal    INTEGER NOT NULL,
     agent_kind TEXT NOT NULL
-               CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
+               CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
     model      TEXT NOT NULL,
     effort     TEXT,
     -- What this agent is told beyond the task itself, where the orchestrator
@@ -225,8 +225,8 @@ CREATE TABLE agent_sessions (
     -- which is the one agent type Ariadne defines rather than one a task
     -- staffs.
     task_agent_id       TEXT REFERENCES task_agents (id) ON DELETE CASCADE,
-    agent_kind          TEXT NOT NULL CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
-    internal_session_id TEXT,                   -- claude session uuid / codex thread_id / opencode session id
+    agent_kind          TEXT NOT NULL CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
+    internal_session_id TEXT,                   -- ACP/claude/codex/opencode session id
     tmux_session        TEXT NOT NULL,
     worktree_path       TEXT,
     status              TEXT NOT NULL DEFAULT 'starting'
@@ -329,7 +329,7 @@ CREATE TABLE agent_events (
     id         TEXT PRIMARY KEY,
     session_id TEXT REFERENCES agent_sessions (id) ON DELETE SET NULL,
     task_id    TEXT REFERENCES tasks (id) ON DELETE CASCADE,
-    agent_kind TEXT CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
+    agent_kind TEXT CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
     kind       TEXT NOT NULL,                   -- session_start | post_tool_use | stop | turn_complete | ...
     payload    TEXT NOT NULL,                   -- raw JSON
     created_at TEXT NOT NULL

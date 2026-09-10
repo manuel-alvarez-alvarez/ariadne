@@ -293,8 +293,8 @@ pub enum Command {
     },
     /// Manage the agent CLIs: the flags each one is launched with
     ///
-    /// One entry per coding-agent CLI Ariadne can run — claude_code, codex,
-    /// opencode — holding the flags every session of that CLI is launched and
+    /// One entry per coding-agent CLI Ariadne can run — acp, claude_code,
+    /// codex, opencode — holding the flags every session of that CLI is launched and
     /// resumed with. `ariadne skill` is the other half: what an agent knows,
     /// this is the program it runs in.
     #[command(after_help = AGENT_EXAMPLES)]
@@ -443,7 +443,7 @@ pub enum Command {
     #[command(hide = true, name = "agent-event")]
     AgentEvent {
         /// Which agent's hook is reporting, as everything else spells it:
-        /// claude_code | codex | opencode
+        /// acp | claude_code | codex | opencode
         #[arg(long, default_value = "claude_code", value_parser = crate::commands::agent::parse_kind)]
         kind: ariadne_core::AgentKind,
         /// OpenCode plugin payload

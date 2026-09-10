@@ -3,7 +3,7 @@
 //! The daemon's side is `ariadne_core::spawn_plan`: tmux is handed a
 //! constant-size command so neither the briefing nor the environment has to
 //! fit in a tmux command line. This end reads the plan, applies it and
-//! `exec`s, so the pane's root process is the agent itself. Every failure
+//! `exec`s a native CLI or drives an ACP server. Every failure
 //! lands on stderr, which in a pane is the session's console log — the one
 //! place somebody debugging a dead pane looks.
 
@@ -15,14 +15,27 @@ use anyhow::{Context, Result};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
 
-/// Read `plan` and replace this process with the agent it names.
+/// Read `plan` and start the agent it names.
 ///
-/// Returns only on failure: a successful `exec` never comes back.
+/// A native CLI replaces this process. An ACP client exits with the session.
 pub fn exec_plan(plan_path: &Path) -> Result<std::convert::Infallible> {
     let raw = std::fs::read_to_string(plan_path)
         .with_context(|| format!("reading the spawn plan {}", plan_path.display()))?;
     let plan = SpawnPlanFile::from_json(&raw)
         .with_context(|| format!("reading the spawn plan {}", plan_path.display()))?;
+
+    if let Some((_, config)) = plan
+        .env
+        .iter()
+        .find(|(key, _)| key == ariadne_core::acp::CONFIG_ENV)
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("starting the ACP runtime")?;
+        runtime.block_on(super::acp::run(&plan, Path::new(config)))?;
+        std::process::exit(0);
+    }
 
     let (program, args) = plan
         .argv

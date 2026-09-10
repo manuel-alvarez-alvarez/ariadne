@@ -240,6 +240,7 @@ pub struct EffortInfo {
 /// The curated models of an agent CLI.
 pub fn curated_models(kind: AgentKind) -> &'static [ModelInfo] {
     match kind {
+        AgentKind::Acp => &[],
         AgentKind::ClaudeCode => CLAUDE_CODE,
         AgentKind::Codex => CODEX,
         AgentKind::Opencode => &[],
@@ -255,6 +256,7 @@ pub fn curated_models(kind: AgentKind) -> &'static [ModelInfo] {
 /// the CLI — so an undiscovered opencode model takes any variant name.
 pub fn known_efforts(kind: AgentKind) -> &'static [&'static str] {
     match kind {
+        AgentKind::Acp => &[],
         AgentKind::ClaudeCode => CLAUDE_CODE_EFFORTS,
         AgentKind::Codex => CODEX_EFFORTS,
         AgentKind::Opencode => &[],
@@ -268,6 +270,7 @@ pub fn known_efforts(kind: AgentKind) -> &'static [&'static str] {
 /// opencode, whose efforts are per model and discovered rather than fixed.
 pub fn effort_ladder(kind: AgentKind) -> &'static [EffortInfo] {
     match kind {
+        AgentKind::Acp => &[],
         AgentKind::ClaudeCode => CLAUDE_CODE_LADDER,
         AgentKind::Codex => CODEX_LADDER,
         AgentKind::Opencode => &[],

@@ -10,8 +10,8 @@ daemon has nothing left to run.
    repositories it works in (`ariadne repo add`). The daemon spawns the
    **orchestrator** in tmux; `ariadne goal attach` drops you into its terminal.
    `--model` is required, and it is the whole choice: a model is spelled
-   `<agent_kind>:<model>` — the agent CLI that runs it (`claude_code`, `codex`,
-   `opencode`) and, after a colon, one model of that CLI (`--model
+   `<agent_kind>:<model>` — the agent CLI that runs it (`acp`, `claude_code`,
+   `codex`, `opencode`) and, after a colon, one model of that CLI (`--model
    codex:gpt-5.6-sol`). A bare CLI name or `default` is refused because every
    run must name its model. `--effort` goes beside it and
    says how deeply that model reasons — one of the efforts `ariadne models ls`
@@ -146,9 +146,12 @@ reasons, commit subjects and bodies, and pull request text.
 Agents run with permissions bypassed — `--dangerously-skip-permissions` for
 Claude Code, `--dangerously-bypass-approvals-and-sandbox` for Codex, `--auto`
 plus an allow-everything permission block for OpenCode (`ariadne agent ls`
-prints the current flags). Hooks installed at spawn time report every
-session/tool event back to the daemon, and each agent's internal session id is
-tracked so sessions can be resumed and attached.
+prints the current flags). ACP has no common bypass flag, so its default list
+is empty. Add the selected agent's flag with `ariadne agent update acp`.
+
+Hooks installed at spawn time report every session and tool event to the
+daemon. The ACP client maps protocol updates into the same event vocabulary.
+Each internal session id is tracked, so sessions can be resumed and attached.
 
 ## Sessions and compaction
 
@@ -160,5 +163,5 @@ the CLI near its context limit. The daemon asks for none, and types into a
 pane only what the work gives it — a nudge, a review's feedback, a landing
 briefing, a message from another agent. It reads a compaction the CLI reports
 (Claude Code's `SessionStart` from `compact`, Codex's `PostCompact` hook,
-OpenCode's `session.compacted` event) for what it says about the agent: the
-turn is over and it is back at its prompt.
+OpenCode's `session.compacted` event, or ACP's completed `compaction_update`)
+for what it says about the agent. The turn is over, and the agent is ready.

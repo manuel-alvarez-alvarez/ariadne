@@ -116,6 +116,12 @@ pub enum EventDelivery {
     },
     /// A plugin the daemon installs once, named by the generated config.
     Plugin(Spelling),
+    /// The ACP client maps protocol updates, then invokes one event sink.
+    Bridge {
+        command: Spelling,
+        arguments: Spelling,
+        events: &'static [&'static str],
+    },
 }
 
 impl EventDelivery {
@@ -162,6 +168,25 @@ impl EventDelivery {
                 .map(|text| ("plugin".to_string(), text))
                 .into_iter()
                 .collect(),
+            EventDelivery::Bridge {
+                command,
+                arguments,
+                events,
+            } => {
+                let Some(command) = command.read(plan, run_dir) else {
+                    return Vec::new();
+                };
+                let Some(arguments) = arguments.read(plan, run_dir) else {
+                    return Vec::new();
+                };
+                let arguments = serde_json::from_str::<Vec<String>>(&arguments)
+                    .map(|arguments| arguments.join(" "))
+                    .unwrap_or(arguments);
+                events
+                    .iter()
+                    .map(|event| ((*event).to_string(), format!("{command} {arguments}")))
+                    .collect()
+            }
         }
     }
 }
@@ -175,6 +200,9 @@ pub enum InstructionDelivery {
     /// ([`SpawnPlan::post_launch_input`]), for a CLI that drops a prompt on
     /// its argv when it resumes.
     TypedIntoThePane,
+    /// Written into the generated client configuration, for a protocol that
+    /// sends the instruction after the agent process starts.
+    Config(Spelling),
 }
 
 /// The contract of one adapter, in the words of the CLI it drives.
@@ -213,6 +241,8 @@ pub struct AdapterContract {
     pub events: EventDelivery,
     /// Whether the adapter chooses the CLI's own session id before the launch.
     pub session_id_chosen_at_spawn: bool,
+    /// Where a resume names the session it continues.
+    pub resume_session: Spelling,
     /// How a resume delivers its instruction.
     pub resume_instruction: InstructionDelivery,
     /// The event kind with which this CLI says a compaction is over.

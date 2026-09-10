@@ -31,9 +31,9 @@
 
 <p align="center">
   Every agent runs in its own tmux session and its own git worktree, so you can attach to any of
-  them at any moment and take over. <b>Claude Code</b>, <b>OpenAI Codex CLI</b> and
-  <b>OpenCode</b> all drive the work, and a goal picks the model and the effort each agent runs
-  at.
+  them at any moment and take over. <b>Claude Code</b>, <b>OpenAI Codex CLI</b>,
+  <b>OpenCode</b>, and <b>ACP-compatible agents</b> all drive the work. A goal picks each
+  agent's model and effort.
 </p>
 
 <p align="center">
@@ -49,8 +49,8 @@
 <table>
 <tr>
 <td width="50%" valign="top">
-<h4>🧩 Three agent CLIs, one interface</h4>
-Claude Code, OpenAI Codex CLI and OpenCode. A model is spelled
+<h4>🧩 Four agent integrations, one interface</h4>
+Claude Code, OpenAI Codex CLI, OpenCode, and ACP-compatible agents. A model is spelled
 <code>&lt;agent_kind&gt;:&lt;model&gt;</code>, and <code>--effort</code> beside it says how deeply
 it reasons.
 </td>

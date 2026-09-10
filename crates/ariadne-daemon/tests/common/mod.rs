@@ -111,6 +111,7 @@ pub struct HarnessBuilder {
 /// which model it is names its own.
 pub fn test_pin(agent_kind: AgentKind) -> AgentPin {
     let model = match agent_kind {
+        AgentKind::Acp => "test-model",
         AgentKind::ClaudeCode => "claude-sonnet-5",
         AgentKind::Codex => "gpt-5.6-terra",
         AgentKind::Opencode => "opencode/hy3-free",

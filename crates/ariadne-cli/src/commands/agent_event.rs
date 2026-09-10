@@ -40,8 +40,8 @@ async fn forward(agent_kind: AgentKind, json: Option<String>) {
             }
             parse_hook_event(&raw)
         }
-        // OpenCode: the plugin passes {"kind": ..., "payload": ...} as --json.
-        AgentKind::Opencode => {
+        // ACP and OpenCode pass {"kind": ..., "payload": ...} as --json.
+        AgentKind::Acp | AgentKind::Opencode => {
             let value: serde_json::Value =
                 serde_json::from_str(json.as_deref().unwrap_or("{}")).unwrap_or_default();
             let event = value

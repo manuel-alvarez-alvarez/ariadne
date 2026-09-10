@@ -2,7 +2,7 @@
 //! lifecycle status it implies, whether it says a human has to act, and what
 //! it reports having spent.
 //!
-//! Three CLIs report through [`super::events::ingest`] in three vocabularies,
+//! Four CLIs report through [`super::events::ingest`] in four vocabularies,
 //! and these tables are where each one is read. An event that matches nothing
 //! is still recorded — it simply moves neither flag.
 
@@ -15,7 +15,7 @@ pub(super) fn extract_internal_id(
 ) -> Option<String> {
     use ariadne_core::AgentKind;
     let candidates: &[&[&str]] = match kind {
-        AgentKind::ClaudeCode | AgentKind::Codex => &[&["session_id"]],
+        AgentKind::Acp | AgentKind::ClaudeCode | AgentKind::Codex => &[&["session_id"]],
         // `sessionID` comes before the bare `id`: opencode's approval events
         // carry both, and there `id` is the permission's, not the session's.
         AgentKind::Opencode => &[&["info", "id"], &["sessionID"], &["session", "id"], &["id"]],

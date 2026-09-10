@@ -1,4 +1,4 @@
-//! Hermetic tests for the three agent adapters: SpawnPlan argv/env and the
+//! Hermetic tests for the four agent adapters: SpawnPlan argv/env and the
 //! generated run-dir files, no real CLI involved.
 
 use std::path::PathBuf;
@@ -257,6 +257,51 @@ fn opencode_spawn_plan() {
         .plan_resume(&ctx(dir.path().into(), KIND), "ses_1", "")
         .unwrap();
     assert!(plan.post_launch_input.is_none());
+}
+
+#[test]
+fn acp_spawn_plan() {
+    const KIND: AgentKind = AgentKind::Acp;
+    let dir = tempfile::tempdir().unwrap();
+    let adapter = adapter_for(KIND);
+    let pinned = ctx_with_pin(dir.path().into(), "test-model", Some("xhigh"));
+    let plan = adapter.plan_spawn(&pinned).unwrap();
+
+    assert_eq!(plan.argv, ["acp", "--extra"]);
+    assert!(plan.internal_session_id.is_none());
+    assert!(plan.post_launch_input.is_none());
+
+    let config_path = plan
+        .env
+        .iter()
+        .find(|(key, _)| key == "ARIADNE_ACP_CONFIG")
+        .map(|(_, value)| value)
+        .expect("ARIADNE_ACP_CONFIG set");
+    let config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+    assert_eq!(config["systemPrompt"], "SYSTEM PROMPT");
+    assert_eq!(config["initialPrompt"], "DO THE TASK");
+    assert_eq!(config["model"], "test-model");
+    assert_eq!(config["effort"], "xhigh");
+    assert_eq!(config["mcpServers"][0]["command"], "/usr/local/bin/ariadne");
+    assert_eq!(
+        config["mcpServers"][0]["args"],
+        serde_json::json!(["mcp", "serve"])
+    );
+
+    let resumed = adapter
+        .plan_resume(&pinned, "acp-session-1", "apply feedback")
+        .unwrap();
+    assert_eq!(resumed.argv, ["acp", "--extra"]);
+    assert_eq!(
+        resumed.internal_session_id.as_deref(),
+        Some("acp-session-1")
+    );
+    let config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("acp.json")).unwrap())
+            .unwrap();
+    assert_eq!(config["resumeSessionId"], "acp-session-1");
+    assert_eq!(config["initialPrompt"], "apply feedback");
 }
 
 #[test]

@@ -75,8 +75,12 @@ async fn flags_are_replaced_whole_and_the_defaults_stay_readable() {
     );
 
     let configs: Vec<AgentConfigDto> = h.json(get("/v1/agents"), StatusCode::OK).await;
+    let claude = configs
+        .iter()
+        .find(|config| config.agent_kind == AgentKind::ClaudeCode)
+        .unwrap();
     assert_eq!(
-        configs[0].extra_flags,
+        claude.extra_flags,
         ["--permission-mode=acceptEdits"],
         "the edit survived the round trip"
     );

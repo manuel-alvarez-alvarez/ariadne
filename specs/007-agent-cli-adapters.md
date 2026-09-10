@@ -2,7 +2,7 @@
 id: agent-cli-adapters
 status: current
 updated: 2026-09-10
-areas: [daemon, core]
+areas: [cli, daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
   - crates/ariadne-daemon/src/launcher.rs
@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/adapters.rs
   - crates/ariadne-daemon/tests/agents.rs
   - crates/ariadne-daemon/tests/resume.rs
+  - crates/ariadne-cli/src/commands/acp.rs
 ---
 
 # Agent CLI adapters
@@ -17,11 +18,11 @@ tests:
 How Ariadne launches a concrete coding-agent CLI: the argv, the environment,
 the generated config, and the hooks that report back.
 
-Three CLIs are supported — **Claude Code**, **OpenAI Codex CLI** and
-**OpenCode** — and an adapter turns a spawn or a resume request into the argv,
-the env and the generated files of one of them. Every adapter meets the same
-contract, and only the spelling of each clause changes from CLI to CLI. That
-is the whole of what a fourth CLI has to do.
+Four CLI integrations are supported: **ACP**, **Claude Code**, **OpenAI Codex
+CLI**, and **OpenCode**. ACP runs any compatible agent exposed as `acp` on
+`PATH`. An adapter turns a spawn or resume request into that CLI's argv,
+environment, and generated files. Every adapter meets the same contract. Only
+the spelling of each clause changes between CLIs.
 
 ## Scope
 
@@ -61,8 +62,8 @@ interface: an adapter declares how it spells each clause, and one suite —
    adapter adds none of its own. The permission bypasses are **configuration**
    — `--dangerously-skip-permissions`,
    `--dangerously-bypass-approvals-and-sandbox`, and `--auto` — read from the
-   per-agent config on every launch, so an agent whose flags the user emptied
-   is launched with no bypass at all.
+   per-agent config on every launch. ACP has no universal bypass flag, so its
+   default list is empty. An agent whose flags the user emptied gets no bypass.
 10. **Resume.** A resume names the session it continues and delivers its
     instruction once, through the one channel that CLI takes it on. An empty
     instruction is an interactive resume: it delivers nothing, and it puts
@@ -86,20 +87,20 @@ interface: an adapter declares how it spells each clause, and one suite —
 One column per CLI, one row per clause that has a spelling. This table is the
 declaration each adapter returns from `contract()`.
 
-| Clause | Claude Code | Codex | OpenCode |
-| --- | --- | --- | --- |
-| Binary | `claude` | `codex` | `opencode` |
-| Generated files | `system-prompt.md`, `mcp.json`, `settings.json` | none — everything is on the argv | `opencode.json`, passed as `OPENCODE_CONFIG` |
-| System prompt | `--append-system-prompt <content>` | prepended to the first message — no append-safe flag | `agent.ariadne.prompt` |
-| Model | `--model` | `-m` | `agent.ariadne.model` |
-| Effort | `--effort`, after the model | `-c model_reasoning_effort=<level>` | `agent.ariadne.variant` |
-| MCP | `--mcp-config <run>/mcp.json`: `command`, `args`, `env` | `-c mcp_servers.ariadne.command`, `.args`, `.env` | `mcp.ariadne`: `command`, which heads the arguments, and `environment` |
-| Hooks | command hooks in `settings.json` | `-c hooks.<Event>=[...]` ([`ariadne_core::codex_hooks`]) | the events plugin the daemon installs, named in `plugin` |
-| Session id | chosen by Ariadne, `--session-id <uuid>` | reported by the `SessionStart` hook | reported by the plugin's `session.created` event |
-| Resume | `--resume <id>` | `codex resume <id>`, every config flag re-passed | `--session <id>` |
-| Instruction | last argument of the argv | last argument of the argv | typed into the TUI: OpenCode drops `--prompt` on a resume |
-| Skills | a session plugin at `<run>/plugin`, passed with `--plugin-dir` | none — the index in the system prompt | `skills.paths` |
-| Compaction | `session_start` whose `source` is `compact` | `post_compact` | `session.compacted` |
+| Clause | ACP | Claude Code | Codex | OpenCode |
+| --- | --- | --- | --- | --- |
+| Binary | `acp` | `claude` | `codex` | `opencode` |
+| Generated files | `acp.json`, selected by `ARIADNE_ACP_CONFIG` | `system-prompt.md`, `mcp.json`, `settings.json` | none — everything is on the argv | `opencode.json`, passed as `OPENCODE_CONFIG` |
+| System prompt | prepended to each user prompt | `--append-system-prompt <content>` | prepended to the first message — no append-safe flag | `agent.ariadne.prompt` |
+| Model | `session/set_config_option`, category `model` | `--model` | `-m` | `agent.ariadne.model` |
+| Effort | `session/set_config_option`, category `thought_level` | `--effort`, after the model | `-c model_reasoning_effort=<level>` | `agent.ariadne.variant` |
+| MCP | `mcpServers` on session setup and restore | `--mcp-config <run>/mcp.json`: `command`, `args`, `env` | `-c mcp_servers.ariadne.command`, `.args`, `.env` | `mcp.ariadne`: `command`, which heads the arguments, and `environment` |
+| Hooks | client bridge maps ACP updates into `agent-event` calls | command hooks in `settings.json` | `-c hooks.<Event>=[...]` ([`ariadne_core::codex_hooks`]) | the events plugin the daemon installs, named in `plugin` |
+| Session id | returned by `session/new` | chosen by Ariadne, `--session-id <uuid>` | reported by the `SessionStart` hook | reported by the plugin's `session.created` event |
+| Resume | `session/resume`, or `session/load` when only loading is available | `--resume <id>` | `codex resume <id>`, every config flag re-passed | `--session <id>` |
+| Instruction | `session/prompt` after setup | last argument of the argv | last argument of the argv | typed into the TUI: OpenCode drops `--prompt` on a resume |
+| Skills | the index in the system prompt | a session plugin at `<run>/plugin`, passed with `--plugin-dir` | none — the index in the system prompt | `skills.paths` |
+| Compaction | completed `compaction_update` | `session_start` whose `source` is `compact` | `post_compact` | `session.compacted` |
 
 ## Behavior
 
@@ -123,7 +124,7 @@ declaration each adapter returns from `contract()`.
 7. Codex is given no skill folder because it discovers skills only under its
    own home or under the project root, and the project root of an agent is its
    worktree. The index in the system prompt names every document by its
-   run-directory path (006), which is the floor under all three: a CLI with no
+   run-directory path (006), which is the floor under all four: a CLI with no
    skill loading of its own still has a file the agent can open.
 8. A freshly launched pane is watched for a trust dialog, and the session says
    it is waiting on a person. The dialog stands until they answer it — typing
@@ -134,7 +135,7 @@ declaration each adapter returns from `contract()`.
 
 ## Acceptance criteria
 
-Every clause of the contract is proven for all three adapters at once, by
+Every clause of the contract is proven for all four adapters at once, by
 `adapter_contract.rs`:
 
 - Clause 1 (`::every_launch_runs_the_binary_of_its_agent_kind`).
@@ -158,7 +159,12 @@ Every clause of the contract is proven for all three adapters at once, by
 The spelling of each CLI is asserted whole beside it:
 
 - Each adapter's spawn plan is asserted whole
-  (`adapters.rs::claude_spawn_plan`, `::codex_spawn_plan`, `::opencode_spawn_plan`).
+  (`adapters.rs::acp_spawn_plan`, `::claude_spawn_plan`,
+  `::codex_spawn_plan`, `::opencode_spawn_plan`).
+- A stub ACP server proves the protocol handshake, session setup, model,
+  effort, MCP, mapped events, compaction, and resume
+  (`commands/acp.rs::the_acp_contract_runs_against_a_stub`,
+  `::resume_uses_the_saved_acp_session`).
 - The adapters hardcode no bypass flag
   (`adapters.rs::the_adapters_hardcode_no_bypass_flag`) and pass the configured
   flags once (`::the_configured_flags_are_passed_once`).
@@ -198,4 +204,5 @@ The spelling of each CLI is asserted whole beside it:
 
 `crates/ariadne-daemon/src/agents/contract.rs` (the contract),
 `crates/ariadne-daemon/src/agents/` (one module per CLI),
+`crates/ariadne-cli/src/commands/acp.rs` (the ACP client),
 `crates/ariadne-daemon/src/launcher.rs`, `crates/ariadne-store/src/agents.rs`.
