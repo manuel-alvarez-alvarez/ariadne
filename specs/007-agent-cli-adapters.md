@@ -53,8 +53,8 @@ interface: an adapter declares how it spells each clause, and one suite —
 5. **Effort.** A pinned effort is passed on every launch, and a session that
    pinned none passes none: the CLI runs the model at its own default.
 6. **System prompt.** A spawn briefs the agent with the system prompt.
-7. **MCP.** Every launch points the CLI at `ariadne mcp serve`, with the
-   session context in the server's environment.
+7. **MCP.** Every launch points the CLI at `ariadne mcp serve`, with nothing
+   after `serve` and the session context in the server's environment.
 8. **Hooks.** Every launch tells the CLI to report what it does to
    `ariadne agent-event --kind <agent kind>`.
 9. **Flags.** The flags of the agent config reach the argv once, and the
@@ -65,8 +65,9 @@ interface: an adapter declares how it spells each clause, and one suite —
    is launched with no bypass at all.
 10. **Resume.** A resume names the session it continues and delivers its
     instruction once, through the one channel that CLI takes it on. An empty
-    instruction is an interactive resume and delivers nothing: the agent drops
-    into its TUI and waits for the user.
+    instruction is an interactive resume: it delivers nothing, and it puts
+    nothing of the adapter's own in its place, so the agent drops into its TUI
+    and waits for the user.
 11. **Session id.** A spawn knows the CLI's own session id up front only where
     the CLI lets the caller choose it; every other adapter waits for the event
     that carries it. Either way the id is tracked, so the session can be
@@ -92,7 +93,7 @@ declaration each adapter returns from `contract()`.
 | System prompt | `--append-system-prompt <content>` | prepended to the first message — no append-safe flag | `agent.ariadne.prompt` |
 | Model | `--model` | `-m` | `agent.ariadne.model` |
 | Effort | `--effort`, after the model | `-c model_reasoning_effort=<level>` | `agent.ariadne.variant` |
-| MCP | `--mcp-config <run>/mcp.json` | `-c mcp_servers.ariadne.*` | `mcp.ariadne` |
+| MCP | `--mcp-config <run>/mcp.json`: `command`, `args`, `env` | `-c mcp_servers.ariadne.command`, `.args`, `.env` | `mcp.ariadne`: `command`, which heads the arguments, and `environment` |
 | Hooks | command hooks in `settings.json` | `-c hooks.<Event>=[...]` ([`ariadne_core::codex_hooks`]) | the events plugin the daemon installs, named in `plugin` |
 | Session id | chosen by Ariadne, `--session-id <uuid>` | reported by the `SessionStart` hook | reported by the plugin's `session.created` event |
 | Resume | `--resume <id>` | `codex resume <id>`, every config flag re-passed | `--session <id>` |

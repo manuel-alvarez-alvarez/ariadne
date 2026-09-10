@@ -94,14 +94,20 @@ const SKILLS: [(&str, &str); 2] = [
 
 /// Both launches of one context: a spawn, and a resume carrying an
 /// instruction. Every clause that holds for a launch holds for both.
-fn both(launch: &Launch, kind: AgentKind) -> Vec<SpawnPlan> {
+///
+/// Each one is planned in a run dir of its own, from a context `shape` builds
+/// afresh. An adapter rewrites its generated files on every launch, so two
+/// launches sharing a run dir would let what the resume wrote answer for what
+/// the spawn wrote, and a spawn that generated nothing would pass.
+fn both(kind: AgentKind, shape: &dyn Fn() -> Launch) -> Vec<(Launch, SpawnPlan)> {
     let adapter = adapter_for(kind);
-    vec![
-        adapter.plan_spawn(&launch.ctx).unwrap(),
-        adapter
-            .plan_resume(&launch.ctx, "id-1", INSTRUCTION)
-            .unwrap(),
-    ]
+    let spawned = shape();
+    let spawn = adapter.plan_spawn(&spawned.ctx).unwrap();
+    let resumed = shape();
+    let resume = adapter
+        .plan_resume(&resumed.ctx, "id-1", INSTRUCTION)
+        .unwrap();
+    vec![(spawned, spawn), (resumed, resume)]
 }
 
 /// Clause 1. A launch runs the CLI of its agent kind, and hands it no empty
@@ -109,10 +115,9 @@ fn both(launch: &Launch, kind: AgentKind) -> Vec<SpawnPlan> {
 #[test]
 fn every_launch_runs_the_binary_of_its_agent_kind() {
     for kind in AgentKind::ALL {
-        let launch = Launch::new();
         let contract = adapter_for(kind).contract();
         assert_eq!(contract.binary, kind.binary(), "{kind:?}");
-        for plan in both(&launch, kind) {
+        for (_launch, plan) in both(kind, &Launch::new) {
             assert_eq!(plan.argv[0], contract.binary, "{kind:?}: {:?}", plan.argv);
             assert!(
                 plan.argv.iter().all(|argument| !argument.is_empty()),
@@ -129,8 +134,7 @@ fn every_launch_runs_the_binary_of_its_agent_kind() {
 #[test]
 fn every_launch_carries_the_session_context_in_its_environment() {
     for kind in AgentKind::ALL {
-        let launch = Launch::new();
-        for plan in both(&launch, kind) {
+        for (launch, plan) in both(kind, &Launch::new) {
             let env: std::collections::HashMap<_, _> = plan.env.iter().cloned().collect();
             assert_eq!(env["ARIADNE_SESSION_ID"], SESSION_ID, "{kind:?}");
             assert_eq!(env["ARIADNE_LAUNCH_ID"], "01launchxxxxxxxxxxxxxxxxxx");
@@ -148,8 +152,7 @@ fn every_launch_carries_the_session_context_in_its_environment() {
 #[test]
 fn every_launch_generates_its_files_in_the_run_dir_and_none_in_the_worktree() {
     for kind in AgentKind::ALL {
-        let launch = Launch::new().with_skills();
-        for plan in both(&launch, kind) {
+        for (launch, plan) in both(kind, &|| Launch::new().with_skills()) {
             for file in adapter_for(kind).contract().generated {
                 assert!(
                     launch.dir().join(file).exists(),
@@ -157,12 +160,12 @@ fn every_launch_generates_its_files_in_the_run_dir_and_none_in_the_worktree() {
                 );
             }
             assert_eq!(plan.cwd, launch.ctx.cwd);
+            assert_eq!(
+                std::fs::read_dir(launch.worktree.path()).unwrap().count(),
+                0,
+                "{kind:?} wrote into the worktree"
+            );
         }
-        assert_eq!(
-            std::fs::read_dir(launch.worktree.path()).unwrap().count(),
-            0,
-            "{kind:?} wrote into the worktree"
-        );
     }
 }
 
@@ -171,9 +174,8 @@ fn every_launch_generates_its_files_in_the_run_dir_and_none_in_the_worktree() {
 #[test]
 fn every_launch_passes_the_pinned_model() {
     for kind in AgentKind::ALL {
-        let launch = Launch::new();
         let contract = adapter_for(kind).contract();
-        for plan in both(&launch, kind) {
+        for (launch, plan) in both(kind, &Launch::new) {
             assert_eq!(
                 contract.model.read(&plan, launch.dir()).as_deref(),
                 Some(MODEL),
@@ -190,20 +192,18 @@ fn every_launch_passes_the_pinned_model() {
 fn an_effort_reaches_the_cli_only_when_the_session_pinned_one() {
     for kind in AgentKind::ALL {
         let contract = adapter_for(kind).contract();
-        let pinned = Launch::new().with_effort("xhigh");
-        for plan in both(&pinned, kind) {
+        for (launch, plan) in both(kind, &|| Launch::new().with_effort("xhigh")) {
             assert_eq!(
-                contract.effort.read(&plan, pinned.dir()).as_deref(),
+                contract.effort.read(&plan, launch.dir()).as_deref(),
                 Some("xhigh"),
                 "{kind:?}: {:?}",
                 plan.argv
             );
         }
 
-        let bare = Launch::new();
-        for plan in both(&bare, kind) {
+        for (launch, plan) in both(kind, &Launch::new) {
             assert_eq!(
-                contract.effort.read(&plan, bare.dir()),
+                contract.effort.read(&plan, launch.dir()),
                 None,
                 "{kind:?}: {:?}",
                 plan.argv
@@ -233,9 +233,9 @@ fn every_spawn_briefs_the_agent_with_the_system_prompt() {
             spelling => {
                 // A CLI that takes the prompt out of band is given it again
                 // on a resume: the run dir is rewritten on every launch.
-                for plan in both(&launch, kind) {
+                for (other, plan) in both(kind, &Launch::new) {
                     assert_eq!(
-                        spelling.read(&plan, launch.dir()).as_deref(),
+                        spelling.read(&plan, other.dir()).as_deref(),
                         Some(SYSTEM_PROMPT),
                         "{kind:?}: {:?}",
                         plan.argv
@@ -246,19 +246,35 @@ fn every_spawn_briefs_the_agent_with_the_system_prompt() {
     }
 }
 
-/// Clause 7. Every launch points the CLI at this daemon's MCP server, running
-/// as this session.
+/// Clause 7. Every launch points the CLI at this daemon's MCP server — the
+/// `ariadne` binary, `mcp serve` and nothing after it — running as this
+/// session.
 #[test]
 fn every_launch_points_the_cli_at_the_ariadne_mcp_server() {
     for kind in AgentKind::ALL {
-        let launch = Launch::new();
         let contract = adapter_for(kind).contract();
-        for plan in both(&launch, kind) {
+        for (launch, plan) in both(kind, &Launch::new) {
             assert_eq!(
                 contract.mcp_command.read(&plan, launch.dir()).as_deref(),
                 Some(CLI_BIN),
                 "{kind:?}: {:?}",
                 plan.argv
+            );
+            let arguments = contract
+                .mcp_arguments
+                .read(&plan, launch.dir())
+                .unwrap_or_else(|| panic!("{kind:?}: no MCP arguments in {:?}", plan.argv));
+            // Exactly `mcp serve`, with nothing before it and nothing after.
+            // The binary heads the same list for one of the three, and clause
+            // 7 asserts it above, so it comes off here.
+            let packed: String = arguments
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect();
+            assert_eq!(
+                packed.replace(&format!(r#""{CLI_BIN}","#), ""),
+                r#"["mcp","serve"]"#,
+                "{kind:?}: the MCP server is not started as `mcp serve`: {arguments}"
             );
             let environment = contract
                 .mcp_environment
@@ -274,10 +290,9 @@ fn every_launch_points_the_cli_at_the_ariadne_mcp_server() {
 #[test]
 fn every_launch_reports_the_cli_events_to_the_daemon() {
     for kind in AgentKind::ALL {
-        let launch = Launch::new();
         let contract = adapter_for(kind).contract();
         assert_eq!(contract.event_kind, kind.as_str(), "{kind:?}");
-        for plan in both(&launch, kind) {
+        for (launch, plan) in both(kind, &Launch::new) {
             let declared = contract.events.declarations(&plan, launch.dir());
             match contract.events {
                 EventDelivery::Hooks { events, .. } => {
@@ -306,8 +321,7 @@ fn every_launch_reports_the_cli_events_to_the_daemon() {
 #[test]
 fn the_configured_flags_reach_every_launch_once_and_the_adapter_adds_none() {
     for kind in AgentKind::ALL {
-        let configured = Launch::new().with_flags(&["--sandbox=off"]);
-        for plan in both(&configured, kind) {
+        for (_launch, plan) in both(kind, &|| Launch::new().with_flags(&["--sandbox=off"])) {
             assert_eq!(
                 plan.argv
                     .iter()
@@ -319,8 +333,7 @@ fn the_configured_flags_reach_every_launch_once_and_the_adapter_adds_none() {
             );
         }
 
-        let bare = Launch::new().with_flags(&[]);
-        for plan in both(&bare, kind) {
+        for (_launch, plan) in both(kind, &|| Launch::new().with_flags(&[])) {
             for flag in kind.default_flags() {
                 assert!(
                     !plan.argv.contains(&flag.to_string()),
@@ -377,15 +390,26 @@ fn a_resume_names_its_session_and_delivers_its_instruction_once() {
 #[test]
 fn an_interactive_resume_delivers_no_instruction() {
     for kind in AgentKind::ALL {
+        // One context for both plans: what is compared here is the argv, and
+        // two run dirs would differ in the paths on it.
         let launch = Launch::new();
-        let plan = adapter_for(kind)
-            .plan_resume(&launch.ctx, "id-1", "")
+        let adapter = adapter_for(kind);
+        let instructed = adapter
+            .plan_resume(&launch.ctx, "id-1", INSTRUCTION)
             .unwrap();
-        assert!(plan.post_launch_input.is_none(), "{kind:?}");
-        assert!(
-            plan.argv.iter().all(|argument| !argument.is_empty()),
-            "{kind:?}: {:?}",
-            plan.argv
+        let interactive = adapter.plan_resume(&launch.ctx, "id-1", "").unwrap();
+
+        assert!(interactive.post_launch_input.is_none(), "{kind:?}");
+        // Exactly the instructed launch with the instruction taken off it:
+        // an empty instruction delivers nothing, and puts nothing of the
+        // adapter's own in its place.
+        let expected = match adapter.contract().resume_instruction {
+            InstructionDelivery::Argv => &instructed.argv[..instructed.argv.len() - 1],
+            InstructionDelivery::TypedIntoThePane => &instructed.argv[..],
+        };
+        assert_eq!(
+            interactive.argv, expected,
+            "{kind:?}: an interactive resume carries something of its own"
         );
     }
 }
@@ -414,9 +438,8 @@ fn a_spawn_knows_its_session_id_only_where_the_cli_lets_it_be_chosen() {
 fn the_skill_documents_reach_the_cli_the_way_it_takes_them() {
     for kind in AgentKind::ALL {
         let contract = adapter_for(kind).contract();
-        let staffed = Launch::new().with_skills();
-        for plan in both(&staffed, kind) {
-            let delivered = contract.skills.read(&plan, staffed.dir());
+        for (launch, plan) in both(kind, &|| Launch::new().with_skills()) {
+            let delivered = contract.skills.read(&plan, launch.dir());
             if contract.skills == Spelling::InThePrompt {
                 // Nothing of its own: the index in the system prompt names
                 // every document by its run-dir path.
@@ -437,10 +460,9 @@ fn the_skill_documents_reach_the_cli_the_way_it_takes_them() {
             }
         }
 
-        let unstaffed = Launch::new();
-        for plan in both(&unstaffed, kind) {
+        for (launch, plan) in both(kind, &Launch::new) {
             assert_eq!(
-                contract.skills.read(&plan, unstaffed.dir()),
+                contract.skills.read(&plan, launch.dir()),
                 None,
                 "{kind:?}: {:?}",
                 plan.argv

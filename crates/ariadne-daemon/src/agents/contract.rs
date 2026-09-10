@@ -19,8 +19,9 @@
 //! 5. **effort** — the pinned effort is passed on every launch, and nothing
 //!    is passed where the session pinned none.
 //! 6. **system prompt** — a spawn brief the agent with the system prompt.
-//! 7. **MCP** — every launch points the CLI at `ariadne mcp serve`, with the
-//!    session context in the server's environment.
+//! 7. **MCP** — every launch points the CLI at `ariadne mcp serve`, with
+//!    nothing after `serve` and the session context in the server's
+//!    environment.
 //! 8. **hooks** — every launch tells the CLI to report its events to
 //!    `ariadne agent-event --kind <agent kind>`.
 //! 9. **flags** — the flags of the agent config reach the argv once, and the
@@ -199,6 +200,9 @@ pub struct AdapterContract {
     pub skills: Spelling,
     /// Where the MCP server's command — the `ariadne` binary — is passed.
     pub mcp_command: Spelling,
+    /// Where the MCP server's arguments are passed. Its value ends with the
+    /// `mcp serve` pair, whether or not the binary heads the same list.
+    pub mcp_arguments: Spelling,
     /// Where the MCP server's environment is passed. Its value carries the
     /// session id, whether one key or a table of them.
     pub mcp_environment: Spelling,

@@ -99,6 +99,7 @@ impl AgentAdapter for CodexAdapter {
             // root, so it reads them from the index in the system prompt.
             skills: Spelling::InThePrompt,
             mcp_command: Spelling::Override("mcp_servers.ariadne.command"),
+            mcp_arguments: Spelling::Override("mcp_servers.ariadne.args"),
             mcp_environment: Spelling::Override("mcp_servers.ariadne.env"),
             events: EventDelivery::Hooks {
                 site: HookSite::Override,

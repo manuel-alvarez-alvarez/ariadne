@@ -165,6 +165,10 @@ impl AgentAdapter for ClaudeAdapter {
                 file: "mcp.json",
                 pointer: "/mcpServers/ariadne/command",
             },
+            mcp_arguments: Spelling::Config {
+                file: "mcp.json",
+                pointer: "/mcpServers/ariadne/args",
+            },
             mcp_environment: Spelling::Config {
                 file: "mcp.json",
                 pointer: "/mcpServers/ariadne/env",
