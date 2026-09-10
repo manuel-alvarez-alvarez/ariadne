@@ -289,6 +289,7 @@ mod tests {
     fn model(id: &str, agent_kind: AgentKind) -> ModelDto {
         ModelDto {
             id: id.to_string(),
+            agent_id: agent_kind.as_str().to_string(),
             agent_kind,
             description: None,
             tier: ModelTier::Unknown,
@@ -388,6 +389,7 @@ mod tests {
         vec![
             ModelDto {
                 id: "codex:gpt-5.6-luna".into(),
+                agent_id: "codex".into(),
                 agent_kind: AgentKind::Codex,
                 description: Some("balanced coding model".into()),
                 tier: ModelTier::Balanced,

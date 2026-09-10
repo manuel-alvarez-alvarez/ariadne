@@ -68,6 +68,30 @@ pub mod agents {
     }
 }
 
+/// ACP agent registry endpoints.
+pub mod acp_agents {
+    use axum::extract::State;
+
+    use ariadne_api::agents::AcpAgentDto;
+
+    use crate::http::AppState;
+    use crate::http::error::{ApiResult, Json};
+
+    /// Every built-in and configured ACP agent with its cached probe result.
+    #[utoipa::path(get, path = "/v1/acp-agents", tag = "agents",
+        responses((status = 200, body = [AcpAgentDto])))]
+    pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<AcpAgentDto>>> {
+        Ok(Json(state.agent_registry.agents().await))
+    }
+
+    /// Probe every registry entry and replace the cached discovery snapshot.
+    #[utoipa::path(post, path = "/v1/acp-agents/refresh", tag = "agents",
+        responses((status = 200, body = [AcpAgentDto])))]
+    pub async fn refresh(State(state): State<AppState>) -> ApiResult<Json<Vec<AcpAgentDto>>> {
+        Ok(Json(state.agent_registry.refresh().await))
+    }
+}
+
 /// Model catalog endpoint.
 pub mod models {
     use std::time::Duration;
@@ -105,7 +129,7 @@ pub mod models {
     #[utoipa::path(get, path = "/v1/models", tag = "models",
         responses((status = 200, body = [ModelDto])))]
     pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<ModelDto>>> {
-        let mut out = catalog(&state.launcher.cfg.opencode_bin).await;
+        let mut out = catalog(&state).await;
         let off = state.store.disabled_models().await?;
         for entry in &mut out {
             entry.enabled = !off.contains(&entry.id);
@@ -130,7 +154,7 @@ pub mod models {
         State(state): State<AppState>,
         Json(req): Json<SetModelEnabledRequest>,
     ) -> ApiResult<Json<ModelDto>> {
-        let mut catalog = catalog(&state.launcher.cfg.opencode_bin).await;
+        let mut catalog = catalog(&state).await;
         let off = state.store.disabled_models().await?;
         if !catalog.iter().any(|entry| entry.id == req.id) {
             return Err(ApiError::new(
@@ -161,16 +185,19 @@ pub mod models {
     /// The catalog as the CLIs and the discovery describe it, before anything
     /// the user turned off is read over it: every entry comes back `enabled`.
     ///
-    /// `opencode_bin` is the binary discovery shells out to — always
-    /// `"opencode"` outside a test (`Config::opencode_bin`).
-    async fn catalog(opencode_bin: &str) -> Vec<ModelDto> {
+    /// Native OpenCode discovery uses the configured test seam. ACP discovery
+    /// reads the registry cache populated at daemon startup or explicit refresh.
+    async fn catalog(state: &AppState) -> Vec<ModelDto> {
         let mut out = Vec::new();
         for kind in AgentKind::ALL {
             match kind {
-                AgentKind::Opencode => out.extend(opencode_models(opencode_bin).await),
+                AgentKind::Opencode => {
+                    out.extend(opencode_models(&state.launcher.cfg.opencode_bin).await)
+                }
                 _ => out.extend(curated_models(kind).iter().map(|m| curated(kind, m))),
             }
         }
+        out.extend(state.agent_registry.models().await);
         out
     }
 
@@ -180,6 +207,7 @@ pub mod models {
     fn curated(kind: AgentKind, model: &ModelInfo) -> ModelDto {
         ModelDto {
             id: qualified(kind, model.id),
+            agent_id: kind.as_str().to_string(),
             agent_kind: kind,
             description: Some(model.description.to_string()),
             tier: model.tier,
@@ -296,6 +324,7 @@ pub mod models {
         let known: Option<ModelProfile> = opencode_profile(&name);
         ModelDto {
             id: qualified(AgentKind::Opencode, line),
+            agent_id: AgentKind::Opencode.as_str().to_string(),
             agent_kind: AgentKind::Opencode,
             description: match known {
                 Some(profile) => Some(profile.description.to_string()),

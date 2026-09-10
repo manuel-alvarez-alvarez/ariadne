@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-10
+updated: 2026-09-11
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -15,6 +15,7 @@ tests:
   - crates/ariadne-daemon/tests/doctor.rs
   - crates/ariadne-cli/src/commands/doctor.rs
   - crates/ariadne-cli/src/commands/doctor/checks.rs
+  - crates/ariadne-cli/src/commands/doctor/agents.rs
   - crates/ariadne-cli/src/commands/events.rs
   - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/src/output/table.rs
@@ -97,29 +98,32 @@ same binary also serves (013).
     warning naming that one case, on this PATH and on the daemon's alike.
 18. `skill ls` marks an orchestrator-only skill while leaving it available to
     inspect, edit and reset.
-19. Each `doctor` section is a shared output table: its check, verdict and
+19. `doctor` reports every ACP registry entry from the daemon's cached probe.
+    It shows measured capabilities, every degraded feature, and the rejection
+    reason when the agent cannot satisfy the required contract.
+20. Each `doctor` section is a shared output table: its check, verdict and
     detail columns fit the terminal, and `--no-trunc` prints their cells whole.
-20. `task ls`, `goal ls`, `session ls` and `attention` take `--watch`: the
+21. `task ls`, `goal ls`, `session ls` and `attention` take `--watch`: the
     table is redrawn whole on every event the command cares about, coalesced
     over a short settle window so one change is one redraw, until Ctrl-C.
     Every filter the command takes still narrows what a redraw shows, the
     redraw escapes only reach a real terminal, and `--watch` is advertised
     only on these four commands.
-21. A screen of several tables is fitted once, across every group of rows:
+22. A screen of several tables is fitted once, across every group of rows:
     `ariadne attention` prints a section per goal, and a column is the same
     width under every heading — on a `--watch` redraw too. A `--columns`
     naming a column the table does not have is refused once, before any of
     the screen is printed.
-22. A heading is one style everywhere: a section heading and the column header
+23. A heading is one style everywhere: a section heading and the column header
     of a table are both bold and uppercase. `-q` prints the first cell of
     every row of every group, and nothing else — and, like every other `-q`
     listing, it reads no `--columns` and so refuses none.
-23. Human mutation output is one styled line. Quiet mutation output is only
+24. Human mutation output is one styled line. Quiet mutation output is only
     the affected id. Inspect keys use lowercase space-separated words. A row's
     subject column is `title`, except the agent CLI kind remains `agent`.
     Boolean columns use the shared `yes_no` wording. Every empty listing states
     what is empty, then gives the next command when one exists.
-24. `ariadne setup codex-hooks` renders the command and events it reports
+25. `ariadne setup codex-hooks` renders the command and events it reports
     through the same key/value block every inspect command uses, rather than
     hand-picked spacing, and its confirmation prompt goes to stderr with every
     other prompt, so a piped stdout carries only that block.
@@ -179,6 +183,8 @@ same binary also serves (013).
   details truncated to a narrow terminal unless `--no-trunc` asks for them
   whole (`commands/doctor.rs::a_narrow_terminal_truncates_doctor_details`,
   `::no_trunc_keeps_doctor_details_and_columns_whole`).
+- `doctor` reports ACP probe rejections and degraded capabilities
+  (`commands/doctor/agents.rs::acp_probe_results_show_rejections_and_gaps`).
 - A git below the floor is a warning that names what it cannot do, and a
   version line is read down to its major and minor
   (`checks.rs::a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits`,

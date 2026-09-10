@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use ariadne_api::agents::AgentConfigDto;
+use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus, AgentConfigDto};
 use ariadne_api::doctor::{BinaryDto, DaemonReportDto};
 use ariadne_core::AgentKind;
 
@@ -73,6 +73,64 @@ pub fn agents(
         );
     }
     checks
+}
+
+/// The daemon's cached discovery result for each ACP registry entry.
+pub fn acp_agents(agents: &[AcpAgentDto]) -> Vec<Check> {
+    agents
+        .iter()
+        .map(|agent| match agent.status {
+            AcpAgentStatus::Rejected => Check::warn(
+                agent.id.clone(),
+                format!(
+                    "rejected: {}; {}",
+                    agent
+                        .rejection_reason
+                        .as_deref()
+                        .unwrap_or("unknown reason"),
+                    acp_capabilities(agent)
+                ),
+            ),
+            AcpAgentStatus::Ready if agent.degraded.is_empty() => {
+                Check::ok(agent.id.clone(), acp_capabilities(agent))
+            }
+            AcpAgentStatus::Ready => Check::warn(
+                agent.id.clone(),
+                format!(
+                    "{}; degraded: {}",
+                    acp_capabilities(agent),
+                    agent
+                        .degraded
+                        .iter()
+                        .map(|gap| match gap {
+                            ariadne_api::agents::AcpDegradation::NoEfforts => "no efforts",
+                            ariadne_api::agents::AcpDegradation::NoAdoption => "no adoption",
+                            ariadne_api::agents::AcpDegradation::NoRestartResume => {
+                                "no restart resume"
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ),
+        })
+        .collect()
+}
+
+fn acp_capabilities(agent: &AcpAgentDto) -> String {
+    let yes_no = |available| if available { "yes" } else { "no" };
+    let capabilities = &agent.capabilities;
+    format!(
+        "stdio {}; version 1 {}; new {}; prompt {}; model {}; thought level {}; list {}; load {}",
+        yes_no(capabilities.stdio),
+        yes_no(capabilities.protocol_v1),
+        yes_no(capabilities.session_new),
+        yes_no(capabilities.session_prompt),
+        yes_no(capabilities.model),
+        yes_no(capabilities.thought_level),
+        yes_no(capabilities.session_list),
+        yes_no(capabilities.session_load),
+    )
 }
 
 /// Whether codex still trusts the hooks every session it spawns declares
@@ -196,6 +254,7 @@ pub fn daemon_environment(
 mod tests {
     use super::*;
 
+    use ariadne_api::agents::{AcpCapabilitiesDto, AcpDegradation};
     use ariadne_api::doctor::PathStateDto;
 
     use super::super::tests::{binary, by_name};
@@ -206,6 +265,49 @@ mod tests {
             .into_iter()
             .map(|kind| binary(kind.binary(), Some(kind), found.contains(&kind), None))
             .collect()
+    }
+
+    #[test]
+    fn acp_probe_results_show_rejections_and_gaps() {
+        let capabilities = AcpCapabilitiesDto {
+            stdio: true,
+            protocol_v1: true,
+            session_new: true,
+            session_prompt: true,
+            model: true,
+            thought_level: false,
+            session_list: false,
+            session_load: false,
+        };
+        let rejected = AcpAgentDto {
+            id: "broken".into(),
+            command: vec!["broken".into()],
+            builtin: false,
+            status: AcpAgentStatus::Rejected,
+            capabilities: capabilities.clone(),
+            degraded: Vec::new(),
+            rejection_reason: Some("model option is missing".into()),
+        };
+        let degraded = AcpAgentDto {
+            id: "limited".into(),
+            command: vec!["limited".into()],
+            builtin: false,
+            status: AcpAgentStatus::Ready,
+            capabilities,
+            degraded: vec![
+                AcpDegradation::NoEfforts,
+                AcpDegradation::NoAdoption,
+                AcpDegradation::NoRestartResume,
+            ],
+            rejection_reason: None,
+        };
+
+        let checks = acp_agents(&[rejected, degraded]);
+        assert!(checks[0].detail.contains("model option is missing"));
+        assert!(checks[0].detail.contains("thought level no"));
+        assert!(checks[1].detail.contains("no efforts"));
+        assert!(checks[1].detail.contains("no adoption"));
+        assert!(checks[1].detail.contains("no restart resume"));
     }
 
     /// Availability as the daemon reports it, whatever this shell has.
@@ -302,6 +404,7 @@ mod tests {
             home: "/home/me/.ariadne".into(),
             socket_path: "/home/me/.ariadne/ariadned.sock".into(),
             agents: Vec::new(),
+            acp_agents: Vec::new(),
             tools: vec![
                 binary("git", None, false, None),
                 binary("gh", None, true, Some(false)),

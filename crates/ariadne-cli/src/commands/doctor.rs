@@ -297,6 +297,13 @@ async fn examine(client: &Client) -> Report {
             Section::new("tools", checks::tools(&[tmux, git], &[gh, glab])),
             Section::new("agents", agents::agents(&agents, &flags, &available)),
             Section::new(
+                "ACP agents",
+                daemon
+                    .as_ref()
+                    .map(|report| agents::acp_agents(&report.acp_agents))
+                    .unwrap_or_default(),
+            ),
+            Section::new(
                 "daemon environment",
                 agents::daemon_environment(daemon.as_ref(), &available),
             ),

@@ -183,6 +183,8 @@ def read():
 def respond(request):
     global permissions
     method = request.get("method")
+    if method in script.get("unsupported_methods", []):
+        raise Failure(-32601, "method not supported: %s" % method)
     sid = script.get("session_id", "stub-session")
     if method == "initialize":
         return {"protocolVersion": script.get("protocol_version", 1),

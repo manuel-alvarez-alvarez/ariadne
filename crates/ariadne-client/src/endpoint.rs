@@ -12,6 +12,16 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+/// One additional ACP agent command configured by the user.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcpAgentConfig {
+    /// Stable id used by the registry and model ids.
+    pub id: String,
+    /// Program followed by its arguments.
+    pub command: Vec<String>,
+}
+
 /// Environment variable moving the whole ariadne home directory.
 pub const HOME_ENV: &str = "ARIADNE_HOME";
 
@@ -53,6 +63,9 @@ pub struct FileConfig {
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).
     pub prevent_sleep: Option<bool>,
+    /// Additional ACP agents appended to the built-in registry.
+    #[serde(default)]
+    pub acp_agents: Vec<AcpAgentConfig>,
 }
 
 /// Why `<home>/config.toml` could not be read as configuration.
@@ -228,6 +241,19 @@ mod tests {
         assert_eq!(config.db_path, Some(PathBuf::from("/scratch/ariadne.db")));
         assert_eq!(config.prevent_sleep, Some(false));
         assert_eq!(config.socket_path, None);
+    }
+
+    #[test]
+    fn configured_acp_agents_keep_their_stable_id_and_argv() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            "[[acp_agents]]\nid = \"my-agent\"\ncommand = [\"my-agent\", \"acp\"]\n",
+        );
+        let config = parse_config(dir.path()).unwrap().expect("a config");
+        assert_eq!(config.acp_agents.len(), 1);
+        assert_eq!(config.acp_agents[0].id, "my-agent");
+        assert_eq!(config.acp_agents[0].command, ["my-agent", "acp"]);
     }
 
     /// A misspelled key is the whole point of parsing strictly: it would

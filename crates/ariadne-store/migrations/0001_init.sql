@@ -37,7 +37,7 @@ CREATE TABLE skills (
 -- a property of that CLI, not of the persona a profile describes. Read on
 -- every spawn and resume.
 CREATE TABLE agent_configs (
-    agent_kind  TEXT PRIMARY KEY CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
+    agent_kind  TEXT PRIMARY KEY,
     extra_flags TEXT NOT NULL,                  -- JSON array of argv strings
     updated_at  TEXT NOT NULL
 );
@@ -102,8 +102,7 @@ CREATE TABLE goals (
                         CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
-    agent_kind          TEXT NOT NULL
-                        CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
+    agent_kind          TEXT NOT NULL,
     model               TEXT NOT NULL,
     effort              TEXT
 );
@@ -161,8 +160,7 @@ CREATE TABLE task_agents (
     task_id    TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
     seat       TEXT NOT NULL CHECK (seat IN ('author', 'reviewer')),
     ordinal    INTEGER NOT NULL,
-    agent_kind TEXT NOT NULL
-               CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
+    agent_kind TEXT NOT NULL,
     model      TEXT NOT NULL,
     effort     TEXT,
     -- What this agent is told beyond the task itself, where the orchestrator
@@ -329,7 +327,7 @@ CREATE TABLE agent_events (
     id         TEXT PRIMARY KEY,
     session_id TEXT REFERENCES agent_sessions (id) ON DELETE SET NULL,
     task_id    TEXT REFERENCES tasks (id) ON DELETE CASCADE,
-    agent_kind TEXT CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
+    agent_kind TEXT,
     kind       TEXT NOT NULL,                   -- session_start | post_tool_use | stop | turn_complete | ...
     payload    TEXT NOT NULL,                   -- raw JSON
     created_at TEXT NOT NULL

@@ -8,6 +8,8 @@ use ariadne_core::AgentKind;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::agents::AcpAgentDto;
+
 /// The daemon's own environment, as `ariadne doctor` renders it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DaemonReportDto {
@@ -20,6 +22,9 @@ pub struct DaemonReportDto {
     pub socket_path: String,
     /// One entry per [`AgentKind`], in `AgentKind::ALL` order.
     pub agents: Vec<BinaryDto>,
+    /// Every registry ACP agent and its cached discovery result.
+    #[serde(default)]
+    pub acp_agents: Vec<AcpAgentDto>,
     /// The other binaries the daemon runs: tmux and git, without which no
     /// session can be spawned at all, and the forge CLIs `gh` and `glab`,
     /// which are what a published task is watched through.

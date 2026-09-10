@@ -9,17 +9,20 @@ use utoipa::ToSchema;
 /// names both halves — there is no bare-CLI entry, because a model is
 /// required wherever an agent is pinned.
 ///
-/// The id is what a request writes as its `model`, whole. `agent_kind` is the
-/// same fact taken apart, so a picker can group the catalog by CLI without
-/// parsing anything. The rest is what an orchestrator sizes a task from: what
-/// this model is, what it costs and how fast it answers next to every other
-/// entry, the work it is and is not the choice for, and what each of its
-/// efforts buys.
+/// The id is what a request writes as its `model`, whole. `agent_id` is its
+/// registry prefix. `agent_kind` keeps the native adapter family, and is
+/// `acp` for a discovered entry. The rest is what an orchestrator sizes a task
+/// from: what this model is, what it costs and how fast it answers next to
+/// every other entry, the work it is and is not the choice for, and what each
+/// of its efforts buys.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ModelDto {
     #[schema(example = "claude_code:claude-fable-5")]
     pub id: String,
-    /// The agent CLI this entry runs on.
+    /// Stable registry agent id. Native catalog entries use their agent kind.
+    #[serde(default)]
+    pub agent_id: String,
+    /// The native adapter family this entry runs through.
     pub agent_kind: AgentKind,
     /// One line about the model, which is what a picker shows beside the id.
     pub description: Option<String>,

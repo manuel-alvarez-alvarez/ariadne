@@ -13,6 +13,29 @@ async fn test_store() -> (Store, tempfile::TempDir) {
     (store, dir)
 }
 
+/// Registry agent ids are open strings throughout the schema.
+#[tokio::test]
+async fn agent_ids_have_no_closed_check_constraint() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let _store = Store::open(&path).await.unwrap();
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    for table in ["agent_configs", "goals", "task_agents", "agent_events"] {
+        let schema: String =
+            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+                .bind(table)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            !schema.contains("agent_kind IN"),
+            "{table} still closes agent ids: {schema}"
+        );
+    }
+}
+
 /// The pin every seeded agent runs on: a model is required everywhere, so the
 /// fixtures name one and the tests that care name their own.
 fn pin(agent_kind: AgentKind, model: &str) -> AgentPin {

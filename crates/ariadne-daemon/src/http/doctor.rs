@@ -64,6 +64,7 @@ pub async fn report(State(state): State<AppState>) -> Json<DaemonReportDto> {
         home: cfg.root.display().to_string(),
         socket_path: cfg.socket_path.display().to_string(),
         agents,
+        acp_agents: state.agent_registry.agents().await,
         tools,
         db: path_state(&cfg.db_path),
         worktree_root: path_state(&cfg.worktree_root),

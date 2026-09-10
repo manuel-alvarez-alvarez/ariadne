@@ -4,6 +4,52 @@ use ariadne_core::AgentKind;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// One ACP agent known to the daemon and its latest discovery result.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AcpAgentDto {
+    /// Stable id used as the model-id prefix.
+    pub id: String,
+    /// Program followed by its arguments.
+    pub command: Vec<String>,
+    /// Whether Ariadne supplied this entry.
+    pub builtin: bool,
+    pub status: AcpAgentStatus,
+    pub capabilities: AcpCapabilitiesDto,
+    /// One flag for every optional capability that is absent.
+    pub degraded: Vec<AcpDegradation>,
+    /// Why discovery rejected this agent.
+    pub rejection_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AcpAgentStatus {
+    Ready,
+    Rejected,
+}
+
+/// Required and optional ACP capabilities measured by discovery.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct AcpCapabilitiesDto {
+    pub stdio: bool,
+    pub protocol_v1: bool,
+    pub session_new: bool,
+    pub session_prompt: bool,
+    pub model: bool,
+    pub thought_level: bool,
+    pub session_list: bool,
+    pub session_load: bool,
+}
+
+/// An optional ACP capability missing from an otherwise usable agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AcpDegradation {
+    NoEfforts,
+    NoAdoption,
+    NoRestartResume,
+}
+
 /// How one agent CLI is launched, shared by every agent that runs on it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentConfigDto {

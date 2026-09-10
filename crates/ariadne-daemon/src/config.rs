@@ -11,6 +11,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 
 use ariadne_client::endpoint;
+use ariadne_client::endpoint::AcpAgentConfig;
 
 /// Fully resolved daemon configuration.
 #[derive(Debug, Clone)]
@@ -43,6 +44,8 @@ pub struct Config {
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
     pub typed_input_window: Duration,
+    /// User-defined ACP agent commands appended to the built-in registry.
+    pub acp_agents: Vec<AcpAgentConfig>,
 }
 
 /// How long a freshly launched pane is watched for a TUI to type a resume
@@ -101,6 +104,7 @@ impl Config {
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
             typed_input_window: DEFAULT_TYPED_INPUT_WINDOW,
+            acp_agents: file.acp_agents,
             root,
         };
 

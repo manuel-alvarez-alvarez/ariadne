@@ -38,7 +38,8 @@ use ariadne_api::stream::HeartbeatDto;
 use ariadne_api::{HealthResponse, VersionResponse};
 use ariadne_store::Store;
 
-use catalog::{agents, models};
+use crate::acp_discovery::AgentRegistry;
+use catalog::{acp_agents, agents, models};
 
 use crate::bus::EventBus;
 use crate::launcher::Launcher;
@@ -61,6 +62,8 @@ pub struct AppState {
     pub events: EventBus,
     /// Recent daemon log lines, served by `/v1/logs`.
     pub logs: LogBuffer,
+    /// ACP commands and their cached discovery snapshot.
+    pub agent_registry: AgentRegistry,
 }
 
 impl AppState {
@@ -106,7 +109,7 @@ impl AppState {
         health,
         version,
         doctor::report,
-        agents::list, agents::update,
+        agents::list, agents::update, acp_agents::list, acp_agents::refresh,
         skills::create, skills::list, skills::get, skills::update, skills::delete,
         skills::reset_document,
         repositories::create, repositories::list, repositories::get,
@@ -162,6 +165,8 @@ pub fn router(state: AppState) -> Router {
         // agents
         .route("/v1/agents", get(agents::list))
         .route("/v1/agents/{kind}", put(agents::update))
+        .route("/v1/acp-agents", get(acp_agents::list))
+        .route("/v1/acp-agents/refresh", post(acp_agents::refresh))
         // skills
         .route("/v1/skills", post(skills::create).get(skills::list))
         .route(

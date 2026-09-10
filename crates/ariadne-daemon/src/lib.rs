@@ -2,6 +2,8 @@
 //! the managers directly. The `ariadned` binary is a thin wrapper.
 
 pub mod acp;
+pub mod acp_discovery;
+mod acp_rpc;
 pub mod agents;
 pub mod attention;
 pub mod branch;

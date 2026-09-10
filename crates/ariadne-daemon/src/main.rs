@@ -43,6 +43,7 @@ unknown key stops the daemon rather than being ignored):
   delete_merged_branches   delete a task branch once it has landed (default: true)
   delete_merged_worktrees  delete a task worktree once it has landed (default: true)
   prevent_sleep            hold off system sleep while a session is live (default: true)
+  [[acp_agents]]           add an ACP command with a stable `id` and `command` array
 
   ariadned --check-config reads that file and exits.\
 ";
@@ -104,6 +105,9 @@ async fn main() -> Result<()> {
         .with_context(|| format!("writing {}", config.pid_file.display()))?;
 
     let config = std::sync::Arc::new(config);
+    let agent_registry =
+        ariadne_daemon::acp_discovery::AgentRegistry::new(&config.acp_agents, config.root.clone());
+    agent_registry.refresh().await;
     let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
         cfg: config.clone(),
         store: store.clone(),
@@ -128,6 +132,7 @@ async fn main() -> Result<()> {
         sched_tx: Some(sched_tx),
         events,
         logs,
+        agent_registry,
     };
     let app = http::router(state);
 

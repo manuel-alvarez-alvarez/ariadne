@@ -106,6 +106,7 @@ pub struct HarnessBuilder {
     opencode_bin: Option<String>,
     acp_bin: Option<String>,
     agent_home: Option<PathBuf>,
+    discover_agents: bool,
 }
 
 /// A daemon in a temporary directory: a stub `tmux`, no scheduler.
@@ -137,6 +138,7 @@ pub fn harness() -> HarnessBuilder {
         opencode_bin: None,
         acp_bin: None,
         agent_home: None,
+        discover_agents: false,
     }
 }
 
@@ -197,6 +199,12 @@ impl HarnessBuilder {
         self
     }
 
+    /// Run ACP registry discovery while the harness starts.
+    pub fn discover_agents(mut self) -> Self {
+        self.discover_agents = true;
+        self
+    }
+
     /// Point transcript discovery at a fixture home rather than the user's
     /// real CLI stores.
     pub fn agent_home(mut self, home: PathBuf) -> Self {
@@ -237,6 +245,13 @@ impl HarnessBuilder {
             Tmux::Missing => TmuxManager::new(stub_path(dir.path()).display().to_string()),
             Tmux::Real => TmuxManager::default(),
         };
+        let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
+            &config.acp_agents,
+            config.root.clone(),
+        );
+        if self.discover_agents {
+            agent_registry.refresh().await;
+        }
         let launcher = Arc::new(Launcher {
             cfg: Arc::new(config),
             store: store.clone(),
@@ -257,6 +272,7 @@ impl HarnessBuilder {
             sched_tx: sched.clone(),
             events: bus.clone(),
             logs: logs.clone(),
+            agent_registry,
         };
         // Lazy: most tests never write behind the store's back, and a
         // connection opened for every harness in every binary is a hundred

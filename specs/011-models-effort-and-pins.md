@@ -1,12 +1,13 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-09-08
+updated: 2026-09-11
 areas: [core, api, daemon, cli]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
   - crates/ariadne-core/src/models.rs
   - crates/ariadne-daemon/tests/models.rs
+  - crates/ariadne-daemon/tests/acp_discovery.rs
   - crates/ariadne-daemon/tests/pins.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/adapters.rs
@@ -76,6 +77,24 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
     still moves.
 12. The last entry left on cannot be turned off: a daemon that can staff
     nothing is not a state to leave a user in.
+13. The ACP registry contains `claude-code-acp`, `codex acp`, and `opencode
+    acp`, plus commands configured under `acp_agents`. Each configured entry
+    supplies the stable id that prefixes its discovered model ids.
+14. The daemon probes all registry entries at startup and caches the result.
+    `POST /v1/acp-agents/refresh` replaces that cache on demand. A probe uses
+    ACP version 1 over standard input and output, creates a session, and
+    verifies prompting before accepting the agent.
+15. An accepted ACP agent must offer a `model` session option. Its choices
+    become models, and the choices of an optional `thought_level` option
+    become each model's efforts. Native adapter catalog entries remain beside
+    the discovered entries.
+16. An ACP agent without version 1, `session/new`, `session/prompt`, or a
+    usable model option is rejected with its reason. Missing thought levels,
+    session listing, or session loading mark the agent as degraded for no
+    efforts, no adoption, or no restart resume respectively.
+17. Agent ids are open strings in the initial database schema. Existing
+    databases fail the edited migration checksum and need a manual migration
+    or recreation.
 
 ## Acceptance criteria
 
@@ -123,6 +142,18 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
   (`models.rs::a_model_the_catalog_does_not_carry_cannot_be_turned_off`), and
   neither can the last one left on
   (`::the_last_model_left_on_cannot_be_turned_off`).
+- The ACP registry includes its built-ins and configured additions
+  (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`),
+  and refreshes its cache on demand (`::discovery_refreshes_on_demand`).
+- ACP discovery adds model and effort choices to the catalog
+  (`acp_discovery.rs::a_discovered_agents_models_and_efforts_enter_the_model_catalog`).
+- Discovery rejects every missing required capability
+  (`acp_discovery.rs::every_required_acp_capability_is_enforced`,
+  `::an_agent_without_a_model_option_is_rejected_and_doctor_shows_why`).
+- Every optional gap has its own degradation flag
+  (`acp_discovery.rs::every_optional_capability_gap_sets_its_degraded_flag`).
+- No schema constraint closes agent ids over a built-in enumeration
+  (`store.rs::agent_ids_have_no_closed_check_constraint`).
 - The desktop app lists the catalog with a switch apiece
   (`models-page.test.tsx`), sending the id in the body so one named with a
   slash still travels, and says why where the daemon refuses; the picker
@@ -133,6 +164,7 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
 
 `crates/ariadne-core/src/models.rs` (the catalog),
 `crates/ariadne-daemon/src/http/catalog.rs`,
+`crates/ariadne-daemon/src/acp_discovery.rs`,
 `crates/ariadne-daemon/src/http/pins.rs`,
 `crates/ariadne-store/src/models.rs`,
 `crates/ariadne-store/src/task_agents.rs`,

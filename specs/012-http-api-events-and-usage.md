@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-10
+updated: 2026-09-11
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-daemon/tests/unknown_fields.rs
   - crates/ariadne-daemon/tests/logs.rs
   - crates/ariadne-daemon/tests/doctor.rs
+  - crates/ariadne-daemon/tests/acp_discovery.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/memories.rs
@@ -86,6 +87,10 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
 13. `doctor` reports the environment the daemon actually runs in — its own
     paths, the agent CLIs and tools a session and a published task need, and a
     worktree root it cannot write.
+14. `GET /v1/acp-agents` serves the cached ACP registry. `POST
+    /v1/acp-agents/refresh` probes every entry and replaces that cache. Both
+    responses include status, measured capabilities, degradation flags, and
+    a rejection reason when discovery failed.
 
 ## Acceptance criteria
 
@@ -144,6 +149,9 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
   (`logs.rs::both_endpoints_are_in_the_openapi_document`,
   `doctor.rs::endpoint_is_in_the_openapi_document`,
   `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`).
+- ACP registry endpoints expose the cached result and refresh it on demand
+  (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`,
+  `::discovery_refreshes_on_demand`).
 
 ## Sources
 

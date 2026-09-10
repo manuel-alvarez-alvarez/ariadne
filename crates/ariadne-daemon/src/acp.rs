@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
@@ -30,6 +30,7 @@ use ariadne_core::AgentKind;
 use ariadne_core::acp::LaunchConfig;
 use ariadne_store::Store;
 
+use crate::acp_rpc::{Incoming, RpcTransport};
 use crate::http::events::ingest_event;
 use crate::scheduler::SchedEvent;
 
@@ -236,7 +237,7 @@ impl AcpRuntime {
             launch_id: launch.launch_id.clone(),
             agent_session: Arc::new(OnceLock::new()),
         };
-        let mut rpc = Rpc::new(BufReader::new(stdout), stdin, sink.clone());
+        let mut rpc = Rpc::new(stdout, stdin, sink.clone());
         let outcome = tokio::select! {
             result = run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts) => Some(result),
             _ = stopped => None,
@@ -310,87 +311,63 @@ impl EventSink {
 }
 
 struct Rpc {
-    reader: tokio::io::Lines<BufReader<ChildStdout>>,
-    writer: BufWriter<ChildStdin>,
-    next_id: u64,
+    transport: RpcTransport,
     sink: EventSink,
     assistant_text: String,
 }
 
 impl Rpc {
-    fn new(reader: BufReader<ChildStdout>, writer: ChildStdin, sink: EventSink) -> Self {
+    fn new(stdout: ChildStdout, stdin: ChildStdin, sink: EventSink) -> Self {
         Self {
-            reader: reader.lines(),
-            writer: BufWriter::new(writer),
-            next_id: 1,
+            transport: RpcTransport::new(stdout, stdin),
             sink,
             assistant_text: String::new(),
         }
     }
 
     async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.write(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }))
-        .await?;
-
-        loop {
-            let line = self
-                .reader
-                .next_line()
-                .await
-                .context("reading from the ACP agent")?
-                .ok_or_else(|| anyhow!("ACP agent closed stdout during {method}"))?;
-            let message: Value = serde_json::from_str(&line)
-                .with_context(|| format!("reading ACP message `{line}`"))?;
-            if message.get("id").and_then(Value::as_u64) == Some(id)
-                && message.get("method").is_none()
-            {
-                if let Some(error) = message.get("error") {
-                    bail!("ACP {method} failed: {error}");
-                }
-                return message
-                    .get("result")
-                    .cloned()
-                    .ok_or_else(|| anyhow!("ACP {method} response has no result"));
-            }
-            self.handle_incoming(message).await?;
-        }
+        let mut incoming = RuntimeIncoming {
+            sink: &self.sink,
+            assistant_text: &mut self.assistant_text,
+        };
+        self.transport.request(method, params, &mut incoming).await
     }
 
-    async fn write(&mut self, message: &Value) -> Result<()> {
-        let mut line = serde_json::to_vec(message)?;
-        line.push(b'\n');
-        self.writer
-            .write_all(&line)
-            .await
-            .context("writing to the ACP agent")?;
-        self.writer.flush().await.context("flushing ACP request")
+    async fn receive(&mut self) -> Result<bool> {
+        let mut incoming = RuntimeIncoming {
+            sink: &self.sink,
+            assistant_text: &mut self.assistant_text,
+        };
+        self.transport.receive(&mut incoming).await
     }
+}
 
-    async fn handle_incoming(&mut self, message: Value) -> Result<()> {
+struct RuntimeIncoming<'a> {
+    sink: &'a EventSink,
+    assistant_text: &'a mut String,
+}
+
+impl Incoming for RuntimeIncoming<'_> {
+    async fn handle(&mut self, message: Value) -> Result<Option<Value>> {
         match message.get("method").and_then(Value::as_str) {
-            Some("session/update") => self.handle_update(&message["params"]).await,
+            Some("session/update") => {
+                self.handle_update(&message["params"]).await?;
+                Ok(None)
+            }
             Some("session/request_permission") if message.get("id").is_some() => {
-                self.handle_permission(&message).await
+                self.handle_permission(&message).await.map(Some)
             }
-            Some(_) if message.get("id").is_some() => {
-                let response = json!({
-                    "jsonrpc": "2.0",
-                    "id": message["id"],
-                    "error": {"code": -32601, "message": "method not supported"},
-                });
-                self.write(&response).await
-            }
-            _ => Ok(()),
+            Some(_) if message.get("id").is_some() => Ok(Some(json!({
+                "jsonrpc": "2.0",
+                "id": message["id"],
+                "error": {"code": -32601, "message": "method not supported"},
+            }))),
+            _ => Ok(None),
         }
     }
+}
 
+impl RuntimeIncoming<'_> {
     async fn handle_update(&mut self, params: &Value) -> Result<()> {
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let update = params.get("update").cloned().unwrap_or_default();
@@ -426,7 +403,7 @@ impl Rpc {
     /// Approve the permission request. There is nobody at a pane to choose:
     /// the daemon selects the first allowing option, and a later task adds
     /// the permission modes that decide otherwise.
-    async fn handle_permission(&mut self, message: &Value) -> Result<()> {
+    async fn handle_permission(&mut self, message: &Value) -> Result<Value> {
         let params = &message["params"];
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let mut payload = tool_payload(session_id.clone(), &params["toolCall"]);
@@ -438,19 +415,17 @@ impl Rpc {
             || json!({"outcome": "cancelled"}),
             |option_id| json!({"outcome": "selected", "optionId": option_id}),
         );
-        self.write(&json!({
-            "jsonrpc": "2.0",
-            "id": message["id"],
-            "result": {"outcome": outcome},
-        }))
-        .await?;
         self.sink
             .emit(
                 "permission.replied",
                 json!({"session_id": session_id, "option_id": selected}),
             )
             .await;
-        Ok(())
+        Ok(json!({
+            "jsonrpc": "2.0",
+            "id": message["id"],
+            "result": {"outcome": outcome},
+        }))
     }
 }
 
@@ -555,13 +530,10 @@ async fn serve_with_input(
                     None => console_open = false,
                 }
             }
-            line = rpc.reader.next_line() => {
-                let Some(line) = line.context("reading from the ACP agent")? else {
+            received = rpc.receive() => {
+                if !received? {
                     return Ok(());
-                };
-                let message: Value = serde_json::from_str(&line)
-                    .with_context(|| format!("reading ACP message `{line}`"))?;
-                rpc.handle_incoming(message).await?;
+                }
             }
         }
     }
@@ -617,7 +589,34 @@ async fn set_pinned_option(
     label: &str,
     value: &str,
 ) -> Result<Vec<Value>> {
-    let option = options
+    let option = find_config_option(&options, categories, names)
+        .ok_or_else(|| anyhow!("ACP agent did not offer a {label} configuration option"))?;
+    let config_id = option
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("ACP {label} configuration option has no id"))?;
+    let response = rpc
+        .request(
+            "session/set_config_option",
+            json!({"sessionId": session_id, "configId": config_id, "value": value}),
+        )
+        .await
+        .with_context(|| format!("setting ACP {label} to `{value}`"))?;
+    Ok(response
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or(options))
+}
+
+/// Find a session configuration option by its ACP category, then by the
+/// identifying names agents used before categories were consistently set.
+pub(crate) fn find_config_option<'a>(
+    options: &'a [Value],
+    categories: &[&str],
+    names: &[&str],
+) -> Option<&'a Value> {
+    options
         .iter()
         .find(|option| {
             option
@@ -638,23 +637,6 @@ async fn set_pinned_option(
                     })
             })
         })
-        .ok_or_else(|| anyhow!("ACP agent did not offer a {label} configuration option"))?;
-    let config_id = option
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("ACP {label} configuration option has no id"))?;
-    let response = rpc
-        .request(
-            "session/set_config_option",
-            json!({"sessionId": session_id, "configId": config_id, "value": value}),
-        )
-        .await
-        .with_context(|| format!("setting ACP {label} to `{value}`"))?;
-    Ok(response
-        .get("configOptions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or(options))
 }
 
 async fn prompt_once(
