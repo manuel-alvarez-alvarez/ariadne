@@ -2,7 +2,7 @@
 
 use ariadne_core::id::new_id;
 
-use crate::{Memory, Result, Store, not_found, now};
+use crate::{Change, Memory, Result, Store, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewMemory {
@@ -34,7 +34,9 @@ impl Store {
         .bind(&new.expires_at)
         .execute(self.w())
         .await?;
-        self.get_memory(&new.repository_id, &id).await
+        let memory = self.get_memory(&new.repository_id, &id).await?;
+        self.publish(Change::MemoryCreated(memory.clone()));
+        Ok(memory)
     }
 
     pub async fn get_memory(&self, repository_id: &str, id: &str) -> Result<Memory> {
@@ -83,6 +85,7 @@ impl Store {
             .bind(id)
             .execute(self.w())
             .await?;
+        self.publish(Change::MemoryDeleted(id.to_string()));
         Ok(())
     }
 }

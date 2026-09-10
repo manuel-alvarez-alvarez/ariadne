@@ -45,6 +45,8 @@ and a later change can add the desktop surface.
    the shared list, mutation, JSON and quiet output forms (014).
 10. The REST surface adds, lists, searches and deletes memory under one
     repository, and every endpoint appears in OpenAPI (012).
+11. Memory creation emits the complete entry, and memory deletion emits the
+    removed id on the domain event stream (012).
 
 ## Acceptance criteria
 
@@ -58,12 +60,20 @@ and a later change can add the desktop surface.
 - Delete removes a memory (`memories.rs::delete_removes_a_memory`), and the
   CLI accepts the entry and repository
   (`cli/tests.rs::memory_delete_takes_the_entry_and_its_repository`).
+- Memory creation and deletion reach the domain event stream
+  (`memories.rs::delete_removes_a_memory`).
 - Every endpoint appears in OpenAPI
   (`memories.rs::every_memory_endpoint_is_in_the_openapi_document`).
 - Every seat receives both memory tools
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`), and
   the tools call the named repository
   (`tools.rs::memory_tools_save_and_search_the_named_repository`).
+- Memory tools default to a task's repository
+  (`tools.rs::memory_tools_default_to_the_task_repository`), default to a
+  goal's only repository
+  (`::memory_search_defaults_to_the_goals_only_repository`), and require a
+  repository when the goal has several
+  (`::memory_search_needs_a_repository_when_the_goal_has_several`).
 - Every MCP text is Simplified Technical English
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
 

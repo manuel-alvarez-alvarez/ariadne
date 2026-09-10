@@ -19,8 +19,8 @@ use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
-    event_dto, goal_dto_of, message_dto, repository_dto, session_dto_of, skill_dto, task_dto_of,
-    transition_dto,
+    event_dto, goal_dto_of, memory_dto, message_dto, repository_dto, session_dto_of, skill_dto,
+    task_dto_of, transition_dto,
 };
 
 /// Events buffered per subscriber before it is considered too slow.
@@ -172,6 +172,8 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::RepositoryDeleted(id) => {
             unscoped(DomainEvent::RepositoryDeleted(DeletedDto { id }))
         }
+        Change::MemoryCreated(memory) => unscoped(DomainEvent::MemoryCreated(memory_dto(memory))),
+        Change::MemoryDeleted(id) => unscoped(DomainEvent::MemoryDeleted(DeletedDto { id })),
     };
     Ok(event)
 }

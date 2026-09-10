@@ -85,6 +85,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::the_skill_catalog_excludes_orchestrator_only_skills`).
 - Memory tools save and search the repository they name
   (`tools.rs::memory_tools_save_and_search_the_named_repository`).
+- Memory tools default to a task's repository
+  (`tools.rs::memory_tools_default_to_the_task_repository`), default to a
+  goal's only repository
+  (`::memory_search_defaults_to_the_goals_only_repository`), and require a
+  repository when the goal has several
+  (`::memory_search_needs_a_repository_when_the_goal_has_several`).
 
 ## Sources
 

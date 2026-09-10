@@ -6,9 +6,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 
 use ariadne_api::SESSION_HEADER;
+use ariadne_api::stream::DomainEvent;
 use ariadne_core::{AgentKind, Seat};
 
-use common::{as_session, delete, get, harness, test_pin};
+use common::{as_session, delete, get, harness, next_event, test_pin};
 
 fn get_as_session(uri: &str, session_id: &str) -> Request<Body> {
     Request::builder()
@@ -203,6 +204,7 @@ async fn an_expired_memory_never_returns_from_list_or_search() {
 #[tokio::test]
 async fn delete_removes_a_memory() {
     let h = harness().await;
+    let mut events = h.bus.subscribe();
     let (goal, repo) = h.goal().await;
     let task = h
         .task_on(&goal, &repo, "task", 0, test_pin(AgentKind::ClaudeCode))
@@ -224,6 +226,12 @@ async fn delete_removes_a_memory() {
             StatusCode::CREATED,
         )
         .await;
+    let event = next_event(&mut events, |event| event.event.kind() == "memory_created").await;
+    let DomainEvent::MemoryCreated(memory) = event.event else {
+        unreachable!("matched memory_created")
+    };
+    assert_eq!(memory.id, created["id"]);
+    assert_eq!(memory.text, "Delete this entry.");
 
     let (status, _) = h
         .send(delete(&format!(
@@ -233,6 +241,11 @@ async fn delete_removes_a_memory() {
         )))
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    let event = next_event(&mut events, |event| event.event.kind() == "memory_deleted").await;
+    let DomainEvent::MemoryDeleted(memory) = event.event else {
+        unreachable!("matched memory_deleted")
+    };
+    assert_eq!(memory.id, created["id"]);
 
     let listed: Vec<serde_json::Value> = h
         .json(

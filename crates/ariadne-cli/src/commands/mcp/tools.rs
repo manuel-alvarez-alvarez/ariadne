@@ -714,7 +714,10 @@ mod tests {
     use ariadne_client::Client;
 
     use crate::commands::mcp::McpSeat;
-    use crate::commands::mcp::tests::{recording_daemon, recording_daemon_answering, server_at};
+    use crate::commands::mcp::tests::{
+        recording_daemon, recording_daemon_answering, recording_daemon_answering_in_order,
+        server_at,
+    };
 
     /// The orchestrator is never offered a model it cannot staff an agent on.
     ///
@@ -954,6 +957,96 @@ mod tests {
             seen[0].path,
             "/v1/repositories/01REPO/memories/search?q=parser+fixture"
         );
+    }
+
+    #[tokio::test]
+    async fn memory_tools_default_to_the_task_repository() {
+        let (endpoint, seen) = recording_daemon_answering_in_order(&[
+            r#"{"repo_id":"01REPO"}"#,
+            "{}",
+            r#"{"repo_id":"01REPO"}"#,
+            "[]",
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.save_memory(Parameters(SaveMemoryReq {
+            repository_id: None,
+            text: "Run the parser fixture.".into(),
+            expires_at: "2099-01-01T00:00:00Z".into(),
+        }))
+        .await
+        .expect("save memory");
+        mcp.search_memory(Parameters(SearchMemoryReq {
+            repository_id: None,
+            query: "parser".into(),
+        }))
+        .await
+        .expect("search memory");
+
+        let seen = seen.lock().expect("lock").clone();
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/v1/tasks/01TASK",
+                "/v1/repositories/01REPO/memories",
+                "/v1/tasks/01TASK",
+                "/v1/repositories/01REPO/memories/search?q=parser",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_search_defaults_to_the_goals_only_repository() {
+        let (endpoint, seen) =
+            recording_daemon_answering_in_order(&[r#"{"repos":[{"id":"01REPO"}]}"#, "[]"]).await;
+        let mut mcp = server_at(
+            McpSeat::Orchestrator,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.task_id = None;
+        mcp.search_memory(Parameters(SearchMemoryReq {
+            repository_id: None,
+            query: "parser".into(),
+        }))
+        .await
+        .expect("search memory");
+
+        let seen = seen.lock().expect("lock").clone();
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/v1/goals/01GOAL",
+                "/v1/repositories/01REPO/memories/search?q=parser",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_search_needs_a_repository_when_the_goal_has_several() {
+        let (endpoint, seen) =
+            recording_daemon_answering(r#"{"repos":[{"id":"01FIRST"},{"id":"01SECOND"}]}"#).await;
+        let mut mcp = server_at(
+            McpSeat::Orchestrator,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.task_id = None;
+        let error = mcp
+            .search_memory(Parameters(SearchMemoryReq {
+                repository_id: None,
+                query: "parser".into(),
+            }))
+            .await
+            .expect_err("repository required");
+
+        assert!(error.message.contains("pass repository_id"), "{error:?}");
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].path, "/v1/goals/01GOAL");
     }
 
     /// A verdict is a message to the author like any other, and what makes it
