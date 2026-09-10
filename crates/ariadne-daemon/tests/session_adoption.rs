@@ -8,7 +8,7 @@ use ariadne_api::sessions::{OutsideSessionDto, SessionDto};
 use ariadne_core::{Actor, AgentKind, Seat, TaskStatus};
 use sqlx::Connection;
 
-use common::{harness, post_json, test_pin};
+use common::{as_session, harness, post_json, test_pin};
 
 const CLAUDE: &str = include_str!("fixtures/outside-sessions/claude.jsonl");
 const CODEX: &str = include_str!("fixtures/outside-sessions/codex.jsonl");
@@ -107,6 +107,19 @@ async fn an_adopted_session_authors_the_task_through_review() {
             test_pin(AgentKind::ClaudeCode),
         )
         .await;
+    let dependency = h
+        .task_on(
+            &goal,
+            &repo,
+            "finish setup",
+            0,
+            test_pin(AgentKind::ClaudeCode),
+        )
+        .await;
+    h.store
+        .set_task_dependencies(&task.id, std::slice::from_ref(&dependency.id))
+        .await
+        .unwrap();
     h.advance(&task, TaskStatus::Ready).await;
 
     let session: SessionDto = h
@@ -138,6 +151,13 @@ async fn an_adopted_session_authors_the_task_through_review() {
         h.spawn_argv(&session.id)
             .contains("--resume claude-outside")
     );
+    assert!(
+        h.spawn_argv(&session.id).contains(&format!(
+            "- {} ({}, branch {})",
+            dependency.title, dependency.status, dependency.branch
+        )),
+        "the adopted author receives its dependencies"
+    );
 
     h.store
         .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
@@ -151,4 +171,49 @@ async fn an_adopted_session_authors_the_task_through_review() {
         h.store.get_task(&task.id).await.unwrap().status(),
         TaskStatus::UnderReview
     );
+}
+
+#[tokio::test]
+async fn an_agent_cannot_adopt_a_session_for_another_task() {
+    let root = tempfile::tempdir().unwrap();
+    let home = transcript_home(root.path()).await;
+    let h = harness().agent_home(home).await;
+    let repo = h.repository(&h.git_repo("author-repo")).await;
+    let goal = h.goal_on(&repo, test_pin(AgentKind::ClaudeCode)).await;
+    let target = h
+        .task_on(
+            &goal,
+            &repo,
+            "target task",
+            1,
+            test_pin(AgentKind::ClaudeCode),
+        )
+        .await;
+    let other = h
+        .task_on(
+            &goal,
+            &repo,
+            "other task",
+            1,
+            test_pin(AgentKind::ClaudeCode),
+        )
+        .await;
+    let other_author = h.store.task_author(&other.id).await.unwrap();
+    let other_session = h
+        .session(&goal, Some(&other), Seat::Author, &other_author.id)
+        .await;
+    h.advance(&target, TaskStatus::Ready).await;
+
+    let (status, _) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/author-session", target.id),
+            &other_session.id,
+            serde_json::json!({
+                "agent_kind": "claude_code",
+                "internal_session_id": "claude-outside",
+            }),
+        ))
+        .await;
+
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
 }

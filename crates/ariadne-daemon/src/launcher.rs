@@ -708,8 +708,12 @@ impl Launcher {
             .set_session_internal_id(&session.id, internal_session_id)
             .await?;
         let task = self.store.get_task(task_id).await?;
+        let mut deps = Vec::new();
+        for dep_id in self.store.list_task_dependencies(&task.id).await? {
+            deps.push(self.store.get_task(&dep_id).await?);
+        }
         let template = prompts::template_for(PromptKind::AuthorBriefing);
-        let briefing = prompts::author_briefing(template, &task, &goal, &repo, &[]);
+        let briefing = prompts::author_briefing(template, &task, &goal, &repo, &deps);
         self.launch_resumed(&session, worktree, internal_session_id, &briefing)
             .await
     }

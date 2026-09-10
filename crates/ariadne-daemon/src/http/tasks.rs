@@ -61,8 +61,11 @@ async fn resolve_reviewers(
 pub async fn adopt_author_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<AdoptOutsideSessionRequest>,
 ) -> ApiResult<Json<SessionDto>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    ensure_task_scope(&ctx, &id)?;
     let available = crate::outside_sessions::discover(&state.store, &state.launcher.cfg.agent_home)
         .await
         .map_err(|error| {
