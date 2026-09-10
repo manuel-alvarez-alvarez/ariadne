@@ -169,6 +169,7 @@ impl AgentAdapter for OpencodeAdapter {
                 pointer: "/plugin/0",
             }),
             session_id_chosen_at_spawn: false,
+            resume_session: Spelling::Flag("--session"),
             resume_instruction: InstructionDelivery::TypedIntoThePane,
             compaction_event: "session.compacted",
         }

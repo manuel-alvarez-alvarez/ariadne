@@ -5,6 +5,7 @@
 //! Ariadne runs — shared for the same reason as the rest, that two callers
 //! answering the same question differently is the bug.
 
+pub mod acp;
 pub mod codex_hooks;
 pub mod id;
 pub mod models;
@@ -412,12 +413,14 @@ fn is_identifier(name: &str) -> bool {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AgentKind {
+    Acp,
     ClaudeCode,
     Codex,
     Opencode,
 }
 
 wire_enum! { AgentKind, "agent kind", [
+    Acp = "acp",
     ClaudeCode = "claude_code",
     Codex = "codex",
     Opencode = "opencode",
@@ -428,6 +431,7 @@ impl AgentKind {
     /// looking for it on a `PATH` searches for.
     pub fn binary(&self) -> &'static str {
         match self {
+            AgentKind::Acp => "acp",
             AgentKind::ClaudeCode => "claude",
             AgentKind::Codex => "codex",
             AgentKind::Opencode => "opencode",
@@ -445,6 +449,9 @@ impl AgentKind {
     /// adapters' own.
     pub fn default_flags(&self) -> &'static [&'static str] {
         match self {
+            // ACP agents do not share a permission-bypass flag. Users add the
+            // flag their selected `acp` executable takes when they want one.
+            AgentKind::Acp => &[],
             AgentKind::ClaudeCode => &["--dangerously-skip-permissions"],
             AgentKind::Codex => &["--dangerously-bypass-approvals-and-sandbox"],
             // "auto-approve permissions that are not explicitly denied

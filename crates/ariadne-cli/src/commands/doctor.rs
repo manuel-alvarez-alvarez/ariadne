@@ -76,7 +76,7 @@ impl Availability {
     }
 
     /// Nothing to launch where it counts, while this shell has agents: the
-    /// same stale service PATH, seen across all three at once.
+    /// same stale service PATH, seen across all four at once.
     pub(super) fn stale_service_path(&self) -> bool {
         self.daemon.is_some() && self.effective().is_empty() && !self.client.is_empty()
     }
@@ -251,8 +251,9 @@ async fn examine(client: &Client) -> Report {
     let home = endpoint::home(None);
     let config = home.as_deref().map(endpoint::parse_config);
 
-    // Probes are processes: run them at once rather than three seconds apart.
-    let (claude, codex, opencode, tmux, git, gh, glab, ariadned) = tokio::join!(
+    // Probes are processes: run them at once rather than several seconds apart.
+    let (acp, claude, codex, opencode, tmux, git, gh, glab, ariadned) = tokio::join!(
+        checks::agent(AgentKind::Acp),
         checks::agent(AgentKind::ClaudeCode),
         checks::agent(AgentKind::Codex),
         checks::agent(AgentKind::Opencode),
@@ -262,7 +263,7 @@ async fn examine(client: &Client) -> Report {
         checks::tool("glab", "--version", true),
         checks::ariadned(),
     );
-    let agents = vec![claude, codex, opencode];
+    let agents = vec![acp, claude, codex, opencode];
 
     let health = client.health().await;
     let reachable = health.is_ok();

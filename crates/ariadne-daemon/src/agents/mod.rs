@@ -1,6 +1,7 @@
 //! Agent adapters: translate an Ariadne spawn/resume request into the argv,
 //! env and generated config files for a concrete coding-agent CLI.
 
+mod acp;
 mod claude;
 mod codex;
 pub mod contract;
@@ -63,13 +64,13 @@ pub struct SpawnCtx {
 /// Write an agent's skills into its run dir, one `SKILL.md` per skill, and
 /// answer with the directory holding them.
 ///
-/// The layout is the one all three CLIs read — `<name>/SKILL.md`, frontmatter
+/// The layout is the one all four CLIs read — `<name>/SKILL.md`, frontmatter
 /// and body — so one write serves whichever mechanism the adapter then points
 /// at it: a plugin for Claude Code, `skills.paths` for OpenCode. Codex takes
 /// neither, because it discovers skills only under its own home or the project
 /// root, and the project root of an agent is the worktree. So the index in the
 /// system prompt names these paths as well, which is the floor under all
-/// three: an agent with no native skill loading opens the file itself.
+/// four: an agent with no native skill loading opens the file itself.
 ///
 /// Rewritten on every launch rather than cached, so a skill reworded since the
 /// task was staffed reaches the next launch of the agent that loads it — the
@@ -130,6 +131,7 @@ pub trait AgentAdapter: Send + Sync {
 
 pub fn adapter_for(kind: AgentKind) -> &'static dyn AgentAdapter {
     match kind {
+        AgentKind::Acp => &acp::AcpAdapter,
         AgentKind::ClaudeCode => &claude::ClaudeAdapter,
         AgentKind::Codex => &codex::CodexAdapter,
         AgentKind::Opencode => &opencode::OpencodeAdapter,
@@ -200,6 +202,16 @@ mod tests {
         assert!(opencode.compaction_done("session.compacted", &json!({"sessionID": "ses_x"})));
         for kind in ["session.idle", "session.updated", "session.created"] {
             assert!(!opencode.compaction_done(kind, &json!({})), "{kind}");
+        }
+
+        let acp = adapter_for(AgentKind::Acp);
+        assert!(acp.compaction_done("compaction_update", &json!({"status": "completed"})));
+        for (kind, payload) in [
+            ("compaction_update", json!({"status": "in_progress"})),
+            ("compaction_update", json!({"status": "failed"})),
+            ("session_update", json!({"status": "completed"})),
+        ] {
+            assert!(!acp.compaction_done(kind, &payload), "{kind} {payload}");
         }
     }
 }

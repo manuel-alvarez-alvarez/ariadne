@@ -190,6 +190,14 @@ async fn agent_configs_are_seeded_with_the_defaults() {
     for config in configs {
         assert_eq!(config.extra_flags(), config.default_flags());
     }
+    assert!(
+        store
+            .get_agent_config(AgentKind::Acp)
+            .await
+            .unwrap()
+            .extra_flags()
+            .is_empty()
+    );
     // The bypass each CLI spells its own way, spelled out: this is what an
     // unconfigured Ariadne launches them with.
     for (kind, flag) in [

@@ -11,7 +11,7 @@ use crate::output::{
     Column, Format, UNCAPPED, col, empty_state, ok_id_line, print, print_list, view,
 };
 
-/// Columns of `agent ls`. There are three agent CLIs and no ids: the row is
+/// Columns of `agent ls`. There are four agent CLIs and no ids: the row is
 /// the agent, and the two flag lists are what there is to read.
 const LS: &[Column] = &[
     col("agent", UNCAPPED).title(),
@@ -39,7 +39,7 @@ pub enum AgentCommand {
     /// be launched with, `--clear-flags` launches it with none, and `--reset`
     /// puts back what Ariadne ships for that kind. Exactly one of the three.
     Update {
-        /// claude_code | codex | opencode
+        /// acp | claude_code | codex | opencode
         #[arg(value_parser = parse_kind, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds))]
         kind: AgentKind,
         /// One flag to launch this agent with, repeatable
@@ -157,6 +157,7 @@ mod tests {
         assert_eq!(parse_kind("claude_code"), Ok(AgentKind::ClaudeCode));
         assert_eq!(parse_kind("codex"), Ok(AgentKind::Codex));
         assert_eq!(parse_kind("opencode"), Ok(AgentKind::Opencode));
+        assert_eq!(parse_kind("acp"), Ok(AgentKind::Acp));
     }
 
     /// `claude-code` is what fingers type; it means the same agent.

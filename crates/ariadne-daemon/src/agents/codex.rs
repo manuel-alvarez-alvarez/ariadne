@@ -107,6 +107,7 @@ impl AgentAdapter for CodexAdapter {
                 events: &ariadne_core::codex_hooks::EVENTS,
             },
             session_id_chosen_at_spawn: false,
+            resume_session: Spelling::Flag("resume"),
             resume_instruction: InstructionDelivery::Argv,
             compaction_event: "post_compact",
         }
