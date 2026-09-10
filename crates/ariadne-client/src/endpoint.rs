@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use ariadne_core::PermissionMode;
+
 /// One additional ACP agent command configured by the user.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +68,8 @@ pub struct FileConfig {
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,
+    /// How ACP permission requests are handled (default auto).
+    pub permission_mode: Option<PermissionMode>,
 }
 
 /// Why `<home>/config.toml` could not be read as configuration.
@@ -240,6 +244,7 @@ mod tests {
         let config = parse_config(dir.path()).unwrap().expect("a config");
         assert_eq!(config.db_path, Some(PathBuf::from("/scratch/ariadne.db")));
         assert_eq!(config.prevent_sleep, Some(false));
+        assert_eq!(config.permission_mode, None);
         assert_eq!(config.socket_path, None);
     }
 

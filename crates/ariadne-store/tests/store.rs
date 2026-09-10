@@ -195,6 +195,7 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             ],
             depends_on: deps,
             landing: None,
+            permission_mode: None,
         })
         .await
         .unwrap()
@@ -391,6 +392,7 @@ async fn a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say() {
             agents: staffed(),
             depends_on: vec![],
             landing: None,
+            permission_mode: None,
         })
         .await
         .unwrap();
@@ -408,6 +410,7 @@ async fn a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say() {
                 agents: staffed(),
                 depends_on: vec![],
                 landing: Some(landing),
+                permission_mode: None,
             })
             .await
             .unwrap();
@@ -505,6 +508,7 @@ async fn a_goal_needs_repositories_that_exist() {
                 ],
                 depends_on: vec![],
                 landing: None,
+                permission_mode: None,
             })
             .await,
         Err(StoreError::Invalid(_))
@@ -548,6 +552,7 @@ async fn task_branch_is_named_after_the_title() {
             ],
             depends_on: vec![],
             landing: None,
+            permission_mode: None,
         })
         .await
         .unwrap();
@@ -2111,6 +2116,7 @@ async fn an_agent_is_written_on_the_pin_it_was_given_whole() {
             ],
             depends_on: vec![],
             landing: None,
+            permission_mode: None,
         })
         .await
         .unwrap();
@@ -2539,6 +2545,7 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
             ],
             depends_on: vec![],
             landing: None,
+            permission_mode: None,
         })
         .await
         .unwrap();
@@ -2569,6 +2576,7 @@ async fn an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to() {
             ],
             depends_on: vec![],
             landing: None,
+            permission_mode: None,
         })
         .await;
     let message = format!("{:?}", refused.expect_err("no such skill"));
@@ -2596,6 +2604,7 @@ async fn a_task_agent_cannot_be_staffed_on_the_orchestrators_skill() {
             ],
             depends_on: vec![],
             landing: None,
+            permission_mode: None,
         })
         .await;
     let message = format!("{:?}", refused.expect_err("the orchestrator's skill"));
@@ -2637,6 +2646,7 @@ async fn a_task_takes_several_authors_each_on_a_branch_of_its_own() {
             agents,
             depends_on: vec![],
             landing: None,
+            permission_mode: None,
         }
     };
 

@@ -14,6 +14,7 @@ mod goals;
 mod memories;
 mod messages;
 mod models;
+mod permissions;
 mod picks;
 mod query;
 mod repositories;

@@ -77,6 +77,28 @@ wire_enum! { Seat, "seat", [
     Reviewer = "reviewer",
 ]}
 
+/// How the ACP runtime answers a tool permission request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(
+    feature = "clap",
+    derive(clap::ValueEnum),
+    value(rename_all = "kebab-case")
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionMode {
+    /// Select the allowing option without asking a person.
+    Auto,
+    /// Send every request to the session console and wait for an answer.
+    Ask,
+    /// Ask once for each repository, tool name and kind; remember approvals.
+    Learn,
+}
+
+wire_enum! { PermissionMode, "permission mode", [
+    Auto = "auto", Ask = "ask", Learn = "learn",
+]}
+
 /// How one task ends.
 ///
 /// The one thing about the end of a task the author has to be told, since the

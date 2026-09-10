@@ -98,8 +98,9 @@ pub async fn stream(
 
 /// Type into an ACP session: the console's counterpart of `/input`.
 ///
-/// There is no pane for the text to land on, so it becomes a fresh
-/// `session/prompt` instead — sent at once if the agent is between turns, or
+/// There is no pane for the text to land on. While a permission request is
+/// pending, the text selects that request's option; otherwise it becomes a
+/// fresh `session/prompt` — sent at once if the agent is between turns, or
 /// queued, in order, behind whichever one is running and sent the moment it
 /// ends.
 ///
@@ -109,7 +110,7 @@ pub async fn stream(
 #[utoipa::path(post, path = "/v1/sessions/{id}/console/input", tag = "sessions",
     request_body = ConsoleInputRequest,
     params(("id" = String, Path, description = "session id")),
-    responses((status = 204, description = "Prompt sent, or queued behind a running turn"),
+    responses((status = 204, description = "Permission answer or prompt accepted"),
         (status = 404), (status = 409)))]
 pub async fn input(
     State(state): State<AppState>,
@@ -131,7 +132,7 @@ pub async fn input(
     state
         .launcher
         .acp
-        .send_prompt(&id, req.text)
+        .send_input(&id, req.text)
         .map_err(|e| ApiError::conflict(e.to_string()))?;
     // The human just acted on this session, the same as typing into a pane
     // does — see `sessions::input` for the reasoning this mirrors.

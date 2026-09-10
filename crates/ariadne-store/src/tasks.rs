@@ -4,7 +4,9 @@
 use std::collections::{HashMap, HashSet};
 
 use ariadne_core::id::new_id;
-use ariadne_core::{Actor, AttentionReason, Landing, Seat, TaskStatus, check_transition};
+use ariadne_core::{
+    Actor, AttentionReason, Landing, PermissionMode, Seat, TaskStatus, check_transition,
+};
 
 use crate::query::Filtered;
 use crate::{
@@ -25,6 +27,8 @@ pub struct NewTask {
     pub depends_on: Vec<String>,
     /// How this task ends. None = the way its repository takes a change.
     pub landing: Option<Landing>,
+    /// None takes the daemon's configured default at launch time.
+    pub permission_mode: Option<PermissionMode>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -173,8 +177,8 @@ impl Store {
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,
-                                landing, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+                                landing, permission_mode, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -186,6 +190,7 @@ impl Store {
         // wrote it said otherwise: it is what most work does, and the other
         // two are the ones somebody chooses.
         .bind(new.landing.unwrap_or(Landing::Merge).as_str())
+        .bind(new.permission_mode.map(|mode| mode.as_str()))
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)

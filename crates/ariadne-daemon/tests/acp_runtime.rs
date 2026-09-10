@@ -209,14 +209,15 @@ async fn resuming_an_acp_author_replaces_the_agent_and_keeps_the_session() {
     assert_eq!(h.tmux_calls_of("new-session"), Vec::<String>::new());
 }
 
-/// Every permission request is approved: the agent hears the allowing option
-/// wherever it stands in the list, and the ask and the answer are events.
+/// In auto mode every permission request is approved: the agent hears the
+/// allowing option wherever it stands in the list, and the ask and answer
+/// are events.
 #[tokio::test]
-async fn a_permission_request_is_approved_with_the_allowing_option() {
+async fn auto_approves_a_permission_request_with_the_allowing_option() {
     let mut scripted = script();
     scripted["prompts"] = json!([{
         "permission": {
-            "toolCall": {"toolCallId": "call-1", "title": "Write",
+            "toolCall": {"toolCallId": "call-1", "title": "Write", "kind": "write",
                          "rawInput": {"path": "src/main.rs"}},
             "options": [
                 {"optionId": "no", "name": "Reject", "kind": "reject_once"},

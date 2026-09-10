@@ -1,6 +1,6 @@
 //! Task DTOs.
 
-use ariadne_core::{Landing, Seat, TaskStatus};
+use ariadne_core::{Landing, PermissionMode, Seat, TaskStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -189,6 +189,9 @@ pub struct CreateTaskRequest {
     /// How the task ends. Omitted = the way its repository takes a change.
     #[serde(default)]
     pub landing: Option<Landing>,
+    /// ACP permission handling for this task. Omitted = the daemon default.
+    #[serde(default)]
+    pub permission_mode: Option<PermissionMode>,
 }
 
 /// Partial update; only allowed while the task is pending/ready.

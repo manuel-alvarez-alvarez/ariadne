@@ -21,7 +21,7 @@ use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, PickWinnerRequest, RecordPullRequestRequest,
     TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, Landing, MessageKind, Seat, TaskStatus};
+use ariadne_core::{Actor, Landing, MessageKind, PermissionMode, Seat, TaskStatus};
 
 use super::{AriadneMcp, json_result, to_mcp_err};
 
@@ -81,6 +81,10 @@ pub struct CreateTaskReq {
     /// `none` lands nothing. Omit it for the way the repository takes a
     /// change.
     pub landing: Option<LandingReq>,
+    /// How ACP permission requests run for this task. `auto` approves them,
+    /// `ask` waits for a console answer, and `learn` remembers approvals in
+    /// this repository. Omit it for the daemon default.
+    pub permission_mode: Option<PermissionModeReq>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -169,6 +173,25 @@ pub enum LandingReq {
     /// Nothing is landed: a published tag, a filed report, a document that
     /// lives elsewhere.
     None,
+}
+
+/// The permission policy for one task.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars", rename_all = "snake_case")]
+pub enum PermissionModeReq {
+    Auto,
+    Ask,
+    Learn,
+}
+
+impl From<PermissionModeReq> for PermissionMode {
+    fn from(req: PermissionModeReq) -> PermissionMode {
+        match req {
+            PermissionModeReq::Auto => PermissionMode::Auto,
+            PermissionModeReq::Ask => PermissionMode::Ask,
+            PermissionModeReq::Learn => PermissionMode::Learn,
+        }
+    }
 }
 
 impl From<LandingReq> for Landing {
@@ -441,6 +464,7 @@ impl AriadneMcp {
                 .collect(),
             depends_on: req.depends_on.unwrap_or_default(),
             landing: req.landing.map(Into::into),
+            permission_mode: req.permission_mode.map(Into::into),
         };
         json_result(self.post(&path, &body).await?)
     }
@@ -1372,6 +1396,7 @@ mod tests {
                 depends_on: None,
                 repo_id: None,
                 landing: None,
+                permission_mode: Some(PermissionModeReq::Learn),
             }))
             .await
             .expect("create the task");
@@ -1381,6 +1406,7 @@ mod tests {
         assert_eq!(seen[0].method, "POST");
         assert_eq!(seen[0].path, "/v1/goals/01GOAL/tasks");
         let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(sent["permission_mode"], "learn");
         assert_eq!(
             sent["agents"],
             serde_json::json!([

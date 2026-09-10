@@ -11,8 +11,7 @@
 //! What the agent does is reported through the same ingestion the hooks use
 //! (`crate::http::events::ingest_event`), in the ACP adapter's event
 //! vocabulary, so an `acp` session's events, status, attention and internal
-//! id read exactly like every other session's. Every permission request is
-//! approved: permission modes are a later task's.
+//! id read exactly like every other session's.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -26,8 +25,8 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use ariadne_api::events::IngestEventRequest;
-use ariadne_core::AgentKind;
 use ariadne_core::acp::LaunchConfig;
+use ariadne_core::{AgentKind, PermissionMode};
 use ariadne_store::Store;
 
 use crate::acp_rpc::{Incoming, RpcTransport};
@@ -48,6 +47,10 @@ pub struct AcpLaunch {
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
     pub config: LaunchConfig,
+    /// Repository this session works in. Learned approvals are scoped here.
+    pub repository_id: String,
+    /// The task override, or daemon default, resolved before the launch.
+    pub permission_mode: PermissionMode,
 }
 
 /// The daemon-owned ACP agents, one child process per live `acp` session.
@@ -83,6 +86,15 @@ struct RunningAgent {
     /// sent at once if the agent is between turns and queued, in order,
     /// behind whichever one is running.
     prompts: mpsc::UnboundedSender<String>,
+    /// The reply channel while the agent waits on one permission request.
+    permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+}
+
+/// The pipe endpoints and permission reply slot a driver owns for one child.
+struct DriverIo {
+    stdout: ChildStdout,
+    stdin: ChildStdin,
+    permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
 }
 
 impl AcpRuntime {
@@ -111,21 +123,25 @@ impl AcpRuntime {
             .contains_key(session_id)
     }
 
-    /// Hand the running agent a console prompt: the daemon's own console has
-    /// no pane to type into, so this is what a client's input becomes. Queued
-    /// rather than sent while a turn is running — an agent mid-`session/prompt`
-    /// cannot be asked for another one — and sent the moment it ends.
+    /// Hand the running agent console input. A pending permission consumes it
+    /// as an option answer; otherwise it becomes a prompt as before.
     ///
     /// Errs where there is nobody here to hear it: no agent runs for this
     /// session, which is the console's counterpart of a pane that is gone.
-    pub fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
-        self.inner
-            .running
-            .lock()
-            .expect("acp registry lock")
-            .get(session_id)
-            .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?
-            .prompts
+    pub fn send_input(&self, session_id: &str, text: String) -> Result<()> {
+        let (prompts, permission) = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            let agent = running
+                .get(session_id)
+                .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
+            (agent.prompts.clone(), agent.permission.clone())
+        };
+        if let Some(reply) = permission.lock().expect("ACP permission lock").take() {
+            return reply.send(text).map_err(|_| {
+                anyhow!("the ACP agent for session {session_id} is no longer waiting")
+            });
+        }
+        prompts
             .send(text)
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
@@ -170,6 +186,7 @@ impl AcpRuntime {
 
         let (stop, stopped) = oneshot::channel();
         let (prompts, queued) = mpsc::unbounded_channel();
+        let permission = Arc::new(Mutex::new(None));
         self.inner
             .running
             .lock()
@@ -180,12 +197,23 @@ impl AcpRuntime {
                     launch_id: launch.launch_id.clone(),
                     stop,
                     prompts,
+                    permission: permission.clone(),
                 },
             );
         let runtime = self.clone();
         tokio::spawn(async move {
             runtime
-                .drive(launch, child, stdout, stdin, stopped, queued)
+                .drive(
+                    launch,
+                    child,
+                    DriverIo {
+                        stdout,
+                        stdin,
+                        permission,
+                    },
+                    stopped,
+                    queued,
+                )
                 .await
         });
         Ok(())
@@ -226,8 +254,7 @@ impl AcpRuntime {
         self,
         launch: AcpLaunch,
         mut child: Child,
-        stdout: ChildStdout,
-        stdin: ChildStdin,
+        io: DriverIo,
         stopped: oneshot::Receiver<()>,
         prompts: mpsc::UnboundedReceiver<String>,
     ) {
@@ -237,7 +264,7 @@ impl AcpRuntime {
             launch_id: launch.launch_id.clone(),
             agent_session: Arc::new(OnceLock::new()),
         };
-        let mut rpc = Rpc::new(stdout, stdin, sink.clone());
+        let mut rpc = Rpc::new(io.stdout, io.stdin, sink.clone(), io.permission, &launch);
         let outcome = tokio::select! {
             result = run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts) => Some(result),
             _ = stopped => None,
@@ -314,14 +341,26 @@ struct Rpc {
     transport: RpcTransport,
     sink: EventSink,
     assistant_text: String,
+    repository_id: String,
+    permission_mode: PermissionMode,
+    pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
 }
 
 impl Rpc {
-    fn new(stdout: ChildStdout, stdin: ChildStdin, sink: EventSink) -> Self {
+    fn new(
+        stdout: ChildStdout,
+        stdin: ChildStdin,
+        sink: EventSink,
+        pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+        launch: &AcpLaunch,
+    ) -> Self {
         Self {
             transport: RpcTransport::new(stdout, stdin),
             sink,
             assistant_text: String::new(),
+            repository_id: launch.repository_id.clone(),
+            permission_mode: launch.permission_mode,
+            pending_permission,
         }
     }
 
@@ -329,6 +368,9 @@ impl Rpc {
         let mut incoming = RuntimeIncoming {
             sink: &self.sink,
             assistant_text: &mut self.assistant_text,
+            repository_id: &self.repository_id,
+            permission_mode: self.permission_mode,
+            pending_permission: &self.pending_permission,
         };
         self.transport.request(method, params, &mut incoming).await
     }
@@ -337,6 +379,9 @@ impl Rpc {
         let mut incoming = RuntimeIncoming {
             sink: &self.sink,
             assistant_text: &mut self.assistant_text,
+            repository_id: &self.repository_id,
+            permission_mode: self.permission_mode,
+            pending_permission: &self.pending_permission,
         };
         self.transport.receive(&mut incoming).await
     }
@@ -345,6 +390,9 @@ impl Rpc {
 struct RuntimeIncoming<'a> {
     sink: &'a EventSink,
     assistant_text: &'a mut String,
+    repository_id: &'a str,
+    permission_mode: PermissionMode,
+    pending_permission: &'a Arc<Mutex<Option<oneshot::Sender<String>>>>,
 }
 
 impl Incoming for RuntimeIncoming<'_> {
@@ -400,17 +448,45 @@ impl RuntimeIncoming<'_> {
         Ok(())
     }
 
-    /// Approve the permission request. There is nobody at a pane to choose:
-    /// the daemon selects the first allowing option, and a later task adds
-    /// the permission modes that decide otherwise.
     async fn handle_permission(&mut self, message: &Value) -> Result<Value> {
         let params = &message["params"];
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let mut payload = tool_payload(session_id.clone(), &params["toolCall"]);
         payload["options"] = params.get("options").cloned().unwrap_or_default();
+        let signature = permission_signature(&params["toolCall"]);
+        let learned = self.permission_mode == PermissionMode::Learn
+            && self
+                .sink
+                .runtime
+                .inner
+                .store
+                .has_learned_permission(self.repository_id, &signature.tool_name, &signature.kind)
+                .await
+                .unwrap_or(false);
+        // The input path must see a waiting receiver as soon as the request
+        // reaches the console stream. Register it before emitting the event,
+        // rather than leaving a gap where input would become a new prompt.
+        let waiting = matches!(self.permission_mode, PermissionMode::Ask)
+            || (self.permission_mode == PermissionMode::Learn && !learned);
+        let receiver = waiting.then(|| self.begin_permission());
         self.sink.emit("permission_request", payload).await;
-
-        let selected = approved_option(params);
+        let selected = match receiver {
+            Some(receiver) => self.wait_for_permission(params, receiver).await?,
+            None => approved_option(params),
+        };
+        if self.permission_mode == PermissionMode::Learn
+            && selected
+                .as_deref()
+                .is_some_and(|option| allowing_option(params, option))
+        {
+            self.sink
+                .runtime
+                .inner
+                .store
+                .learn_permission(self.repository_id, &signature.tool_name, &signature.kind)
+                .await
+                .map_err(|error| anyhow!("remembering ACP permission approval: {error}"))?;
+        }
         let outcome = selected.as_ref().map_or_else(
             || json!({"outcome": "cancelled"}),
             |option_id| json!({"outcome": "selected", "optionId": option_id}),
@@ -426,6 +502,26 @@ impl RuntimeIncoming<'_> {
             "id": message["id"],
             "result": {"outcome": outcome},
         }))
+    }
+
+    /// Make the input path answer the permission request now visible to the
+    /// console. There is one outstanding ACP request per session.
+    fn begin_permission(&self) -> oneshot::Receiver<String> {
+        let (sender, receiver) = oneshot::channel();
+        *self.pending_permission.lock().expect("ACP permission lock") = Some(sender);
+        receiver
+    }
+
+    /// Wait for the console answer after its request was published.
+    async fn wait_for_permission(
+        &self,
+        params: &Value,
+        receiver: oneshot::Receiver<String>,
+    ) -> Result<Option<String>> {
+        let answer = receiver
+            .await
+            .map_err(|_| anyhow!("ACP permission answer channel closed"))?;
+        Ok(permission_option(params, &answer))
     }
 }
 
@@ -717,6 +813,61 @@ fn approved_option(params: &Value) -> Option<String> {
         })
         .and_then(option_id)
         .or_else(|| options.first().and_then(option_id))
+}
+
+/// A remembered permission is deliberately narrow: the ACP tool's human
+/// name and kind, and the repository the request came from.
+struct PermissionSignature {
+    tool_name: String,
+    kind: String,
+}
+
+fn permission_signature(tool_call: &Value) -> PermissionSignature {
+    let tool_name = tool_call
+        .get("title")
+        .or_else(|| tool_call.get("toolCallId"))
+        .and_then(Value::as_str)
+        .unwrap_or("ACP tool")
+        .to_string();
+    let kind = tool_call
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    PermissionSignature { tool_name, kind }
+}
+
+/// Resolve a console answer to an option. Option ids are the stable answer
+/// the API exposes; names make a terminal reply readable too. An unknown
+/// answer cancels the request, which is a denial and is never learned.
+fn permission_option(params: &Value, answer: &str) -> Option<String> {
+    params
+        .get("options")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|option| {
+            ["optionId", "name"].into_iter().any(|key| {
+                option
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value.eq_ignore_ascii_case(answer))
+            })
+        })?
+        .get("optionId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Whether the selected option is an approval, rather than a denial.
+fn allowing_option(params: &Value, option_id: &str) -> bool {
+    params
+        .get("options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|option| option.get("optionId").and_then(Value::as_str) == Some(option_id))
+        .and_then(|option| option.get("kind").and_then(Value::as_str))
+        .is_some_and(|kind| kind.starts_with("allow"))
 }
 
 #[cfg(test)]

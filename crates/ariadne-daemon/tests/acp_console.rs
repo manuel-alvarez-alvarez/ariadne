@@ -10,8 +10,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::json;
 
-use ariadne_core::{AgentKind, SessionStatus};
-use ariadne_store::AgentPin;
+use ariadne_core::{
+    Actor, AgentKind, AttentionReason, PermissionMode, Seat, SessionStatus, TaskStatus,
+};
+use ariadne_store::{AgentPin, NewTask, NewTaskAgent, Store};
 
 use common::acp::{script, stub_acp_agent};
 use common::{Cast, Harness, TIMEOUT, eventually, expect_sse, get, harness, post_json};
@@ -51,6 +53,46 @@ fn post_console_input(session_id: &str, text: &str) -> Request<Body> {
         &format!("/v1/sessions/{session_id}/console/input"),
         json!({ "text": text }),
     )
+}
+
+/// A request whose allowing and denying answers are distinct, so a test can
+/// prove that only the former becomes a learned approval.
+fn permission_script() -> serde_json::Value {
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "permission": {
+            "toolCall": {"toolCallId": "call-1", "title": "Write", "kind": "write",
+                         "rawInput": {"path": "src/main.rs"}},
+            "options": [
+                {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+                {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
+            ],
+        },
+        "updates": [],
+        "stop_reason": "end_turn",
+    }]);
+    scripted
+}
+
+/// A home whose configured ACP permission policy is read as the daemon would
+/// read it, before the harness starts the runtime around it.
+fn home_with_permission_mode(dir: &tempfile::TempDir, mode: &str) -> std::path::PathBuf {
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!("permission_mode = \"{mode}\"\n"),
+    )
+    .unwrap();
+    home
+}
+
+/// Put a task in the lifecycle state where an author is actively owed work.
+async fn ready(h: &Harness, task_id: &str) {
+    h.store
+        .transition_task(task_id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
 }
 
 /// The console stream opens with a snapshot of everything the session has
@@ -172,6 +214,163 @@ async fn posted_input_reaches_the_agent_and_queues_behind_a_running_turn() {
     );
 }
 
+/// Ask mode emits the request to the console, raises attention, leaves the
+/// turn blocked, and uses posted console text as the selected option id.
+#[tokio::test]
+async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), permission_script());
+    let h = harness()
+        .home(home_with_permission_mode(&root, "auto"))
+        .acp_bin(&stub.bin)
+        .await;
+    let cast = acp_cast(&h).await;
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: cast.goal.id.clone(),
+            repo_id: cast.repo.id.clone(),
+            title: "Ask before writing".into(),
+            description: "do things".into(),
+            agents: vec![
+                NewTaskAgent::new(Seat::Author, ["coding"], common::test_pin(AgentKind::Acp)),
+                NewTaskAgent::new(
+                    Seat::Reviewer,
+                    ["code-review"],
+                    common::test_pin(AgentKind::Acp),
+                ),
+            ],
+            depends_on: vec![],
+            landing: None,
+            permission_mode: Some(PermissionMode::Ask),
+        })
+        .await
+        .unwrap();
+    ready(&h, &task.id).await;
+    let session = h.launcher.spawn_author(&task.id).await.unwrap();
+
+    eventually(TIMEOUT, "the permission attention to rise", || async {
+        h.attention(&session).await == Some(AttentionReason::WaitingPermission)
+    })
+    .await;
+    assert!(
+        stub.messages()
+            .iter()
+            .all(|message| message.get("method").is_some()),
+        "the agent must still be waiting for an answer"
+    );
+
+    let (status, _) = h.send(post_console_input(&session.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the answered turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(h.attention(&session).await, None);
+    let reply = stub
+        .messages()
+        .into_iter()
+        .find(|message| {
+            message.get("id").and_then(serde_json::Value::as_str) == Some("permission-1")
+        })
+        .expect("the console answer reached the agent");
+    assert_eq!(reply["result"]["outcome"]["optionId"], "yes");
+}
+
+/// Learn mode asks again after a denial, records an approval under the
+/// repository, and a fresh store opened over the database finds that row.
+#[tokio::test]
+async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), permission_script());
+    let h = harness()
+        .home(home_with_permission_mode(&root, "learn"))
+        .acp_bin(&stub.bin)
+        .await;
+    let cast = acp_cast(&h).await;
+    ready(&h, &cast.task.id).await;
+
+    let denied = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the first permission attention", || async {
+        h.attention(&denied).await == Some(AttentionReason::WaitingPermission)
+    })
+    .await;
+    let (status, _) = h.send(post_console_input(&denied.id, "no")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the denied turn to finish", || async {
+        h.session_status(&denied).await == SessionStatus::Idle
+    })
+    .await;
+    assert!(
+        !h.store
+            .has_learned_permission(&cast.repo.id, "Write", "write")
+            .await
+            .unwrap(),
+        "a denial is not a learned approval"
+    );
+
+    let asked_again = h
+        .task_on(
+            &cast.goal,
+            &cast.repo,
+            "Ask again",
+            1,
+            common::test_pin(AgentKind::Acp),
+        )
+        .await;
+    ready(&h, &asked_again.id).await;
+    let approved = h.launcher.spawn_author(&asked_again.id).await.unwrap();
+    eventually(TIMEOUT, "the second permission attention", || async {
+        h.attention(&approved).await == Some(AttentionReason::WaitingPermission)
+    })
+    .await;
+    let (status, _) = h.send(post_console_input(&approved.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the approved turn to finish", || async {
+        h.session_status(&approved).await == SessionStatus::Idle
+    })
+    .await;
+
+    let restarted = Store::open(h.dir.path().join("test.db")).await.unwrap();
+    assert!(
+        restarted
+            .has_learned_permission(&cast.repo.id, "Write", "write")
+            .await
+            .unwrap(),
+        "a daemon restart reads the learned approval from its store"
+    );
+
+    let remembered = h
+        .task_on(
+            &cast.goal,
+            &cast.repo,
+            "Use approval",
+            1,
+            common::test_pin(AgentKind::Acp),
+        )
+        .await;
+    ready(&h, &remembered.id).await;
+    let session = h.launcher.spawn_author(&remembered.id).await.unwrap();
+    eventually(
+        TIMEOUT,
+        "the remembered permission turn to finish",
+        || async { h.session_status(&session).await == SessionStatus::Idle },
+    )
+    .await;
+    assert_eq!(h.attention(&session).await, None);
+    let replies: Vec<_> = stub
+        .messages()
+        .into_iter()
+        .filter(|message| {
+            message.get("id").and_then(serde_json::Value::as_str) == Some("permission-1")
+        })
+        .collect();
+    assert_eq!(replies.len(), 3, "each stub process got one reply");
+    assert_eq!(replies[2]["result"]["outcome"]["optionId"], "yes");
+}
+
 /// A permission request, and the daemon's reply to it, appear in the console
 /// stream — the same events `acp_runtime.rs` proves reach the store.
 #[tokio::test]
@@ -179,7 +378,7 @@ async fn a_permission_request_appears_in_the_console_stream() {
     let mut scripted = script();
     scripted["prompts"] = json!([{
         "permission": {
-            "toolCall": {"toolCallId": "call-1", "title": "Write",
+            "toolCall": {"toolCallId": "call-1", "title": "Write", "kind": "write",
                          "rawInput": {"path": "src/main.rs"}},
             "options": [
                 {"optionId": "no", "name": "Reject", "kind": "reject_once"},

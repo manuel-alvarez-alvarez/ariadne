@@ -343,6 +343,7 @@ mod tests {
             status: "in_progress".into(),
             branch: "render-prompts-from-the-database-xxxxxx".into(),
             landing: "merge".into(),
+            permission_mode: None,
             worktree_path: Some("/worktrees/task-eng".into()),
             stalled: 0,
             merge_commit: None,

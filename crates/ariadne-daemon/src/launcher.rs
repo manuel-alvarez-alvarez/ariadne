@@ -452,6 +452,23 @@ impl Launcher {
             .with_context(|| format!("reading the ACP config {}", config_path.display()))?;
         let config: ariadne_core::acp::LaunchConfig = serde_json::from_str(&raw)
             .with_context(|| format!("reading the ACP config {}", config_path.display()))?;
+        let (repository_id, permission_mode) = match &session.task_id {
+            Some(task_id) => {
+                let task = self.store.get_task(task_id).await?;
+                let permission_mode = task.permission_mode().unwrap_or(self.cfg.permission_mode);
+                (task.repo_id, permission_mode)
+            }
+            None => {
+                let repo = self
+                    .store
+                    .list_goal_repositories(&session.goal_id)
+                    .await?
+                    .into_iter()
+                    .next()
+                    .context("ACP session goal has no repository")?;
+                (repo.id, self.cfg.permission_mode)
+            }
+        };
         let args = argv
             .split_first()
             .map(|(_, args)| args.to_vec())
@@ -472,6 +489,8 @@ impl Launcher {
                 env,
                 cwd,
                 config,
+                repository_id,
+                permission_mode,
             })
             .await
             .context("spawning the ACP agent")?;

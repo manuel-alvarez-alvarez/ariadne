@@ -62,6 +62,7 @@ async fn contest(h: &Harness) -> Contest {
             ],
             depends_on: vec![],
             landing: None,
+            permission_mode: None,
         })
         .await
         .unwrap();

@@ -161,6 +161,7 @@ async fn an_approved_task_is_landed_by_its_own_author() {
             ],
             depends_on: vec![task.id.clone()],
             landing: None,
+            permission_mode: None,
         })
         .await
         .unwrap();

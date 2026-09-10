@@ -5,7 +5,9 @@ use super::*;
 
 use clap::FromArgMatches;
 
-use ariadne_core::{AgentKind, GoalStatus, Landing, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{
+    AgentKind, GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus,
+};
 
 use crate::commands::models::ModelsCommand;
 use crate::commands::skill::SkillCommand;
@@ -444,7 +446,12 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
     assert_eq!(task_statuses(&["in-progress"]), [TaskStatus::InProgress]);
     assert_eq!(task_statuses(&["in_progress"]), [TaskStatus::InProgress]);
     let Command::Task {
-        command: TaskCommand::Create { landing, .. },
+        command:
+            TaskCommand::Create {
+                landing,
+                permission_mode,
+                ..
+            },
     } = parse(&[
         "ariadne",
         "task",
@@ -456,6 +463,8 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
         "coding=claude_code:claude-sonnet-5",
         "--landing",
         "pull-request",
+        "--permission-mode",
+        "learn",
     ])
     .command
     else {
@@ -466,6 +475,7 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
         Some(Landing::PullRequest),
         "and so is every other enum a flag takes"
     );
+    assert_eq!(permission_mode, Some(PermissionMode::Learn));
 }
 
 /// Several statuses ride on one `ls`, comma-separated or on a flag each, and

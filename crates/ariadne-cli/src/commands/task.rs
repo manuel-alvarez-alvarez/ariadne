@@ -13,7 +13,7 @@ use ariadne_api::tasks::{
 };
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::{Client, SseEvent};
-use ariadne_core::{Actor, Landing, Seat, TaskStatus};
+use ariadne_core::{Actor, Landing, PermissionMode, Seat, TaskStatus};
 
 use super::follow;
 use super::resolve::{self, Kind};
@@ -152,6 +152,10 @@ pub enum TaskCommand {
         /// land. Default: the way the repository takes a change
         #[arg(long, value_enum)]
         landing: Option<Landing>,
+        /// How its ACP permission requests are handled: auto approves, ask
+        /// waits for a console answer, learn remembers approvals per repo
+        #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
+        permission_mode: Option<PermissionMode>,
     },
     /// Edit a task that has not started yet
     ///
@@ -302,6 +306,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             depends_on,
             repo,
             landing,
+            permission_mode,
         } => {
             let reviewers = if no_reviewer { Vec::new() } else { reviewers };
             let goal = resolve::id(client, Kind::Goal, &goal).await?;
@@ -324,6 +329,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         agents,
                         depends_on,
                         landing,
+                        permission_mode,
                     },
                 )
                 .await?;

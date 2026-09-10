@@ -132,6 +132,8 @@ CREATE TABLE tasks (
     -- strategy unless whoever wrote the task said otherwise.
     landing             TEXT NOT NULL DEFAULT 'merge'
                         CHECK (landing IN ('merge', 'pull_request', 'none')),
+    -- NULL takes the daemon's configured default.
+    permission_mode     TEXT CHECK (permission_mode IN ('auto', 'ask', 'learn')),
     worktree_path       TEXT,
     stalled             INTEGER NOT NULL DEFAULT 0,
     merge_commit        TEXT,
@@ -146,6 +148,16 @@ CREATE TABLE tasks (
 );
 CREATE INDEX idx_tasks_goal ON tasks (goal_id);
 CREATE INDEX idx_tasks_status ON tasks (status);
+
+-- An ACP permission approval learned from one repository. A denial has no
+-- row, so it is always asked again.
+CREATE TABLE learned_permissions (
+    repository_id TEXT NOT NULL REFERENCES repositories (id) ON DELETE CASCADE,
+    tool_name     TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (repository_id, tool_name, kind)
+);
 
 -- The agents staffed on a task. An agent has no identity of its own: it is an
 -- agent CLI, a model, an effort, a brief and a set of skills, and its seat
