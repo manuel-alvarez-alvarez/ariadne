@@ -24,6 +24,7 @@ export type MemoryDto = Schemas["MemoryDto"]
 
 export type TaskDto = Schemas["TaskDto"]
 export type TaskAgentDto = Schemas["TaskAgentDto"]
+export type TaskPickDto = Schemas["TaskPickDto"]
 export type AgentAssignment = Schemas["AgentAssignment"]
 export type TaskUsage = Schemas["TaskUsageDto"]
 export type TaskStatus = Schemas["TaskStatus"]

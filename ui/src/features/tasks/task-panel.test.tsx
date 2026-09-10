@@ -33,7 +33,7 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
-import { type MessageDto, qk, type SessionDto, type TaskDto } from "@/api"
+import { type MessageDto, qk, type SessionDto, type TaskDto, type TaskPickDto } from "@/api"
 import { shortId } from "@/lib/format"
 import { aSession } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
@@ -223,6 +223,101 @@ it("says a task has no reviewers rather than showing an empty list", () => {
   })
 
   expect(fact("Reviewers")).toBe("none staffed")
+})
+
+it("keeps the singular Author fact and shows no pick on a one-author task", () => {
+  mount()
+
+  expect(screen.queryByText("Authors")).toBeNull()
+  expect(screen.queryByText("Picks")).toBeNull()
+})
+
+/** Both reviewers picking the second author, oldest first. */
+const FIRST_PICK: TaskPickDto = {
+  reviewer_agent_id: "01AGENTSTRICT",
+  author_agent_id: "01AGENTAUTHOR2",
+  created_at: "2026-01-01T00:00:00Z",
+}
+const SECOND_PICK: TaskPickDto = {
+  reviewer_agent_id: "01AGENTSTRICT2",
+  author_agent_id: "01AGENTAUTHOR2",
+  created_at: "2026-01-01T00:00:01Z",
+}
+
+/** A task staffed with two authors, and its pick: both reviewers picked the second. */
+const TWO_AUTHOR_TASK: TaskDto = {
+  ...TASK,
+  agents: [
+    {
+      id: "01AGENTAUTHOR",
+      seat: "author",
+      skills: ["coding"],
+      model: "codex:gpt-5",
+      effort: "xhigh",
+      branch: "surface-the-pins-000001",
+    },
+    {
+      id: "01AGENTAUTHOR2",
+      seat: "author",
+      skills: ["testing"],
+      model: "claude_code:claude-sonnet-5",
+      branch: "surface-the-pins-000001-b",
+    },
+    ...TASK.agents.filter((agent) => agent.seat === "reviewer"),
+  ],
+  picked_agent_id: "01AGENTAUTHOR2",
+  picks: [FIRST_PICK, SECOND_PICK],
+}
+
+it("shows every author's own branch, marking only the one the reviewers picked", () => {
+  mount(TWO_AUTHOR_TASK)
+
+  const authors = fact("Authors")
+  expect(authors).toContain("coding · codex:gpt-5 @ xhigh")
+  expect(authors).toContain("testing · claude_code:claude-sonnet-5")
+  expect(authors).toContain("surface-the-pins-000001")
+  expect(authors).toContain("surface-the-pins-000001-b")
+
+  // Exactly one "Picked" mark, on the winner's own line.
+  const picked = screen.getByText("Picked")
+  const row = picked.closest(".flex-wrap")?.textContent ?? ""
+  expect(row).toContain("surface-the-pins-000001-b")
+  expect(row).not.toContain("codex:gpt-5")
+
+  // The author nobody picked says so, rather than showing nothing at all —
+  // every author gets its own status, not just the one that won. It reads
+  // "0 picks" and not the unsettled "no picks yet": the pick has settled, and
+  // this author simply got none of it.
+  expect(authors).toContain("0 picks")
+})
+
+it("shows an author's own vote count before the pick settles", () => {
+  mount({ ...TWO_AUTHOR_TASK, picked_agent_id: null, picks: [FIRST_PICK] })
+
+  const authors = fact("Authors")
+  expect(authors).toContain("1 pick")
+  expect(authors).toContain("0 picks")
+  expect(screen.queryByText("Picked")).toBeNull()
+})
+
+it("lists what each reviewer picked, oldest first", () => {
+  mount(TWO_AUTHOR_TASK)
+
+  const picks = fact("Picks")
+  expect(picks).toContain("code-review picked testing")
+  expect(picks).toContain("security-review picked testing")
+})
+
+it("says a several-author task has no picks yet, rather than showing an empty list", () => {
+  mount({ ...TWO_AUTHOR_TASK, picked_agent_id: null, picks: [] })
+
+  expect(fact("Picks")).toBe("no picks yet")
+  // Every author echoes it too, rather than a settled-sounding "0 picks"
+  // before the pick has even started.
+  expect(fact("Authors")).not.toContain("0 picks")
+  const authorCount = (fact("Authors").match(/no picks yet/g) ?? []).length
+  expect(authorCount).toBe(2)
+  expect(screen.queryByText("Picked")).toBeNull()
 })
 
 it("links the pull request its author published", () => {
