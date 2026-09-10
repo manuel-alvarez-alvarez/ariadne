@@ -42,6 +42,26 @@ pub struct SessionDto {
     pub ended_at: Option<String>,
 }
 
+/// A coding-agent session found in a CLI transcript store, but not started by
+/// Ariadne.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct OutsideSessionDto {
+    pub agent_kind: AgentKind,
+    /// The id the CLI uses to resume this conversation.
+    pub internal_session_id: String,
+    pub working_directory: String,
+    pub last_activity_at: String,
+    pub first_prompt: String,
+}
+
+/// The outside CLI session to adopt as a task author.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdoptOutsideSessionRequest {
+    pub agent_kind: AgentKind,
+    pub internal_session_id: String,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 pub struct SessionListQuery {
     /// Filter by goal id.

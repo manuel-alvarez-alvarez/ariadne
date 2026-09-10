@@ -112,12 +112,12 @@ impl AppState {
 
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
-        tasks::create, tasks::list, tasks::get, tasks::update,
+        tasks::create, tasks::list, tasks::get, tasks::update, tasks::adopt_author_session,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         landing::list_task_messages, landing::post_task_message,
         goals::list_goal_messages, goals::post_goal_message, landing::diff,
         landing::record_pull_request,
-        sessions::list, sessions::get, sessions::kill, sessions::resume,
+        sessions::list, sessions::list_outside, sessions::get, sessions::kill, sessions::resume,
         sessions::input, sessions::resize, sessions::logs,
         session_logs::logs_stream,
         events::list, stream::stream,
@@ -198,6 +198,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tasks/{id}/cancel", post(tasks::cancel))
         .route("/v1/tasks/{id}/retry", post(tasks::retry))
         .route(
+            "/v1/tasks/{id}/author-session",
+            post(tasks::adopt_author_session),
+        )
+        .route(
             "/v1/tasks/{id}/messages",
             get(landing::list_task_messages).post(landing::post_task_message),
         )
@@ -208,6 +212,7 @@ pub fn router(state: AppState) -> Router {
         )
         // sessions
         .route("/v1/sessions", get(sessions::list))
+        .route("/v1/outside-sessions", get(sessions::list_outside))
         .route("/v1/sessions/{id}", get(sessions::get))
         .route("/v1/sessions/{id}/kill", post(sessions::kill))
         .route("/v1/sessions/{id}/resume", post(sessions::resume))

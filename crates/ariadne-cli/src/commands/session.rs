@@ -7,7 +7,8 @@ use clap::Subcommand;
 
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{
-    SessionDto, SessionInputRequest, SessionListQuery, SessionLogChunk, SessionLogsResponse,
+    AdoptOutsideSessionRequest, OutsideSessionDto, SessionDto, SessionInputRequest,
+    SessionListQuery, SessionLogChunk, SessionLogsResponse,
 };
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::TaskDto;
@@ -46,6 +47,16 @@ const LS: &[Column] = &[
     col("seat", UNCAPPED).rank(2),
     col("agent", UNCAPPED).rank(1),
     col("tokens", UNCAPPED).rank(0),
+];
+
+/// Columns of `session discover`. The internal id is first because it is the
+/// value `session adopt` takes and therefore what quiet output must print.
+const DISCOVER: &[Column] = &[
+    col("id", UNCAPPED).id(),
+    col("agent", UNCAPPED).rank(3),
+    col("directory", 40).title().rank(2),
+    col("activity", UNCAPPED).rank(1),
+    col("prompt", 50).rank(0),
 ];
 
 /// Where a continuation line of `session inspect` starts: [`print_kv`] pads
@@ -95,6 +106,19 @@ pub enum SessionCommand {
         /// Redraw the table whenever a session changes, until Ctrl-C
         #[arg(long)]
         watch: bool,
+    },
+    /// List CLI sessions Ariadne did not start
+    Discover,
+    /// Resume an outside CLI session as the author of a ready task
+    Adopt {
+        /// Internal session id from `ariadne session discover`
+        session_id: String,
+        /// Ready task id
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        task_id: String,
+        /// CLI that owns the outside session
+        #[arg(long, value_parser = crate::commands::agent::parse_kind)]
+        agent: ariadne_core::AgentKind,
     },
     /// Show a session
     Inspect {
@@ -158,6 +182,35 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 client, task, goal, statuses, seat, attention, all, watch, format,
             )
             .await?
+        }
+        SessionCommand::Discover => discover(client, format).await?,
+        SessionCommand::Adopt {
+            session_id,
+            task_id,
+            agent,
+        } => {
+            let task_id = resolve::id(client, Kind::Task, &task_id).await?;
+            let session: SessionDto = client
+                .post_json(
+                    &format!("/v1/tasks/{task_id}/author-session"),
+                    &AdoptOutsideSessionRequest {
+                        agent_kind: agent,
+                        internal_session_id: session_id,
+                    },
+                )
+                .await?;
+            print(format, &session, || {
+                println!(
+                    "{}",
+                    status_line(
+                        view().color,
+                        view().quiet,
+                        "session",
+                        &session.id,
+                        session.status.as_str(),
+                    )
+                )
+            })?;
         }
         SessionCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
@@ -238,6 +291,29 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
         }
     }
     Ok(())
+}
+
+/// `session discover`: session transcripts that the daemon does not own.
+async fn discover(client: &Client, format: Format) -> Result<()> {
+    let sessions: Vec<OutsideSessionDto> = client.get_json("/v1/outside-sessions").await?;
+    print_list(
+        format,
+        &sessions,
+        DISCOVER,
+        |session| {
+            vec![
+                session.internal_session_id.clone(),
+                session.agent_kind.as_str().into(),
+                session.working_directory.clone(),
+                at(Some(&session.last_activity_at)),
+                session.first_prompt.clone(),
+            ]
+        },
+        empty_state(
+            "No outside sessions found.",
+            Some("start claude, codex or opencode in a project"),
+        ),
+    )
 }
 
 /// What `session send` types into the pane: the text, and the Return that

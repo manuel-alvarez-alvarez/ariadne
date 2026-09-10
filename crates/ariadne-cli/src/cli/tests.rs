@@ -113,6 +113,8 @@ const LEAVES: &[(&str, bool)] = &[
     ("repo ls", true),
     ("repo rm", true),
     ("repo update", true),
+    ("session adopt", true),
+    ("session discover", true),
     ("session inspect", true),
     ("session kill", true),
     ("session logs", true),

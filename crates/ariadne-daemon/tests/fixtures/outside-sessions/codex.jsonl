@@ -1,0 +1,2 @@
+{"timestamp":"2026-09-02T10:00:00.000Z","type":"session_meta","payload":{"id":"codex-outside","cwd":"/work/codex"}}
+{"timestamp":"2026-09-02T10:03:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Add the API endpoint."}]}}
