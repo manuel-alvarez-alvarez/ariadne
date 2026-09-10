@@ -30,6 +30,7 @@ use serde_json::json;
 
 use ariadne_core::AgentKind;
 
+use super::contract::{AdapterContract, EventDelivery, InstructionDelivery, Spelling};
 use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env};
 
 pub struct OpencodeAdapter;
@@ -125,6 +126,47 @@ impl OpencodeAdapter {
 impl AgentAdapter for OpencodeAdapter {
     fn kind(&self) -> AgentKind {
         AgentKind::Opencode
+    }
+
+    fn contract(&self) -> AdapterContract {
+        AdapterContract {
+            binary: "opencode",
+            event_kind: "opencode",
+            generated: &["opencode.json"],
+            system_prompt: Spelling::Config {
+                file: "opencode.json",
+                pointer: "/agent/ariadne/prompt",
+            },
+            model: Spelling::Config {
+                file: "opencode.json",
+                pointer: "/agent/ariadne/model",
+            },
+            effort: Spelling::Config {
+                file: "opencode.json",
+                pointer: "/agent/ariadne/variant",
+            },
+            skills: Spelling::Config {
+                file: "opencode.json",
+                pointer: "/skills/paths/0",
+            },
+            mcp_command: Spelling::Config {
+                file: "opencode.json",
+                pointer: "/mcp/ariadne/command/0",
+            },
+            mcp_environment: Spelling::Config {
+                file: "opencode.json",
+                pointer: "/mcp/ariadne/environment",
+            },
+            // No hooks of its own: the plugin the daemon installs forwards
+            // every event it knows.
+            events: EventDelivery::Plugin(Spelling::Config {
+                file: "opencode.json",
+                pointer: "/plugin/0",
+            }),
+            session_id_chosen_at_spawn: false,
+            resume_instruction: InstructionDelivery::TypedIntoThePane,
+            compaction_event: "session.compacted",
+        }
     }
 
     fn plan_spawn(&self, ctx: &SpawnCtx) -> Result<SpawnPlan> {
