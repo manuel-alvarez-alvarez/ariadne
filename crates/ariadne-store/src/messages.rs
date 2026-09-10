@@ -221,6 +221,35 @@ impl Store {
         .flatten())
     }
 
+    /// Stamp one author's review requests to one reviewer as delivered: the
+    /// reviewer's briefing for that review is what carried them.
+    ///
+    /// On a task staffed with several authors a review request is not typed
+    /// into a reviewer's pane as a bare message — the summary alone names
+    /// neither the author nor the branch, and the reviewer's worktree may
+    /// still stand on another author's. The full briefing is the delivery,
+    /// and this is the stamp that keeps the channel's record true to it.
+    pub async fn mark_review_requests_delivered(
+        &self,
+        task_id: &str,
+        author_agent_id: &str,
+        reviewer_agent_id: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE messages SET delivered_at = ?
+              WHERE task_id = ? AND kind = 'review_request'
+                AND from_agent_id = ? AND to_agent_id = ?
+                AND delivered_at IS NULL",
+        )
+        .bind(now())
+        .bind(task_id)
+        .bind(author_agent_id)
+        .bind(reviewer_agent_id)
+        .execute(self.w())
+        .await?;
+        Ok(())
+    }
+
     /// Stamp a message as delivered: it reached the recipient's pane.
     ///
     /// Idempotent, and the first stamp is the one kept: a message typed twice

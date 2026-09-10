@@ -723,6 +723,12 @@ impl super::Scheduler {
                 info!(task = %task.id, reviewer = %reviewer.id, author = %author.id, "briefing the live reviewer for this author's review");
                 self.review_briefed.insert(briefed);
                 self.spawn_delivery(&session, resume.clone());
+                // The briefing is this review request's delivery: generic
+                // delivery leaves a contested request alone, so the channel's
+                // stamp is written here, as the briefing goes out.
+                self.store
+                    .mark_review_requests_delivered(&task.id, &author.id, &reviewer.id)
+                    .await?;
                 return Ok(());
             }
             self.check_session_quiet(&session, situation, &resume)
@@ -749,6 +755,11 @@ impl super::Scheduler {
             self.review_briefed.insert(briefed);
             self.launcher
                 .resume_reviewer_for(&task.id, &reviewer.id, Some(&author.id), &resume)
+                .await?;
+            // The launch's briefing is this review request's delivery, the
+            // same as the live pane's above.
+            self.store
+                .mark_review_requests_delivered(&task.id, &author.id, &reviewer.id)
                 .await?;
         }
         Ok(())

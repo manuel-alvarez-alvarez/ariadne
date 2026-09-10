@@ -71,7 +71,11 @@ and the wording of the text a message arrives in (006).
     something it needs from it, and an agent that is gone can be told nothing.
 12. `request_review` writes one `review_request` per reviewer, carrying the
     summary the author asked with, so the channel holds the whole of the
-    review rather than the half of it that happened to be typed.
+    review rather than the half of it that happened to be typed. On a task
+    staffed with several authors whose pick is still open, that row is not
+    typed into the reviewer's pane as a bare message: the reviewer's full
+    briefing carries it — the summary with the author and its branch, after
+    its worktree has moved there (004) — and stamps it delivered.
 13. The MCP surface is two tools every seat has: `send_message` and
     `read_messages` (013).
 

@@ -606,3 +606,113 @@ async fn a_restart_finishes_a_settlement_the_daemon_died_in() {
     );
     assert!(worktrees[winner.ordinal as usize].exists());
 }
+
+/// A contested review request never reaches a live reviewer as a bare
+/// message: the summary alone names neither the author nor the branch, and
+/// it would land while the worktree still stands on the review before it.
+/// The full briefing is the only delivery, and it stamps the request
+/// delivered on the channel.
+#[tokio::test]
+async fn a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing() {
+    let h = harness().scheduler().await;
+    h.every_pane_exists();
+    let c = contest(&h).await;
+    h.notify(&c.task.id);
+    eventually(TIMEOUT, "both authors to be spawned", async || {
+        h.status(&c.task.id).await == TaskStatus::InProgress
+            && live_authors(&h, &c.task.id).await.len() == 2
+    })
+    .await;
+
+    let sessions = live_authors(&h, &c.task.id).await;
+    for (n, author) in c.authors.iter().enumerate() {
+        let session = sessions
+            .iter()
+            .find(|s| s.task_agent_id.as_deref() == Some(author.id.as_str()))
+            .expect("a session per author");
+        let worktree = PathBuf::from(session.worktree_path.as_deref().unwrap());
+        sh(
+            &worktree,
+            &format!(
+                "echo attempt-{n} > feature.txt && git add . && \
+                 git -c user.email=t@t -c user.name=t commit -qm 'wip: attempt {n}'"
+            ),
+        );
+    }
+
+    // The first author asks and the reviewer comes up for that review; the
+    // second asks while the reviewer's pane stays live, and the reviewer's
+    // approval of the first hands it the second.
+    h.store
+        .transition_task(
+            &c.task.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    ask_for_review(&h, &c.task, &c.authors[0], "the first attempt").await;
+    h.notify(&c.task.id);
+    eventually(TIMEOUT, "the reviewer to be spawned", async || {
+        h.running_session(&c.task.id, Seat::Reviewer)
+            .await
+            .is_some()
+    })
+    .await;
+    let reviewer_session = h
+        .running_session(&c.task.id, Seat::Reviewer)
+        .await
+        .expect("a live reviewer session");
+    ask_for_review(&h, &c.task, &c.authors[1], "the second attempt").await;
+    h.notify(&c.task.id);
+    h.json::<ariadne_api::messages::MessageDto>(
+        as_session(
+            &format!("/v1/tasks/{}/messages", c.task.id),
+            &reviewer_session.id,
+            serde_json::json!({
+                "kind": "approve",
+                "to_actor": "author",
+                "to_agent_id": c.authors[0].id,
+                "body": "the first attempt reads right",
+            }),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+
+    // The second review reaches the pane as its full briefing, and as
+    // nothing before it: no bare review-request turn is ever typed in.
+    eventually(TIMEOUT, "the live reviewer to be briefed", async || {
+        h.pasted(&reviewer_session)
+            .contains(&format!("Give your verdict to author {}", c.authors[1].id))
+    })
+    .await;
+    let pasted = h.pasted(&reviewer_session);
+    assert!(
+        !pasted.contains("Message from your author"),
+        "a contested review request was typed in as a bare message: {pasted}"
+    );
+
+    // And the channel's record still says both requests reached it: the
+    // briefing that carried each one stamped it delivered.
+    eventually(
+        TIMEOUT,
+        "the requests to be stamped delivered",
+        async || {
+            h.store
+                .list_messages(ariadne_store::MessageFilter {
+                    task_id: Some(c.task.id.clone()),
+                    to_agent_id: Some(c.reviewer.id.clone()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|m| m.kind() == Some(MessageKind::ReviewRequest))
+                .all(|m| m.is_delivered())
+        },
+    )
+    .await;
+}

@@ -85,7 +85,11 @@ Out: the transition table itself (001), the landing that follows approval
     whose pane survived the last review is briefed for the next one the
     moment it owes it — the full briefing naming the author and its branch,
     typed into the live pane, with its detached worktree moved to that
-    branch first — rather than waiting on the quiet clock (009).
+    branch first — rather than waiting on the quiet clock (009). That
+    briefing is also the review request's delivery: a contested request is
+    never typed to a reviewer as a bare message, since the summary alone
+    names neither the author nor the branch, and the briefing is what
+    stamps it delivered on the channel (018).
 14. Approval says a change is sound; with several sound changes, the pick
     says which one lands. Once every author is approved, each reviewer is
     asked to pick a winner — `pick_winner`, once per reviewer, refused by
@@ -136,6 +140,9 @@ Out: the transition table itself (001), the landing that follows approval
 - A live reviewer is briefed for the next author's review without the quiet
   clock, its worktree moved to that author's branch first
   (`multi_author_tasks.rs::a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock`),
+  a contested review request reaches it only as that briefing, stamped
+  delivered by it
+  (`::a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing`),
   and a settlement the daemon died in is finished by the daemon that comes
   back (`::a_restart_finishes_a_settlement_the_daemon_died_in`).
 - One pick per reviewer is the store's own rule too, and the winner reads
