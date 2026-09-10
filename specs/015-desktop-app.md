@@ -3,7 +3,7 @@ id: desktop-app
 status: current
 updated: 2026-09-10
 areas: [ui]
-commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 35de938e]
+commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
   - ui/src/features/**/*.test.tsx
   - ui/src/api/**/*.test.ts
