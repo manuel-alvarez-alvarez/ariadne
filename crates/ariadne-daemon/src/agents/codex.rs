@@ -31,6 +31,7 @@ use anyhow::Result;
 
 use ariadne_core::AgentKind;
 
+use super::contract::{AdapterContract, EventDelivery, HookSite, InstructionDelivery, Spelling};
 use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env};
 
 pub struct CodexAdapter;
@@ -81,6 +82,34 @@ impl CodexAdapter {
 impl AgentAdapter for CodexAdapter {
     fn kind(&self) -> AgentKind {
         AgentKind::Codex
+    }
+
+    fn contract(&self) -> AdapterContract {
+        AdapterContract {
+            binary: "codex",
+            event_kind: "codex",
+            // Everything is on the argv: codex generates no file.
+            generated: &[],
+            // No append-safe flag: the system layer is a preamble of the
+            // first user message.
+            system_prompt: Spelling::InThePrompt,
+            model: Spelling::Flag("-m"),
+            effort: Spelling::Override("model_reasoning_effort"),
+            // Codex discovers skills only under its own home or the project
+            // root, so it reads them from the index in the system prompt.
+            skills: Spelling::InThePrompt,
+            mcp_command: Spelling::Override("mcp_servers.ariadne.command"),
+            mcp_arguments: Spelling::Override("mcp_servers.ariadne.args"),
+            mcp_arguments_carry_the_command: false,
+            mcp_environment: Spelling::Override("mcp_servers.ariadne.env"),
+            events: EventDelivery::Hooks {
+                site: HookSite::Override,
+                events: &ariadne_core::codex_hooks::EVENTS,
+            },
+            session_id_chosen_at_spawn: false,
+            resume_instruction: InstructionDelivery::Argv,
+            compaction_event: "post_compact",
+        }
     }
 
     fn plan_spawn(&self, ctx: &SpawnCtx) -> Result<SpawnPlan> {

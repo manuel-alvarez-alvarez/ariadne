@@ -18,7 +18,7 @@ test that proves it.
 | 004 | [Authoring and review](004-authoring-and-review.md) | the author, the reviewers, and the verdicts on a review |
 | 005 | [How a task ends](005-how-a-task-ends.md) | `merge`, `pull_request` and `none`, and merge verification |
 | 006 | [Prompts and Simplified Technical English](006-prompts-and-simplified-technical-english.md) | the layers of text, who owns each, the English all of it is in |
-| 007 | [Agent CLI adapters](007-agent-cli-adapters.md) | Claude Code, Codex, OpenCode: argv, env, hooks, resume |
+| 007 | [Agent CLI adapters](007-agent-cli-adapters.md) | the contract every adapter meets, and how each CLI spells it |
 | 008 | [Sessions, terminals and logs](008-sessions-terminals-and-logs.md) | tmux panes, log streams, typing, resizing, confirmed delivery |
 | 009 | [Scheduler, attention and watchdogs](009-scheduler-attention-and-watchdogs.md) | the reconciliation loop, the quiet clock, what needs a human |
 | 011 | [Models, effort and pins](011-models-effort-and-pins.md) | the catalog, `<agent>:<model>`, effort, and where a pin is set |

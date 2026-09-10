@@ -29,9 +29,22 @@ use std::os::unix::fs::symlink as symlink_dir;
 
 use ariadne_core::AgentKind;
 
+use super::contract::{AdapterContract, EventDelivery, HookSite, InstructionDelivery, Spelling};
 use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env, env_json};
 
 pub struct ClaudeAdapter;
+
+/// The events the contract says this CLI reports, one hook block each in the
+/// `settings.json` the adapter writes.
+const HOOK_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "Notification",
+    "Stop",
+    "SessionEnd",
+];
 
 impl ClaudeAdapter {
     /// Write system-prompt.md, mcp.json and settings.json into the run dir;
@@ -136,6 +149,39 @@ impl ClaudeAdapter {
 impl AgentAdapter for ClaudeAdapter {
     fn kind(&self) -> AgentKind {
         AgentKind::ClaudeCode
+    }
+
+    fn contract(&self) -> AdapterContract {
+        AdapterContract {
+            binary: "claude",
+            event_kind: "claude_code",
+            generated: &["system-prompt.md", "mcp.json", "settings.json"],
+            system_prompt: Spelling::Flag("--append-system-prompt"),
+            model: Spelling::Flag("--model"),
+            effort: Spelling::Flag("--effort"),
+            // The plugin, not the skills dir: the plugin links to it.
+            skills: Spelling::Flag("--plugin-dir"),
+            mcp_command: Spelling::Config {
+                file: "mcp.json",
+                pointer: "/mcpServers/ariadne/command",
+            },
+            mcp_arguments: Spelling::Config {
+                file: "mcp.json",
+                pointer: "/mcpServers/ariadne/args",
+            },
+            mcp_arguments_carry_the_command: false,
+            mcp_environment: Spelling::Config {
+                file: "mcp.json",
+                pointer: "/mcpServers/ariadne/env",
+            },
+            events: EventDelivery::Hooks {
+                site: HookSite::Config("settings.json"),
+                events: HOOK_EVENTS,
+            },
+            session_id_chosen_at_spawn: true,
+            resume_instruction: InstructionDelivery::Argv,
+            compaction_event: "session_start",
+        }
     }
 
     fn plan_spawn(&self, ctx: &SpawnCtx) -> Result<SpawnPlan> {

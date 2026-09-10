@@ -3,6 +3,7 @@
 
 mod claude;
 mod codex;
+pub mod contract;
 mod opencode;
 pub mod prompts;
 
@@ -11,6 +12,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use ariadne_core::{AgentKind, Seat};
+
+pub use contract::AdapterContract;
 
 /// Everything an adapter needs to plan a spawn. Prompt assembly happens in
 /// the launcher; adapters only deal with delivery mechanics.
@@ -105,6 +108,9 @@ pub struct SpawnPlan {
 
 pub trait AgentAdapter: Send + Sync {
     fn kind(&self) -> AgentKind;
+    /// How this CLI spells each clause of the adapter contract
+    /// ([`contract`]). What one suite holds every adapter to.
+    fn contract(&self) -> AdapterContract;
     /// Write run-dir files and return the launch plan.
     fn plan_spawn(&self, ctx: &SpawnCtx) -> Result<SpawnPlan>;
     /// Plan a resume of a previous session with a new instruction.
