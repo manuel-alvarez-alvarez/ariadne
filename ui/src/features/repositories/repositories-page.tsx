@@ -13,8 +13,9 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
+import { BrainIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
+import { useNavigate } from "react-router-dom"
 
 import type { RepositoryDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
@@ -23,6 +24,7 @@ import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { plural } from "@/lib/format"
+import { paths } from "@/routes/paths"
 
 import { DeleteRepositoryDialog } from "./delete-repository-dialog"
 import { NoRepositories as SharedNoRepositories } from "./no-repositories"
@@ -35,7 +37,7 @@ const COLUMNS = [
   // Wide enough to be a sentence rather than a word per line: what made the
   // rows of this table 130px tall was a description with nothing to wrap in.
   { header: "Description", className: "min-w-48" },
-  { className: "w-20 text-right" },
+  { className: "w-28 text-right" },
 ]
 
 export function RepositoriesPage() {
@@ -116,6 +118,8 @@ function RepositoryRow({
   onEdit: () => void
   onDelete: () => void
 }) {
+  const navigate = useNavigate()
+
   return (
     <TableRow>
       {/* The path is what this screen is visited for: it is read here on its
@@ -137,6 +141,11 @@ function RepositoryRow({
         {repository.description ?? <span className="italic">no description</span>}
       </TableCell>
       <TableCell className="text-right">
+        <RowAction
+          icon={<BrainIcon />}
+          label={`Memory for ${repository.path}`}
+          onClick={() => navigate(paths.repositoryMemory(repository.id))}
+        />
         <RowAction icon={<PencilIcon />} label={`Edit ${repository.path}`} onClick={onEdit} />
         <RowAction icon={<Trash2Icon />} label={`Remove ${repository.path}`} onClick={onDelete} />
       </TableCell>

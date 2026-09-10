@@ -17,6 +17,7 @@ import type {
   AgentEventDto,
   EffortDto,
   GoalDto,
+  MemoryDto,
   ModelDto,
   RepositoryDto,
   SessionDto,
@@ -150,6 +151,21 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
     description: "The orchestrator itself.",
     created_at: STAMP,
     updated_at: STAMP,
+    ...overrides,
+  }
+}
+
+export function aMemory(overrides: Partial<MemoryDto> = {}): MemoryDto {
+  return {
+    id: "01JMEM00000000000000ONE1",
+    repository_id: REPO_ID,
+    text: "The lint config lives in biome.json, not .eslintrc.",
+    source_session_id: SESSION_ID,
+    source_task_id: TASK_ID,
+    source_goal_id: GOAL_ID,
+    created_at: STAMP,
+    // Far enough out that a real clock never treats the fixture as expired.
+    expires_at: "2099-01-01T00:00:00Z",
     ...overrides,
   }
 }

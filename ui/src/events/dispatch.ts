@@ -125,6 +125,17 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
       break
     }
+    case "memory_created": {
+      // A memory carries no id of its own to key a detail on and list results
+      // are filtered by repository and search text, so — like `agent_event` —
+      // the only sound move is to refetch every open list.
+      void queryClient.invalidateQueries({ queryKey: qk.memories.lists() })
+      break
+    }
+    case "memory_deleted": {
+      void queryClient.invalidateQueries({ queryKey: qk.memories.lists() })
+      break
+    }
     default: {
       // A kind the generated types do not know about: the daemon is newer than
       // these types. Regenerate with `npm run gen:api`.

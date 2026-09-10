@@ -31,8 +31,9 @@ Out: the daemon endpoints themselves (012).
 3. Screens: the goals board (swimlanes plus an attention strip), the task
    panel (facts, diff, messages, history), sessions and a terminal, outside
    sessions that a ready task can adopt as its author, skills, repositories,
-   agent kinds and their launch flags, models and which of them may be staffed
-   on, and a daemon-logs drawer.
+   one repository's memory (list, search, delete), agent kinds and their
+   launch flags, models and which of them may be staffed on, and a
+   daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -74,8 +75,12 @@ Out: the daemon endpoints themselves (012).
 
 ## Acceptance criteria
 
-- 70 test files cover the features, the API layer and the event stream; each
+- 73 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
+- One repository's memory lists, searches through the daemon's own search
+  endpoint, and deletes an entry
+  (`ui/src/features/memory/memory-page.test.tsx`) — parity with `ariadne
+  memory ls|search|delete` (019).
 - The task's channel reads as one list, every kind is told apart, and both
   ends of a message are named by the skills they work with
   (`ui/src/features/tasks/task-messages.test.tsx`).

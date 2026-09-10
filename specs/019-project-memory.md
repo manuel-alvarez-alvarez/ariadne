@@ -2,13 +2,14 @@
 id: project-memory
 status: current
 updated: 2026-09-10
-areas: [store, api, daemon, mcp, cli]
+areas: [store, api, daemon, mcp, cli, ui]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/memories.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/cli/tests.rs
+  - ui/src/features/memory/memory-page.test.tsx
 ---
 
 # Project memory
@@ -19,10 +20,10 @@ becoming part of every prompt.
 ## Scope
 
 In: repository memory storage, expiry, source records, REST access, MCP save
-and search tools, and CLI list, search and delete commands.
+and search tools, CLI list, search and delete commands, and the desktop
+screen that offers the same three (015).
 
-Out: prompt injection and the desktop interface. Agents choose when to search,
-and a later change can add the desktop surface.
+Out: prompt injection. Agents choose when to search.
 
 ## Behavior
 
@@ -47,6 +48,8 @@ and a later change can add the desktop surface.
     repository, and every endpoint appears in OpenAPI (012).
 11. Memory creation emits the complete entry, and memory deletion emits the
     removed id on the domain event stream (012).
+12. The desktop app has a memory page per repository: it lists, searches and
+    deletes through the same REST endpoints the CLI uses, matching it (015).
 
 ## Acceptance criteria
 
@@ -76,6 +79,9 @@ and a later change can add the desktop surface.
   (`::memory_search_needs_a_repository_when_the_goal_has_several`).
 - Every MCP text is Simplified Technical English
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
+- The desktop memory page lists, searches through the daemon's own search
+  endpoint, and deletes an entry
+  (`ui/src/features/memory/memory-page.test.tsx`).
 
 ## Sources
 
@@ -83,4 +89,5 @@ and a later change can add the desktop surface.
 `crates/ariadne-api/src/memories.rs`,
 `crates/ariadne-daemon/src/http/memories.rs`,
 `crates/ariadne-cli/src/commands/memory.rs`,
-`crates/ariadne-cli/src/commands/mcp/tools.rs`.
+`crates/ariadne-cli/src/commands/mcp/tools.rs`,
+`ui/src/features/memory/`.

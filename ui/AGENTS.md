@@ -76,7 +76,7 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["skills",       "list", {}]        ["skills",   "detail", name]
 ["repositories", "list", filters]   ["repositories", "detail", id]
 ["agents",       "list", {}]        ["models",   "list", {}]
-["agent-events", "list", filters]
+["agent-events", "list", filters]   ["memories", "list", filters]
 ```
 
 Sub-resources hang off their detail key: `["tasks", "detail", id, "reviews"]`,
@@ -119,6 +119,7 @@ the query cache and it stays live.
 | `repository_created` | patch `repositories.detail`, invalidate `repositories.lists` |
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
+| `memory_created`, `memory_deleted` | invalidate `memories.lists` — a memory carries no id worth a detail key, so, like `agent_event`, this simply refetches |
 
 The daemon has **no replay**: anything that happened while the stream was down
 is simply gone. So both a reconnect and the daemon's `resync` control event
@@ -173,6 +174,13 @@ a session's own panel, `?tab=sessions&session=` for a session inside a goal's or
 a task's panel), which `src/components/detail-panels.tsx` reads. The old
 `#/goals/:goalId` and `#/tasks/:taskId` deep links survive as redirects onto the
 board with the panel open.
+
+A repository's memory (019) is the one screen that is neither: it is a full
+page rather than a panel, because there is no list beside it worth keeping on
+screen, reached from a row on `#/repositories` rather than the sidebar at
+`#/repositories/:repositoryId/memory`. Its route reads the id with a small
+wrapper (`MemoryPageRoute`, next to `GoalPanelRedirect` and `TaskPanelRedirect`)
+so the page itself takes `repositoryId` as a prop and stays easy to test.
 
 **The sessions screen is the one exception**, and the only place a param means
 two things: there `?goal=` and `?task=` are what the *list* is narrowed to — the
