@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-08
+updated: 2026-09-10
 areas: [daemon, store]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/session_resize.rs
   - crates/ariadne-daemon/tests/managers.rs
   - crates/ariadne-daemon/tests/keystroke_delivery.rs
+  - crates/ariadne-daemon/tests/session_adoption.rs
 ---
 
 # Sessions, terminals and logs
@@ -24,8 +25,8 @@ In: the session row and its statuses, tmux session naming and lifecycle,
 reading a pane as a live log stream, typing into a pane, resizing it, and
 confirmed keystroke delivery.
 
-Out: when the daemon decides to type something (009, 010), and what it types
-(006).
+Out: sessions discovered outside Ariadne and adopted as authors (020), when
+the daemon decides to type something (009, 010), and what it types (006).
 
 ## Behavior
 
@@ -68,6 +69,9 @@ Out: when the daemon decides to type something (009, 010), and what it types
     read back, and an Enter that was swallowed is pressed again until the
     message goes. A message that never submits is never called delivered, and
     an instruction still sitting in the composer raises the session.
+13. An adopted session is a normal author session after it is created: it has
+    the task worktree, its CLI resume id, and the same lifecycle as a session
+    Ariadne started (020).
 
 ## Acceptance criteria
 

@@ -102,6 +102,7 @@ pub struct HarnessBuilder {
     logs: Option<LogBuffer>,
     typed_input_window: Option<Duration>,
     opencode_bin: Option<String>,
+    agent_home: Option<PathBuf>,
 }
 
 /// A daemon in a temporary directory: a stub `tmux`, no scheduler.
@@ -130,6 +131,7 @@ pub fn harness() -> HarnessBuilder {
         logs: None,
         typed_input_window: None,
         opencode_bin: None,
+        agent_home: None,
     }
 }
 
@@ -183,6 +185,13 @@ impl HarnessBuilder {
         self
     }
 
+    /// Point transcript discovery at a fixture home rather than the user's
+    /// real CLI stores.
+    pub fn agent_home(mut self, home: PathBuf) -> Self {
+        self.agent_home = Some(home);
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -200,6 +209,9 @@ impl HarnessBuilder {
         }
         if let Some(bin) = self.opencode_bin {
             config.opencode_bin = bin;
+        }
+        if let Some(home) = self.agent_home {
+            config.agent_home = home;
         }
         let tmux = match self.tmux {
             Tmux::Stub => write_tmux_stub(dir.path()),

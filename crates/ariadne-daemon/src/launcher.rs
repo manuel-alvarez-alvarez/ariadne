@@ -13,7 +13,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
-use ariadne_core::{AttentionReason, PromptKind, Seat, SessionStatus, TaskStatus, probe};
+use ariadne_core::{
+    AgentKind, AttentionReason, PromptKind, Seat, SessionStatus, TaskStatus, probe,
+};
 use ariadne_store::{AgentSession, NewSession, Repository, SessionFilter, Store, Task, TaskFilter};
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, prompts, write_skills};
@@ -659,6 +661,61 @@ impl Launcher {
             .get_session(&session.id)
             .await
             .map_err(Into::into)
+    }
+
+    /// Give a ready task an author session that resumes an outside CLI
+    /// conversation in the task's worktree.
+    pub async fn adopt_author(
+        &self,
+        task_id: &str,
+        agent_kind: AgentKind,
+        internal_session_id: &str,
+    ) -> Result<AgentSession> {
+        let task = self.store.get_task(task_id).await?;
+        if task.status() != TaskStatus::Ready {
+            anyhow::bail!("task {task_id} is {}, not ready", task.status);
+        }
+        let goal = self.store.get_goal(&task.goal_id).await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
+        let author = self.store.task_author(task_id).await?;
+        if author.agent_kind() != agent_kind {
+            anyhow::bail!(
+                "outside session uses {}, but task author uses {}",
+                agent_kind.as_str(),
+                author.agent_kind().as_str()
+            );
+        }
+        self.assert_no_live_session(&goal.id, Some(task_id), Seat::Author, None)
+            .await?;
+        let tmux_session = session_name(&goal.id, Some(&task.id), "author", None);
+        self.claim_pane(&tmux_session).await?;
+        let worktree = self.author_worktree(&task, &repo, None).await?;
+        let session = self
+            .store
+            .create_session(NewSession {
+                goal_id: goal.id.clone(),
+                task_id: Some(task.id.clone()),
+                seat: Seat::Author,
+                task_agent_id: Some(author.id.clone()),
+                agent_kind,
+                model: author.model.clone(),
+                effort: author.effort.clone(),
+                tmux_session,
+                worktree_path: Some(worktree.display().to_string()),
+            })
+            .await?;
+        self.store
+            .set_session_internal_id(&session.id, internal_session_id)
+            .await?;
+        let task = self.store.get_task(task_id).await?;
+        let mut deps = Vec::new();
+        for dep_id in self.store.list_task_dependencies(&task.id).await? {
+            deps.push(self.store.get_task(&dep_id).await?);
+        }
+        let template = prompts::template_for(PromptKind::AuthorBriefing);
+        let briefing = prompts::author_briefing(template, &task, &goal, &repo, &deps);
+        self.launch_resumed(&session, worktree, internal_session_id, &briefing)
+            .await
     }
 
     /// The author's worktree, checked out on the task branch: created on the

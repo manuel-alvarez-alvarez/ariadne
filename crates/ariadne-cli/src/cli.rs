@@ -89,6 +89,8 @@ const SESSION_EXAMPLES: &str = "\
 Examples:
   ariadne session ls                       # every live session
   ariadne session ls --all --goal <goal-id>
+  ariadne session discover                 # sessions started outside Ariadne
+  ariadne session adopt <session-id> <task-id> --agent codex
   ariadne session logs <session-id>        # what its pane last printed
   ariadne session resume <session-id>      # new tmux, same conversation
   ariadne session kill <session-id>
@@ -514,6 +516,7 @@ const LISTINGS: &[&str] = &[
     "models ls",
     "skill ls",
     "repo ls",
+    "session discover",
     "session ls",
     "task history",
     "task ls",
@@ -538,6 +541,8 @@ const QUIET_OUTPUT: &[&str] = &[
     "repo rm",
     "repo update",
     "session kill",
+    "session adopt",
+    "session discover",
     "session ls",
     "session resume",
     "session send",

@@ -4,13 +4,33 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use ariadne_api::sessions::{
-    SessionDto, SessionInputRequest, SessionListQuery, SessionLogsResponse, SessionResizeRequest,
+    OutsideSessionDto, SessionDto, SessionInputRequest, SessionListQuery, SessionLogsResponse,
+    SessionResizeRequest,
 };
 use ariadne_store::{AgentSession, SessionFilter};
 
 use super::AppState;
 use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
+
+/// List sessions found in supported CLI transcript stores that Ariadne did
+/// not start.
+#[utoipa::path(get, path = "/v1/outside-sessions", tag = "sessions",
+    responses((status = 200, body = [OutsideSessionDto])))]
+pub async fn list_outside(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Vec<OutsideSessionDto>>> {
+    crate::outside_sessions::discover(&state.store, &state.launcher.cfg.agent_home)
+        .await
+        .map(Json)
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                error.to_string(),
+            )
+        })
+}
 
 /// The session behind `id`, with a pane to act on — or the conflict saying
 /// why there is none, in which `refusal` names what cannot be done.

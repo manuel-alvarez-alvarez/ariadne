@@ -11,6 +11,7 @@ pub mod http;
 pub mod launcher;
 pub mod log;
 pub mod opencode_plugin;
+pub mod outside_sessions;
 pub mod scheduler;
 pub mod sleep;
 pub mod tmux;

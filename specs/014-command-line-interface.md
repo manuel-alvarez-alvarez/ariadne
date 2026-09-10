@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-08
+updated: 2026-09-10
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -123,6 +123,9 @@ same binary also serves (013).
     through the same key/value block every inspect command uses, rather than
     hand-picked spacing, and its confirmation prompt goes to stderr with every
     other prompt, so a piped stdout carries only that block.
+25. `ariadne session discover` lists sessions found in the supported CLI
+    stores but not started by Ariadne. `ariadne session adopt` assigns one to
+    a ready task through the same REST surface (020).
 
 ## Acceptance criteria
 
