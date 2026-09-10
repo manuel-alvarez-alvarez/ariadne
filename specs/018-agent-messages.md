@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-09-06
+updated: 2026-09-10
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -56,7 +56,9 @@ and the wording of the text a message arrives in (006).
    - a recipient that the task does not staff is refused;
    - a verdict comes from a reviewer of that task, on a task that is
      `under_review`, and one reviewer votes once on each review it is asked
-     for (004).
+     for (004). On a task staffed with several authors the review a verdict
+     belongs to is the one its address names — the author whose change it
+     judges — and a verdict to an author that has not asked is refused.
 9. The daemon delivers a message by typing it into the recipient's pane and
    submitting it, so it arrives as a turn. There is no inbox to poll.
    `delivered_at` says which have gone; a pane that is busy is not typed into,

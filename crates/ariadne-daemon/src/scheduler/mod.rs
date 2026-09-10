@@ -151,6 +151,10 @@ pub struct Scheduler {
     /// approved task twice while the daemon that approved it is running, and
     /// a daemon that restarts over an approved task wants to say it again.
     landing_briefed: HashSet<String>,
+    /// Reviewers already asked to pick a contested task's winner, by (task,
+    /// reviewer). In memory like `landing_briefed`, and for the same reason:
+    /// a daemon that restarts over an open pick asks once more.
+    pick_briefed: HashSet<(String, String)>,
     /// Sessions with a delivery going into their pane right now, by session
     /// id: two pastes into one composer at once would interleave into
     /// something neither of them said.
@@ -183,6 +187,7 @@ pub fn start(
         quiet: HashMap::new(),
         goal_told: HashMap::new(),
         landing_briefed: HashSet::new(),
+        pick_briefed: HashSet::new(),
         typing: HashSet::new(),
         reports,
         sleep: SleepInhibitor::new(),

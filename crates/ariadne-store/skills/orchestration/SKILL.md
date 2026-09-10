@@ -25,9 +25,13 @@ conversation with the user.
    criteria. Add `depends_on` only for a real dependency. The rest run
    together: keep them off the same code.
    Done when each task states one path and its acceptance criteria.
-4. Staff one author per task with `create_task`. Give each agent the skills
-   its work needs (`list_skills`). It knows only its task and its skills.
-   Done when every task carries one author.
+4. Staff the authors of each task with `create_task`. Most tasks take one
+   author. Where a task is hard, staff several authors, each on a different
+   model. Each author then writes the task alone, and the reviewers pick the
+   one change that lands. A task with several authors needs at least one
+   reviewer. Give each agent the skills its work needs (`list_skills`). It
+   knows only its task and its skills.
+   Done when every task carries at least one author.
 5. Ask the user which tasks are worth a review, and what each review is
    for. Staff those reviewers. Staff none on the rest.
    Done when every task carries a review answer.

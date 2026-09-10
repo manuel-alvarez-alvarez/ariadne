@@ -232,6 +232,24 @@ pub fn reviewer_resume_briefing(template: &str, task: &Task, summary: Option<&st
     )
 }
 
+/// What a reviewer is asked with once every author of a several-author task
+/// is approved: the task, and one line per author to pick between.
+///
+/// `authors` is (id, branch) per author, in the order the orchestrator
+/// listed them — the id is what `pick_winner` takes, so each line leads with
+/// it.
+pub fn reviewer_pick_briefing(template: &str, task: &Task, authors: &[(String, String)]) -> String {
+    let lines = authors
+        .iter()
+        .map(|(id, branch)| format!("- {id}: branch {branch}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    render(
+        template,
+        &[("task_title", &task.title), ("authors", &lines)],
+    )
+}
+
 /// Resume prompt for an author with a round of requested changes.
 ///
 /// `feedback` is one entry per source, each a heading naming who asked and
@@ -329,6 +347,7 @@ mod tests {
             stalled: 0,
             merge_commit: None,
             pr_url: None,
+            picked_agent_id: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }
@@ -418,6 +437,11 @@ mod tests {
                 PromptKind::ReviewerResume => {
                     reviewer_resume_briefing(&template, &task, Some("done"))
                 }
+                PromptKind::ReviewerPick => reviewer_pick_briefing(
+                    &template,
+                    &task,
+                    &[("01author".to_string(), "a-branch".to_string())],
+                ),
             };
             assert!(
                 !rendered.contains('{'),

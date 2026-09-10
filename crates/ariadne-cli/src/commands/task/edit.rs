@@ -151,6 +151,9 @@ pub fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
         // Three answers, about how deeply the model reasons: nothing said,
         // `default` for the CLI's own, or one effort of it.
         effort,
+        // The author list is edited over the API and the MCP tools; the CLI
+        // re-staffs a task's authors by re-creating it.
+        authors: None,
         reviewers: match (no_reviewer, reviewers.is_empty()) {
             (true, _) => Some(Vec::new()),
             (false, true) => None,

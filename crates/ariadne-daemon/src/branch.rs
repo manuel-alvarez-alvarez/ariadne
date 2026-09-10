@@ -98,44 +98,66 @@ impl BranchWatchers {
     /// stack a second one. Nothing is published for where the branch stands at
     /// this moment — only for where it moves next.
     pub fn watch(&self, task: &Task, repo: &Path) {
+        self.watch_keyed(task.id.clone(), task, &task.branch, repo);
+    }
+
+    /// Follow one author's branch of a task staffed with several: one watch
+    /// per author, beside its siblings rather than in place of them.
+    pub fn watch_author(&self, task: &Task, agent_id: &str, branch: &str, repo: &Path) {
+        self.watch_keyed(author_key(&task.id, agent_id), task, branch, repo);
+    }
+
+    fn watch_keyed(&self, key: String, task: &Task, branch: &str, repo: &Path) {
         let mut watches = self.lock();
-        if watches
-            .get(&task.id)
-            .is_some_and(|w| w.branch == task.branch)
-        {
+        if watches.get(&key).is_some_and(|w| w.branch == branch) {
             return;
         }
-        debug!(task = %task.id, branch = %task.branch, "following the task branch");
+        debug!(task = %task.id, branch = %branch, "following the task branch");
         let handle = tokio::spawn(follow(
             self.events.clone(),
             self.git.clone(),
             Followed {
                 task_id: task.id.clone(),
                 goal_id: task.goal_id.clone(),
-                branch: task.branch.clone(),
+                branch: branch.to_string(),
                 repo: repo.to_path_buf(),
             },
         ));
         // Assigning drops the watch this replaces, if any, which ends it.
         watches.insert(
-            task.id.clone(),
+            key,
             Watch {
-                branch: task.branch.clone(),
+                branch: branch.to_string(),
                 handle,
             },
         );
     }
 
-    /// Stop following a task's branch: its worktree is gone, or the task is.
+    /// Stop following a task's branches — the task's own watch and every
+    /// author's: its worktrees are gone, or the task is.
     pub fn unwatch(&self, task_id: &str) {
-        if self.lock().remove(task_id).is_some() {
+        let prefix = author_key(task_id, "");
+        let mut watches = self.lock();
+        let count = watches.len();
+        watches.retain(|key, _| key != task_id && !key.starts_with(&prefix));
+        if watches.len() < count {
             debug!(task = %task_id, "no longer following the task branch");
         }
     }
 
-    /// Whether a task's branch is being followed right now.
+    /// Stop following one author's branch: the pick passed it over.
+    pub fn unwatch_author(&self, task_id: &str, agent_id: &str) {
+        if self.lock().remove(&author_key(task_id, agent_id)).is_some() {
+            debug!(task = %task_id, agent = %agent_id, "no longer following the author branch");
+        }
+    }
+
+    /// Whether any branch of a task is being followed right now.
     pub fn is_watching(&self, task_id: &str) -> bool {
-        self.lock().contains_key(task_id)
+        let prefix = author_key(task_id, "");
+        self.lock()
+            .keys()
+            .any(|key| key == task_id || key.starts_with(&prefix))
     }
 
     /// A watch registry is only ever read and written under this lock, and
@@ -144,6 +166,12 @@ impl BranchWatchers {
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Watch>> {
         self.watches.lock().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+/// The registry key of one author's watch. Task ids never carry `/`, so the
+/// separator keeps an author key from colliding with a task's own.
+fn author_key(task_id: &str, agent_id: &str) -> String {
+    format!("{task_id}/{agent_id}")
 }
 
 /// What one watch is about.
@@ -349,6 +377,7 @@ mod tests {
             stalled: 0,
             merge_commit: None,
             pr_url: None,
+            picked_agent_id: None,
             created_at: String::new(),
             updated_at: String::new(),
         }

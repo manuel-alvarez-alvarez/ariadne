@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-09-06
+updated: 2026-09-10
 areas: [store, daemon]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
@@ -41,8 +41,12 @@ agent is briefed with in its worktree (006).
    about tasks already under way.
 6. A task branch is named after the task's title — its slug plus a short tail
    of its id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`. Branch names
-   carry no `ariadne/` prefix.
-7. An author gets a writable worktree of its own, on its task branch, cut
+   carry no `ariadne/` prefix. On a task staffed with several authors (004)
+   the first author holds that branch, and every later one works beside it
+   under the same name with an `-a<n>` tail — `…-r9jr7c-a2` for the second.
+   The branches the pick passes over are removed with their worktrees when
+   it settles.
+7. An author gets a writable worktree of its own, on its own branch, cut
    from the base branch of the task's repository. When that base has no
    commits the task branch is cut orphan, the author's first commit is the
    repository's first, and the task's diff is read against the empty tree

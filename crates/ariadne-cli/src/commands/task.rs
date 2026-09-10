@@ -126,9 +126,11 @@ pub enum TaskCommand {
         /// The author's skills, comma-separated, then `=MODEL` — the agent
         /// CLI and model it runs on, required — and `@EFFORT` to say how
         /// deeply it reasons there
-        /// (`--author coding,testing=codex:gpt-5.6-sol@xhigh`)
-        #[arg(long, value_name = "SKILLS=MODEL[@EFFORT]", value_parser = parse_author)]
-        author: AgentAssignment,
+        /// (`--author coding,testing=codex:gpt-5.6-sol@xhigh`).
+        /// Repeatable: several authors each write the task alone, and the
+        /// reviewers pick the one change that lands
+        #[arg(long = "author", required = true, value_name = "SKILLS=MODEL[@EFFORT]", value_parser = parse_author)]
+        authors: Vec<AgentAssignment>,
         /// One reviewer's skills and its model, in review order; repeatable.
         /// Spelled the same way as `--author`
         /// (`--reviewer code-review=codex:gpt-5.6-luna@high`)
@@ -294,7 +296,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             goal,
             title,
             description,
-            author,
+            authors,
             reviewers,
             no_reviewer,
             depends_on,
@@ -304,9 +306,9 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let reviewers = if no_reviewer { Vec::new() } else { reviewers };
             let goal = resolve::id(client, Kind::Goal, &goal).await?;
             let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
-            // The author first, then the reviewers in review order: that is
+            // The authors first, then the reviewers in review order: that is
             // the order the daemon reads a staffing in.
-            let mut agents = vec![author];
+            let mut agents = authors;
             agents.extend(reviewers);
             let repo_id = match repo {
                 Some(spec) => Some(resolve_repo(client, &goal, &spec).await?),
@@ -584,16 +586,32 @@ fn visible(tasks: Vec<TaskDto>, all: bool, statuses: &[TaskStatus]) -> Vec<TaskD
 /// pulled out of the `Inspect` arm so the block's own content is testable
 /// without a daemon behind it.
 fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
-    vec![
+    let authors: Vec<_> = t.agents.iter().filter(|a| a.seat == Seat::Author).collect();
+    let mut pairs = vec![
         ("id", Kv::id(t.id.clone())),
         ("goal", Kv::id(t.goal_id.clone())),
         ("title", Kv::title(t.title.clone())),
         ("status", Kv::status(t.status.as_str())),
         (
             "author",
-            match t.agents.iter().find(|a| a.seat == Seat::Author) {
-                Some(a) => agent_pin_label(&a.skills, &a.model, a.effort.as_deref()),
-                None => "-".to_string(),
+            match authors.as_slice() {
+                [] => "-".to_string(),
+                [a] => agent_pin_label(&a.skills, &a.model, a.effort.as_deref()),
+                // Several authors: each on its own line with the branch it
+                // owns, and the one the reviewers picked marked as such.
+                several => several
+                    .iter()
+                    .map(|a| {
+                        let label = agent_pin_label(&a.skills, &a.model, a.effort.as_deref());
+                        let branch = a.branch.as_deref().unwrap_or("-");
+                        let picked = match t.picked_agent_id.as_deref() == Some(a.id.as_str()) {
+                            true => " — picked",
+                            false => "",
+                        };
+                        format!("{label} on {branch}{picked}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(INDENT),
             }
             .into(),
         ),
@@ -609,6 +627,31 @@ fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
                 .join(INDENT)
                 .into(),
         ),
+    ];
+    // The pick, on the tasks that have one to show: who each reviewer chose,
+    // one line per pick. A one-author task prints exactly what it always did.
+    if authors.len() > 1 {
+        pairs.push((
+            "picks",
+            match t.picks.is_empty() {
+                true => "-".to_string(),
+                false => t
+                    .picks
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "{} picked {}",
+                            staffed_label(t, &p.reviewer_agent_id),
+                            staffed_label(t, &p.author_agent_id)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(INDENT),
+            }
+            .into(),
+        ));
+    }
+    pairs.extend(vec![
         (
             "depends on",
             Kv::id(match t.depends_on.is_empty() {
@@ -629,7 +672,17 @@ fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
         ("pull request", dash(t.pr_url.as_deref()).into()),
         ("created", Kv::meta(moment(&t.created_at))),
         ("description", format!("\n---\n{}", t.description).into()),
-    ]
+    ]);
+    pairs
+}
+
+/// A staffed agent named for a reader: the skills it carries, or its id
+/// where the task no longer staffs it.
+fn staffed_label(t: &TaskDto, agent_id: &str) -> String {
+    match t.agents.iter().find(|a| a.id == agent_id) {
+        Some(a) => agent_label(&a.skills),
+        None => agent_id.to_string(),
+    }
 }
 
 /// What the task cost, spender by spender: the total first, then the

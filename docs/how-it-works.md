@@ -1,6 +1,6 @@
 # How Ariadne works
 
-A goal becomes tasks, a task gets an author, and a review gates its landing.
+A goal becomes tasks, a task gets its authors, and a review gates its landing.
 This page follows one goal from the moment you describe it to the moment the
 daemon has nothing left to run.
 
@@ -25,7 +25,13 @@ daemon has nothing left to run.
    that is a task like any other, staffed with the `spec-writing` skill.
 3. Then it splits the goal into tasks through the Ariadne MCP tools, with
    optional `depends_on` ordering, which is for real dependencies alone. Each
-   task is staffed with one **author** and the agents that review it. What an
+   task is staffed with its **authors** — one for most tasks — and the agents
+   that review it. A hard task can staff several authors, each on its own
+   model and a branch of its own (`--author`, repeated): each writes the task
+   alone, each attempt is reviewed to approval, and the reviewers then pick
+   the one change that lands — the branches they pass over are removed with
+   their worktrees. A task with several authors needs at least one reviewer,
+   to pick. What an
    agent can do is the **skills** it loads — one document about one kind of
    work, from the catalog Ariadne ships and the ones you write (`ariadne skill
    ls`) — so an agent has no identity beyond its skills, its model and its
@@ -52,15 +58,20 @@ daemon has nothing left to run.
    what task shapes it is and is not a fit for, and what each of its efforts
    buys — `ariadne models show <model>` prints the same card.
 6. The scheduler takes over: when a task's dependencies are finished it becomes
-   `ready` and its **author** is spawned in a dedicated git worktree, on a
-   branch named after the task — its title slugged plus a short tail of its
-   id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`. It implements,
+   `ready` and each of its **authors** is spawned in a dedicated git worktree,
+   on a branch named after the task — its title slugged plus a short tail of
+   its id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`; a second author
+   works beside the first as `…-r9jr7c-a2`. Each implements,
    commits and calls `request_review` under a summary of what it did, which is
    what the reviewers read first.
 7. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
    `submit_verdict`, approving or requesting changes. Change requests resume
    the author with the feedback; every reviewer approving moves the task to
-   `approved`.
+   `approved`. On a task with several authors each attempt is reviewed on its
+   own, the task moves on only once every author is approved and every
+   reviewer has called `pick_winner`, and the most-picked author's branch is
+   the one that lands — `ariadne task inspect` shows the authors and the
+   picks.
 
    The agents write to each other while that happens: `send_message` asks an
    agent of the task, or the orchestrator, what it needs to know, and answers
@@ -141,8 +152,8 @@ tracked so sessions can be resumed and attached.
 
 ## Sessions and compaction
 
-Sessions are long-lived — one author per task, one reviewer per task across
-every review of it, one orchestrator per goal — and every resume replays the whole
+Sessions are long-lived — one session per author of a task, one reviewer per
+task across every review of it, one orchestrator per goal — and every resume replays the whole
 transcript as its first prompt. Shortening that transcript is the agent's own
 business: compact a session by typing `/compact` in its pane, or leave it to
 the CLI near its context limit. The daemon asks for none, and types into a

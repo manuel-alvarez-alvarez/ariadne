@@ -36,17 +36,24 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    orchestrator then waits; an author or reviewer works alone and does not ask.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees:
-   - **orchestrator**: `get_task`, `create_task` (every agent it staffs
-     names its model: 011), `update_task` (which refuses `default` as a
-     model — a model is required, and `default` stays legal for the effort
-     alone), `list_models` (which holds only the models it can staff an
-     agent on: 011),
+   - **orchestrator**: `get_task`, `create_task` (staffing the authors as a
+     list — one for most tasks, several where the reviewers pick a winner
+     (004) — and every agent it staffs names its model: 011), `update_task`
+     (which replaces the author list whole through `authors`, and refuses
+     `default` as a model — a model is required, and `default` stays legal
+     for the effort alone), `list_models` (which holds only the models it
+     can staff an agent on: 011),
      `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
      `cancel_task`, `complete_goal` — the last four are what it supervises the
      goal with once the plan is under way (003)
    - **author**: `get_task`, `request_review`, `fail_task`, `finish_task`,
      `record_pull_request`
-   - **reviewer**: `get_task`, `get_diff`, `submit_verdict`
+   - **reviewer**: `get_task`, `get_diff` (which takes an `author` on a task
+     staffed with several, naming whose branch to read), `submit_verdict`
+     (an `author` likewise, naming whose change the verdict judges — and
+     required there, since several reviews are open at once), `pick_winner`
+     (the pick of spec 004: once per reviewer, only once every author is
+     approved)
    - **every seat**: `send_message`, `read_messages` — the channel
      the agents talk to each other on (018); `save_memory`, `search_memory` —
      the repository facts agents choose to keep and retrieve (019)

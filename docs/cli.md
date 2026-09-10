@@ -46,6 +46,12 @@ ariadne task update <task-id> --effort default  # at whatever the CLI reasons it
 ariadne task create <goal-id> --title "Cut 0.6.0" \
     --author release=claude_code:claude-sonnet-5 \
     --no-reviewer --landing none
+
+# two authors race the same task; the reviewer picks the change that lands
+ariadne task create <goal-id> --title "Rewrite the parser" \
+    --author coding=claude_code:claude-opus-5 \
+    --author coding=codex:gpt-5.6-sol@xhigh \
+    --reviewer code-review=codex:gpt-5.6-luna@high
 ariadne task update <task-id> --landing pull-request
 ariadne goal complete <goal-id>        # once its tasks are all done
 ```

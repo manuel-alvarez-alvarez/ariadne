@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
-use ariadne_api::tasks::{RecordPullRequestRequest, TaskDto};
+use ariadne_api::tasks::{PickWinnerRequest, RecordPullRequestRequest, TaskDto};
 use ariadne_core::{Actor, AttentionReason, Landing, Seat, TaskStatus};
 use ariadne_store::{MessageFilter, NewMessage, Repository, Task};
 
@@ -61,10 +61,18 @@ pub(super) async fn verify_merged(
         // belongs, and no check here can see it.
         Landing::None => {}
         Landing::Merge => {
-            if !on_the_base(&task.branch).await? {
+            // The branch that lands is the picked winner's, on a task
+            // staffed with several authors; the task's own everywhere else.
+            let branch = state
+                .launcher
+                .review_branch(task, task.picked_agent_id.as_deref())
+                .await
+                .map_err(unresolved)?
+                .unwrap_or_else(|| task.branch.clone());
+            if !on_the_base(&branch).await? {
                 return Err(ApiError::conflict(format!(
-                    "merge not verified: {} is not an ancestor of {} in {}",
-                    task.branch, repo.base_branch, repo.path
+                    "merge not verified: {branch} is not an ancestor of {} in {}",
+                    repo.base_branch, repo.path
                 )));
             }
         }
@@ -270,8 +278,50 @@ pub(super) async fn send(
         // One verdict per reviewer per review asked for. This used to be a
         // unique index over the round the row carried; a review is bounded by
         // its own request now, which is a row rather than a column, so the
-        // rule is read here.
-        if state
+        // rule is read here. On a task staffed with several authors the
+        // reviews run side by side, so the review a verdict belongs to is the
+        // one its address names: the author it judges.
+        let authors = state.store.list_task_authors(&task.id).await?;
+        if authors.len() > 1 {
+            let Some(author_id) = to_agent_id.as_deref() else {
+                return Err(ApiError::bad_request(
+                    "a verdict goes to the author whose change it judges",
+                ));
+            };
+            if !authors.iter().any(|a| a.id == author_id) {
+                let ids: Vec<&str> = authors.iter().map(|a| a.id.as_str()).collect();
+                return Err(ApiError::bad_request(format!(
+                    "a verdict goes to the author whose change it judges; \
+                     the authors of task {} are: {}",
+                    task.id,
+                    ids.join(", ")
+                )));
+            }
+            if state
+                .store
+                .open_review_request_of(&task.id, author_id)
+                .await?
+                .is_none()
+            {
+                return Err(ApiError::conflict(format!(
+                    "author {author_id} has not asked for a review of task {}",
+                    task.id
+                )));
+            }
+            if state
+                .store
+                .open_verdicts_of(&task.id, author_id)
+                .await?
+                .iter()
+                .any(|m| m.from_agent_id.as_deref() == Some(agent_id.as_str()))
+            {
+                return Err(ApiError::conflict(format!(
+                    "agent {agent_id} has already given its verdict on this review of \
+                     author {author_id} on task {}",
+                    task.id
+                )));
+            }
+        } else if state
             .store
             .open_verdicts(&task.id)
             .await?
@@ -301,14 +351,30 @@ pub(super) async fn send(
         .await?)
 }
 
+/// Which branch of a task a diff is asked about: one author's of several, or
+/// — left out — the task's own, which after the pick is the winner's.
+#[derive(Debug, Default, serde::Deserialize, utoipa::IntoParams)]
+pub struct DiffQuery {
+    /// Id of the author whose branch to read, on a task staffed with several.
+    pub agent: Option<String>,
+}
+
 /// Diff of the task branch against its base (`git diff base...branch`), or,
 /// once the task is merged, the diff its merge commit brought into the base —
 /// after the merge the branch is contained in the base, so the three-dot diff
 /// would be forever empty.
+///
+/// On a task staffed with several authors, `agent` names the author whose
+/// branch to read; left out, the task's own branch is read — the first
+/// author's until the pick settles, and the winner's after it.
 #[utoipa::path(get, path = "/v1/tasks/{id}/diff", tag = "tasks",
-    params(("id" = String, Path, description = "task id")),
+    params(("id" = String, Path, description = "task id"), DiffQuery),
     responses((status = 200, content_type = "text/plain", body = String), (status = 404), (status = 409)))]
-pub async fn diff(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<String> {
+pub async fn diff(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<DiffQuery>,
+) -> ApiResult<String> {
     let task = state.store.get_task(&id).await?;
     let repo = state.store.get_repository(&task.repo_id).await?;
     let repo_path = std::path::PathBuf::from(&repo.path);
@@ -324,22 +390,120 @@ pub async fn diff(State(state): State<AppState>, Path(id): Path<String>) -> ApiR
             .map_err(unresolved);
     }
 
+    let author = match &q.agent {
+        Some(agent_id) => {
+            let authors = state.store.list_task_authors(&task.id).await?;
+            if !authors.iter().any(|a| a.id == *agent_id) {
+                return Err(ApiError::bad_request(format!(
+                    "agent {agent_id} is not an author of task {}",
+                    task.id
+                )));
+            }
+            Some(agent_id.as_str())
+        }
+        None => task.picked_agent_id.as_deref(),
+    };
+    let branch = state
+        .launcher
+        .review_branch(&task, author)
+        .await
+        .map_err(unresolved)?
+        .unwrap_or_else(|| task.branch.clone());
+
     if !state
         .launcher
         .git
-        .branch_exists(&repo_path, &task.branch)
+        .branch_exists(&repo_path, &branch)
         .await
         .map_err(unresolved)?
     {
         return Err(ApiError::conflict(format!(
-            "branch {} does not exist yet (task not started?)",
-            task.branch
+            "branch {branch} does not exist yet (task not started?)"
         )));
     }
     state
         .launcher
         .git
-        .diff(&repo_path, &repo.base_branch, &task.branch)
+        .diff(&repo_path, &repo.base_branch, &branch)
         .await
         .map_err(unresolved)
+}
+
+/// One reviewer's pick of the winning author, on a task staffed with several.
+///
+/// The gate is here: the pick starts only once every author is approved, and
+/// a pick before that is refused. One pick per reviewer per task — a second
+/// is refused by the reviewer's name — and the daemon settles the winner once
+/// every staffed reviewer has picked.
+#[utoipa::path(post, path = "/v1/tasks/{id}/pick", tag = "tasks",
+    request_body = PickWinnerRequest,
+    params(("id" = String, Path, description = "task id")),
+    responses(
+        (status = 200, body = TaskDto),
+        (status = 400, description = "not an author of the task"),
+        (status = 403, description = "not a reviewer session"),
+        (status = 409, description = "the pick has not started, or this reviewer has picked already")
+    ))]
+pub async fn pick_winner(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<PickWinnerRequest>,
+) -> ApiResult<Json<TaskDto>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    ensure_task_scope(&ctx, &id)?;
+    let Some(reviewer_id) = ctx
+        .session
+        .as_ref()
+        .filter(|s| s.seat() == Seat::Reviewer)
+        .and_then(|s| s.task_agent_id.clone())
+    else {
+        return Err(ApiError::forbidden(
+            "only a reviewer of the task may pick the winner",
+        ));
+    };
+    let task = state.store.get_task(&id).await?;
+    let authors = state.store.list_task_authors(&id).await?;
+    if authors.len() < 2 {
+        return Err(ApiError::conflict(format!(
+            "task {} has one author; there is nothing to pick",
+            task.id
+        )));
+    }
+    if task.picked_agent_id.is_some() {
+        return Err(ApiError::conflict(format!(
+            "the pick on task {} has settled already",
+            task.id
+        )));
+    }
+    if task.status() != TaskStatus::UnderReview {
+        return Err(ApiError::conflict(format!(
+            "task is {}, a pick is only taken under_review",
+            task.status
+        )));
+    }
+    if !authors.iter().any(|a| a.id == req.author_agent_id) {
+        let ids: Vec<&str> = authors.iter().map(|a| a.id.as_str()).collect();
+        return Err(ApiError::bad_request(format!(
+            "agent {} is not an author of task {}; the authors are: {}",
+            req.author_agent_id,
+            task.id,
+            ids.join(", ")
+        )));
+    }
+    // The gate the acceptance criteria name: no pick before every author is
+    // approved.
+    if !state.store.authors_all_approved(&id).await? {
+        return Err(ApiError::conflict(format!(
+            "the pick starts once every author of task {} is approved",
+            task.id
+        )));
+    }
+    state
+        .store
+        .record_pick(&id, &reviewer_id, &req.author_agent_id)
+        .await?;
+    state.notify_scheduler(&id);
+    let task = state.store.get_task(&id).await?;
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }

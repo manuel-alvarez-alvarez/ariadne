@@ -154,6 +154,73 @@ impl Store {
         .await?)
     }
 
+    /// The review one author last asked for, as the id of its first request
+    /// row: the per-author reading of [`Store::open_review_request`], for a
+    /// task staffed with several authors whose reviews run side by side.
+    ///
+    /// A request is from the author that asked (`from_agent_id`), so that is
+    /// what scopes it. None where this author has never asked.
+    pub async fn open_review_request_of(
+        &self,
+        task_id: &str,
+        author_agent_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar::<_, Option<String>>(
+            "SELECT MAX(id) FROM messages
+              WHERE task_id = ? AND kind = 'review_request' AND from_agent_id = ?",
+        )
+        .bind(task_id)
+        .bind(author_agent_id)
+        .fetch_optional(self.r())
+        .await?
+        .flatten())
+    }
+
+    /// The verdicts on one author's open review: the ones addressed to that
+    /// author since it last asked. The per-author reading of
+    /// [`Store::open_verdicts`], scoped the way a verdict is addressed — a
+    /// verdict is a message to the author whose change it judges.
+    pub async fn open_verdicts_of(
+        &self,
+        task_id: &str,
+        author_agent_id: &str,
+    ) -> Result<Vec<Message>> {
+        Ok(sqlx::query_as::<_, Message>(
+            "SELECT * FROM messages
+              WHERE task_id = ?1 AND to_agent_id = ?2
+                AND kind IN ('approve', 'request_changes')
+                AND id > COALESCE(
+                      (SELECT MAX(id) FROM messages
+                        WHERE task_id = ?1 AND kind = 'review_request'
+                          AND from_agent_id = ?2), '')
+              ORDER BY id",
+        )
+        .bind(task_id)
+        .bind(author_agent_id)
+        .fetch_all(self.r())
+        .await?)
+    }
+
+    /// The summary one author last asked for review with: the body of its
+    /// latest request, which is what `request_review` wrote there. None where
+    /// this author has never asked.
+    pub async fn author_review_summary(
+        &self,
+        task_id: &str,
+        author_agent_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar::<_, Option<String>>(
+            "SELECT body FROM messages
+              WHERE task_id = ? AND kind = 'review_request' AND from_agent_id = ?
+              ORDER BY id DESC LIMIT 1",
+        )
+        .bind(task_id)
+        .bind(author_agent_id)
+        .fetch_optional(self.r())
+        .await?
+        .flatten())
+    }
+
     /// Stamp a message as delivered: it reached the recipient's pane.
     ///
     /// Idempotent, and the first stamp is the one kept: a message typed twice

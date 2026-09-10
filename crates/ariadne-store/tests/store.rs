@@ -2583,3 +2583,215 @@ async fn a_task_agent_cannot_be_staffed_on_the_orchestrators_skill() {
         "{refused:?}"
     );
 }
+
+/// The staffing a several-author task is held to: one author or more, each on
+/// a branch of its own, and — with several — at least one reviewer to pick
+/// the winner.
+#[tokio::test]
+async fn a_task_takes_several_authors_each_on_a_branch_of_its_own() {
+    let w = World::new().await;
+    let staffed = |authors: usize, reviewers: usize| {
+        let mut agents: Vec<NewTaskAgent> = (0..authors)
+            .map(|_| NewTaskAgent::new(Seat::Author, ["coding"], default_pin()))
+            .collect();
+        agents.extend(
+            (0..reviewers)
+                .map(|_| NewTaskAgent::new(Seat::Reviewer, ["code-review"], default_pin())),
+        );
+        NewTask {
+            goal_id: w.goal.id.clone(),
+            repo_id: w.repo.id.clone(),
+            title: "Contested work".into(),
+            description: "do things".into(),
+            agents,
+            depends_on: vec![],
+            landing: None,
+        }
+    };
+
+    let task = w.store.create_task(staffed(2, 1)).await.unwrap();
+    let authors = w.store.list_task_authors(&task.id).await.unwrap();
+    assert_eq!(authors.len(), 2);
+    assert_eq!(
+        authors.iter().map(|a| a.ordinal).collect::<Vec<_>>(),
+        [0, 1]
+    );
+    // The first author holds the task branch itself, so a one-author task
+    // reads exactly as it always did; the second works beside it.
+    assert_eq!(author_branch(&task.branch, 0), task.branch);
+    assert_eq!(
+        author_branch(&task.branch, 1),
+        format!("{}-a2", task.branch)
+    );
+
+    // No author at all, and several with nobody to pick between them, are
+    // both staffings no task can run on.
+    let none = format!(
+        "{:?}",
+        w.store.create_task(staffed(0, 1)).await.unwrap_err()
+    );
+    assert!(none.contains("at least one author"), "{none}");
+    let unpicked = format!(
+        "{:?}",
+        w.store.create_task(staffed(2, 0)).await.unwrap_err()
+    );
+    assert!(unpicked.contains("needs a reviewer"), "{unpicked}");
+}
+
+/// An edit replaces the author list whole, the way it always replaced the
+/// reviewers — and the one-author pin fields refuse a task that has several,
+/// since each of those names its own model.
+#[tokio::test]
+async fn an_edit_replaces_the_whole_author_list() {
+    let w = World::new().await;
+    let two_authors = || {
+        vec![
+            NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
+            NewTaskAgent::new(
+                Seat::Author,
+                ["coding", "testing"],
+                pin(AgentKind::Codex, "gpt-5.6-terra"),
+            ),
+        ]
+    };
+
+    let task = w
+        .store
+        .update_task(
+            &w.task.id,
+            TaskUpdate {
+                authors: Some(two_authors()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let authors = w.store.list_task_authors(&task.id).await.unwrap();
+    assert_eq!(authors.len(), 2);
+    assert_eq!(authors[1].agent_kind(), AgentKind::Codex);
+
+    // The task's own model field means "the author's", and it has several
+    // now: the edit is refused rather than guessed about.
+    let refused = format!(
+        "{:?}",
+        w.store
+            .update_task(
+                &w.task.id,
+                TaskUpdate {
+                    pin: Some(default_pin()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+    );
+    assert!(refused.contains("several authors"), "{refused}");
+
+    // And an edit cannot leave several authors with nobody to pick a winner.
+    let unpicked = format!(
+        "{:?}",
+        w.store
+            .update_task(
+                &w.task.id,
+                TaskUpdate {
+                    reviewers: Some(vec![]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+    );
+    assert!(unpicked.contains("needs a reviewer"), "{unpicked}");
+
+    // Back to one author, and the pin fields mean what they always did.
+    w.store
+        .update_task(
+            &w.task.id,
+            TaskUpdate {
+                authors: Some(vec![NewTaskAgent::new(
+                    Seat::Author,
+                    ["coding"],
+                    default_pin(),
+                )]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    w.store
+        .update_task(
+            &w.task.id,
+            TaskUpdate {
+                pin: Some(pin(AgentKind::Codex, "gpt-5.6-terra")),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let author = w.store.task_author(&w.task.id).await.unwrap();
+    assert_eq!(author.agent_kind(), AgentKind::Codex);
+}
+
+/// The pick as the store holds it: one row per reviewer, a second one refused
+/// by the reviewer's name, the winner read off the counts with a tie to the
+/// first listed, and a retry clearing the lot.
+#[tokio::test]
+async fn a_reviewer_picks_once_and_the_picks_settle_a_winner() {
+    let w = World::new().await;
+    let task = w
+        .store
+        .update_task(
+            &w.task.id,
+            TaskUpdate {
+                authors: Some(vec![
+                    NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
+                    NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
+                ]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let authors = w.store.list_task_authors(&task.id).await.unwrap();
+    let reviewer = w
+        .store
+        .list_task_reviewers(&task.id)
+        .await
+        .unwrap()
+        .remove(0);
+
+    w.store
+        .record_pick(&task.id, &reviewer.id, &authors[1].id)
+        .await
+        .unwrap();
+    let again = format!(
+        "{:?}",
+        w.store
+            .record_pick(&task.id, &reviewer.id, &authors[0].id)
+            .await
+            .unwrap_err()
+    );
+    assert!(again.contains(&reviewer.id), "{again}");
+    assert!(again.contains("already picked"), "{again}");
+
+    let picks = w.store.list_task_picks(&task.id).await.unwrap();
+    assert_eq!(picks.len(), 1);
+    assert_eq!(
+        picked_winner(&authors, &picks).map(|a| a.id.as_str()),
+        Some(authors[1].id.as_str())
+    );
+
+    w.store
+        .set_task_picked(&task.id, &authors[1].id)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.task().await.picked_agent_id.as_deref(),
+        Some(authors[1].id.as_str())
+    );
+
+    // A retry reviews everything afresh, so the picks go with it.
+    w.store.clear_task_picks(&task.id).await.unwrap();
+    assert!(w.store.list_task_picks(&task.id).await.unwrap().is_empty());
+    assert_eq!(w.task().await.picked_agent_id, None);
+}

@@ -138,6 +138,10 @@ CREATE TABLE tasks (
     merge_commit        TEXT,
     -- The pull or merge request the author published, where it published one.
     pr_url              TEXT,
+    -- The author the reviewers picked, on a task staffed with several. Its
+    -- branch is what lands; the other authors' branches and worktrees go.
+    -- NULL for a one-author task, and until the pick settles.
+    picked_agent_id     TEXT REFERENCES task_agents (id),
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL
 );
@@ -146,11 +150,12 @@ CREATE INDEX idx_tasks_status ON tasks (status);
 
 -- The agents staffed on a task. An agent has no identity of its own: it is an
 -- agent CLI, a model, an effort, a brief and a set of skills, and its seat
--- says only where it sits — the one author that carries the task from its
--- first commit to the end, or one of the reviewers that vote on it.
+-- says only where it sits — one of the authors that write the task, each on
+-- its own branch, or one of the reviewers that vote on it.
 --
--- `ordinal` is the order the orchestrator listed them in. There is exactly one
--- author per task (the partial index below), because the task never leaves it.
+-- `ordinal` is the order the orchestrator listed them in. Most tasks staff
+-- one author; a task staffed with several runs them in parallel, each in its
+-- own worktree, and the reviewers pick the one that lands (`task_picks`).
 CREATE TABLE task_agents (
     id         TEXT PRIMARY KEY,
     task_id    TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
@@ -166,7 +171,17 @@ CREATE TABLE task_agents (
     UNIQUE (task_id, seat, ordinal)
 );
 CREATE INDEX idx_task_agents_task ON task_agents (task_id);
-CREATE UNIQUE INDEX idx_task_one_author ON task_agents (task_id) WHERE seat = 'author';
+
+-- One reviewer's pick of the winning author, on a task staffed with several
+-- authors. The primary key is what holds a reviewer to one pick per task:
+-- a second one is refused by the schema, and the refusal names the reviewer.
+CREATE TABLE task_picks (
+    task_id           TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+    reviewer_agent_id TEXT NOT NULL REFERENCES task_agents (id) ON DELETE CASCADE,
+    author_agent_id   TEXT NOT NULL REFERENCES task_agents (id) ON DELETE CASCADE,
+    created_at        TEXT NOT NULL,
+    PRIMARY KEY (task_id, reviewer_agent_id)
+);
 
 -- The skills an agent loads, in the order they are listed to it.
 CREATE TABLE task_agent_skills (

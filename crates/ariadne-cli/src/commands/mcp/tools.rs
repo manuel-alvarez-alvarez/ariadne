@@ -18,8 +18,8 @@ use ariadne_api::memories::{CreateMemoryRequest, MemoryDto};
 use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
-    AgentAssignment, CreateTaskRequest, RecordPullRequestRequest, TransitionRequest,
-    UpdateTaskRequest,
+    AgentAssignment, CreateTaskRequest, PickWinnerRequest, RecordPullRequestRequest,
+    TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, Landing, MessageKind, Seat, TaskStatus};
 
@@ -62,8 +62,11 @@ pub struct AgentReq {
 pub struct CreateTaskReq {
     pub title: String,
     pub description: String,
-    /// The one agent that writes the task. It owns the task to the end.
-    pub author: AgentReq,
+    /// The agents that write the task, at least one. Most tasks take one.
+    /// Staff several, each on its own model, where the task is worth two
+    /// attempts: each writes it alone, and the reviewers pick the one change
+    /// that lands. Several authors need at least one reviewer.
+    pub authors: Vec<AgentReq>,
     /// The agents that review the task, in review order. Staff at least one
     /// wherever the work can be judged. Leave it empty only where there is
     /// nothing to review, such as a release: the task is then approved as
@@ -87,11 +90,15 @@ pub struct UpdateTaskReq {
     pub title: Option<String>,
     pub description: Option<String>,
     /// What the author runs on, `<agent_kind>:<model>`. Omit it to keep the
-    /// model it has; a model is required, so `default` is refused.
+    /// model it has; a model is required, so `default` is refused. Refused
+    /// on a task with several authors: replace them with `authors`.
     pub author_model: Option<String>,
     /// An `efforts[].id` for that model. `default` puts it back on the
     /// default effort.
     pub author_effort: Option<String>,
+    /// The authors, in order. This list replaces the whole list, each author
+    /// staffed afresh with the skills and the model it names.
+    pub authors: Option<Vec<AgentReq>>,
     /// The reviewers, in review order. This list replaces the whole list, and
     /// an empty list takes every reviewer off the task.
     pub reviewers: Option<Vec<AgentReq>>,
@@ -192,6 +199,25 @@ pub struct SubmitVerdictReq {
     /// A note on an approval. On a change request, the feedback the author
     /// starts again on, and required there.
     pub body: Option<String>,
+    /// The id of the author whose change you judge, from `get_task`.
+    /// Required where the task has several authors; omit it where it has
+    /// one.
+    pub author: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct GetDiffReq {
+    /// The id of the author whose branch to read, from `get_task`. Omit it
+    /// where the task has one author.
+    pub author: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct PickWinnerReq {
+    /// The id of the author you pick, from `get_task`.
+    pub author: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -386,18 +412,27 @@ impl AriadneMcp {
     // ---- orchestrator ----
 
     #[tool(
-        description = "Create one task in the goal. Staff one author, and the reviewers the user agreed it needs. Give each agent the skills its work needs (`list_skills`) and one model from `list_models` — every agent names its model. Say how it ends with `landing`."
+        description = "Create one task in the goal. Staff its authors — one for most tasks, several to compare attempts — and the reviewers the user agreed it needs. Give each agent the skills its work needs (`list_skills`) and one model from `list_models`. Say how it ends with `landing`."
     )]
     async fn create_task(
         &self,
         Parameters(req): Parameters<CreateTaskReq>,
     ) -> Result<CallToolResult, McpError> {
+        if req.authors.is_empty() {
+            return Err(McpError::invalid_params(
+                "a task takes at least one author: pass one entry in `authors`",
+                None,
+            ));
+        }
         let path = format!("/v1/goals/{}/tasks", self.goal_id);
         let body = CreateTaskRequest {
             title: req.title,
             description: req.description,
             repo_id: req.repo_id,
-            agents: std::iter::once(assignment(Seat::Author, req.author))
+            agents: req
+                .authors
+                .into_iter()
+                .map(|a| assignment(Seat::Author, a))
                 .chain(
                     req.reviewers
                         .into_iter()
@@ -432,6 +467,12 @@ impl AriadneMcp {
             description: req.description,
             model: req.author_model,
             effort: req.author_effort,
+            authors: req.authors.map(|authors| {
+                authors
+                    .into_iter()
+                    .map(|a| assignment(Seat::Author, a))
+                    .collect()
+            }),
             reviewers: req.reviewers.map(|reviewers| {
                 reviewers
                     .into_iter()
@@ -597,19 +638,24 @@ impl AriadneMcp {
 
     // ---- reviewer ----
 
-    #[tool(description = "Read the diff of the branch under review against its base branch.")]
-    async fn get_diff(&self, Parameters(_): Parameters<Empty>) -> Result<CallToolResult, McpError> {
+    #[tool(
+        description = "Read the diff of the branch under review against its base branch. On a task with several authors, pass `author` to say whose branch."
+    )]
+    async fn get_diff(
+        &self,
+        Parameters(req): Parameters<GetDiffReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut path = self.task_path(None, "/diff")?;
+        if let Some(author) = req.author {
+            path.push_str(&format!("?agent={author}"));
+        }
         // Plain-text endpoint: no JSON decoding.
-        let diff = self
-            .client
-            .get_text(&self.task_path(None, "/diff")?)
-            .await
-            .map_err(to_mcp_err)?;
+        let diff = self.client.get_text(&path).await.map_err(to_mcp_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::text(diff)]))
     }
 
     #[tool(
-        description = "Give your verdict on the change. Approve it, or request changes. A change request carries the feedback the author starts again on. Where something blocks the review, request changes and name it."
+        description = "Give your verdict on the change. Approve it, or request changes. A change request carries the feedback the author starts again on. Where something blocks the review, request changes and name it. On a task with several authors, pass `author` to say whose change you judge."
     )]
     async fn submit_verdict(
         &self,
@@ -617,8 +663,27 @@ impl AriadneMcp {
     ) -> Result<CallToolResult, McpError> {
         let path = self.task_path(None, "/messages")?;
         let mut body = verdict_message(req.verdict, req.body)?;
-        body.to_agent_id = Some(self.author_of(None).await?);
+        body.to_agent_id = Some(self.verdict_author(req.author).await?);
         json_result(self.post(&path, &body).await?)
+    }
+
+    #[tool(
+        description = "Pick the author whose change lands, on a task with several authors. The pick opens once every author is approved. Call it once: a second pick is refused."
+    )]
+    async fn pick_winner(
+        &self,
+        Parameters(req): Parameters<PickWinnerReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = self.task_path(None, "/pick")?;
+        json_result(
+            self.post(
+                &path,
+                &PickWinnerRequest {
+                    author_agent_id: req.author,
+                },
+            )
+            .await?,
+        )
     }
 
     // ---- everyone ----
@@ -677,14 +742,41 @@ impl AriadneMcp {
         Ok(task["agents"].as_array().cloned().unwrap_or_default())
     }
 
-    /// The id of a task's author, which is who a verdict is for.
-    async fn author_of(&self, task_id: Option<String>) -> Result<String, McpError> {
-        self.agents_of(task_id)
-            .await?
-            .into_iter()
-            .find(|a| a["seat"] == "author")
-            .and_then(|a| a["id"].as_str().map(str::to_string))
-            .ok_or_else(|| McpError::internal_error("this task has no author", None))
+    /// The author a verdict is for: the one `named`, checked against the
+    /// task's staffing, or the task's only author where none was — and a
+    /// refusal naming the ids where the task has several and the verdict
+    /// named none.
+    async fn verdict_author(&self, named: Option<String>) -> Result<String, McpError> {
+        let agents = self.agents_of(None).await?;
+        let authors: Vec<&str> = agents
+            .iter()
+            .filter(|a| a["seat"] == "author")
+            .filter_map(|a| a["id"].as_str())
+            .collect();
+        if let Some(named) = named {
+            if authors.contains(&named.as_str()) {
+                return Ok(named);
+            }
+            return Err(McpError::invalid_params(
+                format!(
+                    "no author {named} on this task; the authors are: {}",
+                    authors.join(", ")
+                ),
+                None,
+            ));
+        }
+        match authors.as_slice() {
+            [author] => Ok((*author).to_string()),
+            [] => Err(McpError::internal_error("this task has no author", None)),
+            several => Err(McpError::invalid_params(
+                format!(
+                    "the task has several authors; pass `author` with the id of the one \
+                     you judge: {}",
+                    several.join(", ")
+                ),
+                None,
+            )),
+        }
     }
 
     /// Move this session's own task, which is the only one an author may
@@ -1069,6 +1161,7 @@ mod tests {
             mcp.submit_verdict(Parameters(SubmitVerdictReq {
                 verdict,
                 body: Some("rebase first".into()),
+                author: None,
             }))
             .await
             .expect("verdict");
@@ -1199,6 +1292,7 @@ mod tests {
             mcp.submit_verdict(Parameters(SubmitVerdictReq {
                 verdict: Verdict::RequestChanges,
                 body,
+                author: None,
             }))
             .await
             .expect_err("empty change request");
@@ -1235,12 +1329,16 @@ mod tests {
             }
         }
 
-        // Only a create staffs the author: a task keeps the one it started
-        // with, so an edit offers the reviewers and the author's pin alone.
-        let create = tool_schema("create_task");
-        assert!(create["properties"].get("author").is_some());
+        // Both tools staff the authors as a list — one for most tasks,
+        // several for one the reviewers pick a winner on — and the old
+        // one-author field is gone rather than merely ignored.
+        for tool in ["create_task", "update_task"] {
+            let schema = tool_schema(tool);
+            assert!(schema["properties"].get("authors").is_some());
+            assert!(schema["properties"].get("author").is_none());
+        }
+        // The one-author pin still moves on an edit without re-staffing.
         let update = tool_schema("update_task");
-        assert!(update["properties"].get("author").is_none());
         for pin in ["author_model", "author_effort"] {
             assert!(
                 update["properties"].get(pin).is_some(),
@@ -1259,12 +1357,12 @@ mod tests {
             .create_task(Parameters(CreateTaskReq {
                 title: "Pin the effort".into(),
                 description: "Beside the model.".into(),
-                author: AgentReq {
+                authors: vec![AgentReq {
                     skills: vec!["coding".into()],
                     model: "codex:gpt-5.6-sol".into(),
                     effort: Some("xhigh".into()),
                     brief: None,
-                },
+                }],
                 reviewers: vec![AgentReq {
                     skills: vec!["code-review".into()],
                     model: "claude_code:claude-haiku-4-5".into(),
@@ -1319,6 +1417,7 @@ mod tests {
                 description: None,
                 author_model: None,
                 author_effort: Some("default".into()),
+                authors: None,
                 reviewers: Some(vec![AgentReq {
                     skills: vec!["code-review".into()],
                     model: "codex:gpt-5.6-luna".into(),
@@ -1357,6 +1456,7 @@ mod tests {
                 description: None,
                 author_model: Some("default".into()),
                 author_effort: None,
+                authors: None,
                 reviewers: None,
                 depends_on: None,
                 landing: None,

@@ -52,6 +52,8 @@ pub fn task(id: &str, goal_id: &str) -> TaskDto {
         stalled: false,
         merge_commit: None,
         pr_url: None,
+        picked_agent_id: None,
+        picks: Vec::new(),
         reason: None,
         usage: Default::default(),
         created_at: NOW.into(),
@@ -93,6 +95,7 @@ pub fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
     TaskAgentDto {
         id: id.into(),
         seat,
+        branch: None,
         skills: skills.iter().map(|s| s.to_string()).collect(),
         model: "claude_code:claude-sonnet-5".into(),
         effort: None,

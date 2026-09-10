@@ -1,7 +1,7 @@
 ---
 id: how-a-task-ends
 status: current
-updated: 2026-09-06
+updated: 2026-09-10
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
@@ -43,7 +43,9 @@ state machine around `approved` and `finished` (001).
    is rendered with `{task_title}`, `{branch}`, `{base_branch}` and
    `{repo_path}`, and may name nothing else.
 4. An approved task is landed by its own author, in the session and worktree
-   it already holds. There is no separate integrator seat.
+   it already holds. There is no separate integrator seat. On a task staffed
+   with several authors that author is the picked winner (004), and its
+   branch is the one every landing command and check reads.
 5. `merge`: rebase the task branch onto the base, squash it into one commit
    with a Conventional Commits subject, fast-forward the base branch in the
    primary checkout, push where there is a remote, then `finish_task` with the

@@ -1,10 +1,12 @@
 //! What a task wants, by status: an author from `ready` to the merge, the
 //! reviewers a review is waiting on, and the cleanup its ending owes.
 
+use std::collections::HashSet;
+
 use tracing::{info, warn};
 
 use ariadne_core::{Actor, AttentionReason, GoalStatus, MessageKind, PromptKind, Seat, TaskStatus};
-use ariadne_store::{AgentSession, SessionFilter, Task, TaskFilter};
+use ariadne_store::{AgentSession, SessionFilter, Task, TaskAgent, TaskFilter, author_branch};
 
 use crate::agents::prompts;
 use crate::launcher;
@@ -35,13 +37,25 @@ impl super::Scheduler {
             return Ok(());
         }
 
+        // Who writes this task: one author for most tasks, several for a
+        // contested one — which runs them side by side until the reviewers
+        // pick a winner, and reads as one-author again once they have.
+        let authors = self.store.list_task_authors(&task.id).await?;
+        let contested = authors.len() > 1 && task.picked_agent_id.is_none();
+
         // The branch is only followed while somebody is working on it. Finished
         // and cancelled tasks are let go by the cleanup below, but a failed
         // one keeps its worktree — a user can retry it — and until one does
         // there is nobody committing on its branch to report. Here rather than
         // in an arm of the match, so that every way a task can stop being
-        // worked on converges on the same pass.
-        if !launcher::worth_following(&task) {
+        // worked on converges on the same pass. A contested task keeps its
+        // worktrees on the sessions rather than on the task, so only its
+        // ending lets the watches go.
+        let followed = match authors.len() > 1 {
+            true => !task.status().is_terminal() && task.status() != TaskStatus::Failed,
+            false => launcher::worth_following(&task),
+        };
+        if !followed {
             self.launcher.branches.unwatch(&task.id);
         }
 
@@ -63,6 +77,11 @@ impl super::Scheduler {
         // again the next time it is approved.
         if task.status() != TaskStatus::Approved {
             self.landing_briefed.remove(&task.id);
+        }
+        // And one that has left the pick — settled, retried, or reopened by a
+        // review — is one whose reviewers want asking afresh next time.
+        if !contested || task.status() != TaskStatus::UnderReview {
+            self.pick_briefed.retain(|(t, _)| t != &task.id);
         }
 
         match task.status() {
@@ -98,6 +117,25 @@ impl super::Scheduler {
                     return Box::pin(self.reconcile_task(task_id)).await;
                 }
             }
+            TaskStatus::Ready if contested => {
+                // Every author starts at once, each in a worktree and on a
+                // branch of its own.
+                for author in &authors {
+                    if self
+                        .live_author_session(&task.id, &author.id)
+                        .await?
+                        .is_none()
+                    {
+                        info!(task = %task.id, author = %author.id, "spawning author");
+                        self.launcher
+                            .spawn_author_agent(&task.id, &author.id)
+                            .await?;
+                    }
+                }
+                self.store
+                    .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
+                    .await?;
+            }
             TaskStatus::Ready => {
                 if self
                     .live_sessions(&goal.id, Some(&task.id), Seat::Author)
@@ -111,8 +149,20 @@ impl super::Scheduler {
                     .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
                     .await?;
             }
+            TaskStatus::InProgress if contested => {
+                // Nobody has asked for a review yet — the first request is
+                // what moves the task on — so every author is still writing.
+                for author in &authors {
+                    let situation = format!("in_progress:{}", author.id);
+                    self.check_contested_author(&task, author, situation)
+                        .await?;
+                }
+            }
             TaskStatus::InProgress => {
                 self.check_stall(&task).await?;
+            }
+            TaskStatus::UnderReview if contested => {
+                self.reconcile_contest(&task, &authors).await?;
             }
             TaskStatus::UnderReview => {
                 let reviewers = self.store.list_task_reviewers(&task.id).await?;
@@ -328,6 +378,308 @@ impl super::Scheduler {
         Ok(())
     }
 
+    /// One pass over a contested task under review: each author's own review
+    /// runs to approval side by side, and once every one of them stands
+    /// approved the reviewers are asked to pick the winner.
+    async fn reconcile_contest(
+        &mut self,
+        task: &Task,
+        authors: &[TaskAgent],
+    ) -> anyhow::Result<()> {
+        let reviewers = self.store.list_task_reviewers(&task.id).await?;
+        let mut all_approved = true;
+        for author in authors {
+            let Some(request) = self
+                .store
+                .open_review_request_of(&task.id, &author.id)
+                .await?
+            else {
+                // Still writing: the task moved on when a sibling asked
+                // first, and this author's own review has not opened yet.
+                all_approved = false;
+                let situation = format!("in_progress:{}", author.id);
+                self.check_contested_author(task, author, situation).await?;
+                continue;
+            };
+            let verdicts = self.store.open_verdicts_of(&task.id, &author.id).await?;
+            if verdicts
+                .iter()
+                .any(|m| m.kind() == Some(MessageKind::RequestChanges))
+            {
+                // The change request reached the author as a message on the
+                // channel; what is watched here is the author revising.
+                all_approved = false;
+                let situation = format!("changes:{request}");
+                self.check_contested_author(task, author, situation).await?;
+                continue;
+            }
+            let approved_by: HashSet<&str> = verdicts
+                .iter()
+                .filter(|m| m.kind() == Some(MessageKind::Approve))
+                .filter_map(|m| m.from_agent_id.as_deref())
+                .collect();
+            if approved_by.len() >= reviewers.len() {
+                continue;
+            }
+            all_approved = false;
+            for reviewer in reviewers
+                .iter()
+                .filter(|r| !approved_by.contains(r.id.as_str()))
+            {
+                self.rouse_reviewer_for(task, reviewer, author, &request)
+                    .await?;
+            }
+        }
+        if !all_approved {
+            // A review reopened is a pick to ask for afresh once it closes.
+            self.pick_briefed.retain(|(t, _)| t != &task.id);
+            return Ok(());
+        }
+        self.run_the_pick(task, authors, &reviewers).await
+    }
+
+    /// The pick itself: every reviewer asked once, and the winner settled as
+    /// soon as the last pick is in.
+    async fn run_the_pick(
+        &mut self,
+        task: &Task,
+        authors: &[TaskAgent],
+        reviewers: &[TaskAgent],
+    ) -> anyhow::Result<()> {
+        let picks = self.store.list_task_picks(&task.id).await?;
+        if picks.len() >= reviewers.len() {
+            let Some(winner) = ariadne_store::picked_winner(authors, &picks) else {
+                return Ok(());
+            };
+            info!(task = %task.id, winner = %winner.id, "every reviewer has picked; landing this author");
+            self.store.set_task_picked(&task.id, &winner.id).await?;
+            // The winner's worktree becomes the task's own, which is what the
+            // landing resumes the author in.
+            if let Some(worktree) = self
+                .last_session(&task.id, |s| {
+                    s.task_agent_id.as_deref() == Some(winner.id.as_str())
+                        && s.worktree_path.is_some()
+                })
+                .await
+                .and_then(|s| s.worktree_path)
+            {
+                self.store
+                    .set_task_worktree(&task.id, Some(&worktree))
+                    .await?;
+            }
+            // The losers go now: their changes were judged and set aside, and
+            // nothing later comes back for their branches or worktrees.
+            self.launcher.cleanup_losing_authors(&task.id).await?;
+            self.store
+                .transition_task(
+                    &task.id,
+                    TaskStatus::Approved,
+                    Actor::Daemon,
+                    Some(&format!("the reviewers picked author {}", winner.id)),
+                    None,
+                )
+                .await?;
+            return Box::pin(self.reconcile_task(&task.id)).await;
+        }
+
+        let picked_by: HashSet<&str> = picks.iter().map(|p| p.reviewer_agent_id.as_str()).collect();
+        let lines: Vec<(String, String)> = authors
+            .iter()
+            .map(|a| (a.id.clone(), author_branch(&task.branch, a.ordinal)))
+            .collect();
+        let template = prompts::template_for(PromptKind::ReviewerPick);
+        let briefing = prompts::reviewer_pick_briefing(template, task, &lines);
+        for reviewer in reviewers
+            .iter()
+            .filter(|r| !picked_by.contains(r.id.as_str()))
+        {
+            let situation = format!("pick:{}", task.id);
+            if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
+                self.spent_on_a_dead_launch(&reviewer.id, &task.id, &session);
+                // Asked once, straight into the pane; from there the quiet
+                // clock takes over like any other owed answer.
+                let key = (task.id.clone(), reviewer.id.clone());
+                if !self.pane_busy(&session.id) && self.pick_briefed.insert(key) {
+                    info!(task = %task.id, reviewer = %reviewer.id, "asking the reviewer to pick the winner");
+                    self.spawn_delivery(&session, briefing.clone());
+                } else {
+                    self.check_session_quiet(&session, situation, &briefing)
+                        .await?;
+                }
+            } else {
+                if let Some(last) = self
+                    .last_session(&task.id, |s| {
+                        s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
+                    })
+                    .await
+                    && self.spent_on_a_dead_launch(&reviewer.id, &task.id, &last)
+                {
+                    warn!(task = %task.id, session = %last.id, "the reviewer came up and was never heard from");
+                    if self
+                        .record_spawn_failure(&task.id, "its agent stopped as soon as it started")
+                        .await
+                    {
+                        return Ok(());
+                    }
+                }
+                info!(task = %task.id, reviewer = %reviewer.id, "starting a reviewer for the pick");
+                self.pick_briefed
+                    .insert((task.id.clone(), reviewer.id.clone()));
+                self.launcher
+                    .resume_reviewer(&task.id, &reviewer.id, &briefing)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One author of a contested task, watched the way [`Self::check_stall`]
+    /// watches a lone one: started again where its session is gone, nudged
+    /// where it has gone quiet, and its dead launches spent against the
+    /// task's budget.
+    async fn check_contested_author(
+        &mut self,
+        task: &Task,
+        author: &TaskAgent,
+        situation: String,
+    ) -> anyhow::Result<()> {
+        // What this author is picked up or nudged with: its own branch, in
+        // the words a lone author gets.
+        let seen = Task {
+            branch: author_branch(&task.branch, author.ordinal),
+            ..task.clone()
+        };
+        let template = prompts::template_for(PromptKind::AuthorResume);
+        let resume = prompts::author_resume_briefing(template, &seen);
+
+        let Some(session) = self.live_author_session(&task.id, &author.id).await? else {
+            if let Some(last) = self
+                .last_session(&task.id, |s| {
+                    s.seat() == Seat::Author
+                        && s.task_agent_id.as_deref() == Some(author.id.as_str())
+                })
+                .await
+                && self.spent_on_a_dead_launch(&author.id, &task.id, &last)
+            {
+                warn!(task = %task.id, session = %last.id, "the author came up and was never heard from");
+                if self
+                    .record_spawn_failure(&task.id, "its agent stopped as soon as it started")
+                    .await
+                {
+                    return Ok(());
+                }
+            }
+            info!(task = %task.id, author = %author.id, "the task is waiting on an author and has none live, starting one");
+            self.launcher
+                .resume_author_agent(&task.id, &author.id, &resume)
+                .await?;
+            return Ok(());
+        };
+        self.spent_on_a_dead_launch(&author.id, &task.id, &session);
+        self.check_session_quiet(&session, situation, &resume).await
+    }
+
+    /// The live session one staffed author runs, if it has one — a pane tmux
+    /// would not answer for counts, as everywhere.
+    async fn live_author_session(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        self.live_agent_session(task_id, agent_id, Seat::Author)
+            .await
+    }
+
+    /// The live session one staffed reviewer runs, if it has one.
+    async fn live_reviewer_session(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        self.live_agent_session(task_id, agent_id, Seat::Reviewer)
+            .await
+    }
+
+    async fn live_agent_session(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        seat: Seat,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        let live = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task_id.to_string()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await?;
+        for session in live {
+            if session.seat() == seat
+                && session.task_agent_id.as_deref() == Some(agent_id)
+                && self
+                    .launcher
+                    .tmux
+                    .has_session_or_unknown(&session.tmux_session)
+                    .await
+            {
+                return Ok(Some(session));
+            }
+        }
+        Ok(None)
+    }
+
+    /// One reviewer that owes a verdict on one author's review of a contested
+    /// task: resumed onto that author's branch where its session is gone, and
+    /// nudged where it has one and has gone quiet.
+    async fn rouse_reviewer_for(
+        &mut self,
+        task: &Task,
+        reviewer: &TaskAgent,
+        author: &TaskAgent,
+        request: &str,
+    ) -> anyhow::Result<()> {
+        let summary = self
+            .store
+            .author_review_summary(&task.id, &author.id)
+            .await?;
+        let summary = launcher::verdict_addressed_to(&author.id, summary.as_deref());
+        let seen = Task {
+            branch: author_branch(&task.branch, author.ordinal),
+            ..task.clone()
+        };
+        let template = prompts::template_for(PromptKind::ReviewerResume);
+        let resume = prompts::reviewer_resume_briefing(template, &seen, Some(&summary));
+        let situation = format!("under_review:{request}");
+
+        if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
+            self.spent_on_a_dead_launch(&session.id, &task.id, &session);
+            self.check_session_quiet(&session, situation, &resume)
+                .await?;
+        } else {
+            if let Some(last) = self
+                .last_session(&task.id, |s| {
+                    s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
+                })
+                .await
+                && self.spent_on_a_dead_launch(&last.id, &task.id, &last)
+            {
+                warn!(task = %task.id, session = %last.id, "the reviewer came up and was never heard from");
+                if self
+                    .record_spawn_failure(&task.id, "its agent stopped as soon as it started")
+                    .await
+                {
+                    return Ok(());
+                }
+            }
+            info!(task = %task.id, reviewer = %reviewer.id, author = %author.id, "starting reviewer");
+            self.launcher
+                .resume_reviewer_for(&task.id, &reviewer.id, Some(&author.id), &resume)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Count an attempt at giving this task an agent that came to nothing, and
     /// say whether that was the last one there was.
     ///
@@ -534,6 +886,19 @@ impl super::Scheduler {
     /// that ended over it has to be given back. Anything earlier is work in
     /// the worktree, and the resume nudge is what that wants.
     async fn resume_text(&self, task: &Task) -> anyhow::Result<String> {
+        // On a task the reviewers picked a winner for, the branch every
+        // briefing names is the winner's own: that is the change that lands.
+        let seen = match self
+            .launcher
+            .review_branch(task, task.picked_agent_id.as_deref())
+            .await?
+        {
+            Some(branch) => Task {
+                branch,
+                ..task.clone()
+            },
+            None => task.clone(),
+        };
         if task.status() == TaskStatus::Approved {
             let repo = self.store.get_repository(&task.repo_id).await?;
             // The procedure is the task's: how this task ends was agreed with
@@ -541,12 +906,12 @@ impl super::Scheduler {
             // decides which of the three the author runs.
             return Ok(prompts::landing_briefing(
                 task.landing_prompt_text(),
-                task,
+                &seen,
                 &repo,
             ));
         }
         let template = prompts::template_for(PromptKind::AuthorResume);
-        Ok(prompts::author_resume_briefing(template, task))
+        Ok(prompts::author_resume_briefing(template, &seen))
     }
 
     /// The session that was last this task's, of the ones `which` picks out,

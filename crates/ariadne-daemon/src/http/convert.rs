@@ -13,7 +13,9 @@ use ariadne_api::messages::MessageDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::skills::{SkillDto, SkillSeat};
-use ariadne_api::tasks::{AgentUsageDto, TaskAgentDto, TaskDto, TaskTransitionDto, TaskUsageDto};
+use ariadne_api::tasks::{
+    AgentUsageDto, TaskAgentDto, TaskDto, TaskPickDto, TaskTransitionDto, TaskUsageDto,
+};
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
 use ariadne_store::{self as store, AgentUsage, Store, StoreError};
@@ -89,36 +91,52 @@ dto! {
     }
 
     /// `skills` is the agent's skill names in load order, which the caller
-    /// loads beside the row.
-    fn task_agent_dto(a: store::TaskAgent, skills: Vec<String>) -> TaskAgentDto {
+    /// loads beside the row; `branch` is the author's own, worked out from
+    /// the task the caller holds, and None for a reviewer.
+    fn task_agent_dto(
+        a: store::TaskAgent,
+        skills: Vec<String>,
+        branch: Option<String>,
+    ) -> TaskAgentDto {
         seat: a.seat(),
         model: spelled(a.agent_kind(), &a.model),
         skills: skills,
+        branch: branch,
         .. id, effort, brief
     }
 
+    pub fn task_pick_dto(p: store::TaskPick) -> TaskPickDto {
+        .. reviewer_agent_id, author_agent_id, created_at
+    }
+
     /// The agents come from the caller, which loads them with their skills,
-    /// author first and the reviewers in review order. So does `reason`,
-    /// which only an ended task has.
+    /// authors first and the reviewers in review order. So do the picks, and
+    /// `reason`, which only an ended task has.
     fn task_dto(
         t: store::Task,
         agents: Vec<(store::TaskAgent, Vec<String>)>,
         depends_on: Vec<String>,
         usage: TaskUsageDto,
         reason: Option<String>,
+        picks: Vec<TaskPickDto>,
     ) -> TaskDto {
         status: t.status(),
         landing: t.landing(),
         stalled: t.is_stalled(),
         agents: agents
             .into_iter()
-            .map(|(a, skills)| task_agent_dto(a, skills))
+            .map(|(a, skills)| {
+                let branch = (a.seat() == Seat::Author)
+                    .then(|| store::author_branch(&t.branch, a.ordinal));
+                task_agent_dto(a, skills, branch)
+            })
             .collect(),
         depends_on: depends_on,
         usage: usage,
         reason: reason,
+        picks: picks,
         .. id, goal_id, repo_id, title, description, branch, worktree_path,
-           merge_commit, pr_url, created_at, updated_at
+           merge_commit, pr_url, picked_agent_id, created_at, updated_at
     }
 
     pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
@@ -195,7 +213,13 @@ pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, St
     let depends_on = store.list_task_dependencies(&task.id).await?;
     let usage = task_usage(store, &task.id, &agents).await?;
     let reason = store.ended_reason(&task).await?;
-    Ok(task_dto(task, agents, depends_on, usage, reason))
+    let picks = store
+        .list_task_picks(&task.id)
+        .await?
+        .into_iter()
+        .map(task_pick_dto)
+        .collect();
+    Ok(task_dto(task, agents, depends_on, usage, reason, picks))
 }
 
 /// [`session_dto`] with what the session has spent loaded from the store.
