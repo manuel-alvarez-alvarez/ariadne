@@ -68,6 +68,12 @@ export const qk = {
     detail: (id: string) => ["sessions", "detail", id] as const,
     logs: (id: string) => ["sessions", "detail", id, "logs"] as const,
   },
+  /** Sessions a supported CLI started outside Ariadne (`GET /v1/outside-sessions`). */
+  outsideSessions: {
+    all: () => ["outside-sessions"] as const,
+    lists: () => ["outside-sessions", "list"] as const,
+    list: () => ["outside-sessions", "list", {}] as const,
+  },
   skills: {
     all: () => ["skills"] as const,
     lists: () => ["skills", "list"] as const,

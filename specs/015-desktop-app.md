@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-08
+updated: 2026-09-10
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -29,9 +29,10 @@ Out: the daemon endpoints themselves (012).
 2. The shell is a sidebar and a main area; a panel opens beside a list rather
    than replacing it, and the URL carries which panel is open.
 3. Screens: the goals board (swimlanes plus an attention strip), the task
-   panel (facts, diff, messages, history), sessions and a terminal, skills,
-   repositories, agent kinds and their launch flags, models and which of them
-   may be staffed on, and a daemon-logs drawer.
+   panel (facts, diff, messages, history), sessions and a terminal, outside
+   sessions that a ready task can adopt as its author, skills, repositories,
+   agent kinds and their launch flags, models and which of them may be staffed
+   on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -66,6 +67,10 @@ Out: the daemon endpoints themselves (012).
     mark, staying editable and resettable like any other shipped skill.
 15. The agent activity feed shows each event's one-line summary from the
     daemon; its raw payload stays available under the row.
+16. The outside-sessions view lists the CLI, working directory, last activity
+    and first prompt from `GET /v1/outside-sessions`, then adopts a matching
+    session as the author of a ready task through `POST
+    /v1/tasks/{id}/author-session`.
 
 ## Acceptance criteria
 
@@ -108,6 +113,9 @@ Out: the daemon endpoints themselves (012).
 - The agent activity feed shows the daemon's summary and opens and closes the
   raw payload under its row
   (`ui/src/features/sessions/session-activity.test.tsx`).
+- The outside-sessions view lists each discovered session and adopts one as the
+  author of a matching ready task
+  (`ui/src/features/sessions/outside-sessions-page.test.tsx`).
 
 ## Sources
 

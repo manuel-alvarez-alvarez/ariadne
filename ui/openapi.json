@@ -4,10 +4,10 @@
     "title": "Ariadne Daemon API",
     "description": "REST API of ariadned, the coding-agent orchestrator daemon.",
     "license": {
-      "name": "MIT OR Apache-2.0",
-      "identifier": "MIT OR Apache-2.0"
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
     },
-    "version": "0.5.0"
+    "version": "0.6.0"
   },
   "paths": {
     "/v1/agents": {
@@ -787,6 +787,30 @@
           },
           "409": {
             "description": "it is the last model left enabled"
+          }
+        }
+      }
+    },
+    "/v1/outside-sessions": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "List sessions found in supported CLI transcript stores that Ariadne did\nnot start.",
+        "operationId": "list_outside",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OutsideSessionDto"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1645,6 +1669,54 @@
         }
       }
     },
+    "/v1/tasks/{id}/author-session": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Make an outside session the author of a ready task.",
+        "operationId": "adopt_author_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdoptOutsideSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/tasks/{id}/cancel": {
       "post": {
         "tags": [
@@ -2030,6 +2102,23 @@
           "daemon",
           "user"
         ]
+      },
+      "AdoptOutsideSessionRequest": {
+        "type": "object",
+        "description": "The outside CLI session to adopt as a task author.",
+        "required": [
+          "agent_kind",
+          "internal_session_id"
+        ],
+        "properties": {
+          "agent_kind": {
+            "$ref": "#/components/schemas/AgentKind"
+          },
+          "internal_session_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "AgentAssignment": {
         "type": "object",
@@ -3145,6 +3234,35 @@
           "fast",
           "unknown"
         ]
+      },
+      "OutsideSessionDto": {
+        "type": "object",
+        "description": "A coding-agent session found in a CLI transcript store, but not started by\nAriadne.",
+        "required": [
+          "agent_kind",
+          "internal_session_id",
+          "working_directory",
+          "last_activity_at",
+          "first_prompt"
+        ],
+        "properties": {
+          "agent_kind": {
+            "$ref": "#/components/schemas/AgentKind"
+          },
+          "first_prompt": {
+            "type": "string"
+          },
+          "internal_session_id": {
+            "type": "string",
+            "description": "The id the CLI uses to resume this conversation."
+          },
+          "last_activity_at": {
+            "type": "string"
+          },
+          "working_directory": {
+            "type": "string"
+          }
+        }
       },
       "PathStateDto": {
         "type": "object",
