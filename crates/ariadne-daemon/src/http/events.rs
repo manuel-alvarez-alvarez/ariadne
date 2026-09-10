@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::Page;
 use ariadne_api::events::{AgentEventDto, EventListQuery, IngestEventRequest};
-use ariadne_store::{EventFilter, NewAgentEvent};
+use ariadne_store::{EventFilter, NewAgentEvent, Store, StoreError};
 
 use super::AppState;
 use super::classify::{
@@ -43,21 +43,32 @@ pub async fn ingest(
     State(state): State<AppState>,
     Json(req): Json<IngestEventRequest>,
 ) -> ApiResult<StatusCode> {
+    ingest_event(&state.store, &req).await?;
+    state.notify_scheduler_session(&req.session_id);
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// One agent event, applied to the store: recorded, and read for the status,
+/// attention, internal id and usage it moves. The one path every report
+/// takes, whether it arrived over `/internal/agent-events` or from the
+/// daemon's own ACP runtime (`crate::acp`) — the caller wakes the scheduler.
+pub(crate) async fn ingest_event(
+    store: &Store,
+    req: &IngestEventRequest,
+) -> Result<(), StoreError> {
     // The session must exist; its task link is copied onto the event.
-    let session = state.store.get_session(&req.session_id).await?;
+    let session = store.get_session(&req.session_id).await?;
 
     // Whether a question was already standing in the pane when this event
     // arrived — asked of the log before this event joins it, so that what it
     // reports is the state this event is about to change. Only Claude Code
     // asks this way, and only its sessions pay for the lookup.
     let question_was_up = session.agent_kind() == ariadne_core::AgentKind::ClaudeCode
-        && state
-            .store
+        && store
             .tool_call_is_pending(&session.id, QUESTION_TOOL)
             .await?;
 
-    state
-        .store
+    store
         .create_event(NewAgentEvent {
             session_id: Some(session.id.clone()),
             task_id: session.task_id.clone(),
@@ -90,7 +101,7 @@ pub async fn ingest(
             session = %session.id, kind = %req.kind, launch = %reported,
             "ignoring an event from a launch this session has moved past"
         );
-        return Ok(StatusCode::ACCEPTED);
+        return Ok(());
     }
 
     // Capture the agent-internal session id as soon as an event carries it.
@@ -98,8 +109,7 @@ pub async fn ingest(
         && let Some(internal) = extract_internal_id(req.agent_kind, &req.payload)
     {
         tracing::info!(session = %session.id, internal, "captured internal session id");
-        state
-            .store
+        store
             .set_session_internal_id(&session.id, &internal)
             .await?;
     }
@@ -110,8 +120,7 @@ pub async fn ingest(
     // agent kind, since which of them carries the figures is a decision of
     // the hook or plugin that reads the transcript, not of this handler.
     if let Some((source, usage)) = usage_for_event(&req.payload) {
-        state
-            .store
+        store
             .upsert_session_usage(&session.id, &source, usage)
             .await?;
     }
@@ -134,7 +143,7 @@ pub async fn ingest(
         && let Some(status) = status
         && status != session.status()
     {
-        state.store.set_session_status(&session.id, status).await?;
+        store.set_session_status(&session.id, status).await?;
     }
 
     // Attention follows the event too: an agent that reported an error needs
@@ -184,32 +193,28 @@ pub async fn ingest(
     let holding_a_question =
         question_was_up && question_for_event(&req.kind, &req.payload).is_none();
     if let Some(reason) = attention_for_event(&req.kind, &req.payload) {
-        if !holding_a_question && crate::attention::work_is_active(&state.store, &session).await {
-            state
-                .store
-                .set_session_attention(&session.id, reason)
-                .await?;
+        if !holding_a_question && crate::attention::work_is_active(store, &session).await {
+            store.set_session_attention(&session.id, reason).await?;
         }
     } else if session.status().is_live() && !holding_a_question {
         match status {
             Some(ariadne_core::SessionStatus::Running) => {
-                state.store.clear_agent_attention(&session.id).await?;
+                store.clear_agent_attention(&session.id).await?;
             }
             Some(ariadne_core::SessionStatus::Idle) => {
-                state.store.clear_attention_after_idle(&session.id).await?;
+                store.clear_attention_after_idle(&session.id).await?;
                 // The one flag an idle report does answer, when the turn that
                 // ended was a turn blocked on a question: Esc on the choices
                 // is what ends it, and it leaves nothing on the screen for
                 // anybody to answer (`clear_question_attention`).
                 if question_was_up {
-                    state.store.clear_question_attention(&session.id).await?;
+                    store.clear_question_attention(&session.id).await?;
                 }
             }
             _ => {}
         }
     }
 
-    state.store.touch_session(&session.id).await?;
-    state.notify_scheduler_session(&session.id);
-    Ok(StatusCode::ACCEPTED)
+    store.touch_session(&session.id).await?;
+    Ok(())
 }

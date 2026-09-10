@@ -31,6 +31,7 @@ test that proves it.
 | 018 | [Agent messages](018-agent-messages.md) | the one channel the agents talk on, and how a message reaches a pane |
 | 019 | [Project memory](019-project-memory.md) | searchable repository facts, sources, expiry and agent access |
 | 020 | [Session adoption](020-session-adoption.md) | discover and adopt sessions started outside Ariadne |
+| 021 | [ACP runtime](021-acp-runtime.md) | the daemon-owned ACP agent: child process, protocol, events, kill |
 
 ## Writing one
 

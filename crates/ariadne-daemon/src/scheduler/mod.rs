@@ -181,6 +181,9 @@ pub fn start(
     prevent_sleep: bool,
 ) -> mpsc::UnboundedSender<SchedEvent> {
     let (tx, mut rx) = mpsc::unbounded_channel();
+    // The ACP runtime reports agent events itself; give it the waker the
+    // HTTP ingestion pokes after a write.
+    launcher.acp.connect_scheduler(tx.clone());
     // Deliveries report on a channel of their own rather than on the event
     // one, so the loop still ends when the daemon drops the sender it was
     // given: the scheduler holds this one for as long as it lives.

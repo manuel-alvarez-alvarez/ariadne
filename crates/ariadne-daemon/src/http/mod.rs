@@ -6,7 +6,7 @@ mod classify;
 pub(crate) mod convert;
 mod doctor;
 mod error;
-mod events;
+pub(crate) mod events;
 mod goals;
 mod landing;
 mod logs;

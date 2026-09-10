@@ -21,6 +21,7 @@ use ariadne_store::{
     author_branch,
 };
 
+use crate::acp::{AcpLaunch, AcpRuntime};
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, prompts, write_skills};
 use crate::branch::BranchWatchers;
 use crate::config::Config;
@@ -54,6 +55,9 @@ pub struct Launcher {
     pub store: Store,
     pub tmux: TmuxManager,
     pub git: GitManager,
+    /// The daemon-owned ACP agents: a session of kind `acp` runs as a child
+    /// process driven here, never in a tmux pane.
+    pub acp: AcpRuntime,
     /// The task branches whose head the daemon is following, so that a commit
     /// an author makes reaches the clients watching its diff.
     pub branches: BranchWatchers,
@@ -130,7 +134,7 @@ impl Launcher {
         for s in live {
             if s.seat() == seat
                 && agent_id.is_none_or(|a| Some(a) == s.task_agent_id.as_deref())
-                && self.tmux.has_session_or_unknown(&s.tmux_session).await
+                && self.session_process_alive(&s).await
             {
                 return Err(anyhow!(
                     "a live {} session already exists: {} (tmux {})",
@@ -141,6 +145,21 @@ impl Launcher {
             }
         }
         Ok(())
+    }
+
+    /// Whether the process behind a session is alive, counting "could not be
+    /// asked" as yes — what every spawn decision reads. An `acp` session has
+    /// no pane: the runtime that owns its child answers instead
+    /// ([`AcpRuntime::is_running`]), and it always answers.
+    pub async fn session_process_alive(&self, session: &AgentSession) -> bool {
+        match session.agent_kind() {
+            AgentKind::Acp => self.acp.is_running(&session.id),
+            _ => {
+                self.tmux
+                    .has_session_or_unknown(&session.tmux_session)
+                    .await
+            }
+        }
     }
 
     /// Take the tmux name the session about to be created will run under.
@@ -382,6 +401,11 @@ impl Launcher {
         // adapter only creates the run dir when it has config files to write
         // there (codex does not).
         std::fs::create_dir_all(self.run_dir(&session.id)).context("creating session run dir")?;
+        if session.agent_kind() == AgentKind::Acp {
+            return self
+                .launch_acp(session, plan.argv, env, plan.cwd, launch_id)
+                .await;
+        }
         let spawn = self.tmux_spawn(session, plan.argv, env, plan.cwd)?;
         self.store
             .set_session_launch(&session.id, launch_id)
@@ -401,6 +425,65 @@ impl Launcher {
         self.watch_for_a_dialog(session.id.clone(), session.tmux_session.clone());
         if let Some(input) = plan.post_launch_input {
             self.deliver_typed_input(session.id.clone(), session.tmux_session.clone(), input);
+        }
+        Ok(())
+    }
+
+    /// The ACP half of [`Self::launch`]: no pane and no `_spawn` — the daemon
+    /// spawns the agent as its own child and drives it over the protocol
+    /// (`crate::acp`). The spawn plan is still written as the record of what
+    /// was launched, and the row moves through the same states in the same
+    /// order as a tmux launch. What runs is `Config::acp_bin` — the plan's
+    /// own argv head outside a test — with the rest of the argv behind it.
+    async fn launch_acp(
+        &self,
+        session: &AgentSession,
+        argv: Vec<String>,
+        env: Vec<(String, String)>,
+        cwd: PathBuf,
+        launch_id: &str,
+    ) -> Result<()> {
+        let config_path = env
+            .iter()
+            .find(|(key, _)| key == ariadne_core::acp::CONFIG_ENV)
+            .map(|(_, value)| PathBuf::from(value))
+            .context("an ACP launch plan names no ACP config")?;
+        let raw = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("reading the ACP config {}", config_path.display()))?;
+        let config: ariadne_core::acp::LaunchConfig = serde_json::from_str(&raw)
+            .with_context(|| format!("reading the ACP config {}", config_path.display()))?;
+        let args = argv
+            .split_first()
+            .map(|(_, args)| args.to_vec())
+            .expect("the ACP adapter plans a non-empty argv");
+        write_spawn_plan(
+            &self.spawn_plan_file(&session.id),
+            &SpawnPlanFile::new(argv, env.clone(), cwd.clone()),
+        )?;
+        self.store
+            .set_session_launch(&session.id, launch_id)
+            .await?;
+        self.acp
+            .launch(AcpLaunch {
+                session_id: session.id.clone(),
+                launch_id: launch_id.to_string(),
+                program: self.cfg.acp_bin.clone(),
+                args,
+                env,
+                cwd,
+                config,
+            })
+            .await
+            .context("spawning the ACP agent")?;
+        self.store.mark_session_launched(&session.id).await?;
+        // Running, but only over a row still starting: unlike a pane, the
+        // driver reports from the moment it spawns, and an agent that failed
+        // fast has ended the row by now — Running written over that would
+        // resurrect it until the sweep retires it again.
+        if self.store.get_session(&session.id).await?.status() == SessionStatus::Starting {
+            self.store
+                .set_session_status(&session.id, SessionStatus::Running)
+                .await?;
         }
         Ok(())
     }
@@ -654,7 +737,11 @@ impl Launcher {
             "author",
             seat.sibling_tail().as_deref(),
         );
-        self.claim_pane(&tmux_session).await?;
+        // An acp author runs no pane: the name is stored — the row carries
+        // one for every session — but nothing tmux is claimed or created.
+        if seat.author.agent_kind() != AgentKind::Acp {
+            self.claim_pane(&tmux_session).await?;
+        }
 
         let worktree = self.author_worktree(&task, &repo, None, &seat).await?;
 
@@ -1139,11 +1226,7 @@ impl Launcher {
         // pane, and a relaunch on top of a live agent puts two of them on one
         // piece of work. A wrong "yes" costs a tick, and the caller asks
         // again.
-        if self
-            .tmux
-            .has_session_or_unknown(&previous.tmux_session)
-            .await
-        {
+        if self.session_process_alive(&previous).await {
             // Already alive — attaching needs nothing from us.
             return Ok(previous);
         }
@@ -1195,10 +1278,13 @@ impl Launcher {
             .await
     }
 
-    /// Kill a session's tmux process and mark it exited.
+    /// Kill a session's agent process and mark the session exited: the tmux
+    /// pane of most kinds, the daemon-owned child of an `acp` session.
     pub async fn kill_session(&self, session_id: &str) -> Result<()> {
         let session = self.store.get_session(session_id).await?;
-        if self.tmux.has_session(&session.tmux_session).await {
+        if session.agent_kind() == AgentKind::Acp {
+            self.acp.kill(&session.id);
+        } else if self.tmux.has_session(&session.tmux_session).await {
             self.tmux.kill_session(&session.tmux_session).await?;
         }
         if session.status().is_live() {

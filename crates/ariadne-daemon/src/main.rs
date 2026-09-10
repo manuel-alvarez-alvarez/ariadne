@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
         store: store.clone(),
         tmux: ariadne_daemon::tmux::TmuxManager::default(),
         git: ariadne_daemon::gitwt::GitManager,
+        acp: ariadne_daemon::acp::AcpRuntime::new(store.clone()),
         branches: ariadne_daemon::branch::BranchWatchers::new(events.clone()),
     });
     // The watches are the process's own: whatever was in flight when the last

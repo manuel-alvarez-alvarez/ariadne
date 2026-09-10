@@ -259,11 +259,7 @@ impl super::Scheduler {
                     for s in &live {
                         if s.seat() == Seat::Reviewer
                             && s.task_agent_id.as_deref() == Some(agent_id.as_str())
-                            && self
-                                .launcher
-                                .tmux
-                                .has_session_or_unknown(&s.tmux_session)
-                                .await
+                            && self.launcher.session_process_alive(s).await
                         {
                             running = Some(s.clone());
                             break;
@@ -664,11 +660,7 @@ impl super::Scheduler {
         for session in live {
             if session.seat() == seat
                 && session.task_agent_id.as_deref() == Some(agent_id)
-                && self
-                    .launcher
-                    .tmux
-                    .has_session_or_unknown(&session.tmux_session)
-                    .await
+                && self.launcher.session_process_alive(&session).await
             {
                 return Ok(Some(session));
             }
@@ -811,13 +803,7 @@ impl super::Scheduler {
             .await?;
         let mut out = Vec::new();
         for s in sessions {
-            if s.seat() == seat
-                && self
-                    .launcher
-                    .tmux
-                    .has_session_or_unknown(&s.tmux_session)
-                    .await
-            {
+            if s.seat() == seat && self.launcher.session_process_alive(&s).await {
                 out.push(s);
             }
         }

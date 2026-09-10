@@ -40,6 +40,20 @@ impl super::Scheduler {
         };
         let mut alive = 0;
         for session in live {
+            // An `acp` session has no pane to measure: the runtime that owns
+            // its child process answers instead (`AcpRuntime::is_running`),
+            // and it answers for certain — there is no "could not be asked"
+            // to leave the row alone on. The starting grace is the same: the
+            // row exists before the child does.
+            if session.agent_kind() == ariadne_core::AgentKind::Acp {
+                if self.launcher.acp.is_running(&session.id) || starting_up(&session) {
+                    alive += 1;
+                } else {
+                    info!(session = %session.id, "acp agent gone, marking exited");
+                    self.retire_disconnected(&session).await;
+                }
+                continue;
+            }
             match self
                 .launcher
                 .tmux
@@ -76,23 +90,7 @@ impl super::Scheduler {
                     }
                     Ok(false) => {
                         info!(session = %session.id, tmux = %session.tmux_session, "session process gone, marking exited");
-                        let _ = self
-                            .store
-                            .set_session_status(&session.id, SessionStatus::Exited)
-                            .await;
-                        // A pane that went away while its work is still going
-                        // is not a session that finished: whatever was waiting
-                        // on this agent is now waiting on nobody, so it is
-                        // raised for the user. The flag outlives the session
-                        // row's `exited` status on purpose — it stays up until
-                        // the agent is resumed or replaced.
-                        if attention::work_is_active(&self.store, &session).await {
-                            warn!(session = %session.id, seat = %session.seat, "agent disconnected with work still active");
-                            let _ = self
-                                .store
-                                .set_session_attention(&session.id, AttentionReason::Disconnected)
-                                .await;
-                        }
+                        self.retire_disconnected(&session).await;
                     }
                     Ok(true) => {
                         alive += 1;
@@ -108,6 +106,28 @@ impl super::Scheduler {
             }
         }
         Some(alive)
+    }
+
+    /// Retire a session whose agent process went away without saying so:
+    /// marked exited, and raised for the user where its work is still going.
+    ///
+    /// A process that went away mid-work is not a session that finished:
+    /// whatever was waiting on this agent is now waiting on nobody, so it is
+    /// raised for the user. The flag outlives the session row's `exited`
+    /// status on purpose — it stays up until the agent is resumed or
+    /// replaced.
+    async fn retire_disconnected(&self, session: &AgentSession) {
+        let _ = self
+            .store
+            .set_session_status(&session.id, SessionStatus::Exited)
+            .await;
+        if attention::work_is_active(&self.store, session).await {
+            warn!(session = %session.id, seat = %session.seat, "agent disconnected with work still active");
+            let _ = self
+                .store
+                .set_session_attention(&session.id, AttentionReason::Disconnected)
+                .await;
+        }
     }
 
     /// Take down attention nobody can act on any more.

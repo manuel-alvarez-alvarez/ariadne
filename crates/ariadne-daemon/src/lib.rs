@@ -1,6 +1,7 @@
 //! Daemon internals, exposed as a library so integration tests can exercise
 //! the managers directly. The `ariadned` binary is a thin wrapper.
 
+pub mod acp;
 pub mod agents;
 pub mod attention;
 pub mod branch;

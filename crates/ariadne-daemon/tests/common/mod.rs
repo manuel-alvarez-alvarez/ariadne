@@ -13,6 +13,8 @@
 //! warning per test binary rather than a signal worth reading.
 #![allow(dead_code)]
 
+pub mod acp;
+
 use std::future::IntoFuture;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -102,6 +104,7 @@ pub struct HarnessBuilder {
     logs: Option<LogBuffer>,
     typed_input_window: Option<Duration>,
     opencode_bin: Option<String>,
+    acp_bin: Option<String>,
     agent_home: Option<PathBuf>,
 }
 
@@ -132,6 +135,7 @@ pub fn harness() -> HarnessBuilder {
         logs: None,
         typed_input_window: None,
         opencode_bin: None,
+        acp_bin: None,
         agent_home: None,
     }
 }
@@ -186,6 +190,13 @@ impl HarnessBuilder {
         self
     }
 
+    /// Point the ACP runtime at another agent binary: a stub, so a test can
+    /// script what the agent says (see [`acp::stub_acp_agent`]).
+    pub fn acp_bin(mut self, bin: impl Into<String>) -> Self {
+        self.acp_bin = Some(bin.into());
+        self
+    }
+
     /// Point transcript discovery at a fixture home rather than the user's
     /// real CLI stores.
     pub fn agent_home(mut self, home: PathBuf) -> Self {
@@ -211,6 +222,9 @@ impl HarnessBuilder {
         if let Some(bin) = self.opencode_bin {
             config.opencode_bin = bin;
         }
+        if let Some(bin) = self.acp_bin {
+            config.acp_bin = bin;
+        }
         if let Some(home) = self.agent_home {
             config.agent_home = home;
         }
@@ -228,6 +242,7 @@ impl HarnessBuilder {
             store: store.clone(),
             tmux,
             git: GitManager,
+            acp: ariadne_daemon::acp::AcpRuntime::new(store.clone()),
             branches: BranchWatchers::new(bus.clone()),
         });
         let sched = self

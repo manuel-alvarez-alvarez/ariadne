@@ -31,6 +31,11 @@ pub struct Config {
     /// stub, the way `typed_input_window` below is set past anything a user
     /// would configure.
     pub opencode_bin: String,
+    /// The executable the ACP runtime spawns for a session of kind `acp`.
+    /// Always `"acp"` outside a test — the adapter contract names the binary
+    /// on `PATH` (spec 007) — and overridden by the test harness to point at
+    /// a stub agent, the way `opencode_bin` above is.
+    pub acp_bin: String,
     /// Home directory containing the transcript stores of the supported CLIs.
     /// Tests replace it with a fixture root.
     pub agent_home: PathBuf,
@@ -90,6 +95,7 @@ impl Config {
             log_filter: file.log_filter.unwrap_or_else(|| "info".to_string()),
             cli_bin: file.cli_bin.unwrap_or_else(default_cli_bin),
             opencode_bin: "opencode".to_string(),
+            acp_bin: "acp".to_string(),
             agent_home: dirs::home_dir().context("cannot determine home directory")?,
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),

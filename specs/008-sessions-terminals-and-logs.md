@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-10
+updated: 2026-09-11
 areas: [daemon, store]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
@@ -16,8 +16,9 @@ tests:
 
 # Sessions, terminals and logs
 
-An agent session is a tmux pane the daemon owns. This is what may be done to
-that pane, and how its output reaches a client.
+An agent session is a tmux pane the daemon owns — except a session of kind
+`acp`, which is a daemon-owned child process with no pane (021). This is what
+may be done to that pane, and how its output reaches a client.
 
 ## Scope
 
@@ -25,8 +26,9 @@ In: the session row and its statuses, tmux session naming and lifecycle,
 reading a pane as a live log stream, typing into a pane, resizing it, and
 confirmed keystroke delivery.
 
-Out: sessions discovered outside Ariadne and adopted as authors (020), when
-the daemon decides to type something (009, 010), and what it types (006).
+Out: sessions discovered outside Ariadne and adopted as authors (020), the
+pane-less `acp` sessions (021), when the daemon decides to type something
+(009, 010), and what it types (006).
 
 ## Behavior
 

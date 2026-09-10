@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-09-10
+updated: 2026-09-11
 areas: [cli, daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -20,9 +20,10 @@ the generated config, and the hooks that report back.
 
 Four CLI integrations are supported: **ACP**, **Claude Code**, **OpenAI Codex
 CLI**, and **OpenCode**. ACP runs any compatible agent exposed as `acp` on
-`PATH`. An adapter turns a spawn or resume request into that CLI's argv,
-environment, and generated files. Every adapter meets the same contract. Only
-the spelling of each clause changes between CLIs.
+`PATH`, driven by the daemon's own runtime rather than a tmux pane (021). An
+adapter turns a spawn or resume request into that CLI's argv, environment,
+and generated files. Every adapter meets the same contract. Only the spelling
+of each clause changes between CLIs.
 
 ## Scope
 
@@ -95,7 +96,7 @@ declaration each adapter returns from `contract()`.
 | Model | `session/set_config_option`, category `model` | `--model` | `-m` | `agent.ariadne.model` |
 | Effort | `session/set_config_option`, category `thought_level` | `--effort`, after the model | `-c model_reasoning_effort=<level>` | `agent.ariadne.variant` |
 | MCP | `mcpServers` on session setup and restore | `--mcp-config <run>/mcp.json`: `command`, `args`, `env` | `-c mcp_servers.ariadne.command`, `.args`, `.env` | `mcp.ariadne`: `command`, which heads the arguments, and `environment` |
-| Hooks | client bridge maps ACP updates into `agent-event` calls | command hooks in `settings.json` | `-c hooks.<Event>=[...]` ([`ariadne_core::codex_hooks`]) | the events plugin the daemon installs, named in `plugin` |
+| Hooks | none — the daemon's ACP runtime records the updates itself (021) | command hooks in `settings.json` | `-c hooks.<Event>=[...]` ([`ariadne_core::codex_hooks`]) | the events plugin the daemon installs, named in `plugin` |
 | Session id | returned by `session/new` | chosen by Ariadne, `--session-id <uuid>` | reported by the `SessionStart` hook | reported by the plugin's `session.created` event |
 | Resume | `session/resume`, or `session/load` when only loading is available | `--resume <id>` | `codex resume <id>`, every config flag re-passed | `--session <id>` |
 | Instruction | `session/prompt` after setup | last argument of the argv | last argument of the argv | typed into the TUI: OpenCode drops `--prompt` on a resume |
