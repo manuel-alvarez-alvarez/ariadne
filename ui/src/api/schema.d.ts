@@ -389,6 +389,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/outside-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List sessions found in supported CLI transcript stores that Ariadne did
+         *     not start.
+         */
+        get: operations["sessions_list_outside"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repositories": {
         parameters: {
             query?: never;
@@ -720,6 +740,23 @@ export interface paths {
         patch: operations["tasks_update"];
         trace?: never;
     };
+    "/v1/tasks/{id}/author-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make an outside session the author of a ready task. */
+        post: operations["tasks_adopt_author_session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{id}/cancel": {
         parameters: {
             query?: never;
@@ -887,6 +924,11 @@ export interface components {
          * @enum {string}
          */
         Actor: "orchestrator" | "author" | "reviewer" | "daemon" | "user";
+        /** @description The outside CLI session to adopt as a task author. */
+        AdoptOutsideSessionRequest: {
+            agent_kind: components["schemas"]["AgentKind"];
+            internal_session_id: string;
+        };
         /**
          * @description One agent to staff on a task: where it sits, the skills it loads, and what
          *     it is to run on.
@@ -1450,6 +1492,18 @@ export interface components {
          * @enum {string}
          */
         ModelTier: "frontier" | "strong" | "balanced" | "fast" | "unknown";
+        /**
+         * @description A coding-agent session found in a CLI transcript store, but not started by
+         *     Ariadne.
+         */
+        OutsideSessionDto: {
+            agent_kind: components["schemas"]["AgentKind"];
+            first_prompt: string;
+            /** @description The id the CLI uses to resume this conversation. */
+            internal_session_id: string;
+            last_activity_at: string;
+            working_directory: string;
+        };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
             exists: boolean;
@@ -2494,6 +2548,25 @@ export interface operations {
             };
         };
     };
+    sessions_list_outside: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutsideSessionDto"][];
+                };
+            };
+        };
+    };
     repositories_list: {
         parameters: {
             query?: never;
@@ -3160,6 +3233,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_adopt_author_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdoptOutsideSessionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionDto"];
                 };
             };
             404: {

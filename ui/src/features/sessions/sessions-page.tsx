@@ -20,8 +20,8 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { ChevronDownIcon, XIcon } from "lucide-react"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
@@ -78,6 +78,15 @@ export function SessionsPage() {
         description="Every agent Ariadne has run, and the goal or task it was run for. Pick one to watch its terminal."
         actions={
           <>
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              render={<Link to={paths.outsideSessions()} />}
+            >
+              <ExternalLinkIcon />
+              Outside sessions
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={

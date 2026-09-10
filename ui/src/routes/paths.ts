@@ -53,6 +53,7 @@ export const paths = {
    * {@link sessionPanelFrom}), this being the one that lists them all.
    */
   sessions: () => "/sessions",
+  outsideSessions: () => "/sessions/outside",
   agents: () => "/agents",
   repositories: () => "/repositories",
   /**

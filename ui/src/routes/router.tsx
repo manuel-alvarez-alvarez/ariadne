@@ -25,6 +25,7 @@ import { AppShell, type PageHandle } from "@/components/app-shell"
 import { AgentsPage } from "@/features/agents/agents-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
+import { OutsideSessionsPage } from "@/features/sessions/outside-sessions-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
 import { SkillsPage } from "@/features/skills/skills-page"
 import { RouteErrorPage } from "@/routes/error-page"
@@ -48,6 +49,11 @@ const routes: RouteObject[] = [
   { path: "tasks", element: <Navigate to={paths.goals()} replace /> },
   { path: "tasks/:taskId", element: <TaskPanelRedirect /> },
   { path: "sessions", element: <SessionsPage />, handle: { title: "Sessions" } },
+  {
+    path: "sessions/outside",
+    element: <OutsideSessionsPage />,
+    handle: { title: "Outside sessions" },
+  },
   { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
   { path: "agents", element: <AgentsPage />, handle: { title: "Agents" } },
   // The models were folded into the agents screen; the address outlives it.

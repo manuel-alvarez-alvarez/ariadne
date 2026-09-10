@@ -23,6 +23,7 @@ import {
   api,
   type CacheSnapshot,
   cacheRow,
+  type OutsideSessionDto,
   optimisticStatus,
   qk,
   restoreCache,
@@ -81,6 +82,38 @@ export function sessionQueryOptions(id: string) {
   return queryOptions({
     queryKey: qk.sessions.detail(id),
     queryFn: () => unwrap(api().GET("/v1/sessions/{id}", { params: { path: { id } } })),
+  })
+}
+
+/** CLI conversations Ariadne did not start, ready for the user to adopt. */
+export function outsideSessionsQueryOptions() {
+  return queryOptions({
+    queryKey: qk.outsideSessions.list(),
+    queryFn: () => unwrap(api().GET("/v1/outside-sessions")),
+  })
+}
+
+/** Make an outside CLI conversation the author of a ready task. */
+export function useAdoptOutsideSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, ...body }: { taskId: string } & OutsideSessionDto) =>
+      unwrap(
+        api().POST("/v1/tasks/{id}/author-session", {
+          params: { path: { id: taskId } },
+          body: {
+            agent_kind: body.agent_kind,
+            internal_session_id: body.internal_session_id,
+          },
+        }),
+      ),
+    onSuccess: async (session) => {
+      cacheRow(queryClient, qk.sessions, session)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() }),
+        queryClient.invalidateQueries({ queryKey: qk.tasks.all() }),
+      ])
+    },
   })
 }
 

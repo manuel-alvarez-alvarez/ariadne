@@ -32,6 +32,7 @@ export type UpdateTaskRequest = Schemas["UpdateTaskRequest"]
 export type SessionDto = Schemas["SessionDto"]
 export type SessionStatus = Schemas["SessionStatus"]
 export type AttentionReason = Schemas["AttentionReason"]
+export type OutsideSessionDto = Schemas["OutsideSessionDto"]
 
 /**
  * What one agent spent — the same three counters wherever they are read: a
