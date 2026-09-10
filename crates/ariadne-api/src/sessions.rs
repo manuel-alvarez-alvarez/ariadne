@@ -135,3 +135,14 @@ pub struct SessionPaneSize {
 pub struct SessionLogEnd {
     pub session_id: String,
 }
+
+/// Body of `POST /v1/sessions/{id}/console/input`.
+///
+/// An ACP session has no pane to type into: the text becomes a fresh
+/// `session/prompt` instead, sent at once or queued behind the turn still
+/// running.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConsoleInputRequest {
+    pub text: String,
+}

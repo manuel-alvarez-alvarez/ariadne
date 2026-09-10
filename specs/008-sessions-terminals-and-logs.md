@@ -12,23 +12,27 @@ tests:
   - crates/ariadne-daemon/tests/managers.rs
   - crates/ariadne-daemon/tests/keystroke_delivery.rs
   - crates/ariadne-daemon/tests/session_adoption.rs
+  - crates/ariadne-daemon/tests/acp_console.rs
 ---
 
 # Sessions, terminals and logs
 
 An agent session is a tmux pane the daemon owns — except a session of kind
-`acp`, which is a daemon-owned child process with no pane (021). This is what
-may be done to that pane, and how its output reaches a client.
+`acp`, which is a daemon-owned child process with no pane (021) and its own
+console instead. This is what may be done to a pane and to a console, and how
+each reaches a client.
 
 ## Scope
 
 In: the session row and its statuses, tmux session naming and lifecycle,
-reading a pane as a live log stream, typing into a pane, resizing it, and
-confirmed keystroke delivery.
+reading a pane as a live log stream, typing into a pane, resizing it,
+confirmed keystroke delivery, and — for a session of kind `acp` — its
+console: the transcript, its live stream, and posted input.
 
 Out: sessions discovered outside Ariadne and adopted as authors (020), the
-pane-less `acp` sessions (021), when the daemon decides to type something
-(009, 010), and what it types (006).
+`acp` runtime itself — the child process, the protocol conversation and its
+event vocabulary (021) — when the daemon decides to type something (009,
+010), and what it types (006).
 
 ## Behavior
 
@@ -74,6 +78,20 @@ pane-less `acp` sessions (021), when the daemon decides to type something
 13. An adopted session is a normal author session after it is created: it has
     the task worktree, its CLI resume id, and the same lifecycle as a session
     Ariadne started (020).
+14. An `acp` session's console snapshot is its events so far, in order: every
+    one the runtime reported (021), with no fixed list of kinds — a message
+    chunk, a thought, a tool call, a plan, a permission request or a turn's
+    status all pass through exactly as the runtime named them.
+15. The console's live stream opens with that snapshot, then sends every later
+    event as it is recorded. It is not a pane reading: there is no grid, no
+    resync on a resize, and a client that falls too far behind is told how
+    many events it missed and the connection closes, the same as
+    `/v1/events/stream` (012) — reconnecting starts again from a fresh
+    snapshot.
+16. Posted console input becomes a `session/prompt`. An agent can run only one
+    turn at a time, so input posted while one is running is queued and sent
+    the moment it ends, in the order it was posted; a finished session, or one
+    of any kind but `acp`, refuses it.
 
 ## Acceptance criteria
 
@@ -115,10 +133,18 @@ pane-less `acp` sessions (021), when the daemon decides to type something
   its own (`resume.rs::every_launch_of_a_session_reports_under_a_new_id`).
 - A pane left behind is taken rather than spawned around
   (`resume.rs::a_pane_left_behind_is_taken_rather_than_spawned_around`).
+- The console stream gives the snapshot, then deltas, for an `acp` session
+  (`acp_console.rs::the_console_stream_gives_the_snapshot_then_deltas`).
+- Posted input reaches the agent as a prompt, and input posted while a turn
+  runs is queued and sent once it ends
+  (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).
+- A permission request appears in the console stream
+  (`acp_console.rs::a_permission_request_appears_in_the_console_stream`).
 
 ## Sources
 
 `crates/ariadne-daemon/src/tmux.rs`, `crates/ariadne-daemon/src/log/`,
 `crates/ariadne-daemon/src/http/session_logs.rs`,
 `crates/ariadne-daemon/src/http/pane.rs`,
-`crates/ariadne-daemon/src/scheduler/delivery.rs`.
+`crates/ariadne-daemon/src/scheduler/delivery.rs`,
+`crates/ariadne-daemon/src/http/console.rs`, `crates/ariadne-daemon/src/acp.rs`.

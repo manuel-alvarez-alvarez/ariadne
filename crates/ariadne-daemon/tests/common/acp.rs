@@ -3,8 +3,9 @@
 //! [`stub_acp_agent`] writes a python3 program that speaks ACP version 1 over
 //! its standard input and output, answering from a script the test wrote:
 //! the capabilities it declares, the configuration options it offers, the
-//! reply to each prompt — updates, a permission request, the stop reason, or
-//! an exit mid-turn — and the stored sessions a load or resume finds. The
+//! reply to each prompt — updates, a permission request, the stop reason, an
+//! exit mid-turn, or a pause (`wait_for`) a test holds the turn open on — and
+//! the stored sessions a load or resume finds. The
 //! harness points `acp_bin` at it ([`super::HarnessBuilder::acp_bin`]), the
 //! daemon spawns it as the agent, and the test reads everything the daemon
 //! sent back out of its log.
@@ -144,7 +145,7 @@ pub fn stub_acp_agent(dir: &Path, mut script: Value) -> StubAcpAgent {
 /// it answers exactly what the script says, logs every incoming message, and
 /// exits on stdin closing, the way an ACP agent ends with its client.
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 
 script = json.load(open(sys.argv[1]))
 with open(script["pid_file"], "w") as f:
@@ -201,6 +202,14 @@ def respond(request):
         return {"configOptions": options}
     if method == "session/prompt":
         turn = prompts.pop(0) if prompts else {}
+        wait_for = turn.get("wait_for")
+        if wait_for:
+            # Say the turn has started, then sit on it until the test lets go
+            # — the window a "queued while a turn runs" test needs.
+            with open(wait_for + ".reached", "w") as f:
+                f.write("1")
+            while not os.path.exists(wait_for):
+                time.sleep(0.01)
         if "permission" in turn:
             permissions += 1
             request_permission = dict(turn["permission"])

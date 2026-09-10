@@ -3,6 +3,7 @@
 mod caller;
 mod catalog;
 mod classify;
+mod console;
 pub(crate) mod convert;
 mod doctor;
 mod error;
@@ -122,6 +123,7 @@ impl AppState {
         sessions::list, sessions::list_outside, sessions::get, sessions::kill, sessions::resume,
         sessions::input, sessions::resize, sessions::logs,
         session_logs::logs_stream,
+        console::snapshot, console::stream, console::input,
         events::list, stream::stream,
         models::list,
         models::set_enabled,
@@ -132,6 +134,7 @@ impl AppState {
         ariadne_api::stream::HeartbeatDto,
         ariadne_api::sessions::SessionLogChunk, ariadne_api::sessions::SessionLogEnd,
         ariadne_api::sessions::SessionPaneSize,
+        ariadne_api::events::AgentEventDto,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
     )),
     tags(
@@ -142,7 +145,7 @@ impl AppState {
         (name = "memories", description = "Searchable facts learned about one repository"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
-        (name = "sessions", description = "Agent sessions (tmux-hosted)"),
+        (name = "sessions", description = "Agent sessions: tmux panes, and the acp session console"),
         (name = "events", description = "Raw agent events from hooks, and the live domain-event stream"),
         (name = "models", description = "Model catalogs per agent CLI"),
         (name = "logs", description = "The daemon's own process log"),
@@ -239,6 +242,9 @@ pub fn router(state: AppState) -> Router {
             "/v1/sessions/{id}/logs/stream",
             get(session_logs::logs_stream),
         )
+        .route("/v1/sessions/{id}/console", get(console::snapshot))
+        .route("/v1/sessions/{id}/console/stream", get(console::stream))
+        .route("/v1/sessions/{id}/console/input", post(console::input))
         // models
         .route("/v1/models", get(models::list))
         .route("/v1/models/enabled", put(models::set_enabled))

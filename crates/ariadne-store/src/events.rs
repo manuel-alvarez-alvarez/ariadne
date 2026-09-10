@@ -77,6 +77,18 @@ impl Store {
         Ok(last.as_deref() == Some("pre_tool_use"))
     }
 
+    /// Every event a session has produced, in order: the whole transcript an
+    /// ACP console replays from, where `list_events`'s page cap would
+    /// truncate a long conversation.
+    pub async fn list_session_events(&self, session_id: &str) -> Result<Vec<AgentEvent>> {
+        Ok(sqlx::query_as::<_, AgentEvent>(
+            "SELECT * FROM agent_events WHERE session_id = ? ORDER BY id",
+        )
+        .bind(session_id)
+        .fetch_all(self.r())
+        .await?)
+    }
+
     pub async fn list_events(&self, filter: EventFilter) -> Result<Vec<AgentEvent>> {
         let limit = match filter.limit {
             n if n <= 0 => 50,

@@ -78,6 +78,10 @@ struct RunningAgent {
     launch_id: String,
     /// Dropping or firing this tells the driver to kill its child and end.
     stop: oneshot::Sender<()>,
+    /// Console input for this agent: each send becomes a `session/prompt`,
+    /// sent at once if the agent is between turns and queued, in order,
+    /// behind whichever one is running.
+    prompts: mpsc::UnboundedSender<String>,
 }
 
 impl AcpRuntime {
@@ -104,6 +108,25 @@ impl AcpRuntime {
             .lock()
             .expect("acp registry lock")
             .contains_key(session_id)
+    }
+
+    /// Hand the running agent a console prompt: the daemon's own console has
+    /// no pane to type into, so this is what a client's input becomes. Queued
+    /// rather than sent while a turn is running — an agent mid-`session/prompt`
+    /// cannot be asked for another one — and sent the moment it ends.
+    ///
+    /// Errs where there is nobody here to hear it: no agent runs for this
+    /// session, which is the console's counterpart of a pane that is gone.
+    pub fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
+        self.inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get(session_id)
+            .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?
+            .prompts
+            .send(text)
+            .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
 
     /// Spawn the agent and drive it until it exits or is killed. A driver
@@ -145,6 +168,7 @@ impl AcpRuntime {
         }
 
         let (stop, stopped) = oneshot::channel();
+        let (prompts, queued) = mpsc::unbounded_channel();
         self.inner
             .running
             .lock()
@@ -154,10 +178,15 @@ impl AcpRuntime {
                 RunningAgent {
                     launch_id: launch.launch_id.clone(),
                     stop,
+                    prompts,
                 },
             );
         let runtime = self.clone();
-        tokio::spawn(async move { runtime.drive(launch, child, stdout, stdin, stopped).await });
+        tokio::spawn(async move {
+            runtime
+                .drive(launch, child, stdout, stdin, stopped, queued)
+                .await
+        });
         Ok(())
     }
 
@@ -199,6 +228,7 @@ impl AcpRuntime {
         stdout: ChildStdout,
         stdin: ChildStdin,
         stopped: oneshot::Receiver<()>,
+        prompts: mpsc::UnboundedReceiver<String>,
     ) {
         let sink = EventSink {
             runtime: self.clone(),
@@ -208,7 +238,7 @@ impl AcpRuntime {
         };
         let mut rpc = Rpc::new(BufReader::new(stdout), stdin, sink.clone());
         let outcome = tokio::select! {
-            result = run_protocol(&mut rpc, &launch.cwd, &launch.config) => Some(result),
+            result = run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts) => Some(result),
             _ = stopped => None,
         };
         // Reap on exit, kill on a kill: the signal is a no-op on a child
@@ -343,25 +373,6 @@ impl Rpc {
         self.writer.flush().await.context("flushing ACP request")
     }
 
-    /// Serve the agent until it exits: the turn is over, and the agent stays
-    /// up for the next one the way a TUI stays at its prompt. What ends this
-    /// is the agent closing its stdout — its own exit, or the kill.
-    async fn serve(&mut self) -> Result<()> {
-        loop {
-            let Some(line) = self
-                .reader
-                .next_line()
-                .await
-                .context("reading from the ACP agent")?
-            else {
-                return Ok(());
-            };
-            let message: Value = serde_json::from_str(&line)
-                .with_context(|| format!("reading ACP message `{line}`"))?;
-            self.handle_incoming(message).await?;
-        }
-    }
-
     async fn handle_incoming(&mut self, message: Value) -> Result<()> {
         match message.get("method").and_then(Value::as_str) {
             Some("session/update") => self.handle_update(&message["params"]).await,
@@ -444,8 +455,14 @@ impl Rpc {
 }
 
 /// Initialize, set the session up, pin the model and the effort, run the
-/// initial prompt, then serve the agent until it exits.
-async fn run_protocol(rpc: &mut Rpc, cwd: &Path, config: &LaunchConfig) -> Result<()> {
+/// initial prompt, then serve the agent — and whatever the console sends it —
+/// until it exits.
+async fn run_protocol(
+    rpc: &mut Rpc,
+    cwd: &Path,
+    config: &LaunchConfig,
+    prompts: mpsc::UnboundedReceiver<String>,
+) -> Result<()> {
     let initialized = rpc
         .request(
             "initialize",
@@ -507,7 +524,47 @@ async fn run_protocol(rpc: &mut Rpc, cwd: &Path, config: &LaunchConfig) -> Resul
     if let Some(prompt) = config.initial_prompt.as_deref() {
         prompt_once(rpc, &session_id, &config.system_prompt, prompt).await?;
     }
-    rpc.serve().await
+    serve_with_input(rpc, &session_id, &config.system_prompt, prompts).await
+}
+
+/// Serve the agent until it exits: the turn is over, and the agent stays up
+/// for the next one the way a TUI stays at its prompt. What ends this is the
+/// agent closing its stdout — its own exit, or the kill.
+///
+/// Console input is the other thing that can start a turn here, alongside the
+/// agent's own notifications: a prompt queued while one was running waits in
+/// `prompts` for this loop to come back around, and is sent the moment it
+/// does. Only one turn is ever in flight — `prompt_once` does not return
+/// until the agent's response does — so nothing here is sent while another
+/// `session/prompt` is outstanding.
+async fn serve_with_input(
+    rpc: &mut Rpc,
+    session_id: &str,
+    system_prompt: &str,
+    mut prompts: mpsc::UnboundedReceiver<String>,
+) -> Result<()> {
+    // Once the console side is gone there is nothing left to queue, but the
+    // agent may still have plenty to say — the branch is dropped rather than
+    // polled into a busy loop of immediate `None`s.
+    let mut console_open = true;
+    loop {
+        tokio::select! {
+            prompt = prompts.recv(), if console_open => {
+                match prompt {
+                    Some(prompt) => prompt_once(rpc, session_id, system_prompt, &prompt).await?,
+                    None => console_open = false,
+                }
+            }
+            line = rpc.reader.next_line() => {
+                let Some(line) = line.context("reading from the ACP agent")? else {
+                    return Ok(());
+                };
+                let message: Value = serde_json::from_str(&line)
+                    .with_context(|| format!("reading ACP message `{line}`"))?;
+                rpc.handle_incoming(message).await?;
+            }
+        }
+    }
 }
 
 async fn session_setup(
