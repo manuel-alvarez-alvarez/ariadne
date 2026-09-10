@@ -264,15 +264,24 @@ fn every_launch_points_the_cli_at_the_ariadne_mcp_server() {
                 .mcp_arguments
                 .read(&plan, launch.dir())
                 .unwrap_or_else(|| panic!("{kind:?}: no MCP arguments in {:?}", plan.argv));
-            // The list itself, read as a list: one optional binary at its
-            // head — OpenCode keeps the command and its arguments in one —
-            // and then `mcp serve`, in that order, with nothing after it.
+            // The list itself, read as a list: `mcp serve`, in that order,
+            // with nothing after it. The binary heads the list only where
+            // the contract says this CLI keeps a command and its arguments
+            // in one, and it is the head there.
             let list: Vec<String> = serde_json::from_str(&arguments).unwrap_or_else(|_| {
                 panic!("{kind:?}: the MCP arguments are not a list: {arguments}")
             });
-            let tail = match list.split_first() {
-                Some((head, rest)) if head == CLI_BIN => rest,
-                _ => &list[..],
+            let tail = if contract.mcp_arguments_carry_the_command {
+                let (head, rest) = list
+                    .split_first()
+                    .unwrap_or_else(|| panic!("{kind:?}: the MCP arguments are empty"));
+                assert_eq!(
+                    head, CLI_BIN,
+                    "{kind:?}: the arguments head another command"
+                );
+                rest
+            } else {
+                &list[..]
             };
             assert_eq!(
                 tail,

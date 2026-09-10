@@ -153,11 +153,11 @@ impl AgentAdapter for OpencodeAdapter {
                 file: "opencode.json",
                 pointer: "/mcp/ariadne/command/0",
             },
-            // The binary heads the same list here.
             mcp_arguments: Spelling::Config {
                 file: "opencode.json",
                 pointer: "/mcp/ariadne/command",
             },
+            mcp_arguments_carry_the_command: true,
             mcp_environment: Spelling::Config {
                 file: "opencode.json",
                 pointer: "/mcp/ariadne/environment",

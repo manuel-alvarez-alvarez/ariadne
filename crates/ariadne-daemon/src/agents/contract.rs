@@ -200,9 +200,12 @@ pub struct AdapterContract {
     pub skills: Spelling,
     /// Where the MCP server's command — the `ariadne` binary — is passed.
     pub mcp_command: Spelling,
-    /// Where the MCP server's arguments are passed. Its value ends with the
-    /// `mcp serve` pair, whether or not the binary heads the same list.
+    /// Where the MCP server's arguments are passed. Its value is the
+    /// `mcp serve` pair, and nothing else.
     pub mcp_arguments: Spelling,
+    /// Whether the binary itself heads that same list, as it does for a CLI
+    /// that keeps a command and its arguments in one.
+    pub mcp_arguments_carry_the_command: bool,
     /// Where the MCP server's environment is passed. Its value carries the
     /// session id, whether one key or a table of them.
     pub mcp_environment: Spelling,
