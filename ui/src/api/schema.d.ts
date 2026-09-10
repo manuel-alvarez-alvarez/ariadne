@@ -840,6 +840,9 @@ export interface paths {
          *     once the task is merged, the diff its merge commit brought into the base —
          *     after the merge the branch is contained in the base, so the three-dot diff
          *     would be forever empty.
+         * @description On a task staffed with several authors, `agent` names the author whose
+         *     branch to read; left out, the task's own branch is read — the first
+         *     author's until the pick settles, and the winner's after it.
          */
         get: operations["tasks_diff"];
         put?: never;
@@ -867,6 +870,29 @@ export interface paths {
          *     speaking.
          */
         post: operations["tasks_post_task_message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{id}/pick": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * One reviewer's pick of the winning author, on a task staffed with several.
+         * @description The gate is here: the pick starts only once every author is approved, and
+         *     a pick before that is refused. One pick per reviewer per task — a second
+         *     is refused by the reviewer's name — and the daemon settles the winner once
+         *     every staffed reviewer has picked.
+         */
+        post: operations["tasks_pick_winner"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1005,7 +1031,10 @@ export interface components {
              * @example codex:o3
              */
             model: string;
-            /** @description `author` or `reviewer`. A task takes exactly one author. */
+            /**
+             * @description `author` or `reviewer`. A task takes one author or more; several
+             *     authors need at least one reviewer, to pick the winner.
+             */
             seat: components["schemas"]["Seat"];
             /**
              * @description The names of the skills this agent loads, in the order they reach it.
@@ -1158,8 +1187,9 @@ export interface components {
         };
         CreateTaskRequest: {
             /**
-             * @description The agents to staff: exactly one author, then the reviewers in review
-             *     order, at least one.
+             * @description The agents to staff: the authors first — one or more, each with its
+             *     own model — then the reviewers in review order. Several authors need
+             *     at least one reviewer, to pick the winner.
              */
             agents: components["schemas"]["AgentAssignment"][];
             /** @description Task ids this task depends on. */
@@ -1589,6 +1619,14 @@ export interface components {
             writable: boolean;
         };
         /**
+         * @description One reviewer picking the winning author of a task staffed with several:
+         *     the author whose branch lands.
+         */
+        PickWinnerRequest: {
+            /** @description Id of the author picked, one of the task's authors. */
+            author_agent_id: string;
+        };
+        /**
          * @description The author reporting the pull or merge request it opened for a task, so
          *     the user has somewhere to go and read it: taken off `gh pr create`'s output
          *     and recorded on the task.
@@ -1812,17 +1850,13 @@ export interface components {
          * @enum {string}
          */
         SkillSeat: "orchestrator" | "task";
-        /**
-         * @description One agent staffed on a task: where it sits, what it knows, and what it
-         *     runs on.
-         *
-         *     The agent has no identity of its own. `seat` says only whether it authors
-         *     the task or reviews it; the skills are what it can do. What it runs on was
-         *     sized by the orchestrator when it staffed the task, or chosen by the user
-         *     since — either way it is what this agent runs on, and nothing behind it
-         *     changes that.
-         */
         TaskAgentDto: {
+            /**
+             * @description The branch this agent works on: the task branch for the first author,
+             *     a suffixed sibling of it for every later one. None for a reviewer,
+             *     which owns no branch.
+             */
+            branch?: string | null;
             /**
              * @description What the orchestrator told this agent beyond the task itself. None =
              *     the task is the whole of it.
@@ -1867,8 +1901,10 @@ export interface components {
         };
         TaskDto: {
             /**
-             * @description The agents staffed on the task: the author first, then the reviewers
-             *     in review order. What each one can do is the skills it carries.
+             * @description The agents staffed on the task: the authors first, then the reviewers
+             *     in review order. What each one can do is the skills it carries. Most
+             *     tasks staff one author; one staffed with several runs them in
+             *     parallel, and the reviewers pick the branch that lands.
              */
             agents: components["schemas"]["TaskAgentDto"][];
             branch: string;
@@ -1884,6 +1920,17 @@ export interface components {
              */
             landing: components["schemas"]["Landing"];
             merge_commit?: string | null;
+            /**
+             * @description The author the reviewers picked, on a task staffed with several: the
+             *     one whose branch lands. None for a one-author task, and until the
+             *     pick settles.
+             */
+            picked_agent_id?: string | null;
+            /**
+             * @description The picks the reviewers have recorded so far, oldest first. Empty for
+             *     a one-author task.
+             */
+            picks: components["schemas"]["TaskPickDto"][];
             /**
              * @description URL of the pull or merge request the task was published as, once its
              *     author has reported one; None for a task landed directly.
@@ -1906,6 +1953,25 @@ export interface components {
             /** @description What the agents of this task have spent between them. */
             usage: components["schemas"]["TaskUsageDto"];
             worktree_path?: string | null;
+        };
+        /**
+         * @description One agent staffed on a task: where it sits, what it knows, and what it
+         *     runs on.
+         *
+         *     The agent has no identity of its own. `seat` says only whether it authors
+         *     the task or reviews it; the skills are what it can do. What it runs on was
+         *     sized by the orchestrator when it staffed the task, or chosen by the user
+         *     since — either way it is what this agent runs on, and nothing behind it
+         *     changes that.
+         *     One reviewer's pick of the winning author, on a task staffed with several
+         *     authors.
+         */
+        TaskPickDto: {
+            /** @description The author it picked. */
+            author_agent_id: string;
+            created_at: string;
+            /** @description The reviewer that picked. One pick per reviewer per task. */
+            reviewer_agent_id: string;
         };
         /**
          * @description Task lifecycle status.
@@ -1995,6 +2061,13 @@ export interface components {
         };
         /** @description Partial update; only allowed while the task is pending/ready. */
         UpdateTaskRequest: {
+            /**
+             * @description The whole author list, replaced: every author is staffed afresh, with
+             *     the skills and the model it names. The way to give a task several
+             *     authors, or to take them back to one. `model` and `effort` above are
+             *     refused while a task has several authors: each author names its own.
+             */
+            authors?: components["schemas"]["AgentAssignment"][] | null;
             depends_on?: string[] | null;
             description?: string | null;
             /**
@@ -3543,7 +3616,10 @@ export interface operations {
     };
     tasks_diff: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Id of the author whose branch to read, on a task staffed with several. */
+                agent?: string | null;
+            };
             header?: never;
             path: {
                 /** @description task id */
@@ -3632,6 +3708,53 @@ export interface operations {
                 };
                 content?: never;
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_pick_winner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PickWinnerRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            /** @description not an author of the task */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not a reviewer session */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the pick has not started, or this reviewer has picked already */
             409: {
                 headers: {
                     [name: string]: unknown;

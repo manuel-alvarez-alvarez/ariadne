@@ -1938,6 +1938,7 @@
           "tasks"
         ],
         "summary": "Diff of the task branch against its base (`git diff base...branch`), or,\nonce the task is merged, the diff its merge commit brought into the base —\nafter the merge the branch is contained in the base, so the three-dot diff\nwould be forever empty.",
+        "description": "On a task staffed with several authors, `agent` names the author whose\nbranch to read; left out, the task's own branch is read — the first\nauthor's until the pick settles, and the winner's after it.",
         "operationId": "diff",
         "parameters": [
           {
@@ -1947,6 +1948,18 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "description": "Id of the author whose branch to read, on a task staffed with several.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -2069,6 +2082,58 @@
           },
           "409": {
             "description": ""
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/pick": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "One reviewer's pick of the winning author, on a task staffed with several.",
+        "description": "The gate is here: the pick starts only once every author is approved, and\na pick before that is refused. One pick per reviewer per task — a second\nis refused by the reviewer's name — and the daemon settles the winner once\nevery staffed reviewer has picked.",
+        "operationId": "pick_winner",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PickWinnerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "not an author of the task"
+          },
+          "403": {
+            "description": "not a reviewer session"
+          },
+          "409": {
+            "description": "the pick has not started, or this reviewer has picked already"
           }
         }
       }
@@ -2326,7 +2391,7 @@
           },
           "seat": {
             "$ref": "#/components/schemas/Seat",
-            "description": "`author` or `reviewer`. A task takes exactly one author."
+            "description": "`author` or `reviewer`. A task takes one author or more; several\nauthors need at least one reviewer, to pick the winner."
           },
           "skills": {
             "type": "array",
@@ -2623,7 +2688,7 @@
             "items": {
               "$ref": "#/components/schemas/AgentAssignment"
             },
-            "description": "The agents to staff: exactly one author, then the reviewers in review\norder, at least one."
+            "description": "The agents to staff: the authors first — one or more, each with its\nown model — then the reviewers in review order. Several authors need\nat least one reviewer, to pick the winner."
           },
           "depends_on": {
             "type": "array",
@@ -3555,6 +3620,20 @@
           }
         }
       },
+      "PickWinnerRequest": {
+        "type": "object",
+        "description": "One reviewer picking the winning author of a task staffed with several:\nthe author whose branch lands.",
+        "required": [
+          "author_agent_id"
+        ],
+        "properties": {
+          "author_agent_id": {
+            "type": "string",
+            "description": "Id of the author picked, one of the task's authors."
+          }
+        },
+        "additionalProperties": false
+      },
       "RecordPullRequestRequest": {
         "type": "object",
         "description": "The author reporting the pull or merge request it opened for a task, so\nthe user has somewhere to go and read it: taken off `gh pr create`'s output\nand recorded on the task.",
@@ -3953,7 +4032,6 @@
       },
       "TaskAgentDto": {
         "type": "object",
-        "description": "One agent staffed on a task: where it sits, what it knows, and what it\nruns on.\n\nThe agent has no identity of its own. `seat` says only whether it authors\nthe task or reviews it; the skills are what it can do. What it runs on was\nsized by the orchestrator when it staffed the task, or chosen by the user\nsince — either way it is what this agent runs on, and nothing behind it\nchanges that.",
         "required": [
           "id",
           "seat",
@@ -3961,6 +4039,13 @@
           "model"
         ],
         "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch this agent works on: the task branch for the first author,\na suffixed sibling of it for every later one. None for a reviewer,\nwhich owns no branch."
+          },
           "brief": {
             "type": [
               "string",
@@ -4041,6 +4126,7 @@
           "branch",
           "landing",
           "stalled",
+          "picks",
           "usage",
           "created_at",
           "updated_at"
@@ -4051,7 +4137,7 @@
             "items": {
               "$ref": "#/components/schemas/TaskAgentDto"
             },
-            "description": "The agents staffed on the task: the author first, then the reviewers\nin review order. What each one can do is the skills it carries."
+            "description": "The agents staffed on the task: the authors first, then the reviewers\nin review order. What each one can do is the skills it carries. Most\ntasks staff one author; one staffed with several runs them in\nparallel, and the reviewers pick the branch that lands."
           },
           "branch": {
             "type": "string"
@@ -4084,6 +4170,20 @@
               "string",
               "null"
             ]
+          },
+          "picked_agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The author the reviewers picked, on a task staffed with several: the\none whose branch lands. None for a one-author task, and until the\npick settles."
+          },
+          "picks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskPickDto"
+            },
+            "description": "The picks the reviewers have recorded so far, oldest first. Empty for\na one-author task."
           },
           "pr_url": {
             "type": [
@@ -4125,6 +4225,28 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "TaskPickDto": {
+        "type": "object",
+        "description": "One agent staffed on a task: where it sits, what it knows, and what it\nruns on.\n\nThe agent has no identity of its own. `seat` says only whether it authors\nthe task or reviews it; the skills are what it can do. What it runs on was\nsized by the orchestrator when it staffed the task, or chosen by the user\nsince — either way it is what this agent runs on, and nothing behind it\nchanges that.\nOne reviewer's pick of the winning author, on a task staffed with several\nauthors.",
+        "required": [
+          "reviewer_agent_id",
+          "author_agent_id",
+          "created_at"
+        ],
+        "properties": {
+          "author_agent_id": {
+            "type": "string",
+            "description": "The author it picked."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "reviewer_agent_id": {
+            "type": "string",
+            "description": "The reviewer that picked. One pick per reviewer per task."
           }
         }
       },
@@ -4339,6 +4461,16 @@
         "type": "object",
         "description": "Partial update; only allowed while the task is pending/ready.",
         "properties": {
+          "authors": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AgentAssignment"
+            },
+            "description": "The whole author list, replaced: every author is staffed afresh, with\nthe skills and the model it names. The way to give a task several\nauthors, or to take them back to one. `model` and `effort` above are\nrefused while a task has several authors: each author names its own."
+          },
           "depends_on": {
             "type": [
               "array",

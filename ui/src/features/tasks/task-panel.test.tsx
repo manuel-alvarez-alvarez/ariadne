@@ -71,6 +71,7 @@ const TASK: TaskDto = {
       model: "codex:gpt-5.6-luna",
     },
   ],
+  picks: [],
   stalled: false,
   usage: {
     total: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
