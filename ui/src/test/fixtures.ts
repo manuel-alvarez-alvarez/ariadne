@@ -84,6 +84,7 @@ export function aTask(overrides: Partial<TaskDto> = {}): TaskDto {
       },
     ],
     depends_on: [],
+    picks: [],
     usage: { total: NO_TOKENS, author: NO_TOKENS, reviewers: [] },
     created_at: STAMP,
     updated_at: STAMP,

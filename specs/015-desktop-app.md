@@ -3,7 +3,7 @@ id: desktop-app
 status: current
 updated: 2026-09-10
 areas: [ui]
-commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10]
+commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
   - ui/src/features/**/*.test.tsx
   - ui/src/api/**/*.test.ts
@@ -72,11 +72,25 @@ Out: the daemon endpoints themselves (012).
     and first prompt from `GET /v1/outside-sessions`, then adopts a matching
     session as the author of a ready task through `POST
     /v1/tasks/{id}/author-session`.
+17. On a task staffed with several authors (004) the task panel shows every
+    one of them — its skills, its model, its own branch, and its status in the
+    pick: the votes it has so far, or "Picked" once it is the one that won —
+    and the reviewer pick itself: which author each reviewer chose. A task
+    with one author shows the singular Author fact and no pick, unchanged.
 
 ## Acceptance criteria
 
 - 73 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
+- A task staffed with several authors shows each one's branch and its own
+  vote count, marks the one the reviewers picked, and lists what each
+  reviewer chose; a one-author task renders as before
+  (`ui/src/features/tasks/task-panel.test.tsx::shows every author's own
+  branch, marking only the one the reviewers picked`,
+  `::shows an author's own vote count before the pick settles`,
+  `::lists what each reviewer picked, oldest first`,
+  `::keeps the singular Author fact and shows no pick on a one-author task`)
+  — parity with `ariadne task inspect`'s own author and picks lines (004).
 - One repository's memory lists, searches through the daemon's own search
   endpoint, and deletes an entry
   (`ui/src/features/memory/memory-page.test.tsx`) — parity with `ariadne

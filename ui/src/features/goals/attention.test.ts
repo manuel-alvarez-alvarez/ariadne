@@ -42,6 +42,7 @@ function task(overrides: Partial<TaskDto>): TaskDto {
     id: "t1",
     repo_id: "r1",
     agents: [],
+    picks: [],
     stalled: false,
     status: "in_progress",
     title: "A task",
