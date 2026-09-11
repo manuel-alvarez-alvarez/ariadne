@@ -217,9 +217,6 @@ impl HarnessBuilder {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let store = Store::open(&db_path).await.unwrap();
-        // Installed before anything writes, exactly as the daemon does at
-        // startup.
-        let bus = ariadne_daemon::bus::start(store.clone());
         let mut config = Config::load(Some(self.home.unwrap_or(dir.path().join("home")))).unwrap();
         if !self.spawns {
             config.cli_bin = dir.path().join("no-such-ariadne").display().to_string();
@@ -249,6 +246,9 @@ impl HarnessBuilder {
             &config.acp_agents,
             config.root.clone(),
         );
+        // Installed before anything writes, exactly as the daemon does at
+        // startup.
+        let bus = ariadne_daemon::bus::start(store.clone(), agent_registry.clone());
         if self.discover_agents {
             agent_registry.refresh().await;
         }
@@ -258,6 +258,7 @@ impl HarnessBuilder {
             tmux,
             git: GitManager,
             acp: ariadne_daemon::acp::AcpRuntime::new(store.clone()),
+            registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
         });
         let sched = self

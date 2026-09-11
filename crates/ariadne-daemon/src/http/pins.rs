@@ -21,6 +21,13 @@
 //! model that was left behind. `default` stays legal for the effort alone —
 //! it clears the effort back to the CLI's own.
 //!
+//! A discovered ACP agent is pinned by its catalog id whole,
+//! `<agent-id>:<model>` (011): the id before the first colon names an agent
+//! in the registry rather than a CLI, the pin is stored as agent kind `acp`
+//! with that id as its model, and the launcher splits it again at the launch
+//! (021). The disabled check and the effort check read the same catalog the
+//! id came from.
+//!
 //! The store keeps the halves in their own columns, so this module is also
 //! where the two that make a model are put back together for a response:
 //! [`spelled`].
@@ -28,6 +35,8 @@
 use ariadne_core::AgentKind;
 use ariadne_core::models::{ModelRef, effort_error};
 use ariadne_store::{AgentPin, Store};
+
+use crate::acp_discovery::AgentRegistry;
 
 use super::catalog::models::efforts_of;
 use super::error::{ApiError, ApiResult};
@@ -62,29 +71,31 @@ pub enum Repin {
 /// none, or writes the empty string or `default`, is refused by the rule.
 pub async fn chosen(
     store: &Store,
+    registry: &AgentRegistry,
     model: Option<&str>,
     effort: Option<&str>,
 ) -> ApiResult<AgentPin> {
-    pin(store, required(model)?, named(effort)).await
+    pin(store, registry, required(model)?, named(effort)).await
 }
 
 /// The same for an edit, which has one more thing to say: an effort can move
 /// on its own, checked against the model the row already runs.
 pub async fn rechosen(
     store: &Store,
+    registry: &AgentRegistry,
     model: Option<&str>,
     effort: Option<&str>,
     standing: Standing<'_>,
 ) -> ApiResult<Repin> {
     match model {
         Some(model) => Ok(Repin::To(
-            pin(store, required(Some(model))?, named(effort)).await?,
+            pin(store, registry, required(Some(model))?, named(effort)).await?,
         )),
         None => match effort {
             None => Ok(Repin::Untouched),
             Some(effort) if CLEAR_EFFORT.contains(&effort) => Ok(Repin::Effort(None)),
             Some(effort) => {
-                checked(standing, effort).await?;
+                checked(registry, standing, effort).await?;
                 Ok(Repin::Effort(Some(effort.to_string())))
             }
         },
@@ -92,11 +103,12 @@ pub async fn rechosen(
 }
 
 /// A model refused for how it is written, before anything it names is looked
-/// up: that a model is missing, or that a string names no agent CLI, is a
-/// fact about the request, not about anything beside it. The whole check is
-/// [`chosen`], which also asks the store what the user has turned off.
-pub fn readable(model: Option<&str>) -> ApiResult<()> {
-    parsed(required(model)?).map(|_| ())
+/// up: that a model is missing, or that a string names no agent CLI and no
+/// registry agent, is a fact about the request, not about anything beside
+/// it. The whole check is [`chosen`], which also asks the store what the
+/// user has turned off.
+pub fn readable(model: Option<&str>, registry: &AgentRegistry) -> ApiResult<()> {
+    parsed(required(model)?, registry).map(|_| ())
 }
 
 /// The model a request must carry: not absent, not empty — whitespace alone
@@ -123,26 +135,63 @@ fn named(effort: Option<&str>) -> Option<&str> {
 /// opencode model to the `provider/model` spelling opencode itself takes
 /// back: one without the prefix would be dropped by opencode's own config,
 /// and a model is never dropped silently.
-fn parsed(model: &str) -> ApiResult<ModelRef> {
-    let chosen: ModelRef = model.parse().map_err(ApiError::bad_request)?;
-    if chosen.agent_kind == AgentKind::Opencode && !chosen.model.contains('/') {
-        return Err(ApiError::bad_request(format!(
-            "`{}` names no provider — an opencode model is written \
-             `provider/model`, as in `opencode:anthropic/{}`",
-            chosen.model, chosen.model
-        )));
+///
+/// A string whose first segment names no agent CLI gets one more reading:
+/// where it names an agent in the ACP registry, the pin is a discovered
+/// catalog id, written whole as the model of kind `acp` — which is how the
+/// launcher takes it back apart (021). Only a string neither reading takes
+/// is refused.
+///
+/// The CLI reading always wins: a first segment that spells a native agent
+/// kind is that CLI, whatever the registry holds — which is why discovery
+/// refuses a configured registry id that spells one
+/// (`acp_discovery::reserved_id`), rather than leave an agent nothing can
+/// select.
+fn parsed(model: &str, registry: &AgentRegistry) -> ApiResult<ModelRef> {
+    let refused = match model.parse::<ModelRef>() {
+        Ok(chosen) => {
+            if chosen.agent_kind == AgentKind::Opencode && !chosen.model.contains('/') {
+                return Err(ApiError::bad_request(format!(
+                    "`{}` names no provider — an opencode model is written \
+                     `provider/model`, as in `opencode:anthropic/{}`",
+                    chosen.model, chosen.model
+                )));
+            }
+            return Ok(chosen);
+        }
+        Err(refused) => refused,
+    };
+    if let Some((agent_id, rest)) = model.split_once(':')
+        && registry.command_of(agent_id).is_some()
+    {
+        if rest.trim().is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "no model after the `:` in `{model}` — a discovered agent is \
+                 pinned `{agent_id}:<model>`, a model id its catalog lists"
+            )));
+        }
+        return Ok(ModelRef {
+            agent_kind: AgentKind::Acp,
+            model: model.to_string(),
+        });
     }
-    Ok(chosen)
+    Err(ApiError::bad_request(refused))
 }
 
 /// One `<agent_kind>:<model>` and the effort beside it as the pin they
 /// spell, or the refusal naming what was typed and the form that would have
 /// worked.
-async fn pin(store: &Store, model: &str, effort: Option<&str>) -> ApiResult<AgentPin> {
-    let chosen = parsed(model)?;
-    available(store, &chosen).await?;
+async fn pin(
+    store: &Store,
+    registry: &AgentRegistry,
+    model: &str,
+    effort: Option<&str>,
+) -> ApiResult<AgentPin> {
+    let chosen = parsed(model, registry)?;
+    available(store, registry, &chosen).await?;
     if let Some(effort) = effort {
         checked(
+            registry,
             Standing {
                 agent_kind: chosen.agent_kind,
                 model: &chosen.model,
@@ -165,10 +214,18 @@ async fn pin(store: &Store, model: &str, effort: Option<&str>) -> ApiResult<Agen
 /// checked against the model the row already runs, and refusing that would
 /// trap a row on a model that was turned off under it: a pin is a snapshot,
 /// and work already staffed keeps running on what it was staffed with.
-async fn available(store: &Store, chosen: &ModelRef) -> ApiResult<()> {
-    match store.disabled_models().await?.contains(&chosen.to_string()) {
+///
+/// The id the switch stores is the catalog's, so what is asked is the same
+/// spelling the request wrote: a registry pin's own model is that id whole.
+async fn available(store: &Store, registry: &AgentRegistry, chosen: &ModelRef) -> ApiResult<()> {
+    let off = store.disabled_models().await?;
+    let disabled = off.contains(&chosen.to_string())
+        || (chosen.agent_kind == AgentKind::Acp && off.contains(&chosen.model));
+    match disabled {
         true => Err(ApiError::bad_request(format!(
-            "`{chosen}` is turned off — pin a model that is on, or turn this one              back on first"
+            "`{}` is turned off — pin a model that is on, or turn this one \
+             back on first",
+            spelled(chosen.agent_kind, &chosen.model, registry)
         ))),
         false => Ok(()),
     }
@@ -177,8 +234,8 @@ async fn available(store: &Store, chosen: &ModelRef) -> ApiResult<()> {
 /// One effort against the model it is to run at: the model's own efforts where
 /// the catalog lists them, and everything its agent CLI accepts where nothing
 /// does — a hand-typed model id the catalog has never heard of.
-async fn checked(standing: Standing<'_>, effort: &str) -> ApiResult<()> {
-    let efforts = efforts_of(standing.agent_kind, standing.model).await;
+async fn checked(registry: &AgentRegistry, standing: Standing<'_>, effort: &str) -> ApiResult<()> {
+    let efforts = efforts_of(registry, standing.agent_kind, standing.model).await;
     match effort_error(standing.agent_kind, efforts.as_deref(), effort) {
         Some(why) => Err(ApiError::bad_request(why)),
         None => Ok(()),
@@ -187,7 +244,20 @@ async fn checked(standing: Standing<'_>, effort: &str) -> ApiResult<()> {
 
 /// The two columns a row keeps its model in, as the one string a response
 /// carries. The effort rides beside it, in its own field.
-pub fn spelled(agent_kind: AgentKind, model: &str) -> String {
+///
+/// A registry pin's model already is the one string — the discovered catalog
+/// id, whose first segment the registry knows — so it is served whole rather
+/// than under an `acp:` prefix nothing wrote. The registry is what tells it
+/// from a fallback `acp` model that merely carries a colon: that one keeps
+/// its `acp:` prefix, since its own spelling is the only one a re-submit
+/// parses.
+pub fn spelled(agent_kind: AgentKind, model: &str, registry: &AgentRegistry) -> String {
+    if agent_kind == AgentKind::Acp
+        && let Some((agent_id, _)) = model.split_once(':')
+        && registry.command_of(agent_id).is_some()
+    {
+        return model.to_string();
+    }
     ModelRef {
         agent_kind,
         model: model.to_string(),

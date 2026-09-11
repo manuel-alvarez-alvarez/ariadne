@@ -42,6 +42,44 @@ struct RegistryEntry {
     command: Vec<String>,
     builtin: bool,
     probe: bool,
+    /// Why this entry is refused outright, where it is: a configuration
+    /// error, permanent until the config changes. A reserved id spells a
+    /// native agent CLI, which a pin's first segment always reads first; a
+    /// duplicate id is already another entry's, and only that one may
+    /// answer for it. A refused entry is never probed and never resolved,
+    /// and its rejection carries this reason.
+    refused: Option<String>,
+}
+
+/// Whether a registry id collides with a native agent kind name: `acp`,
+/// `claude_code`/`claude-code`, `codex` or `opencode`.
+fn reserved_id(id: &str) -> bool {
+    id.replace('-', "_").parse::<AgentKind>().is_ok()
+}
+
+/// Why a configured entry is refused, or `None` for one in good standing:
+/// its id is empty or carries the catalog's `:` delimiter, it spells a
+/// native CLI, or an earlier entry — a built-in, or one configured before
+/// it — already holds it.
+fn refusal(id: &str, taken: &std::collections::HashSet<String>) -> Option<String> {
+    if id.trim().is_empty() {
+        return Some("the id is empty; give the agent a stable id".into());
+    }
+    if id.contains(':') {
+        return Some(format!(
+            "the id `{id}` contains `:`, which splits a catalog id from its model; choose another id"
+        ));
+    }
+    if reserved_id(id) {
+        return Some(format!(
+            "the id `{id}` spells a native agent CLI, which every pin reads first; choose another id"
+        ));
+    }
+    taken.contains(id).then(|| {
+        format!(
+            "the id `{id}` is already another agent's — the first entry keeps it; choose another id"
+        )
+    })
 }
 
 #[derive(Clone)]
@@ -70,6 +108,10 @@ impl AgentRegistry {
     }
 
     fn build(custom: &[AcpAgentConfig], probe_cwd: PathBuf, probe_builtins: bool) -> Self {
+        // The first holder of an id keeps it: built-ins first, then the
+        // configured entries in configuration order.
+        let mut taken: std::collections::HashSet<String> =
+            BUILTINS.iter().map(|(id, _)| (*id).to_string()).collect();
         let entries = BUILTINS
             .into_iter()
             .map(|(id, command)| RegistryEntry {
@@ -77,12 +119,18 @@ impl AgentRegistry {
                 command: command.iter().map(|part| (*part).to_string()).collect(),
                 builtin: true,
                 probe: probe_builtins,
+                refused: None,
             })
-            .chain(custom.iter().map(|agent| RegistryEntry {
-                id: agent.id.clone(),
-                command: agent.command.clone(),
-                builtin: false,
-                probe: true,
+            .chain(custom.iter().map(|agent| {
+                let refused = refusal(&agent.id, &taken);
+                taken.insert(agent.id.clone());
+                RegistryEntry {
+                    id: agent.id.clone(),
+                    command: agent.command.clone(),
+                    builtin: false,
+                    probe: refused.is_none(),
+                    refused,
+                }
             }))
             .collect::<Vec<_>>();
         let results = entries.iter().map(not_probed).collect();
@@ -99,6 +147,9 @@ impl AgentRegistry {
         let probes = self.entries.iter().cloned().map(|entry| {
             let cwd = cwd.clone();
             async move {
+                if let Some(reason) = &entry.refused {
+                    return rejected(&entry, reason.clone());
+                }
                 if !entry.probe {
                     return rejected(&entry, "not probed by the test harness".into());
                 }
@@ -166,6 +217,30 @@ impl AgentRegistry {
         join_all(calls).await.into_iter().flatten().collect()
     }
 
+    /// The command one registry agent is spawned with, by its stable id —
+    /// what the launcher runs for a session pinned to that agent. `None`
+    /// where nothing in the registry carries the id. A refused entry — a
+    /// reserved id, or a duplicate of an earlier entry's — never answers:
+    /// the id belongs to the native CLI or to its first holder.
+    pub fn command_of(&self, id: &str) -> Option<Vec<String>> {
+        self.entries
+            .iter()
+            .find(|entry| entry.id == id && entry.refused.is_none())
+            .map(|entry| entry.command.clone())
+    }
+
+    /// The cached capabilities of one agent, by id: what the last probe
+    /// measured, which is what a launch decision reads. `None` where the id
+    /// is not in the registry.
+    pub async fn capabilities_of(&self, id: &str) -> Option<AcpCapabilitiesDto> {
+        self.results
+            .read()
+            .await
+            .iter()
+            .find(|result| result.agent.id == id)
+            .map(|result| result.agent.capabilities.clone())
+    }
+
     /// Convert every accepted discovery choice into the shared model catalog.
     pub async fn models(&self) -> Vec<ModelDto> {
         self.results
@@ -202,7 +277,10 @@ impl AgentRegistry {
 }
 
 fn not_probed(entry: &RegistryEntry) -> Discovery {
-    rejected(entry, "discovery has not run".into())
+    match &entry.refused {
+        Some(reason) => rejected(entry, reason.clone()),
+        None => rejected(entry, "discovery has not run".into()),
+    }
 }
 
 fn rejected(entry: &RegistryEntry, reason: String) -> Discovery {

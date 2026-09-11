@@ -8,7 +8,7 @@ use utoipa::IntoParams;
 use ariadne_api::goals::{CompleteGoalRequest, CreateGoalRequest, FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{MessageDto, MessageListQuery, SendMessageRequest};
 use ariadne_core::{GoalStatus, TaskStatus};
-use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, Store, TaskFilter};
+use ariadne_store::{Goal, MessageFilter, NewGoal, SessionFilter, TaskFilter};
 
 use super::AppState;
 use super::caller::call_ctx;
@@ -26,8 +26,10 @@ pub struct GoalListQuery {
 
 /// A goal with the repositories it references and what its agents have
 /// spent, which is how every one of these endpoints answers.
-async fn to_dto(store: &Store, goal: Goal) -> ApiResult<Json<GoalDto>> {
-    Ok(Json(goal_dto_of(store, goal).await?))
+async fn to_dto(state: &AppState, goal: Goal) -> ApiResult<Json<GoalDto>> {
+    Ok(Json(
+        goal_dto_of(&state.store, &state.agent_registry, goal).await?,
+    ))
 }
 
 impl GoalListQuery {
@@ -66,14 +68,20 @@ pub async fn create(
     // Refused before anything is looked up: a missing model, or one that
     // names no agent CLI, is a fact about the request rather than about
     // anything it refers to.
-    pins::readable(Some(&req.model))?;
+    pins::readable(Some(&req.model), &state.agent_registry)?;
 
     // Resolved here as well as in the store, so an unknown id is a 404 about
     // the repository rather than a goal that half-exists.
     for id in &req.repository_ids {
         state.store.get_repository(id).await?;
     }
-    let pin = pins::chosen(&state.store, Some(&req.model), req.effort.as_deref()).await?;
+    let pin = pins::chosen(
+        &state.store,
+        &state.agent_registry,
+        Some(&req.model),
+        req.effort.as_deref(),
+    )
+    .await?;
 
     let goal = state
         .store
@@ -86,7 +94,7 @@ pub async fn create(
         .await?;
     // The scheduler spawns the orchestrator session for goals in planning.
     state.notify_scheduler_goal(&goal.id);
-    Ok((StatusCode::CREATED, to_dto(&state.store, goal).await?))
+    Ok((StatusCode::CREATED, to_dto(&state, goal).await?))
 }
 
 /// List goals.
@@ -100,7 +108,7 @@ pub async fn list(
     let goals = state.store.list_goals(&q.statuses()?).await?;
     let mut out = Vec::with_capacity(goals.len());
     for goal in goals {
-        out.push(goal_dto_of(&state.store, goal).await?);
+        out.push(goal_dto_of(&state.store, &state.agent_registry, goal).await?);
     }
     Ok(Json(out))
 }
@@ -113,7 +121,7 @@ pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<GoalDto>> {
-    to_dto(&state.store, state.store.get_goal(&id).await?).await
+    to_dto(&state, state.store.get_goal(&id).await?).await
 }
 
 /// Cancel a goal.
@@ -137,7 +145,7 @@ pub async fn cancel(
         .await?;
     // The scheduler tears down sessions/worktrees of cancelled goals.
     state.notify_scheduler_goal(&goal.id);
-    to_dto(&state.store, goal).await
+    to_dto(&state, goal).await
 }
 
 /// Delete a finished goal and everything under it.
@@ -228,7 +236,7 @@ pub async fn finalize(
     for task in tasks {
         state.notify_scheduler(&task.id);
     }
-    to_dto(&state.store, goal).await
+    to_dto(&state, goal).await
 }
 
 /// Complete the goal: it moves active -> completed and every session of it
@@ -290,7 +298,7 @@ pub async fn complete(
         .set_goal_status(&id, GoalStatus::Completed)
         .await?;
     state.notify_scheduler_goal(&id);
-    to_dto(&state.store, goal).await
+    to_dto(&state, goal).await
 }
 
 /// The messages of a goal: what its agents said that was not about one task.

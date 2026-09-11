@@ -19,7 +19,8 @@ use ariadne_core::{AgentKind, Seat};
 
 use axum::http::StatusCode;
 
-use common::{Harness, harness, patch_json, post_json, put_json};
+use common::acp::{discovery_settled, registry_home, script, stub_acp_agent};
+use common::{Harness, TIMEOUT, eventually, harness, patch_json, post_json, put_json};
 
 /// A goal on `pin`, in a repository of its own.
 async fn goal_on(h: &Harness, pin: serde_json::Value) -> GoalDto {
@@ -638,4 +639,198 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
         .expect("the task keeps its author");
     assert_eq!(author.model, off);
     assert_eq!(author.effort.as_deref(), Some("high"));
+}
+
+/// A discovered catalog id — `<agent-id>:<model>`, the id `GET /v1/models`
+/// serves — pins agents through the public API: the goal and the task take
+/// it, spell it back whole, and the launch it produces runs the registry
+/// agent's command with the bare model half pinned. An id naming no
+/// registry agent stays refused.
+#[tokio::test]
+async fn a_discovered_catalog_id_pins_agents_through_the_api() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(dir.path(), script());
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
+
+    // The goal takes the id and spells it back whole.
+    let goal = goal_on(
+        &h,
+        serde_json::json!({ "model": "stub:old-model", "effort": "low" }),
+    )
+    .await;
+    assert_eq!(goal.model, "stub:old-model");
+    assert_eq!(goal.effort.as_deref(), Some("low"));
+
+    // So does a task's agent, on creation and on an edit.
+    let task = task_on(
+        &h,
+        &goal,
+        serde_json::json!({ "model": "stub:old-model" }),
+        serde_json::json!({ "model": "stub:old-model", "effort": "low" }),
+    )
+    .await;
+    assert_eq!(agent(&task, Seat::Author).model, "stub:old-model");
+    assert_eq!(agent(&task, Seat::Reviewer).model, "stub:old-model");
+    let moved: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({ "model": "stub:old-model", "effort": "low" }),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(agent(&moved, Seat::Author).model, "stub:old-model");
+
+    // The pin reaches the registry command: the orchestrator spawned off it
+    // runs the stub, with the bare model and effort halves pinned.
+    let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
+    assert_eq!(session.agent_kind(), AgentKind::Acp);
+    assert_eq!(session.model, "stub:old-model");
+    eventually(TIMEOUT, "the stub to be launched and pinned", || async {
+        stub.calls_of("session/set_config_option").len() >= 2
+    })
+    .await;
+    let pins = stub.calls_of("session/set_config_option");
+    assert_eq!(pins[0]["value"], "old-model");
+    assert_eq!(pins[1]["value"], "low");
+
+    // An id the registry does not carry is refused as before.
+    let err = h
+        .error(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({ "model": "nobody:some-model" }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("names no agent CLI")
+            || err.error.message.contains("unknown agent"),
+        "{}",
+        err.error.message
+    );
+}
+
+/// A discovered model's effort choices bound its pin, the way a curated
+/// model's do: an effort discovery never listed for it is refused by name,
+/// and a model the catalog does not list stays free text, held to nothing.
+#[tokio::test]
+async fn a_discovered_models_effort_choices_bound_its_pin() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(dir.path(), script());
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
+
+    let repo = h.repository(&h.dir.path().join("plain-repo")).await;
+    let err = h
+        .error(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "model": "stub:old-model",
+                    "effort": "wild",
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`wild` is no effort of that model"),
+        "{}",
+        err.error.message
+    );
+
+    // A model discovery never listed is free text, as an opencode model is:
+    // the agent is real, and the model and effort halves are handed on as
+    // typed.
+    let goal = goal_on(
+        &h,
+        serde_json::json!({ "model": "stub:unlisted-model", "effort": "anything" }),
+    )
+    .await;
+    assert_eq!(goal.model, "stub:unlisted-model");
+    assert_eq!(goal.effort.as_deref(), Some("anything"));
+}
+
+/// A discovered model turned off is refused under the same id the switch
+/// stores: the catalog id whole, not an `acp:`-prefixed spelling nothing
+/// serves.
+#[tokio::test]
+async fn a_discovered_model_turned_off_cannot_be_staffed_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(dir.path(), script());
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
+
+    let _: serde_json::Value = h
+        .json(
+            put_json(
+                "/v1/models/enabled",
+                serde_json::json!({"id": "stub:old-model", "enabled": false}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    let repo = h.repository(&h.dir.path().join("plain-repo")).await;
+    let err = h
+        .error(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "model": "stub:old-model",
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error.message.contains("`stub:old-model` is turned off"),
+        "the refusal names the catalog id: {}",
+        err.error.message
+    );
+}
+
+/// A fallback `acp` model that carries a colon of its own keeps its `acp:`
+/// prefix in every response: its first segment names no registry agent, so
+/// that prefix is the only spelling a re-submit parses — and it does, back
+/// to the same pin.
+#[tokio::test]
+async fn an_acp_fallback_model_with_a_colon_keeps_its_prefix() {
+    let h = harness().await;
+    let goal = goal_on(&h, serde_json::json!({ "model": "acp:vendor:model" })).await;
+    assert_eq!(goal.model, "acp:vendor:model");
+
+    let task = task_on(
+        &h,
+        &goal,
+        serde_json::json!({ "model": "acp:vendor:model" }),
+        // The reviewer is staffed with the goal response's own spelling,
+        // which is the round trip: what a response says is re-submittable.
+        serde_json::json!({ "model": goal.model }),
+    )
+    .await;
+    assert_eq!(agent(&task, Seat::Author).model, "acp:vendor:model");
+    assert_eq!(agent(&task, Seat::Reviewer).model, "acp:vendor:model");
+
+    let respelled = agent(&task, Seat::Author).model.clone();
+    let moved: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({ "model": respelled }),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(agent(&moved, Seat::Author).model, "acp:vendor:model");
 }

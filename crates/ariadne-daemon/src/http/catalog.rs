@@ -230,19 +230,32 @@ pub mod models {
     }
 
     /// The efforts one model can be run at, as this catalog knows them: the
-    /// curated entry for claude_code and codex, and, for opencode, whatever
-    /// discovery prints right now.
+    /// curated entry for claude_code and codex, for opencode whatever
+    /// discovery prints right now, and for `acp` the registry's cached
+    /// snapshot — an `acp` model is the discovered catalog id whole, which
+    /// is the id the snapshot lists it under.
     ///
     /// None where nothing here lists the model — a hand-typed id — which is
     /// what [`ariadne_core::models::effort_error`] reads as "hold it to
     /// everything that CLI accepts".
     ///
-    /// Discovery is re-run rather than cached: it is asked only where a write
-    /// names an opencode effort, which is rare, and a remembered list would
-    /// start refusing the variants a newly configured model really takes.
-    pub async fn efforts_of(kind: AgentKind, model: &str) -> Option<Vec<String>> {
+    /// Opencode discovery is re-run rather than cached: it is asked only
+    /// where a write names an opencode effort, which is rare, and a
+    /// remembered list would start refusing the variants a newly configured
+    /// model really takes.
+    pub async fn efforts_of(
+        registry: &crate::acp_discovery::AgentRegistry,
+        kind: AgentKind,
+        model: &str,
+    ) -> Option<Vec<String>> {
         let names = |efforts: Vec<EffortDto>| efforts.into_iter().map(|e| e.id).collect();
         match kind {
+            AgentKind::Acp => registry
+                .models()
+                .await
+                .into_iter()
+                .find(|m| m.id == model)
+                .map(|m| names(m.efforts)),
             AgentKind::Opencode => opencode_models(DEFAULT_OPENCODE_BIN)
                 .await
                 .into_iter()

@@ -155,7 +155,9 @@ pub async fn record_pull_request(
         .await?;
     state.notify_scheduler(&id);
     let task = state.store.get_task(&id).await?;
-    Ok(Json(task_dto_of(&state.store, task).await?))
+    Ok(Json(
+        task_dto_of(&state.store, &state.agent_registry, task).await?,
+    ))
 }
 
 /// The messages of a task: what its agents have said to each other.
@@ -505,5 +507,7 @@ pub async fn pick_winner(
         .await?;
     state.notify_scheduler(&id);
     let task = state.store.get_task(&id).await?;
-    Ok(Json(task_dto_of(&state.store, task).await?))
+    Ok(Json(
+        task_dto_of(&state.store, &state.agent_registry, task).await?,
+    ))
 }

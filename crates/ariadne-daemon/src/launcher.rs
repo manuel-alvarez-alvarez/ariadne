@@ -22,6 +22,7 @@ use ariadne_store::{
 };
 
 use crate::acp::{AcpLaunch, AcpRuntime};
+use crate::acp_discovery::AgentRegistry;
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, prompts, write_skills};
 use crate::branch::BranchWatchers;
 use crate::config::Config;
@@ -58,6 +59,9 @@ pub struct Launcher {
     /// The daemon-owned ACP agents: a session of kind `acp` runs as a child
     /// process driven here, never in a tmux pane.
     pub acp: AcpRuntime,
+    /// The ACP agent registry: which executable an `acp` session's pin names,
+    /// and what discovery measured about it.
+    pub registry: AgentRegistry,
     /// The task branches whose head the daemon is following, so that a commit
     /// an author makes reaches the clients watching its diff.
     pub branches: BranchWatchers,
@@ -433,8 +437,14 @@ impl Launcher {
     /// spawns the agent as its own child and drives it over the protocol
     /// (`crate::acp`). The spawn plan is still written as the record of what
     /// was launched, and the row moves through the same states in the same
-    /// order as a tmux launch. What runs is `Config::acp_bin` — the plan's
-    /// own argv head outside a test — with the rest of the argv behind it.
+    /// order as a tmux launch.
+    ///
+    /// What runs is the agent the session's pin names: a model pinned as
+    /// `<agent-id>:<model>` picks that registry agent's command, and the bare
+    /// model half is what the runtime pins. A pin naming no registry agent
+    /// runs `Config::acp_bin` — the plan's own argv head outside a test —
+    /// with the model as pinned. The rest of the planned argv (the agent
+    /// kind's extra flags) rides behind either command.
     async fn launch_acp(
         &self,
         session: &AgentSession,
@@ -450,7 +460,7 @@ impl Launcher {
             .context("an ACP launch plan names no ACP config")?;
         let raw = std::fs::read_to_string(&config_path)
             .with_context(|| format!("reading the ACP config {}", config_path.display()))?;
-        let config: ariadne_core::acp::LaunchConfig = serde_json::from_str(&raw)
+        let mut config: ariadne_core::acp::LaunchConfig = serde_json::from_str(&raw)
             .with_context(|| format!("reading the ACP config {}", config_path.display()))?;
         let (repository_id, permission_mode) = match &session.task_id {
             Some(task_id) => {
@@ -469,13 +479,35 @@ impl Launcher {
                 (repo.id, self.cfg.permission_mode)
             }
         };
-        let args = argv
+        let extra = argv
             .split_first()
             .map(|(_, args)| args.to_vec())
             .expect("the ACP adapter plans a non-empty argv");
+        let (program, mut args) = match self.acp_agent_of(session) {
+            Some((agent_id, model, command)) => {
+                // The resume gate reads what discovery measured about this
+                // agent; a launch on the fallback below has no snapshot to
+                // read and is left to the runtime's own protocol errors.
+                if config.resume_session_id.is_some() {
+                    self.assert_acp_session_resumable(session, &agent_id)
+                        .await?;
+                }
+                config.model = model;
+                let mut command = command.into_iter();
+                let program = command.next().context("the registry command is empty")?;
+                (program, command.collect::<Vec<_>>())
+            }
+            None => (self.cfg.acp_bin.clone(), Vec::new()),
+        };
+        args.extend(extra);
+        // The record of the launch names what actually runs: the resolved
+        // command, not the adapter's placeholder head.
+        let recorded = std::iter::once(program.clone())
+            .chain(args.iter().cloned())
+            .collect();
         write_spawn_plan(
             &self.spawn_plan_file(&session.id),
-            &SpawnPlanFile::new(argv, env.clone(), cwd.clone()),
+            &SpawnPlanFile::new(recorded, env.clone(), cwd.clone()),
         )?;
         self.store
             .set_session_launch(&session.id, launch_id)
@@ -484,7 +516,7 @@ impl Launcher {
             .launch(AcpLaunch {
                 session_id: session.id.clone(),
                 launch_id: launch_id.to_string(),
-                program: self.cfg.acp_bin.clone(),
+                program,
                 args,
                 env,
                 cwd,
@@ -503,6 +535,46 @@ impl Launcher {
             self.store
                 .set_session_status(&session.id, SessionStatus::Running)
                 .await?;
+        }
+        Ok(())
+    }
+
+    /// The registry agent an `acp` session's pin names, with the model half
+    /// it runs and the command it is spawned with.
+    ///
+    /// The pin's model is `<agent-id>:<model>` — the id of a discovered
+    /// catalog entry (011), split at the first colon exactly as the catalog
+    /// joined it. `None` where the prefix names nothing in the registry,
+    /// which is a pin from before discovery: it runs on `Config::acp_bin`
+    /// with its model as pinned.
+    fn acp_agent_of(&self, session: &AgentSession) -> Option<(String, String, Vec<String>)> {
+        let (agent_id, model) = session.model.split_once(':')?;
+        let command = self.registry.command_of(agent_id)?;
+        Some((agent_id.to_string(), model.to_string(), command))
+    }
+
+    /// Refuse to resume a session of an agent that cannot load one.
+    ///
+    /// Discovery measures whether an agent supports `session/load`
+    /// (`session_load`), and an agent without it has no way back into a
+    /// stored conversation: a launch that went ahead would open a fresh
+    /// session and call it the old one. The refusal names the session and
+    /// the agent, which is what the caller reports.
+    async fn assert_acp_session_resumable(
+        &self,
+        session: &AgentSession,
+        agent_id: &str,
+    ) -> Result<()> {
+        let resumable = self
+            .registry
+            .capabilities_of(agent_id)
+            .await
+            .is_some_and(|capabilities| capabilities.session_load);
+        if !resumable {
+            anyhow::bail!(
+                "session {} is not resumable: ACP agent {agent_id} does not support session/load",
+                session.id
+            );
         }
         Ok(())
     }
@@ -698,7 +770,11 @@ impl Launcher {
         self.assert_no_live_session(goal_id, None, Seat::Orchestrator, None)
             .await?;
         let tmux_session = session_name(&goal.id, None, "orchestrator", None);
-        self.claim_pane(&tmux_session).await?;
+        // An acp orchestrator runs no pane: the name is stored — the row
+        // carries one for every session — but nothing tmux is claimed.
+        if goal.agent_kind() != AgentKind::Acp {
+            self.claim_pane(&tmux_session).await?;
+        }
 
         let session = self
             .store
@@ -1039,7 +1115,10 @@ impl Launcher {
             "reviewer",
             Some(tail(&reviewer.id)),
         );
-        self.claim_pane(&tmux_session).await?;
+        // An acp reviewer runs no pane, like the author spawn above.
+        if reviewer.agent_kind() != AgentKind::Acp {
+            self.claim_pane(&tmux_session).await?;
+        }
 
         let branch = self.review_branch(&task, author).await?;
         let worktree = self

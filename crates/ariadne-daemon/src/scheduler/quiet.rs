@@ -139,6 +139,15 @@ impl super::Scheduler {
         if done.nudged {
             return Ok(());
         }
+        // An `acp` agent has no composer: a running one is inside a turn and
+        // is left alone — the relaunch threshold answers for a turn that
+        // never ends — and an idle one takes its nudge as a `session/prompt`
+        // through the delivery below.
+        if session.agent_kind() == ariadne_core::AgentKind::Acp
+            && session.status() == SessionStatus::Running
+        {
+            return Ok(());
+        }
         // A running agent is asked before the nudge is spent, so that a turn
         // nobody may interrupt costs it nothing: an empty composer is left
         // where it is, with its nudge still to come if something turns up in

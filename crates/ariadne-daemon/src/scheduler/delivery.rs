@@ -1,13 +1,18 @@
-//! Typing into an agent's pane, off the loop.
+//! Delivering what the scheduler has to say to an agent: typed into its pane
+//! off the loop, or — for a session of kind `acp`, which has no pane — handed
+//! to its daemon-owned agent as a `session/prompt`.
 //!
 //! `send_submitted` is slow by design — a paste, an Enter, and the pane read
 //! back on a widening backoff — so a pass with three agents to nudge waits on
 //! none of them: the typing happens in a task of its own and what came of each
-//! one arrives back here as a [`DeliveryReport`].
+//! one arrives back here as a [`DeliveryReport`]. A prompt delivery is not
+//! slow — the runtime queues it in order behind whatever turn is running —
+//! and reports through the same channel, so one place decides what every
+//! outcome costs.
 
 use tracing::{info, warn};
 
-use ariadne_core::AttentionReason;
+use ariadne_core::{AgentKind, AttentionReason};
 use ariadne_store::AgentSession;
 
 /// What one keystroke delivery came to, reported back to the loop that asked
@@ -42,15 +47,19 @@ impl super::Scheduler {
         self.typing.contains(session_id)
     }
 
-    /// Type `text` into a session's pane in a task of its own, which reports
-    /// back what came of it.
+    /// Deliver `text` to a session's agent: as a `session/prompt` for a
+    /// session of kind `acp`, and typed into the pane for every other kind.
     ///
-    /// Off the loop because [`TmuxManager::send_submitted`] is slow by
+    /// The typing runs in a task of its own, which reports back what came of
+    /// it — off the loop because [`TmuxManager::send_submitted`] is slow by
     /// design: it lets a paste settle, presses Enter, reads the pane back and
     /// tries again on a widening backoff — seconds of waiting that the
     /// scheduler used to do inline, one agent at a time, while every other
     /// event queued behind it.
     pub(super) fn spawn_delivery(&mut self, session: &AgentSession, text: String) {
+        if session.agent_kind() == AgentKind::Acp {
+            return self.deliver_prompt(session, text);
+        }
         self.typing.insert(session.id.clone());
         let tmux = self.launcher.tmux.clone();
         let reports = self.reports.clone();
@@ -69,6 +78,27 @@ impl super::Scheduler {
                 session_id,
                 outcome,
             });
+        });
+    }
+
+    /// Hand `text` to a session's daemon-owned agent as a `session/prompt`
+    /// (021): sent at once when the agent is between turns, and queued in
+    /// order behind whichever one runs. Nothing is typed, so nothing can
+    /// interleave and no pane is held busy; a prompt the runtime took is
+    /// delivered, and one it refused — no agent runs for the session — is the
+    /// prompt's counterpart of a pane tmux would not take, so the report goes
+    /// down the same channel and [`Self::delivery_settled`] decides.
+    fn deliver_prompt(&mut self, session: &AgentSession, text: String) {
+        let outcome = match self.launcher.acp.send_prompt(&session.id, text) {
+            Ok(()) => DeliveryOutcome::Confirmed,
+            Err(e) => {
+                warn!(session = %session.id, error = %format!("{e:#}"), "handing the agent a prompt failed");
+                DeliveryOutcome::Refused
+            }
+        };
+        let _ = self.reports.send(DeliveryReport {
+            session_id: session.id.clone(),
+            outcome,
         });
     }
 

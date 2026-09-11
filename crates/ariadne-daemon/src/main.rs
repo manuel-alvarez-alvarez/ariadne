@@ -94,8 +94,10 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("opening database {}", config.db_path.display()))?;
 
+    let agent_registry =
+        ariadne_daemon::acp_discovery::AgentRegistry::new(&config.acp_agents, config.root.clone());
     // Installed before anything writes, so no state change goes unannounced.
-    let events = ariadne_daemon::bus::start(store.clone());
+    let events = ariadne_daemon::bus::start(store.clone(), agent_registry.clone());
 
     let plugin = ariadne_daemon::opencode_plugin::install()?;
     info!(plugin = %plugin.display(), "opencode events plugin installed");
@@ -105,8 +107,6 @@ async fn main() -> Result<()> {
         .with_context(|| format!("writing {}", config.pid_file.display()))?;
 
     let config = std::sync::Arc::new(config);
-    let agent_registry =
-        ariadne_daemon::acp_discovery::AgentRegistry::new(&config.acp_agents, config.root.clone());
     agent_registry.refresh().await;
     let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
         cfg: config.clone(),
@@ -114,6 +114,7 @@ async fn main() -> Result<()> {
         tmux: ariadne_daemon::tmux::TmuxManager::default(),
         git: ariadne_daemon::gitwt::GitManager,
         acp: ariadne_daemon::acp::AcpRuntime::new(store.clone()),
+        registry: agent_registry.clone(),
         branches: ariadne_daemon::branch::BranchWatchers::new(events.clone()),
     });
     // The watches are the process's own: whatever was in flight when the last

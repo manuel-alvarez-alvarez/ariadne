@@ -1,13 +1,14 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-06
+updated: 2026-09-11
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
   - crates/ariadne-daemon/tests/scheduler_attention.rs
   - crates/ariadne-daemon/tests/scheduler_tmux_outage.rs
   - crates/ariadne-daemon/tests/events.rs
+  - crates/ariadne-daemon/tests/acp_runtime.rs
 ---
 
 # Scheduler, attention and watchdogs
@@ -49,7 +50,11 @@ Out: what a resumed agent is told (006).
    the killed one is still to report changes nothing (008, 012).
 5. What the nudge *is* the pane decides, so the composer is read before one is
    spent: an instruction still sitting unsent gets the Enter alone, and an
-   agent mid-turn is not nudged at all.
+   agent mid-turn is not nudged at all. A session of kind `acp` has no pane
+   and no composer: its nudge — like every delivery the scheduler owes it, a
+   review briefing and an agent message included — is handed to its
+   daemon-owned agent as a `session/prompt` (021), a running one is mid-turn
+   and left alone, and nothing is ever typed for it.
 6. An agent is nudged once for the situation it went quiet in, not once per
    pass.
 7. Attention on a session means a human must act, and it is raised only while
@@ -129,6 +134,9 @@ Out: what a resumed agent is told (006).
   (`::a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it`).
 - A pass with three agents to nudge does not wait on the keystrokes
   (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes`).
+- A nudge to an idle `acp` agent arrives as a `session/prompt`, and nothing
+  takes the keystroke path
+  (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
 
 ## Sources
 

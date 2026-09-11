@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use common::acp::{option, script, stub_acp_agent};
-use common::{Harness, harness, post};
+use common::{Harness, TIMEOUT, eventually, harness, post, post_json};
 
 fn home_with_agent(id: &str, bin: &str) -> std::path::PathBuf {
     let home = std::path::Path::new(bin).parent().unwrap().join("home");
@@ -21,7 +21,22 @@ fn home_with_agent(id: &str, bin: &str) -> std::path::PathBuf {
 
 async fn harness_with_agent(id: &str, agent: &common::acp::StubAcpAgent) -> Harness {
     let home = home_with_agent(id, &agent.bin);
-    harness().home(home).discover_agents().await
+    let h = harness().home(home).discover_agents().await;
+    // A probe under full-suite load can run out its timeout: probe again
+    // until the agent itself answers — accepted, or rejected for a reason of
+    // its own — so no test reads a timed-out snapshot.
+    eventually(TIMEOUT, "the probe to answer", || async {
+        let settled =
+            h.launcher.registry.agents().await.iter().any(|a| {
+                a.id == id && a.rejection_reason.as_deref() != Some("discovery timed out")
+            });
+        if !settled {
+            h.launcher.registry.refresh().await;
+        }
+        settled
+    })
+    .await;
+    h
 }
 
 fn choice(value: &str, name: &str) -> Value {
@@ -237,4 +252,157 @@ async fn discovery_refreshes_on_demand() {
             .iter()
             .any(|model| model["id"] == "refreshable:old-model")
     );
+}
+
+/// A configured registry id that spells a native agent CLI is refused: the
+/// CLI reading wins every pin parse, so such an agent could never be
+/// selected. The entry stays listed with the reason on it, nothing resolves
+/// its command, and a pin naming that CLI still runs the native adapter.
+#[tokio::test]
+async fn a_registry_id_that_spells_a_native_cli_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!(
+            "[[acp_agents]]\nid = \"codex\"\ncommand = [{bin:?}]\n\n\
+             [[acp_agents]]\nid = \"claude-code\"\ncommand = [{bin:?}]\n",
+            bin = agent.bin
+        ),
+    )
+    .unwrap();
+    let h = harness().home(home).discover_agents().await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    for id in ["codex", "claude-code"] {
+        let entry = agents.iter().find(|a| a["id"] == id).unwrap();
+        assert_eq!(entry["status"], "rejected", "{entry}");
+        assert!(
+            entry["rejection_reason"]
+                .as_str()
+                .unwrap()
+                .contains("native agent CLI"),
+            "{entry}"
+        );
+        assert!(h.launcher.registry.command_of(id).is_none());
+    }
+
+    // The precedence stands: `codex:<model>` is the native CLI, whatever the
+    // config named.
+    let repo = h.repository(&dir.path().join("plain-repo")).await;
+    let goal: Value = h
+        .json(
+            post_json(
+                "/v1/goals",
+                json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "model": "codex:gpt-5.3-codex",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(goal["model"], "codex:gpt-5.3-codex");
+}
+
+/// The first holder of an id keeps it — built-ins first, then configuration
+/// order. Every later entry with the same id is rejected with the reason on
+/// it, and nothing resolves its command: `command_of` answers with the
+/// first holder's.
+#[tokio::test]
+async fn a_registry_id_already_taken_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!(
+            "[[acp_agents]]\nid = \"claude-code-acp\"\ncommand = [{bin:?}]\n\n\
+             [[acp_agents]]\nid = \"twin\"\ncommand = [{bin:?}]\n\n\
+             [[acp_agents]]\nid = \"twin\"\ncommand = [{bin:?}, \"second\"]\n",
+            bin = agent.bin
+        ),
+    )
+    .unwrap();
+    let h = harness().home(home).discover_agents().await;
+    // A probe under full-suite load can run out its timeout: probe again
+    // until the first twin is accepted, so no assertion reads a timed-out
+    // snapshot.
+    eventually(TIMEOUT, "discovery to accept the first twin", || async {
+        let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+        if agents
+            .iter()
+            .any(|a| a["id"] == "twin" && a["status"] == "ready")
+        {
+            return true;
+        }
+        h.launcher.registry.refresh().await;
+        false
+    })
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let taken = |id: &str, builtin: bool| {
+        agents
+            .iter()
+            .find(|a| a["id"] == id && a["builtin"] == builtin)
+            .unwrap_or_else(|| panic!("no {id} (builtin: {builtin}) in {agents:#?}"))
+            .clone()
+    };
+
+    // The configured duplicate of a built-in id is rejected; the built-in
+    // keeps the id and its command.
+    let duplicate = taken("claude-code-acp", false);
+    assert_eq!(duplicate["status"], "rejected", "{duplicate}");
+    assert!(
+        duplicate["rejection_reason"]
+            .as_str()
+            .unwrap()
+            .contains("already another agent's"),
+        "{duplicate}"
+    );
+    assert_eq!(
+        h.launcher.registry.command_of("claude-code-acp"),
+        Some(vec!["claude-code-acp".to_string()]),
+        "the built-in keeps its id"
+    );
+
+    // Between two configured entries, the first keeps the id and the
+    // second is rejected.
+    let twins: Vec<&Value> = agents.iter().filter(|a| a["id"] == "twin").collect();
+    assert_eq!(twins.len(), 2, "{agents:#?}");
+    assert_eq!(twins[0]["status"], "ready", "{:#?}", twins[0]);
+    assert_eq!(twins[1]["status"], "rejected", "{:#?}", twins[1]);
+    assert_eq!(
+        h.launcher.registry.command_of("twin"),
+        Some(vec![agent.bin.clone()]),
+        "the first configured entry keeps its id"
+    );
+}
+
+/// An id that carries the catalog delimiter could never be split back out
+/// of a catalog id, so it is refused at build like a reserved one: listed,
+/// rejected with the reason, and never resolved.
+#[tokio::test]
+async fn a_registry_id_with_the_catalog_delimiter_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let h = harness_with_agent("my:agent", &agent).await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let entry = agents.iter().find(|a| a["id"] == "my:agent").unwrap();
+    assert_eq!(entry["status"], "rejected", "{entry}");
+    assert!(
+        entry["rejection_reason"]
+            .as_str()
+            .unwrap()
+            .contains("contains `:`"),
+        "{entry}"
+    );
+    assert!(h.launcher.registry.command_of("my:agent").is_none());
+    assert!(h.launcher.registry.command_of("my").is_none());
 }

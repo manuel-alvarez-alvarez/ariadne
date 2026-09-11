@@ -51,6 +51,12 @@ impl StubAcpAgent {
             .collect()
     }
 
+    /// Forget every message logged so far: what a test starts asserting from
+    /// after the discovery probe has already driven the stub once.
+    pub fn clear_messages(&self) {
+        let _ = std::fs::remove_file(&self.log);
+    }
+
     /// The agent process's pid, once it has written it down.
     pub fn pid(&self) -> Option<u32> {
         std::fs::read_to_string(&self.pid_file)
@@ -75,6 +81,44 @@ pub fn pid_is_alive(pid: u32) -> bool {
         .args(["-0", &pid.to_string()])
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// A home whose `config.toml` registers the stub as the agent `stub`, for a
+/// harness built over it with [`super::HarnessBuilder::home`].
+pub fn registry_home(stub: &StubAcpAgent) -> PathBuf {
+    let home = Path::new(&stub.bin).parent().unwrap().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!(
+            "[[acp_agents]]\nid = \"stub\"\ncommand = [{:?}]\n",
+            stub.bin
+        ),
+    )
+    .unwrap();
+    home
+}
+
+/// Wait for discovery to accept the stub, then drop the probes' traffic
+/// from its log, so a test reads only what the daemon sent its agents.
+///
+/// A probe under full-suite load can run out its timeout: probe again until
+/// the stub is accepted, so no test reads a timed-out snapshot.
+pub async fn discovery_settled(h: &super::Harness, stub: &StubAcpAgent) {
+    let accepted = || async {
+        h.launcher.registry.agents().await.iter().any(|agent| {
+            agent.id == "stub" && agent.status == ariadne_api::agents::AcpAgentStatus::Ready
+        })
+    };
+    super::eventually(super::TIMEOUT, "discovery to accept the stub", || async {
+        if accepted().await {
+            return true;
+        }
+        h.launcher.registry.refresh().await;
+        accepted().await
+    })
+    .await;
+    stub.clear_messages();
 }
 
 /// One configuration option in the ACP shape, as the stub offers it.

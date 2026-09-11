@@ -10,7 +10,7 @@ use ariadne_api::tasks::{
     TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
-use ariadne_store::{NewTask, NewTaskAgent, Store, Task, TaskFilter, TaskUpdate};
+use ariadne_store::{NewTask, NewTaskAgent, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
 use super::caller::{CallCtx, call_ctx, ensure_task_scope};
@@ -24,7 +24,7 @@ use super::pins::{self, Repin, Standing};
 /// An agent has nothing behind it to fall back to: every assignment names its
 /// CLI and its model, and one that names no model is refused.
 async fn resolve_agents(
-    store: &Store,
+    state: &AppState,
     assignments: &[AgentAssignment],
 ) -> ApiResult<Vec<NewTaskAgent>> {
     let mut agents = Vec::with_capacity(assignments.len());
@@ -32,7 +32,13 @@ async fn resolve_agents(
         agents.push(NewTaskAgent {
             seat: assignment.seat,
             skills: assignment.skills.clone(),
-            pin: pins::chosen(store, Some(&assignment.model), assignment.effort.as_deref()).await?,
+            pin: pins::chosen(
+                &state.store,
+                &state.agent_registry,
+                Some(&assignment.model),
+                assignment.effort.as_deref(),
+            )
+            .await?,
             brief: assignment.brief.clone(),
         });
     }
@@ -43,7 +49,7 @@ async fn resolve_agents(
 /// seat among them: each list replaces one seat whole, and an agent filed
 /// under the wrong one would silently change the other list.
 async fn resolve_seat(
-    store: &Store,
+    state: &AppState,
     assignments: &[AgentAssignment],
     seat: Seat,
 ) -> ApiResult<Vec<NewTaskAgent>> {
@@ -54,7 +60,7 @@ async fn resolve_seat(
             seat.as_str()
         )));
     }
-    resolve_agents(store, assignments).await
+    resolve_agents(state, assignments).await
 }
 
 /// Make an outside session the author of a ready task.
@@ -153,7 +159,7 @@ pub async fn create(
         }
     };
 
-    let agents = resolve_agents(&state.store, &req.agents).await?;
+    let agents = resolve_agents(&state, &req.agents).await?;
 
     let task = state
         .store
@@ -168,7 +174,7 @@ pub async fn create(
             permission_mode: req.permission_mode,
         })
         .await?;
-    let dto = task_dto_of(&state.store, task).await?;
+    let dto = task_dto_of(&state.store, &state.agent_registry, task).await?;
     Ok((StatusCode::CREATED, Json(dto)))
 }
 
@@ -189,7 +195,7 @@ pub async fn list(
         .await?;
     let mut out = Vec::with_capacity(tasks.len());
     for task in tasks {
-        out.push(task_dto_of(&state.store, task).await?);
+        out.push(task_dto_of(&state.store, &state.agent_registry, task).await?);
     }
     Ok(Json(out))
 }
@@ -203,7 +209,9 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Json<TaskDto>> {
     let task = state.store.get_task(&id).await?;
-    Ok(Json(task_dto_of(&state.store, task).await?))
+    Ok(Json(
+        task_dto_of(&state.store, &state.agent_registry, task).await?,
+    ))
 }
 
 /// Edit a pending/ready task (orchestrator or user).
@@ -224,11 +232,11 @@ pub async fn update(
         ));
     }
     let authors = match &req.authors {
-        Some(assignments) => Some(resolve_seat(&state.store, assignments, Seat::Author).await?),
+        Some(assignments) => Some(resolve_seat(&state, assignments, Seat::Author).await?),
         None => None,
     };
     let reviewers = match &req.reviewers {
-        Some(assignments) => Some(resolve_seat(&state.store, assignments, Seat::Reviewer).await?),
+        Some(assignments) => Some(resolve_seat(&state, assignments, Seat::Reviewer).await?),
         None => None,
     };
     // What the author is pinned to now: an effort written on its own is run at
@@ -236,6 +244,7 @@ pub async fn update(
     let author = state.store.task_author(&id).await?;
     let (pin, effort) = match pins::rechosen(
         &state.store,
+        &state.agent_registry,
         req.model.as_deref(),
         req.effort.as_deref(),
         Standing {
@@ -268,7 +277,9 @@ pub async fn update(
         state.store.set_task_dependencies(&id, &deps).await?;
     }
     let task = state.store.get_task(&task.id).await?;
-    Ok(Json(task_dto_of(&state.store, task).await?))
+    Ok(Json(
+        task_dto_of(&state.store, &state.agent_registry, task).await?,
+    ))
 }
 
 /// Request a status transition. The actor is derived from the call context.
@@ -285,7 +296,9 @@ pub async fn transition(
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
     let task = apply_transition(&state, &ctx, &id, req).await?;
-    Ok(Json(task_dto_of(&state.store, task).await?))
+    Ok(Json(
+        task_dto_of(&state.store, &state.agent_registry, task).await?,
+    ))
 }
 
 pub(crate) async fn apply_transition(
@@ -379,7 +392,9 @@ pub async fn cancel(
         },
     )
     .await?;
-    Ok(Json(task_dto_of(&state.store, task).await?))
+    Ok(Json(
+        task_dto_of(&state.store, &state.agent_registry, task).await?,
+    ))
 }
 
 /// Retry a failed task: failed -> ready. The user's call, and the
@@ -406,7 +421,9 @@ pub async fn retry(
         },
     )
     .await?;
-    Ok(Json(task_dto_of(&state.store, task).await?))
+    Ok(Json(
+        task_dto_of(&state.store, &state.agent_registry, task).await?,
+    ))
 }
 
 /// Transition audit log of a task.

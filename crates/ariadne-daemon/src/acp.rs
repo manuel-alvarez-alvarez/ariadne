@@ -123,6 +123,26 @@ impl AcpRuntime {
             .contains_key(session_id)
     }
 
+    /// Hand the running agent a prompt from the daemon itself — a scheduler
+    /// nudge, a review briefing, an agent message. Always a `session/prompt`,
+    /// queued in order behind whichever turn runs: unlike console input it
+    /// answers no pending permission, so a delivery is never consumed as an
+    /// option answer meant for a person.
+    ///
+    /// Errs where there is nobody here to hear it: no agent runs for this
+    /// session, which is the prompt's counterpart of a pane that is gone.
+    pub fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
+        self.inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get(session_id)
+            .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?
+            .prompts
+            .send(text)
+            .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+    }
+
     /// Hand the running agent console input. A pending permission consumes it
     /// as an option answer; otherwise it becomes a prompt as before.
     ///

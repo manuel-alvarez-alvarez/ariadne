@@ -88,11 +88,32 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
     become models, and the choices of an optional `thought_level` option
     become each model's efforts. Native adapter catalog entries remain beside
     the discovered entries.
-16. An ACP agent without version 1, `session/new`, `session/prompt`, or a
+16. A discovered catalog id — `<agent-id>:<model>`, its first segment a
+    registry agent rather than a CLI — is a valid pin wherever one is
+    written: it is stored as agent kind `acp` with the id whole as its
+    model, served back whole, and split again at the launch (021). The
+    disabled check reads that same id, an effort is checked against the
+    model's discovered choices where the catalog lists it — a model it does
+    not list stays free text, like an opencode model — and a first segment
+    naming neither a CLI nor a registry agent stays refused. The registry is
+    what tells a catalog id from a fallback `acp` model that merely carries
+    a colon: that one is served under its `acp:` prefix, the one spelling a
+    re-submit parses, so every pin round-trips as itself.
+17. The CLI reading wins every parse: a first segment that spells a native
+    agent kind is that CLI, whatever the registry holds. A configured
+    registry id that spells one — `acp`, `claude_code`, `codex`, `opencode`,
+    hyphenated or not — is therefore refused at discovery: the entry stays
+    listed, rejected with the reason on it, never probed and never resolved.
+    An id has one holder the same way: the first entry with it keeps it —
+    built-ins first, then configuration order — and every later entry with
+    that id is refused the same way, so one id always names one command. An
+    empty id, and one carrying the `:` delimiter no catalog id could split
+    back out, are refused the same way too.
+18. An ACP agent without version 1, `session/new`, `session/prompt`, or a
     usable model option is rejected with its reason. Missing thought levels,
     session listing, or session loading mark the agent as degraded for no
     efforts, no adoption, or no restart resume respectively.
-17. Agent ids are open strings in the initial database schema. Existing
+19. Agent ids are open strings in the initial database schema. Existing
     databases fail the edited migration checksum and need a manual migration
     or recreation.
 
@@ -152,6 +173,25 @@ Out: how each CLI is handed the choice (007), and how the orchestrator decides
   `::an_agent_without_a_model_option_is_rejected_and_doctor_shows_why`).
 - Every optional gap has its own degradation flag
   (`acp_discovery.rs::every_optional_capability_gap_sets_its_degraded_flag`).
+- A discovered catalog id pins agents through the public API, round-trips
+  whole, and reaches the registry command
+  (`pins.rs::a_discovered_catalog_id_pins_agents_through_the_api`).
+- A discovered model's effort choices bound its pin, and a model the catalog
+  does not list stays free text
+  (`pins.rs::a_discovered_models_effort_choices_bound_its_pin`).
+- A discovered model turned off is refused under its catalog id
+  (`pins.rs::a_discovered_model_turned_off_cannot_be_staffed_on`).
+- A fallback `acp` model that carries a colon keeps its `acp:` prefix and
+  round-trips as itself
+  (`pins.rs::an_acp_fallback_model_with_a_colon_keeps_its_prefix`).
+- A registry id that spells a native CLI is rejected at discovery, and a pin
+  naming that CLI still runs the native adapter
+  (`acp_discovery.rs::a_registry_id_that_spells_a_native_cli_is_rejected`).
+- A registry id already taken — by a built-in, or by an earlier configured
+  entry — is rejected, and the first holder keeps the command
+  (`acp_discovery.rs::a_registry_id_already_taken_is_rejected`), and so is
+  one carrying the catalog delimiter
+  (`::a_registry_id_with_the_catalog_delimiter_is_rejected`).
 - No schema constraint closes agent ids over a built-in enumeration
   (`store.rs::agent_ids_have_no_closed_check_constraint`).
 - The desktop app lists the catalog with a switch apiece
