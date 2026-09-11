@@ -1,92 +1,106 @@
 # Installing Ariadne
 
-`scripts/install.sh` installs the CLI, the daemon service, shell completions
-and the desktop app. It is idempotent — re-run it to upgrade.
+Install Ariadne, then make at least one ACP agent available. The installer
+adds the CLI, daemon service, shell completions, and desktop app. Re-run it to
+upgrade; it is idempotent.
 
 ```sh
-scripts/install.sh             # the latest release into ~/.local/bin, the daemon
-                               # service (launchd / systemd --user), bash+zsh
-                               # completions and the Ariadne Desktop app.
-                               # Idempotent — re-run to upgrade.
-scripts/install.sh --version v0.2.0          # a specific release
-scripts/install.sh --build-from-source       # compile this checkout instead
-scripts/install.sh --prefix /usr/local/bin   # custom location
-scripts/install.sh --no-ui     # CLI and daemon only, no desktop app
-scripts/uninstall.sh           # removes everything, keeps ~/.ariadne data
-scripts/uninstall.sh --purge   # ...and deletes the data too
+scripts/install.sh                         # latest release
+scripts/install.sh --version v0.2.0        # one release
+scripts/install.sh --build-from-source     # build this checkout
+scripts/install.sh --prefix /usr/local/bin # choose the binary directory
+scripts/install.sh --no-ui                 # CLI and daemon, without the app
+scripts/uninstall.sh                       # keep ~/.ariadne data
+scripts/uninstall.sh --purge               # remove the data too
 ```
 
-`scripts/install.sh --help` lists every flag; below is what the flags do not
-say.
+Run `scripts/install.sh --help` for the complete flag list.
 
-## Agent CLIs
+## Connect an agent
 
-Ariadne supports Claude Code, OpenAI Codex CLI, OpenCode, and
-[ACP-compatible agents](https://agentclientprotocol.com). Install each CLI
-separately and make its executable available to the daemon on `PATH`.
+Every agent runs through the [Agent Client Protocol][ACP] (ACP). Ariadne
+includes these registry entries. Install the command you want to use and make
+it available on the daemon's `PATH`.
 
-For ACP, expose the selected agent as an executable named `acp`. A small
-wrapper can add the command or mode that starts its ACP server. Ariadne speaks
-ACP version 1 over standard input and output. The agent must offer a `model`
-session option. It must also offer a `thought_level` option when the pin has an
-effort. Ariadne's ACP flags are empty by default because agents use different
-permission flags. Configure them with `ariadne agent update acp`.
+| Agent id | Command Ariadne starts |
+| --- | --- |
+| `claude-code-acp` | `claude-code-acp` |
+| `codex-acp` | `codex acp` |
+| `opencode-acp` | `opencode acp` |
+
+Start the daemon, then check which agents and models it found:
+
+```sh
+ariadne daemon start
+ariadne doctor
+ariadne models ls
+```
+
+`ariadne doctor` reports an unavailable command or an agent that does not meet
+the ACP contract. `ariadne models ls` lists only models that a ready agent
+offered. Use the printed `<agent-id>:<model-id>` value in `--model`; there is
+no implicit agent or model default.
+
+### Add another ACP agent
+
+Add a `[[acp_agents]]` entry to `~/.ariadne/config.toml`, then restart the
+daemon so it discovers the command:
+
+```toml
+[[acp_agents]]
+id = "my-agent"
+command = ["my-agent", "acp"]
+```
+
+```sh
+ariadne daemon restart
+ariadne doctor
+ariadne models ls --agent my-agent
+```
+
+The id must be non-empty, unique, and contain no `:`. It becomes the model
+prefix, for example `my-agent:my-model`. Ariadne starts the command exactly as
+the list gives it. To pass flags to every session of a registered agent, use
+`ariadne agent update my-agent --flag --my-agent-flag`; `ariadne agent ls`
+shows the active flags. The next launch uses the new flags.
+
+### ACP capability contract
+
+An agent must communicate over standard input and output, negotiate ACP
+version 1, support `session/new` and `session/prompt`, and offer at least one
+`model` session configuration option. Ariadne rejects an agent that lacks any
+of those requirements.
+
+An agent may omit `thought_level`; Ariadne can run it, but the model has no
+selectable effort. `session/list` enables session discovery and adoption.
+`loadSession` enables restoring a conversation after the daemon restarts.
+`ariadne doctor` names a missing required capability as an error and an absent
+optional capability as a limitation.
 
 ## Where the binaries come from
 
-By default the binaries and the desktop app come from the GitHub release named
-by `--version` (the latest one when it is not given), for the target triple
-this machine runs — `aarch64-apple-darwin`, `x86_64-apple-darwin`,
-`x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`; anything else has
-to be built. The assets are unsigned, but they carry a build provenance
-attestation, and **every downloaded file is checked with `gh attestation
-verify` before anything is installed** — so the [GitHub
-CLI](https://cli.github.com) has to be installed and logged in
-(`gh auth login`), and a failed check aborts the install with nothing touched.
-The release and its attestations are read from the `origin` remote of the
-checkout you run the script from. Since nothing is signed, macOS would
-quarantine what was downloaded, so the installer clears
-`com.apple.quarantine` from what it installs. `--build-from-source` is the
-other way in: it compiles this checkout with
-`cargo build --release` and builds the desktop app with `npm run tauri build`,
-and needs neither `gh` nor a published release.
+By default the binaries and desktop app come from the GitHub release named by
+`--version` (the latest release when it is omitted), for the target triple the
+machine runs. The downloaded files carry a build provenance attestation. The
+installer verifies each file with `gh attestation verify` before installing it,
+so it requires the [GitHub CLI](https://cli.github.com) and `gh auth login`.
+A failed verification changes nothing. `--build-from-source` compiles this
+checkout instead and needs neither `gh` nor a published release.
 
 ## The desktop app
 
-The desktop app lands in `/Applications/Ariadne Desktop.app` on macOS
-(`~/Applications` when `/Applications` is not writable) and as
-`$PREFIX/ariadne-desktop` on Linux. Built rather than downloaded it needs
-`npm`, and without it that one step is skipped instead of failing the install.
-Where everything went is recorded in `~/.ariadne/install.env`, which is what
-the uninstaller reads.
-
-## Trusting the Codex hooks
-
-Codex needs one manual step, which the installer runs last: it opens a codex
-session so you can accept its "Hooks need review" prompt. Ariadne's codex hooks
-travel with every session as `-c` overrides — nothing is written to `~/.codex` —
-but codex only runs hooks it has been trusted with, and trust is a decision only
-you can make. It is asked once: codex keys command-line hook trust on a
-synthetic path, so the approval covers every later session in every worktree.
-Without it, codex stops each session on that prompt before its first turn —
-bypass flags and all — so nothing runs and the session can be neither resumed
-nor revived. Re-run it any time with `ariadne setup codex-hooks`, or skip it
-during install with `--no-codex-hooks` (or `--yes`).
-
-Codex grants that trust per event, so an Ariadne that declares a new hook event
-keeps the verdicts you already gave and takes every session down to the prompt
-over the one that is new — quietly, since the prompt is at the start of a
-session nobody is watching. **After upgrading, re-run `ariadne setup
-codex-hooks`** — the `PostCompact` hook, which tells the daemon the agent is
-back at its prompt after a compaction, is the latest addition. `ariadne doctor`
-reads the verdicts back out of codex's config and names any declared event that
-has none. Which events are declared, and why each one, is in
-[`crates/ariadne-core/src/codex_hooks.rs`](../crates/ariadne-core/src/codex_hooks.rs).
+The app installs to `/Applications/Ariadne Desktop.app` on macOS
+(`~/Applications` when needed), and to `$PREFIX/ariadne-desktop` on Linux.
+Its TCP connection is off by default; set `tcp_listen` in
+`~/.ariadne/config.toml` before connecting the app. See
+[Configuration](configuration.md).
 
 ## The daemon service
 
-The daemon then runs as a user service with restart-on-failure, and
-`ariadne daemon start|stop|restart` drives that service rather than the bare
-process wherever `~/.ariadne/install.env` records one — `launchctl kickstart
--k` / `launchctl bootout`, `systemctl --user` — saying which command it used;
-`ariadne daemon status` says which manager is holding the daemon up.
+The installer registers a user service with restart-on-failure. Use
+`ariadne daemon start`, `ariadne daemon stop`, or `ariadne daemon restart` to
+control it, and `ariadne daemon status` to see its manager. The daemon starts
+the ACP agents as child processes and keeps their conversations available
+through the console.
+
+[ACP]: https://agentclientprotocol.com

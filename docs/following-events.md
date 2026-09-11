@@ -9,7 +9,7 @@ ariadne events -f                      # ...and keep printing as it happens
 ariadne events -f --goal <goal-id>     # one goal's; also --task, --session, --kind
 ariadne events -f --format json        # one JSON object per line, for a pipe
 
-ariadne session logs <session-id> -f   # an agent's terminal, until its session ends
+ariadne session logs <session-id> -f   # an agent's event transcript, until it ends
 ariadne task logs <task-id> -f         # the same, found by task (--seat reviewer)
 ariadne daemon logs -f                 # the daemon's own log, over the API
 

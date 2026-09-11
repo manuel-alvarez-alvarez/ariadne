@@ -6,10 +6,10 @@
 socket_path = "/Users/me/.ariadne/ariadne.sock"
 db_path = "/Users/me/.ariadne/ariadne.db"
 worktree_root = "/Users/me/.ariadne/worktrees"
+run_dir = "/Users/me/.ariadne/run"
 tcp_listen = "127.0.0.1:7676"     # enables the TCP listener (for web/desktop UIs)
 log_filter = "info,ariadne_daemon=debug"
-cli_bin = "/usr/local/bin/ariadne" # what starts every agent session (`ariadne _spawn`),
-                                   # and their hook and MCP entry point
+cli_bin = "/usr/local/bin/ariadne" # runs the Ariadne MCP server for ACP sessions
                                    # (default: sibling of ariadned)
 delete_merged_worktrees = true     # remove task worktrees after merge (default);
                                    # false keeps them for inspecting finished work
@@ -18,6 +18,7 @@ delete_merged_branches = true      # only applies when worktrees are deleted too
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
+permission_mode = "auto"           # auto, ask, or learn; the default for new tasks
 
 [[acp_agents]]                     # extend the built-in ACP agent registry
 id = "my-agent"                    # stable model-id prefix
@@ -26,8 +27,9 @@ command = ["my-agent", "acp"]      # program followed by its arguments
 
 The built-in registry contains the ids `claude-code-acp`, `codex-acp`, and
 `opencode-acp`. They launch the commands `claude-code-acp`, `codex acp`, and
-`opencode acp`, respectively. The daemon probes every entry at startup. Call
-`POST /v1/acp-agents/refresh` to repeat discovery without restarting it.
+`opencode acp`, respectively. The daemon probes every entry at startup. See
+[Installing Ariadne](install.md) to add an agent, and
+[Permission modes](permissions.md) to choose how it handles tool requests.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the
@@ -35,10 +37,6 @@ daemon that is already running. `ariadned --help` lists every key above and
 the two environment variables (`ARIADNE_HOME`, `RUST_LOG`) with a line each.
 
 ## The database of an earlier release
-
-Editing the initial migration removed the closed `agent_kind` checks. An
-existing database therefore fails SQLx's migration checksum. Recreate it, or
-migrate it by hand before starting this version.
 
 `db_path` has to be deleted before this version is started for the first time:
 the schema's 29 migrations are squashed into one, so a database written by an

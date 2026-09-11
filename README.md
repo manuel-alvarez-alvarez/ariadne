@@ -30,10 +30,10 @@
 </p>
 
 <p align="center">
-  Every agent runs in its own tmux session and its own git worktree, so you can attach to any of
-  them at any moment and take over. <b>Claude Code</b>, <b>OpenAI Codex CLI</b>,
-  <b>OpenCode</b>, and <b>ACP-compatible agents</b> all drive the work. A goal picks each
-  agent's model and effort.
+  Every agent runs as an ACP session, and every task gets its own git worktree. Connect to an
+  agent console at any moment to read events, send a prompt, or answer a permission question.
+  Built-in registry entries start <b>Claude Code ACP</b>, <b>Codex ACP</b>, and <b>OpenCode
+  ACP</b>; you can add any compatible agent. A goal picks each agent's model and effort.
 </p>
 
 <p align="center">
@@ -49,10 +49,11 @@
 <table>
 <tr>
 <td width="50%" valign="top">
-<h4>🧩 Four agent integrations, one interface</h4>
-Claude Code, OpenAI Codex CLI, OpenCode, and ACP-compatible agents. A model is spelled
-<code>&lt;agent_kind&gt;:&lt;model&gt;</code>, and <code>--effort</code> beside it says how deeply
-it reasons.
+<h4>🧩 ACP agents, one interface</h4>
+Every agent speaks ACP. Built-in entries run Claude Code ACP, Codex ACP, and OpenCode ACP; add
+another command in the registry when it meets the protocol contract. A model is spelled
+<code>&lt;agent-id&gt;:&lt;model&gt;</code>, and <code>--effort</code> beside it says how deeply it
+reasons.
 </td>
 <td width="50%" valign="top">
 <h4>📝 A plan you agree to</h4>
@@ -86,13 +87,13 @@ Ariadne ships and the ones you write.
 </tr>
 <tr>
 <td width="50%" valign="top">
-<h4>🖥️ Attach whenever you want</h4>
-Every session is a live tmux pane. <code>ariadne attach</code> drops you into it, and
+<h4>🖥️ Connect whenever you want</h4>
+Every session has a console. <code>ariadne attach</code> shows its events and accepts prompts;
 <code>ariadne attention</code> says who is waiting for you.
 </td>
 <td width="50%" valign="top">
 <h4>⚡ Nothing polls</h4>
-The daemon streams: events, agent terminals and its own log, over a REST API with OpenAPI at
+The daemon streams: events, agent consoles and its own log, over a REST API with OpenAPI at
 <code>/api-docs/openapi.json</code> and SSE at <code>/v1/events/stream</code>.
 </td>
 </tr>
@@ -100,14 +101,14 @@ The daemon streams: events, agent terminals and its own log, over a REST API wit
 
 ## Ariadne Desktop
 
-The same daemon, in a window: goals, tasks, diffs, agent terminals and the live
+The same daemon, in a window: goals, tasks, diffs, agent consoles and the live
 event stream. It is a pure REST/SSE client of the daemon's TCP listener — the
 same code runs in a browser tab and in the packaged [Tauri
 2](https://v2.tauri.app) app — and `scripts/install.sh` installs it beside the
 CLI.
 
 <p align="center">
-  <img src="assets/demo-ui.gif" alt="Ariadne Desktop showing a goal, its tasks and an agent terminal">
+  <img src="assets/demo-ui.gif" alt="Ariadne Desktop showing a goal, its tasks and an agent console">
 </p>
 
 > [!NOTE]
@@ -121,9 +122,11 @@ CLI.
 scripts/install.sh                     # CLI, daemon service, completions, desktop app
 ariadne daemon start                   # unix socket at ~/.ariadne/ariadne.sock
 
+ariadne models ls                      # choose an available <agent-id>:<model-id>
+
 ariadne repo add ~/projects/api --description "the public API"
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
-    --model claude_code:claude-sonnet-5
+    --model codex-acp:<model-id>
 ariadne goal attach <goal-id>          # answer the orchestrator's questions
 
 ariadne attention                      # what is waiting for you, across every goal
@@ -142,12 +145,12 @@ The [manual](docs/README.md) has the rest.
 ```
 ┌─────────┐   REST (unix socket / TCP)   ┌──────────────────────────────┐
 │ ariadne │ ───────────────────────────► │           ariadned           │
-│  (CLI)  │                              │  scheduler · tmux · git · db │
+│  (CLI)  │                              │  scheduler · ACP · git · db  │
 └─────────┘                              └──────┬───────────────────────┘
-     ▲                                          │ spawns (tmux, worktree per task)
+     ▲                                          │ spawns (ACP agents, worktree per task)
      │ MCP (stdio)                              ▼
      │        ┌──────────────┐   ┌────────┐   ┌──────────┐
-     └─────── │ orchestrator │   │ author │   │ reviewer │  · hooks report events
+     └─────── │ orchestrator │   │ author │   │ reviewer │  · ACP events report progress
               └──────────────┘   └────────┘   └──────────┘  · tools via `ariadne mcp serve`
 ```
 
@@ -160,7 +163,6 @@ the orchestrator asks to the commit on the base branch.
 ```
 crates/          the Rust workspace: ariadned, the ariadne CLI and the libraries
                  they share — crate by crate in crates/AGENTS.md
-assets/opencode-plugin/  event-forwarding plugin installed for OpenCode
 docs/            the manual: install, the CLI, events, configuration
 scripts/         install.sh / uninstall.sh + lib.sh, their shared step output
 ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the daemon's
@@ -174,12 +176,14 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 
 | Page | What it covers |
 | --- | --- |
-| [Installing Ariadne](docs/install.md) | the installer, the release assets, the desktop app, the Codex hook trust, the daemon service |
+| [Installing Ariadne](docs/install.md) | the installer, ACP agents, the release assets, the desktop app, and the daemon service |
 | [Shell completion](docs/shell-completion.md) | dynamic completions for bash, zsh and fish, and the static fallback |
 | [Using the CLI](docs/cli.md) | the command tour, the reference, and how tables and colour are printed |
 | [Following what happens](docs/following-events.md) | events, the log streams and the `--watch` tables |
 | [Configuration](docs/configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
-| [How Ariadne works](docs/how-it-works.md) | planning, authoring, review, landing, and the sessions behind them |
+| [Permission modes](docs/permissions.md) | automatic, prompted, and remembered ACP permission answers |
+| [Adopting a session](docs/adopting-sessions.md) | finding an ACP agent's stored session and using it as a task author |
+| [How Ariadne works](docs/how-it-works.md) | planning, authoring, review, landing, and ACP sessions |
 | [Ariadne Desktop](ui/README.md) | running the desktop app |
 
 ## Development
