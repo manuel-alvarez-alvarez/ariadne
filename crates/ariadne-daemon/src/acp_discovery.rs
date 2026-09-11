@@ -15,7 +15,7 @@ use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus, AcpCapabilitiesDto, AcpDe
 use ariadne_api::models::{EffortDto, ModelDto};
 use ariadne_api::sessions::OutsideSessionDto;
 use ariadne_client::endpoint::AcpAgentConfig;
-use ariadne_core::{AgentKind, ModelTier};
+use ariadne_core::ModelTier;
 
 use crate::acp::find_config_option;
 use crate::acp_rpc::{Incoming, RpcTransport};
@@ -43,24 +43,16 @@ struct RegistryEntry {
     builtin: bool,
     probe: bool,
     /// Why this entry is refused outright, where it is: a configuration
-    /// error, permanent until the config changes. A reserved id spells a
-    /// native agent CLI, which a pin's first segment always reads first; a
-    /// duplicate id is already another entry's, and only that one may
-    /// answer for it. A refused entry is never probed and never resolved,
-    /// and its rejection carries this reason.
+    /// error, permanent until the config changes. A duplicate id is already
+    /// another entry's, and only that one may answer for it. A refused entry
+    /// is never probed and never resolved, and its rejection carries this
+    /// reason.
     refused: Option<String>,
 }
 
-/// Whether a registry id collides with a native agent kind name: `acp`,
-/// `claude_code`/`claude-code`, `codex` or `opencode`.
-fn reserved_id(id: &str) -> bool {
-    id.replace('-', "_").parse::<AgentKind>().is_ok()
-}
-
 /// Why a configured entry is refused, or `None` for one in good standing:
-/// its id is empty or carries the catalog's `:` delimiter, it spells a
-/// native CLI, or an earlier entry — a built-in, or one configured before
-/// it — already holds it.
+/// its id is empty or carries the catalog's `:` delimiter, or an earlier
+/// entry — a built-in, or one configured before it — already holds it.
 fn refusal(id: &str, taken: &std::collections::HashSet<String>) -> Option<String> {
     if id.trim().is_empty() {
         return Some("the id is empty; give the agent a stable id".into());
@@ -68,11 +60,6 @@ fn refusal(id: &str, taken: &std::collections::HashSet<String>) -> Option<String
     if id.contains(':') {
         return Some(format!(
             "the id `{id}` contains `:`, which splits a catalog id from its model; choose another id"
-        ));
-    }
-    if reserved_id(id) {
-        return Some(format!(
-            "the id `{id}` spells a native agent CLI, which every pin reads first; choose another id"
         ));
     }
     taken.contains(id).then(|| {
@@ -220,8 +207,8 @@ impl AgentRegistry {
     /// The command one registry agent is spawned with, by its stable id —
     /// what the launcher runs for a session pinned to that agent. `None`
     /// where nothing in the registry carries the id. A refused entry — a
-    /// reserved id, or a duplicate of an earlier entry's — never answers:
-    /// the id belongs to the native CLI or to its first holder.
+    /// duplicate of an earlier entry's — never answers: the id belongs to
+    /// its first holder.
     pub fn command_of(&self, id: &str) -> Option<Vec<String>> {
         self.entries
             .iter()
@@ -252,7 +239,6 @@ impl AgentRegistry {
                 result.models.iter().map(|model| ModelDto {
                     id: format!("{}:{}", result.agent.id, model.value),
                     agent_id: result.agent.id.clone(),
-                    agent_kind: AgentKind::Acp,
                     description: model.description.clone(),
                     tier: ModelTier::Unknown,
                     cost: None,
@@ -524,8 +510,7 @@ fn stored_session(agent: &AcpAgentDto, session: &Value) -> Option<OutsideSession
         .and_then(Value::as_str)?
         .to_string();
     Some(OutsideSessionDto {
-        agent_kind: AgentKind::Acp,
-        agent_id: Some(agent.id.clone()),
+        agent_id: agent.id.clone(),
         internal_session_id,
         working_directory: session
             .get("cwd")

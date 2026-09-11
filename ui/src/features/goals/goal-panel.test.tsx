@@ -135,10 +135,10 @@ it("keeps the sessions tab to the sessions, with no breakdown above them", async
 })
 
 it("shows what the orchestrator runs on: the goal's pin, and that it is a pin", () => {
-  mount(aGoal({ model: "codex:gpt-5.3-codex" }))
+  mount(aGoal({ model: "codex-acp:gpt-5.3-codex" }))
 
   const orchestrator = detail("Orchestrator").textContent ?? ""
-  expect(orchestrator).toContain("codex:gpt-5.3-codex")
+  expect(orchestrator).toContain("codex-acp:gpt-5.3-codex")
   // One word for "this is not what the profile says", where "(overrides)" left
   // the reader to work out which of the two won.
   // Nothing behind the pin to disagree with it any more.
@@ -146,9 +146,9 @@ it("shows what the orchestrator runs on: the goal's pin, and that it is a pin", 
 })
 
 it("shows the effort that model is run at, beside it", () => {
-  mount(aGoal({ model: "codex:gpt-5.3-codex", effort: "high" }))
+  mount(aGoal({ model: "codex-acp:gpt-5.3-codex", effort: "high" }))
 
-  expect(detail("Orchestrator").textContent).toContain("codex:gpt-5.3-codex @ high")
+  expect(detail("Orchestrator").textContent).toContain("codex-acp:gpt-5.3-codex @ high")
 })
 
 describe("which tab the panel opens on", () => {

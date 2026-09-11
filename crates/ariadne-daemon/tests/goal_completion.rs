@@ -9,7 +9,7 @@
 //! What the daemon does hold either of them to is the part it can see: a goal
 //! with a task still going is not one anybody may declare finished.
 //!
-//! No tmux and no agent CLI: the rows are seeded through the store, and the
+//! No agent is started: the rows are seeded through the store, and the
 //! calls are the ones the MCP server and the CLI make.
 
 mod common;
@@ -51,7 +51,7 @@ async fn land(h: &Harness, cast: &Cast) {
 async fn the_orchestrator_completes_the_goal_it_planned() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let orchestrator = h.orchestrator_session(&cast.goal, "orc").await;
+    let orchestrator = h.orchestrator_session(&cast.goal).await;
     land(&h, &cast).await;
 
     let goal: GoalDto = h
@@ -92,7 +92,7 @@ async fn the_user_completes_a_goal_of_their_own() {
 async fn a_goal_with_a_task_still_going_is_refused_by_name() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let orchestrator = h.orchestrator_session(&cast.goal, "orc").await;
+    let orchestrator = h.orchestrator_session(&cast.goal).await;
     h.advance(&cast.task, TaskStatus::InProgress).await;
 
     let envelope: ErrorBody = h

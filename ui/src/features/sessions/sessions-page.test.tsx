@@ -409,16 +409,16 @@ it("says what each session runs on, without repeating the seat beside it", async
   stubDaemon([
     aSession({
       ...ENGINEER,
-      model: "claude-opus-5",
+      model: "claude-code-acp:claude-opus-5",
       effort: "xhigh",
     }),
   ])
   renderPage()
 
   const cells = within(await row("Open Author session")).getAllByRole("cell")
-  // The CLI and the model of it are one id, and the effort it is run at
+  // The agent and the model of it are one id, and the effort it is run at
   // follows the model it belongs to.
-  expect(cells[3]?.textContent).toBe("claude_code:claude-opus-5 @ xhigh")
+  expect(cells[3]?.textContent).toBe("claude-code-acp:claude-opus-5 @ xhigh")
 })
 
 it("keeps a column each, and folds the two a narrow window can spare", async () => {

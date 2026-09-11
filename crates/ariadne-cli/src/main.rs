@@ -1,7 +1,6 @@
 //! ariadne — CLI for the Ariadne daemon.
 
 mod cli;
-mod codex_trust;
 mod commands;
 mod complete;
 mod error;
@@ -14,7 +13,7 @@ use clap::FromArgMatches;
 
 use ariadne_client::Client;
 
-use crate::cli::{Cli, Command, DaemonCommand, Layout, McpCommand, SetupCommand, command};
+use crate::cli::{Cli, Command, DaemonCommand, Layout, McpCommand, command};
 use crate::output::View;
 
 /// Failures are reported by [`error::report`] rather than by anyhow's default
@@ -52,16 +51,6 @@ fn main() -> ExitCode {
         width: output::terminal_width(),
         pager: !cli.no_pager,
     });
-
-    // `_spawn` does not talk to the daemon: it *becomes* the agent. It is
-    // handled before the runtime starts because what tmux is watching is this
-    // process, and it has to reach its `exec` as itself — no worker threads
-    // and no tokio between the pane and the agent.
-    if let Command::Spawn { plan } = &cli.command {
-        let Err(e) = commands::spawn::exec_plan(plan);
-        error::report(&e, format);
-        return error::exit_code(&e);
-    }
 
     match block_on(cli) {
         Ok(code) => code,
@@ -145,20 +134,11 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             };
             commands::events::run(&client, filters, follow, format).await
         }
-        Command::Setup {
-            command: SetupCommand::CodexHooks { cli_bin },
-        } => commands::setup::codex_hooks(cli_bin),
-        Command::AgentEvent { kind, json } => {
-            commands::agent_event::run(kind, json).await;
-            Ok(()) // always succeeds: hooks must never fail
-        }
         Command::Mcp {
             command: McpCommand::Serve,
         } => commands::mcp::serve().await,
         // Handled above: it is the only command with an exit code of its own.
         Command::Doctor => unreachable!(),
-        // Handled in `main`, before the runtime it must not run inside.
-        Command::Spawn { .. } => unreachable!(),
     };
     outcome.map(|()| ExitCode::SUCCESS)
 }

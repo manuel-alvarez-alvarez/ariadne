@@ -52,7 +52,7 @@ pub struct FileConfig {
     pub tcp_listen: Option<SocketAddr>,
     /// tracing filter, e.g. "info,ariadne_daemon=debug"
     pub log_filter: Option<String>,
-    /// Path to the `ariadne` CLI used for hooks and MCP (default: sibling of
+    /// Path to the `ariadne` CLI used for MCP (default: sibling of
     /// ariadned, else "ariadne" on PATH).
     pub cli_bin: Option<String>,
     /// Delete task branches after merge (default true). Only takes effect

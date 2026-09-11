@@ -6,9 +6,9 @@
 //! whose change lands, and the branches the pick passed over go with their
 //! worktrees.
 //!
-//! Like `landing_lifecycle`, the `tmux` here is a stub and the `git` is real:
-//! the sessions are rows and spawn plans, and the worktrees, branches and
-//! merges are the ones the daemon actually made.
+//! Like `landing_lifecycle`, the agents are the harness's stub and the `git`
+//! is real: the worktrees, branches and merges are the ones the daemon
+//! actually made.
 
 mod common;
 
@@ -18,7 +18,7 @@ use std::time::Duration;
 use axum::http::StatusCode;
 
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{Actor, AgentKind, MessageKind, Seat, TaskStatus};
+use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
 use ariadne_store::{
     AgentSession, Goal, NewMessage, NewTask, NewTaskAgent, Repository, SessionFilter, Task,
     TaskAgent, author_branch,
@@ -42,8 +42,8 @@ struct Contest {
 async fn contest(h: &Harness) -> Contest {
     h.git_repo("repo");
     let repo = h.repository(&h.at("repo")).await;
-    let goal = h.goal_on(&repo, test_pin(AgentKind::ClaudeCode)).await;
-    let author = || NewTaskAgent::new(Seat::Author, ["coding"], test_pin(AgentKind::ClaudeCode));
+    let goal = h.goal_on(&repo, test_pin()).await;
+    let author = || NewTaskAgent::new(Seat::Author, ["coding"], test_pin());
     let task = h
         .store
         .create_task(NewTask {
@@ -54,11 +54,7 @@ async fn contest(h: &Harness) -> Contest {
             agents: vec![
                 author(),
                 author(),
-                NewTaskAgent::new(
-                    Seat::Reviewer,
-                    ["code-review"],
-                    test_pin(AgentKind::ClaudeCode),
-                ),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
             ],
             depends_on: vec![],
             landing: None,
@@ -426,16 +422,15 @@ async fn exactly_one_branch_lands_and_the_losers_are_gone() {
     .await;
 }
 
-/// A reviewer whose pane survived the first review is handed the next
+/// A reviewer whose agent survived the first review is handed the next
 /// author's review the moment it owes it: the full briefing, naming that
-/// author and its branch, typed straight into the live pane — not held for
-/// the quiet clock — and its detached worktree moved to that branch first.
+/// author and its branch, sent straight to the live agent — not held for the
+/// quiet clock — and its detached worktree moved to that branch first.
 #[tokio::test]
 async fn a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock() {
-    let h = harness().scheduler().await;
-    // The panes stay up, so the reviewer that judged the first author is a
+    // The agents stay up, so the reviewer that judged the first author is a
     // live session when the second author's review opens.
-    h.every_pane_exists();
+    let h = harness().scheduler().await;
     let c = contest(&h).await;
     h.notify(&c.task.id);
     eventually(TIMEOUT, "both authors to be spawned", async || {
@@ -486,12 +481,12 @@ async fn a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock(
         .await
         .expect("a live reviewer session");
     assert!(
-        h.spawn_argv(&reviewer_session.id)
+        h.told(&reviewer_session.id)
             .contains(&format!("Give your verdict to author {}", c.authors[0].id)),
         "the reviewer was not spawned for the first author's review"
     );
 
-    // The second author asks while the reviewer's pane stays up, and the
+    // The second author asks while the reviewer's agent stays up, and the
     // reviewer settles the first review from that live session.
     ask_for_review(&h, &c.task, &c.authors[1], "the second attempt").await;
     h.notify(&c.task.id);
@@ -510,13 +505,13 @@ async fn a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock(
     )
     .await;
 
-    // The verdict is the event that hands it the next review: the live pane
+    // The verdict is the event that hands it the next review: the live agent
     // is briefed at once, naming the second author and its branch. The wait
     // here is seconds, an order of magnitude under the quiet clock — a
     // briefing that waited for the nudge would fail this test.
     let second_branch = author_branch(&c.task.branch, c.authors[1].ordinal);
     eventually(TIMEOUT, "the live reviewer to be briefed", async || {
-        let pasted = h.pasted(&reviewer_session);
+        let pasted = h.prompted(&reviewer_session);
         pasted.contains(&format!("Give your verdict to author {}", c.authors[1].id))
             && pasted.contains(&second_branch)
     })
@@ -616,7 +611,6 @@ async fn a_restart_finishes_a_settlement_the_daemon_died_in() {
 #[tokio::test]
 async fn a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing() {
     let h = harness().scheduler().await;
-    h.every_pane_exists();
     let c = contest(&h).await;
     h.notify(&c.task.id);
     eventually(TIMEOUT, "both authors to be spawned", async || {
@@ -642,7 +636,7 @@ async fn a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing
     }
 
     // The first author asks and the reviewer comes up for that review; the
-    // second asks while the reviewer's pane stays live, and the reviewer's
+    // second asks while the reviewer's agent stays live, and the reviewer's
     // approval of the first hands it the second.
     h.store
         .transition_task(
@@ -683,17 +677,17 @@ async fn a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing
     )
     .await;
 
-    // The second review reaches the pane as its full briefing, and as
-    // nothing before it: no bare review-request turn is ever typed in.
+    // The second review reaches the agent as its full briefing, and as
+    // nothing before it: no bare review-request turn is ever sent.
     eventually(TIMEOUT, "the live reviewer to be briefed", async || {
-        h.pasted(&reviewer_session)
+        h.prompted(&reviewer_session)
             .contains(&format!("Give your verdict to author {}", c.authors[1].id))
     })
     .await;
-    let pasted = h.pasted(&reviewer_session);
+    let pasted = h.prompted(&reviewer_session);
     assert!(
         !pasted.contains("Message from your author"),
-        "a contested review request was typed in as a bare message: {pasted}"
+        "a contested review request was sent as a bare message: {pasted}"
     );
 
     // And the channel's record still says both requests reached it: the

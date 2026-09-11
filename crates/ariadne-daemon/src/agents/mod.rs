@@ -1,20 +1,18 @@
-//! Agent adapters: translate an Ariadne spawn/resume request into the argv,
-//! env and generated config files for a concrete coding-agent CLI.
+//! The ACP adapter: translate an Ariadne spawn/resume request into the
+//! launch of one ACP agent — the flags behind its registry command, the
+//! environment, and the launch file the ACP runtime drives it from.
 
 mod acp;
-mod claude;
-mod codex;
-pub mod contract;
-mod opencode;
 pub mod prompts;
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use ariadne_core::{AgentKind, Seat};
+use ariadne_core::Seat;
+use ariadne_core::acp::LaunchConfig;
 
-pub use contract::AdapterContract;
+pub use acp::{compaction_done, plan_resume, plan_spawn};
 
 /// Everything an adapter needs to plan a spawn. Prompt assembly happens in
 /// the launcher; adapters only deal with delivery mechanics.
@@ -35,7 +33,7 @@ pub struct SpawnCtx {
     /// (orchestrator).
     pub cwd: PathBuf,
     pub socket_path: PathBuf,
-    /// Path or name of the `ariadne` CLI binary (hooks + MCP entry point).
+    /// Path or name of the `ariadne` CLI binary (the MCP entry point).
     pub cli_bin: String,
     /// What the agent is briefed as: what its seat owes, and the index of the
     /// skills it loads.
@@ -48,29 +46,26 @@ pub struct SpawnCtx {
     pub skills_dir: Option<PathBuf>,
     /// Task/goal briefing delivered as the first user prompt.
     pub initial_prompt: String,
-    /// The model the session is pinned to, as the CLI itself names it. Always
-    /// passed on: a launch never falls back to a CLI default.
+    /// The model the session is pinned to, as the agent itself names it —
+    /// the bare half of the pin, after the registry id. Always passed on: a
+    /// launch never falls back to an agent default.
     pub model: String,
     /// The effort that model is run at, as the session pinned it. None = the
-    /// CLI's own default.
+    /// agent's own default.
     pub effort: Option<String>,
-    /// The agent kind's configured flags (its permission bypass and whatever
-    /// else the user added), read from the database on every launch. The
-    /// structural flags — session ids, MCP and hook config, the system prompt,
-    /// the model and its effort — are the adapters' own and are not in here.
+    /// The agent's configured flags, read from the database on every launch
+    /// and appended to its registry command. Everything structural — the
+    /// session, the MCP server, the system prompt, the model and its effort —
+    /// travels in the launch file instead.
     pub extra_flags: Vec<String>,
 }
 
 /// Write an agent's skills into its run dir, one `SKILL.md` per skill, and
 /// answer with the directory holding them.
 ///
-/// The layout is the one all four CLIs read — `<name>/SKILL.md`, frontmatter
-/// and body — so one write serves whichever mechanism the adapter then points
-/// at it: a plugin for Claude Code, `skills.paths` for OpenCode. Codex takes
-/// neither, because it discovers skills only under its own home or the project
-/// root, and the project root of an agent is the worktree. So the index in the
-/// system prompt names these paths as well, which is the floor under all
-/// four: an agent with no native skill loading opens the file itself.
+/// The layout is `<name>/SKILL.md`, frontmatter and body. An ACP agent has no
+/// way to be pointed at a skill directory, so the index in the system prompt
+/// names these paths, and the agent opens the file itself.
 ///
 /// Rewritten on every launch rather than cached, so a skill reworded since the
 /// task was staffed reaches the next launch of the agent that loads it — the
@@ -91,55 +86,22 @@ pub fn write_skills(run_dir: &Path, skills: &[(String, String)]) -> Result<PathB
     Ok(root)
 }
 
-/// A fully planned process launch for tmux.
+/// A fully planned launch of one ACP agent.
 #[derive(Debug, Clone)]
 pub struct SpawnPlan {
-    pub argv: Vec<String>,
+    /// What rides behind the agent's registry command: its configured flags.
+    pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
-    /// Known ahead of time only for Claude Code (we choose the uuid).
+    /// The agent session a resume continues; `None` for a fresh spawn.
     pub internal_session_id: Option<String>,
-    /// Text the launcher types into the pane once the TUI is up, for a CLI
-    /// that cannot take the instruction on its argv: OpenCode silently drops
-    /// `--prompt` when `--session` resumes an existing conversation (verified
-    /// on 1.18.15), so its resume instruction goes in as a bracketed paste
-    /// instead. `None` for spawns and for interactive resumes.
-    pub post_launch_input: Option<String>,
+    /// The protocol half of the launch, also written to the run dir as
+    /// `acp.json`, the record of what the agent was told.
+    pub config: LaunchConfig,
 }
 
-pub trait AgentAdapter: Send + Sync {
-    fn kind(&self) -> AgentKind;
-    /// How this CLI spells each clause of the adapter contract
-    /// ([`contract`]). What one suite holds every adapter to.
-    fn contract(&self) -> AdapterContract;
-    /// Write run-dir files and return the launch plan.
-    fn plan_spawn(&self, ctx: &SpawnCtx) -> Result<SpawnPlan>;
-    /// Plan a resume of a previous session with a new instruction.
-    fn plan_resume(
-        &self,
-        ctx: &SpawnCtx,
-        internal_id: &str,
-        instruction: &str,
-    ) -> Result<SpawnPlan>;
-    /// Whether an event this CLI reported — `kind` as `ariadne agent-event`
-    /// spells it, with its payload — says a compaction has just finished, so
-    /// the agent is back at its prompt rather than mid-turn. Started by the
-    /// user at the pane, or by the CLI itself near the context limit: the
-    /// daemon asks for none.
-    fn compaction_done(&self, kind: &str, payload: &serde_json::Value) -> bool;
-}
-
-pub fn adapter_for(kind: AgentKind) -> &'static dyn AgentAdapter {
-    match kind {
-        AgentKind::Acp => &acp::AcpAdapter,
-        AgentKind::ClaudeCode => &claude::ClaudeAdapter,
-        AgentKind::Codex => &codex::CodexAdapter,
-        AgentKind::Opencode => &opencode::OpencodeAdapter,
-    }
-}
-
-/// Env vars common to every agent kind. The MCP server and the event hook
-/// read these to know which session they act for.
+/// Env vars every agent is launched with. The MCP server reads these to know
+/// which session it acts for.
 pub fn base_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
     let mut env = vec![
         ("ARIADNE_SESSION_ID".into(), ctx.session_id.clone()),
@@ -155,63 +117,4 @@ pub fn base_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
         env.push(("ARIADNE_TASK_ID".into(), task.clone()));
     }
     env
-}
-
-/// The same env rendered as a JSON object (for MCP server configs).
-pub fn env_json(ctx: &SpawnCtx) -> serde_json::Map<String, serde_json::Value> {
-    base_env(ctx)
-        .into_iter()
-        .map(|(k, v)| (k, serde_json::Value::String(v)))
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::adapter_for;
-
-    use ariadne_core::AgentKind;
-    use serde_json::json;
-
-    /// Each CLI says a compaction is over in its own vocabulary, and nothing
-    /// else it reports is mistaken for it — least of all the session start of
-    /// a resume, which Claude Code spells with the same hook.
-    #[test]
-    fn a_compaction_is_done_when_the_cli_says_so_and_not_before() {
-        let claude = adapter_for(AgentKind::ClaudeCode);
-        assert!(claude.compaction_done(
-            "session_start",
-            &json!({"hook_event_name": "SessionStart", "source": "compact"})
-        ));
-        for (kind, payload) in [
-            ("session_start", json!({"source": "resume"})),
-            ("session_start", json!({"source": "startup"})),
-            ("session_start", json!({})),
-            ("pre_compact", json!({"trigger": "manual"})),
-            ("stop", json!({})),
-        ] {
-            assert!(!claude.compaction_done(kind, &payload), "{kind} {payload}");
-        }
-
-        let codex = adapter_for(AgentKind::Codex);
-        assert!(codex.compaction_done("post_compact", &json!({})));
-        for kind in ["pre_compact", "session_start", "stop"] {
-            assert!(!codex.compaction_done(kind, &json!({})), "{kind}");
-        }
-
-        let opencode = adapter_for(AgentKind::Opencode);
-        assert!(opencode.compaction_done("session.compacted", &json!({"sessionID": "ses_x"})));
-        for kind in ["session.idle", "session.updated", "session.created"] {
-            assert!(!opencode.compaction_done(kind, &json!({})), "{kind}");
-        }
-
-        let acp = adapter_for(AgentKind::Acp);
-        assert!(acp.compaction_done("compaction_update", &json!({"status": "completed"})));
-        for (kind, payload) in [
-            ("compaction_update", json!({"status": "in_progress"})),
-            ("compaction_update", json!({"status": "failed"})),
-            ("session_update", json!({"status": "completed"})),
-        ] {
-            assert!(!acp.compaction_done(kind, &payload), "{kind} {payload}");
-        }
-    }
 }

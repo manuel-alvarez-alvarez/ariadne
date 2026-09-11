@@ -1,12 +1,13 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-09-10
+updated: 2026-09-11
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
+  - crates/ariadne-daemon/tests/adapters.rs
 ---
 
 # MCP tool surface
@@ -24,15 +25,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
 ## Behavior
 
-1. `ariadne mcp serve` is spawned by the agent CLI with a config generated at
-   session spawn. It reads its identity from the environment — session, seat,
+1. `ariadne mcp serve` is spawned by the agent, which the daemon's ACP
+   runtime hands it as an MCP server on `session/new`, `session/load` and
+   `session/resume` (021). It reads its identity from the environment — session, seat,
    goal and, for a task session, the task — and proxies to the daemon's REST
    API with a session header, so the daemon enforces the scoping itself.
 2. The server's instructions, which every session receives before its first
    prompt, say what this session is and carry the session rules that hold for
    every seat alike (006).
 3. Whether anyone answers a question is the one rule picked by seat: the
-   orchestrator's user answers in the terminal, one question at a time, and the
+   orchestrator's user answers in the console, one question at a time, and the
    orchestrator then waits; an author or reviewer works alone and does not ask.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees:
@@ -42,7 +44,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      (which replaces the author list whole through `authors`, and refuses
      `default` as a model — a model is required, and `default` stays legal
      for the effort alone), `list_models` (which holds only the models it
-     can staff an agent on: 011),
+     can staff an agent on, each with its `agent_id`, and narrows to one
+     `agent_id` on request: 011),
      `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
      `cancel_task`, `complete_goal` — the last four are what it supervises the
      goal with once the plan is under way (003)
@@ -73,6 +76,13 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
 ## Acceptance criteria
 
+- Every launch hands the agent the `ariadne mcp serve` server and the
+  session context it reads
+  (`adapters.rs::a_spawn_plans_a_new_session_briefed_and_pinned`,
+  `::every_launch_carries_the_session_context`).
+- `list_models` holds only the models an agent can be staffed on, narrowed to
+  an `agent_id` on request
+  (`tools.rs::the_catalog_an_agent_sees_holds_only_the_models_it_can_be_staffed_on`).
 - Every seat has the tools its playbook names and no others
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`), and
   every allowed tool is one the router actually serves

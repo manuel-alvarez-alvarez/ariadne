@@ -1,13 +1,14 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-09-10
+updated: 2026-09-11
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
   - crates/ariadne-daemon/tests/agent_messages.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
+  - crates/ariadne-daemon/tests/multi_author_tasks.rs
 ---
 
 # Agent messages
@@ -45,7 +46,7 @@ and the wording of the text a message arrives in (006).
    no row points at another.
 6. A message asks or answers, and carries nothing else — no acknowledgement,
    no thanks, and nothing about what the sender is going to do next. Every
-   message arrives in a pane as a turn (9), so a courtesy costs the recipient
+   message arrives at its recipient as a turn (9), so a courtesy costs the recipient
    a turn: that is what the tool's own description bans, and it is banned
    there once rather than in each seat's playbook (006).
 7. A message is about one task, or about the goal itself. The goal's channel
@@ -59,10 +60,12 @@ and the wording of the text a message arrives in (006).
      for (004). On a task staffed with several authors the review a verdict
      belongs to is the one its address names — the author whose change it
      judges — and a verdict to an author that has not asked is refused.
-9. The daemon delivers a message by typing it into the recipient's pane and
-   submitting it, so it arrives as a turn. There is no inbox to poll.
-   `delivered_at` says which have gone; a pane that is busy is not typed into,
-   so a message to an agent mid-turn waits for the pass after it finishes.
+9. The daemon delivers a message by handing it to the recipient's ACP agent
+   as a `session/prompt` (009, 021), so it arrives as a turn. There is no
+   inbox to poll. A message to an agent mid-turn is queued by the runtime
+   behind that turn. `delivered_at` is stamped when the runtime takes the
+   text, so a message still undelivered is one waiting for a live agent to
+   take it.
 10. Nothing about a message starts a session. Waking an agent is the
     lifecycle's business (009), and a message is not a reason to put one back
     on a task nobody is working on.
@@ -71,9 +74,9 @@ and the wording of the text a message arrives in (006).
     something it needs from it, and an agent that is gone can be told nothing.
 12. `request_review` writes one `review_request` per reviewer, carrying the
     summary the author asked with, so the channel holds the whole of the
-    review rather than the half of it that happened to be typed. On a task
+    review rather than the half of it that happened to be said. On a task
     staffed with several authors whose pick is still open, that row is not
-    typed into the reviewer's pane as a bare message: the reviewer's full
+    handed to the reviewer as a bare message: the reviewer's full
     briefing carries it — the summary with the author and its branch, after
     its worktree has moved there (004) — and stamps it delivered.
 13. The MCP surface is two tools every seat has: `send_message` and
@@ -83,11 +86,12 @@ and the wording of the text a message arrives in (006).
 
 - Agents write to each other without leaving the task and without the review
   moving (`agent_messages.rs::agents_write_to_each_other_without_leaving_the_task`).
-- The message is typed into the recipient's pane, names the sender by its
-  skills, carries no id to answer on, and is stamped delivered
-  (`agent_messages.rs::a_message_is_typed_into_the_pane_it_was_sent_to`).
-- An agent can write to the orchestrator, and it reaches its pane
-  (`agent_messages.rs::an_agent_writes_to_the_orchestrator_and_it_reaches_its_pane`).
+- The message is handed to the recipient's agent as a prompt, names the
+  sender by its skills, carries no id to answer on, and is stamped delivered
+  (`agent_messages.rs::a_message_is_handed_to_the_agent_it_was_sent_to`).
+- An agent can write to the orchestrator, and it reaches the orchestrator's
+  agent
+  (`agent_messages.rs::an_agent_writes_to_the_orchestrator_and_it_reaches_its_agent`).
 - A recipient the task does not staff is refused and nothing is written
   (`agent_messages.rs::a_message_to_an_agent_the_task_does_not_staff_is_refused`).
 - Only a reviewer of the task can send a verdict
@@ -102,6 +106,9 @@ and the wording of the text a message arrives in (006).
   (`agent_messages.rs::a_review_request_reaches_every_reviewer_as_a_message`).
 - A message is delivered once, and the stamp says which have gone
   (`store.rs::a_message_is_delivered_once_and_the_stamp_says_so`).
+- On a contested task, a review request reaches a live reviewer only as its
+  briefing
+  (`multi_author_tasks.rs::a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing`).
 - A reviewer that voted is left where it is
   (`agent_messages.rs::a_reviewer_that_voted_is_left_where_it_is`).
 - A message names the agent it is for

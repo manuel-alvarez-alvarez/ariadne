@@ -48,15 +48,15 @@ const CREATE_EXAMPLES: &str = "\
 Examples:
   # a goal in one registered repository
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
-      --model claude_code:claude-sonnet-5
+      --model claude-code-acp:claude-sonnet-5
 
   # an orchestrator reasoned deeply
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
-      --model codex:gpt-5.6-sol --effort xhigh
+      --model codex-acp:gpt-5.6-sol --effort xhigh
 
   # a goal that works in two repositories
   ariadne goal create --title \"Split the API\" --repo ~/projects/api \\
-      --repo ~/projects/ui --model claude_code:claude-sonnet-5
+      --repo ~/projects/ui --model claude-code-acp:claude-sonnet-5
 ";
 
 #[derive(Subcommand)]
@@ -79,15 +79,15 @@ pub enum GoalCommand {
         /// (`ariadne repo add`); repeatable
         #[arg(long = "repo", required = true, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
         repos: Vec<String>,
-        /// What the orchestrator runs on: AGENT:MODEL — an agent CLI
-        /// (claude_code | codex | opencode) and, after the colon, one model
-        /// of it (codex:gpt-5.3-codex). Required: a model is required, and no
-        /// CLI default stands in for one
+        /// What the orchestrator runs on: AGENT:MODEL — the id of an agent of
+        /// the ACP registry and, after the colon, one model of it
+        /// (codex-acp:gpt-5.3-codex). Required: a model is required, and no
+        /// agent default stands in for one
         #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: String,
         /// The reasoning effort that model is run at: one of the efforts
-        /// `ariadne models ls` lists for it. Default: whatever the agent CLI
-        /// runs it at
+        /// `ariadne models ls` lists for it. Default: whatever the agent runs
+        /// it at
         #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
         effort: Option<String>,
     },
@@ -136,7 +136,7 @@ pub enum GoalCommand {
     /// Delete a finished goal and everything under it
     ///
     /// Only a completed or cancelled goal can go: an active one still owns
-    /// tmux sessions and worktrees, and `goal cancel` is what tears those
+    /// agent sessions and worktrees, and `goal cancel` is what tears those
     /// down. What goes takes its tasks with it, for good.
     Rm {
         /// Goal id
@@ -146,7 +146,7 @@ pub enum GoalCommand {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Attach to the goal's orchestrator tmux session or ACP console
+    /// Attach to the console of the goal's orchestrator
     Attach {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
@@ -502,7 +502,7 @@ fn by_short_id(repos: &[RepositoryDto], spec: &str) -> Result<String> {
 /// pinned.
 ///
 /// An effort that was never pinned says nothing at all: the model is run at
-/// whatever its agent CLI runs it at, and a `@` with a guess after it would
+/// whatever its agent runs it at, and a `@` with a guess after it would
 /// read as a choice somebody made.
 fn pin_label(model: &str, effort: Option<&str>) -> String {
     match effort {

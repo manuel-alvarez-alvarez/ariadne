@@ -24,10 +24,10 @@ export const SKILL_PARAM = "skill"
 
 /**
  * What a link asks the screen it opens to hand the keyboard to, under
- * `?focus=`: a session's terminal pane.
+ * `?focus=`: a session's console.
  *
  * The attention list is where this comes from — a row that says an agent is
- * blocked on a prompt has to land on the pane the answer is typed into, not
+ * blocked on a prompt has to land on the console the answer is given in, not
  * merely on the screen that contains it. It is a request rather than a state:
  * it is read once by whichever control it names and dropped from the URL there
  * (see {@link useTerminalFocusRequest}), so a reload, a tab switch or a second
@@ -235,9 +235,9 @@ function arriving(target: { search: string }, focus: "terminal"): { search: stri
 }
 
 /**
- * Link target that opens a session's own panel on its terminal, with the pane
- * focused — where an agent blocked on a prompt is answered, since what it is
- * waiting for is a keystroke in that pane and nothing else.
+ * Link target that opens a session's own panel on its console, with the
+ * console focused — where an agent blocked on a prompt is answered, since what
+ * it is waiting for is an answer in that console and nothing else.
  */
 export function sessionTerminalFrom(
   pathname: string,
@@ -254,7 +254,7 @@ export function sessionTerminalFrom(
  *
  * Frozen at mount and dropped from the URL in the same breath, which is what
  * makes it a request and not a state: the control it names may not exist yet
- * (a terminal has a snapshot to wait for), so the answer has to survive until
+ * (a console has a snapshot to wait for), so the answer has to survive until
  * it does — and once it has been given, a re-render, a tab switch or a reload
  * must not give it again.
  */
@@ -275,7 +275,7 @@ function useArrival(target: "terminal"): boolean {
   return asked
 }
 
-/** Whether a link asked this session's pane to take the keyboard. */
+/** Whether a link asked this session's console to take the keyboard. */
 export function useTerminalFocusRequest(): boolean {
   return useArrival("terminal")
 }

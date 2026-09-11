@@ -33,5 +33,5 @@ it("says what the two vocabularies are, since neither is guessable", () => {
   render(<KeyboardShortcutsDialog open onOpenChange={() => {}} />)
 
   const description = screen.getByText(/answer to Ctrl as well/)
-  expect(description.textContent).toContain("session's terminal")
+  expect(description.textContent).toContain("session's console")
 })

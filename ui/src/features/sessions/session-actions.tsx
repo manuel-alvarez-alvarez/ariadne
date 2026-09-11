@@ -5,8 +5,8 @@
  * sit in the same corner of a panel that is itself dismissible, and a bare
  * verb there reads as being about the panel.
  *
- * Kill is destructive and irreversible — it tears down the agent's tmux
- * process mid-thought — so it asks first, and because it asks, its refusal is
+ * Kill is destructive and irreversible — it stops the agent's process
+ * mid-thought — so it asks first, and because it asks, its refusal is
  * shown in that dialog like every other confirmed action's. Resume is not
  * destructive and has no dialog to put anything in; it also fails often and
  * for reasons worth reading (the daemon answers `409` when the session has no
@@ -21,7 +21,7 @@ import { toast } from "sonner"
 import type { SessionDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
-import { describeError } from "@/lib/format"
+import { describeError, shortId } from "@/lib/format"
 
 import { useKillSession, useResumeSession } from "./queries"
 import { isLiveStatus } from "./session-display"
@@ -63,16 +63,16 @@ export function SessionActions({
               onSuccess: (revived) => {
                 // The daemon answers with this same session either way: live
                 // again when it really relaunched it, or untouched when its
-                // pane turned out to be alive after all (the scheduler may
+                // agent turned out to be alive after all (the scheduler may
                 // have respawned it already) — which its status is what says.
                 if (!isLiveStatus(revived.status)) {
-                  toast.info("That pane is already alive", {
-                    description: `${revived.tmux_session} has a running agent; nothing to resume.`,
+                  toast.info("That agent is already alive", {
+                    description: `${shortId(revived.id)} has a running agent; nothing to resume.`,
                   })
                   return
                 }
                 toast.success("Session resumed", {
-                  description: `${revived.tmux_session} · same agent conversation`,
+                  description: `${shortId(revived.id)} · same agent conversation`,
                 })
                 onResumed?.(revived)
               },
@@ -95,7 +95,7 @@ export function SessionActions({
         title="Kill this session?"
         description={
           <>
-            The agent's tmux process (<code className="font-mono">{session.tmux_session}</code>) is
+            The agent's process (<code className="font-mono">{shortId(session.id)}</code>) is
             terminated wherever it got to. Its conversation is kept, so the session can be resumed
             afterwards.
           </>
@@ -115,7 +115,7 @@ export function SessionActions({
               // What was done, like every other success toast — not the status
               // it left behind, which the badge on the row already says.
               toast.success("Session killed", {
-                description: `${session.tmux_session} · the conversation is kept, so it can be resumed`,
+                description: `${shortId(session.id)} · the conversation is kept, so it can be resumed`,
               })
             },
           })

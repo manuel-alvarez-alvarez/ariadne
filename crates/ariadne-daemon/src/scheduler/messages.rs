@@ -1,14 +1,15 @@
-//! Carrying what one agent said to another into the pane it was said to.
+//! Carrying what one agent said to another to the agent it was said to.
 //!
 //! A message is written by the agent that sent it and delivered by the daemon:
-//! typed into the recipient's composer and submitted, the way a nudge is. That
-//! is the whole of the transport — there is no inbox an agent has to poll, and
-//! nothing it has to be told to check, because the message arrives as a turn.
+//! handed to the recipient's agent as a `session/prompt`, the way a nudge is.
+//! That is the whole of the transport — there is no inbox an agent has to
+//! poll, and nothing it has to be told to check, because the message arrives
+//! as a turn.
 //!
-//! A pane that is busy is not typed into, so a message to an agent mid-turn
-//! waits for the pass after it finishes. `delivered_at` is what says which
-//! have gone: it is stamped when tmux takes the text, and a message that is
-//! still NULL is one still waiting for a pane.
+//! A message to an agent mid-turn is queued behind the turn by the runtime.
+//! `delivered_at` is what says which have gone: it is stamped when the
+//! runtime takes the text, and a message that is still NULL is one still
+//! waiting for a live agent to take it.
 
 use tracing::{debug, info, warn};
 
@@ -18,7 +19,7 @@ use ariadne_store::{AgentSession, Message, MessageFilter, SessionFilter};
 use crate::agents::prompts;
 
 impl super::Scheduler {
-    /// Deliver everything still waiting for a pane on this task.
+    /// Deliver everything still waiting for an agent on this task.
     pub(super) async fn deliver_task_messages(&mut self, task_id: &str) {
         let waiting = self
             .store
@@ -52,16 +53,11 @@ impl super::Scheduler {
         self.deliver(waiting).await;
     }
 
-    /// One pass over a batch of undelivered messages.
-    ///
-    /// In the order they were written, and one per pane per pass: two pastes
-    /// into one composer at once would interleave into something neither of
-    /// them said, and `spawn_delivery` runs off the loop. What is left over
-    /// goes on the next pass.
+    /// One pass over a batch of undelivered messages, in the order they were
+    /// written: the runtime queues each prompt behind the one before it.
     async fn deliver(&mut self, waiting: Vec<Message>) {
-        let mut typed: std::collections::HashSet<String> = std::collections::HashSet::new();
         for message in waiting {
-            // A contested task's review request is not a message to type: the
+            // A contested task's review request is not a message to hand on: the
             // summary alone names neither the author nor the branch, and it
             // would land while the reviewer's worktree still stands on the
             // review before it. The reviewer's full briefing is what carries
@@ -78,9 +74,6 @@ impl super::Scheduler {
                 debug!(message = %message.id, "nothing live to deliver the message to yet");
                 continue;
             };
-            if self.pane_busy(&session.id) || !typed.insert(session.id.clone()) {
-                continue;
-            }
             let from = self.sender_name(&message).await;
             let template = prompts::template_for(PromptKind::IncomingMessage);
             let text = prompts::incoming_message_briefing(template, &message, &from);
@@ -90,15 +83,15 @@ impl super::Scheduler {
                 kind = %message.kind,
                 "delivering a message to the agent it is for"
             );
-            // Stamped as the delivery goes out rather than when it comes back:
-            // a message typed twice is worse than one the record calls
-            // delivered a moment early, and what tmux made of it is the
-            // delivery report's to say ([`Self::delivery_settled`]).
-            if let Err(e) = self.store.mark_message_delivered(&message.id).await {
-                warn!(message = %message.id, error = %e, "stamping the message failed");
+            // Stamped once the runtime took it: one it refused — the agent
+            // went away between the lookup and the hand-off — waits for the
+            // next pass.
+            if !self.hand_prompt(&session, text) {
                 continue;
             }
-            self.spawn_delivery(&session, text);
+            if let Err(e) = self.store.mark_message_delivered(&message.id).await {
+                warn!(message = %message.id, error = %e, "stamping the message failed");
+            }
         }
     }
 
@@ -125,8 +118,8 @@ impl super::Scheduler {
 
     /// The live session a message is for, or None while there is none.
     ///
-    /// A message outlives the session that will read it: an agent whose pane
-    /// is being started again gets it on the pass after, and one whose task is
+    /// A message outlives the session that will read it: an agent that is
+    /// being started again gets it on the pass after, and one whose task is
     /// over never does — which is why nothing here starts a session. Waking an
     /// agent is the lifecycle's business, and a message is not a reason to put
     /// one back on a task nobody is working on.

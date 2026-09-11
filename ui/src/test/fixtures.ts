@@ -43,7 +43,7 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     id: GOAL_ID,
     title: "Ship the board",
     description: "",
-    model: "claude_code:claude-sonnet-5",
+    model: "claude-code-acp:claude-sonnet-5",
     repos: [],
     status: "active",
     usage: {
@@ -74,13 +74,13 @@ export function aTask(overrides: Partial<TaskDto> = {}): TaskDto {
         id: AUTHOR_ID,
         seat: "author",
         skills: ["coding"],
-        model: "claude_code:claude-sonnet-5",
+        model: "claude-code-acp:claude-sonnet-5",
       },
       {
         id: REVIEWER_ID,
         seat: "reviewer",
         skills: ["code-review"],
-        model: "claude_code:claude-sonnet-5",
+        model: "claude-code-acp:claude-sonnet-5",
       },
     ],
     depends_on: [],
@@ -100,10 +100,8 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     task_id: TASK_ID,
     seat: "author",
     task_agent_id: AUTHOR_ID,
-    agent_kind: "claude_code",
-    model: "claude-sonnet-5",
+    model: "claude-code-acp:claude-sonnet-5",
     internal_session_id: null,
-    tmux_session: `ariadne-${id}`,
     worktree_path: null,
     status: "running",
     attention_reason: null,
@@ -121,7 +119,6 @@ export function anAgentEvent(overrides: Partial<AgentEventDto> = {}): AgentEvent
     id: "01JEVENT000000000000000001",
     session_id: SESSION_ID,
     task_id: TASK_ID,
-    agent_kind: "claude_code",
     kind: "post_tool_use",
     summary: "Read AGENTS.md.",
     payload: { tool_name: "Read", cwd: "/Users/me/dev/ariadne" },
@@ -173,7 +170,7 @@ export function aMemory(overrides: Partial<MemoryDto> = {}): MemoryDto {
 
 export function anAgentConfig(overrides: Partial<AgentConfigDto> = {}): AgentConfigDto {
   return {
-    agent_kind: "claude_code",
+    agent_id: "claude-code-acp",
     extra_flags: [],
     default_flags: [],
     ...overrides,
@@ -193,8 +190,8 @@ export function anEffort(overrides: Partial<EffortDto> = {}): EffortDto {
 /** One entry of the model catalog `GET /v1/models` serves. */
 export function aModel(overrides: Partial<ModelDto> = {}): ModelDto {
   return {
-    id: "claude_code:claude-sonnet-5",
-    agent_kind: "claude_code",
+    id: "claude-code-acp:claude-sonnet-5",
+    agent_id: "claude-code-acp",
     description: null,
     tier: "unknown",
     cost: null,

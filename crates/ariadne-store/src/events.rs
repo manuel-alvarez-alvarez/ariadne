@@ -1,6 +1,5 @@
-//! Agent-event repository (raw hook/notify/plugin payloads).
+//! Agent-event repository: what the ACP runtime reports each agent doing.
 
-use ariadne_core::AgentKind;
 use ariadne_core::id::new_id;
 
 use crate::query::Filtered;
@@ -10,7 +9,6 @@ use crate::{AgentEvent, Change, Result, Store, now};
 pub struct NewAgentEvent {
     pub session_id: Option<String>,
     pub task_id: Option<String>,
-    pub agent_kind: Option<AgentKind>,
     pub kind: String,
     pub payload: serde_json::Value,
 }
@@ -27,13 +25,12 @@ impl Store {
     pub async fn create_event(&self, new: NewAgentEvent) -> Result<AgentEvent> {
         let id = new_id();
         sqlx::query(
-            "INSERT INTO agent_events (id, session_id, task_id, agent_kind, kind, payload, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO agent_events (id, session_id, task_id, kind, payload, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.session_id)
         .bind(&new.task_id)
-        .bind(new.agent_kind.map(|k| k.as_str()))
         .bind(&new.kind)
         .bind(new.payload.to_string())
         .bind(now())
@@ -47,38 +44,8 @@ impl Store {
         Ok(event)
     }
 
-    /// Whether this session's log ends on a `tool` call nobody has answered.
-    ///
-    /// A tool that asks the user something is pending for as long as it takes
-    /// them to answer, and the log is where that stretch of time is recorded:
-    /// its `pre_tool_use` opens it, and the first of its own `post_tool_use`,
-    /// a `user_prompt_submit` or a `stop` closes it. So the last event that
-    /// does either is the whole answer — everything the turn reported in
-    /// between belongs to its other tool calls and says nothing about the
-    /// question.
-    ///
-    /// Which tool blocks on a person is the agent's vocabulary rather than
-    /// the store's, so the caller names it (`ariadne-daemon`'s
-    /// `classify::QUESTION_TOOL`).
-    pub async fn tool_call_is_pending(&self, session_id: &str, tool: &str) -> Result<bool> {
-        let last: Option<String> = sqlx::query_scalar(
-            "SELECT kind FROM agent_events
-              WHERE session_id = ?
-                AND (kind IN ('user_prompt_submit', 'stop')
-                     OR (kind IN ('pre_tool_use', 'post_tool_use')
-                         AND json_extract(payload, '$.tool_name') = ?))
-              ORDER BY id DESC
-              LIMIT 1",
-        )
-        .bind(session_id)
-        .bind(tool)
-        .fetch_optional(self.r())
-        .await?;
-        Ok(last.as_deref() == Some("pre_tool_use"))
-    }
-
     /// Every event a session has produced, in order: the whole transcript an
-    /// ACP console replays from, where `list_events`'s page cap would
+    /// console replays from, where `list_events`'s page cap would
     /// truncate a long conversation.
     pub async fn list_session_events(&self, session_id: &str) -> Result<Vec<AgentEvent>> {
         Ok(sqlx::query_as::<_, AgentEvent>(

@@ -1,14 +1,14 @@
 /**
- * `EventSource` wrapper for `GET /v1/sessions/{id}/console/stream` — the
- * counterpart of `log-stream.ts` for a session with no pane at all.
+ * `EventSource` wrapper for `GET /v1/sessions/{id}/console/stream` — what a
+ * session's console reads.
  *
  * The protocol is a `snapshot` event carrying every event the session has
  * recorded so far (`AgentEventDto[]`, oldest first), then an `event` per later
- * one (a bare `AgentEventDto`). There is no grid and no resize: an `acp`
- * session's console is a feed of events, not a byte stream drawn into a grid.
+ * one (a bare `AgentEventDto`). There is no grid and no resize: a session's
+ * console is a feed of events, not a byte stream drawn into a grid.
  *
- * There is no replay and no `Last-Event-ID`, so — exactly as the log stream —
- * every connection starts from a fresh snapshot: a reconnect replaces what is
+ * There is no replay and no `Last-Event-ID`, so — exactly as the daemon's log
+ * stream — every connection starts from a fresh snapshot: a reconnect replaces what is
  * shown rather than resuming it. A client that falls too far behind gets a
  * final `resync` event and the daemon closes the connection right after it;
  * that read as an ordinary drop and is left to the normal retry, since the

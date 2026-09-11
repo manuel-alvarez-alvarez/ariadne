@@ -5,9 +5,7 @@ use super::*;
 
 use clap::FromArgMatches;
 
-use ariadne_core::{
-    AgentKind, GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus,
-};
+use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
 use crate::commands::skill::SkillCommand;
@@ -83,10 +81,8 @@ fn an_empty_description_is_not_advertised_as_a_default() {
 /// what it prints. Hidden internal commands are in here too: `--format`
 /// is global, so it reaches them whether or not anyone meant it to.
 const LEAVES: &[(&str, bool)] = &[
-    ("_spawn", false),
     ("agent ls", true),
     ("agent update", true),
-    ("agent-event", false),
     ("attach", false),
     ("attention", true),
     ("completions", false),
@@ -126,7 +122,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("session ls", true),
     ("session resume", true),
     ("session send", true),
-    ("setup codex-hooks", false),
     ("skill create", true),
     ("skill get", true),
     ("skill inspect", true),
@@ -292,7 +287,16 @@ fn the_display_flags_parse_on_either_side_of_the_subcommand() {
 fn quiet_parses_after_a_mutation() {
     assert!(
         parse(&[
-            "ariadne", "goal", "create", "-q", "--title", "x", "--repo", "r", "--model", "codex:m"
+            "ariadne",
+            "goal",
+            "create",
+            "-q",
+            "--title",
+            "x",
+            "--repo",
+            "r",
+            "--model",
+            "codex-acp:m",
         ])
         .quiet
     );
@@ -341,26 +345,6 @@ fn a_listing_hides_what_is_finished_behind_the_same_flag() {
         with.push("-a");
         assert!(all(&with), "{with:?} lists everything");
     }
-}
-
-/// `_spawn` is tmux's end of a launch, not a command anyone types: it takes
-/// the plan path and stays out of the help.
-#[test]
-fn the_spawn_command_takes_a_plan_path_and_is_hidden() {
-    let Command::Spawn { plan } = parse(&["ariadne", "_spawn", "/run/s/spawn.json"]).command else {
-        panic!("_spawn");
-    };
-    assert_eq!(plan, PathBuf::from("/run/s/spawn.json"));
-    assert!(
-        try_parse(&["ariadne", "_spawn"]).is_err(),
-        "a launch with no plan is a usage error"
-    );
-    let mut cmd = command();
-    cmd.build();
-    assert!(
-        cmd.find_subcommand("_spawn").expect("_spawn").is_hide_set(),
-        "_spawn is advertised in the help"
-    );
 }
 
 /// A path in [`NO_FORMAT`] that names no command hides nothing —
@@ -460,7 +444,7 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
         "--title",
         "t",
         "--author",
-        "coding=claude_code:claude-sonnet-5",
+        "coding=claude-code-acp:claude-sonnet-5",
         "--landing",
         "pull-request",
         "--permission-mode",
@@ -542,14 +526,9 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         model
     };
     assert_eq!(
-        orchestrator(&["--model", "codex:gpt-5.3-codex"]),
-        "codex:gpt-5.3-codex"
-    );
-    assert_eq!(
-        orchestrator(&["--model", "claude-code:claude-opus-5"]),
-        "claude_code:claude-opus-5",
-        "the hyphenated spelling names the same CLI, and travels as the daemon \
-         spells it"
+        orchestrator(&["--model", "codex-acp:gpt-5.3-codex"]),
+        "codex-acp:gpt-5.3-codex",
+        "a model travels as it was typed"
     );
 
     let Command::Task {
@@ -564,11 +543,11 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         "--title",
         "Do it",
         "--author",
-        "coding,testing=claude_code:claude-opus-5",
+        "coding,testing=claude-code-acp:claude-opus-5",
         "--reviewer",
-        "code-review=codex:o3",
+        "code-review=codex-acp:o3",
         "--reviewer",
-        "security-review=opencode:ollama/llama3:8b",
+        "security-review=opencode-acp:ollama/llama3:8b",
     ])
     .command
     else {
@@ -576,15 +555,18 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     };
     assert_eq!(authors.len(), 1);
     assert_eq!(authors[0].skills, ["coding", "testing"]);
-    assert_eq!(authors[0].model, "claude_code:claude-opus-5");
+    assert_eq!(authors[0].model, "claude-code-acp:claude-opus-5");
     assert_eq!(
         reviewers
             .iter()
             .map(|r| (r.skills.join(","), r.model.as_str()))
             .collect::<Vec<_>>(),
         [
-            ("code-review".to_string(), "codex:o3"),
-            ("security-review".to_string(), "opencode:ollama/llama3:8b"),
+            ("code-review".to_string(), "codex-acp:o3"),
+            (
+                "security-review".to_string(),
+                "opencode-acp:ollama/llama3:8b"
+            ),
         ],
         "in the order they were typed, which is review order"
     );
@@ -601,13 +583,8 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         model
     };
     assert_eq!(
-        edited(&["--model", "claude-code:claude-opus-5"]).as_deref(),
-        Some("claude_code:claude-opus-5"),
-        "a CLI travels in the spelling the daemon reads"
-    );
-    assert_eq!(
-        edited(&["--model", "codex:gpt-5.3-codex"]).as_deref(),
-        Some("codex:gpt-5.3-codex")
+        edited(&["--model", "codex-acp:gpt-5.3-codex"]).as_deref(),
+        Some("codex-acp:gpt-5.3-codex")
     );
     assert_eq!(edited(&["--title", "Do it better"]), None);
 }
@@ -647,25 +624,40 @@ fn a_line_with_no_model_is_a_usage_error() {
     assert!(err.contains("a model is required"), "{err}");
     assert!(err.contains("SKILLS=MODEL"), "{err}");
 
-    // A bare agent CLI parses nowhere: it names no model.
-    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "codex"])
-        .map(|_| ())
-        .expect_err("a bare CLI")
-        .to_string();
-    assert!(err.contains("`codex` names no model"), "{err}");
+    // A bare agent parses nowhere: it names no model.
+    let err = try_parse(&[
+        "ariadne",
+        "task",
+        "update",
+        "01TASK",
+        "--model",
+        "codex-acp",
+    ])
+    .map(|_| ())
+    .expect_err("a bare agent")
+    .to_string();
+    assert!(err.contains("`codex-acp` names no agent"), "{err}");
+    assert!(err.contains("a model is required"), "{err}");
 
     let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "default"])
         .map(|_| ())
         .expect_err("default is no model")
         .to_string();
-    assert!(err.contains("names no agent CLI"), "{err}");
+    assert!(err.contains("names no agent"), "{err}");
 
     // Whitespace after the colon is an empty model too: it would create a
-    // pin and launch a model no CLI has.
-    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "codex: "])
-        .map(|_| ())
-        .expect_err("whitespace is no model")
-        .to_string();
+    // pin and launch a model no agent has.
+    let err = try_parse(&[
+        "ariadne",
+        "task",
+        "update",
+        "01TASK",
+        "--model",
+        "codex-acp: ",
+    ])
+    .map(|_| ())
+    .expect_err("whitespace is no model")
+    .to_string();
     assert!(err.contains("no model after the `:`"), "{err}");
     assert!(err.contains("a model is required"), "{err}");
 }
@@ -686,7 +678,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
         "--repo",
         "01REPO",
         "--model",
-        "codex:gpt-5.6-sol",
+        "codex-acp:gpt-5.6-sol",
         "--effort",
         "xhigh",
     ])
@@ -694,7 +686,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
     else {
         panic!("goal create")
     };
-    assert_eq!(model, "codex:gpt-5.6-sol");
+    assert_eq!(model, "codex-acp:gpt-5.6-sol");
     assert_eq!(effort.as_deref(), Some("xhigh"));
 
     let Command::Task {
@@ -709,13 +701,13 @@ fn an_effort_can_be_chosen_beside_every_model() {
         "--title",
         "Do it",
         "--author",
-        "coding=claude_code:claude-opus-5@xhigh",
+        "coding=claude-code-acp:claude-opus-5@xhigh",
         "--reviewer",
-        "code-review=codex:gpt-5.6-sol@xhigh",
+        "code-review=codex-acp:gpt-5.6-sol@xhigh",
         "--reviewer",
-        "security-review=claude_code:claude-sonnet-5@high",
+        "security-review=claude-code-acp:claude-sonnet-5@high",
         "--reviewer",
-        "performance-review=codex:gpt-5.6-luna",
+        "performance-review=codex-acp:gpt-5.6-luna",
     ])
     .command
     else {
@@ -730,15 +722,19 @@ fn an_effort_can_be_chosen_beside_every_model() {
         [
             (
                 "code-review".to_string(),
-                "codex:gpt-5.6-sol",
+                "codex-acp:gpt-5.6-sol",
                 Some("xhigh")
             ),
             (
                 "security-review".to_string(),
-                "claude_code:claude-sonnet-5",
+                "claude-code-acp:claude-sonnet-5",
                 Some("high")
             ),
-            ("performance-review".to_string(), "codex:gpt-5.6-luna", None),
+            (
+                "performance-review".to_string(),
+                "codex-acp:gpt-5.6-luna",
+                None
+            ),
         ],
         "an agent names its model, and the effort beside it where one was \
          chosen"
@@ -757,7 +753,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
     };
     assert_eq!(edited(&["--effort", "ultra"]).as_deref(), Some("ultra"));
     assert_eq!(edited(&["--effort", "default"]).as_deref(), Some("default"));
-    assert_eq!(edited(&["--model", "codex:gpt-5.3-codex"]), None);
+    assert_eq!(edited(&["--model", "codex-acp:gpt-5.3-codex"]), None);
 }
 
 /// An effort is the model's to accept, and the daemon holds the catalogue —
@@ -773,7 +769,7 @@ fn an_effort_that_says_nothing_is_a_usage_error() {
     assert!(err.contains("default"), "{err}");
 
     // Which efforts a model takes is the daemon's answer, not this one's: an
-    // effort no claude model runs at is still sent, and refused there.
+    // effort no model of that agent runs at is still sent, and refused there.
     assert!(
         try_parse(&[
             "ariadne",
@@ -781,7 +777,7 @@ fn an_effort_that_says_nothing_is_a_usage_error() {
             "update",
             "01TASK",
             "--model",
-            "claude_code:claude-opus-5",
+            "claude-code-acp:claude-opus-5",
             "--effort",
             "ultra",
         ])
@@ -789,7 +785,7 @@ fn an_effort_that_says_nothing_is_a_usage_error() {
     );
 }
 
-/// A model does not say which CLI runs it, so one that names no agent CLI is
+/// A model does not say which agent runs it, so one that names no agent is
 /// refused on the line it was typed on — with the spelling that would have
 /// named one, never a request the daemon has to turn down.
 #[test]
@@ -832,12 +828,12 @@ fn a_model_naming_no_agent_is_a_usage_error() {
             .map(|_| ())
             .expect_err("a model naming no agent")
             .to_string();
-        assert!(err.contains("names no agent CLI"), "{argv:?}: {err}");
-        assert!(err.contains("claude_code:gpt-5.3-codex"), "{argv:?}: {err}");
+        assert!(err.contains("names no agent"), "{argv:?}: {err}");
+        assert!(err.contains("`<agent>:gpt-5.3-codex`"), "{argv:?}: {err}");
     }
 
-    // `default` is a word only an update takes: on a create it names no CLI
-    // either, since nothing is being handed back.
+    // `default` is a word only an update takes: on a create it names no
+    // agent either, since nothing is being handed back.
     assert!(
         try_parse(&[
             "ariadne", "goal", "create", "--title", "Ship it", "--repo", "01REPO", "--model",
@@ -847,22 +843,20 @@ fn a_model_naming_no_agent_is_a_usage_error() {
     );
 }
 
-/// `task update --model` takes a model and nothing else: an agent CLI
-/// Ariadne does not run is refused on the line it was typed on, never sent
-/// for the daemon to turn down.
+/// Which agents there are is the daemon's registry, which the line cannot
+/// see: an agent id is sent as it was typed, and the daemon refuses one its
+/// registry does not hold.
 #[test]
-fn a_model_on_an_agent_that_is_no_cli_is_a_usage_error() {
-    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--model", "llama:x"])
-        .map(|_| ())
-        .expect_err("no such agent")
-        .to_string();
-    assert!(err.contains("unknown agent `llama`"), "{err}");
-    assert!(err.contains("claude_code, codex, opencode"), "{err}");
+fn an_agent_id_is_the_daemons_to_check() {
+    assert!(
+        try_parse(&["ariadne", "task", "update", "01TASK", "--model", "llama:x"]).is_ok(),
+        "the line has no registry to check an agent against"
+    );
 }
 
 /// A `--reviewer` that says half of what it means is a typo, and it is
 /// refused where it was typed rather than sent to the daemon to be refused
-/// there — with the form it accepts and the agent CLIs that stand in it.
+/// there — with the form it accepts.
 #[test]
 fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
     let refused = |spec: &str| {
@@ -881,17 +875,16 @@ fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
         .to_string()
     };
     let err = refused("code-review=llama");
-    assert!(err.contains("names no agent CLI"), "{err}");
-    assert!(err.contains("claude_code, codex, opencode"), "{err}");
+    assert!(err.contains("names no agent"), "{err}");
     assert!(refused("code-review=").contains("no model after the ="));
-    assert!(refused("code-review=codex:").contains("no model after the `:`"));
+    assert!(refused("code-review=codex-acp:").contains("no model after the `:`"));
     // Skills with no `=MODEL` at all are half a slot too, `@EFFORT` or not.
     let err = refused("code-review");
     assert!(err.contains("a model is required"), "{err}");
     let err = refused("Reviewer@high");
     assert!(err.contains("a model is required"), "{err}");
     // And the half after the `@`, which the forms in the refusal spell out.
-    let err = refused("code-review=codex:o3@");
+    let err = refused("code-review=codex-acp:o3@");
     assert!(err.contains("no effort was named"), "{err}");
     assert!(refused("code-review=@high").contains("SKILLS=MODEL@EFFORT"));
 }
@@ -980,7 +973,7 @@ fn a_hidden_format_flag_is_still_parsed() {
 #[test]
 fn updating_an_agent_takes_flags_or_clear_or_reset_but_only_one() {
     let update = |args: &[&str]| {
-        let mut argv = vec!["ariadne", "agent", "update", "claude_code"];
+        let mut argv = vec!["ariadne", "agent", "update", "claude-code-acp"];
         argv.extend_from_slice(args);
         try_parse(&argv).is_ok()
     };
@@ -1002,14 +995,14 @@ fn updating_an_agent_takes_flags_or_clear_or_reset_but_only_one() {
 #[test]
 fn an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is() {
     let Command::Agent {
-        command: AgentCommand::Update { kind, flags, .. },
+        command: AgentCommand::Update { agent, flags, .. },
     } = parse(&[
         "ariadne",
         "agent",
         "update",
-        "claude-code",
+        "claude-code-acp",
         "--flag",
-        "--dangerously-skip-permissions",
+        "--model-config",
         "--flag",
         "--verbose",
     ])
@@ -1017,9 +1010,8 @@ fn an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is() {
     else {
         panic!("agent update");
     };
-    // The dash spelling names the agent the daemon calls claude_code.
-    assert_eq!(kind, AgentKind::ClaudeCode);
-    assert_eq!(flags, ["--dangerously-skip-permissions", "--verbose"]);
+    assert_eq!(agent, "claude-code-acp");
+    assert_eq!(flags, ["--model-config", "--verbose"]);
 }
 
 /// A skill is one document, so its lines are the four things one does to a
@@ -1139,37 +1131,20 @@ fn stopping_and_restarting_wait_for_a_bounded_time() {
     );
 }
 
-/// `session send` is the CLI's half of the UI's terminal panel: an id, the
-/// text, and the one thing a caller may want differently — leaving it in the
-/// prompt instead of submitting it.
+/// `session send` is the CLI's half of the UI's console: an id and the text
+/// to send.
 #[test]
-fn session_send_takes_an_id_and_the_text_to_type() {
+fn session_send_takes_an_id_and_the_text_to_send() {
     let Command::Session {
-        command:
-            SessionCommand::Send {
-                id,
-                text,
-                no_newline,
-            },
+        command: SessionCommand::Send { id, text },
     } = parse(&["ariadne", "session", "send", "01SESS", "make it green"]).command
     else {
         panic!("session send");
     };
-    assert_eq!(
-        (id.as_str(), text.as_str(), no_newline),
-        ("01SESS", "make it green", false)
-    );
-
-    let Command::Session {
-        command: SessionCommand::Send { no_newline, .. },
-    } = parse(&["ariadne", "session", "send", "01SESS", "y", "--no-newline"]).command
-    else {
-        panic!("session send");
-    };
-    assert!(no_newline);
+    assert_eq!((id.as_str(), text.as_str()), ("01SESS", "make it green"));
     assert!(
         try_parse(&["ariadne", "session", "send", "01SESS"]).is_err(),
-        "there is nothing to type"
+        "there is nothing to send"
     );
 }
 
@@ -1205,21 +1180,8 @@ fn models_ls_takes_an_agent_to_narrow_the_catalogue() {
     };
     assert_eq!(agent(&["ariadne", "models", "ls"]), None);
     assert_eq!(
-        agent(&["ariadne", "models", "ls", "--agent", "claude_code"]),
-        Some(AgentKind::ClaudeCode)
-    );
-    assert_eq!(
-        agent(&["ariadne", "models", "ls", "--agent", "claude-code"]),
-        Some(AgentKind::ClaudeCode)
-    );
-    let Err(err) = try_parse(&["ariadne", "models", "ls", "--agent", "gemini"]) else {
-        panic!("\"gemini\" is not an agent CLI");
-    };
-    let err = err.to_string();
-    assert!(err.contains("unknown agent kind: gemini"), "{err}");
-    assert!(
-        err.contains("opencode"),
-        "the refusal lists the real ones: {err}"
+        agent(&["ariadne", "models", "ls", "--agent", "claude-code-acp"]).as_deref(),
+        Some("claude-code-acp")
     );
 }
 
@@ -1237,19 +1199,15 @@ fn models_show_takes_a_model_in_the_spelling_dash_dash_model_takes() {
         model
     };
     assert_eq!(
-        model(&["ariadne", "models", "show", "codex:gpt-5.6-luna"]),
-        "codex:gpt-5.6-luna"
+        model(&["ariadne", "models", "show", "codex-acp:gpt-5.6-luna"]),
+        "codex-acp:gpt-5.6-luna"
     );
-    // The catalog has no bare-CLI entry any more, so a bare CLI is refused
-    // the way `--model` refuses it.
-    let Err(err) = try_parse(&["ariadne", "models", "show", "codex"]) else {
-        panic!("a bare CLI names no model");
+    // The catalog has no bare-agent entry, so a bare agent is refused the
+    // way `--model` refuses it.
+    let Err(err) = try_parse(&["ariadne", "models", "show", "codex-acp"]) else {
+        panic!("a bare agent names no model");
     };
-    assert!(err.to_string().contains("names no model"), "{err}");
-    let Err(err) = try_parse(&["ariadne", "models", "show", "gemini:nope"]) else {
-        panic!("\"gemini\" is not an agent CLI");
-    };
-    assert!(err.to_string().contains("unknown agent `gemini`"));
+    assert!(err.to_string().contains("names no agent"), "{err}");
 }
 
 fn parse(argv: &[&str]) -> Cli {

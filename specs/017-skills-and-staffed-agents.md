@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-09-10
+updated: 2026-09-11
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/skill_documents.rs
   - crates/ariadne-daemon/tests/adapters.rs
   - crates/ariadne-daemon/tests/prompts.rs
+  - crates/ariadne-daemon/tests/unreviewed_tasks.rs
 ---
 
 # Skills and staffed agents
@@ -23,7 +24,7 @@ becomes what its task needs by loading skills.
 In: what a skill is, the catalog Ariadne ships, who may edit one, how a task
 staffs an agent on skills, and what a seat means once identity is gone.
 
-Out: how a skill document reaches the agent CLI (007), how the index is
+Out: how a skill document reaches the agent (007), how the index is
 written into the system prompt (006), and the lifecycle the seats sit in
 (001, 004).
 
@@ -32,11 +33,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
 1. A **skill** is one document — a `SKILL.md`, YAML frontmatter and a body —
    that tells a generic agent how to do one kind of work. It is named in
    kebab-case, and the name is how a task loads it.
-2. An **agent** has no identity: it is an agent CLI, a model, an effort, a
-   brief and a set of skills — and the CLI and the model are required, so
-   every agent names both (011). A **seat** says only where it sits. The
-   author of a specification, of a fix and of a release are all `author`,
-   and differ only in the skills they hold.
+2. An **agent** has no identity: it is a registry agent, a model, an
+   effort, a brief and a set of skills. Its pin is one string,
+   `<agent>:<model>`, where `<agent>` is the id of an agent in the daemon's
+   ACP registry (011). The agent and the model are both required, so every
+   agent names both. No agent kind is stored beside the pin. A **seat** says
+   only where it sits. The author of a specification, of a fix and of a
+   release are all `author`, and differ only in the skills they hold.
 3. There are three seats. `orchestrator` belongs to a goal; `author` and
    `reviewer` belong to a task. A task takes one author or more: most staff
    one, and one staffed with several runs them side by side, each on its own
@@ -120,7 +123,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`), and
   every document is within its cap (`defaults.rs::skill_size_caps_hold`).
 - An agent is written on the pin it was given, whole
-  (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`).
+  (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`), and no
+  table names an agent by anything but the registry id at the head of its
+  pin (`store.rs::the_schema_names_agents_by_registry_id_alone`).
 - A staffed agent's skills reach it as an index and as documents on disk
   (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
 

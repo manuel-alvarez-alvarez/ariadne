@@ -72,9 +72,8 @@ export const qk = {
     list: (filters?: SessionFilters) => ["sessions", "list", filters ?? {}] as const,
     details: () => ["sessions", "detail"] as const,
     detail: (id: string) => ["sessions", "detail", id] as const,
-    logs: (id: string) => ["sessions", "detail", id, "logs"] as const,
   },
-  /** Sessions a supported CLI started outside Ariadne (`GET /v1/outside-sessions`). */
+  /** Sessions an ACP agent stored outside Ariadne (`GET /v1/outside-sessions`). */
   outsideSessions: {
     all: () => ["outside-sessions"] as const,
     lists: () => ["outside-sessions", "list"] as const,
@@ -100,7 +99,7 @@ export const qk = {
     detail: (id: string) => ["repositories", "detail", id] as const,
   },
   /**
-   * How each coding-agent CLI is launched (`GET /v1/agents`): one unfiltered
+   * How each registry agent is launched (`GET /v1/agents`): one unfiltered
    * list of every agent kind, because the daemon answers with all of them.
    */
   agents: {
@@ -123,7 +122,7 @@ export const qk = {
     lists: () => ["acp-agents", "list"] as const,
     list: () => ["acp-agents", "list", {}] as const,
   },
-  /** Raw hook-reported agent events (`GET /v1/events`). */
+  /** Raw agent events the ACP runtime recorded (`GET /v1/events`). */
   agentEvents: {
     all: () => ["agent-events"] as const,
     lists: () => ["agent-events", "list"] as const,

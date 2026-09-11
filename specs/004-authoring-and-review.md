@@ -82,12 +82,12 @@ Out: the transition table itself (001), the landing that follows approval
     reaches that author as a message, and only that author revises. A
     reviewer works one review at a time, oldest first by author order, and
     each verdict it gives is the event that hands it the next: a reviewer
-    whose pane survived the last review is briefed for the next one the
+    whose agent survived the last review is briefed for the next one the
     moment it owes it — the full briefing naming the author and its branch,
-    typed into the live pane, with its detached worktree moved to that
-    branch first — rather than waiting on the quiet clock (009). That
+    sent to the live agent as a prompt, with its detached worktree moved to
+    that branch first — rather than waiting on the quiet clock (009). That
     briefing is also the review request's delivery: a contested request is
-    never typed to a reviewer as a bare message, since the summary alone
+    never sent to a reviewer as a bare message, since the summary alone
     names neither the author nor the branch, and the briefing is what
     stamps it delivered on the channel (018).
 14. Approval says a change is sound; with several sound changes, the pick

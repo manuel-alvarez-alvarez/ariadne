@@ -14,7 +14,7 @@ use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{TaskAgentDto, TaskDto};
-use ariadne_core::{AgentKind, GoalStatus, Landing, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, Landing, Seat, SessionStatus, TaskStatus};
 
 /// A stamp every fixture is created and updated at, so a rendered row is
 /// reproducible.
@@ -26,7 +26,7 @@ pub fn goal(id: &str, title: &str) -> GoalDto {
         title: title.into(),
         description: String::new(),
         status: GoalStatus::Active,
-        model: "claude_code:claude-sonnet-5".into(),
+        model: "stub:test-model".into(),
         effort: None,
         repos: Vec::new(),
         usage: Default::default(),
@@ -73,11 +73,9 @@ pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
             None => Seat::Orchestrator,
         },
         task_agent_id: Some("01AUTHOR".into()),
-        agent_kind: AgentKind::ClaudeCode,
-        model: "claude-sonnet-5".into(),
+        model: "stub:test-model".into(),
         effort: None,
         internal_session_id: None,
-        tmux_session: format!("ariadne-{id}"),
         worktree_path: None,
         status: SessionStatus::Running,
         attention_reason: None,
@@ -97,7 +95,7 @@ pub fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
         seat,
         branch: None,
         skills: skills.iter().map(|s| s.to_string()).collect(),
-        model: "claude_code:claude-sonnet-5".into(),
+        model: "stub:test-model".into(),
         effort: None,
         brief: None,
     }

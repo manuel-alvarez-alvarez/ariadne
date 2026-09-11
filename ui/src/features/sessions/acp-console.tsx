@@ -1,18 +1,16 @@
 /**
- * Ariadne's own console for an `acp` session: the counterpart of
- * `session-terminal.tsx` for a session with no pane at all.
+ * Ariadne's own console for a session: what the agent is doing, and where the
+ * user speaks to it.
  *
- * An `acp` session has nothing a tmux pane would show — no grid, no escape
- * sequences — so it gets a console instead: the transcript
- * (`console-transcript.tsx`), an input line, and permission questions
- * answered inline. `console-stream.ts` is the wire underneath, the same shape
- * `log-stream.ts` gives a pane.
+ * An agent speaks ACP, so there is no grid and no escape sequence to show:
+ * the console is the transcript (`console-transcript.tsx`), an input line,
+ * and permission questions answered inline. `console-stream.ts` is the wire
+ * underneath.
  *
- * The panel-to-dialog lift is the same move `session-terminal.tsx` makes, for
- * the same reason: only the frame changes, so expanding costs no new
- * connection and drops nothing already on screen. There is no escape-key
- * tug-of-war to referee here, though — a plain input line does not want
- * Escape the way a pane's TUI does, so the dialog closes on it like any other.
+ * The console can be lifted out of the panel into a dialog, and only the
+ * frame changes, so expanding costs no new connection and drops nothing
+ * already on screen. A plain input line does not want Escape, so the dialog
+ * closes on it like any other.
  */
 
 import { Minimize2Icon } from "lucide-react"
@@ -43,9 +41,8 @@ export function AcpConsole({
   const [expanded, setExpanded] = useState(false)
   /**
    * The element the console is rendered into, made once and kept for as long
-   * as this component is on screen — the same trick `session-terminal.tsx`
-   * uses, for the same reason: moving the DOM node between the panel and the
-   * dialog keeps the one stream connection open instead of dropping it and
+   * as this component is on screen: moving the DOM node between the panel and
+   * the dialog keeps the one stream connection open instead of dropping it and
    * fetching a fresh snapshot for a transcript that has not gone anywhere.
    */
   const [host] = useState(createConsoleHost)
@@ -105,7 +102,11 @@ export function AcpConsole({
   )
 }
 
-/** See {@link SessionTerminal}'s `createTerminalHost`, which this mirrors. */
+/**
+ * A bare element outside React's tree for the console to live in. It is
+ * `display: contents` so it lays out as if the console were the anchor's own
+ * child, wherever the anchor is.
+ */
 function createConsoleHost(): HTMLDivElement {
   const host = document.createElement("div")
   host.style.display = "contents"

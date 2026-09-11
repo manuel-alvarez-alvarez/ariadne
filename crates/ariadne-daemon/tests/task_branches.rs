@@ -3,8 +3,9 @@
 //! Nothing in the store changes when an author commits, so the daemon
 //! watches the branch ref itself and publishes `task_branch_updated` off that
 //! watch. `git` is real here: the commits are made in the author's worktree
-//! by the test, exactly where the agent would have made them. `tmux` is the
-//! stub, so the author is a row and a spawn plan rather than a pane.
+//! by the test, exactly where the agent would have made them. The author is
+//! the harness's stub agent, which answers its briefing and then says
+//! nothing.
 
 mod common;
 
@@ -12,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::{Actor, TaskStatus};
+use ariadne_core::{Actor, SessionStatus, TaskStatus};
 use ariadne_daemon::bus::BusEvent;
 use ariadne_store::Task;
 use tokio::sync::broadcast::Receiver;
@@ -35,7 +36,13 @@ const SILENCE: Duration = Duration::from_secs(2);
 async fn at_work(h: &Harness) -> (Task, PathBuf, PathBuf) {
     let repo = h.git_repo("repo");
     let cast = h.active_cast().await;
-    h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let author = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    // The stub answers its briefing at once; what the tests hear from here on
+    // is the branch, not the agent's turn.
+    eventually(TIMEOUT, "the author's first turn to end", || async {
+        h.session_status(&author).await == SessionStatus::Idle
+    })
+    .await;
     let task = h.store.get_task(&cast.task.id).await.unwrap();
     let worktree = task
         .worktree_path

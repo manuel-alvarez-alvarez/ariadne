@@ -1,17 +1,14 @@
 //! The ACP runtime: the daemon's own client for agents that speak the Agent
 //! Client Protocol.
 //!
-//! Every other agent kind runs a CLI inside a tmux pane. An `acp` session is
-//! a child process of the daemon itself: spawned with piped standard input
-//! and output, driven over newline-delimited JSON-RPC (ACP version 1), reaped
-//! when it exits, and killed when its session is killed. The protocol code is
-//! ported from the CLI-side client (`ariadne-cli/src/commands/acp.rs`), which
-//! `ariadne _spawn` still carries for launches outside the daemon.
+//! Every session is a child process of the daemon itself: spawned with piped
+//! standard input and output, driven over newline-delimited JSON-RPC (ACP
+//! version 1), reaped when it exits, and killed when its session is killed.
 //!
-//! What the agent does is reported through the same ingestion the hooks use
-//! (`crate::http::events::ingest_event`), in the ACP adapter's event
-//! vocabulary, so an `acp` session's events, status, attention and internal
-//! id read exactly like every other session's.
+//! What the agent does is reported through the one ingestion path
+//! (`crate::http::events::ingest_event`), in the runtime's own event
+//! vocabulary, which is what moves a session's status, attention and internal
+//! id.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,8 +22,8 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use ariadne_api::events::IngestEventRequest;
+use ariadne_core::PermissionMode;
 use ariadne_core::acp::LaunchConfig;
-use ariadne_core::{AgentKind, PermissionMode};
 use ariadne_store::Store;
 
 use crate::acp_rpc::{Incoming, RpcTransport};
@@ -34,14 +31,15 @@ use crate::http::events::ingest_event;
 use crate::scheduler::SchedEvent;
 
 /// Everything one launch of an ACP agent is made of. The launcher builds it
-/// from the adapter's spawn plan: the argv and environment as planned, and
-/// the `acp.json` the adapter wrote, read back as the protocol's half.
+/// from the adapter's spawn plan: the registry command with the planned
+/// flags behind it, the environment as planned, and the launch file as the
+/// protocol's half.
 pub struct AcpLaunch {
     pub session_id: String,
     /// The launch every event of this process reports under.
     pub launch_id: String,
-    /// The executable to spawn — `Config::acp_bin`, which is the contract's
-    /// `acp` outside a test.
+    /// The executable to spawn: the head of the registry command of the
+    /// agent the session's pin names.
     pub program: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
@@ -53,12 +51,12 @@ pub struct AcpLaunch {
     pub permission_mode: PermissionMode,
 }
 
-/// The daemon-owned ACP agents, one child process per live `acp` session.
+/// The daemon-owned ACP agents, one child process per live session.
 ///
 /// Cheap to clone: every clone shares the one registry, which is what lets a
-/// driver task deregister itself and the launcher ask who is alive. Unlike
-/// tmux there is no "could not be asked" — the registry always answers, and a
-/// daemon restart answers "no" for every child of the daemon that died.
+/// driver task deregister itself and the launcher ask who is alive. There is
+/// no "could not be asked" — the registry always answers, and a daemon
+/// restart answers "no" for every child of the daemon that died.
 #[derive(Clone)]
 pub struct AcpRuntime {
     inner: Arc<Inner>,
@@ -130,7 +128,7 @@ impl AcpRuntime {
     /// option answer meant for a person.
     ///
     /// Errs where there is nobody here to hear it: no agent runs for this
-    /// session, which is the prompt's counterpart of a pane that is gone.
+    /// session.
     pub fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
         self.inner
             .running
@@ -147,7 +145,7 @@ impl AcpRuntime {
     /// as an option answer; otherwise it becomes a prompt as before.
     ///
     /// Errs where there is nobody here to hear it: no agent runs for this
-    /// session, which is the console's counterpart of a pane that is gone.
+    /// session.
     pub fn send_input(&self, session_id: &str, text: String) -> Result<()> {
         let (prompts, permission) = {
             let running = self.inner.running.lock().expect("acp registry lock");
@@ -313,8 +311,8 @@ impl AcpRuntime {
     }
 }
 
-/// Where the driver reports what its agent does: the same ingestion the
-/// hooks post to, minus the process and the socket.
+/// Where the driver reports what its agent does: the one ingestion path
+/// every event takes into the store.
 #[derive(Clone)]
 struct EventSink {
     runtime: AcpRuntime,
@@ -327,13 +325,12 @@ struct EventSink {
 }
 
 impl EventSink {
-    /// Event reporting is fail-safe, like every agent hook: an event that
-    /// cannot be recorded costs the record, never the agent.
+    /// Event reporting is fail-safe: an event that cannot be recorded costs
+    /// the record, never the agent.
     async fn emit(&self, kind: &str, payload: Value) {
         let request = IngestEventRequest {
             session_id: self.session_id.clone(),
             launch: Some(self.launch_id.clone()),
-            agent_kind: AgentKind::Acp,
             kind: kind.to_string(),
             payload,
         };

@@ -79,7 +79,7 @@ function card(): HTMLElement {
 const LOADED: TaskDto = {
   ...TASK,
   agents: [
-    { id: "01AGENTAUTHOR", seat: "author", skills: ["coding"], model: "codex:gpt-5.3-codex" },
+    { id: "01AGENTAUTHOR", seat: "author", skills: ["coding"], model: "codex-acp:gpt-5.3-codex" },
   ],
 }
 
@@ -185,7 +185,7 @@ it("says nothing about what the task runs on, however it is pinned", () => {
         id: "01AGENTAUTHOR",
         seat: "author",
         skills: ["coding"],
-        model: "claude_code:claude-fable-5",
+        model: "claude-code-acp:claude-fable-5",
         effort: "high",
       },
     ],

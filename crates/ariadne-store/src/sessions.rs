@@ -1,7 +1,7 @@
 //! Agent-session repository.
 
 use ariadne_core::id::new_id;
-use ariadne_core::{AgentKind, AttentionReason, Seat, SessionStatus};
+use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use crate::query::Filtered;
 use crate::{AgentSession, Change, Result, Store, not_found, now};
@@ -17,10 +17,6 @@ const PROMPTS_ONLY: &str = " AND attention_reason IN (?, ?)";
 /// and the failed turn of [`Store::clear_attention_after_idle`].
 const SILENCE_AND_ERROR: &str = " AND attention_reason IN (?, ?)";
 
-/// The clause that keeps a clear to one named reason — the flag raised for
-/// the user, or the one a question in the pane raised.
-const ONE_REASON: &str = " AND attention_reason = ?";
-
 /// The clause that leaves what a human is owed where it is: a raise an agent's
 /// own detectors made does not land on a row carrying
 /// [`AttentionReason::is_for_the_user`].
@@ -33,12 +29,10 @@ pub struct NewSession {
     pub seat: Seat,
     /// The staffed agent this session runs; None for an orchestrator.
     pub task_agent_id: Option<String>,
-    pub agent_kind: AgentKind,
-    /// Model to launch with.
+    /// Model to launch with, `<agent>:<model>`.
     pub model: String,
-    /// Effort to run that model at; None = whatever the CLI runs it at.
+    /// Effort to run that model at; None = whatever the agent runs it at.
     pub effort: Option<String>,
-    pub tmux_session: String,
     pub worktree_path: Option<String>,
 }
 
@@ -58,20 +52,17 @@ impl Store {
     pub async fn create_session(&self, new: NewSession) -> Result<AgentSession> {
         let id = new_id();
         sqlx::query(
-            "INSERT INTO agent_sessions (id, goal_id, task_id, seat, task_agent_id, agent_kind, model,
-                                         effort, tmux_session, worktree_path, status,
-                                         created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
+            "INSERT INTO agent_sessions (id, goal_id, task_id, seat, task_agent_id, model,
+                                         effort, worktree_path, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
         )
         .bind(&id)
         .bind(&new.goal_id)
         .bind(&new.task_id)
         .bind(new.seat.as_str())
         .bind(&new.task_agent_id)
-        .bind(new.agent_kind.as_str())
         .bind(&new.model)
         .bind(&new.effort)
-        .bind(&new.tmux_session)
         .bind(&new.worktree_path)
         .bind(now())
         .execute(self.w())
@@ -99,7 +90,7 @@ impl Store {
     /// Move a session to a new lifecycle status.
     ///
     /// Retiring one takes any prompt-style attention down with it: a session
-    /// that has ended has no terminal to answer a dialog in, and a flag left
+    /// that has ended has no agent left to answer, and a flag left
     /// behind that way asks the user to go and reply to nobody. The reasons a
     /// session ends *carrying* — an error, a disconnect, a stall — are meant
     /// to outlive it and are left alone.
@@ -209,7 +200,7 @@ impl Store {
     /// taken.
     ///
     /// Everything else stands. Going idle is exactly when a permission prompt
-    /// or a question is up, so the prompt reasons survive it, and
+    /// is up, so the prompt reasons survive it, and
     /// `waiting_user` was never the agent's to take down — see
     /// [`Store::clear_agent_attention`], which is the clear a session going
     /// back to *work* makes instead.
@@ -220,23 +211,6 @@ impl Store {
         ];
         let cleared = self
             .clear_attention(id, SILENCE_AND_ERROR, &reasons)
-            .await?;
-        self.announce_attention(id, cleared).await
-    }
-
-    /// The clear an answered question makes: `waiting_input`, and nothing
-    /// else.
-    ///
-    /// The narrow one, because the event that ends a question is often an
-    /// event that proves nothing else. A turn ending on `stop` is how Esc on
-    /// the choices reads, and [`Store::clear_attention_after_idle`] rightly
-    /// leaves a prompt standing through an idle — the dialog an agent is
-    /// blocked on is still on the screen while it sits there. A question that
-    /// has just left the screen is not, and it is the only flag going idle
-    /// that way does answer.
-    pub async fn clear_question_attention(&self, id: &str) -> Result<()> {
-        let cleared = self
-            .clear_attention(id, ONE_REASON, &[AttentionReason::WaitingInput.as_str()])
             .await?;
         self.announce_attention(id, cleared).await
     }
@@ -264,8 +238,8 @@ impl Store {
     }
 
     /// Put a finished session back into its pre-spawn state so it can be
-    /// relaunched under its own id: resuming a conversation in a fresh tmux
-    /// keeps the one row — same id, same console log — instead of leaving a
+    /// relaunched under its own id: resuming a conversation in a fresh agent
+    /// process keeps the one row — same id, same console log — instead of leaving a
     /// sibling behind for every review it sat through. `worktree_path`
     /// overwrites the stored one when given, since the relaunch is what
     /// decides it.
@@ -317,8 +291,8 @@ impl Store {
     /// Written on the way into every launch rather than on the way out,
     /// because what it settles is which of two processes the row belongs to:
     /// a relaunch kills one agent and starts another under the same session
-    /// id, and between the kill and the new pane the old one still has its
-    /// exit hook to fire. From this write on, that report names a launch the
+    /// id, and between the kill and the new process the old one can still
+    /// report its end. From this write on, that report names a launch the
     /// row has moved past — see [`Store::mark_session_launched`] for the
     /// stamp that follows once the process is up.
     pub async fn set_session_launch(&self, id: &str, launch_id: &str) -> Result<()> {

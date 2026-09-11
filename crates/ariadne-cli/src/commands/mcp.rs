@@ -180,7 +180,7 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 }
 
 /// Whether a session gets an answer to a question: the orchestrator writes a
-/// spec with the user, who is there in the terminal to ask; an author or
+/// spec with the user, who is there in the console to ask; an author or
 /// reviewer works its task alone, with nobody there to answer one.
 ///
 /// The orchestrator's line replaced "work alone" whole, sentence for
@@ -191,7 +191,7 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
-            "The user answers in your terminal. Ask in plain turn text, one \
+            "The user answers in your console. Ask in plain turn text, one \
              question at a time. Then wait."
         }
         McpSeat::Author | McpSeat::Reviewer => {
@@ -483,7 +483,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The orchestrator is told the user answers in the terminal and to ask; an
+    /// The orchestrator is told the user answers in the console and to ask; an
     /// author or reviewer is told the opposite, word for word as before.
     #[test]
     fn only_the_orchestrator_is_told_to_ask() {
@@ -492,7 +492,7 @@ pub(crate) mod tests {
             Client::resolve(Some("http://127.0.0.1:1"), None),
         );
         let instructions = orchestrator.get_info().instructions.expect("instructions");
-        assert!(instructions.contains("The user answers in your terminal"));
+        assert!(instructions.contains("The user answers in your console"));
         assert!(instructions.contains("Ask in plain turn text, one question at a time"));
         assert!(instructions.contains("Then wait"));
         assert!(!instructions.contains("Nobody answers a question, so do not ask"));

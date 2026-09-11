@@ -43,7 +43,6 @@ const SESSION: SessionDto = aSession({
   goal_id: GOAL.id,
   task_id: TASK.id,
   task_agent_id: ENGINEER,
-  tmux_session: "ariadne-01JSESS0000000000000000001",
 })
 
 /** An orchestrator's: no task, and a lane header of the goal's rather than a task card. */
@@ -255,9 +254,9 @@ it("sends a stuck orchestrator to its own session panel, having no card of its o
   expect(await hrefs()).toEqual([`/goals?status=active&session=${PLANNER_SESSION.id}`])
 })
 
-// A prompt is answered with a keystroke, so this one does open the pane — and
-// hands it the keyboard on the way in.
-it("sends a blocked agent to its terminal, focused", async () => {
+// A prompt is answered in the console, so this one does open it — and hands
+// it the keyboard on the way in.
+it("sends a blocked agent to its console, focused", async () => {
   stubDaemon({
     tasks: [TASK],
     sessions: [

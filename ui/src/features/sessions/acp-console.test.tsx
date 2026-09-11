@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * The console an `acp` session gets instead of a pane: pinning down that a
+ * The console every session gets: pinning down that a
  * stream turns into a readable transcript, that a typed message reaches the
  * console's input endpoint and shows as pending until the daemon confirms it,
  * and that an inline permission question is answered the same way.

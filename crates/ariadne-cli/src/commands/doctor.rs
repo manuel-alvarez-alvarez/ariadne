@@ -7,9 +7,10 @@
 //! The report has two halves on purpose. What this shell sees is one thing;
 //! what `ariadned` sees is another, and it is the one that matters, because
 //! the daemon is what spawns sessions. A daemon started by launchd or systemd
-//! carries the PATH its service file was written with, so an agent CLI
-//! installed after the install can be perfectly present here and invisible
-//! there — which looks, from the outside, like an agent that will not run.
+//! carries the PATH its service file was written with, so a binary installed
+//! after the install can be perfectly present here and invisible there. Which
+//! agents a session can run on is the daemon's alone to say: its ACP
+//! registry, and what discovery found each agent able to do.
 
 mod agents;
 mod checks;
@@ -19,9 +20,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 use serde::Serialize;
 
-use ariadne_api::doctor::{BinaryDto, DaemonReportDto};
 use ariadne_client::{Client, endpoint};
-use ariadne_core::AgentKind;
 
 use crate::output::{
     Column, Format, UNCAPPED, View, col, note, print, render_table, style, table, view,
@@ -34,61 +33,6 @@ const COLUMNS: &[Column] = &[
     col("check", 28),
     col("detail", 72),
 ];
-
-/// Which agent binaries can actually be launched, from both points of view.
-#[derive(Debug, Default, Clone)]
-pub struct Availability {
-    /// Kinds on the daemon's PATH; `None` when no daemon answered.
-    daemon: Option<Vec<AgentKind>>,
-    /// Kinds on this shell's PATH.
-    client: Vec<AgentKind>,
-}
-
-impl Availability {
-    fn new(daemon: Option<&DaemonReportDto>, agents: &[BinaryDto]) -> Self {
-        let launchable = |binaries: &[BinaryDto]| -> Vec<AgentKind> {
-            binaries
-                .iter()
-                .filter(|b| b.path.is_some())
-                .filter_map(|b| b.agent_kind)
-                .collect()
-        };
-        Self {
-            daemon: daemon.map(|d| launchable(&d.agents)),
-            client: launchable(agents),
-        }
-    }
-
-    /// What the process that spawns sessions can launch: the daemon's view
-    /// when there is one, this shell's as the only stand-in when there is not.
-    pub(super) fn effective(&self) -> &[AgentKind] {
-        self.daemon.as_deref().unwrap_or(&self.client)
-    }
-
-    pub(super) fn has(&self, kind: AgentKind) -> bool {
-        self.effective().contains(&kind)
-    }
-
-    /// Installed here but not where it counts — the shape a stale service
-    /// PATH takes.
-    pub(super) fn only_on_client(&self, kind: AgentKind) -> bool {
-        self.daemon.is_some() && !self.has(kind) && self.client.contains(&kind)
-    }
-
-    /// Nothing to launch where it counts, while this shell has agents: the
-    /// same stale service PATH, seen across all four at once.
-    pub(super) fn stale_service_path(&self) -> bool {
-        self.daemon.is_some() && self.effective().is_empty() && !self.client.is_empty()
-    }
-
-    /// Whose PATH a verdict was reached on, so a failure says where to look.
-    pub(super) fn viewpoint(&self) -> &'static str {
-        match self.daemon.is_some() {
-            true => checks::THERE,
-            false => checks::HERE,
-        }
-    }
-}
 
 /// How a check came out. Ordered by severity so the worst one wins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -252,38 +196,23 @@ async fn examine(client: &Client) -> Report {
     let config = home.as_deref().map(endpoint::parse_config);
 
     // Probes are processes: run them at once rather than several seconds apart.
-    let (acp, claude, codex, opencode, tmux, git, gh, glab, ariadned) = tokio::join!(
-        checks::agent(AgentKind::Acp),
-        checks::agent(AgentKind::ClaudeCode),
-        checks::agent(AgentKind::Codex),
-        checks::agent(AgentKind::Opencode),
-        checks::tool("tmux", "-V", false),
+    let (git, gh, glab, ariadned) = tokio::join!(
         checks::tool("git", "--version", false),
         checks::tool("gh", "--version", true),
         checks::tool("glab", "--version", true),
         checks::ariadned(),
     );
-    let agents = vec![acp, claude, codex, opencode];
 
     let health = client.health().await;
     let reachable = health.is_ok();
     // Everything here only exists for a daemon that answered at all.
-    let (version, daemon, flags) = match reachable {
+    let (version, daemon) = match reachable {
         true => {
-            let (version, daemon, flags) = tokio::join!(
-                client.version(),
-                client.daemon_report(),
-                client.list_agent_configs(),
-            );
-            (
-                version.ok().map(|v| v.version),
-                daemon.ok(),
-                flags.unwrap_or_default(),
-            )
+            let (version, daemon) = tokio::join!(client.version(), client.daemon_report());
+            (version.ok().map(|v| v.version), daemon.ok())
         }
-        false => (None, None, Vec::new()),
+        false => (None, None),
     };
-    let available = Availability::new(daemon.as_ref(), &agents);
 
     Report::new(
         client.endpoint(),
@@ -294,10 +223,9 @@ async fn examine(client: &Client) -> Report {
                 "daemon",
                 checks::daemon(client, &health, version, home.as_deref()).await,
             ),
-            Section::new("tools", checks::tools(&[tmux, git], &[gh, glab])),
-            Section::new("agents", agents::agents(&agents, &flags, &available)),
+            Section::new("tools", checks::tools(&[git], &[gh, glab])),
             Section::new(
-                "ACP agents",
+                "agents",
                 daemon
                     .as_ref()
                     .map(|report| agents::acp_agents(&report.acp_agents))
@@ -305,7 +233,7 @@ async fn examine(client: &Client) -> Report {
             ),
             Section::new(
                 "daemon environment",
-                agents::daemon_environment(daemon.as_ref(), &available),
+                agents::daemon_environment(daemon.as_ref()),
             ),
         ],
     )
@@ -369,15 +297,9 @@ pub(crate) mod tests {
     use ariadne_api::doctor::BinaryDto;
 
     /// A binary as either half of the report carries one.
-    pub(crate) fn binary(
-        name: &str,
-        kind: Option<AgentKind>,
-        found: bool,
-        auth: Option<bool>,
-    ) -> BinaryDto {
+    pub(crate) fn binary(name: &str, found: bool, auth: Option<bool>) -> BinaryDto {
         BinaryDto {
             name: name.into(),
-            agent_kind: kind,
             path: found.then(|| format!("/bin/{name}")),
             version: found.then(|| "1.0".to_string()),
             authenticated: auth,
@@ -497,7 +419,7 @@ pub(crate) mod tests {
                 vec![
                     Check::ok("git", "2.43.0"),
                     Check::warn("gh", "not authenticated"),
-                    Check::fail("tmux", "not found").hint("install tmux"),
+                    Check::fail("git", "not found").hint("install git"),
                 ],
             )],
         );
@@ -522,7 +444,7 @@ pub(crate) mod tests {
             fail_line.contains(&style::paint(true, style::check("fail").0, "✗ fail")),
             "{fail_line}"
         );
-        assert!(visible(hint_line).contains("install tmux"), "{hint_line}");
+        assert!(visible(hint_line).contains("install git"), "{hint_line}");
 
         // `name` starts in the same column on every row, escapes and all —
         // a character offset, since a multi-byte glyph like `✗` would throw
@@ -532,7 +454,7 @@ pub(crate) mod tests {
             plain.find(name).map(|byte| plain[..byte].chars().count())
         };
         assert_eq!(name_offset(ok_line, "git"), name_offset(warn_line, "gh"));
-        assert_eq!(name_offset(ok_line, "git"), name_offset(fail_line, "tmux"));
+        assert_eq!(name_offset(ok_line, "git"), name_offset(fail_line, "git"));
 
         // Plain is the same report, minus every escape — and the glyphs,
         // which are the one thing colour is allowed to have added.
@@ -580,13 +502,13 @@ pub(crate) mod tests {
             "/tmp/ariadne.sock",
             vec![Section::new(
                 "tools",
-                vec![Check::fail("tmux", "not found").hint("install tmux")],
+                vec![Check::fail("git", "not found").hint("install git")],
             )],
         ))
         .unwrap();
         assert_eq!(json["status"], "fail");
         assert_eq!(json["sections"][0]["name"], "tools");
         assert_eq!(json["sections"][0]["checks"][0]["status"], "fail");
-        assert_eq!(json["sections"][0]["checks"][0]["hint"], "install tmux");
+        assert_eq!(json["sections"][0]["checks"][0]["hint"], "install git");
     }
 }

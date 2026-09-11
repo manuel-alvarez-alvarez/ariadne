@@ -1,7 +1,7 @@
-//! The interactive console for an ACP session.
+//! The interactive console for an agent session.
 //!
-//! An ACP agent has no tmux pane. Its recorded agent events are its
-//! transcript, and a line typed here becomes the next `session/prompt`.
+//! An agent's recorded events are its transcript, and a line typed here
+//! becomes the next `session/prompt`.
 
 use anyhow::Result;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -306,7 +306,6 @@ mod tests {
             id: "event".into(),
             session_id: Some("session".into()),
             task_id: None,
-            agent_kind: Some("acp".into()),
             kind: kind.into(),
             payload,
             summary: summary.into(),

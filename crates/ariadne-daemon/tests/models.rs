@@ -1,143 +1,130 @@
 //! Integration tests for the model catalog endpoint.
 //!
 //! The contract is that `GET /v1/models` returns everything an agent can be
-//! pinned to, each entry's id spelled the way a request writes it: the
-//! curated models of each agent CLI, `<agent_kind>:<model>`, and no bare-CLI
-//! entry — a model is required wherever an agent is pinned. Nothing scopes
-//! the catalog any more, so there is one answer and it is the union. Each
-//! entry says what the model is for and carries the efforts it can be run
-//! at. OpenCode discovery's parser is unit-tested in the daemon; here it is
-//! exercised only by one test that needs a catalog it can change out from
-//! under a write, and that one points discovery at a stub rather than an
-//! installed `opencode` binary, whose live answer can differ between two
-//! calls by chance rather than on demand.
+//! pinned to, each entry's id spelled the way a request writes it: the models
+//! discovery found each registry agent offering, `<agent>:<model>`, and no
+//! bare-agent entry — a model is required wherever an agent is pinned.
+//! Nothing scopes the catalog, so there is one answer and it is the union.
+//! Each entry carries the efforts it can be run at, as the agent offered
+//! them. What discovery reads off an agent is tested in `acp_discovery.rs`.
 //!
 //! Every entry also says whether an agent can be staffed on it. The catalog
-//! is code and discovery, so what the database holds is the user's
-//! subtraction from it: a model turned off stays listed, off, and is refused
-//! as a pin.
+//! is discovery, so what the database holds is the user's subtraction from
+//! it: a model turned off stays listed, off, and is refused as a pin.
 
 mod common;
 
 use ariadne_api::models::ModelDto;
-use ariadne_core::models::curated_models;
-use ariadne_core::{AgentKind, ModelTier};
+use ariadne_core::ModelTier;
 
 use axum::http::StatusCode;
 
 use ariadne_api::error::ErrorBody;
 
-use common::{Harness, harness, put_json, vanishing_opencode_stub};
+use common::acp::{discovery_settled, option, registry_home, script, stub_acp_agent};
+use common::{Harness, harness, put_json};
 
 async fn models(h: &Harness) -> Vec<ModelDto> {
     h.get("/v1/models").await
 }
 
-/// Every curated model is listed under its agent CLI, with everything a
-/// orchestrator sizes a task from and an id that carries the CLI it runs on.
-#[tokio::test]
-async fn every_curated_model_is_listed_as_its_agent_runs_it() {
-    let h = harness().await;
-    let got = models(&h).await;
-    for kind in [AgentKind::ClaudeCode, AgentKind::Codex] {
-        for want in curated_models(kind) {
-            let id = format!("{}:{}", kind.as_str(), want.id);
-            let found = got
-                .iter()
-                .find(|m| m.id == id)
-                .unwrap_or_else(|| panic!("missing {id}"));
-            assert_eq!(found.agent_kind, kind, "{id}");
-            assert_eq!(found.description.as_deref(), Some(want.description), "{id}");
-            assert_ne!(found.tier, ModelTier::Unknown, "{id}");
-            for band in [found.cost, found.speed] {
-                let band = band.unwrap_or_else(|| panic!("{id} is unranked"));
-                assert!((1..=5).contains(&band), "{id}: {band}");
-            }
-            assert!(!found.best_for.is_empty(), "{id}");
-            assert!(!found.avoid_for.is_empty(), "{id}");
-            assert!(
-                found.efforts.iter().all(|e| e.description.is_some()),
-                "{id}: every effort says what it buys"
-            );
-        }
-    }
+/// A harness whose registry agent `stub` offers two models, and three
+/// efforts with `medium` the one it runs at, discovered.
+async fn two_model_harness(dir: &std::path::Path) -> Harness {
+    let mut offer = script();
+    offer["config_options"] = serde_json::json!([
+        {
+            "id": "model-id", "name": "Model", "category": "model", "type": "select",
+            "currentValue": "old-model",
+            "options": [
+                {"value": "old-model", "name": "The old one"},
+                {"value": "new-model", "name": "The new one"},
+            ],
+        },
+        {
+            "id": "effort-id", "name": "Effort", "category": "thought_level", "type": "select",
+            "currentValue": "medium",
+            "options": [{"value": "low"}, {"value": "medium"}, {"value": "high"}],
+        },
+    ]);
+    let stub = stub_acp_agent(dir, offer);
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
+    h
 }
 
-/// A curated model carries the efforts it can be run at, cheapest first, and
-/// flags the one its CLI runs it at when none is passed — including the models
-/// that take no effort at all, which say so with an empty list.
+/// Every model an agent offered is listed under that agent's registry id,
+/// with the efforts it offered, cheapest first as offered, and the one it
+/// runs at by default flagged. Nothing is written about a discovered model
+/// beyond what the agent said.
 #[tokio::test]
-async fn a_curated_model_carries_its_efforts_and_its_default() {
-    let h = harness().await;
+async fn every_discovered_model_is_listed_as_its_agent_runs_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
     let got = models(&h).await;
-    let found = |id: &str| {
-        got.iter()
-            .find(|m| m.id == id)
-            .unwrap_or_else(|| panic!("missing {id}"))
-            .clone()
-    };
-    let ids = |m: &ModelDto| -> Vec<String> { m.efforts.iter().map(|e| e.id.clone()).collect() };
-    let defaults = |m: &ModelDto| -> Vec<String> {
-        m.efforts
-            .iter()
-            .filter(|e| e.default)
-            .map(|e| e.id.clone())
-            .collect()
-    };
-
-    let luna = found("codex:gpt-5.6-luna");
-    assert_eq!(ids(&luna), ["low", "medium", "high", "xhigh", "max"]);
-    assert_eq!(defaults(&luna), ["medium"], "exactly one, and it is medium");
     assert_eq!(
-        luna.efforts[0].description.as_deref(),
-        Some("Fast responses with lighter reasoning: small, well-specified changes")
+        got.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["stub:old-model", "stub:new-model"]
     );
-
-    let opus = found("claude_code:claude-opus-4-7");
-    assert_eq!(defaults(&opus), ["xhigh"], "the one model that runs deep");
-
-    for id in [
-        "claude_code:claude-haiku-4-5",
-        "claude_code:claude-sonnet-4-5",
-    ] {
-        let model = found(id);
-        assert!(model.efforts.is_empty(), "{id} takes no effort at all");
+    for model in &got {
+        assert_eq!(model.agent_id, "stub");
+        assert_eq!(model.tier, ModelTier::Unknown);
+        assert_eq!(
+            model
+                .efforts
+                .iter()
+                .map(|e| e.id.as_str())
+                .collect::<Vec<_>>(),
+            ["low", "medium", "high"]
+        );
+        assert_eq!(
+            model
+                .efforts
+                .iter()
+                .filter(|e| e.default)
+                .map(|e| e.id.as_str())
+                .collect::<Vec<_>>(),
+            ["medium"]
+        );
+        assert!(model.enabled);
     }
+    assert_eq!(got[1].description.as_deref(), Some("The new one"));
 }
 
-/// No agent CLI is offered on its own: a model is required wherever an agent
-/// is pinned, so a bare-CLI entry would be an id no request may write. Every
-/// entry names both halves, `<agent_kind>:<model>`.
+/// An agent discovery has not accepted offers nothing: the catalog is what
+/// discovery found, and a daemon that has not run it has found nothing.
 #[tokio::test]
-async fn no_bare_cli_entry_is_listed() {
-    let h = harness().await;
+async fn an_agent_discovery_has_not_accepted_offers_no_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(dir.path(), script());
+    let h = harness().home(registry_home(&stub)).await;
+    assert!(models(&h).await.is_empty());
+}
+
+/// No agent is offered on its own: a model is required wherever an agent is
+/// pinned, so a bare-agent entry would be an id no request may write. Every
+/// entry names both halves, `<agent>:<model>`.
+#[tokio::test]
+async fn no_bare_agent_entry_is_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
     let got = models(&h).await;
     assert!(!got.is_empty());
     for entry in &got {
         assert!(
-            entry.id.contains(':'),
+            entry.id.starts_with(&format!("{}:", entry.agent_id)),
+            "`{}` and its agent_id disagree",
+            entry.id
+        );
+        assert!(
+            entry.id.len() > entry.agent_id.len() + 1,
             "`{}` names no model, and nothing may pin it",
             entry.id
-        );
-        assert!(
-            entry
-                .id
-                .starts_with(&format!("{}:", entry.agent_kind.as_str())),
-            "`{}` and its agent_kind disagree",
-            entry.id
-        );
-    }
-    for kind in AgentKind::ALL {
-        assert!(
-            !got.iter().any(|m| m.id == kind.as_str()),
-            "{} is offered bare",
-            kind.as_str()
         );
     }
 }
 
-/// The endpoint is part of the OpenAPI document, and nothing scopes it: the
-/// `agent` parameter went with the agent field it filtered.
+/// The endpoint is part of the OpenAPI document, and nothing scopes it.
 #[tokio::test]
 async fn endpoint_is_in_the_openapi_document_with_nothing_to_filter_by() {
     let h = harness().await;
@@ -157,8 +144,9 @@ async fn endpoint_is_in_the_openapi_document_with_nothing_to_filter_by() {
 /// prints `no`, and the orchestrator is never offered it at all.
 #[tokio::test]
 async fn a_model_turned_off_stays_in_the_catalog_and_out_of_use() {
-    let h = harness().await;
-    let id = "claude_code:claude-opus-5";
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    let id = "stub:old-model";
     assert!(
         models(&h).await.iter().all(|m| m.enabled),
         "a fresh daemon has nothing turned off"
@@ -203,91 +191,46 @@ async fn a_model_turned_off_stays_in_the_catalog_and_out_of_use() {
 /// turned off that nothing could ever turn back on.
 #[tokio::test]
 async fn a_model_the_catalog_does_not_carry_cannot_be_turned_off() {
-    let h = harness().await;
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
     let envelope: ErrorBody = h
         .error(
             put_json(
                 "/v1/models/enabled",
-                serde_json::json!({"id": "claude_code:no-such-model", "enabled": false}),
+                serde_json::json!({"id": "stub:no-such-model", "enabled": false}),
             ),
             StatusCode::NOT_FOUND,
         )
         .await;
     assert!(
-        envelope.error.message.contains("claude_code:no-such-model"),
+        envelope.error.message.contains("stub:no-such-model"),
         "{}",
         envelope.error.message
     );
 }
 
-/// What `opencode models --verbose` prints for one model, `vanishing`: the
-/// [`vanishing_opencode_stub`] answers with this once, and with nothing after.
-const VANISHING_MODEL: &str = r#"opencode/vanishing
-{
-  "id": "vanishing",
-  "providerID": "opencode",
-  "name": "Vanishing"
-}
-"#;
-
 /// The last model left on cannot be turned off. A daemon that can staff
 /// nothing is not a state to leave a user in, and it is the one state this
 /// endpoint could put them in.
-///
-/// The catalog is re-read between writes rather than listed once: opencode's
-/// half of it is whatever discovery answers at that moment, so what "every
-/// other entry" means is a question with a fresh answer each time. A model
-/// the listing just named can be gone from the catalog by the time the write
-/// reaches it — discovery ran again in between and dropped it — and that is
-/// churn, not a failure: the listing is stale, not the assertion.
-///
-/// Discovery here is the stub, not the real `opencode`: it answers once with
-/// a model this test never named, `vanishing`, and with nothing ever after —
-/// gone from the catalog by the time anything tries to turn it off, on
-/// demand rather than by the real catalog's own chance.
 #[tokio::test]
 async fn the_last_model_left_on_cannot_be_turned_off() {
-    let stub_dir = tempfile::tempdir().unwrap();
-    let opencode_bin = vanishing_opencode_stub(stub_dir.path(), VANISHING_MODEL);
-    let h = harness().opencode_bin(opencode_bin).await;
-    let keep = "codex:gpt-5.6-sol";
-    // Everything but one, off — however many passes the catalog takes to
-    // stop offering another.
-    loop {
-        let others: Vec<String> = models(&h)
-            .await
-            .into_iter()
-            .filter(|m| m.enabled && m.id != keep)
-            .map(|m| m.id)
-            .collect();
-        if others.is_empty() {
-            break;
-        }
-        for id in others {
-            let (status, body) = h
-                .send(put_json(
-                    "/v1/models/enabled",
-                    serde_json::json!({"id": id, "enabled": false}),
-                ))
-                .await;
-            match status {
-                StatusCode::OK => {}
-                // Gone from the catalog since it was listed: re-list rather
-                // than fail on a model nothing offers any more.
-                StatusCode::NOT_FOUND => break,
-                other => panic!(
-                    "turning {id} off: {other} {}",
-                    String::from_utf8_lossy(&body)
-                ),
-            }
-        }
-    }
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    let _: ModelDto = h
+        .json(
+            put_json(
+                "/v1/models/enabled",
+                serde_json::json!({"id": "stub:new-model", "enabled": false}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
 
     let envelope: ErrorBody = h
         .error(
             put_json(
                 "/v1/models/enabled",
-                serde_json::json!({"id": keep, "enabled": false}),
+                serde_json::json!({"id": "stub:old-model", "enabled": false}),
             ),
             StatusCode::CONFLICT,
         )
@@ -300,5 +243,25 @@ async fn the_last_model_left_on_cannot_be_turned_off() {
     assert!(
         models(&h).await.iter().any(|m| m.enabled),
         "and something is still there to staff an agent on"
+    );
+}
+
+/// A model option with no choices of its own offers the one it holds: an
+/// agent that names only its current model is still an agent with a model.
+#[tokio::test]
+async fn a_model_option_with_no_choices_offers_its_current_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut offer = script();
+    offer["config_options"] = serde_json::json!([option("model-id", "model", "only-model")]);
+    let stub = stub_acp_agent(dir.path(), offer);
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
+    assert_eq!(
+        models(&h)
+            .await
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        ["stub:only-model"]
     );
 }

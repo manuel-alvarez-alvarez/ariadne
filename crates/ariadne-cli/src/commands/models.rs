@@ -6,7 +6,6 @@ use clap::Subcommand;
 
 use ariadne_api::models::{EffortDto, ModelDto, SetModelEnabledRequest};
 use ariadne_client::Client;
-use ariadne_core::AgentKind;
 
 use super::parse_model;
 use crate::output::{
@@ -14,7 +13,7 @@ use crate::output::{
     view, yes_no,
 };
 
-/// Columns of `models ls`. The title is the whole id — `claude_code:o3`, not
+/// Columns of `models ls`. The title is the whole id — `codex-acp:o3`, not
 /// `o3` — because that is the string `--model` takes, and a column somebody
 /// copies out of has to be copyable. `agent` repeats the half of it that
 /// groups the table, which is what the eye scans by.
@@ -46,17 +45,15 @@ const SHOW_KEY_WIDTH: usize = "description".len();
 
 #[derive(Subcommand)]
 pub enum ModelsCommand {
-    /// List what every agent CLI can be pinned to
+    /// List what every agent can be pinned to
     Ls {
-        /// Only what one agent CLI can be pinned to
-        #[arg(long, value_parser = super::agent::parse_kind,
-              add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds))]
-        agent: Option<AgentKind>,
+        /// Only what one registry agent can be pinned to
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
+        agent: Option<String>,
     },
     /// Show what one model is, costs and is for
     Show {
-        /// Model id, `<agent_kind>:<model>` — the same spelling `--model`
-        /// takes
+        /// Model id, `<agent>:<model>` — the same spelling `--model` takes
         #[arg(value_parser = parse_model,
               add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: String,
@@ -83,7 +80,7 @@ pub enum ModelsCommand {
 
 pub async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<()> {
     match cmd {
-        ModelsCommand::Ls { agent } => ls(client, agent, format).await,
+        ModelsCommand::Ls { agent } => ls(client, agent.as_deref(), format).await,
         ModelsCommand::Show { model } => show(client, &model, format).await,
         ModelsCommand::Enable { model } => set_enabled(client, &model, true, format).await,
         ModelsCommand::Disable { model } => set_enabled(client, &model, false, format).await,
@@ -118,7 +115,7 @@ async fn set_enabled(client: &Client, model: &str, enabled: bool, format: Format
     Ok(())
 }
 
-async fn ls(client: &Client, agent: Option<AgentKind>, format: Format) -> Result<()> {
+async fn ls(client: &Client, agent: Option<&str>, format: Format) -> Result<()> {
     let models: Vec<ModelDto> = client.get_json("/v1/models").await?;
     // `GET /v1/models` takes no filter: the catalogue is the union, so an
     // agent narrows what it answered rather than what was asked for.
@@ -129,15 +126,10 @@ async fn ls(client: &Client, agent: Option<AgentKind>, format: Format) -> Result
         &models,
         LS,
         row,
+        // An agent's half of the catalogue is whatever discovery found it
+        // offering, which is nothing at all when it is not installed.
         match agent {
-            // opencode's half of the catalogue is whatever `opencode models`
-            // answered, which is nothing at all when it is not installed.
-            Some(kind) => match kind {
-                AgentKind::Opencode => {
-                    empty_state("No OpenCode models are available.", Some("ariadne doctor"))
-                }
-                _ => empty_state("No models exist for that agent.", Some("ariadne models ls")),
-            },
+            Some(_) => empty_state("No models exist for that agent.", Some("ariadne doctor")),
             None => empty_state("No models are available.", Some("ariadne doctor")),
         },
     )?;
@@ -145,7 +137,7 @@ async fn ls(client: &Client, agent: Option<AgentKind>, format: Format) -> Result
     // when it says something: `--format json`, `-q` and a catalogue with no
     // default at all all go without.
     if format == Format::Table && !view().quiet && marks_a_default {
-        note("* the effort that agent CLI runs the model at by default");
+        note("* the effort that agent runs the model at by default");
     }
     Ok(())
 }
@@ -160,7 +152,7 @@ async fn show(client: &Client, model: &str, format: Format) -> Result<()> {
 /// A row of `models ls`, in the order [`LS`] declares its columns.
 fn row(m: &ModelDto) -> Vec<String> {
     vec![
-        m.agent_kind.as_str().to_string(),
+        m.agent_id.clone(),
         m.id.clone(),
         yes_no(m.enabled, "no"),
         m.tier.as_str().to_string(),
@@ -216,11 +208,11 @@ fn card_pairs(m: &ModelDto) -> Vec<(&'static str, Kv)> {
     ]
 }
 
-/// The catalogue narrowed to one agent CLI, or all of it.
-fn of_agent(models: Vec<ModelDto>, agent: Option<AgentKind>) -> Vec<ModelDto> {
+/// The catalogue narrowed to one registry agent, or all of it.
+fn of_agent(models: Vec<ModelDto>, agent: Option<&str>) -> Vec<ModelDto> {
     models
         .into_iter()
-        .filter(|m| agent.is_none_or(|kind| m.agent_kind == kind))
+        .filter(|m| agent.is_none_or(|id| m.agent_id == id))
         .collect()
 }
 
@@ -286,11 +278,10 @@ mod tests {
     use super::*;
     use crate::output::{View, render_table};
 
-    fn model(id: &str, agent_kind: AgentKind) -> ModelDto {
+    fn model(id: &str, agent_id: &str) -> ModelDto {
         ModelDto {
             id: id.to_string(),
-            agent_id: agent_kind.as_str().to_string(),
-            agent_kind,
+            agent_id: agent_id.to_string(),
             description: None,
             tier: ModelTier::Unknown,
             cost: None,
@@ -304,9 +295,9 @@ mod tests {
 
     fn catalogue() -> Vec<ModelDto> {
         vec![
-            model("claude_code:claude-fable-5", AgentKind::ClaudeCode),
-            model("claude_code:claude-opus-5", AgentKind::ClaudeCode),
-            model("codex:gpt-5.6-luna", AgentKind::Codex),
+            model("claude-code-acp:claude-fable-5", "claude-code-acp"),
+            model("claude-code-acp:claude-opus-5", "claude-code-acp"),
+            model("codex-acp:gpt-5.6-luna", "codex-acp"),
         ]
     }
 
@@ -320,11 +311,14 @@ mod tests {
     fn an_agent_narrows_the_catalogue_to_its_own() {
         assert_eq!(ids(of_agent(catalogue(), None)).len(), 3);
         assert_eq!(
-            ids(of_agent(catalogue(), Some(AgentKind::ClaudeCode))),
-            ["claude_code:claude-fable-5", "claude_code:claude-opus-5"]
+            ids(of_agent(catalogue(), Some("claude-code-acp"))),
+            [
+                "claude-code-acp:claude-fable-5",
+                "claude-code-acp:claude-opus-5"
+            ]
         );
         assert_eq!(
-            ids(of_agent(catalogue(), Some(AgentKind::Opencode))),
+            ids(of_agent(catalogue(), Some("opencode-acp"))),
             [] as [String; 0]
         );
     }
@@ -388,9 +382,8 @@ mod tests {
     fn fixture() -> Vec<ModelDto> {
         vec![
             ModelDto {
-                id: "codex:gpt-5.6-luna".into(),
-                agent_id: "codex".into(),
-                agent_kind: AgentKind::Codex,
+                id: "codex-acp:gpt-5.6-luna".into(),
+                agent_id: "codex-acp".into(),
                 description: Some("balanced coding model".into()),
                 tier: ModelTier::Balanced,
                 cost: Some(3),
@@ -415,7 +408,7 @@ mod tests {
             // terminal is wide enough for.
             ModelDto {
                 enabled: false,
-                ..model("opencode:llama3", AgentKind::Opencode)
+                ..model("opencode-acp:llama3", "opencode-acp")
             },
         ]
     }
@@ -427,8 +420,8 @@ mod tests {
         assert_eq!(
             row(&fixture()[0]),
             [
-                "codex",
-                "codex:gpt-5.6-luna",
+                "codex-acp",
+                "codex-acp:gpt-5.6-luna",
                 "yes",
                 "balanced",
                 "3/5",
@@ -440,8 +433,8 @@ mod tests {
         assert_eq!(
             row(&fixture()[1]),
             [
-                "opencode",
-                "opencode:llama3",
+                "opencode-acp",
+                "opencode-acp:llama3",
                 "no",
                 "unknown",
                 "-",
@@ -504,12 +497,12 @@ mod tests {
     /// guessing at a prefix.
     #[test]
     fn show_finds_the_exact_id_or_refuses_by_name() {
-        let found = find(fixture(), "codex:gpt-5.6-luna").expect("found");
-        assert_eq!(found.id, "codex:gpt-5.6-luna");
+        let found = find(fixture(), "codex-acp:gpt-5.6-luna").expect("found");
+        assert_eq!(found.id, "codex-acp:gpt-5.6-luna");
 
-        let err = find(fixture(), "codex:nope").expect_err("not in the catalogue");
+        let err = find(fixture(), "codex-acp:nope").expect_err("not in the catalogue");
         let err = err.to_string();
-        assert!(err.contains("codex:nope"), "{err}");
+        assert!(err.contains("codex-acp:nope"), "{err}");
         assert!(err.contains("models ls"), "{err}");
     }
 
@@ -525,7 +518,7 @@ mod tests {
         assert_eq!(
             pairs,
             vec![
-                ("id", Kv::id("codex:gpt-5.6-luna")),
+                ("id", Kv::id("codex-acp:gpt-5.6-luna")),
                 ("enabled", "yes".into()),
                 ("tier", "balanced".into()),
                 ("cost", "3/5".into()),
@@ -548,12 +541,12 @@ mod tests {
     fn the_card_dashes_what_nothing_knows() {
         let bare = ModelDto {
             enabled: false,
-            ..model("opencode:llama3", AgentKind::Opencode)
+            ..model("opencode-acp:llama3", "opencode-acp")
         };
         assert_eq!(
             card_pairs(&bare),
             vec![
-                ("id", Kv::id("opencode:llama3")),
+                ("id", Kv::id("opencode-acp:llama3")),
                 ("enabled", "no — nothing can be staffed on it".into()),
                 ("tier", "unknown".into()),
                 ("cost", "-".into()),

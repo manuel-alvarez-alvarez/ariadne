@@ -14,7 +14,7 @@
  * Two shapes, because ids come in two kinds:
  *
  * - {@link CopyableId} for a value that is only ever wanted as itself — a
- *   branch, a path, a sha, a tmux name. One click, and the tooltip that names
+ *   branch, a path, a sha, an agent's session id. One click, and the tooltip that names
  *   the button flips to "Copied" under the pointer: no toast, nothing that
  *   moves the layout, and it lives and dies with the value it belongs to.
  * - {@link CopyableIdMenu} for goal, task and session ids, which are usually

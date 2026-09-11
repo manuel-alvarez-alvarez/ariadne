@@ -1,7 +1,7 @@
 /**
  * An `EventSource` that reconnects on its own terms.
  *
- * Three streams in this app need one — the domain events, a session's pane, the
+ * Three streams in this app need one — the domain events, a session's console, the
  * daemon's log — and all three had written the same machinery for themselves:
  * open, close the old source first, retry with capped exponential backoff and
  * jitter, cancel the pending retry on stop. Written three times they drifted in

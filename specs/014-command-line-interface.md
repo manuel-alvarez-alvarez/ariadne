@@ -17,10 +17,10 @@ tests:
   - crates/ariadne-cli/src/commands/doctor/checks.rs
   - crates/ariadne-cli/src/commands/doctor/agents.rs
   - crates/ariadne-cli/src/commands/events.rs
-  - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/src/output/table.rs
   - crates/ariadne-cli/src/commands/attention.rs
-  - crates/ariadne-cli/src/commands/setup.rs
+  - crates/ariadne-cli/src/commands/agent.rs
+  - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
 ---
 
@@ -44,8 +44,10 @@ same binary also serves (013).
    desktop app. Project memory is currently CLI-only (019).
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
    `models`, `skill`, `repo`, `goal`, `task`, `session`, `events`,
-   `attention`, `memory`, `doctor`, `completions`, plus the hidden plumbing
-   the agents use (`mcp serve`, `agent-event`).
+   `attention`, `memory`, `attach`, `doctor`, `completions`, plus the one
+   hidden command the agents use (`mcp serve`). Nothing in the tree launches
+   an agent or reports on one's behalf: the daemon's ACP runtime does both
+   (021).
 3. The root and every group share one help-screen shape, and no help screen
    leaks the endpoint of the shell it runs in.
 4. Display flags (`--format`, and the listing flags) parse on either side of
@@ -57,12 +59,13 @@ same binary also serves (013).
    lists the real ones.
 7. A model is chosen for every agent on the line, with an effort beside it,
    and it is required: `goal create --model` and the `=MODEL` half of every
-   `--author`/`--reviewer` slot must be written, a bare agent CLI names no
-   model, and `task update --model` refuses `default` — only `--effort`
-   still takes that word. A missing model, a model naming no agent, a model
-   on an agent that is no CLI, an effort with no meaning and a reviewer
-   naming no real agent are usage errors, refused before anything is sent.
-   Completions offer neither a bare CLI nor `default` as a model.
+   `--author`/`--reviewer` slot must be written, a bare agent names no model,
+   and `task update --model` refuses `default` — only `--effort` still takes
+   that word. A missing model, a model naming no agent, an effort with no
+   meaning and a reviewer slot missing a half are usage errors, refused
+   before anything is sent. Which agents exist is the daemon's registry: an
+   agent id is sent as typed, and the daemon refuses one it does not hold
+   (011).
 8. The empty list is a flag of its own wherever a repeatable flag names one,
    since a repeatable flag cannot be given zero times on purpose:
    `--no-reviewer` for a task with nothing to review, `--clear-depends-on` for
@@ -77,9 +80,9 @@ same binary also serves (013).
     opening.
 11. `task history` is a table too: each row is one transition, `from` and
     `to` painted with the same status glyphs every other status cell carries.
-12. `ariadne events` prints the daemon's own gist of an agent event's payload
-    as the detail: `<agent kind> · <summary>` — the same `summary` the
-    daemon builds onto the event's DTO (012), whichever CLI reported it.
+12. `ariadne events` prints one line per event, `time · kind · subject ·
+    detail`. An agent event's detail is the `summary` the daemon builds onto
+    its DTO (012), and a recorded event reads the same as a live one.
 13. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
    block, no transport detail, no repeated envelope. Attach failures keep
    recovery commands in the rendered hint on that same line. `--format json`
@@ -101,7 +104,10 @@ same binary also serves (013).
     inspect, edit and reset.
 19. `doctor` reports every ACP registry entry from the daemon's cached probe.
     It shows measured capabilities, every degraded feature, and the rejection
-    reason when the agent cannot satisfy the required contract.
+    reason when the agent cannot satisfy the required contract. One ready
+    agent is enough; a registry with none is a failure, since no session can
+    be spawned. Beside the agents it checks `git`, `gh` and `glab`, on this
+    PATH and on the daemon's.
 20. Each `doctor` section is a shared output table: its check, verdict and
     detail columns fit the terminal, and `--no-trunc` prints their cells whole.
 21. `task ls`, `goal ls`, `session ls` and `attention` take `--watch`: the
@@ -121,23 +127,25 @@ same binary also serves (013).
     listing, it reads no `--columns` and so refuses none.
 24. Human mutation output is one styled line. Quiet mutation output is only
     the affected id. Inspect keys use lowercase space-separated words. A row's
-    subject column is `title`, except the agent CLI kind remains `agent`.
+    subject column is `title`, except that the agent listing keeps `agent`.
     Boolean columns use the shared `yes_no` wording. Every empty listing states
     what is empty, then gives the next command when one exists.
-25. `ariadne setup codex-hooks` renders the command and events it reports
-    through the same key/value block every inspect command uses, rather than
-    hand-picked spacing, and its confirmation prompt goes to stderr with every
-    other prompt, so a piped stdout carries only that block.
-25. `ariadne session discover` lists sessions found in the supported CLI
-    stores but not started by Ariadne. `ariadne session adopt` assigns one to
-    a ready task through the same REST surface (020).
-26. `ariadne memory ls|search|delete` reads and removes active repository
+25. `ariadne agent ls|update` lists and edits the flags each registry agent
+    is launched with, keyed by its registry id. `update` takes a flag list, a
+    clear, or a reset, and only one of them, and a flag value that reads like
+    a flag of the CLI's own is taken as it is.
+26. `ariadne session discover` lists the stored sessions of every ACP agent
+    that can list them, and names each agent that cannot with its reason.
+    `ariadne session adopt` assigns one to a ready task through the same REST
+    surface (020).
+27. `ariadne memory ls|search|delete` reads and removes active repository
     memories. Each command names the repository by id or path (019).
-27. `ariadne attach`, `goal attach` and `task attach` open an interactive
-    console for ACP sessions: it renders the event transcript, submits each
-    typed line as a prompt, and lists permission choices for numeric answers.
-    `session logs` reads that transcript, and `session logs -f` follows its
-    event stream. Tmux sessions keep their tmux attach and pane-log paths.
+28. `ariadne attach`, `goal attach` and `task attach` open the console of the
+    session an id names, revived first when it is gone: it renders the event
+    transcript, submits each typed line as a prompt, and lists permission
+    choices for numeric answers. `session send` posts one line to that same
+    console input. `session logs` prints the transcript, and `session logs -f`
+    follows the console's event stream.
 
 ## Acceptance criteria
 
@@ -155,16 +163,24 @@ same binary also serves (013).
   non-status lists the real ones
   (`::a_status_is_spelled_in_kebab_or_in_snake`, `::several_statuses_ride_on_one_flag`,
   `::a_status_that_is_no_spelling_of_one_lists_the_real_ones`).
+- A model and an effort can be chosen for every agent on the line
+  (`cli/tests.rs::a_model_can_be_chosen_for_every_agent_on_the_line`,
+  `::an_effort_can_be_chosen_beside_every_model`).
 - Model and effort misuse is a usage error
   (`::a_model_naming_no_agent_is_a_usage_error`,
-  `::a_model_on_an_agent_that_is_no_cli_is_a_usage_error`,
   `::an_effort_that_says_nothing_is_a_usage_error`,
   `::a_reviewer_that_names_no_real_agent_is_a_usage_error`), and so is a line
-  with no model (`::a_line_with_no_model_is_a_usage_error`).
-- Completion offers no bare CLI and no `default` for a model
-  (`complete.rs::the_curated_fallback_offers_no_bare_cli_and_no_default`).
+  with no model (`::a_line_with_no_model_is_a_usage_error`), while an agent id
+  is the daemon's to check (`::an_agent_id_is_the_daemons_to_check`).
+- `models ls` narrows to an agent and `models show` takes and refuses a model
+  the way `--model` does
+  (`cli/tests.rs::models_ls_takes_an_agent_to_narrow_the_catalogue`,
+  `::models_show_takes_a_model_in_the_spelling_dash_dash_model_takes`).
+- Completion offers the efforts an entry lists and no others
+  (`complete.rs::an_entry_offers_the_efforts_it_lists_and_no_others`).
 - `ariadne events` prints the daemon's summary in an agent event's detail
-  (`commands/events.rs::an_agent_event_reads_the_same_recorded_as_it_does_live`).
+  (`commands/events.rs::an_event_reads_as_time_kind_subject_and_detail`,
+  `::an_agent_event_reads_the_same_recorded_as_it_does_live`).
 - `task history` paints `from` and `to`, and a row carries a dash for a
   transition with no reason
   (`commands/task.rs::history_paints_the_from_and_to_statuses`,
@@ -181,16 +197,21 @@ same binary also serves (013).
 - Completion candidates come out newest first and live sessions first
   (`complete.rs::candidates_come_out_newest_first`,
   `::attaching_offers_live_sessions_first_and_ended_ones_last`).
-- `doctor` reports every agent kind, the tools a session and a published task
-  need, and a worktree root it cannot write
-  (`doctor.rs::every_agent_kind_is_reported`,
+- `doctor` answers for a database from before the squashed schema
+  (`checks.rs::a_database_from_before_the_squash_fails_the_check`).
+- `doctor` reports every registry agent, the tools a session and a published
+  task need, and a worktree root it cannot write
+  (`doctor.rs::every_registry_agent_is_reported_with_what_discovery_made_of_it`,
   `::the_tools_a_session_and_a_published_task_need_are_reported`,
-  `::a_worktree_root_the_daemon_cannot_write_is_reported_as_such`), with
+  `::a_worktree_root_the_daemon_cannot_write_is_reported_as_such`,
+  `commands/doctor/agents.rs::the_daemon_report_is_read_for_its_tools_the_same_way`), with
   details truncated to a narrow terminal unless `--no-trunc` asks for them
   whole (`commands/doctor.rs::a_narrow_terminal_truncates_doctor_details`,
   `::no_trunc_keeps_doctor_details_and_columns_whole`).
 - `doctor` reports ACP probe rejections and degraded capabilities
-  (`commands/doctor/agents.rs::acp_probe_results_show_rejections_and_gaps`).
+  (`commands/doctor/agents.rs::acp_probe_results_show_rejections_and_gaps`),
+  and fails only where no agent is ready
+  (`::no_ready_agent_fails_the_report_and_one_is_enough`).
 - A git below the floor is a warning that names what it cannot do, and a
   version line is read down to its major and minor
   (`checks.rs::a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits`,
@@ -226,16 +247,27 @@ same binary also serves (013).
   `yes` or `no` (`session.rs::the_session_subject_column_is_title`,
   `models.rs::the_bands_drop_before_efforts_and_description_do`,
   `::a_row_carries_the_bands_and_stars_the_default_effort`).
-- `setup codex-hooks` aligns its command and events values through the shared
-  key/value block
-  (`setup.rs::the_hook_block_aligns_command_and_events_through_kv_block`).
+- `agent update` takes flags, a clear or a reset but only one, and keeps a
+  flag that looks like a flag as it is
+  (`cli/tests.rs::updating_an_agent_takes_flags_or_clear_or_reset_but_only_one`,
+  `::an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is`), and its
+  listing keeps the `agent` column name
+  (`agent.rs::the_agent_keeps_the_agent_column_name`).
+- `session discover` names each agent that cannot list sessions with its
+  reason
+  (`session.rs::an_agent_without_the_capability_is_named_with_its_reason`).
 - The memory commands are classified like other lists and mutations
   (`cli/tests.rs::every_command_in_the_tree_is_classified`), and delete takes
   its entry and repository (`::memory_delete_takes_the_entry_and_its_repository`).
-- The ACP console renders a stub-agent transcript and submits typed input, and
+- The console renders a stub-agent transcript and submits typed input, and
   its permission question submits the selected option
   (`commands/console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
-  `::a_permission_question_renders_and_delivers_the_selected_answer`).
+  `::a_permission_question_renders_and_delivers_the_selected_answer`);
+  `session send` takes an id and the text
+  (`cli/tests.rs::session_send_takes_an_id_and_the_text_to_send`); and
+  `session logs` reads the snapshot and follows the console stream
+  (`commands/console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`,
+  `::a_followed_log_uses_the_console_event_stream`).
 
 ## Sources
 

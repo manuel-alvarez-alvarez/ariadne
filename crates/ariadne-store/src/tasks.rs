@@ -396,11 +396,10 @@ impl Store {
                         .into(),
                 ));
             };
-            let (agent_kind, model, effort) = match &update.pin {
+            let (model, effort) = match &update.pin {
                 // The model stands, so an effort of its own moves alone: what
                 // it is run at is the model the author is already pinned to.
                 None => (
-                    author.agent_kind.clone(),
                     author.model.clone(),
                     update
                         .effort
@@ -409,15 +408,12 @@ impl Store {
                 ),
                 Some(pin) => AgentPin::columns(pin),
             };
-            sqlx::query(
-                "UPDATE task_agents SET agent_kind = ?, model = ?, effort = ? WHERE id = ?",
-            )
-            .bind(&agent_kind)
-            .bind(&model)
-            .bind(&effort)
-            .bind(&author.id)
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query("UPDATE task_agents SET model = ?, effort = ? WHERE id = ?")
+                .bind(&model)
+                .bind(&effort)
+                .bind(&author.id)
+                .execute(&mut *tx)
+                .await?;
         }
         tx.commit().await?;
         let task = self.get_task(id).await?;

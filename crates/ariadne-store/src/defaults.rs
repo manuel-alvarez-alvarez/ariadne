@@ -286,10 +286,10 @@ const GOAL_ATTENTION: &str = r#"The tasks of "{goal_title}" need you:
 
 Read them with `list_tasks`. Retry, cancel or rewrite what you must. Call `complete_goal` once every task is done."#;
 
-/// What one agent said to another, as it arrives in the recipient's pane.
+/// What one agent said to another, as it reaches the recipient's agent.
 ///
 /// The agents talk to each other, and this is the whole of the transport: the
-/// message is typed into the composer and submitted, so it reaches the agent
+/// runtime hands the message to the agent as a prompt, so it reaches the agent
 /// as a turn rather than as something it has to go and look for.
 ///
 /// The sender is named by its seat and its skills, which is the only thing
@@ -603,13 +603,13 @@ mod tests {
     /// could not report before rather than a rewording of one it could.
     ///
     /// Then the agents got a channel to each other, and one more kind with
-    /// it: what a message looks like when it lands in a pane. Every seat is
+    /// it: what a message looks like when it reaches an agent. Every seat is
     /// briefed with that one — anybody can be written to — and it is the
     /// transport for a thing no text could carry before, so the total went to
     /// 1500 rather than the kinds being squeezed to fit it.
     ///
     /// The author's and the reviewer's went to 1060 for what a message is
-    /// *not* for. An agent handed a channel, and a pane that answers on it,
+    /// *not* for. An agent handed a channel, and a peer that answers on it,
     /// thanks whoever answered and is thanked back; the channel has one verb
     /// now and nothing is answered, and each seat is told so where it is told
     /// to use it. Every other text says what to do rather than what a message
@@ -617,7 +617,7 @@ mod tests {
     ///
     /// The orchestrator's went to 1750 for the mix: staffing a task was a
     /// question about that task alone, and it is now a question about the
-    /// plan as well — the agent CLIs are spread over the tasks rather than
+    /// plan as well — the agents are spread over the tasks rather than
     /// every agent going on whichever one the orchestrator likes. That is a
     /// decision nothing else in the system makes, and the two sentences it
     /// takes are the shortest it has been said in.
@@ -1025,12 +1025,12 @@ mod tests {
         "Read the goal. Explore its repositories.",
         "Ask the user about every unclear point",
         "Write one question in your turn text.",
-        "Wait for the answer in the terminal.",
+        "Wait for the answer in the console.",
         "Split the goal into tasks",
         "Staff the authors of each task with `create_task`",
         "Ask the user which tasks are worth a review",
         "Ask the user how each task ends",
-        "Mix the agent CLIs evenly over the tasks.",
+        "Mix the agents evenly over the tasks.",
         "Revise them until they write an explicit yes.",
         "Call `finalize_plan`",
         "Stay up for the rest of the goal.",
@@ -1073,29 +1073,29 @@ mod tests {
         );
     }
 
-    /// A plan is staffed on a mix of agent CLIs, and fit comes first.
+    /// A plan is staffed on a mix of agents, and fit comes first.
     ///
-    /// Every agent on one CLI is a plan that stands or falls with that CLI:
-    /// its rate limit, its outage, its blind spot on a kind of work. So the
-    /// orchestrator is told to spread them — and told in the same breath not
-    /// to spread them onto a CLI the task does not suit, which is the failure
-    /// an instruction to mix invites. The telling is the `orchestration`
-    /// skill's, where the playbook lives.
+    /// Every task on one agent is a plan that stands or falls with that
+    /// agent: its rate limit, its outage, its blind spot on a kind of work.
+    /// So the orchestrator is told to spread them — and told in the same
+    /// breath not to spread them onto an agent the task does not suit, which
+    /// is the failure an instruction to mix invites. The telling is the
+    /// `orchestration` skill's, where the playbook lives.
     #[test]
-    fn the_orchestrator_staffs_a_plan_on_a_mix_of_agent_clis() {
+    fn the_orchestrator_staffs_a_plan_on_a_mix_of_agents() {
         let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
         let mix = prompt
-            .find("Mix the agent CLIs evenly over the tasks.")
-            .expect("the orchestrator is not told to mix the agent CLIs");
+            .find("Mix the agents evenly over the tasks.")
+            .expect("the orchestrator is not told to mix the agents");
         let fit = prompt
-            .find("Take only a CLI that suits the task.")
+            .find("Take only an agent that suits the task.")
             .expect("the orchestrator is not told to keep the mix suitable");
         assert!(
             fit > mix,
             "the fit has to be the sentence after the mix, or the mix reads as the whole rule"
         );
         // Said where the agents are sized, not in a step of its own: which
-        // CLI a task runs on is one answer with which model of it.
+        // agent a task runs on is one answer with which model of it.
         assert!(
             mix > prompt
                 .find("Give each agent one model from `list_models`")

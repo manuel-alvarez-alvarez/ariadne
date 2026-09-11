@@ -303,8 +303,8 @@ function reasons(index: Map<string, Flagged>): Map<string, SessionAttention> {
  *
  * The daemon's reason is what decides, because it is what says *how* the
  * agent is stuck. An agent blocked on a permission or an input prompt is
- * answered with a keystroke in its pane, so the row opens the terminal with
- * the keyboard already in it.
+ * answered in its console, so the row opens the console with the keyboard
+ * already in it.
  *
  * Everything else lands where it always did — the task's panel for a row that
  * is about a task, the session's for one that is only about a session — since

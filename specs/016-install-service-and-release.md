@@ -1,11 +1,12 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-09-08
+updated: 2026-09-11
 areas: [install, scripts, store]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, 03f9c8b7]
 tests:
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-daemon/tests/agents.rs
   - scripts/install.sh
   - .github/workflows/release-please.yml
 ---
@@ -77,8 +78,9 @@ Out: what the daemon does once running (009, 012).
 - The shipped skills are seeded into a fresh database, each on the text
   Ariadne ships, and a reopen reseeds no row the database already holds (017)
   (`store.rs::a_fresh_database_is_seeded_with_every_shipped_skill_on_its_own_text`,
-  `::a_reopen_reseeds_no_row_the_database_already_holds`), and so are the
-  per-agent launch flags (`::agent_configs_are_seeded_with_the_defaults`).
+  `::a_reopen_reseeds_no_row_the_database_already_holds`). No agent flags
+  are seeded: an agent nobody set flags for is listed and launched with none
+  (007, `agents.rs::every_registry_agent_is_listed_with_its_flags_and_its_defaults`).
 - The installer fails late and unprompted on an unsupported OS, showing the log
   tail (`scripts/install.sh`, covered by
   `fix(scripts): keep --purge unprompted and fail late on an unsupported OS`,

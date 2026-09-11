@@ -3,11 +3,12 @@
 //! `ariadne doctor` asks the shell it runs in the same questions, and the two
 //! answers differ more often than one would like: a launchd or systemd
 //! service is handed the PATH baked into its service file at install time,
-//! and an agent CLI installed afterwards is on the user's PATH and nowhere
-//! else. Sessions are spawned by this process, so this is the answer that
-//! decides whether a profile can run at all — which is why the PATH searched
-//! here is this process's own, and why [`ariadne_core::probe`] takes it as a
-//! parameter instead of reading one.
+//! and a binary installed afterwards is on the user's PATH and nowhere else.
+//! Sessions and worktrees are made by this process, so this is the answer
+//! that decides whether they can be made at all — which is why the PATH
+//! searched here is this process's own, and why [`ariadne_core::probe`]
+//! takes it as a parameter instead of reading one. Which agents a session can
+//! run on is what the registry's discovery found (`acp_agents`).
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -17,21 +18,18 @@ use axum::extract::State;
 use futures_util::future::join_all;
 
 use ariadne_api::doctor::{BinaryDto, DaemonReportDto, PathStateDto};
-use ariadne_core::AgentKind;
 use ariadne_core::probe;
 
 use super::AppState;
 
-/// The non-agent binaries the daemon runs, with the flag each prints its
-/// version for (tmux has never spelled it `--version`) and whether it holds
-/// credentials worth asking about.
+/// The binaries the daemon runs, with the flag each prints its version for
+/// and whether it holds credentials worth asking about.
 ///
-/// tmux and git are what a session is made of; `gh` and `glab` are how a
-/// published task is watched, and they are here because a forge CLI that is
-/// missing or signed out fails every poll of a pull request in a way nothing
-/// else in the system shows — the task simply sits there looking watched.
-const TOOLS: [(&str, &str, bool); 4] = [
-    ("tmux", "-V", false),
+/// git is what a worktree is made of; `gh` and `glab` are how a published
+/// task is watched, and they are here because a forge CLI that is missing or
+/// signed out fails every poll of a pull request in a way nothing else in the
+/// system shows — the task simply sits there looking watched.
+const TOOLS: [(&str, &str, bool); 3] = [
     ("git", "--version", false),
     ("gh", "--version", true),
     ("glab", "--version", true),
@@ -46,24 +44,18 @@ pub async fn report(State(state): State<AppState>) -> Json<DaemonReportDto> {
     let path = std::env::var_os("PATH");
     let path = path.as_deref();
 
-    let agents = join_all(
-        AgentKind::ALL
-            .into_iter()
-            .map(|kind| report_on(path, kind.binary(), "--version", Some(kind), false)),
-    );
     let tools = join_all(
         TOOLS
             .into_iter()
-            .map(|(name, flag, authenticates)| report_on(path, name, flag, None, authenticates)),
-    );
-    let (agents, tools) = tokio::join!(agents, tools);
+            .map(|(name, flag, authenticates)| report_on(path, name, flag, authenticates)),
+    )
+    .await;
 
     Json(DaemonReportDto {
         version: env!("CARGO_PKG_VERSION").into(),
         path: std::env::var("PATH").ok(),
         home: cfg.root.display().to_string(),
         socket_path: cfg.socket_path.display().to_string(),
-        agents,
         acp_agents: state.agent_registry.agents().await,
         tools,
         db: path_state(&cfg.db_path),
@@ -80,7 +72,6 @@ async fn report_on(
     path: Option<&OsStr>,
     name: &str,
     version_flag: &str,
-    agent_kind: Option<AgentKind>,
     authenticates: bool,
 ) -> BinaryDto {
     let found = path.and_then(|path| probe::which(path, name));
@@ -95,7 +86,6 @@ async fn report_on(
     };
     BinaryDto {
         name: name.to_string(),
-        agent_kind,
         path: found.map(|p| p.display().to_string()),
         version,
         authenticated,

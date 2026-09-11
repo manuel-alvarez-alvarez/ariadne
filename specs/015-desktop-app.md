@@ -7,6 +7,8 @@ commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 
 tests:
   - ui/src/features/**/*.test.tsx
   - ui/src/api/**/*.test.ts
+  - ui/src/components/**/*.test.tsx
+  - ui/src/lib/**/*.test.ts
 ---
 
 # Desktop app
@@ -29,11 +31,11 @@ Out: the daemon endpoints themselves (012).
 2. The shell is a sidebar and a main area; a panel opens beside a list rather
    than replacing it, and the URL carries which panel is open.
 3. Screens: the goals board (swimlanes plus an attention strip), the task
-   panel (facts, diff, messages, history), sessions with a terminal for a
-   tmux one and a console for an `acp` one, outside sessions that a ready
-   task can adopt as its author, skills, repositories, one repository's
-   memory (list, search, delete), agent kinds and their launch flags, models
-   and which of them may be staffed on, and a daemon-logs drawer.
+   panel (facts, diff, messages, history), sessions, each shown in its
+   console, outside sessions that a ready task can adopt as its author,
+   skills, repositories, one repository's memory (list, search, delete), the
+   agents of the daemon's ACP registry with their launch flags and the models
+   each may be staffed on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -58,42 +60,74 @@ Out: the daemon endpoints themselves (012).
 11. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
     `npm run check:unused` before a commit.
 12. A goal, task author and task reviewer each name a concrete
-    `<agent_kind>:<model>` before their form can submit. An empty effort stays
-    valid and uses that model's default effort (011).
-13. The model picker lists concrete catalog entries only. No screen shows an
-    automatic or default model; `auto` is an effort choice only.
-14. The task form's skill boxes suggest only skills that can staff a task
+    `<agent>:<model>` before their form can submit, where `<agent>` is a
+    registry agent id (011). An empty effort stays valid and uses that
+    model's default effort.
+13. The model picker lists concrete catalog entries only, under one heading
+    per registry agent, in the order the catalog first names each agent. No
+    screen shows an automatic or default model; `auto` is an effort choice
+    only.
+14. The client checks only the shape of a pin: one `:`, with text on both
+    sides of it. Which agents exist is the daemon's answer, so the client
+    refuses no agent id by name. Only the first `:` splits the pin; a later
+    one is part of the model.
+15. A model the catalog lists takes only the efforts the catalog gives it. A
+    model the catalog does not list takes a free-text effort, as the daemon
+    takes any effort that is not blank for such a model (011).
+16. The task form's skill boxes suggest only skills that can staff a task
     agent; the orchestrator's own playbook is not among them, for the author
     or a reviewer. The skills screen marks that playbook beside its built-in
     mark, staying editable and resettable like any other shipped skill.
-15. The agent activity feed shows each event's one-line summary from the
+17. The agent activity feed shows each event's one-line summary from the
     daemon; its raw payload stays available under the row.
-16. The outside-sessions view lists the CLI (or, for an ACP session, its
-    registry agent id), working directory, last activity and first prompt
-    from `GET /v1/outside-sessions`, then adopts a matching session as the
-    author of a ready task through `POST /v1/tasks/{id}/author-session`. Below
-    the table it names every ACP agent from `GET /v1/acp-agents` that cannot
-    list its sessions, with why.
-17. On a task staffed with several authors (004) the task panel shows every
+18. The outside-sessions view lists each stored session of an ACP agent from
+    `GET /v1/outside-sessions`: its registry agent id, working directory,
+    last activity and first prompt. It offers only the ready tasks whose
+    author's pin names the same agent, and adopts the session as that task's
+    author through `POST /v1/tasks/{id}/author-session`, sending the agent id
+    and the session id. Below the table it names every ACP agent from
+    `GET /v1/acp-agents` that cannot list its sessions, with why.
+19. On a task staffed with several authors (004) the task panel shows every
     one of them — its skills, its model, its own branch, and its status in the
     pick: the votes it has so far, or "Picked" once it is the one that won —
     and the reviewer pick itself: which author each reviewer chose. A task
     with one author shows the singular Author fact and no pick, unchanged.
-18. An `acp` session's own tab renders its console rather than a terminal:
-    the transcript from `GET /console` and `.../console/stream` (008), an
-    input line posting to `.../console/input`, and permission questions
-    answered inline. A message chunk, a thought, a tool call, a plan or
-    anything else the runtime reports gets a readable row of its own where
-    the console recognizes the kind, and the same one-line-summary-plus-
-    payload row the agent activity feed already gives every event otherwise —
-    the console carries no fixed list either. A message just sent is shown at
-    once, pending, until the event that confirms it arrives; the `?session=`
-    panel, the fullscreen dialog and the `?focus=` keyboard hand-off all work
-    the same as they do for a tmux session's terminal.
+20. Every session is shown in its console. The console is the transcript
+    from `GET /console` and `.../console/stream` (008), an input line posting
+    to `.../console/input`, and permission questions answered inline. A
+    message chunk, a thought, a tool call, a plan or anything else the
+    runtime reports gets a readable row of its own where the console
+    recognizes the kind, and the one-line-summary-plus-payload row of the
+    agent activity feed otherwise. A message just sent is shown at once,
+    pending, until the event that confirms it arrives. A session that has
+    ended takes no new message.
+21. A session's view has two tabs over one space: the console, open by
+    default, and the agent activity feed. The tab is in the URL (`?tab=`);
+    the console's tab is `terminal` on the wire, so an older link still
+    opens it. A tab value that is not one of the two opens the console.
+    Leaving the console's tab closes its stream, and coming back opens a new
+    one.
+22. A session's Agent fact and the sessions list show the pin the session
+    was launched on, whole (`<agent>:<model>`), with the effort after an `@`
+    where one is pinned.
+23. A row of the attention strip for an agent blocked on a permission or an
+    input prompt opens that session's console with `?focus=`, so the console
+    takes the keyboard on arrival.
+24. Above the console, a session blocked on a permission or an input prompt
+    shows a banner that says where to answer: the options in the console for
+    a permission, the console's input for a question. A session that has
+    ended while blocked is told to resume first. No other attention reason
+    shows the banner.
+25. The typed keyboard chords (`n`, `g` then a letter, `?`, `[`) are ignored
+    while a field, an editor or a session's console input has the keyboard.
+26. The agents screen has one tab per registry agent from `GET /v1/agents`,
+    in the daemon's order, named by its agent id. Each tab holds that agent's
+    extra flags and the models of the catalog whose `agent_id` is that agent.
+    A flag edit replaces the list whole through `PUT /v1/agents/{id}`.
 
 ## Acceptance criteria
 
-- 75 test files cover the features, the API layer and the event stream; each
+- 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
 - A task staffed with several authors shows each one's branch and its own
   vote count, marks the one the reviewers picked, and lists what each
@@ -113,13 +147,22 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/tasks/task-messages.test.tsx`).
 - Every judgement the orchestrator makes about a task can be made here too:
   how a task ends
-  (`ui/src/features/tasks/task-form-dialog.test.tsx::sends how the task ends`),
-  whether it is reviewed (`::takes every reviewer off`), and whether the goal
-  is over (`ui/src/features/goals/goal-actions.test.tsx::completing a goal`).
-- The models screen lists the catalog with a switch apiece, and says why
-  where the daemon refuses one
-  (`ui/src/features/models/models-page.test.tsx`) — the rule of 011 read from
-  the surface that acts on it.
+  (`ui/src/features/tasks/task-form-dialog.test.tsx::sends the selected landing choice`),
+  who reviews it
+  (`ui/src/features/tasks/task-form-values.test.ts::replaces the whole reviewer list, each with its skills and its pin`),
+  and whether the goal is over
+  (`ui/src/features/goals/goal-actions.test.tsx::completing a goal`).
+- The agents screen gives every registry agent a tab, puts each model in the
+  tab of the agent that runs it, counts each agent's catalog on its tab, and
+  sends a flag edit to that agent's endpoint
+  (`ui/src/features/agents/agents-page.test.tsx::gives every agent a tab, and opens on the daemon's first`,
+  `::puts each model in the tab of the agent that runs it`,
+  `::counts each agent's catalog on its tab`,
+  `::sends the whole list, added row included, to that agent's endpoint`).
+- Each model has a switch, and the screen says why where the daemon refuses
+  one (`ui/src/features/agents/agents-page.test.tsx::turns a model off`,
+  `::says why, where the daemon refuses to turn a model off`) — the rule of
+  011 read from the surface that acts on it.
 - The skills screen groups the shipped skills apart from the user's own
   (`ui/src/features/skills/skills-page.test.tsx`), and offers reset for the
   first and delete for the second and never the other way round
@@ -137,22 +180,63 @@ Out: the daemon endpoints themselves (012).
 - The attention strip holds a placeholder while its lists load and survives a
   partial failure (`ui/src/features/goals/attention-strip.test.tsx`).
 - Unused exports fail `npm run check:unused`.
-- The goal dialog and task dialog refuse a missing model, and the picker lists
-  only concrete model ids
-  (`ui/src/features/goals/create-goal-dialog.test.tsx`,
-  `ui/src/features/tasks/task-form-dialog.test.tsx`,
-  `ui/src/features/models/pin-picker.test.tsx`).
+- The goal dialog and task dialog refuse a missing model and a pin that is
+  one half only
+  (`ui/src/features/goals/create-goal-dialog.test.tsx::refuses a model that names no agent, before the daemon is asked`,
+  `ui/src/features/tasks/task-form-dialog.test.tsx::disables create until the author and every reviewer have models`,
+  `::refuses a bare agent before it sends the task`).
+- The picker lists only concrete model ids, grouped by agent
+  (`ui/src/features/models/pin-picker.test.tsx::offers only concrete catalog models, grouped by agent`,
+  `ui/src/features/goals/create-goal-dialog.test.tsx::offers the catalog whole, grouped by the agent each model runs on`).
+- A pin is checked by its shape alone and split at its first `:`
+  (`ui/src/features/models/model-ref.test.ts::takes any agent and any model, one colon apart`,
+  `::refuses one half on its own by showing where the other goes`,
+  `::refuses a leading colon, which names no agent`,
+  `::refuses a trailing colon, which names no model`,
+  `::splits at the first colon`).
+- A listed model offers its own efforts, and an unlisted one takes free text
+  (`ui/src/features/models/pin-picker.test.tsx::offers the efforts of the pinned model, the agent's own first, and stores the pick`,
+  `::takes free text for a model of a known agent the catalog does not list`,
+  `::takes free text for a model nothing has discovered`).
 - The agent activity feed shows the daemon's summary and opens and closes the
   raw payload under its row
   (`ui/src/features/sessions/session-activity.test.tsx`).
-- The outside-sessions view lists each discovered session, an ACP one named by
-  its registry agent id, adopts one as the author of a matching ready task,
-  and shows why an ACP agent without the session-listing capability offers
-  none (`ui/src/features/sessions/outside-sessions-page.test.tsx`).
-- An `acp` session's console renders a transcript from its stream, sends
-  typed text to its input endpoint and shows it pending until confirmed, and
-  answers an inline permission question the same way
-  (`ui/src/features/sessions/acp-console.test.tsx`).
+- The outside-sessions view lists each stored session named by its registry
+  agent id, offers only the ready tasks on the same agent, adopts one with
+  the agent id sent along, and shows why an ACP agent without the
+  session-listing capability offers none
+  (`ui/src/features/sessions/outside-sessions-page.test.tsx::lists each outside session with its agent, directory, activity, and first prompt`,
+  `::offers only the ready tasks whose author runs the session's agent`,
+  `::adopts a stored session, sending the registry agent id along with it`,
+  `::shows why an ACP agent without the session-listing capability offers no adoption`).
+- A session's console renders a transcript from its stream, sends typed text
+  to its input endpoint and shows it pending until confirmed, takes no
+  message once the session has ended, and answers an inline permission
+  question
+  (`ui/src/features/sessions/acp-console.test.tsx::renders the transcript the stream delivers: a snapshot, then a delta`,
+  `::sends typed text to the console's input endpoint, and shows it pending until confirmed`,
+  `::does not queue a message once the session has ended`,
+  `::answers an inline permission question`).
+- A session's view opens on the console, keeps its tab in the URL, falls back
+  to the console for a foreign tab value, and opens a new stream on each
+  return to the console
+  (`ui/src/features/sessions/session-detail-view.test.tsx::opens on the console, with the activity feed a tab away`,
+  `::takes its tab from the URL, and puts a switch back into it`,
+  `::falls back to the console for a tab that is not one of its own`).
+- A session shows its pin whole
+  (`ui/src/features/sessions/session-detail-view.test.tsx::shows the model the session was launched with, once`,
+  `ui/src/features/sessions/sessions-page.test.tsx::says what each session runs on, without repeating the seat beside it`).
+- A blocked agent's row opens its console focused
+  (`ui/src/features/goals/attention-strip.test.tsx::sends a blocked agent to its console, focused`).
+- The blocked banner says where to answer, says to resume an agent that is
+  gone, and shows for no other reason
+  (`ui/src/features/sessions/session-blocked-banner.test.tsx::says what a permission prompt is waiting for, and where to answer it`,
+  `::asks for an answer when the agent asked a question`,
+  `::says the agent is gone rather than pointing at the console`,
+  `::stays out of the way of every other reason`).
+- The typed chords stand aside for a console's input
+  (`ui/src/lib/shortcuts.test.ts::is true for form fields, the console's textarea included`,
+  `ui/src/components/keyboard-shortcuts-dialog.test.tsx::says what the two vocabularies are, since neither is guessable`).
 
 ## Sources
 

@@ -1,7 +1,7 @@
 //! Deleting a goal: `DELETE /v1/goals/{id}`.
 //!
 //! The contract is that only a finished goal can go — an active one still owns
-//! tmux sessions and worktrees that cancelling is what tears down — that what
+//! agent sessions and worktrees that cancelling is what tears down — that what
 //! goes takes its tasks with it, and that the deletion reaches the
 //! domain-event stream so clients stop showing what no longer exists.
 
@@ -35,7 +35,7 @@ async fn goal(h: &Harness, name: &str) -> GoalDto {
         post_json(
             "/v1/goals",
             serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
-                               "model": "claude_code:claude-sonnet-5"}),
+                               "model": "stub:test-model"}),
         ),
         StatusCode::CREATED,
     )
@@ -48,9 +48,9 @@ async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
             &format!("/v1/goals/{}/tasks", goal.id),
             serde_json::json!({"title": "Do the thing", "agents": [
                 {"seat": "author", "skills": ["coding"],
-                 "model": "claude_code:claude-sonnet-5"},
+                 "model": "stub:test-model"},
                 {"seat": "reviewer", "skills": ["code-review"],
-                 "model": "claude_code:claude-sonnet-5"}]}),
+                 "model": "stub:test-model"}]}),
         ),
         StatusCode::CREATED,
     )
@@ -65,16 +65,11 @@ async fn cancel(h: &Harness, goal: &GoalDto) -> GoalDto {
     .await
 }
 
-/// A live session on a goal, with a pane the stub tmux answers for.
+/// A live session on a goal, with a stub agent running under it.
 async fn live_session(h: &Harness, goal: &GoalDto) -> AgentSession {
     let goal = h.store.get_goal(&goal.id).await.unwrap();
-    let session = h
-        .orchestrator_session(
-            &goal,
-            &ariadne_daemon::tmux::session_name(&goal.id, None, "orc", None),
-        )
-        .await;
-    h.pane_exists(&session);
+    let session = h.orchestrator_session(&goal).await;
+    h.agent_runs(&session).await;
     session
 }
 
@@ -176,10 +171,10 @@ async fn deleting_an_unknown_goal_is_a_404() {
     );
 }
 
-/// The delete is what makes an orphan permanent: the rows cascade away, and a
-/// pane that outlived them is no longer anything the daemon can name, let
+/// The delete is what makes an orphan permanent: the rows cascade away, and an
+/// agent that outlived them is no longer anything the daemon can name, let
 /// alone reap. A finished goal is not supposed to own one — but if it does,
-/// the pane goes before the rows do.
+/// the agent goes before the rows do.
 #[tokio::test]
 async fn deleting_a_goal_takes_down_a_session_that_outlived_it() {
     let h = harness().await;
@@ -194,10 +189,9 @@ async fn deleting_a_goal_takes_down_a_session_that_outlived_it() {
         "{}",
         String::from_utf8_lossy(&body)
     );
-    assert_eq!(
-        h.killed_panes(),
-        vec![session.tmux_session],
-        "the pane was killed before its row was deleted"
+    assert!(
+        !h.agent_is_running(&session),
+        "the agent was killed before its row was deleted"
     );
     h.error(
         get(&format!("/v1/sessions/{}", session.id)),

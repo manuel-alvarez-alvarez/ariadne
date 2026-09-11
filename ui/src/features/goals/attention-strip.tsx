@@ -11,7 +11,7 @@
  * One row per thing gone wrong, too: a failed task under an agent that
  * reported an error is one row with two badges rather than the same trouble
  * twice (see `attention.ts`). Every row is a link to the control the answer is
- * given through — the thread a question was asked in, the pane a prompt is
+ * given through — the thread a question was asked in, the console a prompt is
  * waiting in — so reading the list and acting on it are the same gesture, and
  * the board stays underneath.
  *
@@ -166,8 +166,8 @@ function Retry({ onClick }: { onClick: () => void }) {
  * The badges are the reasons, task first — a task's status is what the row
  * sits under, and the session's reason is the live thing on top of it. Where
  * the row goes is the reason's to say (see {@link attentionTarget}), so a
- * question opens the thread it was asked in and a prompt opens the pane it is
- * waiting in.
+ * question opens the thread it was asked in and a prompt opens the console it
+ * is waiting in.
  */
 function Row({ item }: { item: AttentionItem }) {
   const [search] = useSearchParams()

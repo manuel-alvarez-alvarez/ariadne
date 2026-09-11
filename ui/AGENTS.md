@@ -7,6 +7,10 @@ anything here; commit-message and history rules live in the root
 Before committing, run `npm test`, `npm run typecheck`, `npm run lint` and
 `npm run check:unused`.
 
+The suite needs no daemon and no agent. The daemon is a stubbed `fetch` and a
+stubbed `EventSource` (`src/test/`), and a session is the console stream those
+stubs feed with fixture events — there is no terminal to drive.
+
 ## Layout
 
 ```
@@ -26,11 +30,11 @@ src/
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
     tasks/         the task panel: facts, diff, reviews, history
-    sessions/      the sessions screen, the session panel and the terminal
+    sessions/      the sessions screen, the session panel and its console
     models/        the pin picker, the model catalog and the agent summary
     skills/        skills screen: the catalog, and the document each one is
     repositories/  the registered checkouts goals are created against
-    agents/        agent-kind screen: the flags each CLI is launched with
+    agents/        agents screen: the flags each registry agent is launched with
     system/        the daemon-logs drawer and the log stream behind it
   test/            setup, render harness, DTO fixtures and the browser stand-ins
                    the suite shares
@@ -80,8 +84,7 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ```
 
 Sub-resources hang off their detail key: `["tasks", "detail", id, "reviews"]`,
-`… "transitions"`, `… "diff"`, `["sessions", "detail", id, "logs"]`. Two
-consequences the event dispatcher
+`… "transitions"`, `… "diff"`. Two consequences the event dispatcher
 depends on: invalidating `qk.tasks.lists()` refetches every task list without
 disturbing an open detail view, and invalidating a detail key also invalidates
 that entity's sub-resources.
@@ -126,7 +129,7 @@ is simply gone. So both a reconnect and the daemon's `resync` control event
 (sent when this client fell too far behind, just before the daemon hangs up)
 invalidate *everything*. Reconnection itself — capped exponential backoff with
 jitter, closing the old socket before opening a new one — is
-`src/events/reconnecting-stream.ts`, shared with the session-pane and
+`src/events/reconnecting-stream.ts`, shared with the session-console and
 daemon-log streams; `DomainEventStream` adds the protocol and publishes its
 state through `useStreamStore`.
 
@@ -212,9 +215,9 @@ deep link has to resolve client-side.
 
 Chords are bound once, by the shell, in `src/hooks/use-global-shortcuts.ts` —
 `window`, bubble phase, skipped when the keystroke was already handled or is
-going into a text field, an editor, or the textarea xterm reads a session's pane
-through. The typed chords are skipped inside a dialog or a menu too, where a
-bare letter belongs to whatever is on top. `Escape` is deliberately *not* bound:
+going into a text field, an editor, or a session's console input. The typed
+chords are skipped inside a dialog or a menu too, where a bare letter belongs
+to whatever is on top. `Escape` is deliberately *not* bound:
 it belongs to whatever is on top, and Base UI's dialogs already close the
 topmost one, so a global handler would take two layers down at once.
 
@@ -228,7 +231,7 @@ palette opens the same sheet.
 The palette (`src/features/command-palette/`) leads with **Needs attention** —
 the attention list's own rows (`features/goals/attention.ts`), which decide
 where a pick lands through the same `attentionTarget` the strip and the alerts
-ask, so a prompt opens the pane it is waiting in and anything else opens
+ask, so a prompt opens the console it is waiting in and anything else opens
 wherever it is otherwise read — and then the actions, including the ones that only
 exist for what the screen underneath has open: a new task in the goal whose
 panel is up, `ariadne attach <id>` for the task or session that is. It searches

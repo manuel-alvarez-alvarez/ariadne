@@ -8,22 +8,23 @@ use clap::Subcommand;
 use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus};
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{
-    AdoptOutsideSessionRequest, OutsideSessionDto, SessionDto, SessionInputRequest,
-    SessionListQuery, SessionLogChunk, SessionLogsResponse,
+    AdoptOutsideSessionRequest, ConsoleInputRequest, OutsideSessionDto, SessionDto,
+    SessionListQuery,
 };
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent};
+use ariadne_core::models::agent_of;
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use super::attention::reason_label;
-use super::follow::{self, Ending, Next};
+use super::follow;
 use super::resolve::{self, Kind};
 use super::{Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, note, ok_id_line, pager,
-    print, print_json, print_kv, print_list, short_id, status_line, usage_block, usage_cell, view,
+    Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, note, ok_id_line, print,
+    print_kv, print_list, short_id, status_line, usage_block, usage_cell, view,
 };
 
 /// Columns of `session ls`. `title` is the one written by a human, so it is
@@ -36,9 +37,9 @@ use crate::output::{
 /// to the digit are in `session inspect`, since a column is scanned rather
 /// than read.
 ///
-/// The tmux session and the agent's own internal id are not here: they are
-/// what one goes to `session inspect` for, and they cost eight columns each
-/// of a row nobody reads them from.
+/// The worktree and the agent's own internal id are not here: they are what
+/// one goes to `session inspect` for, and they cost a lot of a row nobody
+/// reads them from.
 const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 40).title(),
@@ -108,7 +109,7 @@ pub enum SessionCommand {
         #[arg(long)]
         watch: bool,
     },
-    /// List CLI sessions Ariadne did not start
+    /// List agent sessions Ariadne did not start
     Discover,
     /// Resume an outside session as the author of a ready task
     Adopt {
@@ -117,13 +118,10 @@ pub enum SessionCommand {
         /// Ready task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         task_id: String,
-        /// CLI that owns the outside session
-        #[arg(long, value_parser = crate::commands::agent::parse_kind)]
-        agent: ariadne_core::AgentKind,
-        /// The ACP agent id the session belongs to (`session discover`'s
-        /// `agent` column), required when `--agent acp`
-        #[arg(long)]
-        acp_agent: Option<String>,
+        /// The agent the session belongs to (`session discover`'s `agent`
+        /// column)
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
+        agent: String,
     },
     /// Show a session
     Inspect {
@@ -131,22 +129,19 @@ pub enum SessionCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
         id: String,
     },
-    /// Type into a live session, as the UI's terminal panel does
+    /// Send a line to a live session, as the UI's console does
     ///
-    /// The text is typed into the agent's pane and submitted, which is what
-    /// answering a question or a permission prompt from the terminal looks
-    /// like. `--no-newline` leaves it in the prompt unsent.
+    /// While the agent waits on a permission request, the line answers it:
+    /// an option's id or name. Otherwise it is the agent's next prompt, sent
+    /// at once or queued behind the turn it is in.
     Send {
         /// Session id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
         id: String,
-        /// What to type
+        /// What to send
         text: String,
-        /// Type the text without submitting it
-        #[arg(long)]
-        no_newline: bool,
     },
-    /// Show a session's terminal output or ACP transcript
+    /// Show a session's transcript
     Logs {
         /// Session id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
@@ -155,13 +150,13 @@ pub enum SessionCommand {
         #[arg(short, long)]
         follow: bool,
     },
-    /// Revive an ended session: new tmux, same agent conversation
+    /// Revive an ended session: new agent process, same conversation
     Resume {
         /// Session id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::ended_session_ids))]
         id: String,
     },
-    /// Kill a session's tmux process
+    /// Kill a session's agent process
     Kill {
         /// Session id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::live_session_ids))]
@@ -193,15 +188,13 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             session_id,
             task_id,
             agent,
-            acp_agent,
         } => {
             let task_id = resolve::id(client, Kind::Task, &task_id).await?;
             let session: SessionDto = client
                 .post_json(
                     &format!("/v1/tasks/{task_id}/author-session"),
                     &AdoptOutsideSessionRequest {
-                        agent_kind: agent,
-                        agent_id: acp_agent,
+                        agent_id: agent,
                         internal_session_id: session_id,
                     },
                 )
@@ -224,17 +217,13 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             let s: SessionDto = client.get_json(&session_path(&id)).await?;
             print(format, &s, || print_kv(&inspect_pairs(&s)))?;
         }
-        SessionCommand::Send {
-            id,
-            text,
-            no_newline,
-        } => {
-            let data = keystrokes(&text, no_newline);
+        SessionCommand::Send { id, text } => {
+            let id = resolve::id(client, Kind::Session, &id).await?;
             client
                 .send_no_content(
                     http::Method::POST,
-                    &format!("/v1/sessions/{id}/input"),
-                    Some(&SessionInputRequest { data }),
+                    &format!("/v1/sessions/{id}/console/input"),
+                    Some(&ConsoleInputRequest { text }),
                 )
                 .await?;
             print(
@@ -245,12 +234,12 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
         }
         SessionCommand::Logs { id, follow } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
-            logs(client, &id, follow, format).await?;
+            crate::commands::console::logs(client, &id, follow, format).await?;
         }
         SessionCommand::Resume { id } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
             // The daemon answers with this same session either way: relaunched
-            // when it really resumed it, or untouched when its pane turned out
+            // when it really resumed it, or untouched when its agent turned out
             // to be alive already. What the row said before the call is what
             // tells a relaunch from a session that never needed one.
             let before: SessionDto = client.get_json(&session_path(&id)).await?;
@@ -300,8 +289,8 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
     Ok(())
 }
 
-/// `session discover`: session transcripts that the daemon does not own, and
-/// the stored sessions of every ACP agent that can list them.
+/// `session discover`: the stored sessions of every ACP agent that can list
+/// them, minus the ones the daemon already owns.
 async fn discover(client: &Client, format: Format) -> Result<()> {
     let sessions: Vec<OutsideSessionDto> = client.get_json("/v1/outside-sessions").await?;
     print_list(
@@ -311,10 +300,7 @@ async fn discover(client: &Client, format: Format) -> Result<()> {
         |session| {
             vec![
                 session.internal_session_id.clone(),
-                session
-                    .agent_id
-                    .clone()
-                    .unwrap_or_else(|| session.agent_kind.as_str().into()),
+                session.agent_id.clone(),
                 session.working_directory.clone(),
                 at(Some(&session.last_activity_at)),
                 session.first_prompt.clone(),
@@ -322,7 +308,7 @@ async fn discover(client: &Client, format: Format) -> Result<()> {
         },
         empty_state(
             "No outside sessions found.",
-            Some("start claude, codex or opencode in a project"),
+            Some("start an ACP agent that can list its sessions in a project"),
         ),
     )?;
     if format == Format::Table {
@@ -352,19 +338,6 @@ fn unavailable_acp_agents(agents: &[AcpAgentDto]) -> Vec<String> {
             format!("{}: adoption unavailable — {reason}", agent.id)
         })
         .collect()
-}
-
-/// What `session send` types into the pane: the text, and the Return that
-/// submits it unless the caller asked for the text alone.
-///
-/// A terminal's Return is a carriage return, which is what every agent TUI is
-/// listening for — `\n` would land in the prompt as a newline in half of them
-/// — and the endpoint types what it is given, byte for byte.
-fn keystrokes(text: &str, no_newline: bool) -> String {
-    match no_newline {
-        true => text.to_string(),
-        false => format!("{text}\r"),
-    }
 }
 
 fn session_path(id: &str) -> String {
@@ -486,7 +459,7 @@ async fn render(
                 attention_label(s.attention_reason),
                 age(&s.created_at, now),
                 s.seat.as_str().into(),
-                s.agent_kind.as_str().into(),
+                agent_of(&s.model).into(),
                 usage_cell(&s.usage),
             ]
         },
@@ -504,90 +477,6 @@ async fn render(
             (false, false) => empty_state("No live sessions.", Some("ariadne session ls --all")),
         },
     )
-}
-
-/// `session logs` and `task logs`: the pane's recent output, and with
-/// `follow` everything it prints from here until the session ends.
-///
-/// A followed snapshot comes from the stream rather than from `GET
-/// /v1/sessions/{id}/logs`: the stream opens with the same scrollback, drawn
-/// at the grid the pane is actually using, and taking it from there is what
-/// leaves no gap between the snapshot and the output that follows it. Reading
-/// both would print the overlap twice.
-pub async fn logs(client: &Client, id: &str, follow_it: bool, format: Format) -> Result<()> {
-    let session: SessionDto = client.get_json(&session_path(id)).await?;
-    if session.agent_kind == ariadne_core::AgentKind::Acp {
-        return crate::commands::console::logs(client, id, follow_it, format).await;
-    }
-    if !follow_it {
-        let logs: SessionLogsResponse = client.get_json(&format!("/v1/sessions/{id}/logs")).await?;
-        return match format {
-            Format::Json => print_json(&logs),
-            // A pane's scrollback is longer than a screen: it goes through
-            // the pager when there is somebody to page for. A follow has no
-            // end to page and writes straight out.
-            Format::Table => pager::page(&logs.logs),
-        };
-    }
-    let mut opened = false;
-    let ending = follow::frames(client, &format!("/v1/sessions/{id}/logs/stream"), |frame| {
-        Ok(match frame.event.as_str() {
-            // Both carry a chunk of terminal output. A `snapshot` after the
-            // first one is the pane redrawn at a grid it has been resized to,
-            // and means "replace everything" — which a terminal that has
-            // already scrolled cannot do, so it is said instead and the fresh
-            // screen printed under it.
-            "snapshot" | "delta" => {
-                if frame.event == "snapshot" && std::mem::replace(&mut opened, true) {
-                    note(&format!(
-                        "the pane of {id} was resized — what follows is its screen at the new size"
-                    ));
-                }
-                if let Ok(chunk) = serde_json::from_str::<SessionLogChunk>(&frame.data) {
-                    print_chunk(format, &frame.event, &chunk.chunk);
-                }
-                Next::Go
-            }
-            // The pane's grid: nothing to print, and the snapshot behind it is
-            // what says the size changed.
-            "resize" => Next::Go,
-            "end" => Next::Stop,
-            _ => Next::Go,
-        })
-    })
-    .await?;
-
-    // The one line that says why the output stopped, on stderr so a redirected
-    // log is only the log.
-    match ending {
-        Ending::Done => note(&ended(client, id).await),
-        Ending::Dropped => note(&format!(
-            "log stream for {id} closed while the session was still live — \
-             run it again to reconnect"
-        )),
-        Ending::Interrupted => {}
-    }
-    Ok(())
-}
-
-/// One chunk of terminal output, as it was written — escape sequences and all,
-/// which is what makes it look like the pane it came from. Flushed as it goes:
-/// a tail nobody sees until the buffer fills is not a tail.
-fn print_chunk(format: Format, event: &str, chunk: &str) {
-    match format {
-        Format::Json => println!("{}", serde_json::json!({"event": event, "chunk": chunk})),
-        Format::Table => print!("{chunk}"),
-    }
-    let _ = std::io::Write::flush(&mut std::io::stdout());
-}
-
-/// What the session ended as, for the last line of a follow. The status is
-/// worth a second call: `end` says the output is over and nothing else.
-async fn ended(client: &Client, id: &str) -> String {
-    match client.get_json::<SessionDto>(&session_path(id)).await {
-        Ok(s) => format!("session {id} ended ({})", s.status.as_str()),
-        Err(_) => format!("session {id} ended"),
-    }
 }
 
 /// Which of the sessions the daemon answered with `session ls` shows.
@@ -669,12 +558,12 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
         ("task", Kv::id(dash(s.task_id.as_deref()))),
         ("seat", s.seat.as_str().into()),
         ("agent id", Kv::id(dash(s.task_agent_id.as_deref()))),
-        ("agent", s.agent_kind.as_str().into()),
+        ("agent", agent_of(&s.model).into()),
         // Recorded at launch, so it is what this session runs on even if the
         // agent has been re-pinned since.
         ("model", s.model.clone().into()),
         // How deeply it reasons there, recorded with the model it belongs
-        // to; `default` is whatever the agent CLI runs that model at.
+        // to; `default` is whatever the agent runs that model at.
         (
             "effort",
             s.effort.clone().unwrap_or_else(|| "default".into()).into(),
@@ -688,7 +577,6 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
             "attention since",
             Kv::meta(at(s.attention_since.as_deref())),
         ),
-        ("tmux", s.tmux_session.clone().into()),
         ("worktree", dash(s.worktree_path.as_deref()).into()),
         ("internal id", dash(s.internal_session_id.as_deref()).into()),
         ("tokens", usage_block(&s.usage, &[], INDENT).into()),
@@ -698,7 +586,7 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
     ]
 }
 
-/// Whose terminal it is: a session has no title, and the seat and the piece
+/// Whose agent it is: a session has no title, and the seat and the piece
 /// of work it was spawned for are what stand in for one.
 fn what_for(s: &SessionDto) -> String {
     match &s.task_id {
@@ -707,7 +595,7 @@ fn what_for(s: &SessionDto) -> String {
     }
 }
 
-/// What `session kill` asks: a live agent is about to lose its terminal, and
+/// What `session kill` asks: a live agent is about to be stopped, and
 /// the id alone does not say whose.
 fn kill_question(s: &SessionDto, subject: &Subject) -> String {
     format!(
@@ -868,20 +756,6 @@ mod tests {
         assert_eq!(
             ids(visible(listed(), false, &[], Some(Seat::Reviewer))),
             [] as [String; 0]
-        );
-    }
-
-    /// What `session send` types is the text and the Return that submits it:
-    /// a carriage return, which is what a TUI reads as Enter, and nothing at
-    /// all when the caller wants the text left in the prompt.
-    #[test]
-    fn what_is_typed_carries_its_own_return() {
-        assert_eq!(keystrokes("approve", false), "approve\r");
-        assert_eq!(keystrokes("approve", true), "approve");
-        assert_eq!(
-            keystrokes("", false),
-            "\r",
-            "a bare Return is a legitimate keystroke"
         );
     }
 

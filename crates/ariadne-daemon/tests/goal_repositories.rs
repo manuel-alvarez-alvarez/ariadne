@@ -6,9 +6,8 @@
 //! create a task, and see the worktree the launcher makes from the path and
 //! base branch the repository holds — including after that base branch moves.
 //!
-//! No tmux and no agent CLI: `tmux` is a stub that answers "no session" and
-//! records what it was told, and every agent is pinned to a CLI so that
-//! nothing here looks for a coding-agent CLI on `PATH`. `git` is real.
+//! No coding-agent CLI: every agent is pinned to the harness's stub ACP agent,
+//! so nothing here looks for one on `PATH`. `git` is real.
 
 mod common;
 
@@ -19,19 +18,14 @@ use axum::http::StatusCode;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::AgentKind;
 
 use common::{Harness, delete, harness, post_json, put_json, sh};
 
-/// The pin every goal and every agent here is created with.
-///
-/// Left out, they are on "auto", which at spawn time means "the first
-/// coding-agent CLI on `PATH`" — and where there is none, as on every CI
-/// runner, spawning fails outright. What is under test here is the worktree a
-/// spawn cuts, not the agent it starts, so the CLI is named and never looked
-/// up.
+/// The pin every goal and every agent here is created with: the harness's
+/// own stub agent. What is under test here is the worktree a spawn cuts, not
+/// the agent it starts.
 fn pinned() -> String {
-    format!("{}:claude-sonnet-5", AgentKind::ClaudeCode.as_str())
+    common::test_pin().model
 }
 
 async fn pinned_harness() -> Harness {

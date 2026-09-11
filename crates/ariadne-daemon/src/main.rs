@@ -33,13 +33,13 @@ unknown key stops the daemon rather than being ignored):
   socket_path              unix socket to listen on (default: <home>/ariadne.sock)
   db_path                  SQLite database (default: <home>/ariadne.db)
   worktree_root            where task worktrees are created (default: <home>/worktrees)
-  run_dir                  per-session run files: spawn plans, console logs
+  run_dir                  per-session run files: ACP launch files, skills
                            (default: <home>/run)
   tcp_listen               extra TCP listener for web/desktop UIs, e.g.
                            \"127.0.0.1:7676\" (default: unix socket only)
   log_filter               tracing filter when RUST_LOG says nothing (default: info)
-  cli_bin                  the `ariadne` every session, hook and MCP server is
-                           launched with (default: the one beside this binary)
+  cli_bin                  the `ariadne` every session's MCP server is launched
+                           with (default: the one beside this binary)
   delete_merged_branches   delete a task branch once it has landed (default: true)
   delete_merged_worktrees  delete a task worktree once it has landed (default: true)
   prevent_sleep            hold off system sleep while a session is live (default: true)
@@ -97,10 +97,7 @@ async fn main() -> Result<()> {
     let agent_registry =
         ariadne_daemon::acp_discovery::AgentRegistry::new(&config.acp_agents, config.root.clone());
     // Installed before anything writes, so no state change goes unannounced.
-    let events = ariadne_daemon::bus::start(store.clone(), agent_registry.clone());
-
-    let plugin = ariadne_daemon::opencode_plugin::install()?;
-    info!(plugin = %plugin.display(), "opencode events plugin installed");
+    let events = ariadne_daemon::bus::start(store.clone());
 
     let unix_listener = bind_unix_socket(&config).await?;
     std::fs::write(&config.pid_file, std::process::id().to_string())
@@ -111,7 +108,6 @@ async fn main() -> Result<()> {
     let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
         cfg: config.clone(),
         store: store.clone(),
-        tmux: ariadne_daemon::tmux::TmuxManager::default(),
         git: ariadne_daemon::gitwt::GitManager,
         acp: ariadne_daemon::acp::AcpRuntime::new(store.clone()),
         registry: agent_registry.clone(),

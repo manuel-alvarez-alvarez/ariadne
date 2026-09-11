@@ -1,69 +1,54 @@
-//! Agent-kind configuration: how each coding-agent CLI is launched.
+//! Agent configuration: the flags each registry agent is launched with.
 //!
-//! One row per [`AgentKind`], seeded from the built-in defaults and edited
-//! from there. Every spawn and resume reads its flags here, so turning a
-//! permission bypass off takes effect on the next launch of any agent
-//! running on that agent.
-
-use ariadne_core::AgentKind;
+//! Keyed by the id of the agent in the ACP registry. Nothing is seeded: an
+//! agent nobody has set flags for is launched with its registry command
+//! alone, and a row appears the first time somebody sets some. Every spawn
+//! and resume reads its flags here, so an edit takes effect on the next
+//! launch of any session on that agent.
 
 use crate::{AgentConfig, Result, Store, StoreError, now};
 
 impl Store {
-    /// Give every agent kind a config row, with the flags
-    /// [`AgentKind::default_flags`] ships. Runs on every open, so a kind added
-    /// to the enum later is seeded on the next start rather than in a
-    /// migration; existing rows are left as the user edited them.
-    pub(crate) async fn seed_agent_configs(&self) -> Result<()> {
-        let ts = now();
-        for kind in AgentKind::ALL {
-            let defaults: Vec<&str> = kind.default_flags().to_vec();
-            let flags = flags_json(&defaults)?;
-            sqlx::query(
-                "INSERT OR IGNORE INTO agent_configs (agent_kind, extra_flags, updated_at)
-                 VALUES (?, ?, ?)",
-            )
-            .bind(kind.as_str())
-            .bind(&flags)
-            .bind(&ts)
-            .execute(self.w())
-            .await?;
-        }
-        Ok(())
-    }
-
-    /// Every agent kind's config, in [`AgentKind::ALL`] order.
+    /// Every stored agent config, by agent id.
     pub async fn list_agent_configs(&self) -> Result<Vec<AgentConfig>> {
-        let mut configs = Vec::with_capacity(AgentKind::ALL.len());
-        for kind in AgentKind::ALL {
-            configs.push(self.get_agent_config(kind).await?);
-        }
-        Ok(configs)
+        Ok(
+            sqlx::query_as::<_, AgentConfig>("SELECT * FROM agent_configs ORDER BY agent_id")
+                .fetch_all(self.r())
+                .await?,
+        )
     }
 
-    pub async fn get_agent_config(&self, kind: AgentKind) -> Result<AgentConfig> {
-        self.fetch_by("agent config", "agent_configs", "agent_kind", kind.as_str())
-            .await
+    /// The flags `agent_id` is launched with: the stored list, or none where
+    /// nobody has set any.
+    pub async fn agent_flags(&self, agent_id: &str) -> Result<Vec<String>> {
+        let row =
+            sqlx::query_as::<_, AgentConfig>("SELECT * FROM agent_configs WHERE agent_id = ?")
+                .bind(agent_id)
+                .fetch_optional(self.r())
+                .await?;
+        Ok(row.map(|config| config.extra_flags()).unwrap_or_default())
     }
 
-    /// Replace an agent kind's flag list, whole. An empty one is a legitimate
-    /// answer: "launch this CLI with nothing of ours".
+    /// Replace an agent's flag list, whole. An empty one is a legitimate
+    /// answer: "launch this agent with nothing of ours".
     pub async fn update_agent_config(
         &self,
-        kind: AgentKind,
+        agent_id: &str,
         extra_flags: Vec<String>,
     ) -> Result<AgentConfig> {
-        self.get_agent_config(kind).await?;
         let flags = flags_json(&extra_flags)?;
         sqlx::query(
-            "UPDATE agent_configs SET extra_flags = ?, updated_at = ? WHERE agent_kind = ?",
+            "INSERT INTO agent_configs (agent_id, extra_flags, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT (agent_id) DO UPDATE SET extra_flags = excluded.extra_flags,
+                                                 updated_at = excluded.updated_at",
         )
+        .bind(agent_id)
         .bind(&flags)
         .bind(now())
-        .bind(kind.as_str())
         .execute(self.w())
         .await?;
-        self.get_agent_config(kind).await
+        self.fetch_by("agent config", "agent_configs", "agent_id", agent_id)
+            .await
     }
 }
 

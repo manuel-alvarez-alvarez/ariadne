@@ -6,7 +6,6 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 
@@ -24,41 +23,16 @@ pub struct Config {
     pub pid_file: PathBuf,
     pub tcp_listen: Option<SocketAddr>,
     pub log_filter: String,
+    /// The `ariadne` binary every session's MCP server is launched with.
     pub cli_bin: String,
-    /// The binary the model catalog shells out to for `opencode models
-    /// --verbose`. Always `"opencode"` outside a test: there is no
-    /// `config.toml` key for it, since nothing about it is the user's to
-    /// choose. A test harness overrides it directly to point discovery at a
-    /// stub, the way `typed_input_window` below is set past anything a user
-    /// would configure.
-    pub opencode_bin: String,
-    /// The executable the ACP runtime spawns for a session of kind `acp`.
-    /// Always `"acp"` outside a test — the adapter contract names the binary
-    /// on `PATH` (spec 007) — and overridden by the test harness to point at
-    /// a stub agent, the way `opencode_bin` above is.
-    pub acp_bin: String,
-    /// Home directory containing the transcript stores of the supported CLIs.
-    /// Tests replace it with a fixture root.
-    pub agent_home: PathBuf,
     pub delete_merged_branches: bool,
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
     /// The default for ACP task permission requests. A task may override it.
     pub permission_mode: PermissionMode,
-    pub typed_input_window: Duration,
     /// User-defined ACP agent commands appended to the built-in registry.
     pub acp_agents: Vec<AcpAgentConfig>,
 }
-
-/// How long a freshly launched pane is watched for a TUI to type a resume
-/// instruction into (see `Launcher::deliver_typed_input`): two minutes,
-/// because a slow CLI start draws its first frame well after the spawn.
-///
-/// Resolved here rather than written as a constant where it is used so that a
-/// test can watch a pane that never draws without spending two real minutes
-/// on it. There is no `config.toml` key behind it: nothing about it is the
-/// user's to choose.
-const DEFAULT_TYPED_INPUT_WINDOW: Duration = Duration::from_secs(120);
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
 fn default_cli_bin() -> String {
@@ -99,14 +73,10 @@ impl Config {
             tcp_listen: file.tcp_listen,
             log_filter: file.log_filter.unwrap_or_else(|| "info".to_string()),
             cli_bin: file.cli_bin.unwrap_or_else(default_cli_bin),
-            opencode_bin: "opencode".to_string(),
-            acp_bin: "acp".to_string(),
-            agent_home: dirs::home_dir().context("cannot determine home directory")?,
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
             permission_mode: file.permission_mode.unwrap_or(PermissionMode::Auto),
-            typed_input_window: DEFAULT_TYPED_INPUT_WINDOW,
             acp_agents: file.acp_agents,
             root,
         };

@@ -101,7 +101,7 @@ impl super::Scheduler {
     /// launches, so an attempt that dies on the way leaves a `starting` row
     /// the liveness sweep retires and flags `disconnected` — and a goal in
     /// planning always wants an orchestrator, so a launch nothing on this
-    /// machine can perform (a model the agent CLI does not know, a CLI that
+    /// machine can perform (a model the agent does not know, an agent that
     /// is not installed) would put a fresh alarm on the strip every tick, for
     /// ever. [`SPAWN_RETRY_BUDGET`] attempts is what it gets, the same budget
     /// a task's author spends, out of the same map.
@@ -118,8 +118,7 @@ impl super::Scheduler {
         if self.spawn_failures.get(&goal.id).copied().unwrap_or(0) < SPAWN_RETRY_BUDGET {
             return true;
         }
-        // A store that would not say leaves the pass concluding nothing, the
-        // way the sweep does with a tmux it cannot reach.
+        // A store that would not say leaves the pass concluding nothing.
         let Some(orchestrators) = self.orchestrator_sessions(&goal.id).await else {
             return false;
         };
@@ -249,8 +248,9 @@ impl super::Scheduler {
     ///
     /// Once per situation rather than once per pass: the line the tasks render
     /// to is the key, so a second task failing is news and the same one still
-    /// failed is not. Typed into the pane rather than sent as a resume, since
-    /// the session is up and the user may be mid-conversation with it.
+    /// failed is not. Sent as a prompt to the live agent rather than as a
+    /// resume, since the session is up and the user may be mid-conversation
+    /// with it.
     async fn tell_orchestrator(&mut self, goal: &Goal, tasks: &[Task]) -> anyhow::Result<()> {
         let Some(situation) = goal_attention(tasks) else {
             self.goal_told.remove(&goal.id);
@@ -266,19 +266,16 @@ impl super::Scheduler {
             .iter()
             .find(|s| s.status() == SessionStatus::Idle)
         else {
-            // Nothing to type into: an orchestrator still starting, or one
+            // Nothing to tell: an orchestrator still starting, or one
             // mid-turn. The situation is not written down, so the pass that
             // finds it idle says it then.
             return Ok(());
         };
-        if self.pane_busy(&orchestrator.id) {
-            return Ok(());
-        }
         info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");
         self.goal_told.insert(goal.id.clone(), situation.clone());
         let template = prompts::template_for(PromptKind::GoalAttention);
         let text = prompts::goal_attention_briefing(template, goal, &situation);
-        self.spawn_delivery(orchestrator, text);
+        self.hand_prompt(orchestrator, text);
         Ok(())
     }
 
@@ -298,7 +295,7 @@ impl super::Scheduler {
 }
 
 /// The row a goal's orchestrator trouble is told on: the one already saying
-/// it where there is one — a pane that vanished under an orchestrator that
+/// it where there is one — an agent that vanished under an orchestrator that
 /// was running is flagged by the sweep, and that is this same trouble seen a
 /// moment earlier — and otherwise the last attempt's own row.
 fn alarm_row(orchestrators: &[AgentSession]) -> Option<&AgentSession> {

@@ -5,9 +5,14 @@
 -- somebody wrote one), so a reworded default never touches the database again
 -- and this file never has to grow a successor for one.
 --
--- Schema only: the built-in skills and the per-agent launch flags are seeded
--- from Rust constants after the migrations run (`seed_builtin_skills`,
--- `seed_agent_configs`), so a default can change without a migration.
+-- Schema only: the built-in skills are seeded from Rust constants after the
+-- migrations run (`seed_builtin_skills`), so a default can change without a
+-- migration.
+--
+-- Every agent is an ACP agent in the daemon's registry, named by its registry
+-- id. A model is chosen by one string, `<agent>:<model>`
+-- (`ariadne_core::models::ModelRef`), whose first segment is that id: the
+-- `model` columns below hold it whole, and nothing else names the agent.
 --
 -- Ids are lowercase ULIDs (TEXT, 26 chars); timestamps are ISO-8601 UTC TEXT.
 
@@ -16,8 +21,7 @@
 -- agent is generic and becomes what its task needs by loading skills.
 --
 -- `document` is the whole SKILL.md — YAML frontmatter naming the skill and
--- describing it, then the body — in the format Claude Code and Codex both
--- read, so one text serves every agent CLI.
+-- describing it, then the body — so one text serves every agent.
 --
 -- NULL `document` means a built-in still on the text Ariadne ships
 -- (`ariadne_store::defaults`), which is what a reset goes back to by clearing
@@ -33,22 +37,22 @@ CREATE TABLE skills (
     CHECK (builtin = 1 OR document IS NOT NULL)
 );
 
--- Per-agent-kind launch configuration: how an agent CLI is allowed to run is
--- a property of that CLI, not of the persona a profile describes. Read on
--- every spawn and resume.
+-- The flags a registry agent is launched with, appended to its registry
+-- command. Keyed by the registry id; an agent with no row is launched with
+-- its command alone. Read on every spawn and resume.
 CREATE TABLE agent_configs (
-    agent_kind  TEXT PRIMARY KEY,
+    agent_id    TEXT PRIMARY KEY,
     extra_flags TEXT NOT NULL,                  -- JSON array of argv strings
     updated_at  TEXT NOT NULL
 );
 
 -- The models the user has turned off. A model is available unless a row here
--- says otherwise, so the catalog — curated per CLI, and discovered live for
--- opencode — keeps every entry it grows usable without a write here.
+-- says otherwise, so the catalog — discovered live from each registry agent —
+-- keeps every entry it grows usable without a write here.
 --
--- The id is `<agent_kind>:<model>`, the one string a model is chosen by
--- (`ariadne_core::ModelRef`). The catalog itself is code and discovery, so
--- nothing joins on this: it is read as a set and subtracted.
+-- The id is `<agent>:<model>`, the one string a model is chosen by. The
+-- catalog itself is discovery, so nothing joins on this: it is read as a set
+-- and subtracted.
 CREATE TABLE disabled_models (
     id          TEXT PRIMARY KEY,
     disabled_at TEXT NOT NULL
@@ -87,13 +91,12 @@ CREATE TABLE memories (
 );
 CREATE INDEX idx_memories_repository ON memories (repository_id, id);
 
--- The agent, model and effort columns on `goals` and `task_agents` are pins:
--- the orchestrator sizes each agent it staffs and writes the answer here, and
--- the row is what the launcher reads from there on. The agent CLI and the
--- model are required — every agent names both, `<agent_kind>:<model>`, and no
--- CLI default stands in for a model. Only the effort may be NULL, which means
--- whatever the CLI runs the model at. The user's later choice overwrites them,
--- while the task has not started.
+-- The model and effort columns on `goals` and `task_agents` are pins: the
+-- orchestrator sizes each agent it staffs and writes the answer here, and the
+-- row is what the launcher reads from there on. The model is required —
+-- `<agent>:<model>`, and no agent default stands in for one. Only the effort
+-- may be NULL, which means whatever the agent runs the model at. The user's
+-- later choice overwrites them, while the task has not started.
 CREATE TABLE goals (
     id                  TEXT PRIMARY KEY,
     title               TEXT NOT NULL,
@@ -102,7 +105,6 @@ CREATE TABLE goals (
                         CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
-    agent_kind          TEXT NOT NULL,
     model               TEXT NOT NULL,
     effort              TEXT
 );
@@ -159,8 +161,8 @@ CREATE TABLE learned_permissions (
     PRIMARY KEY (repository_id, tool_name, kind)
 );
 
--- The agents staffed on a task. An agent has no identity of its own: it is an
--- agent CLI, a model, an effort, a brief and a set of skills, and its seat
+-- The agents staffed on a task. An agent has no identity of its own: it is a
+-- model of a registry agent, an effort, a brief and a set of skills, and its seat
 -- says only where it sits — one of the authors that write the task, each on
 -- its own branch, or one of the reviewers that vote on it.
 --
@@ -172,7 +174,6 @@ CREATE TABLE task_agents (
     task_id    TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
     seat       TEXT NOT NULL CHECK (seat IN ('author', 'reviewer')),
     ordinal    INTEGER NOT NULL,
-    agent_kind TEXT NOT NULL,
     model      TEXT NOT NULL,
     effort     TEXT,
     -- What this agent is told beyond the task itself, where the orchestrator
@@ -219,13 +220,13 @@ CREATE INDEX idx_task_deps_on ON task_dependencies (depends_on_task_id);
 -- `created_at`, and not the `last_activity_at` the agent moves — since a
 -- session is relaunched under its own id on every resume.
 --
--- `launch_id` names that run. A relaunch kills a pane and starts another under
--- the same row, so for a moment two processes share one ARIADNE_SESSION_ID:
--- the one being torn down still has its exit hook to fire, and the report of
--- it would otherwise land on the process that replaced it and retire a session
--- that is running. Every launch is given a fresh id, the agent carries it in
--- ARIADNE_LAUNCH_ID, and an event that names another one is a dead process
--- talking.
+-- `launch_id` names that run. A relaunch kills an agent process and starts
+-- another under the same row, so for a moment two processes share one
+-- ARIADNE_SESSION_ID: the one being torn down still has its exit to report,
+-- and the report of it would otherwise land on the process that replaced it
+-- and retire a session that is running. Every launch is given a fresh id, the
+-- runtime reports each process's events under its own, and an event that
+-- names another one is a dead process talking.
 CREATE TABLE agent_sessions (
     id                  TEXT PRIMARY KEY,       -- == ARIADNE_SESSION_ID env of the agent
     goal_id             TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
@@ -235,9 +236,7 @@ CREATE TABLE agent_sessions (
     -- which is the one agent type Ariadne defines rather than one a task
     -- staffs.
     task_agent_id       TEXT REFERENCES task_agents (id) ON DELETE CASCADE,
-    agent_kind          TEXT NOT NULL CHECK (agent_kind IN ('acp', 'claude_code', 'codex', 'opencode')),
-    internal_session_id TEXT,                   -- ACP/claude/codex/opencode session id
-    tmux_session        TEXT NOT NULL,
+    internal_session_id TEXT,                   -- the ACP agent's own session id
     worktree_path       TEXT,
     status              TEXT NOT NULL DEFAULT 'starting'
                         CHECK (status IN ('starting', 'running', 'idle', 'exited', 'failed')),
@@ -261,8 +260,7 @@ CREATE INDEX idx_sessions_attention ON agent_sessions (attention_reason);
 
 -- What each agent session has spent, as the transcripts under it report it.
 --
--- A `source` is one transcript the totals were read from — the JSONL file a
--- Claude session writes, a Codex rollout, an OpenCode session — and its three
+-- A `source` is one transcript the totals were read from, and its three
 -- counters are that transcript's *cumulative* totals, never a delta: a fresh
 -- report for the same source replaces the previous one. A session accumulates
 -- several sources when its agent is resumed into a new transcript, so the
@@ -324,7 +322,7 @@ CREATE TABLE messages (
                                       'daemon', 'user')),
     to_agent_id   TEXT REFERENCES task_agents (id) ON DELETE CASCADE,
     body          TEXT NOT NULL,
-    -- When it reached the recipient's pane. NULL while it is still waiting.
+    -- When it was handed to the recipient's agent. NULL while it is still waiting.
     delivered_at  TEXT,
     created_at    TEXT NOT NULL
 );
@@ -339,8 +337,7 @@ CREATE TABLE agent_events (
     id         TEXT PRIMARY KEY,
     session_id TEXT REFERENCES agent_sessions (id) ON DELETE SET NULL,
     task_id    TEXT REFERENCES tasks (id) ON DELETE CASCADE,
-    agent_kind TEXT,
-    kind       TEXT NOT NULL,                   -- session_start | post_tool_use | stop | turn_complete | ...
+    kind       TEXT NOT NULL,                   -- session_start | post_tool_use | stop | ...
     payload    TEXT NOT NULL,                   -- raw JSON
     created_at TEXT NOT NULL
 );

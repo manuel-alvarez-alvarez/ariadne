@@ -5,10 +5,10 @@
 //! holds starts. Nobody else may make that call — a user session is refused —
 //! and it is made once.
 //!
-//! Mostly no tmux and no agent CLI — the rows are seeded through the store and
+//! Mostly no agent is started — the rows are seeded through the store and
 //! the endpoints are exercised — except for the two tests about what the
 //! scheduler makes of a finalized goal, which want a real scheduler and the
-//! stub tmux's panes.
+//! stub ACP agent.
 
 mod common;
 
@@ -33,7 +33,7 @@ fn finalize_uri(cast: &Cast) -> String {
 /// A live orchestrator session on the goal, which is what an orchestrator's
 /// calls come in as.
 async fn orchestrator_session(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
-    h.orchestrator_session(&cast.goal, "orc").await
+    h.orchestrator_session(&cast.goal).await
 }
 
 /// The plan finalized by its orchestrator, as the MCP tool finalizes it.
@@ -149,7 +149,7 @@ async fn only_the_orchestrator_may_finalize_the_plan() {
 async fn a_plan_with_no_tasks_cannot_be_finalized() {
     let h = harness().await;
     let (goal, _repo) = h.goal().await;
-    let session = h.orchestrator_session(&goal, "orc").await;
+    let session = h.orchestrator_session(&goal).await;
 
     let envelope: ErrorBody = h
         .json(
@@ -225,15 +225,15 @@ async fn an_orchestrator_is_the_agent_work_waits_on_until_the_goal_is_over() {
 /// left up, because the goal is not over — and left alone, because a goal
 /// under way has nothing to say to it.
 ///
-/// The hand-off used to be typed into: the daemon asked the orchestrator to
+/// The hand-off used to be a message: the daemon asked the orchestrator to
 /// compact the conversation that wrote the plan. It asks nothing now, and an
-/// idle pane that nothing has happened on stays empty.
+/// idle agent that nothing has happened on is sent nothing.
 #[tokio::test]
 async fn a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_nothing() {
     let h = harness().scheduler().await;
     let cast = h.cast().await;
     let orchestrator = orchestrator_session(&h, &cast).await;
-    h.pane_exists(&orchestrator);
+    h.agent_runs(&orchestrator).await;
     h.set_status(&orchestrator, SessionStatus::Idle).await;
     finalize(&h, &cast, &orchestrator.id).await;
 
@@ -243,12 +243,12 @@ async fn a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_not
     }
 
     assert!(
-        !h.killed_panes().contains(&orchestrator.tmux_session),
+        h.agent_is_running(&orchestrator),
         "the orchestrator was let go once its plan was under way"
     );
     assert_eq!(
-        h.pasted(&orchestrator),
-        "",
-        "the daemon typed into a pane that had nothing waiting for it"
+        h.prompts_to(&orchestrator),
+        Vec::<String>::new(),
+        "the daemon prompted an agent that had nothing waiting for it"
     );
 }

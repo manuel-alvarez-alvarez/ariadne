@@ -107,11 +107,11 @@ pub struct TaskAgentDto {
     /// The skills this agent loads, in the order they reach it.
     #[schema(example = json!(["coding", "testing"]))]
     pub skills: Vec<String>,
-    /// What this agent runs on, `<agent_kind>:<model>`.
-    #[schema(example = "codex:o3")]
+    /// What this agent runs on, `<agent>:<model>`.
+    #[schema(example = "codex-acp:o3")]
     pub model: String,
     /// The reasoning effort that model is run at. None = whatever the agent
-    /// CLI runs it at on its own.
+    /// runs it at on its own.
     #[schema(example = "high")]
     pub effort: Option<String>,
     /// What the orchestrator told this agent beyond the task itself. None =
@@ -122,10 +122,11 @@ pub struct TaskAgentDto {
 /// One agent to staff on a task: where it sits, the skills it loads, and what
 /// it is to run on.
 ///
-/// The model is written `<agent_kind>:<model>`: the agent CLI, and after the
-/// `:` one model of it. Both halves are required — a model is required, and
-/// no CLI default stands in for one — and a string naming no agent CLI is
-/// refused: nothing here derives one from the other.
+/// The model is written `<agent>:<model>`: the id of an agent in the ACP
+/// registry, and after the `:` one model of it. Both halves are required — a
+/// model is required, and no agent default stands in for one — and a string
+/// naming no registry agent is refused: nothing here derives one from the
+/// other.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentAssignment {
@@ -137,13 +138,13 @@ pub struct AgentAssignment {
     #[serde(default)]
     #[schema(example = json!(["coding", "testing"]))]
     pub skills: Vec<String>,
-    /// What this agent runs on, `<agent_kind>:<model>`. Required; the empty
+    /// What this agent runs on, `<agent>:<model>`. Required; the empty
     /// string and the word "default" are refused.
-    #[schema(example = "codex:o3")]
+    #[schema(example = "codex-acp:o3")]
     pub model: String,
     /// The reasoning effort to run that model at, one of the efforts
     /// `GET /v1/models` lists for it; anything else is refused. Omitted (or
-    /// "default") = whatever the agent CLI runs the model at.
+    /// "default") = whatever the agent runs the model at.
     #[serde(default)]
     #[schema(example = "high")]
     pub effort: Option<String>,
@@ -200,18 +201,18 @@ pub struct CreateTaskRequest {
 pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the author runs on, `<agent_kind>:<model>`: absent leaves the
+    /// What the author runs on, `<agent>:<model>`: absent leaves the
     /// author's pins alone, and anything else pins what it spells. A model is
     /// required, so "default" and the empty string are refused — there is no
     /// default to hand the pin back to.
-    #[schema(example = "codex:gpt-5.3-codex")]
+    #[schema(example = "codex-acp:gpt-5.3-codex")]
     pub model: Option<String>,
     /// The reasoning effort to run the model at: absent leaves it alone,
-    /// "default" (or the empty string) puts it back on whatever the agent CLI
+    /// "default" (or the empty string) puts it back on whatever the agent
     /// runs the model at, and anything else is checked against the model it
     /// will run at — the one this request names, or the task's own where it
     /// names none — and refused where that model does not take it. A `model`
-    /// written without an effort runs at the CLI's own default: the effort
+    /// written without an effort runs at the agent's own default: the effort
     /// belonged to the model that was left behind.
     #[schema(example = "xhigh")]
     pub effort: Option<String>,

@@ -23,7 +23,6 @@ use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::skills::SkillDto;
 use ariadne_api::{HealthResponse, VersionResponse};
-use ariadne_core::AgentKind;
 
 pub mod endpoint;
 pub mod sse;
@@ -258,21 +257,20 @@ impl Client {
         self.get_json("/v1/doctor").await
     }
 
-    /// How each agent CLI is launched: its flags as they stand, and the
-    /// defaults they were seeded from.
+    /// How each registry agent is launched: its flags as they stand.
     pub async fn list_agent_configs(&self) -> Result<Vec<AgentConfigDto>, ClientError> {
         self.get_json("/v1/agents").await
     }
 
-    /// Replace one agent kind's flags, whole; sending the kind's
-    /// `default_flags` back is how it is restored to the default.
+    /// Replace one registry agent's flags, whole; sending its `default_flags`
+    /// back is how it is restored to the default.
     pub async fn update_agent_config(
         &self,
-        kind: AgentKind,
+        agent_id: &str,
         extra_flags: Vec<String>,
     ) -> Result<AgentConfigDto, ClientError> {
         self.put_json(
-            &format!("/v1/agents/{}", kind.as_str()),
+            &format!("/v1/agents/{agent_id}"),
             &UpdateAgentConfigRequest { extra_flags },
         )
         .await

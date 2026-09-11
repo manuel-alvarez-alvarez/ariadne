@@ -5,21 +5,23 @@
 //! the capabilities it declares, the configuration options it offers, the
 //! reply to each prompt — updates, a permission request, the stop reason, an
 //! exit mid-turn, or a pause (`wait_for`) a test holds the turn open on — and
-//! the stored sessions a load or resume finds. The
-//! harness points `acp_bin` at it ([`super::HarnessBuilder::acp_bin`]), the
-//! daemon spawns it as the agent, and the test reads everything the daemon
-//! sent back out of its log.
+//! the stored sessions a load or resume finds. The harness registers it as
+//! the registry agent `stub` ([`registry_home`] for a script of the test's
+//! own), the daemon spawns it as the agent, and the test reads everything the
+//! daemon sent back out of its log — each message tagged with the Ariadne
+//! session the agent process ran under.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-/// One stub agent on disk: the executable the harness points `acp_bin` at,
-/// and the files it reports through.
+/// One stub agent on disk: the executable the registry runs, and the files it
+/// reports through.
 pub struct StubAcpAgent {
     /// The wrapper script the daemon spawns.
     pub bin: String,
     log: PathBuf,
+    launches: PathBuf,
     pid_file: PathBuf,
 }
 
@@ -48,6 +50,43 @@ impl StubAcpAgent {
             .into_iter()
             .filter(|m| m.get("method").and_then(Value::as_str) == Some(method))
             .map(|m| m.get("params").cloned().unwrap_or_default())
+            .collect()
+    }
+
+    /// The text of every `session/prompt` the agent processes of one Ariadne
+    /// session were sent, in order.
+    pub fn prompts_for(&self, session_id: &str) -> Vec<String> {
+        self.messages()
+            .into_iter()
+            .filter(|m| m.get("method").and_then(Value::as_str) == Some("session/prompt"))
+            .filter(|m| m.get("ariadne_session").and_then(Value::as_str) == Some(session_id))
+            .filter_map(|m| {
+                m.pointer("/params/prompt/0/text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    /// The arguments every agent process of one Ariadne session was started
+    /// with behind the stub's own command, one list per process, in order.
+    pub fn launches_for(&self, session_id: &str) -> Vec<Vec<String>> {
+        std::fs::read_to_string(&self.launches)
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("a logged launch"))
+            .filter(|launch| {
+                launch.get("ariadne_session").and_then(Value::as_str) == Some(session_id)
+            })
+            .map(|launch| {
+                launch["argv"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .collect()
     }
 
@@ -161,8 +200,10 @@ pub fn script() -> Value {
 /// by. The script is `script()` with whatever the test changed.
 pub fn stub_acp_agent(dir: &Path, mut script: Value) -> StubAcpAgent {
     let log = dir.join("acp-messages.jsonl");
+    let launches = dir.join("acp-launches.jsonl");
     let pid_file = dir.join("acp-agent.pid");
     script["log"] = json!(log.display().to_string());
+    script["launches"] = json!(launches.display().to_string());
     script["pid_file"] = json!(pid_file.display().to_string());
     let script_file = dir.join("acp-script.json");
     std::fs::write(&script_file, serde_json::to_string_pretty(&script).unwrap()).unwrap();
@@ -181,6 +222,7 @@ pub fn stub_acp_agent(dir: &Path, mut script: Value) -> StubAcpAgent {
     StubAcpAgent {
         bin: bin.display().to_string(),
         log,
+        launches,
         pid_file,
     }
 }
@@ -194,6 +236,9 @@ import json, os, sys, time
 script = json.load(open(sys.argv[1]))
 with open(script["pid_file"], "w") as f:
     f.write(str(os.getpid()))
+with open(script["launches"], "a") as f:
+    f.write(json.dumps({"ariadne_session": os.environ.get("ARIADNE_SESSION_ID"),
+                        "argv": sys.argv[2:]}) + "\n")
 
 options = script.get("config_options", [])
 prompts = list(script.get("prompts", []))
@@ -206,6 +251,8 @@ class Failure(Exception):
 
 
 def log(message):
+    message = dict(message)
+    message["ariadne_session"] = os.environ.get("ARIADNE_SESSION_ID")
     with open(script["log"], "a") as f:
         f.write(json.dumps(message) + "\n")
 

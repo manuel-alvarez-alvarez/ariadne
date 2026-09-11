@@ -7,7 +7,7 @@ use axum::http::{Request, StatusCode};
 
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::{AgentKind, Seat};
+use ariadne_core::Seat;
 
 use common::{as_session, delete, get, harness, next_event, test_pin};
 
@@ -23,18 +23,10 @@ fn get_as_session(uri: &str, session_id: &str) -> Request<Body> {
 async fn another_session_of_the_same_repository_finds_an_authors_memory() {
     let h = harness().await;
     let (goal, repo) = h.goal().await;
-    let first = h
-        .task_on(&goal, &repo, "first", 0, test_pin(AgentKind::ClaudeCode))
-        .await;
-    let second_goal = h.goal_on(&repo, test_pin(AgentKind::ClaudeCode)).await;
+    let first = h.task_on(&goal, &repo, "first", 0, test_pin()).await;
+    let second_goal = h.goal_on(&repo, test_pin()).await;
     let second = h
-        .task_on(
-            &second_goal,
-            &repo,
-            "second",
-            0,
-            test_pin(AgentKind::ClaudeCode),
-        )
+        .task_on(&second_goal, &repo, "second", 0, test_pin())
         .await;
     let first_author = h.store.task_author(&first.id).await.unwrap();
     let second_author = h.store.task_author(&second.id).await.unwrap();
@@ -82,13 +74,7 @@ async fn another_repository_does_not_find_the_memory() {
     let h = harness().await;
     let (first_goal, first_repo) = h.goal().await;
     let first_task = h
-        .task_on(
-            &first_goal,
-            &first_repo,
-            "first",
-            0,
-            test_pin(AgentKind::ClaudeCode),
-        )
+        .task_on(&first_goal, &first_repo, "first", 0, test_pin())
         .await;
     let first_author = h.store.task_author(&first_task.id).await.unwrap();
     let saving = h
@@ -113,17 +99,9 @@ async fn another_repository_does_not_find_the_memory() {
     .await;
 
     let other_repo = h.repository(&h.at("other-repo")).await;
-    let other_goal = h
-        .goal_on(&other_repo, test_pin(AgentKind::ClaudeCode))
-        .await;
+    let other_goal = h.goal_on(&other_repo, test_pin()).await;
     let other_task = h
-        .task_on(
-            &other_goal,
-            &other_repo,
-            "other",
-            0,
-            test_pin(AgentKind::ClaudeCode),
-        )
+        .task_on(&other_goal, &other_repo, "other", 0, test_pin())
         .await;
     let other_author = h.store.task_author(&other_task.id).await.unwrap();
     let searching = h
@@ -160,9 +138,7 @@ async fn another_repository_does_not_find_the_memory() {
 async fn an_expired_memory_never_returns_from_list_or_search() {
     let h = harness().await;
     let (goal, repo) = h.goal().await;
-    let task = h
-        .task_on(&goal, &repo, "task", 0, test_pin(AgentKind::ClaudeCode))
-        .await;
+    let task = h.task_on(&goal, &repo, "task", 0, test_pin()).await;
     let author = h.store.task_author(&task.id).await.unwrap();
     let session = h
         .session(&goal, Some(&task), Seat::Author, &author.id)
@@ -206,9 +182,7 @@ async fn delete_removes_a_memory() {
     let h = harness().await;
     let mut events = h.bus.subscribe();
     let (goal, repo) = h.goal().await;
-    let task = h
-        .task_on(&goal, &repo, "task", 0, test_pin(AgentKind::ClaudeCode))
-        .await;
+    let task = h.task_on(&goal, &repo, "task", 0, test_pin()).await;
     let author = h.store.task_author(&task.id).await.unwrap();
     let session = h
         .session(&goal, Some(&task), Seat::Author, &author.id)

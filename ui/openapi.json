@@ -63,7 +63,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "Every agent kind's flags, current and default.",
+        "summary": "Every registry agent's flags, in registry order. An agent nobody set\nflags for is listed with none.",
         "operationId": "list",
         "responses": {
           "200": {
@@ -82,19 +82,19 @@
         }
       }
     },
-    "/v1/agents/{kind}": {
+    "/v1/agents/{id}": {
       "put": {
         "tags": [
           "agents"
         ],
-        "summary": "Replace an agent kind's flags.",
-        "description": "The list is replaced whole, and an empty one is a legitimate answer.\nRestoring the defaults is this same call with the `default_flags` the GET\nhands out — nothing else to learn, and nothing that can drift from them.",
+        "summary": "Replace a registry agent's flags.",
+        "description": "The list is replaced whole, and an empty one is a legitimate answer.\nRestoring the defaults is this same call with the `default_flags` the\nGET hands out — nothing else to learn, and nothing that can drift from\nthem.",
         "operationId": "update",
         "parameters": [
           {
-            "name": "kind",
+            "name": "id",
             "in": "path",
-            "description": "claude_code, codex or opencode",
+            "description": "the agent's registry id",
             "required": true,
             "schema": {
               "type": "string"
@@ -123,7 +123,7 @@
             }
           },
           "400": {
-            "description": "unknown agent kind"
+            "description": "no such agent in the registry"
           }
         }
       }
@@ -627,7 +627,7 @@
           {
             "name": "undelivered",
             "in": "query",
-            "description": "Only the ones that have not reached a pane yet.",
+            "description": "Only the ones that have not reached their agent yet.",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -781,8 +781,8 @@
         "tags": [
           "models"
         ],
-        "summary": "Everything an agent can be pinned to, `<agent_kind>:<model>` apiece:\nthe models of each agent CLI, curated for claude_code and codex,\ndiscovered live (`opencode models --verbose`) for opencode. No\nbare-CLI entry: a model is required wherever an agent is pinned, so\nthere is nothing a CLI on its own could be staffed as.",
-        "description": "The union always, and grouped by agent CLI: a model is chosen by one\nstring that carries its CLI, so nothing scopes this catalog any more.\nEach entry says what the model is for — its tier, its cost and speed\nnext to every other entry, the work it suits and the work it does not\n— and carries the efforts it can be run at, cheapest first, each with\nwhat spending it buys and whether it is the one its CLI runs by\ndefault.\nEvery entry says whether an agent can be staffed on it. A model the\nuser turned off stays in the list, off: a catalog that hid it would\nleave nothing to turn back on, and nothing to say why a pin naming it\nis refused.",
+        "summary": "Everything an agent can be pinned to, `<agent>:<model>` apiece: the\nmodels discovery found each registry agent offering, grouped by agent.\nNo bare-agent entry: a model is required wherever an agent is pinned,\nso there is nothing an agent on its own could be staffed as.",
+        "description": "Each entry carries the efforts it can be run at, as the agent offered\nthem, and which of them it runs by default. Every entry says whether\nan agent can be staffed on it. A model the user turned off stays in\nthe list, off: a catalog that hid it would leave nothing to turn back\non, and nothing to say why a pin naming it is refused.",
         "operationId": "list",
         "responses": {
           "200": {
@@ -807,7 +807,7 @@
           "models"
         ],
         "summary": "Turn one entry of the catalog on or off.",
-        "description": "The catalog is code and discovery, so this writes only the exception:\nan id nothing in the catalog carries is a 404, and the last entry left\non cannot be turned off — a plan needs something to be staffed on, and\na daemon that can staff nothing is not a state to leave a user in.",
+        "description": "The catalog is discovery, so this writes only the exception:\nan id nothing in the catalog carries is a 404, and the last entry left\non cannot be turned off — a plan needs something to be staffed on, and\na daemon that can staff nothing is not a state to leave a user in.",
         "operationId": "set_enabled",
         "requestBody": {
           "content": {
@@ -844,7 +844,7 @@
         "tags": [
           "sessions"
         ],
-        "summary": "List sessions Ariadne did not start: hand-started CLI conversations found\nin a supported CLI's own transcript store, and stored sessions of an ACP\nagent that can list them.",
+        "summary": "List sessions Ariadne did not start: the stored sessions of every ACP\nagent that can list them, newest first.",
         "operationId": "list_outside",
         "responses": {
           "200": {
@@ -1326,7 +1326,7 @@
         "tags": [
           "sessions"
         ],
-        "summary": "The session's events so far, in order: the whole transcript a console\nopens on, since there is no pane to capture a snapshot from instead.",
+        "summary": "The session's events so far, in order: the whole transcript a console\nopens on.",
         "operationId": "snapshot",
         "parameters": [
           {
@@ -1364,8 +1364,8 @@
         "tags": [
           "sessions"
         ],
-        "summary": "Type into an ACP session: the console's counterpart of `/input`.",
-        "description": "There is no pane for the text to land on. While a permission request is\npending, the text selects that request's option; otherwise it becomes a\nfresh `session/prompt` — sent at once if the agent is between turns, or\nqueued, in order, behind whichever one is running and sent the moment it\nends.\n\nBoth halves of \"live\" matter, as they do for a pane: the row's status,\nbecause a finished session takes no more input, and the runtime itself,\nsince a session of any other kind has no agent here to hand a prompt to.",
+        "summary": "Type into a session.",
+        "description": "While a permission request is pending, the text selects that request's\noption; otherwise it becomes a fresh `session/prompt` — sent at once if\nthe agent is between turns, or queued, in order, behind whichever one is\nrunning and sent the moment it ends.\n\nBoth halves of \"live\" matter: the row's status, because a finished\nsession takes no more input, and the runtime itself, which has no agent to\nhand a prompt to for a session whose process is gone.\n\nAnd it is the user acting on the session, so whatever it was flagged for\ncomes down with the input: a permission answered, a question typed back,\na message read. An agent still blocked raises its own again with its next\nevent. The scheduler hears about it as it does about an ingested event, so\nthe quiet clock and the stream follow.",
         "operationId": "console_input",
         "parameters": [
           {
@@ -1422,7 +1422,7 @@
         ],
         "responses": {
           "200": {
-            "description": "SSE stream of console events (text/event-stream). A `snapshot` event carrying every event recorded so far (`[AgentEventDto]`), then an `event` per new one (`AgentEventDto`) — message chunks, thoughts, tool calls, plans, permission requests and turn status all arrive this way, in whatever vocabulary the agent's adapter reports them in. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes.",
+            "description": "SSE stream of console events (text/event-stream). A `snapshot` event carrying every event recorded so far (`[AgentEventDto]`), then an `event` per new one (`AgentEventDto`) — message chunks, thoughts, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -1437,54 +1437,12 @@
         }
       }
     },
-    "/v1/sessions/{id}/input": {
-      "post": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "Type into a session's pane: the write counterpart of the log stream.",
-        "description": "The bytes go to tmux verbatim, so the agent sees exactly what was typed in\nfront of it and the echo comes back through `/logs/stream` like any other\npane output. Nothing is appended — a submit carries its own `\\r`.\n\nAnd it is the user acting on the session, so whatever it was flagged for\ncomes down with the input.\n\nBoth halves of \"live\" are checked, as in `logs_stream`: the row's status,\nbecause a finished session must not be typed into, and tmux itself,\nbecause tmux names are reused and a `send-keys` at a stale name would land\nin a successor's pane.",
-        "operationId": "input",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "session id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SessionInputRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Input handed to the pane"
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
     "/v1/sessions/{id}/kill": {
       "post": {
         "tags": [
           "sessions"
         ],
-        "summary": "Kill a session's tmux process.",
+        "summary": "Kill a session's agent process.",
         "operationId": "kill",
         "parameters": [
           {
@@ -1514,131 +1472,12 @@
         }
       }
     },
-    "/v1/sessions/{id}/logs": {
-      "get": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "Recent tmux pane output of a session.",
-        "operationId": "logs",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "session id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionLogsResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/sessions/{id}/logs/stream": {
-      "get": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "Follow a session's terminal output.",
-        "description": "The stream opens with a `resize` event (`SessionPaneSize`) carrying the\ngrid the output is drawn at: the snapshot is wrapped at that width and\nevery later repaint is addressed in it. A live pane is measured; a\nfinished one is reported at the last size it was seen at, if it ever was.\n\nThen a `snapshot` event carrying the scrollback the `/logs` endpoint would\nreturn — as the pane's screen rather than as text: it ends where the pane's\ncursor is (see [`as_screen`]), so the repaints that follow land where they\nwere addressed. Then a `delta` event per burst of new output. Both payloads\nare a `SessionLogChunk`: raw terminal bytes, escape sequences and all, are\nJSON-encoded so they cannot break SSE's line framing.\n\nA pane resized under the stream — by `ariadne attach`, say — sends a\n`resize` and a *fresh* `snapshot` rather than continuing with deltas: the\noutput in flight straddles the change and belongs to neither grid, so the\nclient starts over at the new one. `snapshot` therefore means \"replace\neverything you have\", whenever it arrives. Nothing is sent in between: a\ndelta drawn at a grid the client does not have is the corruption this is\nall here to avoid. If no coherent screen can be had — the pane cannot be\nread, or keeps changing shape while it is — the connection is closed\n*without* an `end`, at the opening as much as later on: the session is not\nover, and a fresh connection is the shortest way back to a grid and a\nscreen that agree. Only a pane confirmed gone ends a stream.\n\nWhen the session ends — or if it was already over when the request arrived\n— the remaining output is flushed, a final `end` event (`SessionLogEnd`)\nis sent and the connection closes. There is no replay and no\n`Last-Event-ID`: reconnecting starts again from a fresh snapshot.",
-        "operationId": "logs_stream",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "session id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "SSE stream of terminal output (text/event-stream). A `resize` event with the grid the output is drawn at (`{\"cols\": 80, \"rows\": 24}`, SessionPaneSize), then a `snapshot` event with the current scrollback and a `delta` event per burst of new output — both `{\"chunk\": \"...\"}` (SessionLogChunk). A pane resized under the stream sends a new `resize` followed by a fresh `snapshot`, which replaces everything sent so far. A final `end` event (SessionLogEnd) closes the stream when the session is over.",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionLogChunk"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/sessions/{id}/resize": {
-      "post": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "Resize a session's pane to the grid a viewer is showing it at.",
-        "description": "The web terminal is not a tmux client, so nothing sizes the pane for it:\nleft alone a detached session stays at tmux's 80×24 and a panel with room\nfor far more shows a small pane in a large box. This is the attach a\nbrowser cannot make — the same `resize-window` a `tmux attach` performs —\nand the new grid comes back to every viewer through the log stream, which\nalready notices a pane that changed size.\n\nSeveral viewers each fit the pane to their own panel; the last one to ask\nwins, exactly as the last client to attach does in tmux.\n\nLiveness is checked as it is for input: a finished session's status, and\ntmux itself, since a stale name may belong to a successor's pane by now.",
-        "operationId": "resize",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "session id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SessionResizeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Pane resized"
-          },
-          "400": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
     "/v1/sessions/{id}/resume": {
       "post": {
         "tags": [
           "sessions"
         ],
-        "summary": "Revive an ended session: new tmux, same agent conversation (resumed via\nthe stored internal session id). Returns the session to attach to, which\nis this one either way — relaunched under its own id and tmux name, or\nuntouched when its tmux turned out to be alive already.",
+        "summary": "Revive an ended session: a new agent process, same agent conversation\n(resumed via the stored internal session id). Returns the session to\nattach to, which is this one either way — relaunched under its own id, or\nuntouched when its agent turned out to be alive already.",
         "description": "`409` when there is nothing to come back to: no stored agent id, a\nworktree that was cleaned up — or a goal that has finished, whose live\nsessions the scheduler takes down anyway.",
         "operationId": "resume",
         "parameters": [
@@ -2014,7 +1853,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Make an outside session the author of a ready task.",
+        "summary": "Make a stored ACP session the author of a ready task.",
         "operationId": "adopt_author_session",
         "parameters": [
           {
@@ -2179,7 +2018,7 @@
           {
             "name": "undelivered",
             "in": "query",
-            "description": "Only the ones that have not reached a pane yet.",
+            "description": "Only the ones that have not reached their agent yet.",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -2615,21 +2454,15 @@
       },
       "AdoptOutsideSessionRequest": {
         "type": "object",
-        "description": "The outside CLI session to adopt as a task author.",
+        "description": "The stored ACP session to adopt as a task author.",
         "required": [
-          "agent_kind",
+          "agent_id",
           "internal_session_id"
         ],
         "properties": {
           "agent_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Required alongside an `agent_kind` of `acp`: which registry agent the\nsession belongs to."
-          },
-          "agent_kind": {
-            "$ref": "#/components/schemas/AgentKind"
+            "type": "string",
+            "description": "Which registry agent the session belongs to."
           },
           "internal_session_id": {
             "type": "string"
@@ -2639,7 +2472,7 @@
       },
       "AgentAssignment": {
         "type": "object",
-        "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent_kind>:<model>`: the agent CLI, and after the\n`:` one model of it. Both halves are required — a model is required, and\nno CLI default stands in for one — and a string naming no agent CLI is\nrefused: nothing here derives one from the other.",
+        "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent>:<model>`: the id of an agent in the ACP\nregistry, and after the `:` one model of it. Both halves are required — a\nmodel is required, and no agent default stands in for one — and a string\nnaming no registry agent is refused: nothing here derives one from the\nother.",
         "required": [
           "seat",
           "model"
@@ -2657,13 +2490,13 @@
               "string",
               "null"
             ],
-            "description": "The reasoning effort to run that model at, one of the efforts\n`GET /v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at.",
+            "description": "The reasoning effort to run that model at, one of the efforts\n`GET /v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent runs the model at.",
             "example": "high"
           },
           "model": {
             "type": "string",
-            "description": "What this agent runs on, `<agent_kind>:<model>`. Required; the empty\nstring and the word \"default\" are refused.",
-            "example": "codex:o3"
+            "description": "What this agent runs on, `<agent>:<model>`. Required; the empty\nstring and the word \"default\" are refused.",
+            "example": "codex-acp:o3"
           },
           "seat": {
             "$ref": "#/components/schemas/Seat",
@@ -2685,29 +2518,30 @@
       },
       "AgentConfigDto": {
         "type": "object",
-        "description": "How one agent CLI is launched, shared by every agent that runs on it.",
+        "description": "How one registry agent is launched, shared by every session that runs on\nit.",
         "required": [
-          "agent_kind",
+          "agent_id",
           "extra_flags",
           "default_flags"
         ],
         "properties": {
-          "agent_kind": {
-            "$ref": "#/components/schemas/AgentKind"
+          "agent_id": {
+            "type": "string",
+            "description": "The id of the agent in the ACP registry (`GET /v1/acp-agents`)."
           },
           "default_flags": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "What Ariadne ships for this agent kind: what `extra_flags` was seeded\nwith, and what restoring the defaults writes back — a client resets by\nsending these back as `extra_flags`."
+            "description": "What Ariadne ships for this agent: what restoring the defaults writes\nback — a client resets by sending these back as `extra_flags`. An ACP\nagent ships with no flags, so this is empty."
           },
           "extra_flags": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Argv flags appended on every spawn and resume of this agent CLI."
+            "description": "Argv flags appended to the agent's registry command on every spawn and\nresume."
           }
         }
       },
@@ -2721,12 +2555,6 @@
           "created_at"
         ],
         "properties": {
-          "agent_kind": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "created_at": {
             "type": "string"
           },
@@ -2735,7 +2563,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "e.g. session_start, post_tool_use, stop, turn_complete"
+            "description": "e.g. session_start, post_tool_use, stop"
           },
           "payload": {},
           "session_id": {
@@ -2746,7 +2574,7 @@
           },
           "summary": {
             "type": "string",
-            "description": "The one-line gist of `payload`, built by the daemon from the CLI's own\nvocabulary rather than stored: an action and its subject for a tool\ncall, the agent's own words where it left any, and `…` where nothing\nof it can be read."
+            "description": "The one-line gist of `payload`, built by the daemon from the event's\nown vocabulary rather than stored: an action and its subject for a tool\ncall, the agent's own words where it left any, and `…` where nothing\nof it can be read."
           },
           "task_id": {
             "type": [
@@ -2755,16 +2583,6 @@
             ]
           }
         }
-      },
-      "AgentKind": {
-        "type": "string",
-        "description": "Which coding-agent CLI a profile runs on.",
-        "enum": [
-          "acp",
-          "claude_code",
-          "codex",
-          "opencode"
-        ]
       },
       "AgentUsageDto": {
         "type": "object",
@@ -2809,28 +2627,17 @@
           "name"
         ],
         "properties": {
-          "agent_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AgentKind",
-                "description": "Set for the coding-agent CLIs, absent for tmux and git."
-              }
-            ]
-          },
           "authenticated": {
             "type": [
               "boolean",
               "null"
             ],
-            "description": "Whether it holds credentials for the service it speaks to, for the\nbinaries that hold any: `gh auth status` and `glab auth status`, asked\nof the daemon's own environment because that is where the polling\nruns. `None` for a binary with nothing to sign in to — tmux, git, the\nagent CLIs — and for one that was not found to ask.\n\nThe distinction it exists for is the one that used to be invisible: a\n`gh` that is installed and signed out answers every poll of a pull\nrequest with a failure, and a task published to a forge is then\nwatched by nothing."
+            "description": "Whether it holds credentials for the service it speaks to, for the\nbinaries that hold any: `gh auth status` and `glab auth status`, asked\nof the daemon's own environment because that is where the polling\nruns. `None` for a binary with nothing to sign in to — git — and for\none that was not found to ask.\n\nThe distinction it exists for is the one that used to be invisible: a\n`gh` that is installed and signed out answers every poll of a pull\nrequest with a failure, and a task published to a forge is then\nwatched by nothing."
           },
           "name": {
             "type": "string",
-            "description": "Executable name as it is looked up on PATH (\"claude\", \"tmux\").",
-            "example": "claude"
+            "description": "Executable name as it is looked up on PATH (\"git\", \"gh\").",
+            "example": "git"
           },
           "path": {
             "type": [
@@ -2855,7 +2662,7 @@
       },
       "ConsoleInputRequest": {
         "type": "object",
-        "description": "Body of `POST /v1/sessions/{id}/console/input`.\n\nAn ACP session has no pane to type into. While a permission request is\npending, the text selects that request's option; otherwise it becomes a\nfresh `session/prompt`, sent at once or queued behind the turn still\nrunning.",
+        "description": "Body of `POST /v1/sessions/{id}/console/input`.\n\nWhile a permission request is pending, the text selects that request's\noption; otherwise it becomes a fresh `session/prompt`, sent at once or\nqueued behind the turn still running.",
         "required": [
           "text"
         ],
@@ -2882,13 +2689,13 @@
               "string",
               "null"
             ],
-            "description": "The reasoning effort to run that model at, one of the efforts `GET\n/v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent CLI runs the model at.",
+            "description": "The reasoning effort to run that model at, one of the efforts `GET\n/v1/models` lists for it; anything else is refused. Omitted (or\n\"default\") = whatever the agent runs the model at.",
             "example": "high"
           },
           "model": {
             "type": "string",
-            "description": "What the orchestrator runs on, `<agent_kind>:<model>` — the agent CLI\nand, after the `:`, the model of it: `codex:gpt-5.3-codex`,\n`opencode:ollama/llama3:8b`. Required — a model is required, and no\nCLI default stands in for one. The model half is free text, handed to\nthat CLI as typed; a string naming no agent CLI is refused, and so are\nthe empty string and the word \"default\".",
-            "example": "codex:gpt-5.3-codex"
+            "description": "What the orchestrator runs on, `<agent>:<model>` — the id of an agent\nin the ACP registry and, after the `:`, the model of it:\n`codex-acp:gpt-5.3-codex`, `opencode-acp:ollama/llama3:8b`. Required —\na model is required, and no agent default stands in for one. The model\nhalf is free text, handed to that agent as typed; a string naming no\nregistry agent is refused, and so are the empty string and the word\n\"default\".",
+            "example": "codex-acp:gpt-5.3-codex"
           },
           "repository_ids": {
             "type": "array",
@@ -3032,7 +2839,6 @@
           "version",
           "home",
           "socket_path",
-          "agents",
           "tools",
           "db",
           "worktree_root"
@@ -3043,14 +2849,7 @@
             "items": {
               "$ref": "#/components/schemas/AcpAgentDto"
             },
-            "description": "Every registry ACP agent and its cached discovery result."
-          },
-          "agents": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BinaryDto"
-            },
-            "description": "One entry per [`AgentKind`], in `AgentKind::ALL` order."
+            "description": "Every registry ACP agent and its cached discovery result: the agents\na session can be spawned on."
           },
           "db": {
             "$ref": "#/components/schemas/PathStateDto"
@@ -3064,7 +2863,7 @@
               "string",
               "null"
             ],
-            "description": "The daemon's `PATH`, the one every agent, tmux and git lookup uses."
+            "description": "The daemon's `PATH`, the one every agent and git lookup uses."
           },
           "socket_path": {
             "type": "string"
@@ -3074,7 +2873,7 @@
             "items": {
               "$ref": "#/components/schemas/BinaryDto"
             },
-            "description": "The other binaries the daemon runs: tmux and git, without which no\nsession can be spawned at all, and the forge CLIs `gh` and `glab`,\nwhich are what a published task is watched through."
+            "description": "The other binaries the daemon runs: git, without which no worktree can\nbe cut at all, and the forge CLIs `gh` and `glab`, which are what a\npublished task is watched through."
           },
           "version": {
             "type": "string",
@@ -3442,7 +3241,7 @@
       },
       "EffortDto": {
         "type": "object",
-        "description": "One reasoning effort an entry can be run at: the name it is passed by, and\nwhat spending it buys.\n\nAt most one effort of a model is the `default`: what its agent CLI runs it\nat when a task pins no effort at all. None of them are where the CLI has no\ndefault to name.",
+        "description": "One reasoning effort an entry can be run at: the name it is passed by, and\nwhat spending it buys.\n\nAt most one effort of a model is the `default`: what its agent runs it at\nwhen a task pins no effort at all. None of them are where the agent has no\ndefault to name.",
         "required": [
           "id",
           "default"
@@ -3450,14 +3249,14 @@
         "properties": {
           "default": {
             "type": "boolean",
-            "description": "Whether this is what the agent CLI runs the model at when none is\npassed."
+            "description": "Whether this is what the agent runs the model at when none is passed."
           },
           "description": {
             "type": [
               "string",
               "null"
             ],
-            "description": "What spending this effort buys — the same on every model of one agent\nCLI. `null` where nothing knows, which is where the effort was\ndiscovered rather than curated."
+            "description": "What spending this effort buys, where the agent describes it. `null`\nwhere nothing knows."
           },
           "id": {
             "type": "string",
@@ -3495,7 +3294,7 @@
               "string",
               "null"
             ],
-            "description": "The reasoning effort that model is run at, pinned like `model`. None =\nwhatever the agent CLI runs it at on its own.",
+            "description": "The reasoning effort that model is run at, pinned like `model`. None =\nwhatever the agent runs it at on its own.",
             "example": "high"
           },
           "id": {
@@ -3503,8 +3302,8 @@
           },
           "model": {
             "type": "string",
-            "description": "What the orchestrator runs on, `<agent_kind>:<model>`: the agent CLI\nand, after the `:`, the model of it (`claude_code:claude-opus-5`).",
-            "example": "claude_code:claude-opus-5"
+            "description": "What the orchestrator runs on, `<agent>:<model>`: the registry agent\nand, after the `:`, the model of it (`claude-code-acp:claude-opus-5`).",
+            "example": "claude-code-acp:claude-opus-5"
           },
           "repos": {
             "type": "array",
@@ -3724,7 +3523,7 @@
               "string",
               "null"
             ],
-            "description": "When it reached the recipient's pane, or None while it is still\nwaiting for one to be free."
+            "description": "When it was handed to the recipient's agent, or None while it is still\nwaiting for one to be free."
           },
           "from_actor": {
             "$ref": "#/components/schemas/Actor"
@@ -3782,10 +3581,10 @@
       },
       "ModelDto": {
         "type": "object",
-        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`). Every entry\nnames both halves — there is no bare-CLI entry, because a model is\nrequired wherever an agent is pinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. `agent_kind` keeps the native adapter family, and is\n`acp` for a discovered entry. The rest is what an orchestrator sizes a task\nfrom: what this model is, what it costs and how fast it answers next to\nevery other entry, the work it is and is not the choice for, and what each\nof its efforts buys.",
+        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: a\nregistry agent on a model discovery found it offering\n(`claude-code-acp:claude-opus-5`). Every entry names both halves — there\nis no bare-agent entry, because a model is required wherever an agent is\npinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. The rest is what an orchestrator sizes a task from: what\nthis model is, what it costs and how fast it answers next to every other\nentry, the work it is and is not the choice for, and what each of its\nefforts buys.",
         "required": [
           "id",
-          "agent_kind",
+          "agent_id",
           "tier",
           "best_for",
           "avoid_for",
@@ -3795,11 +3594,7 @@
         "properties": {
           "agent_id": {
             "type": "string",
-            "description": "Stable registry agent id. Native catalog entries use their agent kind."
-          },
-          "agent_kind": {
-            "$ref": "#/components/schemas/AgentKind",
-            "description": "The native adapter family this entry runs through."
+            "description": "Stable registry agent id."
           },
           "avoid_for": {
             "type": "array",
@@ -3827,7 +3622,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "What it costs to run: 1 (free) to 5 (frontier), ranked across the whole\ncatalog so entries of different agent CLIs compare. `null` where\nnothing knows.",
+            "description": "What it costs to run: 1 (free) to 5 (frontier), ranked across the whole\ncatalog so entries of different agents compare. `null` where nothing\nknows.",
             "example": 3,
             "maximum": 5,
             "minimum": 1
@@ -3852,7 +3647,7 @@
           },
           "id": {
             "type": "string",
-            "example": "claude_code:claude-fable-5"
+            "example": "claude-code-acp:claude-opus-5"
           },
           "speed": {
             "type": [
@@ -3873,7 +3668,7 @@
       },
       "ModelTier": {
         "type": "string",
-        "description": "Roughly what a model is, as a picker and an orchestrator compare models: the\ncapability class it belongs to, across every agent CLI at once.\n\nOne ladder for the whole catalog, so a claude_code entry and a codex entry\nthat sit at the same rung really are alternatives for the same work.\n`Unknown` is what an entry nothing has been written about says — a model\ndiscovered at runtime, or an agent CLI on whatever model it defaults to —\nand it is a genuine answer rather than a missing one.",
+        "description": "Roughly what a model is, as a picker and an orchestrator compare models: the\ncapability class it belongs to, across every agent at once.\n\nOne ladder for the whole catalog, so two agents' entries that sit at the\nsame rung really are alternatives for the same work. `Unknown` is what an\nentry nothing has been written about says — every model discovery finds at\nruntime — and it is a genuine answer rather than a missing one.",
         "enum": [
           "frontier",
           "strong",
@@ -3884,9 +3679,9 @@
       },
       "OutsideSessionDto": {
         "type": "object",
-        "description": "A coding-agent session found in a CLI transcript store, but not started by\nAriadne.",
+        "description": "A stored session of an ACP agent that Ariadne did not start, listed over\n`session/list`.",
         "required": [
-          "agent_kind",
+          "agent_id",
           "internal_session_id",
           "working_directory",
           "last_activity_at",
@@ -3894,21 +3689,15 @@
         ],
         "properties": {
           "agent_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Which ACP registry agent this session belongs to (`GET\n/v1/acp-agents`). `None` for a native CLI session, where `agent_kind`\nalone says which CLI it is."
-          },
-          "agent_kind": {
-            "$ref": "#/components/schemas/AgentKind"
+            "type": "string",
+            "description": "Which ACP registry agent this session belongs to (`GET\n/v1/acp-agents`)."
           },
           "first_prompt": {
             "type": "string"
           },
           "internal_session_id": {
             "type": "string",
-            "description": "The id the CLI uses to resume this conversation."
+            "description": "The id the agent loads this conversation back by."
           },
           "last_activity_at": {
             "type": "string"
@@ -4069,17 +3858,12 @@
           "id",
           "goal_id",
           "seat",
-          "agent_kind",
           "model",
-          "tmux_session",
           "status",
           "usage",
           "created_at"
         ],
         "properties": {
-          "agent_kind": {
-            "$ref": "#/components/schemas/AgentKind"
-          },
           "attention_reason": {
             "oneOf": [
               {
@@ -4106,7 +3890,7 @@
               "string",
               "null"
             ],
-            "description": "Effort that model was launched at, off the same pin as `model`; null =\nwhatever the agent CLI runs it at.",
+            "description": "Effort that model was launched at, off the same pin as `model`; null =\nwhatever the agent runs it at.",
             "example": "high"
           },
           "ended_at": {
@@ -4126,7 +3910,7 @@
               "string",
               "null"
             ],
-            "description": "Agent-internal id: ACP session id / claude session uuid / codex thread id / opencode\nsession id."
+            "description": "The ACP agent's own session id."
           },
           "last_activity_at": {
             "type": [
@@ -4136,7 +3920,7 @@
           },
           "model": {
             "type": "string",
-            "description": "Model requested at launch."
+            "description": "Model requested at launch, `<agent>:<model>`: the registry agent the\nsession runs on, and the model of it."
           },
           "seat": {
             "$ref": "#/components/schemas/Seat"
@@ -4158,9 +3942,6 @@
             ],
             "description": "None = orchestrator session."
           },
-          "tmux_session": {
-            "type": "string"
-          },
           "usage": {
             "$ref": "#/components/schemas/TokenUsageDto",
             "description": "What this session's agent has spent, summed over every transcript it\nreported under. Zeros while nothing has been reported."
@@ -4172,107 +3953,6 @@
             ]
           }
         }
-      },
-      "SessionInputRequest": {
-        "type": "object",
-        "description": "Body of `POST /v1/sessions/{id}/input`.",
-        "required": [
-          "data"
-        ],
-        "properties": {
-          "data": {
-            "type": "string",
-            "description": "Keystrokes to type into the pane, exactly as the terminal produced\nthem: `\\r` for Return, `\\x03` for Ctrl-C, `\\x1b[A` for Up. Sent\nverbatim — nothing is appended, so a submit has to carry its own `\\r`."
-          }
-        },
-        "additionalProperties": false
-      },
-      "SessionLogChunk": {
-        "type": "object",
-        "description": "Payload of the `snapshot` and `delta` events of\n`GET /v1/sessions/{id}/logs/stream`.\n\nTerminal output is raw bytes — newlines, escape sequences, control\ncharacters — none of which survive SSE's line-oriented `data:` framing on\ntheir own, so every chunk travels as JSON.",
-        "required": [
-          "chunk"
-        ],
-        "properties": {
-          "chunk": {
-            "type": "string",
-            "description": "Terminal output as written, decoded lossily from UTF-8."
-          }
-        }
-      },
-      "SessionLogEnd": {
-        "type": "object",
-        "description": "Payload of the final `end` event of `GET /v1/sessions/{id}/logs/stream`:\nthe session is over and no further output is coming.",
-        "required": [
-          "session_id"
-        ],
-        "properties": {
-          "session_id": {
-            "type": "string"
-          }
-        }
-      },
-      "SessionLogsResponse": {
-        "type": "object",
-        "description": "Response of `GET /v1/sessions/{id}/logs`.",
-        "required": [
-          "session_id",
-          "tmux_session",
-          "logs"
-        ],
-        "properties": {
-          "logs": {
-            "type": "string",
-            "description": "Recent pane contents captured from tmux."
-          },
-          "session_id": {
-            "type": "string"
-          },
-          "tmux_session": {
-            "type": "string"
-          }
-        }
-      },
-      "SessionPaneSize": {
-        "type": "object",
-        "description": "Payload of the `resize` event of `GET /v1/sessions/{id}/logs/stream`: the\ngrid the pane is drawing against, in cells.\n\nA terminal stream only means anything at a size. The agent addresses the\ncursor and erases lines against *this* grid, so a viewer that renders the\nbytes at any other one has every repaint land on the wrong row.",
-        "required": [
-          "cols",
-          "rows"
-        ],
-        "properties": {
-          "cols": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "rows": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          }
-        }
-      },
-      "SessionResizeRequest": {
-        "type": "object",
-        "description": "Body of `POST /v1/sessions/{id}/resize`.\n\nThe grid a viewer wants the pane to draw at, in cells — what a terminal\nhands its pty when its window changes, and what `tmux attach` gives the\npane it attaches to.",
-        "required": [
-          "cols",
-          "rows"
-        ],
-        "properties": {
-          "cols": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "rows": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
       },
       "SessionStatus": {
         "type": "string",
@@ -4287,7 +3967,7 @@
       },
       "SetModelEnabledRequest": {
         "type": "object",
-        "description": "Body of `PUT /v1/models/enabled`: one model of the catalog, turned on or\noff.\n\nThe id is a field rather than a path segment because a model id carries\nboth `:` and, for the ids opencode discovers, `/`\n(`opencode:anthropic/claude-sonnet-4`) — which is a path of its own, not a\nsegment of one.",
+        "description": "Body of `PUT /v1/models/enabled`: one model of the catalog, turned on or\noff.\n\nThe id is a field rather than a path segment because a model id carries\n`:` and often `/` (`opencode-acp:anthropic/claude-sonnet-4`) — which is a\npath of its own, not a segment of one.",
         "required": [
           "id",
           "enabled"
@@ -4300,7 +3980,7 @@
           "id": {
             "type": "string",
             "description": "The entry, as `GET /v1/models` spells its `id`.",
-            "example": "claude_code:claude-fable-5"
+            "example": "claude-code-acp:claude-opus-5"
           }
         }
       },
@@ -4386,7 +4066,7 @@
               "string",
               "null"
             ],
-            "description": "The reasoning effort that model is run at. None = whatever the agent\nCLI runs it at on its own.",
+            "description": "The reasoning effort that model is run at. None = whatever the agent\nruns it at on its own.",
             "example": "high"
           },
           "id": {
@@ -4394,8 +4074,8 @@
           },
           "model": {
             "type": "string",
-            "description": "What this agent runs on, `<agent_kind>:<model>`.",
-            "example": "codex:o3"
+            "description": "What this agent runs on, `<agent>:<model>`.",
+            "example": "codex-acp:o3"
           },
           "seat": {
             "$ref": "#/components/schemas/Seat",
@@ -4731,7 +4411,7 @@
       },
       "UpdateAgentConfigRequest": {
         "type": "object",
-        "description": "Body of `PUT /v1/agents/{kind}`: the whole new flag list, empty included.",
+        "description": "Body of `PUT /v1/agents/{id}`: the whole new flag list, empty included.",
         "required": [
           "extra_flags"
         ],
@@ -4819,7 +4499,7 @@
               "string",
               "null"
             ],
-            "description": "The reasoning effort to run the model at: absent leaves it alone,\n\"default\" (or the empty string) puts it back on whatever the agent CLI\nruns the model at, and anything else is checked against the model it\nwill run at — the one this request names, or the task's own where it\nnames none — and refused where that model does not take it. A `model`\nwritten without an effort runs at the CLI's own default: the effort\nbelonged to the model that was left behind.",
+            "description": "The reasoning effort to run the model at: absent leaves it alone,\n\"default\" (or the empty string) puts it back on whatever the agent\nruns the model at, and anything else is checked against the model it\nwill run at — the one this request names, or the task's own where it\nnames none — and refused where that model does not take it. A `model`\nwritten without an effort runs at the agent's own default: the effort\nbelonged to the model that was left behind.",
             "example": "xhigh"
           },
           "landing": {
@@ -4838,8 +4518,8 @@
               "string",
               "null"
             ],
-            "description": "What the author runs on, `<agent_kind>:<model>`: absent leaves the\nauthor's pins alone, and anything else pins what it spells. A model is\nrequired, so \"default\" and the empty string are refused — there is no\ndefault to hand the pin back to.",
-            "example": "codex:gpt-5.3-codex"
+            "description": "What the author runs on, `<agent>:<model>`: absent leaves the\nauthor's pins alone, and anything else pins what it spells. A model is\nrequired, so \"default\" and the empty string are refused — there is no\ndefault to hand the pin back to.",
+            "example": "codex-acp:gpt-5.3-codex"
           },
           "reviewers": {
             "type": [
@@ -4887,7 +4567,7 @@
     },
     {
       "name": "agents",
-      "description": "Per-agent-CLI launch configuration"
+      "description": "Per-agent launch configuration: the flags behind each registry command"
     },
     {
       "name": "acp-agents",
@@ -4915,15 +4595,15 @@
     },
     {
       "name": "sessions",
-      "description": "Agent sessions: tmux panes, and the acp session console"
+      "description": "Agent sessions, and the console each one is driven through"
     },
     {
       "name": "events",
-      "description": "Raw agent events from hooks, and the live domain-event stream"
+      "description": "Agent events the ACP runtime reports, and the live domain-event stream"
     },
     {
       "name": "models",
-      "description": "Model catalogs per agent CLI"
+      "description": "The model catalog discovery found each registry agent offering"
     },
     {
       "name": "logs",

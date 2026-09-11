@@ -1,24 +1,21 @@
 //! What the scheduler notices about agents that stopped working.
 //!
 //! One clock — how long since the session was last heard from at all — and
-//! one timeline on it: a nudge, then the user, then the pane killed and the
-//! agent put back on its feet. The three thresholds are the scheduler's own,
+//! one timeline on it: a nudge, then the user, then the agent killed and put
+//! back on its feet. The three thresholds are the scheduler's own,
 //! read from it rather than copied, so a test says "past the nudge" and means
 //! whatever that is today. Every seat
 //! is under it, since every seat can go quiet: the orchestrator of a goal still
 //! being planned, the reviewers a round is waiting on, and the author —
 //! which is the only one whose task carries a flag of its own next to the
-//! session's. A pane that disappears while its work is still going says so
-//! too, rather than ending quietly.
+//! session's. An agent that dies while its work is still going says so too,
+//! rather than ending quietly.
 //!
-//! What the nudge is, the pane decides: an idle agent is told to get on with
-//! the work, a pane whose composer is still holding the instruction it was
-//! launched with gets the Enter that submits it, and an agent in the middle
-//! of a turn is left alone until the thresholds behind the nudge.
-//!
-//! None of it waits on the keystrokes themselves: typing into a pane settles
-//! for a second or two, and a pass with three agents to nudge sends all three
-//! at once rather than one after another.
+//! Only an idle agent is nudged, told to get on with the work as a prompt;
+//! an agent in the middle of a turn is left alone until the thresholds
+//! behind the nudge. The agents are the harness's stub, running under the
+//! sessions a test seeds, and a nudge is read back from the prompts it was
+//! sent.
 //!
 //! The scheduler is started after the seeding rather than with the harness, so
 //! that the pass a test asks for is the first one over the state it just
@@ -34,7 +31,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
+    Actor, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
 };
 // The watchdog's timeline and the orchestrator's budget come from the scheduler
 // rather than being written down again here, so that moving a threshold moves
@@ -52,9 +49,9 @@ use common::{Harness, eventually, harness, test_pin};
 /// worth, as the scheduler has it.
 const SPAWN_RETRY_BUDGET: usize = ariadne_daemon::scheduler::SPAWN_RETRY_BUDGET as usize;
 /// How long a test waits for a reconciliation to reach the store. Generous
-/// because some of what is waited on is not the daemon thinking: a nudge no
-/// composer will let go of spends several seconds of widening backoff before
-/// anybody hears about it, and every test here runs beside the others.
+/// because some of what is waited on is not the daemon thinking: a stub agent
+/// is a process to start and talk to, and every test here runs beside the
+/// others.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One daemon, one goal, and the agents a test puts under it.
@@ -89,10 +86,10 @@ impl World {
         World::build(harness().await, reviewers).await
     }
 
-    /// A daemon that cannot start anything: `cli_bin` names no executable, so
-    /// every fresh session dies at the launch.
+    /// A daemon that cannot start anything: the registry's agent names no
+    /// executable, so every fresh session dies at the launch.
     ///
-    /// What a vanished pane leaves behind is only itself visible while nothing
+    /// What a vanished agent leaves behind is only itself visible while nothing
     /// has replaced it — a successful replacement is supposed to clear the
     /// flag — so the tests about what the sweep concluded run where no
     /// replacement can happen, and the one about the replacement runs where it
@@ -128,12 +125,8 @@ impl World {
                 title: title.into(),
                 description: "do things".into(),
                 agents: vec![
-                    NewTaskAgent::new(Seat::Author, ["coding"], test_pin(AgentKind::ClaudeCode)),
-                    NewTaskAgent::new(
-                        Seat::Reviewer,
-                        ["code-review"],
-                        test_pin(AgentKind::ClaudeCode),
-                    ),
+                    NewTaskAgent::new(Seat::Author, ["coding"], test_pin()),
+                    NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
                 ],
                 depends_on: vec![],
                 landing: None,
@@ -143,14 +136,14 @@ impl World {
             .unwrap()
     }
 
-    /// The author of a task walked to `status`, in a pane the stub answers
-    /// for: the opening most of these tests share.
+    /// The author of a task walked to `status`, with a stub agent running
+    /// under it: the opening most of these tests share.
     async fn author_on(&self, task: &Task, status: TaskStatus) -> AgentSession {
         self.advance(task, status).await;
         let session = self
             .session(&self.goal, Some(task), Seat::Author, &self.author)
             .await;
-        self.pane_exists(&session);
+        self.agent_runs(&session).await;
         session
     }
 
@@ -184,8 +177,7 @@ impl Sched {
 }
 
 /// The author's resume template, as its profile has it: the words the daemon
-/// is about to type into the pane, which is what a composer that never lets go
-/// keeps showing.
+/// nudges an idle author with.
 const RESUME: &str = r#"Continue "task" on"#;
 
 // -- the timeline -----------------------------------------------------------
@@ -196,15 +188,15 @@ const RESUME: &str = r#"Continue "task" on"#;
 async fn an_orchestrator_idle_past_the_threshold_is_raised_on_its_session() {
     let h = harness().await;
     let goal = h.planning_goal().await;
-    let session = h.orchestrator_session(&goal, "orc").await;
-    h.pane_exists(&session);
+    let session = h.orchestrator_session(&goal).await;
+    h.agent_runs(&session).await;
     h.idle_for(&session, NUDGE_SECS + 60).await;
 
     // One pass per threshold: the nudge, and then the escalation behind it.
     let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     sched.goal(&goal);
     eventually(TIMEOUT, "the orchestrator to be nudged", async || {
-        h.keystrokes(&session) > 0
+        !h.prompts_to(&session).is_empty()
     })
     .await;
     h.idle_for(&session, FLAG_SECS + 60).await;
@@ -223,13 +215,13 @@ async fn a_reviewer_idle_past_the_threshold_is_raised_on_its_session() {
     let session = w
         .session(&w.goal, Some(&w.task), Seat::Reviewer, &w.reviewer)
         .await;
-    w.pane_exists(&session);
+    w.agent_runs(&session).await;
     w.idle_for(&session, NUDGE_SECS + 60).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(TIMEOUT, "the reviewer to be nudged", async || {
-        w.keystrokes(&session) > 0
+        !w.prompts_to(&session).is_empty()
     })
     .await;
     w.idle_for(&session, FLAG_SECS + 60).await;
@@ -250,7 +242,7 @@ async fn an_author_stall_flags_the_task_and_its_session() {
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(TIMEOUT, "the author to be nudged", async || {
-        w.keystrokes(&session) > 0
+        !w.prompts_to(&session).is_empty()
     })
     .await;
     w.idle_for(&session, FLAG_SECS + 60).await;
@@ -278,13 +270,12 @@ async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(TIMEOUT, "the author to be nudged", async || {
-        w.keystrokes(&session) > 0
+        !w.prompts_to(&session).is_empty()
     })
     .await;
-    // The delivery settles a paste and an Enter before the scheduler hears
-    // anything; nothing is counted until it has.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let nudged = w.keystrokes(&session);
+    // Whatever else that pass had to say would have been said by now.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let nudged = w.prompts_to(&session).len();
 
     // A second task's agent, quiet in the same way from now on: its nudge is
     // what says the passes the first one went through are over.
@@ -298,15 +289,15 @@ async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
         sched.task(&w.task);
         sched.task(&control_task);
         eventually(TIMEOUT, "the other agent to be nudged", async || {
-            w.keystrokes(&control) > 0
+            !w.prompts_to(&control).is_empty()
         })
         .await;
     }
 
     assert_eq!(
-        w.keystrokes(&session),
+        w.prompts_to(&session).len(),
         nudged,
-        "nothing more was typed at an agent that has already been nudged"
+        "nothing more was sent to an agent that has already been nudged"
     );
     assert_eq!(
         w.attention(&session).await,
@@ -315,42 +306,8 @@ async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
     );
 }
 
-/// A nudge that does not leave the composer is not a nudge. The pane keeps
-/// showing it however many Enters follow, so the session is raised for the
-/// user rather than counted as told — the flag says the agent is not moving,
-/// and the task it is not moving on says so with it.
-#[tokio::test]
-async fn a_nudge_that_never_submits_raises_the_session() {
-    let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
-    // Past the nudge threshold and nowhere near the flag one: the only route
-    // to a raised session here is the delivery that could not be confirmed.
-    w.idle_for(&session, NUDGE_SECS + 60).await;
-    w.composer_keeps(RESUME);
-
-    let sched = w.scheduler();
-    sched.task(&w.task);
-
-    eventually(TIMEOUT, "the session to be raised", async || {
-        w.attention(&session).await == Some(AttentionReason::Stalled)
-    })
-    .await;
-    assert!(
-        w.keystrokes(&session) > 2,
-        "the paste was followed by more than one Enter"
-    );
-    // Waited for rather than read straight off: the task's column is the
-    // store's projection of the session's flag and is written after it, so a
-    // read taken between the two says nothing about either.
-    eventually(TIMEOUT, "the task to carry it too", async || {
-        w.store.get_task(&w.task.id).await.unwrap().is_stalled()
-    })
-    .await;
-}
-
-/// An agent waiting on a person is blocked, not stalled. Typing into it would
-/// answer whatever it is waiting on — a permission prompt takes Enter for a
-/// yes — so it is left alone, flag and all.
+/// An agent waiting on a person is blocked, not stalled: the answer it waits
+/// on is the person's to give, so it is left alone, flag and all.
 #[tokio::test]
 async fn a_session_waiting_on_a_person_is_never_nudged() {
     let w = World::active().await;
@@ -367,14 +324,14 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
     sched.task(&w.task);
     sched.task(&control_task);
     eventually(TIMEOUT, "the unblocked author to be nudged", async || {
-        w.keystrokes(&control) > 0
+        !w.prompts_to(&control).is_empty()
     })
     .await;
 
     assert_eq!(
-        w.keystrokes(&session),
+        w.prompts_to(&session).len(),
         0,
-        "no keystroke is sent into a pane that is asking the user something"
+        "nothing is sent to an agent that is asking the user something"
     );
     assert_eq!(
         w.attention(&session).await,
@@ -387,104 +344,14 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
     );
 }
 
-/// The notification Claude fires a minute after every turn is not a person
-/// being waited for.
-///
-/// An author that ended its turn mid-task is waiting for the daemon's nudge,
-/// and nothing tells the two apart: the hook is registered with no matcher, so
-/// the same `idle_prompt` arrives whether the agent asked something or simply
-/// stopped. Reading it as a wait on the user put the session behind the
-/// watchdog's skip list, where it was never nudged, never raised and never
-/// relaunched.
-#[tokio::test]
-async fn a_claude_agent_idle_at_its_prompt_is_nudged_like_any_other() {
-    let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
-    w.ingest(
-        &session,
-        "notification",
-        serde_json::json!({
-            "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
-            "cwd": "/tmp/wt",
-            "hook_event_name": "Notification",
-            "message": "Claude is waiting for your input",
-            "notification_type": "idle_prompt",
-        }),
-    )
-    .await;
-    assert_eq!(
-        w.attention(&session).await,
-        None,
-        "an agent sitting at its prompt is asking nobody for anything"
-    );
-
-    // And the silence behind that notification is measured like any other.
-    w.idle_for(&session, NUDGE_SECS + 60).await;
-    let sched = w.scheduler();
-    sched.task(&w.task);
-    eventually(TIMEOUT, "the author to be nudged", async || {
-        w.keystrokes(&session) > 0
-    })
-    .await;
-}
-
-/// A resume whose instruction never left the composer: the agent is running,
-/// has reported nothing at all, and would sit there for ever. The pane says
-/// which it is — the instruction is still drawn in the composer — and what
-/// that wants is the Enter a human would press, not another copy of what is
-/// already there. If that did not start it either, the user.
-#[tokio::test]
-async fn a_composer_still_holding_its_instruction_gets_the_enter_alone() {
-    let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
-    w.launched_ago(&session, NUDGE_SECS + 60).await;
-    // The instruction the launch put there, still drawn where it was pasted.
-    w.composer_keeps(RESUME);
-
-    let sched = w.scheduler();
-    sched.task(&w.task);
-    eventually(TIMEOUT, "the stuck composer to be submitted", async || {
-        w.keystrokes(&session) > 0
-    })
-    .await;
-    // Whatever else that pass had to say would have been said by now.
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(
-        w.keystrokes(&session),
-        1,
-        "one keystroke: the Enter, and not the whole instruction pasted over \
-         the copy already in the composer"
-    );
-
-    // Still nothing reported a threshold later, and the keystroke was not the
-    // answer: only a person can say why.
-    w.launched_ago(&session, FLAG_SECS + 60).await;
-    sched.task(&w.task);
-    eventually(
-        TIMEOUT,
-        "the agent that never started to be raised",
-        async || w.attention(&session).await == Some(AttentionReason::Stalled),
-    )
-    .await;
-    assert_eq!(
-        w.keystrokes(&session),
-        1,
-        "and the Enter is not pressed again for the same launch"
-    );
-}
-
-/// An agent in the middle of a turn is left alone at the first threshold: its
-/// composer is empty, so there is nothing to submit, and typing into a turn is
-/// how work gets interrupted. A turn that never ends is what the thresholds
-/// behind the nudge are for.
+/// An agent in the middle of a turn is left alone at the first threshold: a
+/// nudge would only queue behind the turn it is in. A turn that never ends is
+/// what the thresholds behind the nudge are for.
 #[tokio::test]
 async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
     let w = World::active().await;
     let session = w.author_on(&w.task, TaskStatus::InProgress).await;
     w.launched_ago(&session, NUDGE_SECS + 60).await;
-    // Nothing written into the stub's composer at all: every look at the pane
-    // comes back empty, which is what a TUI drawing a transcript looks like
-    // from here.
 
     // A second task's author, idle in the same silence: its nudge is what
     // says the pass the working one went through is over.
@@ -496,14 +363,14 @@ async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
     sched.task(&w.task);
     sched.task(&control_task);
     eventually(TIMEOUT, "the idle author to be nudged", async || {
-        w.keystrokes(&control) > 0
+        !w.prompts_to(&control).is_empty()
     })
     .await;
 
     assert_eq!(
-        w.keystrokes(&session),
+        w.prompts_to(&session).len(),
         0,
-        "nothing is typed into an agent that is working"
+        "nothing is sent to an agent that is working"
     );
     assert_eq!(
         w.attention(&session).await,
@@ -513,15 +380,14 @@ async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
 }
 
 /// An agent that reported an error is already asking for the user by name.
-/// OpenCode reports a failed turn as `session.error` and the ingest leaves the
-/// session running with the error raised — which is not a composer anybody has
-/// to submit, and not a reason the user is better off hearing as a stall.
+/// A failed turn is reported as `session.error`, and the ingest leaves the
+/// session running with the error raised — which is not a reason the user is
+/// better off hearing as a stall.
 #[tokio::test]
 async fn an_agent_that_reported_an_error_is_left_alone() {
     let w = World::active().await;
     let errored = w.author_on(&w.task, TaskStatus::InProgress).await;
     w.launched_ago(&errored, RELAUNCH_SECS + 60).await;
-    w.composer_keeps(RESUME);
     w.raise(&errored, AttentionReason::AgentError).await;
     // And an agent whose silence nothing explains, whose flag says the passes
     // are over.
@@ -539,9 +405,9 @@ async fn an_agent_that_reported_an_error_is_left_alone() {
     .await;
 
     assert_eq!(
-        w.keystrokes(&errored),
+        w.prompts_to(&errored).len(),
         0,
-        "nothing is typed into an agent whose turn failed"
+        "nothing is sent to an agent whose turn failed"
     );
     assert_eq!(
         w.attention(&errored).await,
@@ -551,14 +417,14 @@ async fn an_agent_that_reported_an_error_is_left_alone() {
     assert_eq!(
         w.launched_at(&errored).await,
         launched,
-        "and its pane is not killed out from under the failure"
+        "and its agent is not killed out from under the failure"
     );
 }
 
 // -- the sweep --------------------------------------------------------------
 
-/// A pane that vanished while its work was still going is not a session that
-/// finished: it is an agent the user has lost, and it says so until something
+/// An agent that vanished while its work was still going is not a session
+/// that finished: it is an agent the user has lost, and it says so until something
 /// puts it back — whatever the agent happened to be asking when it went, since
 /// what the user has to know is that the work lost its agent.
 ///
@@ -566,18 +432,17 @@ async fn an_agent_that_reported_an_error_is_left_alone() {
 /// reconciliation cannot start a replacement here (the repository is not a git
 /// repository) and would have nothing to say about attention if it could.
 #[tokio::test]
-async fn a_vanished_pane_with_work_still_active_is_flagged_disconnected() {
+async fn a_vanished_agent_with_work_still_active_is_flagged_disconnected() {
     let h = harness().cannot_spawn().await;
     let goal = h.planning_goal().await;
-    // Launched and running in the database, gone as far as tmux is concerned:
-    // never added to the stub's list of panes. Launched rather than merely
-    // written, since a row whose start is still in front of it has no pane yet
-    // for reasons that are nobody's alarm — which is the grace window's own
-    // test below.
-    let session = h.orchestrator_session(&goal, "orc").await;
+    // Launched and running in the database, with no agent process under it.
+    // Launched rather than merely written, since a row whose start is still
+    // in front of it has no agent yet for reasons that are nobody's alarm —
+    // which is the grace window's own test below.
+    let session = h.orchestrator_session(&goal).await;
     h.launched_ago(&session, 60).await;
-    // And a second one that was sitting on a dialog that died with it.
-    let on_a_prompt = h.orchestrator_session(&goal, "vanished-prompt").await;
+    // And a second one that was sitting on a question that died with it.
+    let on_a_prompt = h.orchestrator_session(&goal).await;
     h.launched_ago(&on_a_prompt, 60).await;
     h.raise(&on_a_prompt, AttentionReason::WaitingPermission)
         .await;
@@ -629,13 +494,13 @@ async fn an_author_that_cannot_be_resumed_is_flagged_disconnected() {
     .await;
 }
 
-/// A pane going away when nobody is waiting on that agent is just a session
+/// An agent going away when nobody is waiting on it is just a session
 /// ending: the author of a task under review is waiting on its reviewers and
 /// is woken by id when they answer, a reviewer that has voted is finished
 /// however long the round runs on, and a cancelled task is owed nothing at
 /// all. All three are retired, and none of them raised.
 #[tokio::test]
-async fn a_vanished_pane_nobody_is_waiting_on_is_not_raised() {
+async fn a_vanished_agent_nobody_is_waiting_on_is_not_raised() {
     // Two approvals wanted, one given: the round stays open around a reviewer
     // that has nothing left to do, so the status is not what makes it quiet.
     let w = World::reviewed_by(2).await;
@@ -667,7 +532,7 @@ async fn a_vanished_pane_nobody_is_waiting_on_is_not_raised() {
         .await
         .unwrap();
 
-    // All three had launched and were running when their panes went: a session
+    // All three had launched and were running when their agents went: a session
     // still starting is inside the sweep's grace window, and left alone
     // whoever it belongs to.
     for gone in [&author, &voted, &cancelled] {
@@ -705,7 +570,7 @@ async fn a_superseded_session_drops_its_attention_when_the_replacement_starts() 
     let goal = h.planning_goal().await;
     // The orchestrator cwd has to exist for the spawn to get off the ground.
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
-    let session = h.orchestrator_session(&goal, "orc").await;
+    let session = h.orchestrator_session(&goal).await;
     h.set_status(&session, SessionStatus::Exited).await;
     h.raise(&session, AttentionReason::Disconnected).await;
 
@@ -764,7 +629,7 @@ async fn resuming_a_session_clears_its_attention() {
 }
 
 /// A flag raised by an agent event is only ever taken down by another one, and
-/// a session sitting on a dialog reports nothing: the sweep is what lets go of
+/// a session waiting on an answer reports nothing: the sweep is what lets go of
 /// an author that was blocked on a permission prompt when its task moved on
 /// to its reviewers — and only then. An agent the work is still waiting on
 /// keeps its flag, down to the moment it went up, since how long it has been
@@ -808,7 +673,7 @@ async fn the_sweep_lets_go_of_a_blocked_agent_only_once_its_work_moved_on() {
     );
 }
 
-/// A prompt is a dialog on the agent's pane: nobody can answer one on a
+/// A prompt is a question to a live agent: nobody can answer one on a
 /// session that has ended, so retiring a session takes what it was waiting on
 /// with it. Every seat, and every one of them with its work still owed —
 /// which is exactly when nothing else would take the flag down.
@@ -831,7 +696,7 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
     // the state its own work is still going in.
     let h = harness().await;
     let cast = h.cast().await;
-    let orchestrator_session = h.orchestrator_session(&cast.goal, "orc").await;
+    let orchestrator_session = h.orchestrator_session(&cast.goal).await;
     assert_eq!(
         retire_on(&h, &orchestrator_session, AttentionReason::WaitingInput).await,
         None,
@@ -844,13 +709,7 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
         .session(&goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     let review = h
-        .task_on(
-            &goal,
-            &cast.repo,
-            "under review",
-            1,
-            test_pin(AgentKind::ClaudeCode),
-        )
+        .task_on(&goal, &cast.repo, "under review", 1, test_pin())
         .await;
     h.advance(&review, TaskStatus::UnderReview).await;
     let reviewer_session = h
@@ -885,7 +744,7 @@ async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
         AttentionReason::AgentError,
         AttentionReason::Stalled,
     ] {
-        let session = h.orchestrator_session(&goal, "orc").await;
+        let session = h.orchestrator_session(&goal).await;
         h.set_status(&session, SessionStatus::Exited).await;
         h.stale_attention(&session, reason).await;
         sessions.push(session);
@@ -909,31 +768,25 @@ async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
     );
 }
 
-/// A session on its way up has no pane yet, and that is not an agent that
-/// vanished. The row goes into `starting` before tmux has anything under it —
-/// a spawn writes it before it launches, and a resume from the API kills the
-/// old pane before the new one exists — so a sweep landing in that window used
-/// to retire a session that was coming back and raise `disconnected` on it: an
-/// alarm that took itself down again on the agent's first hook, having flashed
-/// on the strip and over SSE in between. A start older than the window is a
-/// launch that is not coming, and is swept as ever.
+/// A session on its way up has no agent yet, and that is not an agent that
+/// vanished. The row goes into `starting` before its agent exists — a spawn
+/// writes it before it launches, and a resume from the API takes the old
+/// agent down before the new one is up — so a sweep landing in that window
+/// used to retire a session that was coming back and raise `disconnected` on
+/// it: an alarm that took itself down again on the agent's first event,
+/// having flashed on the strip and over SSE in between. A start older than
+/// the window is a launch that is not coming, and is swept as ever.
 #[tokio::test]
 async fn a_starting_session_is_swept_only_once_its_grace_window_has_run_out() {
     let w = World::cannot_spawn().await;
     w.advance(&w.task, TaskStatus::InProgress).await;
-    // Two authors with no pane between them — neither was ever added to the
-    // stub's list — and nothing but the age of their start to tell them apart.
+    // Two authors with no agent between them, and nothing but the age of
+    // their start to tell them apart.
     let coming_up = w
         .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
         .await;
     let never_came_up = w
-        .session_named(
-            &w.goal,
-            Some(&w.task),
-            Seat::Author,
-            &w.author,
-            "author-starting-since-forever",
-        )
+        .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
         .await;
     w.starting_for(&never_came_up, START_GRACE_SECS + 60).await;
 
@@ -983,8 +836,8 @@ async fn a_session_that_outlived_its_completed_goal_is_killed() {
         .unwrap();
     // Live under a goal that was already finished, which is what a revive
     // racing the completion leaves behind.
-    let session = h.orchestrator_session(&goal, "orc").await;
-    h.pane_exists(&session);
+    let session = h.orchestrator_session(&goal).await;
+    h.agent_runs(&session).await;
 
     let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     sched.goal(&goal);
@@ -997,7 +850,7 @@ async fn a_session_that_outlived_its_completed_goal_is_killed() {
 
     // And the passes after it do nothing at all. The sends are ordered on one
     // channel, so the last one having been seen means the others have too.
-    let keystrokes = h.keystrokes(&session);
+    let prompted = h.prompts_to(&session).len();
     for _ in 0..3 {
         sched.goal(&goal);
     }
@@ -1006,9 +859,9 @@ async fn a_session_that_outlived_its_completed_goal_is_killed() {
     })
     .await;
     assert_eq!(
-        h.keystrokes(&session),
-        keystrokes,
-        "a finished session is not typed into"
+        h.prompts_to(&session).len(),
+        prompted,
+        "a finished session is sent nothing"
     );
     assert_eq!(h.session_status(&session).await, SessionStatus::Exited);
 }
@@ -1062,14 +915,14 @@ async fn orchestrators(h: &Harness, goal: &Goal) -> Vec<AgentSession> {
 
 /// A goal in planning always wants an orchestrator, and its row goes in
 /// before the launch: a spawn that cannot get off the ground — a model the
-/// agent CLI does not know, a CLI that is not installed — used to leave a
+/// agent does not know, an agent that is not installed — used to leave a
 /// fresh "disconnected" session on the strip every tick, for ever. So the
 /// attempts are counted the way a task's author's are, and when they run out
 /// one row is left carrying the alarm.
 ///
-/// The user's answer to it is that alarm coming down: resuming the session it
-/// sits on is what says somebody has dealt with what stopped it, and the count
-/// starts again from there.
+/// The user's answer to it is that alarm coming down: taking it down is what
+/// says somebody has dealt with what stopped it, and the count starts again
+/// from there.
 #[tokio::test]
 async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
     let h = harness().cannot_spawn().await;
@@ -1120,11 +973,11 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
         "an orchestrator that was given up on is not spawned again"
     );
 
-    // The user's answer: resuming the flagged session. Nothing here can get an
-    // agent up, so the resume fails at the launch like every attempt before it
-    // — but it puts the row back on its feet and drops what it was flagged for
-    // (`restart_session`), which is what the daemon reads as dealt with.
-    let _ = h.launcher.revive_session(&alarm.id, None).await;
+    // The user's answer: the alarm taken down. An orchestrator that never
+    // started has no conversation for a resume to go back to, so the flag
+    // coming down is the whole of it — which is what the daemon reads as
+    // dealt with.
+    h.store.clear_session_attention(&alarm.id).await.unwrap();
     assert_eq!(h.attention(&alarm).await, None, "the alarm is down");
 
     sched.goal(&goal);
@@ -1137,8 +990,8 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
 }
 
 /// A launch that works and an agent that runs are not the same thing. An
-/// orchestrator whose CLI comes up and exits — a dialog it was shown and
-/// nobody answered, a folder it will not open — leaves the seat empty again
+/// orchestrator whose agent comes up and exits — a protocol it will not
+/// speak, a folder it will not open — leaves the seat empty again
 /// within a tick, and a goal always wants that seat filled: the daemon spawned
 /// one every five seconds for as long as the goal lived, and the user was
 /// never told, because the alarm each death raised was cleared by the
@@ -1146,12 +999,11 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
 ///
 /// So a death on arrival spends an attempt like a launch that never got off
 /// the ground, and it ends where that one ends: one alarm, on one row, and
-/// nothing started again. Here every launch works — the stub takes the
-/// `new-session` — and no pane is ever alive under it, which is exactly an
-/// agent that exits the moment it starts.
+/// nothing started again. Here every launch works — the agent process is
+/// started — and it exits at once, never heard from.
 #[tokio::test]
 async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
-    let h = harness().await;
+    let h = harness().dying_agent().await;
     let goal = h.planning_goal().await;
     // The cwd of a launch has to exist for the launch to be performed at all.
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
@@ -1210,7 +1062,7 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
 /// which is a different thing that has already been ruled out.
 #[tokio::test]
 async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it() {
-    let h = harness().await;
+    let h = harness().dying_agent().await;
     // A real repository: an author is launched in a worktree of it, and the
     // launch has to work for the death that follows to be the thing under
     // test.
@@ -1280,12 +1132,12 @@ async fn a_cancelled_goal_records_why_on_every_task_it_took_with_it() {
 /// A goal whose tasks all landed is not completed by the daemon: whether the
 /// goal is *met* is a judgement about the work, and only its orchestrator can
 /// make it. What the daemon does is say that there is nothing left running,
-/// on the orchestrator's own pane, and `complete_goal` is the answer.
+/// to the orchestrator's own agent, and `complete_goal` is the answer.
 #[tokio::test]
 async fn a_goal_whose_tasks_all_landed_wakes_its_orchestrator() {
     let w = World::active().await;
-    let orchestrator = w.orchestrator_session(&w.goal, "orc").await;
-    w.pane_exists(&orchestrator);
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
     for (status, actor) in [
@@ -1309,7 +1161,7 @@ async fn a_goal_whose_tasks_all_landed_wakes_its_orchestrator() {
         sched.goal(&w.goal);
     }
     eventually(TIMEOUT, "the orchestrator to be woken", async || {
-        w.pasted(&orchestrator).contains("Every task is done.")
+        w.prompted(&orchestrator).contains("Every task is done.")
     })
     .await;
     assert_eq!(
@@ -1321,12 +1173,10 @@ async fn a_goal_whose_tasks_all_landed_wakes_its_orchestrator() {
 
 // -- deliveries and relaunches ----------------------------------------------
 
-/// Three agents to nudge in one pass, and the pass does not wait on any of
-/// them. Every delivery settles a paste and an Enter before it can say
-/// whether the composer let go — a second or two each — which the loop used
-/// to spend one agent at a time while every other event queued behind it.
+/// Three agents to nudge in one pass, and the pass hands all three their
+/// prompt at once: a delivery is queued by the runtime, never waited on.
 #[tokio::test]
-async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes() {
+async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries() {
     let w = World::active().await;
     let second = w.extra_task("second").await;
     let third = w.extra_task("third").await;
@@ -1339,41 +1189,19 @@ async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes() {
 
     // The scheduler's opening reconciliation is the pass: it sees all three.
     let _sched = w.scheduler();
-
-    // What is measured is the pass, not the machine it runs on: how long
-    // after the first pane is typed into the last one is. A delivery settles
-    // for a second before it can report anything, so three taken in turn put
-    // seconds between the first and the last.
-    let deadline = std::time::Instant::now() + TIMEOUT;
-    let mut first: Option<std::time::Instant> = None;
-    let spread = loop {
-        let typed = sessions.iter().filter(|s| w.keystrokes(s) > 0).count();
-        if typed > 0 && first.is_none() {
-            first = Some(std::time::Instant::now());
-        }
-        if typed == sessions.len() {
-            break first.unwrap().elapsed();
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for all three panes to be typed into"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
-    assert!(
-        spread < Duration::from_millis(900),
-        "the three nudges went out together, not one after another: {spread:?}"
-    );
+    eventually(TIMEOUT, "all three agents to be nudged", async || {
+        sessions.iter().all(|s| !w.prompts_to(s).is_empty())
+    })
+    .await;
 }
 
 /// An agent wedged inside a turn: a model stream that never ends, a
-/// subprocess that never returns, hooks that stopped firing. The session stays
-/// `running`, its composer is empty — there is nothing to submit — and it
-/// reports nothing at all.
+/// subprocess that never returns. The session stays `running` and reports
+/// nothing at all.
 ///
-/// The user first, because a person may know what the pane is doing; and if
-/// the flag changes nothing, the pane is killed and the same session put back
-/// on the conversation it was already having.
+/// The user first, because a person may know what the agent is doing; and if
+/// the flag changes nothing, the agent is killed and the same session put
+/// back on the conversation it was already having.
 #[tokio::test]
 async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
     let w = World::active().await;
@@ -1403,19 +1231,16 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
     let launched = w.launched_at(&session).await;
     sched.task(&w.task);
     // Waited for through the status rather than the stamp: the row is put
-    // back into `starting` and stamped before the launch reaches tmux, so a
-    // read taken on the stamp alone can catch it on its way up.
+    // back into `starting` and stamped before its agent is up, so a read
+    // taken on the stamp alone can catch it on its way up.
     eventually(TIMEOUT, "the wedged agent to be relaunched", async || {
         w.launched_at(&session).await != launched
-            && w.session_status(&session).await == SessionStatus::Running
+            && w.session_status(&session).await.is_live()
+            && w.session_status(&session).await != SessionStatus::Starting
     })
     .await;
     let back = w.store.get_session(&session.id).await.unwrap();
-    assert_eq!(
-        back.status(),
-        SessionStatus::Running,
-        "the same session is on air again"
-    );
+    assert!(back.status().is_live(), "the same session is on air again");
     assert_eq!(
         back.attention_reason(),
         None,
@@ -1430,15 +1255,17 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
         1,
         "the same session row, not a sibling beside it"
     );
-    let argv = w.spawn_argv(&session.id);
-    assert!(
-        argv.contains("uuid-1234"),
-        "the relaunch resumes the conversation it was having: {argv}"
+    let launch = w.launch_file(&session.id).expect("a launch file");
+    assert_eq!(
+        launch.resume_session_id.as_deref(),
+        Some("uuid-1234"),
+        "the relaunch resumes the conversation it was having"
     );
+    let resume = launch.initial_prompt.unwrap_or_default();
     assert!(
-        argv.contains(&w.task.branch) && argv.contains("Continue \"task\" on"),
+        resume.contains(&w.task.branch) && resume.contains(RESUME),
         "and carries the resume its seat is picked up with, rendered for this \
-         task: {argv}"
+         task: {resume}"
     );
 }
 
@@ -1486,8 +1313,8 @@ async fn a_running_agent_that_keeps_reporting_is_left_alone() {
 }
 
 /// An agent waiting on a person is blocked, not wedged: it is silent because
-/// the answer it needs is a human's, and killing its pane would throw away
-/// the dialog the user is about to answer.
+/// the answer it needs is a human's, and killing it would throw away the
+/// question the user is about to answer.
 #[tokio::test]
 async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
     let w = World::active().await;
@@ -1528,7 +1355,7 @@ async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
         assert_eq!(
             &w.launched_at(session).await,
             was,
-            "and its pane is not killed out from under the dialog"
+            "and its agent is not killed out from under the question"
         );
     }
 }
@@ -1576,7 +1403,7 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
     assert_eq!(
         w.session_status(&session).await,
         SessionStatus::Exited,
-        "and it is not left holding a pane under a failed task"
+        "and it is not left running under a failed task"
     );
     // A task nobody is coming back to carries why, whichever watchdog gave up
     // on it.
@@ -1602,8 +1429,8 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
     let w = World::active().await;
     // The orchestrator's own cwd, which a revive needs to be there.
     std::fs::create_dir_all(w.dir.path().join("repo")).unwrap();
-    let orchestrator = w.orchestrator_session(&w.goal, "orc").await;
-    w.pane_exists(&orchestrator);
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
     w.store
         .set_session_internal_id(&orchestrator.id, "uuid-orchestrator")
         .await
@@ -1620,65 +1447,15 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
         "the orchestrator was let go once its plan was under way"
     );
     assert_eq!(
-        w.pasted(&orchestrator),
+        w.prompted(&orchestrator),
         "",
-        "nothing happened on the goal, and the daemon typed into its pane anyway"
+        "nothing happened on the goal, and the daemon prompted its agent anyway"
     );
     assert_eq!(
         w.attention(&orchestrator).await,
         None,
         "an orchestrator with nothing to do is not one the user is called for"
     );
-}
-
-/// A pane with a delivery going into it is not a pane to kill, wedged or not:
-/// the paste and the Enters behind it would be interrupted mid-word, and the
-/// user would be told about a composer that was only ever cut off. The
-/// relaunch waits for the pass after the delivery has settled — and then it
-/// happens, because a composer that took a paste says nothing about the turn
-/// the agent is stuck in.
-#[tokio::test]
-async fn a_wedged_agent_is_not_killed_while_a_nudge_is_going_into_its_pane() {
-    let w = World::active().await;
-    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
-    w.make_resumable(&w.task, &session).await;
-
-    // A composer that never lets go: the nudge spends its whole backoff in
-    // the pane, which is the window this is about.
-    w.composer_keeps(RESUME);
-    let sched = w.scheduler();
-    w.idle_for(&session, NUDGE_SECS + 60).await;
-    sched.task(&w.task);
-    eventually(TIMEOUT, "the nudge to reach the pane", async || {
-        w.keystrokes(&session) > 0
-    })
-    .await;
-
-    // Now it is past the relaunch threshold too, and every pass while the
-    // pane is being typed into leaves it exactly where it is.
-    w.idle_for(&session, RELAUNCH_SECS + 60).await;
-    let launched = w.launched_at(&session).await;
-    for _ in 0..6 {
-        sched.task(&w.task);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(
-            w.pane_is_alive(&session),
-            "the pane was killed with a delivery going into it"
-        );
-        assert_eq!(
-            w.launched_at(&session).await,
-            launched,
-            "and the session was relaunched under the delivery"
-        );
-    }
-
-    // And once the delivery has settled, the wedge is still a wedge.
-    eventually(TIMEOUT, "the wedged agent to be relaunched", async || {
-        sched.task(&w.task);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        w.launched_at(&session).await != launched
-    })
-    .await;
 }
 
 /// A flag raised for the user is not an agent waiting on one. `waiting_user`
@@ -1729,9 +1506,8 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
         async || w.attention(&session).await == Some(AttentionReason::WaitingUser),
     )
     .await;
-    assert_eq!(
-        w.session_status(&session).await,
-        SessionStatus::Running,
+    assert!(
+        w.session_status(&session).await.is_live(),
         "on the agent that is running again, not on the row it was killed in"
     );
     assert!(
@@ -1745,8 +1521,8 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
 ///
 /// The chain this is about is the whole of an approved task's ending. The
 /// author opens the request, tells the user it is theirs to merge, and stops
-/// — it has nothing left to do until they do. Its pane going away is read as a
-/// disconnect, since landing the change is still the author's turn, and the
+/// — it has nothing left to do until they do. Its agent going away is read as
+/// a disconnect, since landing the change is still the author's turn, and the
 /// resume that answers the disconnect wipes the row clean. Nothing in any of
 /// that merged anything, so the task must still say who it is waiting for
 /// afterwards.
@@ -1754,8 +1530,8 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
 async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_resumed() {
     let w = World::active().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
-    // Live in the database and gone as far as tmux is concerned: the pane is
-    // never added to the stub's list, which is the agent that stopped.
+    // Live in the database with no agent process under it: the agent that
+    // stopped.
     let session = w
         .session(&w.goal, Some(&w.task), Seat::Author, &w.author)
         .await;
@@ -1769,7 +1545,7 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
         .await
         .unwrap();
 
-    // One pass does all of it: the sweep retires the vanished pane and raises
+    // One pass does all of it: the sweep retires the vanished agent and raises
     // the disconnect, and the task's own reconciliation puts an author back
     // on it.
     let _sched = w.scheduler();
@@ -1777,10 +1553,11 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
         TIMEOUT,
         "the author to be put back on the task",
         async || {
-            // Launched at all, and running now: the row it comes back in is the
+            // Launched at all, and up now: the row it comes back in is the
             // one that went down, since the conversation was there to resume.
             w.launched_at(&session).await.is_some()
-                && w.session_status(&session).await == SessionStatus::Running
+                && w.session_status(&session).await.is_live()
+                && w.session_status(&session).await != SessionStatus::Starting
         },
     )
     .await;
@@ -1798,15 +1575,15 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
 
 /// A task that failed is a decision no author can make: retry it, rewrite it,
 /// staff it differently or give it up. So the daemon wakes the orchestrator,
-/// on the pane the user is also talking to, and says which task it is.
+/// the agent the user is also talking to, and says which task it is.
 ///
 /// Once per situation, not once per pass: a second task failing is news, and
 /// the same one still failed is not.
 #[tokio::test]
 async fn a_failed_task_wakes_the_orchestrator_once() {
     let w = World::active().await;
-    let orchestrator = w.orchestrator_session(&w.goal, "orc").await;
-    w.pane_exists(&orchestrator);
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
     w.advance(&w.task, TaskStatus::InProgress).await;
     w.store
@@ -1823,21 +1600,21 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
     let sched = w.scheduler();
     sched.goal(&w.goal);
     eventually(TIMEOUT, "the orchestrator to be woken", async || {
-        w.pasted(&orchestrator).contains("failed")
+        w.prompted(&orchestrator).contains("failed")
     })
     .await;
-    let woken = w.pasted(&orchestrator);
+    let woken = w.prompted(&orchestrator);
     assert!(woken.contains(&w.task.title), "{woken}");
     assert!(woken.contains("`list_tasks`"), "{woken}");
 
     // Every pass after it says the same thing, so nothing is said again.
-    let said = w.pasted(&orchestrator).matches("`list_tasks`").count();
+    let said = w.prompted(&orchestrator).matches("`list_tasks`").count();
     for _ in 0..3 {
         sched.goal(&w.goal);
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     assert_eq!(
-        w.pasted(&orchestrator).matches("`list_tasks`").count(),
+        w.prompted(&orchestrator).matches("`list_tasks`").count(),
         said,
         "the orchestrator was woken again for the same situation"
     );
@@ -1849,8 +1626,8 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
 #[tokio::test]
 async fn a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone() {
     let w = World::active().await;
-    let orchestrator = w.orchestrator_session(&w.goal, "orc").await;
-    w.pane_exists(&orchestrator);
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
 
@@ -1860,8 +1637,8 @@ async fn a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone() {
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     assert!(
-        !w.pasted(&orchestrator).contains("`list_tasks`"),
+        !w.prompted(&orchestrator).contains("`list_tasks`"),
         "{:?}",
-        w.pasted(&orchestrator)
+        w.prompted(&orchestrator)
     );
 }

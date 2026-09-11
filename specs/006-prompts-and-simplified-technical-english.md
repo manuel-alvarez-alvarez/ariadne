@@ -106,7 +106,7 @@ they describe (003, 004, 005) — and what a skill is (017).
 - The orchestrator system prompt holds no playbook step; the phases and their
   order are the `orchestration` skill's
   (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,
-  `::the_orchestrator_staffs_a_plan_on_a_mix_of_agent_clis`), and an
+  `::the_orchestrator_staffs_a_plan_on_a_mix_of_agents`), and an
   orchestrator session indexes that skill
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).
 - The index adds one line per skill, and the path it names holds the document

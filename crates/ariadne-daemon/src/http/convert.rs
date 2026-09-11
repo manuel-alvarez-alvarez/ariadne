@@ -5,7 +5,6 @@
 //! enum, a derived flag, a name the caller loaded. Only the second kind is
 //! worth reading, so [`dto!`] is what writes the first.
 
-use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
 use ariadne_api::memories::MemoryDto;
@@ -19,10 +18,6 @@ use ariadne_api::tasks::{
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
 use ariadne_store::{self as store, AgentUsage, Store, StoreError};
-
-use crate::acp_discovery::AgentRegistry;
-
-use super::pins::spelled;
 
 /// One conversion per entity: the fields that are not a straight move, then
 /// `..` and the ones that are.
@@ -61,13 +56,6 @@ dto! {
         .. name, created_at, updated_at
     }
 
-    pub fn agent_config_dto(c: store::AgentConfig) -> AgentConfigDto {
-        agent_kind: c.agent_kind(),
-        default_flags: c.default_flags(),
-        extra_flags: c.extra_flags(),
-        ..
-    }
-
     pub fn repository_dto(r: store::Repository) -> RepositoryDto {
         .. id, path, base_branch, description, created_at, updated_at
     }
@@ -83,13 +71,11 @@ dto! {
         g: store::Goal,
         repos: Vec<store::Repository>,
         usage: GoalUsageDto,
-        registry: &AgentRegistry,
     ) -> GoalDto {
         status: g.status(),
-        model: spelled(g.agent_kind(), &g.model, registry),
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
-        .. id, title, description, effort,
+        .. id, title, description, model, effort,
            created_at, updated_at
     }
 
@@ -100,13 +86,11 @@ dto! {
         a: store::TaskAgent,
         skills: Vec<String>,
         branch: Option<String>,
-        registry: &AgentRegistry,
     ) -> TaskAgentDto {
         seat: a.seat(),
-        model: spelled(a.agent_kind(), &a.model, registry),
         skills: skills,
         branch: branch,
-        .. id, effort, brief
+        .. id, model, effort, brief
     }
 
     pub fn task_pick_dto(p: store::TaskPick) -> TaskPickDto {
@@ -123,7 +107,6 @@ dto! {
         usage: TaskUsageDto,
         reason: Option<String>,
         picks: Vec<TaskPickDto>,
-        registry: &AgentRegistry,
     ) -> TaskDto {
         status: t.status(),
         landing: t.landing(),
@@ -133,7 +116,7 @@ dto! {
             .map(|(a, skills)| {
                 let branch = (a.seat() == Seat::Author)
                     .then(|| store::author_branch(&t.branch, a.ordinal));
-                task_agent_dto(a, skills, branch, registry)
+                task_agent_dto(a, skills, branch)
             })
             .collect(),
         depends_on: depends_on,
@@ -162,12 +145,11 @@ dto! {
     /// `usage` is what this session has spent, which the caller loads.
     fn session_dto(s: store::AgentSession, usage: TokenUsageDto) -> SessionDto {
         seat: s.seat(),
-        agent_kind: s.agent_kind(),
         status: s.status(),
         attention_reason: s.attention_reason(),
         usage: usage,
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
-           tmux_session, worktree_path, attention_since,
+           worktree_path, attention_since,
            last_activity_at, created_at, ended_at
     }
 }
@@ -183,7 +165,6 @@ pub fn event_dto(e: store::AgentEvent) -> AgentEventDto {
         id: e.id,
         session_id: e.session_id,
         task_id: e.task_id,
-        agent_kind: e.agent_kind,
         kind: e.kind,
         payload,
         summary,
@@ -209,11 +190,7 @@ async fn agent_skills(store: &Store, agent_id: &str) -> Vec<String> {
 ///
 /// The skills beside every agent are what a task is read for: an agent is its
 /// skills, and no prompt can teach a reader to read an id.
-pub async fn task_dto_of(
-    store: &Store,
-    registry: &AgentRegistry,
-    task: store::Task,
-) -> Result<TaskDto, StoreError> {
+pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, StoreError> {
     let mut agents = Vec::new();
     for agent in store.list_task_agents(&task.id).await? {
         let skills = agent_skills(store, &agent.id).await;
@@ -228,9 +205,7 @@ pub async fn task_dto_of(
         .into_iter()
         .map(task_pick_dto)
         .collect();
-    Ok(task_dto(
-        task, agents, depends_on, usage, reason, picks, registry,
-    ))
+    Ok(task_dto(task, agents, depends_on, usage, reason, picks))
 }
 
 /// [`session_dto`] with what the session has spent loaded from the store.
@@ -244,14 +219,10 @@ pub async fn session_dto_of(
 
 /// [`goal_dto`] with everything it needs loaded: the repositories the goal
 /// references, and what every session under it has spent.
-pub async fn goal_dto_of(
-    store: &Store,
-    registry: &AgentRegistry,
-    goal: store::Goal,
-) -> Result<GoalDto, StoreError> {
+pub async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<GoalDto, StoreError> {
     let repos = store.list_goal_repositories(&goal.id).await?;
     let usage = goal_usage(store, &goal.id).await?;
-    Ok(goal_dto(goal, repos, usage, registry))
+    Ok(goal_dto(goal, repos, usage))
 }
 
 /// What a task has spent, arranged the way it is read: the author's own, one

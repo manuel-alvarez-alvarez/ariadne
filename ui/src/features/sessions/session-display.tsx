@@ -17,9 +17,9 @@ import type { AttentionReason, SessionDto, SessionStatus } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
 
 /**
- * Mirrors `SessionStatus::is_live` in `ariadne-core`: a session with a tmux
- * pane that may still produce output. Everything the UI treats as "live" —
- * the pulsing badge, the kill action, the terminal expecting more — keys off
+ * Mirrors `SessionStatus::is_live` in `ariadne-core`: a session with an agent
+ * that may still produce output. Everything the UI treats as "live" —
+ * the pulsing badge, the kill action, the console expecting more — keys off
  * this and nothing else.
  */
 export function isLiveStatus(status: SessionStatus): boolean {
@@ -133,7 +133,7 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
   },
   disconnected: {
     label: "Disconnected",
-    hint: "The agent's terminal is gone while its work is still active.",
+    hint: "The agent's process is gone while its work is still active.",
     badge: "bg-status-danger-soft text-status-danger-fg",
     border: "border-status-danger/40",
   },

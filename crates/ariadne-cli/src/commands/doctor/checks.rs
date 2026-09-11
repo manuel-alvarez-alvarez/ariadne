@@ -13,7 +13,7 @@ use anyhow::Result;
 use ariadne_api::doctor::BinaryDto;
 use ariadne_client::endpoint::{self, ConfigError, FileConfig};
 use ariadne_client::{Client, ClientError};
-use ariadne_core::{AgentKind, probe};
+use ariadne_core::probe;
 
 use super::{Check, Status};
 use crate::commands::daemon::service::{Manager, manifest};
@@ -25,14 +25,6 @@ pub const THERE: &str = "the daemon's PATH";
 const FIRST_START: &str = "the daemon creates it on its first start";
 
 // ---- probing -----------------------------------------------------------
-
-/// A coding-agent CLI as this shell can see it.
-pub async fn agent(kind: AgentKind) -> BinaryDto {
-    BinaryDto {
-        agent_kind: Some(kind),
-        ..tool(kind.binary(), "--version", false).await
-    }
-}
 
 /// A binary on this shell's PATH, asked for its version — and, for a forge
 /// CLI, whether it is signed in.
@@ -70,14 +62,13 @@ async fn found(name: &str, path: Option<PathBuf>, flag: &str, auths: bool) -> Bi
     };
     BinaryDto {
         name: name.to_string(),
-        agent_kind: None,
         path: path.map(|p| p.display().to_string()),
         version,
         authenticated,
     }
 }
 
-/// "claude 1.2.3 at /usr/local/bin/claude", as far as it is known. `lookup` is
+/// "git version 2.55.0 at /usr/bin/git", as far as it is known. `lookup` is
 /// whose PATH it was missing from, since the two halves of the report search
 /// different ones.
 pub fn describe(binary: &BinaryDto, lookup: &str) -> String {
@@ -294,19 +285,20 @@ fn start_hint(manager: Manager, unit: &Path) -> String {
     }
 }
 
-/// What this shell has of the two kinds of tool: tmux and git, without either
-/// of which no session can be spawned at all, and the forge CLIs, which only a
-/// task published to a forge needs.
+/// What this shell has of the two kinds of tool: git, without which no
+/// session can be spawned at all, and the forge CLIs, which only a task
+/// published to a forge needs.
 pub fn tools(required: &[BinaryDto], forges: &[BinaryDto]) -> Vec<Check> {
     let mut checks: Vec<Check> = required.iter().map(|t| required_tool(t, HERE)).collect();
     checks.extend(forges.iter().map(|forge| forge_check(forge, HERE)));
     checks
 }
 
-/// tmux or git: without it nothing spawns, wherever it is reported from.
+/// A required tool — git: without it nothing spawns, wherever it is reported
+/// from.
 ///
-/// git is asked one question more than tmux, because one thing it does for
-/// Ariadne is younger than the rest: see [`GIT_FLOOR`].
+/// git is asked one question more, because one thing it does for Ariadne is
+/// younger than the rest: see [`GIT_FLOOR`].
 pub fn required_tool(tool: &BinaryDto, lookup: &str) -> Check {
     let present = Check::when(
         tool.name.clone(),
@@ -398,21 +390,14 @@ mod tests {
 
     /// The forge CLIs are the two questions nothing else asks: installed, and
     /// signed in. Neither is a failure — a task landed locally needs neither —
-    /// and both are worth a warning with the command that fixes them. tmux and
-    /// git are the opposite: without them nothing spawns at all.
+    /// and both are worth a warning with the command that fixes them. git is
+    /// the opposite: without it nothing spawns at all.
     #[test]
     fn a_forge_cli_is_reported_on_being_installed_and_being_signed_in() {
         let checks = tools(
-            &[
-                binary("tmux", None, true, None),
-                binary("git", None, false, None),
-            ],
-            &[
-                binary("gh", None, true, Some(false)),
-                binary("glab", None, false, None),
-            ],
+            &[binary("git", false, None)],
+            &[binary("gh", true, Some(false)), binary("glab", false, None)],
         );
-        assert_eq!(by_name(&checks, "tmux").status, Status::Ok);
         assert_eq!(by_name(&checks, "git").status, Status::Fail);
 
         // Installed and signed out: a warning that names the way out of it.
@@ -433,7 +418,7 @@ mod tests {
             "{glab:?}"
         );
         // And signed in is nothing to report.
-        let checks = tools(&[], &[binary("gh", None, true, Some(true))]);
+        let checks = tools(&[], &[binary("gh", true, Some(true))]);
         assert_eq!(checks[0].status, Status::Ok);
         assert!(checks[0].detail.contains("signed in"), "{:?}", checks[0]);
     }
@@ -512,7 +497,7 @@ mod tests {
     fn a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits() {
         let git = |version: Option<&str>| BinaryDto {
             version: version.map(Into::into),
-            ..binary("git", None, true, None)
+            ..binary("git", true, None)
         };
 
         let old = required_tool(&git(Some("git version 2.39.5 (Apple Git-154)")), HERE);
@@ -530,13 +515,6 @@ mod tests {
             let check = required_tool(&git(version), HERE);
             assert_eq!(check.status, Status::Ok, "{version:?}");
         }
-
-        // And the floor is git's alone: tmux answers `-V` in its own words.
-        let tmux = BinaryDto {
-            version: Some("tmux 3.4".into()),
-            ..binary("tmux", None, true, None)
-        };
-        assert_eq!(required_tool(&tmux, HERE).status, Status::Ok);
     }
 
     /// What a version line is read down to, vendors and release candidates

@@ -63,7 +63,7 @@ async fn resolve_seat(
     resolve_agents(state, assignments).await
 }
 
-/// Make an outside session the author of a ready task.
+/// Make a stored ACP session the author of a ready task.
 #[utoipa::path(post, path = "/v1/tasks/{id}/author-session", tag = "tasks",
     request_body = AdoptOutsideSessionRequest,
     params(("id" = String, Path, description = "task id")),
@@ -83,19 +83,11 @@ pub async fn adopt_author_session(
             error.to_string(),
         )
     };
-    let mut available =
-        crate::outside_sessions::discover(&state.store, &state.launcher.cfg.agent_home)
-            .await
-            .map_err(internal_error)?;
-    available.extend(
-        crate::acp_sessions::discover(&state.agent_registry, &state.store)
-            .await
-            .map_err(internal_error)?,
-    );
+    let available = crate::acp_sessions::discover(&state.agent_registry, &state.store)
+        .await
+        .map_err(internal_error)?;
     if !available.iter().any(|session| {
-        session.agent_kind == req.agent_kind
-            && session.agent_id == req.agent_id
-            && session.internal_session_id == req.internal_session_id
+        session.agent_id == req.agent_id && session.internal_session_id == req.internal_session_id
     }) {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
@@ -105,12 +97,7 @@ pub async fn adopt_author_session(
     }
     let session = state
         .launcher
-        .adopt_author(
-            &id,
-            req.agent_kind,
-            req.agent_id.as_deref(),
-            &req.internal_session_id,
-        )
+        .adopt_author(&id, &req.agent_id, &req.internal_session_id)
         .await
         .map_err(|error| ApiError::conflict(error.to_string()))?;
     state.notify_scheduler(&id);
@@ -174,7 +161,7 @@ pub async fn create(
             permission_mode: req.permission_mode,
         })
         .await?;
-    let dto = task_dto_of(&state.store, &state.agent_registry, task).await?;
+    let dto = task_dto_of(&state.store, task).await?;
     Ok((StatusCode::CREATED, Json(dto)))
 }
 
@@ -195,7 +182,7 @@ pub async fn list(
         .await?;
     let mut out = Vec::with_capacity(tasks.len());
     for task in tasks {
-        out.push(task_dto_of(&state.store, &state.agent_registry, task).await?);
+        out.push(task_dto_of(&state.store, task).await?);
     }
     Ok(Json(out))
 }
@@ -209,9 +196,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Json<TaskDto>> {
     let task = state.store.get_task(&id).await?;
-    Ok(Json(
-        task_dto_of(&state.store, &state.agent_registry, task).await?,
-    ))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 /// Edit a pending/ready task (orchestrator or user).
@@ -248,7 +233,6 @@ pub async fn update(
         req.model.as_deref(),
         req.effort.as_deref(),
         Standing {
-            agent_kind: author.agent_kind(),
             model: &author.model,
         },
     )
@@ -277,9 +261,7 @@ pub async fn update(
         state.store.set_task_dependencies(&id, &deps).await?;
     }
     let task = state.store.get_task(&task.id).await?;
-    Ok(Json(
-        task_dto_of(&state.store, &state.agent_registry, task).await?,
-    ))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 /// Request a status transition. The actor is derived from the call context.
@@ -296,9 +278,7 @@ pub async fn transition(
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
     let task = apply_transition(&state, &ctx, &id, req).await?;
-    Ok(Json(
-        task_dto_of(&state.store, &state.agent_registry, task).await?,
-    ))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 pub(crate) async fn apply_transition(
@@ -392,9 +372,7 @@ pub async fn cancel(
         },
     )
     .await?;
-    Ok(Json(
-        task_dto_of(&state.store, &state.agent_registry, task).await?,
-    ))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 /// Retry a failed task: failed -> ready. The user's call, and the
@@ -421,9 +399,7 @@ pub async fn retry(
         },
     )
     .await?;
-    Ok(Json(
-        task_dto_of(&state.store, &state.agent_registry, task).await?,
-    ))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 /// Transition audit log of a task.

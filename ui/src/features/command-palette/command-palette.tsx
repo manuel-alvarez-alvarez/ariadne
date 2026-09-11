@@ -210,7 +210,7 @@ export function CommandPalette({
                 // gets them there, for whatever this screen has open.
                 <CommandItem
                   value={ATTACH.label}
-                  keywords={["ariadne", "attach", "tmux", "terminal", attachTo]}
+                  keywords={["ariadne", "attach", "console", "terminal", attachTo]}
                   onSelect={() =>
                     run(() => void copyEntry({ ...ATTACH, text: attachCommand(attachTo) }))
                   }

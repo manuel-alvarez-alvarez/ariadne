@@ -6,11 +6,9 @@
 //! answering the same question differently is the bug.
 
 pub mod acp;
-pub mod codex_hooks;
 pub mod id;
 pub mod models;
 pub mod probe;
-pub mod spawn_plan;
 pub mod state_machine;
 
 pub use models::TokenUsage;
@@ -430,69 +428,13 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Which coding-agent CLI a profile runs on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum AgentKind {
-    Acp,
-    ClaudeCode,
-    Codex,
-    Opencode,
-}
-
-wire_enum! { AgentKind, "agent kind", [
-    Acp = "acp",
-    ClaudeCode = "claude_code",
-    Codex = "codex",
-    Opencode = "opencode",
-]}
-
-impl AgentKind {
-    /// The executable this agent CLI is launched as, and the name anything
-    /// looking for it on a `PATH` searches for.
-    pub fn binary(&self) -> &'static str {
-        match self {
-            AgentKind::Acp => "acp",
-            AgentKind::ClaudeCode => "claude",
-            AgentKind::Codex => "codex",
-            AgentKind::Opencode => "opencode",
-        }
-    }
-
-    /// The argv flags Ariadne launches this agent CLI with out of the box:
-    /// the permission bypass each one spells its own way, so an agent working
-    /// unattended in a throwaway worktree is not left waiting at a prompt.
-    ///
-    /// What a fresh database seeds the flag list with and what restoring the
-    /// defaults puts back; from there the list is the user's. Only flags a
-    /// user may reasonably drop belong here — the structural ones (session
-    /// ids, MCP and hook config, the system prompt, the model) are the
-    /// adapters' own.
-    pub fn default_flags(&self) -> &'static [&'static str] {
-        match self {
-            // ACP agents do not share a permission-bypass flag. Users add the
-            // flag their selected `acp` executable takes when they want one.
-            AgentKind::Acp => &[],
-            AgentKind::ClaudeCode => &["--dangerously-skip-permissions"],
-            AgentKind::Codex => &["--dangerously-bypass-approvals-and-sandbox"],
-            // "auto-approve permissions that are not explicitly denied
-            // (dangerous!)" — `opencode --help`, v1.18.15. The generated
-            // `opencode.json` already allows the tools; this covers whatever
-            // asks for approval outside it.
-            AgentKind::Opencode => &["--auto"],
-        }
-    }
-}
-
 /// Roughly what a model is, as a picker and an orchestrator compare models: the
-/// capability class it belongs to, across every agent CLI at once.
+/// capability class it belongs to, across every agent at once.
 ///
-/// One ladder for the whole catalog, so a claude_code entry and a codex entry
-/// that sit at the same rung really are alternatives for the same work.
-/// `Unknown` is what an entry nothing has been written about says — a model
-/// discovered at runtime, or an agent CLI on whatever model it defaults to —
-/// and it is a genuine answer rather than a missing one.
+/// One ladder for the whole catalog, so two agents' entries that sit at the
+/// same rung really are alternatives for the same work. `Unknown` is what an
+/// entry nothing has been written about says — every model discovery finds at
+/// runtime — and it is a genuine answer rather than a missing one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
@@ -564,13 +506,13 @@ impl GoalStatus {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
-    /// Tmux session created, agent booting.
+    /// Agent process started, handshake under way.
     Starting,
     /// Agent actively working.
     Running,
     /// Agent finished its turn and is waiting (Stop / turn-complete / idle).
     Idle,
-    /// Tmux session gone or agent process exited.
+    /// Agent process exited.
     Exited,
     /// Spawn or runtime failure.
     Failed,
@@ -614,7 +556,7 @@ pub enum AttentionReason {
     WaitingUser,
     /// The agent reported an error (API error, crash, `session.error`).
     AgentError,
-    /// Tmux session or agent process gone while its work is still active.
+    /// Agent process gone while its work is still active.
     Disconnected,
     /// No activity for too long.
     Stalled,
@@ -630,10 +572,10 @@ wire_enum! { AttentionReason, "attention reason", [
 ]}
 
 impl AttentionReason {
-    /// Whether this reason describes a dialog on the agent's own terminal.
+    /// Whether this reason describes a question the live agent is waiting on.
     ///
-    /// Only a live session can be sitting on one: a prompt is something
-    /// somebody types an answer into, and a pane that is gone has none. The
+    /// Only a live session can be sitting on one: a prompt is answered in the
+    /// session's console, and an agent that is gone has none. The
     /// other reasons are the ones a session ends *carrying*, and they stay
     /// true after the agent has stopped.
     pub fn is_prompt(&self) -> bool {
@@ -667,7 +609,7 @@ impl AttentionReason {
 /// One kind carries everything the agents say outside a review, whether it
 /// asks something or answers it. There is no `answer` kind and no `reply`
 /// tool: an answer is a message to whoever asked, addressed the way the
-/// question was, so nothing threads. Each message arrives in a pane as a turn
+/// question was, so nothing threads. Each message reaches its agent as a turn
 /// — which is why the tool that sends one takes questions and answers and
 /// nothing else, no acknowledgement and no thanks.
 ///

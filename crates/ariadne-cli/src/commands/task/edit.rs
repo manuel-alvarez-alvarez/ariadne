@@ -2,7 +2,7 @@
 //!
 //! Both are refused here rather than by the daemon where the answer is already
 //! known: an update with nothing in it, an agent with no skills, one whose
-//! model is missing or names no agent CLI Ariadne runs, one whose `@` is
+//! model is missing or names no agent, one whose `@` is
 //! followed by no effort, and a `--repo` that names none of the goal's
 //! repositories.
 
@@ -19,7 +19,7 @@ use crate::commands::{parse_effort, parse_model, resolve};
 
 /// One `--author` or `--reviewer` argument, `SKILLS=MODEL[@EFFORT]`: what
 /// the agent knows, then — after the `=`, required — what it runs on, in the
-/// one spelling a model is chosen by, `<agent_kind>:<model>`, and — after an
+/// one spelling a model is chosen by, `<agent>:<model>`, and — after an
 /// `@` — the effort that model is reasoned at.
 ///
 /// The skills are comma-separated and in the order they reach the agent:
@@ -28,10 +28,10 @@ use crate::commands::{parse_effort, parse_model, resolve};
 /// refuse, which is where the list of them lives.
 ///
 /// The `=` splits first and the last `@` after it splits the effort off, and
-/// nothing else splits at all: an opencode id carries `/` and `:` of its own,
-/// so `code-review=opencode:ollama/llama3:8b` reaches the request as that one
-/// id, tag and all. The `=MODEL` half is mandatory — a model is required, and
-/// no CLI default stands in for one — so skills on their own, with or without
+/// nothing else splits at all: a model id may carry `/` and `:` of its own,
+/// so `code-review=opencode-acp:ollama/llama3:8b` reaches the request as that
+/// one id, tag and all. The `=MODEL` half is mandatory — a model is required,
+/// and no agent default stands in for one — so skills on their own, with or without
 /// an `@EFFORT`, are refused.
 ///
 /// What is after the `=` is the same string `--model` takes, and it is refused
@@ -98,9 +98,9 @@ fn split_effort(half: &str) -> (&str, Option<&str>) {
 /// two forms, and the spelling each half is in.
 fn accepted() -> String {
     "write SKILLS=MODEL or SKILLS=MODEL@EFFORT, where SKILLS is one or more \
-     skill names separated by commas, MODEL is an agent CLI (claude_code, \
-     codex, opencode) and, after a colon, one model of it, and EFFORT is one \
-     of the efforts `ariadne models ls` lists for that model"
+     skill names separated by commas, MODEL is the id of an agent of the ACP \
+     registry and, after a colon, one model of it, and EFFORT is one of the \
+     efforts `ariadne models ls` lists for that model"
         .to_string()
 }
 
@@ -149,7 +149,7 @@ pub fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
         // parsed as one.
         model,
         // Three answers, about how deeply the model reasons: nothing said,
-        // `default` for the CLI's own, or one effort of it.
+        // `default` for the agent's own, or one effort of it.
         effort,
         // The author list is edited over the API and the MCP tools; the CLI
         // re-staffs a task's authors by re-creating it.
@@ -247,22 +247,16 @@ mod tests {
     #[test]
     fn an_agent_keeps_its_skills_and_what_it_runs_on() {
         let pinned =
-            parse_reviewer("code-review,security-review=opencode:ollama/llama3:8b@thinking")
+            parse_reviewer("code-review,security-review=opencode-acp:ollama/llama3:8b@thinking")
                 .expect("skills, a model and an effort");
         assert_eq!(pinned.skills, ["code-review", "security-review"]);
-        assert_eq!(pinned.model, "opencode:ollama/llama3:8b");
+        assert_eq!(pinned.model, "opencode-acp:ollama/llama3:8b");
         assert_eq!(pinned.effort.as_deref(), Some("thinking"));
 
-        let both = parse_reviewer("code-review=codex:gpt-5.3-codex").expect("a model");
+        let both = parse_reviewer("code-review=codex-acp:gpt-5.3-codex").expect("a model");
         assert_eq!(both.skills, ["code-review"]);
-        assert_eq!(both.model, "codex:gpt-5.3-codex");
-        assert_eq!(both.effort, None, "no effort at all is the CLI's own");
-
-        // The agent CLI answers to the hyphenated spelling too, the way
-        // `--model` does, and travels as the daemon spells it.
-        let hyphenated =
-            parse_reviewer("code-review=claude-code:claude-opus-5").expect("a spelling");
-        assert_eq!(hyphenated.model, "claude_code:claude-opus-5");
+        assert_eq!(both.model, "codex-acp:gpt-5.3-codex");
+        assert_eq!(both.effort, None, "no effort at all is the agent's own");
     }
 
     /// The other half an agent may carry: the effort after the `@` — and the
@@ -270,23 +264,23 @@ mod tests {
     /// with.
     #[test]
     fn a_reviewer_runs_at_the_effort_after_the_at_sign() {
-        let both =
-            parse_reviewer("code-review=codex:gpt-5.6-sol@xhigh").expect("a model and an effort");
+        let both = parse_reviewer("code-review=codex-acp:gpt-5.6-sol@xhigh")
+            .expect("a model and an effort");
         assert_eq!(both.skills, ["code-review"]);
-        assert_eq!(both.model, "codex:gpt-5.6-sol");
+        assert_eq!(both.model, "codex-acp:gpt-5.6-sol");
         assert_eq!(both.effort.as_deref(), Some("xhigh"));
 
-        // The model half is cut at the last `@` and nothing else: an opencode
-        // id is `provider/model` with a tag of its own, and all of it is model.
-        let opencode =
-            parse_reviewer("code-review=opencode:openrouter/x/y:z@high").expect("an opencode id");
-        assert_eq!(opencode.model, "opencode:openrouter/x/y:z");
+        // The model half is cut at the last `@` and nothing else: a model id
+        // may be `provider/model` with a tag of its own, and all of it is model.
+        let opencode = parse_reviewer("code-review=opencode-acp:openrouter/x/y:z@high")
+            .expect("a provider id");
+        assert_eq!(opencode.model, "opencode-acp:openrouter/x/y:z");
         assert_eq!(opencode.effort.as_deref(), Some("high"));
 
         // Which efforts a model takes is the daemon's to know: anything that
         // is an effort at all travels, and is refused where the model is.
         let unknown =
-            parse_reviewer("Reviewer=claude_code:claude-opus-5@ultra").expect("an effort");
+            parse_reviewer("Reviewer=claude-code-acp:claude-opus-5@ultra").expect("an effort");
         assert_eq!(unknown.effort.as_deref(), Some("ultra"));
     }
 
@@ -309,35 +303,28 @@ mod tests {
         assert!(err.contains("no model after the ="), "{err}");
         assert!(err.contains("a model is required"), "{err}");
         assert!(err.contains("SKILLS=MODEL"), "{err}");
-        assert!(err.contains("claude_code, codex, opencode"), "{err}");
+        assert!(err.contains("ACP registry"), "{err}");
 
-        let err = parse_reviewer("code-review=codex:").expect_err("no model after the colon");
-        assert!(err.contains("in \"code-review=codex:\""), "{err}");
+        let err = parse_reviewer("code-review=codex-acp:").expect_err("no model after the colon");
+        assert!(err.contains("in \"code-review=codex-acp:\""), "{err}");
         assert!(err.contains("no model after the `:`"), "{err}");
 
         // Whitespace after the colon is an empty model too.
-        let err = parse_reviewer("code-review=codex: ").expect_err("whitespace is no model");
+        let err = parse_reviewer("code-review=codex-acp: ").expect_err("whitespace is no model");
         assert!(err.contains("no model after the `:`"), "{err}");
         assert!(err.contains("a model is required"), "{err}");
 
-        let err = parse_reviewer("code-review=codex").expect_err("a bare CLI");
-        assert!(err.contains("`codex` names no model"), "{err}");
+        let err = parse_reviewer("code-review=llama").expect_err("no agent");
+        assert!(err.contains("`llama` names no agent"), "{err}");
+        assert!(err.contains("`<agent>:llama`"), "{err}");
 
-        let err = parse_reviewer("code-review=llama").expect_err("no such agent");
-        assert!(err.contains("names no agent CLI"), "{err}");
-        assert!(err.contains("claude_code:llama"), "{err}");
-        assert!(err.contains("claude_code, codex, opencode"), "{err}");
-
-        let err = parse_reviewer("code-review=llama:x").expect_err("no such agent");
-        assert!(err.contains("unknown agent `llama`"), "{err}");
-
-        let err = parse_reviewer("=codex:o3").expect_err("no skills");
+        let err = parse_reviewer("=codex-acp:o3").expect_err("no skills");
         assert!(err.contains("no skills"), "{err}");
 
         // An `@` that says nothing after it is the same kind of typo, and the
         // refusal names the forms one of which was meant.
-        let err = parse_reviewer("code-review=codex:o3@").expect_err("no effort");
-        assert!(err.contains("in \"code-review=codex:o3@\""), "{err}");
+        let err = parse_reviewer("code-review=codex-acp:o3@").expect_err("no effort");
+        assert!(err.contains("in \"code-review=codex-acp:o3@\""), "{err}");
         assert!(err.contains("no effort was named"), "{err}");
         assert!(err.contains("ariadne models ls"), "{err}");
 
@@ -367,8 +354,8 @@ mod tests {
 
         let req = update_request(Edits {
             reviewers: vec![
-                parse_reviewer("code-review=claude_code:claude-sonnet-5").expect("a model"),
-                parse_reviewer("security-review=codex:gpt-5.6-luna@high").expect("a model"),
+                parse_reviewer("code-review=claude-code-acp:claude-sonnet-5").expect("a model"),
+                parse_reviewer("security-review=codex-acp:gpt-5.6-luna@high").expect("a model"),
             ],
             depends_on: vec!["01TASK".into()],
             ..Edits::default()
@@ -382,12 +369,12 @@ mod tests {
             Some(vec![
                 (
                     "code-review".to_string(),
-                    "claude_code:claude-sonnet-5",
+                    "claude-code-acp:claude-sonnet-5",
                     None
                 ),
                 (
                     "security-review".to_string(),
-                    "codex:gpt-5.6-luna",
+                    "codex-acp:gpt-5.6-luna",
                     Some("high")
                 )
             ])
@@ -430,11 +417,11 @@ mod tests {
     }
 
     /// What the author runs on is three answers, and the one field carries
-    /// each of them: nothing said at all, back to auto, or an agent CLI —
-    /// with a model of it after the `:` where one was named.
+    /// each of them: nothing said at all, back to auto, or an agent — with a
+    /// model of it after the `:` where one was named.
     #[test]
     fn the_pin_travels_as_the_three_things_it_can_say() {
-        for model in ["default", "codex", "codex:gpt-5.3-codex"] {
+        for model in ["default", "codex-acp", "codex-acp:gpt-5.3-codex"] {
             let req = update_request(Edits {
                 model: Some(model.into()),
                 ..Edits::default()
@@ -446,7 +433,7 @@ mod tests {
     }
 
     /// The effort travels beside the model and says the same three things:
-    /// nothing at all, back to the CLI's own, or one effort of the model —
+    /// nothing at all, back to the agent's own, or one effort of the model —
     /// and an effort on its own is an edit like any other.
     #[test]
     fn the_effort_travels_the_way_the_pin_does() {
@@ -461,12 +448,12 @@ mod tests {
         }
 
         let req = update_request(Edits {
-            model: Some("claude_code:claude-opus-5".into()),
+            model: Some("claude-code-acp:claude-opus-5".into()),
             effort: Some("xhigh".into()),
             ..Edits::default()
         })
         .expect("body");
-        assert_eq!(req.model.as_deref(), Some("claude_code:claude-opus-5"));
+        assert_eq!(req.model.as_deref(), Some("claude-code-acp:claude-opus-5"));
         assert_eq!(req.effort.as_deref(), Some("xhigh"));
     }
 

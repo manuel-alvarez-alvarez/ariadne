@@ -47,9 +47,9 @@ Examples:
 
 const AGENT_EXAMPLES: &str = "\
 Examples:
-  ariadne agent ls                         # the flags every CLI is launched with
-  ariadne agent update codex --flag --dangerously-bypass-approvals-and-sandbox
-  ariadne agent update claude_code --reset # back to what Ariadne ships
+  ariadne agent ls                         # the flags every agent is launched with
+  ariadne agent update codex-acp --flag --verbose
+  ariadne agent update codex-acp --reset   # back to what Ariadne ships
 ";
 
 const SKILL_EXAMPLES: &str = "\
@@ -81,7 +81,7 @@ const GOAL_EXAMPLES: &str = "\
 Examples:
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
   ariadne goal ls --status planning,active
-  ariadne goal attach <goal-id>            # the orchestrator's terminal
+  ariadne goal attach <goal-id>            # the orchestrator's console
   ariadne goal inspect <goal-id>
 ";
 
@@ -90,7 +90,7 @@ Examples:
   ariadne task ls --goal <goal-id>
   ariadne task ls --status in-progress,under-review
   ariadne task inspect <task-id>           # and: diff, messages, history
-  ariadne task attach <task-id>            # the author's terminal
+  ariadne task attach <task-id>            # the author's console
 ";
 
 const SESSION_EXAMPLES: &str = "\
@@ -98,9 +98,9 @@ Examples:
   ariadne session ls                       # every live session
   ariadne session ls --all --goal <goal-id>
   ariadne session discover                 # sessions started outside Ariadne
-  ariadne session adopt <session-id> <task-id> --agent codex
-  ariadne session logs <session-id>        # what its pane last printed
-  ariadne session resume <session-id>      # new tmux, same conversation
+  ariadne session adopt <session-id> <task-id> --agent codex-acp
+  ariadne session logs <session-id>        # its transcript so far
+  ariadne session resume <session-id>      # new agent process, same conversation
   ariadne session kill <session-id>
 ";
 
@@ -135,9 +135,9 @@ Exit codes:
         Every command here asks the ariadned daemon for something. It plans a \
         goal with an orchestrator agent, hands each task to an author that owns it \
         from its first commit to the end, and gates it behind reviewer \
-        agents. Each of them works in a tmux session `ariadne \
-        attach` drops you into, and `ariadne attention` is what says which of \
-        them is waiting for you.",
+        agents. Each of them is an ACP agent the daemon drives, with a \
+        console `ariadne attach` drops you into, and `ariadne attention` is \
+        what says which of them is waiting for you.",
     after_help = format!("{EXAMPLES}\n{EXIT_CODES}")
 )]
 pub struct Cli {
@@ -291,12 +291,12 @@ pub enum Command {
         #[command(subcommand)]
         command: DaemonCommand,
     },
-    /// Manage the agent CLIs: the flags each one is launched with
+    /// Manage the agents: the flags each one is launched with
     ///
-    /// One entry per coding-agent CLI Ariadne can run — acp, claude_code,
-    /// codex, opencode — holding the flags every session of that CLI is launched and
-    /// resumed with. `ariadne skill` is the other half: what an agent knows,
-    /// this is the program it runs in.
+    /// One entry per agent of the daemon's ACP registry, holding the flags
+    /// every session of that agent is launched and resumed with, behind its
+    /// registry command. `ariadne skill` is the other half: what an agent
+    /// knows, this is the program it runs in.
     #[command(after_help = AGENT_EXAMPLES)]
     Agent {
         #[command(subcommand)]
@@ -361,7 +361,7 @@ pub enum Command {
     },
     /// Manage agent sessions
     ///
-    /// A session is one agent in one tmux window: the terminal an
+    /// A session is one agent process the daemon drives: the agent an
     /// orchestrator, an author or a reviewer is actually working in. They are
     /// listed docker-style — live ones by default, finished ones behind --all
     /// — and one that has ended can be revived with the same conversation.
@@ -403,11 +403,10 @@ pub enum Command {
         #[arg(long)]
         watch: bool,
     },
-    /// Attach to the tmux session or ACP console of a session, task or goal id
+    /// Attach to the console of a session, task or goal id
     ///
-    /// The terminal or console of whichever agent that id names, revived
-    /// first when it is gone. Leave tmux with Ctrl-b d or the console with
-    /// Ctrl-C; the agent keeps working.
+    /// The console of whichever agent that id names, revived first when it is
+    /// gone. Leave the console with Ctrl-C; the agent keeps working.
     #[command(after_help = ATTACH_EXAMPLES)]
     Attach {
         /// Session, task or goal id
@@ -418,48 +417,11 @@ pub enum Command {
         #[arg(long, value_parser = values::Spelling::<ariadne_core::Seat>::new())]
         seat: Option<ariadne_core::Seat>,
     },
-    /// One-time host setup for the coding agents
-    Setup {
-        #[command(subcommand)]
-        command: SetupCommand,
-    },
     /// Serve Ariadne MCP tools over stdio (spawned by coding agents)
     #[command(hide = true)]
     Mcp {
         #[command(subcommand)]
         command: McpCommand,
-    },
-    /// Become the agent a daemon-written spawn plan describes (tmux runs this)
-    ///
-    /// The plan carries the argv, the environment and the working directory,
-    /// none of which would fit in a tmux command line — see
-    /// `ariadne_core::spawn_plan`.
-    #[command(hide = true, name = "_spawn")]
-    Spawn {
-        /// Path to the JSON spawn plan in the session's run dir
-        plan: PathBuf,
-    },
-    /// Report an agent hook event to the daemon (called by hooks, fail-safe)
-    #[command(hide = true, name = "agent-event")]
-    AgentEvent {
-        /// Which agent's hook is reporting, as everything else spells it:
-        /// acp | claude_code | codex | opencode
-        #[arg(long, default_value = "claude_code", value_parser = crate::commands::agent::parse_kind)]
-        kind: ariadne_core::AgentKind,
-        /// OpenCode plugin payload
-        #[arg(long)]
-        json: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum SetupCommand {
-    /// Trust Ariadne's Codex hooks (starts codex once so it can ask)
-    CodexHooks {
-        /// The `ariadne` binary the hooks call (default: this one). Must match
-        /// the daemon's `cli_bin`.
-        #[arg(long)]
-        cli_bin: Option<String>,
     },
 }
 
@@ -513,10 +475,7 @@ pub const STOP_TIMEOUT: u64 = 10;
 const NO_FORMAT: &[&[&str]] = &[
     &["completions"],
     &["attach"],
-    &["setup"],
     &["mcp"],
-    &["agent-event"],
-    &["_spawn"],
     &["daemon", "logs"],
     &["goal", "attach"],
     &["task", "attach"],

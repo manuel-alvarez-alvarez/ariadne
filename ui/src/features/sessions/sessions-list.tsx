@@ -63,7 +63,7 @@ import { When, WhenDetail } from "@/components/when"
 // barrel: `@/features/tasks` re-exports the task panel, whose sessions tab is
 // this very component, and the round trip is an import cycle.
 import { goalsQueryOptions } from "@/features/goals/queries"
-import { formatModelRef, pinLabel } from "@/features/models/model-ref"
+import { pinLabel } from "@/features/models/model-ref"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { cn, SEAT_LABELS, shortId } from "@/lib/format"
@@ -311,7 +311,7 @@ function SessionRow({
         </TableCell>
       ) : null}
       {/* What the agent runs on, and nothing else: an agent has no name to
-          carry it any more, so this column is the model itself — the CLI and
+          carry it any more, so this column is the model itself — the agent and
           the model of it as one id, with the effort after an `@` where one is
           pinned. The seat is already on the row, in the column of its own on
           the screen and beside the id in a panel, so it is not repeated here.
@@ -322,9 +322,7 @@ function SessionRow({
           on one line grows to the longest id instead (see {@link ContextCell}).
           */}
       <TableCell className="max-w-36 text-xs text-muted-foreground lg:max-w-56">
-        <span className="block truncate">
-          {pinLabel(formatModelRef(session.agent_kind, session.model), session.effort)}
-        </span>
+        <span className="block truncate">{pinLabel(session.model, session.effort)}</span>
       </TableCell>
       {/* The reason rides in the status cell rather than taking a seventh
           column: it is empty for almost every row, and where it is not it is

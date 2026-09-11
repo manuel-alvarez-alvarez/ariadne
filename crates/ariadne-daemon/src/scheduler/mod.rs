@@ -1,17 +1,17 @@
 //! Scheduler: an event-driven reconciliation loop.
 //!
 //! HTTP handlers send [`SchedEvent`]s after writes; a periodic tick reconciles
-//! everything so crashes, missed events and dead tmux sessions self-heal.
+//! everything so crashes, missed events and dead agent processes self-heal.
 //! Every rule is idempotent — read state, compare desired, act — which is why
 //! a pass that arrives late does what the state says now rather than replaying
 //! what it missed.
 //!
 //! The rules are a module each: `goals` and `tasks` for what the two entities
 //! want, `sweeps` for the two passes that see every session whatever it
-//! belongs to, `quiet` for the watchdog over an agent that stopped reporting,
-//! and `delivery` for typing into a pane off the loop.
+//! belongs to, and `quiet` for the watchdog over an agent that stopped
+//! reporting. What the scheduler says to an agent goes out through
+//! [`Scheduler::hand_prompt`].
 
-mod delivery;
 mod goals;
 mod messages;
 mod quiet;
@@ -31,7 +31,6 @@ use ariadne_store::{AgentSession, SessionFilter, Store, TaskFilter};
 use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
 
-use delivery::DeliveryReport;
 use quiet::Quiet;
 
 /// Events that wake the scheduler for a scoped reconciliation.
@@ -48,62 +47,58 @@ pub enum SchedEvent {
 /// How often the full reconciliation tick runs.
 ///
 /// Not how long a hand-off waits: everything a write can report — a task
-/// moving on, a plan finalized, a verdict, an agent's own hook — arrives as a
+/// moving on, a plan finalized, a verdict, an agent's own event — arrives as a
 /// [`SchedEvent`] and is acted on as it lands, in milliseconds. What is left
-/// for the tick is the state nothing reports, and
-/// the one that costs an agent its turn is a pane that went away without
-/// saying so: a killed tmux, a machine that dropped the session. This period
-/// is the ceiling on how long the successor of such an agent sits unstarted,
-/// so it is short — the pass costs one `tmux display-message` per live
-/// session and a handful of indexed reads, which is cheap enough to make five
-/// seconds the wait rather than fifteen.
+/// for the tick is the state nothing reports, and the one that costs an agent
+/// its turn is an agent that died before it could say so. This period is the
+/// ceiling on how long the successor of such an agent sits unstarted, so it
+/// is short — the pass costs a handful of indexed reads, which is cheap
+/// enough to make five seconds the wait rather than fifteen.
 pub const TICK_SECS: u64 = 5;
-/// How long a session that is starting is given to get a pane before the
-/// liveness sweep concludes there is none.
+/// How long a session that is starting is given to get an agent process
+/// before the liveness sweep concludes there is none.
 ///
-/// A row is put into `starting` before tmux has anything: the launcher writes
-/// it and then spawns, and a resume from the API kills the old pane before the
-/// new one exists. A sweep landing in that window would retire a session on
-/// its way up and raise `disconnected` on it — an alarm that clears itself the
-/// moment the agent's first hook arrives, having flashed on the strip and over
-/// SSE in the meantime. Long enough for a launch to reach tmux, short enough
-/// that one which never will is still noticed within a tick or two.
+/// A row is put into `starting` before its agent exists: the launcher writes
+/// it and then spawns, and a resume from the API takes the old agent down
+/// before the new one is up. A sweep landing in that window would retire a
+/// session on its way up and raise `disconnected` on it — an alarm that
+/// clears itself the moment the agent's first event arrives, having flashed
+/// on the strip and over SSE in the meantime. Long enough for a launch to
+/// come up, short enough that one which never will is still noticed within a
+/// tick or two.
 pub const START_GRACE_SECS: i64 = 30;
 /// Spawn attempts before the daemon stops trying: per task, after which it is
 /// failed, and per goal, after which its orchestrator is left alone.
 pub const SPAWN_RETRY_BUDGET: u32 = 3;
 /// How long a session may report nothing before it is nudged: told to get on
-/// with the work in front of it, or given the Enter its composer is waiting
-/// for.
+/// with the work in front of it.
 ///
 /// Long enough that a slow start or a long tool call is not read as a stuck
-/// one — three minutes, where it was five. What makes the shorter clock safe
-/// is that the nudge is not sent on it alone: an agent in the middle of a
-/// turn has an empty composer, and a pane whose composer is empty is left
-/// exactly where it is (see [`quiet`]). So the only pane this reaches sooner
-/// is one that is either idle with the work still in front of it or holding
-/// an instruction nobody submitted, and neither is a `cargo build`.
+/// one — three minutes. What makes the short clock safe is that the nudge is
+/// not sent on it alone: an agent in the middle of a turn is left exactly
+/// where it is (see [`quiet`]). So the only agent this reaches is one idle
+/// with the work still in front of it, and that is not a `cargo build`.
 pub const QUIET_NUDGE_SECS: i64 = 180;
 /// And before the silence is raised for the user, whom the nudge did not
 /// spare.
 ///
-/// Ten minutes. Unlike the nudge this one is spent whatever the pane says, so
-/// it has to clear the longest wait an agent is *told* to take: the landing
-/// briefing sends an author to `sleep` at most five minutes at a time while
-/// it waits for a pull request to be merged, and this is twice that. A flag
+/// Ten minutes. Unlike the nudge this one is spent whatever the agent is
+/// doing, so it has to clear the longest wait an agent is *told* to take: the
+/// landing briefing sends an author to `sleep` at most five minutes at a time
+/// while it waits for a pull request to be merged, and this is twice that. A flag
 /// raised over a tool call that ran longer still is not the end of anything —
 /// the agent's next event takes it down again.
 pub const QUIET_FLAG_SECS: i64 = 600;
-/// And before the pane is killed and the agent put back on its feet: the flag
+/// And before the agent is killed and put back on its feet: the flag
 /// plus enough of a wait for a person to have looked at it first — twenty
 /// minutes of one, after which nobody is coming and the agent has been silent
 /// for half an hour.
 pub const QUIET_RELAUNCH_SECS: i64 = 1_800;
 /// The watchdog is one timeline, and the order of its thresholds is what
-/// makes it one: nudged before the user is told, told before a pane is killed
-/// under them. The flag has a floor of its own — it is spent whatever the
-/// pane is doing, so it has to clear the longest wait an agent is *told* to
-/// take, which is the five-minute `sleep` the landing briefing sends an
+/// makes it one: nudged before the user is told, told before an agent is
+/// killed under them. The flag has a floor of its own — it is spent whatever
+/// the agent is doing, so it has to clear the longest wait an agent is *told*
+/// to take, which is the five-minute `sleep` the landing briefing sends an
 /// author to while a pull request waits to be merged. Checked here rather
 /// than in a test, so that a number edited into the wrong order does not
 /// build.
@@ -113,7 +108,7 @@ const _: () = assert!(
 );
 const _: () = assert!(
     QUIET_FLAG_SECS < QUIET_RELAUNCH_SECS,
-    "and told before its pane is killed and the agent put back on its feet"
+    "and told before the agent is killed and put back on its feet"
 );
 const _: () = assert!(
     QUIET_FLAG_SECS >= 600,
@@ -140,11 +135,11 @@ pub struct Scheduler {
     /// to act on, by session id (in memory like the map above).
     quiet: HashMap<String, Quiet>,
     /// What each goal's orchestrator was last told its tasks needed, by goal
-    /// id, so a situation that has not changed is not typed into its pane
-    /// every tick. In memory like the maps below: a daemon that restarts over
-    /// a failed task tells the orchestrator once more, which is the right way
-    /// round — a wake too many costs a turn, one too few leaves a goal with
-    /// nobody deciding.
+    /// id, so a situation that has not changed is not sent to it every tick.
+    /// In memory like the maps below: a daemon that restarts over a failed
+    /// task tells the orchestrator once more, which is the right way round —
+    /// a wake too many costs a turn, one too few leaves a goal with nobody
+    /// deciding.
     goal_told: HashMap<String, String>,
     /// Tasks whose author has been handed the landing briefing, by task id.
     /// In memory like the maps above: what it prevents is briefing the same
@@ -157,16 +152,10 @@ pub struct Scheduler {
     pick_briefed: HashSet<(String, String)>,
     /// Reviews a live reviewer has already been briefed on, by (reviewer,
     /// review request). A contested task opens one review per author, and a
-    /// reviewer whose pane survived the last one is handed the next one's
+    /// reviewer whose agent survived the last one is handed the next one's
     /// briefing the moment it owes it — once, and in memory like the sets
     /// above: a daemon that restarts over an open review says it once more.
     review_briefed: HashSet<(String, String)>,
-    /// Sessions with a delivery going into their pane right now, by session
-    /// id: two pastes into one composer at once would interleave into
-    /// something neither of them said.
-    typing: HashSet<String>,
-    /// Where a delivery that ran off the loop reports back to.
-    reports: mpsc::UnboundedSender<DeliveryReport>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -182,12 +171,8 @@ pub fn start(
 ) -> mpsc::UnboundedSender<SchedEvent> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     // The ACP runtime reports agent events itself; give it the waker the
-    // HTTP ingestion pokes after a write.
+    // HTTP handlers poke after a write.
     launcher.acp.connect_scheduler(tx.clone());
-    // Deliveries report on a channel of their own rather than on the event
-    // one, so the loop still ends when the daemon drops the sender it was
-    // given: the scheduler holds this one for as long as it lives.
-    let (reports, mut settled) = mpsc::unbounded_channel();
     let mut scheduler = Scheduler {
         store,
         launcher,
@@ -198,8 +183,6 @@ pub fn start(
         landing_briefed: HashSet::new(),
         pick_briefed: HashSet::new(),
         review_briefed: HashSet::new(),
-        typing: HashSet::new(),
-        reports,
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };
@@ -214,7 +197,6 @@ pub fn start(
                     Some(SchedEvent::SessionEvent(id)) => scheduler.reconcile_session(&id).await,
                     None => break, // daemon shutting down
                 },
-                Some(report) = settled.recv() => scheduler.delivery_settled(report).await,
                 _ = tick.tick() => scheduler.reconcile_all().await,
             }
         }
@@ -234,6 +216,25 @@ enum Target<'a> {
 }
 
 impl Scheduler {
+    /// Hand `text` to a session's agent as a `session/prompt` (021): sent at
+    /// once when the agent is between turns, and queued in order behind
+    /// whichever one runs. Answers whether the runtime took it.
+    ///
+    /// One it refused — no agent runs for the session — gives a nudge spent
+    /// on it back, so the next pass over this session sends it again.
+    fn hand_prompt(&mut self, session: &AgentSession, text: String) -> bool {
+        match self.launcher.acp.send_prompt(&session.id, text) {
+            Ok(()) => true,
+            Err(e) => {
+                warn!(session = %session.id, error = %format!("{e:#}"), "handing the agent a prompt failed");
+                if let Some(done) = self.quiet.get_mut(&session.id) {
+                    done.nudged = false;
+                }
+                false
+            }
+        }
+    }
+
     /// One reconciliation, with nowhere to hand an error: the event loop and
     /// the tick are the only callers, and what they do about a failure is say
     /// so — and, for a task, count it against the spawn-retry budget, since a
@@ -378,8 +379,8 @@ pub(super) fn heard_from(session: &AgentSession) -> bool {
 
 /// Whether this session came up and died without ever being heard from.
 ///
-/// The launch worked and the agent did not: a CLI that exits on a dialog it
-/// was shown, a model it will not take, a folder it will not open. What tells
+/// The launch worked and the agent did not: an agent that refuses the
+/// protocol, a model it will not take, a folder it will not open. What tells
 /// it from a session that ended having done its work is that nothing was ever
 /// reported under this launch, and from one still starting that it is over.
 pub(super) fn died_on_arrival(session: &AgentSession) -> bool {

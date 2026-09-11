@@ -75,7 +75,7 @@ export function SessionsPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Sessions"
-        description="Every agent Ariadne has run, and the goal or task it was run for. Pick one to watch its terminal."
+        description="Every agent Ariadne has run, and the goal or task it was run for. Pick one to watch its console."
         actions={
           <>
             <Button

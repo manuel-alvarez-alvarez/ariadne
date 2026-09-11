@@ -18,8 +18,8 @@ test that proves it.
 | 004 | [Authoring and review](004-authoring-and-review.md) | the author, the reviewers, and the verdicts on a review |
 | 005 | [How a task ends](005-how-a-task-ends.md) | `merge`, `pull_request` and `none`, and merge verification |
 | 006 | [Prompts and Simplified Technical English](006-prompts-and-simplified-technical-english.md) | the layers of text, who owns each, the English all of it is in |
-| 007 | [Agent CLI adapters](007-agent-cli-adapters.md) | the contract every adapter meets, and how each CLI spells it |
-| 008 | [Sessions, terminals and logs](008-sessions-terminals-and-logs.md) | tmux panes, log streams, typing, resizing, confirmed delivery |
+| 007 | [Agent launch](007-agent-cli-adapters.md) | how a registry agent is launched over ACP: the launch record, flags, skills, resume |
+| 008 | [Sessions and the console](008-sessions-terminals-and-logs.md) | session rows, the console, kill and resume |
 | 009 | [Scheduler, attention and watchdogs](009-scheduler-attention-and-watchdogs.md) | the reconciliation loop, the quiet clock, what needs a human |
 | 011 | [Models, effort and pins](011-models-effort-and-pins.md) | the catalog, `<agent>:<model>`, effort, and where a pin is set |
 | 012 | [HTTP API, event stream and usage](012-http-api-events-and-usage.md) | transports, the envelope, SSE, token accounting |
@@ -28,7 +28,7 @@ test that proves it.
 | 015 | [Desktop app](015-desktop-app.md) | Ariadne Desktop, and its parity with the CLI |
 | 016 | [Install, service and release](016-install-service-and-release.md) | the installer, the service, release-please, the migration policy |
 | 017 | [Skills and staffed agents](017-skills-and-staffed-agents.md) | the one agent type, the skill catalog, and how a task is staffed |
-| 018 | [Agent messages](018-agent-messages.md) | the one channel the agents talk on, and how a message reaches a pane |
+| 018 | [Agent messages](018-agent-messages.md) | the one channel the agents talk on, and how a message reaches its recipient |
 | 019 | [Project memory](019-project-memory.md) | searchable repository facts, sources, expiry and agent access |
 | 020 | [Session adoption](020-session-adoption.md) | discover and adopt sessions started outside Ariadne |
 | 021 | [ACP runtime](021-acp-runtime.md) | the daemon-owned ACP agent: child process, protocol, events, kill |

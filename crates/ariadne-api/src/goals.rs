@@ -13,12 +13,12 @@ pub struct GoalDto {
     pub title: String,
     pub description: String,
     pub status: GoalStatus,
-    /// What the orchestrator runs on, `<agent_kind>:<model>`: the agent CLI
-    /// and, after the `:`, the model of it (`claude_code:claude-opus-5`).
-    #[schema(example = "claude_code:claude-opus-5")]
+    /// What the orchestrator runs on, `<agent>:<model>`: the registry agent
+    /// and, after the `:`, the model of it (`claude-code-acp:claude-opus-5`).
+    #[schema(example = "claude-code-acp:claude-opus-5")]
     pub model: String,
     /// The reasoning effort that model is run at, pinned like `model`. None =
-    /// whatever the agent CLI runs it at on its own.
+    /// whatever the agent runs it at on its own.
     #[schema(example = "high")]
     pub effort: Option<String>,
     /// The registered repositories the goal works in, as they stand now: a
@@ -68,17 +68,18 @@ pub struct CreateGoalRequest {
     pub description: String,
     /// Ids of registered repositories (`POST /v1/repositories`); at least one.
     pub repository_ids: Vec<String>,
-    /// What the orchestrator runs on, `<agent_kind>:<model>` — the agent CLI
-    /// and, after the `:`, the model of it: `codex:gpt-5.3-codex`,
-    /// `opencode:ollama/llama3:8b`. Required — a model is required, and no
-    /// CLI default stands in for one. The model half is free text, handed to
-    /// that CLI as typed; a string naming no agent CLI is refused, and so are
-    /// the empty string and the word "default".
-    #[schema(example = "codex:gpt-5.3-codex")]
+    /// What the orchestrator runs on, `<agent>:<model>` — the id of an agent
+    /// in the ACP registry and, after the `:`, the model of it:
+    /// `codex-acp:gpt-5.3-codex`, `opencode-acp:ollama/llama3:8b`. Required —
+    /// a model is required, and no agent default stands in for one. The model
+    /// half is free text, handed to that agent as typed; a string naming no
+    /// registry agent is refused, and so are the empty string and the word
+    /// "default".
+    #[schema(example = "codex-acp:gpt-5.3-codex")]
     pub model: String,
     /// The reasoning effort to run that model at, one of the efforts `GET
     /// /v1/models` lists for it; anything else is refused. Omitted (or
-    /// "default") = whatever the agent CLI runs the model at.
+    /// "default") = whatever the agent runs the model at.
     #[serde(default)]
     #[schema(example = "high")]
     pub effort: Option<String>,

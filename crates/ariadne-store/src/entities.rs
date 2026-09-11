@@ -5,8 +5,8 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, Landing, MessageKind, PermissionMode, Seat,
-    SessionStatus, TaskStatus,
+    Actor, AttentionReason, GoalStatus, Landing, MessageKind, PermissionMode, Seat, SessionStatus,
+    TaskStatus,
 };
 
 use crate::defaults::{
@@ -43,13 +43,11 @@ macro_rules! enum_columns {
 }
 
 enum_columns! {
-    AgentConfig { agent_kind: AgentKind }
-    Goal { status: GoalStatus, agent_kind: AgentKind }
+    Goal { status: GoalStatus }
     Task { status: TaskStatus }
-    TaskAgent { seat: Seat, agent_kind: AgentKind }
+    TaskAgent { seat: Seat }
     AgentSession {
         seat: Seat,
-        agent_kind: AgentKind,
         status: SessionStatus,
         attention_reason: [AttentionReason],
     }
@@ -138,10 +136,13 @@ impl SkillSeat {
     }
 }
 
-/// How one agent CLI is launched, shared by every agent that runs on it.
+/// The flags one registry agent is launched with, shared by every session
+/// that runs on it. A row exists only once somebody has set flags; an agent
+/// with none is launched with its registry command alone.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AgentConfig {
-    pub agent_kind: String,
+    /// The id of the agent in the ACP registry.
+    pub agent_id: String,
     /// JSON array of argv strings.
     pub extra_flags: String,
     pub updated_at: String,
@@ -150,15 +151,6 @@ pub struct AgentConfig {
 impl AgentConfig {
     pub fn extra_flags(&self) -> Vec<String> {
         serde_json::from_str(&self.extra_flags).unwrap_or_default()
-    }
-    /// What this agent kind ships with, and what restoring the defaults puts
-    /// back.
-    pub fn default_flags(&self) -> Vec<String> {
-        self.agent_kind()
-            .default_flags()
-            .iter()
-            .map(|f| f.to_string())
-            .collect()
     }
 }
 
@@ -187,30 +179,26 @@ pub struct Memory {
     pub expires_at: String,
 }
 
-/// The agent CLI, the model, and optionally the effort, that a goal's
-/// orchestrator or one of a task's agents runs on.
+/// The model, and optionally the effort, that a goal's orchestrator or one
+/// of a task's agents runs on.
 ///
-/// The CLI and the model are both required — every agent names both, and no
-/// CLI default stands in for a model. Only the effort may be left out, which
-/// runs the model at whatever the CLI runs it at. There is nothing behind a
+/// The model is `<agent>:<model>` (`ariadne_core::models::ModelRef`): the id
+/// of an agent in the ACP registry, and a model of it. It is required — no
+/// agent default stands in for one. Only the effort may be left out, which
+/// runs the model at whatever the agent runs it at. There is nothing behind a
 /// pin to fall back to: what the orchestrator sized the agent at, or what the
 /// user chose instead, is the whole of the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentPin {
-    pub agent_kind: AgentKind,
     pub model: String,
-    /// None = whatever the agent CLI runs that model at.
+    /// None = whatever the agent runs that model at.
     pub effort: Option<String>,
 }
 
 impl AgentPin {
-    /// The `(agent_kind, model, effort)` a row is written with.
-    pub(crate) fn columns(pin: &AgentPin) -> (String, String, Option<String>) {
-        (
-            pin.agent_kind.as_str().to_string(),
-            pin.model.clone(),
-            pin.effort.clone(),
-        )
+    /// The `(model, effort)` a row is written with.
+    pub(crate) fn columns(pin: &AgentPin) -> (String, Option<String>) {
+        (pin.model.clone(), pin.effort.clone())
     }
 }
 
@@ -220,11 +208,9 @@ pub struct Goal {
     pub title: String,
     pub description: String,
     pub status: String,
-    /// Agent CLI this goal's orchestrator runs on.
-    pub agent_kind: String,
-    /// Model this goal's orchestrator runs on.
+    /// Model this goal's orchestrator runs on, `<agent>:<model>`.
     pub model: String,
-    /// Effort that model is run at. None = whatever the agent CLI runs it at.
+    /// Effort that model is run at. None = whatever the agent runs it at.
     pub effort: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -303,11 +289,9 @@ pub struct TaskAgent {
     pub seat: String,
     /// The order the orchestrator listed this agent in, 0-based within a seat.
     pub ordinal: i64,
-    /// Agent CLI this agent runs on.
-    pub agent_kind: String,
-    /// Model it runs on.
+    /// Model it runs on, `<agent>:<model>`.
     pub model: String,
-    /// Effort that model is run at. None = whatever the CLI runs it at.
+    /// Effort that model is run at. None = whatever the agent runs it at.
     pub effort: Option<String>,
     /// What the orchestrator told this agent beyond the task itself, where it
     /// had anything to add. None = the task is the whole of it.
@@ -336,17 +320,15 @@ pub struct AgentSession {
     /// The staffed agent this session runs, or None for an orchestrator,
     /// which no task staffs.
     pub task_agent_id: Option<String>,
-    pub agent_kind: String,
-    /// Model this session runs on. Taken from the pin its seat carries — the
-    /// goal for an orchestrator, the staffed agent otherwise — when the
-    /// session is created, and never rewritten, so no later edit moves a
-    /// running conversation onto another model.
+    /// Model this session runs on, `<agent>:<model>`. Taken from the pin its
+    /// seat carries — the goal for an orchestrator, the staffed agent
+    /// otherwise — when the session is created, and never rewritten, so no
+    /// later edit moves a running conversation onto another model.
     pub model: String,
     /// Effort this session's model is run at, copied off the same pin as
-    /// `model` and never rewritten either. None = the CLI's own.
+    /// `model` and never rewritten either. None = the agent's own.
     pub effort: Option<String>,
     pub internal_session_id: Option<String>,
-    pub tmux_session: String,
     pub worktree_path: Option<String>,
     pub status: String,
     /// Why this session needs the user's attention, if it does. Orthogonal to
@@ -386,8 +368,8 @@ pub struct Message {
     /// The staffed agent it is for, or None for the orchestrator.
     pub to_agent_id: Option<String>,
     pub body: String,
-    /// When it reached the recipient's pane, or None while it is still
-    /// waiting for one to be free.
+    /// When it was handed to the recipient's agent, or None while it is still
+    /// waiting for one to take it.
     pub delivered_at: Option<String>,
     pub created_at: String,
 }
@@ -412,7 +394,7 @@ impl Message {
         Actor::from_str(&self.to_actor).ok()
     }
 
-    /// Whether it is still waiting for the recipient's pane.
+    /// Whether it is still waiting for the recipient's agent.
     pub fn is_delivered(&self) -> bool {
         self.delivered_at.is_some()
     }
@@ -423,7 +405,6 @@ pub struct AgentEvent {
     pub id: String,
     pub session_id: Option<String>,
     pub task_id: Option<String>,
-    pub agent_kind: Option<String>,
     pub kind: String,
     pub payload: String,
     pub created_at: String,

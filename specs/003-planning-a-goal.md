@@ -46,8 +46,8 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
    files run together.
 6. It staffs one author per task, on the skills that work needs (017), and
    gives every agent one model from the catalog (011) — a model is required,
-   so no agent is staffed without one. Across a plan it spreads the agent
-   CLIs evenly over the tasks, and never onto a task the CLI does not suit:
+   so no agent is staffed without one. Across a plan it spreads the agents
+   evenly over the tasks, and never onto a task the agent does not suit:
    fit is the first question, and an even mix is the second.
 7. Four things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
@@ -74,13 +74,13 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
     the plan can be written in full, and read, before anybody agrees to it.
 12. The plan is a hand-off, not an ending. The orchestrator stays up for the
     rest of the goal: it is what the user talks to about work already running.
-    Nothing is typed into its pane for the hand-off itself.
+    Nothing is sent to it for the hand-off itself.
 13. The daemon wakes it when its tasks need a decision no author can make: a
     task that failed, a task that has gone quiet, or a goal with nothing left
-    to do. Once per situation, on its own pane. Work in progress is what the
-    orchestrator delegated, and it is not woken for that.
-14. Its pane is also open to the agents themselves. Any of them can write to
-    it about anything it needs to know, and the message arrives as a turn
+    to do. Once per situation, as a prompt of its own. Work in progress is
+    what the orchestrator delegated, and it is not woken for that.
+14. It is also open to the agents themselves. Any of them can write to it
+    about anything it needs to know, and the message arrives as a turn
     (018). It acts on what it is told — the plan is its to change — rather
     than writing back.
 15. It answers with `list_tasks`, and then with `retry_task`, `cancel_task`,
@@ -95,8 +95,8 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 
 - The playbook asks before it plans and plans before it starts
   (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
-  and it staffs a plan on a mix of agent CLIs rather than on one
-  (`defaults.rs::the_orchestrator_staffs_a_plan_on_a_mix_of_agent_clis`).
+  and it staffs a plan on a mix of agents rather than on one
+  (`defaults.rs::the_orchestrator_staffs_a_plan_on_a_mix_of_agents`).
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
   other plan call
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).

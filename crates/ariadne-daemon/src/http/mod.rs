@@ -1,5 +1,7 @@
 //! Axum application: routes, shared state, OpenAPI document.
 
+pub use events::ingest_event;
+
 mod caller;
 mod catalog;
 mod classify;
@@ -12,10 +14,8 @@ mod goals;
 mod landing;
 mod logs;
 mod memories;
-mod pane;
 mod pins;
 mod repositories;
-mod session_logs;
 mod sessions;
 mod skills;
 mod sse;
@@ -124,8 +124,6 @@ impl AppState {
         goals::list_goal_messages, goals::post_goal_message, landing::diff,
         landing::record_pull_request, landing::pick_winner,
         sessions::list, sessions::list_outside, sessions::get, sessions::kill, sessions::resume,
-        sessions::input, sessions::resize, sessions::logs,
-        session_logs::logs_stream,
         console::snapshot, console::stream, console::input,
         events::list, stream::stream,
         models::list,
@@ -135,23 +133,21 @@ impl AppState {
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::stream::HeartbeatDto,
-        ariadne_api::sessions::SessionLogChunk, ariadne_api::sessions::SessionLogEnd,
-        ariadne_api::sessions::SessionPaneSize,
         ariadne_api::events::AgentEventDto,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
-        (name = "agents", description = "Per-agent-CLI launch configuration"),
+        (name = "agents", description = "Per-agent launch configuration: the flags behind each registry command"),
         (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "memories", description = "Searchable facts learned about one repository"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
-        (name = "sessions", description = "Agent sessions: tmux panes, and the acp session console"),
-        (name = "events", description = "Raw agent events from hooks, and the live domain-event stream"),
-        (name = "models", description = "Model catalogs per agent CLI"),
+        (name = "sessions", description = "Agent sessions, and the console each one is driven through"),
+        (name = "events", description = "Agent events the ACP runtime reports, and the live domain-event stream"),
+        (name = "models", description = "The model catalog discovery found each registry agent offering"),
         (name = "logs", description = "The daemon's own process log"),
     )
 )]
@@ -165,7 +161,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/doctor", get(doctor::report))
         // agents
         .route("/v1/agents", get(agents::list))
-        .route("/v1/agents/{kind}", put(agents::update))
+        .route("/v1/agents/{id}", put(agents::update))
         .route("/v1/acp-agents", get(acp_agents::list))
         .route("/v1/acp-agents/refresh", post(acp_agents::refresh))
         // skills
@@ -241,13 +237,6 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}", get(sessions::get))
         .route("/v1/sessions/{id}/kill", post(sessions::kill))
         .route("/v1/sessions/{id}/resume", post(sessions::resume))
-        .route("/v1/sessions/{id}/input", post(sessions::input))
-        .route("/v1/sessions/{id}/resize", post(sessions::resize))
-        .route("/v1/sessions/{id}/logs", get(sessions::logs))
-        .route(
-            "/v1/sessions/{id}/logs/stream",
-            get(session_logs::logs_stream),
-        )
         .route("/v1/sessions/{id}/console", get(console::snapshot))
         .route("/v1/sessions/{id}/console/stream", get(console::stream))
         .route("/v1/sessions/{id}/console/input", post(console::input))
@@ -260,7 +249,6 @@ pub fn router(state: AppState) -> Router {
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))
-        .route("/internal/agent-events", post(events::ingest))
         // debug spawn (manual agent launch until the scheduler lands)
         .route("/internal/spawn", post(sessions::debug_spawn))
         // docs (SwaggerUi also serves the spec at /api-docs/openapi.json)

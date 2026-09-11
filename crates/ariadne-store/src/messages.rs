@@ -6,9 +6,9 @@
 //! had nowhere to ask. Everything an agent says is a message now, and what
 //! tells them apart is [`MessageKind`].
 //!
-//! A message has exactly one recipient. The daemon types it into that
-//! recipient's pane and stamps `delivered_at`, so an undelivered message is
-//! one still waiting for a pane to be free — see
+//! A message has exactly one recipient. The daemon hands it to that
+//! recipient as a prompt and stamps `delivered_at`, so an undelivered message
+//! is one still waiting for its recipient to be free — see
 //! `scheduler::messages`.
 
 use ariadne_core::id::new_id;
@@ -45,7 +45,7 @@ pub struct MessageFilter {
     pub to_agent_id: Option<String>,
     /// Messages for whoever sits in this seat, the orchestrator included.
     pub to_actor: Option<Actor>,
-    /// Only the ones that have not reached a pane yet.
+    /// Only the ones that have not reached their agent yet.
     pub undelivered_only: bool,
 }
 
@@ -224,8 +224,8 @@ impl Store {
     /// Stamp one author's review requests to one reviewer as delivered: the
     /// reviewer's briefing for that review is what carried them.
     ///
-    /// On a task staffed with several authors a review request is not typed
-    /// into a reviewer's pane as a bare message — the summary alone names
+    /// On a task staffed with several authors a review request is not handed
+    /// to a reviewer as a bare message — the summary alone names
     /// neither the author nor the branch, and the reviewer's worktree may
     /// still stand on another author's. The full briefing is the delivery,
     /// and this is the stamp that keeps the channel's record true to it.
@@ -250,9 +250,10 @@ impl Store {
         Ok(())
     }
 
-    /// Stamp a message as delivered: it reached the recipient's pane.
+    /// Stamp a message as delivered: the runtime handed it to the recipient's
+    /// agent as a prompt.
     ///
-    /// Idempotent, and the first stamp is the one kept: a message typed twice
+    /// Idempotent, and the first stamp is the one kept: a message handed twice
     /// is a bug in the caller, and overwriting the time would hide it.
     pub async fn mark_message_delivered(&self, id: &str) -> Result<()> {
         sqlx::query("UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL")

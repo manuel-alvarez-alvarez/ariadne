@@ -1,7 +1,7 @@
 //! What one agent says to another, and how it gets there.
 //!
 //! The channel is one table and one transport: a message is written by the
-//! agent that sent it and typed into the recipient's pane by the daemon, so it
+//! agent that sent it and handed to the recipient as a prompt by the daemon, so it
 //! arrives as a turn rather than as something anybody has to go and look for.
 //!
 //! What is worth pinning is the addressing — every message has exactly one
@@ -14,7 +14,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::messages::MessageDto;
-use ariadne_core::{Actor, AgentKind, MessageKind, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, MessageKind, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 
 use common::{Cast, TIMEOUT, as_session, eventually, get, harness, test_pin};
@@ -38,7 +38,7 @@ fn message(to_actor: &str, to_agent_id: Option<&str>, body: &str) -> serde_json:
 /// where it was.
 ///
 /// Both are the same thing: one message naming the agent it is for. Nothing
-/// threads and nothing is a reply — each one arrives in a pane as a turn, so
+/// threads and nothing is a reply — each one reaches its agent as a turn, so
 /// a channel that invites one back spends two turns saying nothing.
 #[tokio::test]
 async fn agents_write_to_each_other_without_leaving_the_task() {
@@ -105,16 +105,16 @@ async fn agents_write_to_each_other_without_leaving_the_task() {
     assert_eq!(h.store.open_verdicts(&cast.task.id).await.unwrap().len(), 0);
 }
 
-/// The transport: the daemon types the message into the recipient's pane and
-/// stamps it delivered, so the agent reads it as a turn.
+/// The transport: the daemon hands the message to the recipient's agent as a
+/// prompt and stamps it delivered, so the agent reads it as a turn.
 #[tokio::test]
-async fn a_message_is_typed_into_the_pane_it_was_sent_to() {
+async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
     let h = harness().await;
     let cast = h.active_cast().await;
     let author = h
         .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
-    h.pane_exists(&author);
+    h.agent_runs(&author).await;
     h.set_status(&author, SessionStatus::Idle).await;
     let reviewer = h
         .session(
@@ -146,15 +146,15 @@ async fn a_message_is_typed_into_the_pane_it_was_sent_to() {
         .send(SchedEvent::TaskChanged(cast.task.id.clone()))
         .unwrap();
 
-    eventually(TIMEOUT, "the message to reach the pane", async || {
-        h.pasted(&author)
+    eventually(TIMEOUT, "the message to reach the agent", async || {
+        h.prompted(&author)
             .contains("The retry loop has no bound and the caller has one.")
     })
     .await;
-    let pasted = h.pasted(&author);
+    let pasted = h.prompted(&author);
     assert!(
         !pasted.contains(&sent.id),
-        "the pane carries an id there is nothing to answer on: {pasted}"
+        "the agent is told an id there is nothing to answer on: {pasted}"
     );
     // Named by the skills it works with: an agent has no name of its own.
     assert!(pasted.contains("reviewer (code-review)"), "{pasted}");
@@ -268,11 +268,11 @@ async fn a_verdict_outside_a_review_is_refused() {
 /// coding agents for the whole goal: it is addressed by what it is, since a
 /// goal has one and it is staffed on no task.
 #[tokio::test]
-async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_pane() {
+async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_agent() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let orchestrator = h.orchestrator_session(&cast.goal, "orc").await;
-    h.pane_exists(&orchestrator);
+    let orchestrator = h.orchestrator_session(&cast.goal).await;
+    h.agent_runs(&orchestrator).await;
     h.set_status(&orchestrator, SessionStatus::Idle).await;
     let author = h
         .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
@@ -304,7 +304,7 @@ async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_pane() {
         TIMEOUT,
         "the message to reach the orchestrator",
         async || {
-            h.pasted(&orchestrator)
+            h.prompted(&orchestrator)
                 .contains("The task names no CLI, and the spec it cites has one.")
         },
     )
@@ -323,15 +323,11 @@ async fn a_review_request_reaches_every_reviewer_as_a_message() {
             &cast.task.id,
             ariadne_store::TaskUpdate {
                 reviewers: Some(vec![
-                    ariadne_store::NewTaskAgent::new(
-                        Seat::Reviewer,
-                        ["code-review"],
-                        test_pin(AgentKind::ClaudeCode),
-                    ),
+                    ariadne_store::NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
                     ariadne_store::NewTaskAgent::new(
                         Seat::Reviewer,
                         ["security-review"],
-                        test_pin(AgentKind::ClaudeCode),
+                        test_pin(),
                     ),
                 ]),
                 ..Default::default()
@@ -395,7 +391,7 @@ async fn a_reviewer_that_voted_is_left_where_it_is() {
         .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     h.make_resumable(&cast.task, &author).await;
-    h.pane_exists(&author);
+    h.agent_runs(&author).await;
     h.set_status(&author, SessionStatus::Idle).await;
 
     let reviewer = h
@@ -406,7 +402,7 @@ async fn a_reviewer_that_voted_is_left_where_it_is() {
             &cast.reviewer.id,
         )
         .await;
-    h.pane_exists(&reviewer);
+    h.agent_runs(&reviewer).await;
     h.set_status(&reviewer, SessionStatus::Idle).await;
     h.advance(&cast.task, TaskStatus::UnderReview).await;
     h.verdict_from(&cast.task, &reviewer, MessageKind::Approve, "Looks fine.")
@@ -426,7 +422,7 @@ async fn a_reviewer_that_voted_is_left_where_it_is() {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
     assert!(
-        h.pane_is_alive(&reviewer),
+        h.agent_is_running(&reviewer),
         "the reviewer was killed once its round closed"
     );
     assert_eq!(

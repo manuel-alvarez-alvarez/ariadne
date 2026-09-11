@@ -1,10 +1,8 @@
-//! Ariadne's own console for an `acp` session: the counterpart of the tmux
-//! pane log ([`super::session_logs`], [`super::pane`]) for a session with no
-//! pane at all.
+//! Ariadne's own console for an agent session.
 //!
 //! There is nothing to capture here that is not already an agent event: the
-//! ACP runtime (`crate::acp`) reports what its agent does on the same
-//! ingestion path every hook uses, so the console is a session-scoped view of
+//! ACP runtime (`crate::acp`) reports what its agent does on the one
+//! ingestion path, so the console is a session-scoped view of
 //! that record — every event kind the runtime reports flows through
 //! unchanged, so a message chunk, a thought, a tool call, a plan, a
 //! permission request or a turn's status all show up exactly as the runtime
@@ -21,7 +19,6 @@ use futures_util::{Stream, StreamExt};
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::ConsoleInputRequest;
 use ariadne_api::stream::{DomainEvent, ResyncDto};
-use ariadne_core::AgentKind;
 
 use super::AppState;
 use super::convert::event_dto;
@@ -29,7 +26,7 @@ use super::error::{ApiError, ApiResult, Json};
 use super::sse;
 
 /// The session's events so far, in order: the whole transcript a console
-/// opens on, since there is no pane to capture a snapshot from instead.
+/// opens on.
 #[utoipa::path(get, path = "/v1/sessions/{id}/console", tag = "sessions",
     params(("id" = String, Path, description = "session id")),
     responses((status = 200, body = [AgentEventDto]), (status = 404)))]
@@ -60,7 +57,7 @@ pub async fn snapshot(
                        carrying every event recorded so far (`[AgentEventDto]`), then an \
                        `event` per new one (`AgentEventDto`) — message chunks, thoughts, tool \
                        calls, plans, permission requests and turn status all arrive this way, \
-                       in whatever vocabulary the agent's adapter reports them in. A client \
+                       in the vocabulary the ACP runtime reports them in. A client \
                        that falls behind gets a `resync` event (ResyncDto) and the connection \
                        closes.",
         content_type = "text/event-stream", body = AgentEventDto),
@@ -96,17 +93,22 @@ pub async fn stream(
     Ok(sse::respond(opening.chain(live)))
 }
 
-/// Type into an ACP session: the console's counterpart of `/input`.
+/// Type into a session.
 ///
-/// There is no pane for the text to land on. While a permission request is
-/// pending, the text selects that request's option; otherwise it becomes a
-/// fresh `session/prompt` — sent at once if the agent is between turns, or
-/// queued, in order, behind whichever one is running and sent the moment it
-/// ends.
+/// While a permission request is pending, the text selects that request's
+/// option; otherwise it becomes a fresh `session/prompt` — sent at once if
+/// the agent is between turns, or queued, in order, behind whichever one is
+/// running and sent the moment it ends.
 ///
-/// Both halves of "live" matter, as they do for a pane: the row's status,
-/// because a finished session takes no more input, and the runtime itself,
-/// since a session of any other kind has no agent here to hand a prompt to.
+/// Both halves of "live" matter: the row's status, because a finished
+/// session takes no more input, and the runtime itself, which has no agent to
+/// hand a prompt to for a session whose process is gone.
+///
+/// And it is the user acting on the session, so whatever it was flagged for
+/// comes down with the input: a permission answered, a question typed back,
+/// a message read. An agent still blocked raises its own again with its next
+/// event. The scheduler hears about it as it does about an ingested event, so
+/// the quiet clock and the stream follow.
 #[utoipa::path(post, path = "/v1/sessions/{id}/console/input", tag = "sessions",
     operation_id = "console_input",
     request_body = ConsoleInputRequest,
@@ -119,11 +121,6 @@ pub async fn input(
     Json(req): Json<ConsoleInputRequest>,
 ) -> ApiResult<StatusCode> {
     let session = state.store.get_session(&id).await?;
-    if session.agent_kind() != AgentKind::Acp {
-        return Err(ApiError::conflict(format!(
-            "session {id} is not an acp session and has no console to type into"
-        )));
-    }
     if !session.status().is_live() {
         return Err(ApiError::conflict(format!(
             "session {id} is {} and cannot take input",
@@ -135,8 +132,6 @@ pub async fn input(
         .acp
         .send_input(&id, req.text)
         .map_err(|e| ApiError::conflict(e.to_string()))?;
-    // The human just acted on this session, the same as typing into a pane
-    // does — see `sessions::input` for the reasoning this mirrors.
     state.store.clear_session_attention(&id).await?;
     state.notify_scheduler_session(&id);
     Ok(StatusCode::NO_CONTENT)

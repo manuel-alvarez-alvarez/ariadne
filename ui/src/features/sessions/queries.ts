@@ -34,7 +34,6 @@ import {
   unwrap,
 } from "@/api"
 
-import type { PaneSize } from "./log-stream"
 import { isLiveStatus, sessionAttention } from "./session-display"
 
 /** What the sessions list can be narrowed by. */
@@ -49,7 +48,7 @@ export interface SessionListFilters {
    */
   seat?: Seat
   /**
-   * Only the sessions with a pane that may still produce output. Client-side
+   * Only the sessions with an agent that may still produce output. Client-side
    * for the same reason the seat is, and for one more: the daemon's filter
    * takes *one* status, and being live is three of them (see
    * {@link isLiveStatus}). Set alongside `status` it would only narrow it
@@ -94,7 +93,7 @@ export function outsideSessionsQueryOptions() {
   })
 }
 
-/** Make an outside CLI conversation the author of a ready task. */
+/** Make an outside agent conversation the author of a ready task. */
 export function useAdoptOutsideSession() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -103,7 +102,6 @@ export function useAdoptOutsideSession() {
         api().POST("/v1/tasks/{id}/author-session", {
           params: { path: { id: taskId } },
           body: {
-            agent_kind: body.agent_kind,
             agent_id: body.agent_id,
             internal_session_id: body.internal_session_id,
           },
@@ -120,9 +118,9 @@ export function useAdoptOutsideSession() {
 }
 
 /**
- * Kill a session's tmux process. Only meaningful while the session is live.
+ * Kill a session's agent process. Only meaningful while the session is live.
  *
- * Optimistic: the daemon tears the pane down and marks the session `exited`,
+ * Optimistic: the daemon stops the agent and marks the session `exited`,
  * which is the one status the client can know in advance, and a row that still
  * says "running" after a confirmed kill is the wrong thing to be looking at.
  * A refusal puts the previous row straight back. The session is the mutation's
@@ -143,7 +141,7 @@ export function useKillSession() {
 
 /**
  * Revive an ended session. The daemon relaunches the session itself — same id,
- * same tmux name, same agent conversation — and answers with the refreshed
+ * same agent conversation — and answers with the refreshed
  * row, so the response's status is what says whether anything was revived.
  * `409` is the "not resumable" answer (no internal session id, still running,
  * agent cannot resume) and carries the reason in its envelope.
@@ -158,86 +156,8 @@ export function useResumeSession() {
 }
 
 /**
- * One request per session at a time, for the two things a frame sends a pane.
- *
- * Deliberately not mutations: both are called as fast as a person can type or
- * drag, they change nothing the cache holds, and a `useMutation`'s pending
- * state would re-render the terminal for each one. Fired in parallel they also
- * race — the browser sends them down several connections, and the pane receives
- * `ceho` for `echo` or settles at whichever size lost — so whatever arrives
- * while a request is in flight waits and rides along in the next one.
- *
- * The two differ only in how that waiting is spelled, which is what `queue`
- * says: keystrokes *accumulate*, because every one of them has to reach the
- * pane in order; a size *replaces* whatever was queued behind it, because only
- * the newest one is worth asking for.
- *
- * There is no retry either way, and a failure drops what was queued behind it.
- * For input, keeping it would contradict the no-retry rule by another route: it
- * would ride out behind the *next* keystroke, minutes later, and a Return or
- * Ctrl-C replayed out of context acts on whatever the pane is showing by then.
- * For a resize, the frame the size was measured from is a moment old and the
- * next thing that moves it measures again. The daemon answers `409` once the
- * session is over or its pane is gone, and that rejection reaches whoever is
- * waiting on the send.
- */
-function coalesced<T>(
-  queue: (pending: T | undefined, next: T) => T,
-  send: (id: string, value: T) => Promise<unknown>,
-): (id: string, value: T) => Promise<void> {
-  const pending = new Map<string, T>()
-  const inFlight = new Map<string, Promise<void>>()
-
-  async function drain(id: string): Promise<void> {
-    try {
-      for (;;) {
-        const value = pending.get(id)
-        if (value === undefined) return
-        pending.delete(id)
-        await send(id, value)
-      }
-    } catch (error) {
-      pending.delete(id)
-      throw error
-    }
-  }
-
-  return (id, value) => {
-    pending.set(id, queue(pending.get(id), value))
-    const running = inFlight.get(id)
-    if (running) return running
-    const draining = drain(id).finally(() => inFlight.delete(id))
-    inFlight.set(id, draining)
-    return draining
-  }
-}
-
-/** Type into a live session's pane; every keystroke gets there, in order. */
-export const sendSessionInput = coalesced<string>(
-  (queued, data) => (queued ?? "") + data,
-  (id, data) =>
-    unwrap(api().POST("/v1/sessions/{id}/input", { params: { path: { id } }, body: { data } })),
-)
-
-/**
- * Ask a live session's pane to draw at `size`; only the newest one is sent.
- *
- * A pane's size is last-write-wins, and two overlapping resizes can land in
- * either order, which would leave the pane at a size nobody is showing. Until
- * the pane answers, the terminal scales its font to the grid it has — a pane
- * that was not resized is a pane rendered smaller, not one that stopped
- * working.
- */
-export const sendSessionResize = coalesced<PaneSize>(
-  (_queued, size) => size,
-  (id, size) =>
-    unwrap(api().POST("/v1/sessions/{id}/resize", { params: { path: { id } }, body: size })),
-)
-
-/**
- * Post text into an `acp` session's console. Unlike {@link sendSessionInput}
- * this is not coalesced: each call is a whole prompt of its own, sent at once
- * or queued behind a running turn — never a keystroke accumulating into one.
+ * Post text into a session's console. Each call is a whole prompt of its own,
+ * sent at once or queued behind a running turn.
  */
 export function sendConsoleInput(id: string, text: string): Promise<void> {
   return unwrap(

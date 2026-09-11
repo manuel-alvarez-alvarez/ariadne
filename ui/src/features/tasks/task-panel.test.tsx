@@ -54,21 +54,21 @@ const TASK: TaskDto = {
       id: "01AGENTAUTHOR",
       seat: "author",
       skills: ["coding"],
-      model: "codex:gpt-5",
+      model: "codex-acp:gpt-5",
       effort: "xhigh",
     },
     {
       id: "01AGENTSTRICT",
       seat: "reviewer",
       skills: ["code-review"],
-      model: "claude_code:claude-sonnet-5",
+      model: "claude-code-acp:claude-sonnet-5",
       effort: "high",
     },
     {
       id: "01AGENTSTRICT2",
       seat: "reviewer",
       skills: ["security-review"],
-      model: "codex:gpt-5.6-luna",
+      model: "codex-acp:gpt-5.6-luna",
     },
   ],
   picks: [],
@@ -132,7 +132,7 @@ const MESSAGES: MessageDto[] = ["01AGENTSTRICT", "01AGENTAUTO"].map((reviewer, i
  * only mounted once it is clicked, and a seeded entry nothing observes is
  * collected before then. Everything else — the session behind a picked row
  * included — keeps the never-settling default, which is what leaves the panel
- * on its skeleton instead of mounting a terminal in a DOM that has no canvas.
+ * on its skeleton instead of mounting a console with no stream behind it.
  */
 function stubSessions() {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
@@ -188,16 +188,16 @@ it("shows the author's pin as it was staffed", () => {
 
   expect(fact("Author")).toContain("coding")
   // The model and, after an `@`, the effort it is run at: one pin, one line.
-  expect(fact("Author")).toContain("codex:gpt-5 @ xhigh")
+  expect(fact("Author")).toContain("codex-acp:gpt-5 @ xhigh")
 })
 
 it("leaves the effort off a pin that names none, which is the CLI's own", () => {
   mount({
     ...TASK,
-    agents: [{ id: "01AGENTAUTHOR", seat: "author", skills: ["coding"], model: "codex:gpt-5" }],
+    agents: [{ id: "01AGENTAUTHOR", seat: "author", skills: ["coding"], model: "codex-acp:gpt-5" }],
   })
 
-  expect(fact("Author")).toContain("codex:gpt-5")
+  expect(fact("Author")).toContain("codex-acp:gpt-5")
   expect(fact("Author")).not.toContain("@")
 })
 
@@ -205,8 +205,8 @@ it("shows each reviewer slot's own pin, in review order", () => {
   mount()
 
   const reviewers = fact("Reviewers")
-  expect(reviewers).toContain("code-review · claude_code:claude-sonnet-5 @ high")
-  expect(reviewers).toContain("security-review · codex:gpt-5.6-luna")
+  expect(reviewers).toContain("code-review · claude-code-acp:claude-sonnet-5 @ high")
+  expect(reviewers).toContain("security-review · codex-acp:gpt-5.6-luna")
 })
 
 it("says a task has no reviewers rather than showing an empty list", () => {
@@ -217,7 +217,7 @@ it("says a task has no reviewers rather than showing an empty list", () => {
         id: "01AGENTAUTHOR",
         seat: "author",
         skills: ["coding"],
-        model: "codex:gpt-5",
+        model: "codex-acp:gpt-5",
       },
     ],
   })
@@ -252,7 +252,7 @@ const TWO_AUTHOR_TASK: TaskDto = {
       id: "01AGENTAUTHOR",
       seat: "author",
       skills: ["coding"],
-      model: "codex:gpt-5",
+      model: "codex-acp:gpt-5",
       effort: "xhigh",
       branch: "surface-the-pins-000001",
     },
@@ -260,7 +260,7 @@ const TWO_AUTHOR_TASK: TaskDto = {
       id: "01AGENTAUTHOR2",
       seat: "author",
       skills: ["testing"],
-      model: "claude_code:claude-sonnet-5",
+      model: "claude-code-acp:claude-sonnet-5",
       branch: "surface-the-pins-000001-b",
     },
     ...TASK.agents.filter((agent) => agent.seat === "reviewer"),
@@ -273,8 +273,8 @@ it("shows every author's own branch, marking only the one the reviewers picked",
   mount(TWO_AUTHOR_TASK)
 
   const authors = fact("Authors")
-  expect(authors).toContain("coding · codex:gpt-5 @ xhigh")
-  expect(authors).toContain("testing · claude_code:claude-sonnet-5")
+  expect(authors).toContain("coding · codex-acp:gpt-5 @ xhigh")
+  expect(authors).toContain("testing · claude-code-acp:claude-sonnet-5")
   expect(authors).toContain("surface-the-pins-000001")
   expect(authors).toContain("surface-the-pins-000001-b")
 
@@ -282,7 +282,7 @@ it("shows every author's own branch, marking only the one the reviewers picked",
   const picked = screen.getByText("Picked")
   const row = picked.closest(".flex-wrap")?.textContent ?? ""
   expect(row).toContain("surface-the-pins-000001-b")
-  expect(row).not.toContain("codex:gpt-5")
+  expect(row).not.toContain("codex-acp:gpt-5")
 
   // The author nobody picked says so, rather than showing nothing at all —
   // every author gets its own status, not just the one that won. It reads

@@ -82,11 +82,11 @@ impl EventBus {
 
 /// Install the store change hook and start the pump. Call once at startup,
 /// before anything writes.
-pub fn start(store: Store, registry: crate::acp_discovery::AgentRegistry) -> EventBus {
+pub fn start(store: Store) -> EventBus {
     let bus = EventBus::new();
     match store.watch_changes() {
         Some(rx) => {
-            tokio::spawn(pump(store, registry, rx, bus.clone()));
+            tokio::spawn(pump(store, rx, bus.clone()));
         }
         None => warn!("store change hook already installed; no domain events will be published"),
     }
@@ -94,14 +94,9 @@ pub fn start(store: Store, registry: crate::acp_discovery::AgentRegistry) -> Eve
 }
 
 /// Fatten changes into domain events, in commit order.
-async fn pump(
-    store: Store,
-    registry: crate::acp_discovery::AgentRegistry,
-    mut rx: mpsc::UnboundedReceiver<Change>,
-    bus: EventBus,
-) {
+async fn pump(store: Store, mut rx: mpsc::UnboundedReceiver<Change>, bus: EventBus) {
     while let Some(change) = rx.recv().await {
-        match fatten(&store, &registry, change).await {
+        match fatten(&store, change).await {
             Ok(event) => {
                 debug!(kind = event.event.kind(), "publishing domain event");
                 bus.publish(event);
@@ -113,18 +108,10 @@ async fn pump(
 
 /// Load whatever the DTO needs beyond the changed row, and tag the event with
 /// its goal/task for filtering.
-async fn fatten(
-    store: &Store,
-    registry: &crate::acp_discovery::AgentRegistry,
-    change: Change,
-) -> Result<BusEvent> {
+async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
     let event = match change {
-        Change::GoalCreated(goal) => {
-            goal_event(store, registry, goal, DomainEvent::GoalCreated).await?
-        }
-        Change::GoalUpdated(goal) => {
-            goal_event(store, registry, goal, DomainEvent::GoalUpdated).await?
-        }
+        Change::GoalCreated(goal) => goal_event(store, goal, DomainEvent::GoalCreated).await?,
+        Change::GoalUpdated(goal) => goal_event(store, goal, DomainEvent::GoalUpdated).await?,
         // Scoped to the goal it removes, so a `goal`-filtered stream learns
         // that what it follows is gone instead of just falling silent.
         Change::GoalDeleted(id) => BusEvent {
@@ -133,7 +120,7 @@ async fn fatten(
             event: DomainEvent::GoalDeleted(DeletedDto { id }),
         },
         Change::TaskCreated(task) => {
-            let (dto, keys) = task_event_of(store, registry, task).await?;
+            let (dto, keys) = task_event_of(store, task).await?;
             BusEvent {
                 event: DomainEvent::TaskCreated(dto),
                 goal_id: Some(keys.0),
@@ -141,7 +128,7 @@ async fn fatten(
             }
         }
         Change::TaskUpdated { task, transition } => {
-            let (dto, keys) = task_event_of(store, registry, task).await?;
+            let (dto, keys) = task_event_of(store, task).await?;
             BusEvent {
                 event: DomainEvent::TaskUpdated(TaskUpdatedDto {
                     task: dto,
@@ -193,13 +180,12 @@ async fn fatten(
 
 async fn goal_event(
     store: &Store,
-    registry: &crate::acp_discovery::AgentRegistry,
     goal: Goal,
     wrap: fn(GoalDto) -> DomainEvent,
 ) -> Result<BusEvent> {
     let goal_id = goal.id.clone();
     Ok(BusEvent {
-        event: wrap(goal_dto_of(store, registry, goal).await?),
+        event: wrap(goal_dto_of(store, goal).await?),
         goal_id: Some(goal_id),
         task_id: None,
     })
@@ -208,11 +194,10 @@ async fn goal_event(
 /// Task DTO plus its `(goal_id, task_id)` routing keys.
 async fn task_event_of(
     store: &Store,
-    registry: &crate::acp_discovery::AgentRegistry,
     task: Task,
 ) -> Result<(ariadne_api::tasks::TaskDto, (String, String))> {
     let keys = (task.goal_id.clone(), task.id.clone());
-    Ok((task_dto_of(store, registry, task).await?, keys))
+    Ok((task_dto_of(store, task).await?, keys))
 }
 
 async fn session_event(

@@ -3,14 +3,14 @@
  *
  * One listener for all of them, on `window` and in the bubble phase: a
  * shortcut is the *last* thing a keystroke should mean, so anything that
- * handled it first — a dialog, a menu, the terminal — keeps it.
+ * handled it first — a dialog, a menu, a text field — keeps it.
  *
  * Two vocabularies (see `@/lib/shortcuts`): ⌘ chords for the two things that
  * open over everything, and typed chords for the rest — `n` for a new goal,
  * `[` for the sidebar rail, `?` for the sheet that lists all of this, `g` then
  * a letter for the screens, the way keyboard-first apps spell navigation.
  * Typed chords are guarded twice over: never while the keystroke is
- * text (a field, an editor, a session's pane), and never from inside a dialog
+ * text (a field, an editor, a session's console), and never from inside a dialog
  * or a menu, where a bare letter belongs to whatever is on top.
  *
  * `Escape` is deliberately absent. It belongs to whatever is on top (the
@@ -151,11 +151,11 @@ export function useGlobalShortcuts({
     }
 
     function onKeyDown(event: KeyboardEvent) {
-      // Somebody already acted on this keystroke (an open combobox, xterm's
-      // own bindings); a second meaning would be a surprise.
+      // Somebody already acted on this keystroke (an open combobox, an
+      // editor's own bindings); a second meaning would be a surprise.
       if (event.defaultPrevented) return
       // Where the keystroke is going owns it: a text field, an editor, or the
-      // pane a session is being typed into.
+      // console a session is being typed into.
       if (isTypingTarget(event.target as TypingTarget | null)) return
 
       const held = matchesShortcut(event, PALETTE_SHORTCUT)

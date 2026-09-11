@@ -72,25 +72,12 @@ jobs:
           key: ${{ matrix.os }}
           cache-on-failure: true
 
-      # The integration tests drive real tmux panes, and the keystroke ones
-      # script a TUI in python3. Neither runner image ships tmux, and both
-      # legs run those tests, so both install it.
-      - name: Install tmux (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tmux
-
-      - name: Install tmux (macOS)
-        if: matrix.os == 'macos-latest'
-        run: brew install tmux
-
       - name: Build
         run: cargo build --workspace --all-targets
 
-      # Everything, tmux and git tests included — they are no longer
-      # `#[ignore]`d. The spawn-plan one launches the `ariadne` CLI, which the
-      # build step above put in the same target dir.
+      # Everything, git tests included — nothing is `#[ignore]`d. Every agent
+      # a test starts is a stub ACP agent in python3, which both runner
+      # images ship, so no coding-agent CLI is installed.
       - name: Test
         run: cargo nextest run --workspace --profile ci
 

@@ -81,27 +81,27 @@ const HISTORY: &[Column] = &[
 const CREATE_EXAMPLES: &str = "\
 Examples:
   ariadne task create <goal-id> --title \"Add the rate limiter middleware\" \\
-      --author coding,testing=claude_code:claude-sonnet-5 \\
-      --reviewer code-review=codex:gpt-5.6-luna
+      --author coding,testing=claude-code-acp:claude-sonnet-5 \\
+      --reviewer code-review=codex-acp:gpt-5.6-luna
 
   # after another task, reasoned deeply
   ariadne task create <goal-id> --title \"Wire it up\" --depends-on <task-id> \\
-      --author coding,testing=codex:gpt-5.6-sol@xhigh \\
-      --reviewer code-review=claude_code:claude-opus-5@high
+      --author coding,testing=codex-acp:gpt-5.6-sol@xhigh \\
+      --reviewer code-review=claude-code-acp:claude-opus-5@high
 
   # nothing to review: approved as soon as the author asks
   ariadne task create <goal-id> --title \"Cut 0.6.0\" \\
-      --author release=claude_code:claude-sonnet-5 --no-reviewer
+      --author release=claude-code-acp:claude-sonnet-5 --no-reviewer
 ";
 
 /// What `task update --help` ends with.
 const UPDATE_EXAMPLES: &str = "\
 Examples:
   ariadne task update <task-id> --title \"Add the rate limiter middleware\"
-  ariadne task update <task-id> --model claude_code:claude-opus-5 --effort xhigh
-  ariadne task update <task-id> --reviewer code-review=codex:gpt-5.6-luna@high
+  ariadne task update <task-id> --model claude-code-acp:claude-opus-5 --effort xhigh
+  ariadne task update <task-id> --reviewer code-review=codex-acp:gpt-5.6-luna@high
   ariadne task update <task-id> --no-reviewer          # nothing left to review
-  ariadne task update <task-id> --effort default       # at whatever the CLI reasons it at
+  ariadne task update <task-id> --effort default       # at whatever the agent reasons it at
   ariadne task update <task-id> --clear-depends-on     # free it to start now
 ";
 
@@ -124,16 +124,16 @@ pub enum TaskCommand {
         #[arg(short = 'd', long, default_value = "", hide_default_value = true)]
         description: String,
         /// The author's skills, comma-separated, then `=MODEL` — the agent
-        /// CLI and model it runs on, required — and `@EFFORT` to say how
+        /// and model it runs on, required — and `@EFFORT` to say how
         /// deeply it reasons there
-        /// (`--author coding,testing=codex:gpt-5.6-sol@xhigh`).
+        /// (`--author coding,testing=codex-acp:gpt-5.6-sol@xhigh`).
         /// Repeatable: several authors each write the task alone, and the
         /// reviewers pick the one change that lands
         #[arg(long = "author", required = true, value_name = "SKILLS=MODEL[@EFFORT]", value_parser = parse_author)]
         authors: Vec<AgentAssignment>,
         /// One reviewer's skills and its model, in review order; repeatable.
         /// Spelled the same way as `--author`
-        /// (`--reviewer code-review=codex:gpt-5.6-luna@high`)
+        /// (`--reviewer code-review=codex-acp:gpt-5.6-luna@high`)
         #[arg(long = "reviewer", value_name = "SKILLS=MODEL[@EFFORT]", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
         reviewers: Vec<AgentAssignment>,
         /// Staff no reviewer: the task is approved as soon as its author asks
@@ -175,15 +175,15 @@ pub enum TaskCommand {
         /// New description
         #[arg(short = 'd', long)]
         description: Option<String>,
-        /// What the author runs on: AGENT:MODEL — an agent CLI
-        /// (claude_code | codex | opencode) and, after the colon, one model
-        /// of it (codex:gpt-5.3-codex). A model is required, so "default" is
+        /// What the author runs on: AGENT:MODEL — the id of an agent of the
+        /// ACP registry and, after the colon, one model of it
+        /// (codex-acp:gpt-5.3-codex). A model is required, so "default" is
         /// refused: there is nothing to hand the pin back to
         #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// The reasoning effort that model is run at: one of the efforts
         /// `ariadne models ls` lists for it; "default" runs it at whatever
-        /// the agent CLI runs it at
+        /// the agent runs it at
         #[arg(long, value_name = "EFFORT|default", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts_or_default))]
         effort: Option<String>,
         /// One reviewer's skills and its model, optionally `@EFFORT`, in
@@ -271,7 +271,7 @@ pub enum TaskCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
     },
-    /// Attach to the task's agent tmux session or ACP console
+    /// Attach to the console of the task's agent
     Attach {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -280,7 +280,7 @@ pub enum TaskCommand {
         #[arg(long, value_parser = Spelling::<ariadne_core::Seat>::new())]
         seat: Option<ariadne_core::Seat>,
     },
-    /// Show recent terminal output of the task's agent
+    /// Show the transcript of the task's agent
     Logs {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -459,7 +459,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         TaskCommand::Logs { id, seat, follow } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let session = crate::commands::attach::resolve_live(client, &id, seat).await?;
-            crate::commands::session::logs(client, &session.id, follow, format).await?;
+            crate::commands::console::logs(client, &session.id, follow, format).await?;
         }
     }
     Ok(())

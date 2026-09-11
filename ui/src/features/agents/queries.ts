@@ -1,9 +1,9 @@
 /**
  * The agents screen's read and its one write.
  *
- * `GET /v1/agents` answers with every agent kind at once — the daemon takes no
- * filters and there is no per-kind endpoint to read — so there is a single
- * list key here and no detail keys under it.
+ * `GET /v1/agents` answers with every registry agent at once — the daemon
+ * takes no filters and there is no per-agent endpoint to read — so there is a
+ * single list key here and no detail keys under it.
  *
  * Nothing on the stream carries an agent config: there is no
  * `agent_config_updated` event, so unlike profiles or repositories this list
@@ -13,9 +13,9 @@
  */
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
-import { type AgentConfigDto, type AgentKind, api, qk, unwrap } from "@/api"
+import { type AgentConfigDto, api, qk, unwrap } from "@/api"
 
-/** `GET /v1/agents` — every agent kind's flags, current and default. */
+/** `GET /v1/agents` — every registry agent's flags, current and default. */
 export function agentConfigsQueryOptions() {
   return queryOptions({
     queryKey: qk.agents.list(),
@@ -37,27 +37,27 @@ export function acpAgentsQueryOptions() {
 }
 
 /**
- * `PUT /v1/agents/{kind}` — the whole flag list, empty included.
+ * `PUT /v1/agents/{id}` — the whole flag list, empty included.
  *
  * There is no adding to the list and no clearing sentinel: what is sent is
  * what the agent is launched with, and restoring the defaults is this same
- * call with the kind's `default_flags`.
+ * call with the agent's `default_flags`.
  */
 export function useUpdateAgentConfig() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ kind, extraFlags }: { kind: AgentKind; extraFlags: string[] }) =>
+    mutationFn: ({ agentId, extraFlags }: { agentId: string; extraFlags: string[] }) =>
       unwrap(
-        api().PUT("/v1/agents/{kind}", {
-          params: { path: { kind } },
+        api().PUT("/v1/agents/{id}", {
+          params: { path: { id: agentId } },
           body: { extra_flags: extraFlags },
         }),
       ),
-    // The updated kind back into the list, in place, and a refetch behind it.
+    // The updated agent back into the list, in place, and a refetch behind it.
     // There are no detail keys to patch, so this is not `cacheRow`.
     onSuccess: (config) => {
       queryClient.setQueryData(qk.agents.list(), (configs?: AgentConfigDto[]) =>
-        configs?.map((current) => (current.agent_kind === config.agent_kind ? config : current)),
+        configs?.map((current) => (current.agent_id === config.agent_id ? config : current)),
       )
       void queryClient.invalidateQueries({ queryKey: qk.agents.lists() })
     },

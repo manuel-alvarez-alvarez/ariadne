@@ -18,7 +18,7 @@
  * left behind.
  *
  * What the orchestrator runs on is the other field with a rule of its own, and one
- * control makes the whole choice: a model that names the agent CLI running it,
+ * control makes the whole choice: a model that names the agent running it,
  * and the effort that model is run at. A model naming no CLI never reaches the
  * daemon: the field refuses it first.
  */
@@ -40,8 +40,8 @@ const ARIADNE: RepositoryDto = aRepository({
 /** Two agents' worth of catalog, which the picker offers whole. */
 const CATALOG: ModelDto[] = [
   aModel({
-    id: "claude_code:claude-opus-5",
-    agent_kind: "claude_code",
+    id: "claude-code-acp:claude-opus-5",
+    agent_id: "claude-code-acp",
     description: "Opus tier: deep analysis",
     tier: "strong",
     efforts: [
@@ -53,8 +53,8 @@ const CATALOG: ModelDto[] = [
     ],
   }),
   aModel({
-    id: "codex:gpt-5.3-codex",
-    agent_kind: "codex",
+    id: "codex-acp:gpt-5.3-codex",
+    agent_id: "codex-acp",
     description: "Frontier reasoning: agentic loops",
     tier: "frontier",
     efforts: [
@@ -158,7 +158,7 @@ async function openList(user: ReturnType<typeof userEvent.setup>): Promise<HTMLE
 async function chooseModel(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Orchestrator runs on" }))
   const models = await screen.findByRole("listbox", { name: "Models" })
-  await user.click(within(models).getByText("codex:gpt-5.3-codex"))
+  await user.click(within(models).getByText("codex-acp:gpt-5.3-codex"))
   await user.keyboard("{Escape}")
 }
 
@@ -247,7 +247,7 @@ describe("picking the goal's repositories", () => {
     expect(lastWrite()?.body).toEqual({
       title: "Repositories",
       description: "",
-      model: "codex:gpt-5.3-codex",
+      model: "codex-acp:gpt-5.3-codex",
       repository_ids: [ARIADNE.id],
     })
     expect(screen.queryByLabelText("Max tasks")).toBeNull()
@@ -358,7 +358,7 @@ describe("dismissing the dialog", () => {
 })
 
 /**
- * The orchestrator is pinned with one control, whose value carries the agent CLI,
+ * The orchestrator is pinned with one control, whose value carries the agent,
  * the model of it and the effort it is run at: what was pinned goes on the
  * wire, and an empty effort uses the model default.
  */
@@ -399,16 +399,16 @@ describe("choosing what the orchestrator runs on", () => {
     await closePin(user)
   }
 
-  it("offers the catalog whole, grouped by the agent CLI each model runs on", async () => {
+  it("offers the catalog whole, grouped by the agent each model runs on", async () => {
     const user = userEvent.setup()
     renderDialog()
 
     const models = await openPin(user)
 
-    expect(within(models).getByText("Codex")).toBeDefined()
-    expect(within(models).getByText("codex:gpt-5.3-codex")).toBeDefined()
-    expect(within(models).getByText("Claude Code")).toBeDefined()
-    expect(within(models).getByText("claude_code:claude-opus-5")).toBeDefined()
+    expect(within(models).getByText("codex-acp")).toBeDefined()
+    expect(within(models).getByText("codex-acp:gpt-5.3-codex")).toBeDefined()
+    expect(within(models).getByText("claude-code-acp")).toBeDefined()
+    expect(within(models).getByText("claude-code-acp:claude-opus-5")).toBeDefined()
   })
 
   it("disables submit until the orchestrator has a model", async () => {
@@ -426,7 +426,7 @@ describe("choosing what the orchestrator runs on", () => {
     // A codex model on the Orchestrator profile: the pin is the slot's, not the
     // profile's.
     const models = await openPin(user)
-    await user.click(within(models).getByText("codex:gpt-5.3-codex"))
+    await user.click(within(models).getByText("codex-acp:gpt-5.3-codex"))
     await closePin(user)
 
     await user.click(screen.getByRole("button", { name: "Create goal" }))
@@ -434,10 +434,10 @@ describe("choosing what the orchestrator runs on", () => {
     await waitFor(() => {
       expect(lastWrite()).toBeDefined()
     })
-    expect(lastWrite()?.body).toMatchObject({ model: "codex:gpt-5.3-codex" })
+    expect(lastWrite()?.body).toMatchObject({ model: "codex-acp:gpt-5.3-codex" })
   })
 
-  it("refuses a bare agent CLI before the daemon is asked", async () => {
+  it("refuses a bare agent before the daemon is asked", async () => {
     const user = userEvent.setup()
     renderDialog()
 
@@ -455,7 +455,7 @@ describe("choosing what the orchestrator runs on", () => {
 
     await fillRequired(user)
     const models = await openPin(user)
-    await user.click(within(models).getByText("codex:gpt-5.3-codex"))
+    await user.click(within(models).getByText("codex-acp:gpt-5.3-codex"))
 
     // The strip is that model's own: `ultra` is a codex effort, and the claude
     // entry beside it in the catalog takes none of it.
@@ -467,7 +467,7 @@ describe("choosing what the orchestrator runs on", () => {
     await waitFor(() => {
       expect(lastWrite()).toBeDefined()
     })
-    expect(lastWrite()?.body).toMatchObject({ model: "codex:gpt-5.3-codex", effort: "ultra" })
+    expect(lastWrite()?.body).toMatchObject({ model: "codex-acp:gpt-5.3-codex", effort: "ultra" })
   })
 
   it("sends no effort where none was chosen: the CLI runs the model as it likes", async () => {
@@ -475,7 +475,7 @@ describe("choosing what the orchestrator runs on", () => {
     renderDialog()
 
     await fillRequired(user)
-    await typePin(user, "codex:gpt-5.6")
+    await typePin(user, "codex-acp:gpt-5.6")
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     await waitFor(() => {
@@ -484,7 +484,7 @@ describe("choosing what the orchestrator runs on", () => {
     expect(lastWrite()?.body).not.toHaveProperty("effort")
   })
 
-  it("refuses a model that names no agent CLI, before the daemon is asked", async () => {
+  it("refuses a model that names no agent, before the daemon is asked", async () => {
     const user = userEvent.setup()
     renderDialog()
 
@@ -492,7 +492,7 @@ describe("choosing what the orchestrator runs on", () => {
     await typePin(user, "claude-opus-5")
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
-    expect(await screen.findByText(/claude_code:claude-opus-5/)).toBeDefined()
+    expect(await screen.findByText(/<agent>:claude-opus-5/)).toBeDefined()
     expect(lastWrite()).toBeUndefined()
   })
 })

@@ -1,18 +1,18 @@
 //! Which models a plan is allowed to be staffed on.
 //!
-//! The catalog itself is not in the database: it is what `ariadne-core`
-//! curates per agent CLI, plus what `opencode models --verbose` discovers at
-//! runtime. So what is stored here is the user's subtraction from it — the
-//! models they turned off — and everything else is available.
+//! The catalog itself is not in the database: it is what ACP discovery finds
+//! each registry agent offering at runtime. So what is stored here is the
+//! user's subtraction from it — the models they turned off — and everything
+//! else is available.
 //!
-//! That way round on purpose. A catalog that grows (a CLI ships a model, a
-//! discovery finds one) hands the new entry over usable, rather than needing
-//! a write here before anybody can pin it. The rows are the exceptions, and
-//! there are usually none.
+//! That way round on purpose. A catalog that grows (an agent ships a model,
+//! a discovery finds one) hands the new entry over usable, rather than
+//! needing a write here before anybody can pin it. The rows are the
+//! exceptions, and there are usually none.
 //!
-//! A model is named by the one string it is chosen by,
-//! `<agent_kind>:<model>` (`ariadne_core::ModelRef`) — the same spelling
-//! `--model` takes, so the id in a row is the id a request is refused by.
+//! A model is named by the one string it is chosen by, `<agent>:<model>`
+//! (`ariadne_core::models::ModelRef`) — the same spelling `--model` takes, so
+//! the id in a row is the id a request is refused by.
 
 use std::collections::BTreeSet;
 

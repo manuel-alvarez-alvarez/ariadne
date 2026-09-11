@@ -1,33 +1,33 @@
 /**
- * One agent session laid out in full: what it is, what it is printing, and
+ * One agent session laid out in full: what it is, what it is saying, and
  * what it reported. No page chrome, so it renders the same inside the goal
  * panel and the task panel.
  *
  * What it is comes first and stays there — a compact block of facts, the same
  * shape as the task panel's — because it is what identifies the session, and
  * it is short. What it is *doing* is the long half, and the two halves of that
- * (the pane and the reported events) are two answers to the same question:
+ * (the console and the reported events) are two answers to the same question:
  * they share the space as tabs rather than stacking into a page nobody reaches
- * the bottom of. The terminal is the tab that is open by default, since it is
+ * the bottom of. The console is the tab that is open by default, since it is
  * why one opens a session at all.
  *
- * Switching tabs unmounts the terminal, which drops its log stream. That is
- * the same trade `task-sessions.tsx` already takes for the selection itself:
- * every connection replays the whole pane from a snapshot, so coming back
- * costs a reconnect and shows the same thing, where keeping it mounted would
- * hold a stream open for a pane nobody is looking at.
+ * Switching tabs unmounts the console, which drops its stream. That is the
+ * same trade `task-sessions.tsx` already takes for the selection itself:
+ * every connection replays the whole transcript from a snapshot, so coming
+ * back costs a reconnect and shows the same thing, where keeping it mounted
+ * would hold a stream open for a console nobody is looking at.
  *
  * The tab lives in the URL (`?tab=`), the way the goal and task panels keep
  * theirs: a reload stays on the tab the user was reading, and a link can point
- * at one agent's reported activity rather than at its pane. It is the same
+ * at one agent's reported activity rather than at its console. It is the same
  * param those panels use — while one of them is drilled into a session it is
  * showing this view and nothing else, and coming back out sets `?tab=sessions`
  * again — so a value that is not one of these two simply reads as the default.
  *
  * The metadata comes from the query cache, which the event dispatcher keeps
  * current — a session going idle or being killed elsewhere updates this view
- * without a refetch. The terminal is the exception: it is a byte stream, not
- * cacheable state, and owns its own connection (see `log-stream.ts`).
+ * without a refetch. The console is the exception: it is a feed, not
+ * cacheable state, and owns its own connection (see `console-stream.ts`).
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -45,7 +45,6 @@ import { When } from "@/components/when"
 // leads back here, and the round trip is an import cycle.
 import { goalQueryOptions } from "@/features/goals/queries"
 import { SeatSummary } from "@/features/models/agent-summary"
-import { formatModelRef } from "@/features/models/model-ref"
 import { taskQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { SEAT_LABELS } from "@/lib/format"
@@ -56,9 +55,12 @@ import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
 import { SessionBlockedBanner } from "./session-blocked-banner"
 import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
-import { SessionTerminal } from "./session-terminal"
 
-/** The two halves of what a session is doing; the pane is what is opened for. */
+/**
+ * The two halves of what a session is doing; the console is what is opened
+ * for. Its tab is still `terminal` on the wire, so links made before the
+ * console keep working — see `paths.ts`'s `sessionTerminalFrom`.
+ */
 const TABS = ["terminal", "activity"] as const
 type Tab = (typeof TABS)[number]
 
@@ -85,12 +87,9 @@ export function SessionDetailView({
   const [search, setSearch] = useSearchParams()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "terminal"
   // Set when the panel was opened by a row that said this agent is blocked on
-  // a prompt: what it is waiting for is a keystroke, so the pane takes the
+  // a prompt: what it is waiting for is an answer, so the console takes the
   // keyboard rather than waiting to be clicked. Read once, on arrival.
   const focusTerminal = useTerminalFocusRequest()
-  // No tmux pane exists for an `acp` session (021): it gets Ariadne's own
-  // console instead, on the same tab a pane would have used.
-  const isAcp = session.agent_kind === "acp"
 
   // Replaces rather than pushes: which half of a session is on screen is not a
   // step of its own, and Back should leave the session, not walk its tabs.
@@ -125,7 +124,7 @@ export function SessionDetailView({
       </header>
 
       {/* Under the header rather than beside the badge: what to do about a
-          blocked agent is a sentence, and the pane it is about is below. */}
+          blocked agent is a sentence, and the console it is about is below. */}
       <SessionBlockedBanner session={session} />
 
       <FactList>
@@ -148,21 +147,12 @@ export function SessionDetailView({
           </Fact>
         )}
         {/* One fact, not two: what the agent runs on is the tail of this line
-            (`claude_code:claude-opus-5`), and a Model row under it repeated
-            that tail with the CLI half taken off. The session's own snapshot,
+            (`claude-code-acp:claude-opus-5`), and a Model row under it repeated
+            that tail with the agent half taken off. The session's own snapshot,
             not the profile's current fields — the profile may have been edited
-            since this agent was launched — and a session keeps the CLI and the
-            model apart, so the id every other mention carries is composed
-            here. */}
+            since this agent was launched. */}
         <Fact label="Agent">
-          <SeatSummary
-            seat={session.seat}
-            model={formatModelRef(session.agent_kind, session.model)}
-            effort={session.effort}
-          />
-        </Fact>
-        <Fact label="tmux session">
-          <CopyableId value={session.tmux_session} label="tmux session" className="text-xs" />
+          <SeatSummary seat={session.seat} model={session.model} effort={session.effort} />
         </Fact>
         <Fact label="Worktree">
           {session.worktree_path ? (
@@ -207,22 +197,11 @@ export function SessionDetailView({
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
         <TabsList>
-          {/* Still `?tab=terminal` on the wire either way, so a link built
-              for a tmux session keeps working the day its task's author is
-              restaffed onto an acp one — see `paths.ts`'s `sessionTerminalFrom`. */}
-          <TabsTrigger value="terminal">{isAcp ? "Console" : "Terminal"}</TabsTrigger>
+          <TabsTrigger value="terminal">Console</TabsTrigger>
           <TabsTrigger value="activity">Agent activity</TabsTrigger>
         </TabsList>
         <TabsContent value="terminal" className="pt-3">
-          {isAcp ? (
-            <AcpConsole sessionId={session.id} status={session.status} autoFocus={focusTerminal} />
-          ) : (
-            <SessionTerminal
-              sessionId={session.id}
-              status={session.status}
-              autoFocus={focusTerminal}
-            />
-          )}
+          <AcpConsole sessionId={session.id} status={session.status} autoFocus={focusTerminal} />
         </TabsContent>
         <TabsContent value="activity" className="pt-3">
           <SessionActivity sessionId={session.id} />

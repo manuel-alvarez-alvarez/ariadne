@@ -201,7 +201,6 @@ impl Store {
             changes: Arc::default(),
         };
         store.seed_builtin_skills().await?;
-        store.seed_agent_configs().await?;
         Ok(store)
     }
 

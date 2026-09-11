@@ -5,14 +5,13 @@ use clap::Subcommand;
 
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_client::Client;
-use ariadne_core::AgentKind;
 
 use crate::output::{
     Column, Format, UNCAPPED, col, empty_state, ok_id_line, print, print_list, view,
 };
 
-/// Columns of `agent ls`. There are four agent CLIs and no ids: the row is
-/// the agent, and the two flag lists are what there is to read.
+/// Columns of `agent ls`. The row is the registry agent, and the two flag
+/// lists are what there is to read.
 const LS: &[Column] = &[
     col("agent", UNCAPPED).title(),
     col("flags", 44),
@@ -23,25 +22,24 @@ const LS: &[Column] = &[
 /// for a flag.
 const EMPTY: &str = "-";
 
-/// `ariadne agent ...` — how each coding-agent CLI is launched.
+/// `ariadne agent ...` — how each registry agent is launched.
 ///
-/// The flags belong to the agent kind, not to the persona: every profile that
-/// runs on that CLI is spawned and resumed with them, and an edit lands on the
-/// next launch. `ariadne profile` is the other half — the model, the seat and
-/// the prompts one agent runs with.
+/// The flags belong to the agent, not to the persona: every session that runs
+/// on it is spawned and resumed with them, behind its registry command, and
+/// an edit lands on the next launch.
 #[derive(Subcommand)]
 pub enum AgentCommand {
-    /// List the agent CLIs, their flags and the defaults they came from
+    /// List the registry agents, their flags and the defaults they came from
     Ls,
-    /// Replace an agent CLI's flags
+    /// Replace an agent's flags
     ///
     /// The list is replaced whole: `--flag` names every flag the agent is to
     /// be launched with, `--clear-flags` launches it with none, and `--reset`
-    /// puts back what Ariadne ships for that kind. Exactly one of the three.
+    /// puts back what Ariadne ships for that agent. Exactly one of the three.
     Update {
-        /// acp | claude_code | codex | opencode
-        #[arg(value_parser = parse_kind, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds))]
-        kind: AgentKind,
+        /// The agent's registry id, as `ariadne agent ls` lists it
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
+        agent: String,
         /// One flag to launch this agent with, repeatable
         ///
         /// Flags start with a dash, so a value clap could read as a flag of
@@ -57,26 +55,10 @@ pub enum AgentCommand {
         /// Launch this agent with no extra flags at all
         #[arg(long, conflicts_with = "reset")]
         clear_flags: bool,
-        /// Put the flag list back to the default of this agent kind
+        /// Put the flag list back to what Ariadne ships for this agent
         #[arg(long)]
         reset: bool,
     },
-}
-
-/// An agent kind as a command line spells it, or an error naming the ones
-/// there are — the same answer the daemon would give, without the round trip.
-///
-/// Both spellings are accepted: `claude_code` is how the daemon writes it,
-/// `claude-code` is how a shell tends to.
-pub fn parse_kind(s: &str) -> Result<AgentKind, String> {
-    s.replace('-', "_").parse().map_err(|_| {
-        let known = AgentKind::ALL
-            .iter()
-            .map(|k| k.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("unknown agent kind: {s} (expected one of {known})")
-    })
 }
 
 /// A flag list as a table shows it: the flags as they are launched, or
@@ -88,16 +70,16 @@ fn flags_cell(flags: &[String]) -> String {
     }
 }
 
-/// The flags Ariadne ships for `kind`, as the daemon reports them: what
+/// The flags Ariadne ships for `agent`, as the daemon reports them: what
 /// `--reset` writes back, so a default that changes there changes here too.
-async fn default_flags(client: &Client, kind: AgentKind) -> Result<Vec<String>> {
+async fn default_flags(client: &Client, agent: &str) -> Result<Vec<String>> {
     client
         .list_agent_configs()
         .await?
         .into_iter()
-        .find(|c| c.agent_kind == kind)
+        .find(|c| c.agent_id == agent)
         .map(|c| c.default_flags)
-        .with_context(|| format!("the daemon knows no {} agent", kind.as_str()))
+        .with_context(|| format!("the daemon knows no agent {agent}"))
 }
 
 pub async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<()> {
@@ -110,37 +92,32 @@ pub async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<(
                 LS,
                 |c| {
                     vec![
-                        c.agent_kind.as_str().into(),
+                        c.agent_id.clone(),
                         flags_cell(&c.extra_flags),
                         flags_cell(&c.default_flags),
                     ]
                 },
-                empty_state("No agent CLIs are configured.", Some("ariadne doctor")),
+                empty_state("No agents are in the registry.", Some("ariadne doctor")),
             )?;
         }
         AgentCommand::Update {
-            kind,
+            agent,
             flags,
             clear_flags: _,
             reset,
         } => {
             let extra_flags = match reset {
-                true => default_flags(client, kind).await?,
+                true => default_flags(client, &agent).await?,
                 // `--clear-flags` is the empty list, which is exactly what
                 // `flags` already is: clap has seen to it that one of the two
                 // was given, and that neither came with the other.
                 false => flags,
             };
-            let config = client.update_agent_config(kind, extra_flags).await?;
+            let config = client.update_agent_config(&agent, extra_flags).await?;
             print(format, &config, || {
                 println!(
                     "{}",
-                    ok_id_line(
-                        view().color,
-                        view().quiet,
-                        "updated",
-                        config.agent_kind.as_str()
-                    )
+                    ok_id_line(view().color, view().quiet, "updated", &config.agent_id)
                 );
             })?;
         }
@@ -153,30 +130,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_kind_is_spelled_as_the_daemon_spells_it() {
-        assert_eq!(parse_kind("claude_code"), Ok(AgentKind::ClaudeCode));
-        assert_eq!(parse_kind("codex"), Ok(AgentKind::Codex));
-        assert_eq!(parse_kind("opencode"), Ok(AgentKind::Opencode));
-        assert_eq!(parse_kind("acp"), Ok(AgentKind::Acp));
-    }
-
-    /// `claude-code` is what fingers type; it means the same agent.
-    #[test]
-    fn the_dash_spelling_names_the_same_agent() {
-        assert_eq!(parse_kind("claude-code"), Ok(AgentKind::ClaudeCode));
-    }
-
-    /// A typo must not send the caller to `--help` to find the spelling.
-    #[test]
-    fn an_unknown_kind_lists_the_kinds_that_exist() {
-        let err = parse_kind("emacs").expect_err("unknown");
-        assert!(err.starts_with("unknown agent kind: emacs"), "{err}");
-        for kind in AgentKind::ALL {
-            assert!(err.contains(kind.as_str()), "{err}");
-        }
-    }
-
-    #[test]
     fn a_flag_list_reads_as_a_command_line_and_an_empty_one_as_a_dash() {
         assert_eq!(flags_cell(&[]), EMPTY);
         assert_eq!(
@@ -186,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_kind_keeps_the_agent_column_name() {
+    fn the_agent_keeps_the_agent_column_name() {
         let table = crate::output::render_table(
             LS,
             &[vec![String::new(); LS.len()]],

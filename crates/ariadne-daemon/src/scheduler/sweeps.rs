@@ -1,9 +1,9 @@
 //! The two passes that see every session, whatever it belongs to.
 //!
 //! Both run on the tick rather than on an event, because what they are about
-//! is state nothing reported: a pane that goes away says nothing, and a flag
-//! left behind by a daemon that has since restarted has nobody to take it
-//! down.
+//! is state nothing reported: an agent that dies before it can say so, and a
+//! flag left behind by a daemon that has since restarted has nobody to take
+//! it down.
 
 use tracing::{info, warn};
 
@@ -15,15 +15,12 @@ use crate::attention;
 use super::START_GRACE_SECS;
 
 impl super::Scheduler {
-    /// Mark sessions whose tmux process died as exited, and note the grid the
-    /// living ones are drawing at.
+    /// Mark sessions whose agent process died as exited.
     ///
-    /// Measuring a pane answers both: `display-message` fails on a session
-    /// that is not there. The size is written down because it is only
-    /// knowable while the pane exists — a viewer opening the console log of a
-    /// session that has ended has no other way to learn what width its bytes
-    /// were written at (see `Launcher::record_pane_size`). This sweep is the
-    /// only place that sees every session, watched or not.
+    /// The runtime that owns each child process answers
+    /// (`AcpRuntime::is_running`), and it answers for certain — there is no
+    /// "could not be asked" to leave the row alone on. A session still
+    /// starting is left alone: the row exists before the child does.
     ///
     /// Returns how many sessions came out of it still alive, or `None` if the
     /// store could not be listed.
@@ -40,69 +37,11 @@ impl super::Scheduler {
         };
         let mut alive = 0;
         for session in live {
-            // An `acp` session has no pane to measure: the runtime that owns
-            // its child process answers instead (`AcpRuntime::is_running`),
-            // and it answers for certain — there is no "could not be asked"
-            // to leave the row alone on. The starting grace is the same: the
-            // row exists before the child does.
-            if session.agent_kind() == ariadne_core::AgentKind::Acp {
-                if self.launcher.acp.is_running(&session.id) || starting_up(&session) {
-                    alive += 1;
-                } else {
-                    info!(session = %session.id, "acp agent gone, marking exited");
-                    self.retire_disconnected(&session).await;
-                }
-                continue;
-            }
-            match self
-                .launcher
-                .tmux
-                .pane_geometry(&session.tmux_session)
-                .await
-            {
-                Ok(geometry) => {
-                    alive += 1;
-                    self.launcher
-                        .record_pane_size(&session.id, geometry.cols, geometry.rows)
-                        .await;
-                }
-                // Confirmed before acting on it, and only an answer counts as
-                // confirmation: marking a session exited ends its work, which
-                // is too much to hang on a line of tmux output that failed to
-                // parse — or on a `has-session` that never ran. Both leave the
-                // session alone for the next sweep to ask again.
-                Err(e) => match self
-                    .launcher
-                    .tmux
-                    .has_session_checked(&session.tmux_session)
-                    .await
-                {
-                    // Except while it is still starting: a row goes into
-                    // `starting` before tmux has anything under it, so a
-                    // session on its way up has no pane yet and no more went
-                    // wrong than that this sweep got there first. Counted as
-                    // alive — a launch in flight is no reason to let the
-                    // machine sleep — and asked again next time, by which
-                    // point the window has either produced a pane or run out.
-                    Ok(false) if starting_up(&session) => {
-                        alive += 1;
-                        info!(session = %session.id, tmux = %session.tmux_session, "no pane yet, but the session is still starting; left for the next sweep");
-                    }
-                    Ok(false) => {
-                        info!(session = %session.id, tmux = %session.tmux_session, "session process gone, marking exited");
-                        self.retire_disconnected(&session).await;
-                    }
-                    Ok(true) => {
-                        alive += 1;
-                        warn!(session = %session.id, error = %e, "measuring the pane failed")
-                    }
-                    // Unknown, so counted as alive: an unreachable tmux is no
-                    // reason to let the machine sleep on a working agent.
-                    Err(check) => {
-                        alive += 1;
-                        warn!(session = %session.id, error = %e, check = %check, "cannot reach tmux")
-                    }
-                },
+            if self.launcher.acp.is_running(&session.id) || starting_up(&session) {
+                alive += 1;
+            } else {
+                info!(session = %session.id, "agent process gone, marking exited");
+                self.retire_disconnected(&session).await;
             }
         }
         Some(alive)
@@ -133,15 +72,15 @@ impl super::Scheduler {
     /// Take down attention nobody can act on any more.
     ///
     /// A flag raised by an agent event is only ever taken down by another
-    /// one, and a session sitting on a dialog emits nothing: an author
-    /// blocked on a permission prompt whose task then goes under review would
-    /// keep asking for the user for ever. Whatever put a flag up, it comes
+    /// one, and a session waiting on an answer emits nothing: an author
+    /// blocked on a permission request whose task then goes under review
+    /// would keep asking for the user for ever. Whatever put a flag up, it comes
     /// down once the work it was about stopped being this session's — the
     /// same question the sweep above asks before raising one.
     ///
     /// Two ways for that to be true, and a dead agent is the second: a prompt
-    /// is a dialog on a pane, so a session that has ended cannot be waiting
-    /// on an answer whatever its row still says. Retiring a session clears
+    /// is a question to a live agent, so a session that has ended cannot be
+    /// waiting on an answer whatever its row still says. Retiring a session clears
     /// the flag as it goes (`set_session_status`); this is what heals the
     /// rows that were already stale when the daemon started, and it is not
     /// the same question as the one above — an exited orchestrator of a goal
@@ -174,8 +113,8 @@ impl super::Scheduler {
 }
 
 /// Whether this session went into `starting` less than [`START_GRACE_SECS`]
-/// ago: a launch that may not have reached tmux yet, rather than one that
-/// never will.
+/// ago: a launch whose agent may not be up yet, rather than one that never
+/// will be.
 ///
 /// The start is dated from the latest of the three columns that stamp one,
 /// since which of them holds it depends on how the session got there:

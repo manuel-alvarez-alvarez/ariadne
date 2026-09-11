@@ -1,7 +1,6 @@
 /**
- * Sessions found in the transcript stores of the supported CLIs, and the
- * stored sessions of an ACP agent that can list them, none of it started by
- * Ariadne. The user can make one the author of a ready task here, which is
+ * The stored sessions of every ACP agent that can list them, none of them
+ * started by Ariadne. The user can make one the author of a ready task here, which is
  * the desktop equivalent of `ariadne session discover` and `ariadne session
  * adopt`.
  */
@@ -19,21 +18,19 @@ import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
 import { acpAgentsQueryOptions } from "@/features/agents/queries"
+import { parseModelRef } from "@/features/models/model-ref"
 import { taskAuthor } from "@/features/tasks/agents"
 import { taskListQueryOptions } from "@/features/tasks/queries"
-import { AGENT_KIND_LABELS, cn } from "@/lib/format"
+import { cn } from "@/lib/format"
 
 import { outsideSessionsQueryOptions, useAdoptOutsideSession } from "./queries"
 
 /**
- * The CLI cell and the dialog's wording name the exact agent for an ACP
- * session — its registry id, which is what tells one ACP agent from another —
- * rather than the `ACP` kind label every one of them would otherwise share.
+ * The agent cell and the dialog's wording name the agent by its registry id,
+ * which is what tells one ACP agent from another.
  */
 function sessionAgentLabel(session: OutsideSessionDto): string {
-  return session.agent_kind === "acp"
-    ? (session.agent_id ?? AGENT_KIND_LABELS.acp)
-    : AGENT_KIND_LABELS[session.agent_kind]
+  return session.agent_id
 }
 
 export function OutsideSessionsPage() {
@@ -44,13 +41,13 @@ export function OutsideSessionsPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Outside sessions"
-        description="Conversations started in a supported CLI, or stored by an ACP agent, that Ariadne can continue as a task author."
+        description="Conversations stored by an ACP agent that Ariadne can continue as a task author."
       />
       <DataTable
         query={sessions}
         errorTitle="Could not load outside sessions"
         columns={[
-          { header: "CLI" },
+          { header: "Agent" },
           { header: "Working directory", className: "min-w-56" },
           { header: "Last activity", className: "text-right" },
           { header: "First prompt", className: "min-w-72" },
@@ -61,9 +58,7 @@ export function OutsideSessionsPage() {
             No outside sessions found.
           </p>
         }
-        rowKey={(session) =>
-          `${session.agent_kind}:${session.agent_id ?? ""}:${session.internal_session_id}`
-        }
+        rowKey={(session) => `${session.agent_id}:${session.internal_session_id}`}
         renderRow={(session) => (
           <TableRow>
             <TableCell>{sessionAgentLabel(session)}</TableCell>
@@ -138,7 +133,7 @@ function AdoptOutsideSessionDialog({
   const adopt = useAdoptOutsideSession()
   const [taskId, setTaskId] = useState<string | null>(null)
   const readyTasks = useMemo(
-    () => (session ? (tasks.data ?? []).filter((task) => taskUsesCli(task, session)) : []),
+    () => (session ? (tasks.data ?? []).filter((task) => taskUsesAgent(task, session)) : []),
     [session, tasks.data],
   )
 
@@ -209,18 +204,8 @@ function AdoptOutsideSessionDialog({
 
 /**
  * Whether a ready task's author runs the same agent this session belongs to:
- * the CLI for a hand-started one, and — since one `acp` kind covers every ACP
- * agent — the registry agent id as well for a stored one.
- *
- * A model is read by its first `:` alone, not through {@link
- * import("@/features/models/model-ref").parseModelRef} — that helper only
- * recognizes the CLIs a bare `auto` pin can resolve to, `acp` deliberately
- * not among them, where a session's own `agent_kind` already says enough.
+ * the registry id before the first `:` of its pin.
  */
-function taskUsesCli(task: TaskDto, session: OutsideSessionDto): boolean {
-  const model = taskAuthor(task)?.model ?? ""
-  const colon = model.indexOf(":")
-  if (colon < 0 || model.slice(0, colon) !== session.agent_kind) return false
-  if (session.agent_kind !== "acp") return true
-  return model.slice(colon + 1).split(":")[0] === session.agent_id
+function taskUsesAgent(task: TaskDto, session: OutsideSessionDto): boolean {
+  return parseModelRef(taskAuthor(task)?.model ?? "")?.agent === session.agent_id
 }

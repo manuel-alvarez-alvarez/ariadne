@@ -3,19 +3,15 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
-use ariadne_api::sessions::{
-    OutsideSessionDto, SessionDto, SessionInputRequest, SessionListQuery, SessionLogsResponse,
-    SessionResizeRequest,
-};
-use ariadne_store::{AgentSession, SessionFilter};
+use ariadne_api::sessions::{OutsideSessionDto, SessionDto, SessionListQuery};
+use ariadne_store::SessionFilter;
 
 use super::AppState;
 use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
 
-/// List sessions Ariadne did not start: hand-started CLI conversations found
-/// in a supported CLI's own transcript store, and stored sessions of an ACP
-/// agent that can list them.
+/// List sessions Ariadne did not start: the stored sessions of every ACP
+/// agent that can list them, newest first.
 #[utoipa::path(get, path = "/v1/outside-sessions", tag = "sessions",
     responses((status = 200, body = [OutsideSessionDto])))]
 pub async fn list_outside(
@@ -28,39 +24,11 @@ pub async fn list_outside(
             error.to_string(),
         )
     };
-    let mut sessions =
-        crate::outside_sessions::discover(&state.store, &state.launcher.cfg.agent_home)
-            .await
-            .map_err(internal_error)?;
-    let mut acp = crate::acp_sessions::discover(&state.agent_registry, &state.store)
+    let mut sessions = crate::acp_sessions::discover(&state.agent_registry, &state.store)
         .await
         .map_err(internal_error)?;
-    sessions.append(&mut acp);
     sessions.sort_by(|left, right| right.last_activity_at.cmp(&left.last_activity_at));
     Ok(Json(sessions))
-}
-
-/// The session behind `id`, with a pane to act on — or the conflict saying
-/// why there is none, in which `refusal` names what cannot be done.
-///
-/// Both halves of "live" are checked: the row's status, because a finished
-/// session must not be acted on, and tmux itself, because tmux names are
-/// reused and a call at a stale name would land in a successor's pane.
-async fn live_pane(state: &AppState, id: &str, refusal: &str) -> ApiResult<AgentSession> {
-    let session = state.store.get_session(id).await?;
-    if !session.status().is_live() {
-        return Err(ApiError::conflict(format!(
-            "session {id} is {} and {refusal}",
-            session.status
-        )));
-    }
-    if !state.launcher.tmux.has_session(&session.tmux_session).await {
-        return Err(ApiError::conflict(format!(
-            "session {id} has no live pane ({})",
-            session.tmux_session
-        )));
-    }
-    Ok(session)
 }
 
 /// List agent sessions.
@@ -100,10 +68,10 @@ pub async fn get(
     Ok(Json(session_dto_of(&state.store, session).await?))
 }
 
-/// Revive an ended session: new tmux, same agent conversation (resumed via
-/// the stored internal session id). Returns the session to attach to, which
-/// is this one either way — relaunched under its own id and tmux name, or
-/// untouched when its tmux turned out to be alive already.
+/// Revive an ended session: a new agent process, same agent conversation
+/// (resumed via the stored internal session id). Returns the session to
+/// attach to, which is this one either way — relaunched under its own id, or
+/// untouched when its agent turned out to be alive already.
 ///
 /// `409` when there is nothing to come back to: no stored agent id, a
 /// worktree that was cleaned up — or a goal that has finished, whose live
@@ -123,7 +91,7 @@ pub async fn resume(
     Ok(Json(session_dto_of(&state.store, session).await?))
 }
 
-/// Kill a session's tmux process.
+/// Kill a session's agent process.
 #[utoipa::path(post, path = "/v1/sessions/{id}/kill", tag = "sessions",
     params(("id" = String, Path, description = "session id")),
     responses((status = 200, body = SessionDto), (status = 404)))]
@@ -141,129 +109,6 @@ pub async fn kill(
         .map_err(|e| ApiError::conflict(e.to_string()))?;
     let session = state.store.get_session(&id).await?;
     Ok(Json(session_dto_of(&state.store, session).await?))
-}
-
-/// Type into a session's pane: the write counterpart of the log stream.
-///
-/// The bytes go to tmux verbatim, so the agent sees exactly what was typed in
-/// front of it and the echo comes back through `/logs/stream` like any other
-/// pane output. Nothing is appended — a submit carries its own `\r`.
-///
-/// And it is the user acting on the session, so whatever it was flagged for
-/// comes down with the input.
-///
-/// Both halves of "live" are checked, as in `logs_stream`: the row's status,
-/// because a finished session must not be typed into, and tmux itself,
-/// because tmux names are reused and a `send-keys` at a stale name would land
-/// in a successor's pane.
-#[utoipa::path(post, path = "/v1/sessions/{id}/input", tag = "sessions",
-    request_body = SessionInputRequest,
-    params(("id" = String, Path, description = "session id")),
-    responses((status = 204, description = "Input handed to the pane"),
-        (status = 404), (status = 409)))]
-pub async fn input(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(req): Json<SessionInputRequest>,
-) -> ApiResult<StatusCode> {
-    let session = live_pane(&state, &id, "cannot take input").await?;
-    state
-        .launcher
-        .tmux
-        .send_raw(&session.tmux_session, req.data.as_bytes())
-        .await
-        .map_err(|e| ApiError::conflict(e.to_string()))?;
-    // The human has just acted on this pane, which is every reason a session
-    // can be flagged with: a permission dialog answered, a question typed
-    // back, a message read. All of them come down — an agent still blocked
-    // raises its own again with its next event, and until it does nothing is
-    // being waited on here. The scheduler hears about it as it does about an
-    // ingested event, so the quiet clock and the stream follow.
-    state.store.clear_session_attention(&id).await?;
-    state.notify_scheduler_session(&id);
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Largest grid a pane may be asked for, per side.
-///
-/// Nothing renders a terminal this big — it is a bound on nonsense, not a
-/// preference — but a pane is a real allocation per cell, so a viewer with a
-/// broken measurement must not be able to ask tmux for a million rows.
-const MAX_PANE_SIDE: u16 = 500;
-
-/// Resize a session's pane to the grid a viewer is showing it at.
-///
-/// The web terminal is not a tmux client, so nothing sizes the pane for it:
-/// left alone a detached session stays at tmux's 80×24 and a panel with room
-/// for far more shows a small pane in a large box. This is the attach a
-/// browser cannot make — the same `resize-window` a `tmux attach` performs —
-/// and the new grid comes back to every viewer through the log stream, which
-/// already notices a pane that changed size.
-///
-/// Several viewers each fit the pane to their own panel; the last one to ask
-/// wins, exactly as the last client to attach does in tmux.
-///
-/// Liveness is checked as it is for input: a finished session's status, and
-/// tmux itself, since a stale name may belong to a successor's pane by now.
-#[utoipa::path(post, path = "/v1/sessions/{id}/resize", tag = "sessions",
-    request_body = SessionResizeRequest,
-    params(("id" = String, Path, description = "session id")),
-    responses((status = 204, description = "Pane resized"),
-        (status = 400), (status = 404), (status = 409)))]
-pub async fn resize(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(req): Json<SessionResizeRequest>,
-) -> ApiResult<StatusCode> {
-    if req.cols == 0 || req.rows == 0 || req.cols > MAX_PANE_SIDE || req.rows > MAX_PANE_SIDE {
-        return Err(ApiError::bad_request(format!(
-            "pane size {}x{} is out of range (1x1 to {MAX_PANE_SIDE}x{MAX_PANE_SIDE})",
-            req.cols, req.rows
-        )));
-    }
-    let session = live_pane(&state, &id, "has no pane to resize").await?;
-    state
-        .launcher
-        .tmux
-        .resize_window(&session.tmux_session, req.cols, req.rows)
-        .await
-        .map_err(|e| ApiError::conflict(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Recent tmux pane output of a session.
-#[utoipa::path(get, path = "/v1/sessions/{id}/logs", tag = "sessions",
-    params(("id" = String, Path, description = "session id")),
-    responses((status = 200, body = SessionLogsResponse), (status = 404), (status = 409)))]
-pub async fn logs(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<Json<SessionLogsResponse>> {
-    let session = state.store.get_session(&id).await?;
-    let logs = if state.launcher.tmux.has_session(&session.tmux_session).await {
-        state
-            .launcher
-            .tmux
-            .capture_pane(&session.tmux_session, 1000)
-            .await
-            .map_err(|e| ApiError::conflict(e.to_string()))?
-    } else {
-        // Fall back to the piped console log of a finished session.
-        std::fs::read_to_string(
-            state
-                .launcher
-                .cfg
-                .run_dir
-                .join(&session.id)
-                .join("console.log"),
-        )
-        .unwrap_or_default()
-    };
-    Ok(Json(SessionLogsResponse {
-        session_id: session.id,
-        tmux_session: session.tmux_session,
-        logs,
-    }))
 }
 
 /// Body of the internal debug-spawn endpoint.

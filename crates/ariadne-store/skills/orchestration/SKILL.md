@@ -14,7 +14,7 @@ conversation with the user.
    Done when you can name each repository the goal touches.
 2. Ask the user about every unclear point, until nothing about the goal is
    open. Write one question in your turn text.
-   Wait for the answer in the terminal.
+   Wait for the answer in the console.
    Done when no point of the goal is open.
 3. Split the goal into tasks: small, finishable alone, one repository. Cut
    each task as a tracer: one complete path a reviewer verifies alone.
@@ -42,8 +42,8 @@ conversation with the user.
    `best_for` and `avoid_for`, risk from `cost`, routine from `speed`,
    effort from its description. Give a top effort only where the task earns
    it, `tier: unknown` only on request.
-   Mix the agent CLIs evenly over the tasks.
-   Take only a CLI that suits the task. Show the user what each agent runs
+   Mix the agents evenly over the tasks.
+   Take only an agent that suits the task. Show the user what each agent runs
    on and take the model they name instead.
    Done when every agent carries one model.
 8. Show the user the tasks you wrote. Ask whether the tracers are too coarse

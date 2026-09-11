@@ -1,9 +1,9 @@
 //! The watchdog over an agent that stopped reporting.
 //!
 //! One clock — how long since the session was last heard from at all — and one
-//! timeline on it: a nudge, then the user, then the pane killed and the agent
-//! put back on its feet. What the nudge is, the pane decides, which is why the
-//! composer is read before one is spent.
+//! timeline on it: a nudge, then the user, then the agent killed and put back
+//! on its feet. Only an agent between turns is nudged: one inside a turn is
+//! left to the thresholds behind the nudge.
 
 use tracing::{info, warn};
 
@@ -43,21 +43,15 @@ impl super::Scheduler {
     /// [`Self::last_heard_from`] says when this session was last heard from at
     /// all, and three thresholds are read off it: a nudge at
     /// [`QUIET_NUDGE_SECS`], the user at [`QUIET_FLAG_SECS`], and at
-    /// [`QUIET_RELAUNCH_SECS`] the pane killed and the agent put back on its
-    /// feet. Each of them is done once for the situation the agent is in, and
-    /// a pass that arrives late does what the clock says now rather than going
-    /// back for the steps it never had a chance to take.
+    /// [`QUIET_RELAUNCH_SECS`] the agent killed and put back on its feet. Each
+    /// of them is done once for the situation the agent is in, and a pass that
+    /// arrives late does what the clock says now rather than going back for
+    /// the steps it never had a chance to take.
     ///
-    /// What the nudge is, the pane decides. An agent that is idle finished a
-    /// turn and stopped with the work still in front of it, so it is told to
-    /// get on with it, in the words it would be started again with. A running
-    /// one whose composer is still holding an instruction is one that never
-    /// submitted it — the Enter a TUI swallowed, or `codex resume <thread>
-    /// <instruction>`, which hands the prompt to the composer through argv and
-    /// leaves it there for somebody to send — and what that wants is the Enter
-    /// a human would press on finding such a pane. A running one whose
-    /// composer is empty is inside a turn, and typing into a turn is how work
-    /// gets interrupted: it is left alone until the thresholds behind the
+    /// Only an idle agent is nudged. It finished a turn and stopped with the
+    /// work still in front of it, so it is told to get on with it, in the
+    /// words it would be started again with, as a `session/prompt`. A running
+    /// one is inside a turn: it is left alone until the thresholds behind the
     /// nudge, which is where a turn that never ends is answered for.
     ///
     /// `situation` is what the nudge and the flag are spent on — what the
@@ -75,11 +69,9 @@ impl super::Scheduler {
         ) {
             return Ok(());
         }
-        // An agent waiting on a person is blocked, not quiet. Typing into it
-        // would answer whatever it is waiting on — a permission prompt takes
-        // Enter for a yes — which is the one decision the daemon must not make
-        // for it, and killing its pane would throw the dialog away. An agent
-        // that reported an error is already asking for the user by name, and
+        // An agent waiting on a person is blocked, not quiet: killing it would
+        // throw away the question it is waiting on an answer to. An agent that
+        // reported an error is already asking for the user by name, and
         // overwriting that with a stall would take away the more useful half
         // of what it said.
         if matches!(
@@ -97,14 +89,6 @@ impl super::Scheduler {
         };
         let quiet_secs = (chrono::Utc::now() - since).num_seconds();
         if quiet_secs < QUIET_NUDGE_SECS {
-            return Ok(());
-        }
-        // A pane already being typed into is being nudged by that, and is no
-        // pane to kill either: the paste and the Enter behind it would come
-        // back as a message nobody could be given, and the user would be told
-        // about a composer that was only ever interrupted. It waits for the
-        // pass after the delivery has settled.
-        if self.pane_busy(&session.id) {
             return Ok(());
         }
         let done = self.quiet.entry(session.id.clone()).or_default();
@@ -139,56 +123,28 @@ impl super::Scheduler {
         if done.nudged {
             return Ok(());
         }
-        // An `acp` agent has no composer: a running one is inside a turn and
-        // is left alone — the relaunch threshold answers for a turn that
-        // never ends — and an idle one takes its nudge as a `session/prompt`
-        // through the delivery below.
-        if session.agent_kind() == ariadne_core::AgentKind::Acp
-            && session.status() == SessionStatus::Running
-        {
+        // A running agent is inside a turn and is left alone — the relaunch
+        // threshold answers for a turn that never ends.
+        if session.status() == SessionStatus::Running {
             return Ok(());
-        }
-        // A running agent is asked before the nudge is spent, so that a turn
-        // nobody may interrupt costs it nothing: an empty composer is left
-        // where it is, with its nudge still to come if something turns up in
-        // there later. An unreachable tmux answers neither way, and is left
-        // for the next pass too.
-        let enter = session.status() == SessionStatus::Running;
-        if enter
-            && !self
-                .launcher
-                .tmux
-                .composer_holds(&session.tmux_session, resume)
-                .await
-                .unwrap_or(false)
-        {
-            return Ok(());
-        }
-        self.quiet.entry(session.id.clone()).or_default().nudged = true;
-        if enter {
-            info!(session = %session.id, seat = %session.seat, quiet_secs, "the agent's composer is still holding its instruction, pressing Enter into the pane");
-            // Spent whether or not tmux took it: a pane that refused the
-            // keystroke this pass will refuse the next.
-            return self.launcher.tmux.send_enter(&session.tmux_session).await;
         }
         info!(session = %session.id, seat = %session.seat, quiet_secs, "nudging idle agent");
-        // Spent as the delivery goes out, and off the loop: a pane that takes
-        // the nudge and will not submit it is raised for the user rather than
-        // nudged again, and one tmux would not take at all gives the nudge
-        // back — see [`Self::delivery_settled`].
-        self.spawn_delivery(session, resume.to_string());
+        // Spent as the prompt goes out. One the runtime would not take — no
+        // agent runs for the session — is given back by `hand_prompt`, so
+        // the next pass over this session sends it again.
+        self.quiet.entry(session.id.clone()).or_default().nudged = true;
+        self.hand_prompt(session, resume.to_string());
         Ok(())
     }
 
     /// The one clock: when this session was last heard from at all.
     ///
     /// Two things count, and the later of them is the answer. What the agent
-    /// reported is the plain one — every hook and every plugin event stamps
+    /// reported is the plain one — every event the runtime reports stamps
     /// `last_activity_at`, so an agent that is working keeps its own clock
     /// reset however slowly it works, and a wedged one is exactly the one that
     /// cannot. And the launch counts because a session that has reported
-    /// nothing at all still has to be measured from something — an instruction
-    /// left sitting in a composer fires no hook whatsoever.
+    /// nothing at all still has to be measured from something.
     ///
     /// A nudge that went in counts for neither: the whole point of the
     /// thresholds behind it is that an agent which was told to get on with the
@@ -212,7 +168,7 @@ impl super::Scheduler {
         .max()
     }
 
-    /// Put a wedged agent back on its feet: the pane killed, and the same
+    /// Put a wedged agent back on its feet: the agent killed, and the same
     /// session row relaunched on the agent conversation it was already having.
     ///
     /// The relaunch is spent out of a budget for the same reason a spawn is:

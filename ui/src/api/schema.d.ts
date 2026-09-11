@@ -45,7 +45,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every agent kind's flags, current and default. */
+        /**
+         * Every registry agent's flags, in registry order. An agent nobody set
+         *     flags for is listed with none.
+         */
         get: operations["agents_list"];
         put?: never;
         post?: never;
@@ -55,7 +58,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/agents/{kind}": {
+    "/v1/agents/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -64,10 +67,11 @@ export interface paths {
         };
         get?: never;
         /**
-         * Replace an agent kind's flags.
+         * Replace a registry agent's flags.
          * @description The list is replaced whole, and an empty one is a legitimate answer.
-         *     Restoring the defaults is this same call with the `default_flags` the GET
-         *     hands out — nothing else to learn, and nothing that can drift from them.
+         *     Restoring the defaults is this same call with the `default_flags` the
+         *     GET hands out — nothing else to learn, and nothing that can drift from
+         *     them.
          */
         put: operations["agents_update"];
         post?: never;
@@ -374,22 +378,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Everything an agent can be pinned to, `<agent_kind>:<model>` apiece:
-         *     the models of each agent CLI, curated for claude_code and codex,
-         *     discovered live (`opencode models --verbose`) for opencode. No
-         *     bare-CLI entry: a model is required wherever an agent is pinned, so
-         *     there is nothing a CLI on its own could be staffed as.
-         * @description The union always, and grouped by agent CLI: a model is chosen by one
-         *     string that carries its CLI, so nothing scopes this catalog any more.
-         *     Each entry says what the model is for — its tier, its cost and speed
-         *     next to every other entry, the work it suits and the work it does not
-         *     — and carries the efforts it can be run at, cheapest first, each with
-         *     what spending it buys and whether it is the one its CLI runs by
-         *     default.
-         *     Every entry says whether an agent can be staffed on it. A model the
-         *     user turned off stays in the list, off: a catalog that hid it would
-         *     leave nothing to turn back on, and nothing to say why a pin naming it
-         *     is refused.
+         * Everything an agent can be pinned to, `<agent>:<model>` apiece: the
+         *     models discovery found each registry agent offering, grouped by agent.
+         *     No bare-agent entry: a model is required wherever an agent is pinned,
+         *     so there is nothing an agent on its own could be staffed as.
+         * @description Each entry carries the efforts it can be run at, as the agent offered
+         *     them, and which of them it runs by default. Every entry says whether
+         *     an agent can be staffed on it. A model the user turned off stays in
+         *     the list, off: a catalog that hid it would leave nothing to turn back
+         *     on, and nothing to say why a pin naming it is refused.
          */
         get: operations["models_list"];
         put?: never;
@@ -410,7 +407,7 @@ export interface paths {
         get?: never;
         /**
          * Turn one entry of the catalog on or off.
-         * @description The catalog is code and discovery, so this writes only the exception:
+         * @description The catalog is discovery, so this writes only the exception:
          *     an id nothing in the catalog carries is a 404, and the last entry left
          *     on cannot be turned off — a plan needs something to be staffed on, and
          *     a daemon that can staff nothing is not a state to leave a user in.
@@ -431,9 +428,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List sessions Ariadne did not start: hand-started CLI conversations found
-         *     in a supported CLI's own transcript store, and stored sessions of an ACP
-         *     agent that can list them.
+         * List sessions Ariadne did not start: the stored sessions of every ACP
+         *     agent that can list them, newest first.
          */
         get: operations["sessions_list_outside"];
         put?: never;
@@ -572,7 +568,7 @@ export interface paths {
         };
         /**
          * The session's events so far, in order: the whole transcript a console
-         *     opens on, since there is no pane to capture a snapshot from instead.
+         *     opens on.
          */
         get: operations["sessions_snapshot"];
         put?: never;
@@ -593,16 +589,21 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Type into an ACP session: the console's counterpart of `/input`.
-         * @description There is no pane for the text to land on. While a permission request is
-         *     pending, the text selects that request's option; otherwise it becomes a
-         *     fresh `session/prompt` — sent at once if the agent is between turns, or
-         *     queued, in order, behind whichever one is running and sent the moment it
-         *     ends.
+         * Type into a session.
+         * @description While a permission request is pending, the text selects that request's
+         *     option; otherwise it becomes a fresh `session/prompt` — sent at once if
+         *     the agent is between turns, or queued, in order, behind whichever one is
+         *     running and sent the moment it ends.
          *
-         *     Both halves of "live" matter, as they do for a pane: the row's status,
-         *     because a finished session takes no more input, and the runtime itself,
-         *     since a session of any other kind has no agent here to hand a prompt to.
+         *     Both halves of "live" matter: the row's status, because a finished
+         *     session takes no more input, and the runtime itself, which has no agent to
+         *     hand a prompt to for a session whose process is gone.
+         *
+         *     And it is the user acting on the session, so whatever it was flagged for
+         *     comes down with the input: a permission answered, a question typed back,
+         *     a message read. An agent still blocked raises its own again with its next
+         *     event. The scheduler hears about it as it does about an ingested event, so
+         *     the quiet clock and the stream follow.
          */
         post: operations["sessions_console_input"];
         delete?: never;
@@ -639,36 +640,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sessions/{id}/input": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Type into a session's pane: the write counterpart of the log stream.
-         * @description The bytes go to tmux verbatim, so the agent sees exactly what was typed in
-         *     front of it and the echo comes back through `/logs/stream` like any other
-         *     pane output. Nothing is appended — a submit carries its own `\r`.
-         *
-         *     And it is the user acting on the session, so whatever it was flagged for
-         *     comes down with the input.
-         *
-         *     Both halves of "live" are checked, as in `logs_stream`: the row's status,
-         *     because a finished session must not be typed into, and tmux itself,
-         *     because tmux names are reused and a `send-keys` at a stale name would land
-         *     in a successor's pane.
-         */
-        post: operations["sessions_input"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/sessions/{id}/kill": {
         parameters: {
             query?: never;
@@ -678,103 +649,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Kill a session's tmux process. */
+        /** Kill a session's agent process. */
         post: operations["sessions_kill"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{id}/logs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Recent tmux pane output of a session. */
-        get: operations["sessions_logs"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{id}/logs/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Follow a session's terminal output.
-         * @description The stream opens with a `resize` event (`SessionPaneSize`) carrying the
-         *     grid the output is drawn at: the snapshot is wrapped at that width and
-         *     every later repaint is addressed in it. A live pane is measured; a
-         *     finished one is reported at the last size it was seen at, if it ever was.
-         *
-         *     Then a `snapshot` event carrying the scrollback the `/logs` endpoint would
-         *     return — as the pane's screen rather than as text: it ends where the pane's
-         *     cursor is (see [`as_screen`]), so the repaints that follow land where they
-         *     were addressed. Then a `delta` event per burst of new output. Both payloads
-         *     are a `SessionLogChunk`: raw terminal bytes, escape sequences and all, are
-         *     JSON-encoded so they cannot break SSE's line framing.
-         *
-         *     A pane resized under the stream — by `ariadne attach`, say — sends a
-         *     `resize` and a *fresh* `snapshot` rather than continuing with deltas: the
-         *     output in flight straddles the change and belongs to neither grid, so the
-         *     client starts over at the new one. `snapshot` therefore means "replace
-         *     everything you have", whenever it arrives. Nothing is sent in between: a
-         *     delta drawn at a grid the client does not have is the corruption this is
-         *     all here to avoid. If no coherent screen can be had — the pane cannot be
-         *     read, or keeps changing shape while it is — the connection is closed
-         *     *without* an `end`, at the opening as much as later on: the session is not
-         *     over, and a fresh connection is the shortest way back to a grid and a
-         *     screen that agree. Only a pane confirmed gone ends a stream.
-         *
-         *     When the session ends — or if it was already over when the request arrived
-         *     — the remaining output is flushed, a final `end` event (`SessionLogEnd`)
-         *     is sent and the connection closes. There is no replay and no
-         *     `Last-Event-ID`: reconnecting starts again from a fresh snapshot.
-         */
-        get: operations["sessions_logs_stream"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{id}/resize": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Resize a session's pane to the grid a viewer is showing it at.
-         * @description The web terminal is not a tmux client, so nothing sizes the pane for it:
-         *     left alone a detached session stays at tmux's 80×24 and a panel with room
-         *     for far more shows a small pane in a large box. This is the attach a
-         *     browser cannot make — the same `resize-window` a `tmux attach` performs —
-         *     and the new grid comes back to every viewer through the log stream, which
-         *     already notices a pane that changed size.
-         *
-         *     Several viewers each fit the pane to their own panel; the last one to ask
-         *     wins, exactly as the last client to attach does in tmux.
-         *
-         *     Liveness is checked as it is for input: a finished session's status, and
-         *     tmux itself, since a stale name may belong to a successor's pane by now.
-         */
-        post: operations["sessions_resize"];
         delete?: never;
         options?: never;
         head?: never;
@@ -791,10 +667,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Revive an ended session: new tmux, same agent conversation (resumed via
-         *     the stored internal session id). Returns the session to attach to, which
-         *     is this one either way — relaunched under its own id and tmux name, or
-         *     untouched when its tmux turned out to be alive already.
+         * Revive an ended session: a new agent process, same agent conversation
+         *     (resumed via the stored internal session id). Returns the session to
+         *     attach to, which is this one either way — relaunched under its own id, or
+         *     untouched when its agent turned out to be alive already.
          * @description `409` when there is nothing to come back to: no stored agent id, a
          *     worktree that was cleaned up — or a goal that has finished, whose live
          *     sessions the scheduler takes down anyway.
@@ -908,7 +784,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Make an outside session the author of a ready task. */
+        /** Make a stored ACP session the author of a ready task. */
         post: operations["tasks_adopt_author_session"];
         delete?: never;
         options?: never;
@@ -1142,24 +1018,21 @@ export interface components {
          * @enum {string}
          */
         Actor: "orchestrator" | "author" | "reviewer" | "daemon" | "user";
-        /** @description The outside CLI session to adopt as a task author. */
+        /** @description The stored ACP session to adopt as a task author. */
         AdoptOutsideSessionRequest: {
-            /**
-             * @description Required alongside an `agent_kind` of `acp`: which registry agent the
-             *     session belongs to.
-             */
-            agent_id?: string | null;
-            agent_kind: components["schemas"]["AgentKind"];
+            /** @description Which registry agent the session belongs to. */
+            agent_id: string;
             internal_session_id: string;
         };
         /**
          * @description One agent to staff on a task: where it sits, the skills it loads, and what
          *     it is to run on.
          *
-         *     The model is written `<agent_kind>:<model>`: the agent CLI, and after the
-         *     `:` one model of it. Both halves are required — a model is required, and
-         *     no CLI default stands in for one — and a string naming no agent CLI is
-         *     refused: nothing here derives one from the other.
+         *     The model is written `<agent>:<model>`: the id of an agent in the ACP
+         *     registry, and after the `:` one model of it. Both halves are required — a
+         *     model is required, and no agent default stands in for one — and a string
+         *     naming no registry agent is refused: nothing here derives one from the
+         *     other.
          */
         AgentAssignment: {
             /**
@@ -1170,14 +1043,14 @@ export interface components {
             /**
              * @description The reasoning effort to run that model at, one of the efforts
              *     `GET /v1/models` lists for it; anything else is refused. Omitted (or
-             *     "default") = whatever the agent CLI runs the model at.
+             *     "default") = whatever the agent runs the model at.
              * @example high
              */
             effort?: string | null;
             /**
-             * @description What this agent runs on, `<agent_kind>:<model>`. Required; the empty
+             * @description What this agent runs on, `<agent>:<model>`. Required; the empty
              *     string and the word "default" are refused.
-             * @example codex:o3
+             * @example codex-acp:o3
              */
             model: string;
             /**
@@ -1195,40 +1068,41 @@ export interface components {
              */
             skills?: string[];
         };
-        /** @description How one agent CLI is launched, shared by every agent that runs on it. */
+        /**
+         * @description How one registry agent is launched, shared by every session that runs on
+         *     it.
+         */
         AgentConfigDto: {
-            agent_kind: components["schemas"]["AgentKind"];
+            /** @description The id of the agent in the ACP registry (`GET /v1/acp-agents`). */
+            agent_id: string;
             /**
-             * @description What Ariadne ships for this agent kind: what `extra_flags` was seeded
-             *     with, and what restoring the defaults writes back — a client resets by
-             *     sending these back as `extra_flags`.
+             * @description What Ariadne ships for this agent: what restoring the defaults writes
+             *     back — a client resets by sending these back as `extra_flags`. An ACP
+             *     agent ships with no flags, so this is empty.
              */
             default_flags: string[];
-            /** @description Argv flags appended on every spawn and resume of this agent CLI. */
+            /**
+             * @description Argv flags appended to the agent's registry command on every spawn and
+             *     resume.
+             */
             extra_flags: string[];
         };
         AgentEventDto: {
-            agent_kind?: string | null;
             created_at: string;
             id: string;
-            /** @description e.g. session_start, post_tool_use, stop, turn_complete */
+            /** @description e.g. session_start, post_tool_use, stop */
             kind: string;
             payload: unknown;
             session_id?: string | null;
             /**
-             * @description The one-line gist of `payload`, built by the daemon from the CLI's own
-             *     vocabulary rather than stored: an action and its subject for a tool
+             * @description The one-line gist of `payload`, built by the daemon from the event's
+             *     own vocabulary rather than stored: an action and its subject for a tool
              *     call, the agent's own words where it left any, and `…` where nothing
              *     of it can be read.
              */
             summary: string;
             task_id?: string | null;
         };
-        /**
-         * @description Which coding-agent CLI a profile runs on.
-         * @enum {string}
-         */
-        AgentKind: "acp" | "claude_code" | "codex" | "opencode";
         /**
          * @description What one staffed agent spent on a task, named the way a reader addresses
          *     it: an agent has no name of its own, so its skills are what identify it.
@@ -1250,13 +1124,12 @@ export interface components {
         AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled";
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
-            agent_kind?: null | components["schemas"]["AgentKind"];
             /**
              * @description Whether it holds credentials for the service it speaks to, for the
              *     binaries that hold any: `gh auth status` and `glab auth status`, asked
              *     of the daemon's own environment because that is where the polling
-             *     runs. `None` for a binary with nothing to sign in to — tmux, git, the
-             *     agent CLIs — and for one that was not found to ask.
+             *     runs. `None` for a binary with nothing to sign in to — git — and for
+             *     one that was not found to ask.
              *
              *     The distinction it exists for is the one that used to be invisible: a
              *     `gh` that is installed and signed out answers every poll of a pull
@@ -1265,8 +1138,8 @@ export interface components {
              */
             authenticated?: boolean | null;
             /**
-             * @description Executable name as it is looked up on PATH ("claude", "tmux").
-             * @example claude
+             * @description Executable name as it is looked up on PATH ("git", "gh").
+             * @example git
              */
             name: string;
             /** @description Absolute path, when it was found. */
@@ -1287,10 +1160,9 @@ export interface components {
         /**
          * @description Body of `POST /v1/sessions/{id}/console/input`.
          *
-         *     An ACP session has no pane to type into. While a permission request is
-         *     pending, the text selects that request's option; otherwise it becomes a
-         *     fresh `session/prompt`, sent at once or queued behind the turn still
-         *     running.
+         *     While a permission request is pending, the text selects that request's
+         *     option; otherwise it becomes a fresh `session/prompt`, sent at once or
+         *     queued behind the turn still running.
          */
         ConsoleInputRequest: {
             text: string;
@@ -1300,18 +1172,19 @@ export interface components {
             /**
              * @description The reasoning effort to run that model at, one of the efforts `GET
              *     /v1/models` lists for it; anything else is refused. Omitted (or
-             *     "default") = whatever the agent CLI runs the model at.
+             *     "default") = whatever the agent runs the model at.
              * @example high
              */
             effort?: string | null;
             /**
-             * @description What the orchestrator runs on, `<agent_kind>:<model>` — the agent CLI
-             *     and, after the `:`, the model of it: `codex:gpt-5.3-codex`,
-             *     `opencode:ollama/llama3:8b`. Required — a model is required, and no
-             *     CLI default stands in for one. The model half is free text, handed to
-             *     that CLI as typed; a string naming no agent CLI is refused, and so are
-             *     the empty string and the word "default".
-             * @example codex:gpt-5.3-codex
+             * @description What the orchestrator runs on, `<agent>:<model>` — the id of an agent
+             *     in the ACP registry and, after the `:`, the model of it:
+             *     `codex-acp:gpt-5.3-codex`, `opencode-acp:ollama/llama3:8b`. Required —
+             *     a model is required, and no agent default stands in for one. The model
+             *     half is free text, handed to that agent as typed; a string naming no
+             *     registry agent is refused, and so are the empty string and the word
+             *     "default".
+             * @example codex-acp:gpt-5.3-codex
              */
             model: string;
             /** @description Ids of registered repositories (`POST /v1/repositories`); at least one. */
@@ -1366,20 +1239,21 @@ export interface components {
         };
         /** @description The daemon's own environment, as `ariadne doctor` renders it. */
         DaemonReportDto: {
-            /** @description Every registry ACP agent and its cached discovery result. */
+            /**
+             * @description Every registry ACP agent and its cached discovery result: the agents
+             *     a session can be spawned on.
+             */
             acp_agents?: components["schemas"]["AcpAgentDto"][];
-            /** @description One entry per [`AgentKind`], in `AgentKind::ALL` order. */
-            agents: components["schemas"]["BinaryDto"][];
             db: components["schemas"]["PathStateDto"];
             /** @description Home directory the daemon resolved, and the socket it listens on. */
             home: string;
-            /** @description The daemon's `PATH`, the one every agent, tmux and git lookup uses. */
+            /** @description The daemon's `PATH`, the one every agent and git lookup uses. */
             path?: string | null;
             socket_path: string;
             /**
-             * @description The other binaries the daemon runs: tmux and git, without which no
-             *     session can be spawned at all, and the forge CLIs `gh` and `glab`,
-             *     which are what a published task is watched through.
+             * @description The other binaries the daemon runs: git, without which no worktree can
+             *     be cut at all, and the forge CLIs `gh` and `glab`, which are what a
+             *     published task is watched through.
              */
             tools: components["schemas"]["BinaryDto"][];
             /** @example 0.1.0 */
@@ -1482,20 +1356,16 @@ export interface components {
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
          *     what spending it buys.
          *
-         *     At most one effort of a model is the `default`: what its agent CLI runs it
-         *     at when a task pins no effort at all. None of them are where the CLI has no
+         *     At most one effort of a model is the `default`: what its agent runs it at
+         *     when a task pins no effort at all. None of them are where the agent has no
          *     default to name.
          */
         EffortDto: {
-            /**
-             * @description Whether this is what the agent CLI runs the model at when none is
-             *     passed.
-             */
+            /** @description Whether this is what the agent runs the model at when none is passed. */
             default: boolean;
             /**
-             * @description What spending this effort buys — the same on every model of one agent
-             *     CLI. `null` where nothing knows, which is where the effort was
-             *     discovered rather than curated.
+             * @description What spending this effort buys, where the agent describes it. `null`
+             *     where nothing knows.
              */
             description?: string | null;
             /** @example high */
@@ -1512,15 +1382,15 @@ export interface components {
             description: string;
             /**
              * @description The reasoning effort that model is run at, pinned like `model`. None =
-             *     whatever the agent CLI runs it at on its own.
+             *     whatever the agent runs it at on its own.
              * @example high
              */
             effort?: string | null;
             id: string;
             /**
-             * @description What the orchestrator runs on, `<agent_kind>:<model>`: the agent CLI
-             *     and, after the `:`, the model of it (`claude_code:claude-opus-5`).
-             * @example claude_code:claude-opus-5
+             * @description What the orchestrator runs on, `<agent>:<model>`: the registry agent
+             *     and, after the `:`, the model of it (`claude-code-acp:claude-opus-5`).
+             * @example claude-code-acp:claude-opus-5
              */
             model: string;
             /**
@@ -1636,7 +1506,7 @@ export interface components {
             body: string;
             created_at: string;
             /**
-             * @description When it reached the recipient's pane, or None while it is still
+             * @description When it was handed to the recipient's agent, or None while it is still
              *     waiting for one to be free.
              */
             delivered_at?: string | null;
@@ -1677,23 +1547,21 @@ export interface components {
          */
         MessageKind: "review_request" | "approve" | "request_changes" | "message";
         /**
-         * @description One thing an agent can be pinned to, as served by `GET /v1/models`: an
-         *     agent CLI on a model of it (`claude_code:claude-fable-5`). Every entry
-         *     names both halves — there is no bare-CLI entry, because a model is
-         *     required wherever an agent is pinned.
+         * @description One thing an agent can be pinned to, as served by `GET /v1/models`: a
+         *     registry agent on a model discovery found it offering
+         *     (`claude-code-acp:claude-opus-5`). Every entry names both halves — there
+         *     is no bare-agent entry, because a model is required wherever an agent is
+         *     pinned.
          *
          *     The id is what a request writes as its `model`, whole. `agent_id` is its
-         *     registry prefix. `agent_kind` keeps the native adapter family, and is
-         *     `acp` for a discovered entry. The rest is what an orchestrator sizes a task
-         *     from: what this model is, what it costs and how fast it answers next to
-         *     every other entry, the work it is and is not the choice for, and what each
-         *     of its efforts buys.
+         *     registry prefix. The rest is what an orchestrator sizes a task from: what
+         *     this model is, what it costs and how fast it answers next to every other
+         *     entry, the work it is and is not the choice for, and what each of its
+         *     efforts buys.
          */
         ModelDto: {
-            /** @description Stable registry agent id. Native catalog entries use their agent kind. */
-            agent_id?: string;
-            /** @description The native adapter family this entry runs through. */
-            agent_kind: components["schemas"]["AgentKind"];
+            /** @description Stable registry agent id. */
+            agent_id: string;
             /**
              * @description Task shapes it is the wrong choice for; empty where nothing knows.
              * @example [
@@ -1712,8 +1580,8 @@ export interface components {
             /**
              * Format: int32
              * @description What it costs to run: 1 (free) to 5 (frontier), ranked across the whole
-             *     catalog so entries of different agent CLIs compare. `null` where
-             *     nothing knows.
+             *     catalog so entries of different agents compare. `null` where nothing
+             *     knows.
              * @example 3
              */
             cost?: number | null;
@@ -1730,7 +1598,7 @@ export interface components {
              *     where it is shown as off and refused as a pin.
              */
             enabled: boolean;
-            /** @example claude_code:claude-fable-5 */
+            /** @example claude-code-acp:claude-opus-5 */
             id: string;
             /**
              * Format: int32
@@ -1748,30 +1616,27 @@ export interface components {
         };
         /**
          * @description Roughly what a model is, as a picker and an orchestrator compare models: the
-         *     capability class it belongs to, across every agent CLI at once.
+         *     capability class it belongs to, across every agent at once.
          *
-         *     One ladder for the whole catalog, so a claude_code entry and a codex entry
-         *     that sit at the same rung really are alternatives for the same work.
-         *     `Unknown` is what an entry nothing has been written about says — a model
-         *     discovered at runtime, or an agent CLI on whatever model it defaults to —
-         *     and it is a genuine answer rather than a missing one.
+         *     One ladder for the whole catalog, so two agents' entries that sit at the
+         *     same rung really are alternatives for the same work. `Unknown` is what an
+         *     entry nothing has been written about says — every model discovery finds at
+         *     runtime — and it is a genuine answer rather than a missing one.
          * @enum {string}
          */
         ModelTier: "frontier" | "strong" | "balanced" | "fast" | "unknown";
         /**
-         * @description A coding-agent session found in a CLI transcript store, but not started by
-         *     Ariadne.
+         * @description A stored session of an ACP agent that Ariadne did not start, listed over
+         *     `session/list`.
          */
         OutsideSessionDto: {
             /**
              * @description Which ACP registry agent this session belongs to (`GET
-             *     /v1/acp-agents`). `None` for a native CLI session, where `agent_kind`
-             *     alone says which CLI it is.
+             *     /v1/acp-agents`).
              */
-            agent_id?: string | null;
-            agent_kind: components["schemas"]["AgentKind"];
+            agent_id: string;
             first_prompt: string;
-            /** @description The id the CLI uses to resume this conversation. */
+            /** @description The id the agent loads this conversation back by. */
             internal_session_id: string;
             last_activity_at: string;
             working_directory: string;
@@ -1864,27 +1729,26 @@ export interface components {
             to_agent_id?: string | null;
         };
         SessionDto: {
-            agent_kind: components["schemas"]["AgentKind"];
             attention_reason?: null | components["schemas"]["AttentionReason"];
             /** @description When the current `attention_reason` was first raised. */
             attention_since?: string | null;
             created_at: string;
             /**
              * @description Effort that model was launched at, off the same pin as `model`; null =
-             *     whatever the agent CLI runs it at.
+             *     whatever the agent runs it at.
              * @example high
              */
             effort?: string | null;
             ended_at?: string | null;
             goal_id: string;
             id: string;
-            /**
-             * @description Agent-internal id: ACP session id / claude session uuid / codex thread id / opencode
-             *     session id.
-             */
+            /** @description The ACP agent's own session id. */
             internal_session_id?: string | null;
             last_activity_at?: string | null;
-            /** @description Model requested at launch. */
+            /**
+             * @description Model requested at launch, `<agent>:<model>`: the registry agent the
+             *     session runs on, and the model of it.
+             */
             model: string;
             seat: components["schemas"]["Seat"];
             status: components["schemas"]["SessionStatus"];
@@ -1895,75 +1759,12 @@ export interface components {
             task_agent_id?: string | null;
             /** @description None = orchestrator session. */
             task_id?: string | null;
-            tmux_session: string;
             /**
              * @description What this session's agent has spent, summed over every transcript it
              *     reported under. Zeros while nothing has been reported.
              */
             usage: components["schemas"]["TokenUsageDto"];
             worktree_path?: string | null;
-        };
-        /** @description Body of `POST /v1/sessions/{id}/input`. */
-        SessionInputRequest: {
-            /**
-             * @description Keystrokes to type into the pane, exactly as the terminal produced
-             *     them: `\r` for Return, `\x03` for Ctrl-C, `\x1b[A` for Up. Sent
-             *     verbatim — nothing is appended, so a submit has to carry its own `\r`.
-             */
-            data: string;
-        };
-        /**
-         * @description Payload of the `snapshot` and `delta` events of
-         *     `GET /v1/sessions/{id}/logs/stream`.
-         *
-         *     Terminal output is raw bytes — newlines, escape sequences, control
-         *     characters — none of which survive SSE's line-oriented `data:` framing on
-         *     their own, so every chunk travels as JSON.
-         */
-        SessionLogChunk: {
-            /** @description Terminal output as written, decoded lossily from UTF-8. */
-            chunk: string;
-        };
-        /**
-         * @description Payload of the final `end` event of `GET /v1/sessions/{id}/logs/stream`:
-         *     the session is over and no further output is coming.
-         */
-        SessionLogEnd: {
-            session_id: string;
-        };
-        /** @description Response of `GET /v1/sessions/{id}/logs`. */
-        SessionLogsResponse: {
-            /** @description Recent pane contents captured from tmux. */
-            logs: string;
-            session_id: string;
-            tmux_session: string;
-        };
-        /**
-         * @description Payload of the `resize` event of `GET /v1/sessions/{id}/logs/stream`: the
-         *     grid the pane is drawing against, in cells.
-         *
-         *     A terminal stream only means anything at a size. The agent addresses the
-         *     cursor and erases lines against *this* grid, so a viewer that renders the
-         *     bytes at any other one has every repaint land on the wrong row.
-         */
-        SessionPaneSize: {
-            /** Format: int32 */
-            cols: number;
-            /** Format: int32 */
-            rows: number;
-        };
-        /**
-         * @description Body of `POST /v1/sessions/{id}/resize`.
-         *
-         *     The grid a viewer wants the pane to draw at, in cells — what a terminal
-         *     hands its pty when its window changes, and what `tmux attach` gives the
-         *     pane it attaches to.
-         */
-        SessionResizeRequest: {
-            /** Format: int32 */
-            cols: number;
-            /** Format: int32 */
-            rows: number;
         };
         /**
          * @description Agent session lifecycle status.
@@ -1975,16 +1776,15 @@ export interface components {
          *     off.
          *
          *     The id is a field rather than a path segment because a model id carries
-         *     both `:` and, for the ids opencode discovers, `/`
-         *     (`opencode:anthropic/claude-sonnet-4`) — which is a path of its own, not a
-         *     segment of one.
+         *     `:` and often `/` (`opencode-acp:anthropic/claude-sonnet-4`) — which is a
+         *     path of its own, not a segment of one.
          */
         SetModelEnabledRequest: {
             /** @description What it becomes. */
             enabled: boolean;
             /**
              * @description The entry, as `GET /v1/models` spells its `id`.
-             * @example claude_code:claude-fable-5
+             * @example claude-code-acp:claude-opus-5
              */
             id: string;
         };
@@ -2040,14 +1840,14 @@ export interface components {
             brief?: string | null;
             /**
              * @description The reasoning effort that model is run at. None = whatever the agent
-             *     CLI runs it at on its own.
+             *     runs it at on its own.
              * @example high
              */
             effort?: string | null;
             id: string;
             /**
-             * @description What this agent runs on, `<agent_kind>:<model>`.
-             * @example codex:o3
+             * @description What this agent runs on, `<agent>:<model>`.
+             * @example codex-acp:o3
              */
             model: string;
             /** @description `author` or `reviewer`. */
@@ -2216,7 +2016,7 @@ export interface components {
             reason?: string | null;
             to: components["schemas"]["TaskStatus"];
         };
-        /** @description Body of `PUT /v1/agents/{kind}`: the whole new flag list, empty included. */
+        /** @description Body of `PUT /v1/agents/{id}`: the whole new flag list, empty included. */
         UpdateAgentConfigRequest: {
             extra_flags: string[];
         };
@@ -2248,22 +2048,22 @@ export interface components {
             description?: string | null;
             /**
              * @description The reasoning effort to run the model at: absent leaves it alone,
-             *     "default" (or the empty string) puts it back on whatever the agent CLI
+             *     "default" (or the empty string) puts it back on whatever the agent
              *     runs the model at, and anything else is checked against the model it
              *     will run at — the one this request names, or the task's own where it
              *     names none — and refused where that model does not take it. A `model`
-             *     written without an effort runs at the CLI's own default: the effort
+             *     written without an effort runs at the agent's own default: the effort
              *     belonged to the model that was left behind.
              * @example xhigh
              */
             effort?: string | null;
             landing?: null | components["schemas"]["Landing"];
             /**
-             * @description What the author runs on, `<agent_kind>:<model>`: absent leaves the
+             * @description What the author runs on, `<agent>:<model>`: absent leaves the
              *     author's pins alone, and anything else pins what it spells. A model is
              *     required, so "default" and the empty string are refused — there is no
              *     default to hand the pin back to.
-             * @example codex:gpt-5.3-codex
+             * @example codex-acp:gpt-5.3-codex
              */
             model?: string | null;
             /**
@@ -2351,8 +2151,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description claude_code, codex or opencode */
-                kind: string;
+                /** @description the agent's registry id */
+                id: string;
             };
             cookie?: never;
         };
@@ -2370,7 +2170,7 @@ export interface operations {
                     "application/json": components["schemas"]["AgentConfigDto"];
                 };
             };
-            /** @description unknown agent kind */
+            /** @description no such agent in the registry */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2728,7 +2528,7 @@ export interface operations {
             query?: {
                 /** @description Only the messages for this staffed agent. */
                 to_agent_id?: string | null;
-                /** @description Only the ones that have not reached a pane yet. */
+                /** @description Only the ones that have not reached their agent yet. */
                 undelivered?: boolean;
             };
             header?: never;
@@ -3363,7 +3163,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying every event recorded so far (`[AgentEventDto]`), then an `event` per new one (`AgentEventDto`) — message chunks, thoughts, tool calls, plans, permission requests and turn status all arrive this way, in whatever vocabulary the agent's adapter reports them in. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
+            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying every event recorded so far (`[AgentEventDto]`), then an `event` per new one (`AgentEventDto`) — message chunks, thoughts, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3373,43 +3173,6 @@ export interface operations {
                 };
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    sessions_input: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description session id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SessionInputRequest"];
-            };
-        };
-        responses: {
-            /** @description Input handed to the pane */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3438,112 +3201,6 @@ export interface operations {
                 };
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    sessions_logs: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description session id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionLogsResponse"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    sessions_logs_stream: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description session id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description SSE stream of terminal output (text/event-stream). A `resize` event with the grid the output is drawn at (`{"cols": 80, "rows": 24}`, SessionPaneSize), then a `snapshot` event with the current scrollback and a `delta` event per burst of new output — both `{"chunk": "..."}` (SessionLogChunk). A pane resized under the stream sends a new `resize` followed by a fresh `snapshot`, which replaces everything sent so far. A final `end` event (SessionLogEnd) closes the stream when the session is over. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": components["schemas"]["SessionLogChunk"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    sessions_resize: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description session id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SessionResizeRequest"];
-            };
-        };
-        responses: {
-            /** @description Pane resized */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3964,7 +3621,7 @@ export interface operations {
             query?: {
                 /** @description Only the messages for this staffed agent. */
                 to_agent_id?: string | null;
-                /** @description Only the ones that have not reached a pane yet. */
+                /** @description Only the ones that have not reached their agent yet. */
                 undelivered?: boolean;
             };
             header?: never;

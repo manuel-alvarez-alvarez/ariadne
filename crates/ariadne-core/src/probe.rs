@@ -4,7 +4,7 @@
 //! of the same binaries, and used to ask them twice. The `PATH` searched is a
 //! parameter rather than something read from the environment here, because
 //! the two answers legitimately differ: a launchd or systemd service carries
-//! the `PATH` its service file was written with, so an agent CLI installed
+//! the `PATH` its service file was written with, so a binary installed
 //! afterwards is on the user's `PATH` and invisible to the process that
 //! spawns sessions.
 //!
@@ -198,7 +198,7 @@ mod tests {
         let gone = Path::new("/nonexistent/gh");
 
         // The first line of stdout, and the flag reaching the binary as
-        // written — tmux has never spelled it `--version`.
+        // written, whatever flag a binary spells its version with.
         assert_eq!(probe_version(echo, "1.2.3").await.as_deref(), Some("1.2.3"));
         assert_eq!(probe_version(echo, "-V").await.as_deref(), Some("-V"));
         // The ones that answer on stderr are still answering.

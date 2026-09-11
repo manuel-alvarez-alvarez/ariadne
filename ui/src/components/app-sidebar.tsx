@@ -1,7 +1,7 @@
 /**
  * The app's navigation. Five screens, in the order an orchestrator asks for
  * them: what is being worked on, who is working on it right now, what the
- * agents run as, how the agent CLIs themselves are launched, and the checkouts
+ * agents run as, how the agents themselves are launched, and the checkouts
  * they work in.
  *
  * What is *stuck* has no entry of its own — it is a strip on the goals board,

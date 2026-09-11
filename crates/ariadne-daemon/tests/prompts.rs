@@ -9,10 +9,9 @@
 //! the daemon produced, so a change to the assembler shows up as a diff rather
 //! than as an agent quietly briefed with something else.
 //!
-//! No tmux and no agent CLI: `tmux` is a stub that records the commands the
-//! launcher issues, and the rendered briefing is read back from the session's
-//! spawn plan — tmux is handed `ariadne _spawn <plan>` and nothing of the
-//! briefing itself. `git` is real — spawning an author creates its worktree.
+//! The agent is the harness's stub, and the rendered briefing is read back
+//! from the session's launch file — what the agent was told. `git` is real —
+//! spawning an author creates its worktree.
 
 mod common;
 
@@ -48,8 +47,8 @@ fn default_for(kind: PromptKind) -> String {
 }
 
 /// The built-in template is the briefing the agent is launched with,
-/// placeholders and all — and nowhere else: a briefing in the tmux command
-/// line is what the plan file exists to prevent, whatever its size.
+/// placeholders and all, as its first prompt — behind the system layer and
+/// the index of its skills.
 #[tokio::test]
 async fn a_spawned_author_is_briefed_from_the_builtin_template() {
     let h = harness().await;
@@ -64,23 +63,18 @@ async fn a_spawned_author_is_briefed_from_the_builtin_template() {
         &cast.repo,
         &[],
     );
-    let plan = h.spawn_plan(&session.id).expect("a spawn plan");
-    assert!(
-        plan.argv.iter().any(|arg| arg == &briefing),
-        "the built-in briefing, rendered: {:?}",
-        plan.argv
-    );
-    let log = h.tmux_calls().join("\n");
-    assert!(
-        !log.contains(&briefing),
-        "the briefing reached the tmux command line: {log}"
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    assert_eq!(
+        launch.initial_prompt.as_deref(),
+        Some(briefing.as_str()),
+        "the built-in briefing, rendered"
     );
 
     // The system layer is what the seat owes, and then the index of the skills
     // this agent loads: one line each, with the document left on disk for the
     // agent to read when it needs it.
     let run_dir = h.launcher.cfg.run_dir.join(&session.id);
-    let system = std::fs::read_to_string(run_dir.join("system-prompt.md")).unwrap();
+    let system = launch.system_prompt;
     let (owed, index) = system
         .split_once(
             "\n\nYour skills. Read the document of a skill before you do the work it covers:",
@@ -135,11 +129,11 @@ async fn a_spawn_assembles_the_default_briefing_word_for_word() {
         ],
     );
 
-    let plan = h.spawn_plan(&session.id).expect("a spawn plan");
-    assert!(
-        plan.argv.iter().any(|arg| arg == &expected),
-        "the default briefing, assembled: {:?}",
-        plan.argv
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    assert_eq!(
+        launch.initial_prompt.as_deref(),
+        Some(expected.as_str()),
+        "the default briefing, assembled"
     );
     // The same text is what the assembler answers on its own, so nothing
     // between the two decorates it.
@@ -245,11 +239,11 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
             ("summary", SUMMARY),
         ],
     );
-    let plan = h.spawn_plan(&session.id).expect("a spawn plan");
-    assert!(
-        plan.argv.iter().any(|arg| arg == &expected),
-        "the review-round briefing, assembled: {:?}",
-        plan.argv
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    assert_eq!(
+        launch.initial_prompt.as_deref(),
+        Some(expected.as_str()),
+        "the review-round briefing, assembled"
     );
     // The summary is what the author requested review with, undecorated:
     // it is the whole of what the reviewer is told.

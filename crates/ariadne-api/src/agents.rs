@@ -1,6 +1,5 @@
-//! Agent-kind configuration DTOs.
+//! ACP agent registry and agent configuration DTOs.
 
-use ariadne_core::AgentKind;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -50,19 +49,22 @@ pub enum AcpDegradation {
     NoRestartResume,
 }
 
-/// How one agent CLI is launched, shared by every agent that runs on it.
+/// How one registry agent is launched, shared by every session that runs on
+/// it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentConfigDto {
-    pub agent_kind: AgentKind,
-    /// Argv flags appended on every spawn and resume of this agent CLI.
+    /// The id of the agent in the ACP registry (`GET /v1/acp-agents`).
+    pub agent_id: String,
+    /// Argv flags appended to the agent's registry command on every spawn and
+    /// resume.
     pub extra_flags: Vec<String>,
-    /// What Ariadne ships for this agent kind: what `extra_flags` was seeded
-    /// with, and what restoring the defaults writes back — a client resets by
-    /// sending these back as `extra_flags`.
+    /// What Ariadne ships for this agent: what restoring the defaults writes
+    /// back — a client resets by sending these back as `extra_flags`. An ACP
+    /// agent ships with no flags, so this is empty.
     pub default_flags: Vec<String>,
 }
 
-/// Body of `PUT /v1/agents/{kind}`: the whole new flag list, empty included.
+/// Body of `PUT /v1/agents/{id}`: the whole new flag list, empty included.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateAgentConfigRequest {

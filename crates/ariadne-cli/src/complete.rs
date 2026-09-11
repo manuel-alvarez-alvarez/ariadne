@@ -21,21 +21,20 @@ use clap_complete::engine::CompletionCandidate;
 use serde_json::Value;
 
 use ariadne_client::{Client, endpoint};
-use ariadne_core::models::ModelRef;
-use ariadne_core::{AgentKind, SessionStatus, TaskStatus};
+use ariadne_core::models::agent_of;
+use ariadne_core::{SessionStatus, TaskStatus};
 
 /// Completion must be snappy: local unix socket, hard budget for the whole
 /// invocation however many endpoints it reads.
 const BUDGET: Duration = Duration::from_millis(800);
 
-/// The exception, for the model catalog alone. `GET /v1/models` asks the
-/// agent CLIs what they can run, which takes seconds rather than
-/// milliseconds — and it is paid at most once per [`MODELS_TTL`], because
-/// what comes back is written to disk.
+/// The exception, for the model catalog alone. `GET /v1/models` can take
+/// longer than the rest — and it is paid at most once per [`MODELS_TTL`],
+/// because what comes back is written to disk.
 const CATALOG_BUDGET: Duration = Duration::from_secs(5);
 
 /// How long a written model catalog answers `--model` on its own. Models move
-/// when an agent CLI is upgraded or a provider key appears, which is rare
+/// when an agent is upgraded or a provider key appears, which is rare
 /// next to how often TAB is pressed, so a quarter of an hour of staleness
 /// buys every press but the first an instant answer.
 const MODELS_TTL: Duration = Duration::from_secs(900);
@@ -203,7 +202,7 @@ fn session_help(x: &Value) -> String {
         "[{}] {} {}",
         s(x, "status"),
         s(x, "seat"),
-        s(x, "agent_kind")
+        agent_of(s(x, "model"))
     )
 }
 
@@ -212,7 +211,7 @@ pub fn session_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/sessions", anything, session_help)
 }
 
-/// What `session kill` can act on: a session with a tmux process to kill.
+/// What `session kill` can act on: a session with an agent process to kill.
 /// Three statuses are live against a query that takes one, so the narrowing
 /// is here.
 pub fn live_session_ids() -> Vec<CompletionCandidate> {
@@ -234,7 +233,7 @@ fn session_has_ended(row: &Value) -> bool {
 }
 
 /// Session, task and goal ids (top-level `ariadne attach`), live sessions
-/// first: attaching wants a pane that exists, and the rest of the list is
+/// first: attaching wants a console that is live, and the rest of the list is
 /// there because a task or goal id attaches to the session of its seat.
 ///
 /// The three lists are read together on one round rather than one after
@@ -360,32 +359,31 @@ fn is_ulid(word: &str) -> bool {
 
 // ---- agents, prompts -----------------------------------------------------
 
-/// The agent CLIs, for `ariadne agent update <kind>` — the one place left
-/// where an agent CLI is named on its own, since what an agent *runs on* is
-/// chosen as a whole model (`--model`).
-pub fn agent_kinds() -> Vec<CompletionCandidate> {
-    AgentKind::ALL
-        .into_iter()
-        .map(|kind| CompletionCandidate::new(kind.as_str()))
+/// The registry agents, for `ariadne agent update <agent>` and every
+/// `--agent` — the places an agent is named on its own, since what an agent
+/// *runs on* is chosen as a whole model (`--model`). In registry order, each
+/// with what discovery made of it.
+pub fn agent_ids() -> Vec<CompletionCandidate> {
+    fetch("/v1/acp-agents")
+        .iter()
+        .map(|agent| candidate(s(agent, "id"), s(agent, "status").to_string()))
         .collect()
 }
 
 // ---- models --------------------------------------------------------------
 
 /// Model candidates for `--model`: everything an agent can be pinned to, in
-/// the one spelling that pins it — `<agent_kind>:<model>`. No bare agent CLI
-/// and no `default`: a model is required, so neither pins anything.
+/// the one spelling that pins it — `<agent>:<model>`. No bare agent and no
+/// `default`: a model is required, so neither pins anything.
 ///
-/// The catalog is the daemon's (`GET /v1/models`, the list the UI offers,
-/// opencode discovery included), kept on disk so that pressing TAB again
-/// costs nothing and so that a daemon which is down still completes with what
-/// it last said. Only a machine that has never reached one falls back to the
-/// compiled-in curated lists.
+/// The catalog is the daemon's (`GET /v1/models`, the list the UI offers),
+/// kept on disk so that pressing TAB again costs nothing and so that a daemon
+/// which is down still completes with what it last said. A machine that has
+/// never reached one completes nothing: the catalog is what discovery found.
 pub fn models() -> Vec<CompletionCandidate> {
-    match model_catalog() {
-        Some(catalog) => catalog.iter().map(model_candidate).collect(),
-        None => curated_catalog(),
-    }
+    model_catalog()
+        .map(|catalog| catalog.iter().map(model_candidate).collect())
+        .unwrap_or_default()
 }
 
 /// Effort candidates for `--effort`: every effort the catalog knows, once
@@ -398,15 +396,11 @@ pub fn models() -> Vec<CompletionCandidate> {
 ///
 /// Each entry lists its own efforts cheapest → deepest, and the lists agree
 /// wherever they overlap, so they are merged rather than concatenated: what
-/// comes out reads from cheapest to deepest across every agent CLI.
+/// comes out reads from cheapest to deepest across every agent.
 pub fn efforts() -> Vec<CompletionCandidate> {
-    let (known, entries) = match model_catalog() {
-        Some(catalog) => (
-            catalog.iter().map(catalog_efforts).collect(),
-            catalog_effort_entries(&catalog),
-        ),
-        None => (curated_efforts(), curated_effort_entries()),
-    };
+    let catalog = model_catalog().unwrap_or_default();
+    let known = catalog.iter().map(catalog_efforts).collect();
+    let entries = catalog_effort_entries(&catalog);
     merged(known)
         .into_iter()
         .map(|id| match effort_help(&id, &entries) {
@@ -416,10 +410,10 @@ pub fn efforts() -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// One effort as one agent CLI describes it: which CLI, the effort's own id,
-/// and what it buys where that CLI has written one.
+/// One effort as one agent describes it: which agent, the effort's own id,
+/// and what it buys where that agent has written one.
 struct EffortEntry {
-    kind: String,
+    agent: String,
     id: String,
     description: Option<String>,
 }
@@ -431,13 +425,13 @@ fn catalog_effort_entries(catalog: &[Value]) -> Vec<EffortEntry> {
     catalog
         .iter()
         .flat_map(|m| {
-            let kind = s(m, "agent_kind").to_string();
+            let agent = s(m, "agent_id").to_string();
             m.get("efforts")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
                 .map(move |e| EffortEntry {
-                    kind: kind.clone(),
+                    agent: agent.clone(),
                     id: s(e, "id").to_string(),
                     description: e
                         .get("description")
@@ -448,29 +442,10 @@ fn catalog_effort_entries(catalog: &[Value]) -> Vec<EffortEntry> {
         .collect()
 }
 
-/// The same, from the compiled-in ladders, for a machine that has never
-/// reached a daemon.
-fn curated_effort_entries() -> Vec<EffortEntry> {
-    AgentKind::ALL
-        .into_iter()
-        .flat_map(|kind| {
-            ariadne_core::models::known_efforts(kind)
-                .iter()
-                .map(move |effort| EffortEntry {
-                    kind: kind.as_str().to_string(),
-                    id: (*effort).to_string(),
-                    description: ariadne_core::models::effort_description(kind, effort)
-                        .map(str::to_string),
-                })
-        })
-        .collect()
-}
-
-/// What `--effort <id>` is described as: the description every agent CLI
-/// that takes it agrees on, when they agree — an effort means the same thing
-/// on every model of one agent CLI, but not necessarily between two of them —
-/// or, where two CLIs write different words for it, each named beside its
-/// own: `low — claude_code: …; codex: …`.
+/// What `--effort <id>` is described as: the description every agent that
+/// takes it agrees on, when they agree — an effort need not mean the same
+/// thing on two agents — or, where two agents write different words for it,
+/// each named beside its own: `low — claude-code-acp: …; codex-acp: …`.
 ///
 /// `None` where nothing that lists this effort has written a description for
 /// it at all.
@@ -478,12 +453,12 @@ fn effort_help(id: &str, entries: &[EffortEntry]) -> Option<String> {
     let mut described: Vec<(&str, &str)> = Vec::new();
     let mut seen: Vec<&str> = Vec::new();
     for e in entries {
-        if e.id != id || seen.contains(&e.kind.as_str()) {
+        if e.id != id || seen.contains(&e.agent.as_str()) {
             continue;
         }
-        seen.push(&e.kind);
+        seen.push(&e.agent);
         if let Some(d) = &e.description {
-            described.push((&e.kind, d.as_str()));
+            described.push((&e.agent, d.as_str()));
         }
     }
     match described.as_slice() {
@@ -492,7 +467,7 @@ fn effort_help(id: &str, entries: &[EffortEntry]) -> Option<String> {
         many if many.windows(2).all(|w| w[0].1 == w[1].1) => Some(many[0].1.to_string()),
         many => Some(
             many.iter()
-                .map(|(kind, d)| format!("{kind}: {d}"))
+                .map(|(agent, d)| format!("{agent}: {d}"))
                 .collect::<Vec<_>>()
                 .join("; "),
         ),
@@ -500,12 +475,12 @@ fn effort_help(id: &str, entries: &[EffortEntry]) -> Option<String> {
 }
 
 /// The same, plus the word an update writes to run the model at whatever its
-/// agent CLI runs it at: `task update --effort` and `profile update --effort`.
+/// agent runs it at: `task update --effort` and `profile update --effort`.
 pub fn efforts_or_default() -> Vec<CompletionCandidate> {
     let mut out = efforts();
     out.push(
         CompletionCandidate::new(crate::commands::DEFAULT).help(Some(
-            "pin no effort: whatever the agent CLI reasons it at".into(),
+            "pin no effort: whatever the agent reasons it at".into(),
         )),
     );
     out
@@ -527,26 +502,12 @@ fn catalog_efforts(m: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// What a machine that has never reached a daemon offers: every effort each
-/// agent CLI accepts, which is as much as this side knows on its own.
-fn curated_efforts() -> Vec<Vec<String>> {
-    AgentKind::ALL
-        .into_iter()
-        .map(|kind| {
-            ariadne_core::models::known_efforts(kind)
-                .iter()
-                .map(|effort| (*effort).to_string())
-                .collect()
-        })
-        .collect()
-}
-
 /// Several cheapest-first lists as one, each effort once and in an order that
 /// keeps every list's own.
 ///
 /// An effort nothing has offered yet is held back until the next one that has
-/// been, and goes in just before it — which is what puts codex's `minimal` at
-/// the head of a list that already starts at `low`. A run with nothing after
+/// been, and goes in just before it — which is what puts one agent's
+/// `minimal` at the head of a list that already starts at `low`. A run with nothing after
 /// it is deeper than everything so far, and goes at the end; so does a list
 /// that shares no effort at all with what is there, since nothing says where
 /// else it would sit.
@@ -658,7 +619,7 @@ fn model_candidate(m: &Value) -> CompletionCandidate {
     let speed = m.get("speed").and_then(Value::as_u64).map(|n| n as u8);
     let description = match m.get("description").and_then(|d| d.as_str()) {
         Some(d) => d,
-        None => s(m, "agent_kind"),
+        None => s(m, "agent_id"),
     };
     candidate(s(m, "id"), model_help(tier, cost, speed, description))
 }
@@ -683,40 +644,6 @@ fn band(n: Option<u8>) -> String {
     }
 }
 
-/// The compiled-in catalog, for a machine that has never reached a daemon:
-/// the models ariadne-core knows each agent CLI can be pinned to, qualified
-/// here the way the daemon qualifies them. No bare-CLI entry — a model is
-/// required, so a CLI on its own pins nothing. What an agent discovers for
-/// itself is not in here — that is the daemon's job, and asking `opencode` to
-/// list its own models on a TAB cost seconds every time the daemon was down.
-fn curated_catalog() -> Vec<CompletionCandidate> {
-    AgentKind::ALL
-        .into_iter()
-        .flat_map(curated_models)
-        .collect()
-}
-
-fn curated_models(kind: AgentKind) -> Vec<CompletionCandidate> {
-    ariadne_core::models::curated_models(kind)
-        .iter()
-        .map(|m| {
-            candidate(
-                &qualified(kind, m.id),
-                model_help(m.tier.as_str(), m.cost, m.speed, m.description),
-            )
-        })
-        .collect()
-}
-
-/// One model as it is pinned: the CLI that runs it, then the model.
-fn qualified(kind: AgentKind, model: &str) -> String {
-    ModelRef {
-        agent_kind: kind,
-        model: model.to_string(),
-    }
-    .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,7 +655,7 @@ mod tests {
     }
 
     fn session(id: &str, status: &str) -> Value {
-        json!({"id": id, "status": status, "seat": "author", "agent_kind": "codex"})
+        json!({"id": id, "status": status, "seat": "author", "model": "codex-acp:o3"})
     }
 
     fn goal(id: &str, status: &str) -> Value {
@@ -774,8 +701,8 @@ mod tests {
     }
 
     /// The two halves of a session's life, and each verb gets its own:
-    /// `session kill` has a tmux process to kill, `session resume` has one to
-    /// bring back.
+    /// `session kill` has an agent process to kill, `session resume` has one
+    /// to bring back.
     #[test]
     fn killing_and_resuming_a_session_split_the_list_between_them() {
         let rows = [
@@ -822,34 +749,24 @@ mod tests {
         assert_eq!(merged(Vec::new()), Vec::<String>::new());
     }
 
-    /// What a machine that has never reached a daemon offers: the union of
-    /// what each agent CLI accepts, in the same cheapest-first order.
-    #[test]
-    fn the_curated_efforts_are_what_every_cli_accepts() {
-        assert_eq!(
-            merged(curated_efforts()),
-            words(&["minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
-        );
-    }
-
     /// The catalog's own answer is read as it comes, and an entry that lists
     /// no efforts — a model with no effort control, or a daemon too old to
     /// say — contributes nothing rather than breaking the list.
     #[test]
     fn an_entry_offers_the_efforts_it_lists_and_no_others() {
         assert_eq!(
-            catalog_efforts(&json!({"id": "codex:gpt-5.6-sol", "efforts": [
+            catalog_efforts(&json!({"id": "codex-acp:gpt-5.6-sol", "efforts": [
                 {"id": "low", "description": "lighter reasoning", "default": false},
                 {"id": "high", "description": "greater depth", "default": true},
             ]})),
             words(&["low", "high"])
         );
         assert_eq!(
-            catalog_efforts(&json!({"id": "claude_code:claude-haiku-4-5", "efforts": []})),
+            catalog_efforts(&json!({"id": "claude-code-acp:claude-haiku-4-5", "efforts": []})),
             Vec::<String>::new()
         );
         assert_eq!(
-            catalog_efforts(&json!({"id": "claude_code:claude-opus-5"})),
+            catalog_efforts(&json!({"id": "claude-code-acp:claude-opus-5"})),
             Vec::<String>::new()
         );
     }
@@ -864,41 +781,24 @@ mod tests {
             "frontier · cost 5/5 · speed 2/5 — deepest reasoning there is"
         );
         assert_eq!(
-            model_help("unknown", None, None, "codex"),
-            "unknown · cost - · speed - — codex"
+            model_help("unknown", None, None, "codex-acp"),
+            "unknown · cost - · speed - — codex-acp"
         );
     }
 
-    /// A machine that has never reached a daemon offers the compiled-in
-    /// catalog, every entry a CLI and a model of it: no bare CLI and no
-    /// `default`, since a model is required and neither pins one.
-    #[test]
-    fn the_curated_fallback_offers_no_bare_cli_and_no_default() {
-        let catalog = curated_catalog();
-        assert!(!catalog.is_empty());
-        for candidate in catalog {
-            let value = candidate.get_value().to_string_lossy().into_owned();
-            assert!(
-                value.contains(':'),
-                "{value} pins no model, and completion must not offer it"
-            );
-            assert_ne!(value, crate::commands::DEFAULT);
-        }
-    }
-
     /// An effort every entry that lists it agrees about is described once;
-    /// one that two agent CLIs describe differently is described per CLI,
-    /// each named beside its own words; one nothing has described at all
-    /// carries no help.
+    /// one that two agents describe differently is described per agent, each
+    /// named beside its own words; one nothing has described at all carries
+    /// no help.
     #[test]
-    fn an_effort_is_described_once_when_every_cli_agrees_and_per_cli_when_they_do_not() {
+    fn an_effort_is_described_once_when_every_agent_agrees_and_per_agent_when_they_do_not() {
         let entries = catalog_effort_entries(
             json!([
-                {"agent_kind": "claude_code", "efforts": [
+                {"agent_id": "claude-code-acp", "efforts": [
                     {"id": "high", "description": "greater depth"},
                     {"id": "low", "description": "lighter reasoning"},
                 ]},
-                {"agent_kind": "codex", "efforts": [
+                {"agent_id": "codex-acp", "efforts": [
                     {"id": "high", "description": "more thinking time"},
                     {"id": "low", "description": "lighter reasoning"},
                     {"id": "minimal"},
@@ -910,11 +810,11 @@ mod tests {
         assert_eq!(
             effort_help("low", &entries).as_deref(),
             Some("lighter reasoning"),
-            "the two CLIs agree, so it is said once"
+            "the two agents agree, so it is said once"
         );
         assert_eq!(
             effort_help("high", &entries).as_deref(),
-            Some("claude_code: greater depth; codex: more thinking time"),
+            Some("claude-code-acp: greater depth; codex-acp: more thinking time"),
             "and where they do not, each is named beside its own"
         );
         assert_eq!(
@@ -930,14 +830,14 @@ mod tests {
     #[test]
     fn a_catalog_of_the_old_shape_is_no_catalog() {
         let current = json!([
-            {"id": "codex:gpt-5.6-sol", "efforts": [{"id": "low", "default": true}]},
-            {"id": "codex:gpt-5.6-luna", "efforts": []},
-            {"id": "claude_code:claude-fable-5"},
+            {"id": "codex-acp:gpt-5.6-sol", "efforts": [{"id": "low", "default": true}]},
+            {"id": "codex-acp:gpt-5.6-luna", "efforts": []},
+            {"id": "claude-code-acp:claude-fable-5"},
         ]);
         assert!(current_shape(current.as_array().expect("an array")));
         for stale in [
-            json!([{"id": "codex:gpt-5.6-sol", "efforts": ["low", "high"]}]),
-            json!([{"id": "codex:gpt-5.6-sol", "efforts": "low"}]),
+            json!([{"id": "codex-acp:gpt-5.6-sol", "efforts": ["low", "high"]}]),
+            json!([{"id": "codex-acp:gpt-5.6-sol", "efforts": "low"}]),
         ] {
             assert!(
                 !current_shape(stale.as_array().expect("an array")),
@@ -962,7 +862,7 @@ mod tests {
     }
 
     /// `ariadne attach` takes a session, task or goal id, and only a live
-    /// session has a pane waiting: those come first, and the ones that have
+    /// session has a live console: those come first, and the ones that have
     /// ended come last.
     #[test]
     fn attaching_offers_live_sessions_first_and_ended_ones_last() {

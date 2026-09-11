@@ -8,9 +8,9 @@
 //! branch, and `request_review` for a revision the people on a published
 //! request asked for, which the Ariadne reviewers judge like any other round.
 //!
-//! No tmux and no agent CLI: `tmux` is a stub script that answers "no such
-//! session" and records what it was asked for, so the sessions here are rows
-//! and spawn plans rather than panes. `git` is real, and so is the merge the
+//! The agents are the harness's stub: they answer a briefing and sit at
+//! their prompt, and what each was told is read back from its launch file and
+//! from the prompts the stub was sent. `git` is real, and so is the merge the
 //! daemon verifies before accepting it — the agent doing the rebase, the
 //! squash and the fast-forward is the test itself, running the commands its
 //! briefing tells the agent to run.
@@ -24,7 +24,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::messages::MessageDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{Actor, AgentKind, AttentionReason, Landing, MessageKind, Seat, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, Landing, MessageKind, Seat, TaskStatus};
 use ariadne_store::{AgentSession, NewTaskAgent, Repository, Task};
 
 use common::{Cast, Harness, as_session, eventually, get, harness, sh, test_pin};
@@ -33,11 +33,10 @@ use common::{Cast, Harness, as_session, eventually, get, harness, sh, test_pin};
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 /// A goal on a real repository, active, with one task on it ending in
-/// `landing`. The agents are pinned to an agent kind: the internal session id
-/// a resume needs is one the Claude adapter chooses at spawn, so the resume
-/// paths here are the ones a real session takes.
+/// `landing`. The agents run on the stub, which discovery has accepted, so
+/// the resume paths here are the ones a real session takes.
 async fn seeded(landing: Landing) -> (Harness, Cast) {
-    let h = harness().scheduler().await;
+    let h = harness().scheduler().discover_agents().await;
     h.git_repo("repo");
     let mut cast = h.active_cast().await;
     if landing != Landing::Merge {
@@ -122,7 +121,7 @@ async fn walk_to_landing(
         h.status(&task.id).await == TaskStatus::Approved
             && h.running_session(&task.id, Seat::Author)
                 .await
-                .is_some_and(|s| h.spawn_argv(&s.id).contains(briefed))
+                .is_some_and(|s| h.told(&s.id).contains(briefed))
     })
     .await;
     let landing = h
@@ -152,12 +151,8 @@ async fn an_approved_task_is_landed_by_its_own_author() {
             title: "Use what the first one built".into(),
             description: "do things".into(),
             agents: vec![
-                NewTaskAgent::new(Seat::Author, ["coding"], test_pin(AgentKind::ClaudeCode)),
-                NewTaskAgent::new(
-                    Seat::Reviewer,
-                    ["code-review"],
-                    test_pin(AgentKind::ClaudeCode),
-                ),
+                NewTaskAgent::new(Seat::Author, ["coding"], test_pin()),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
             ],
             depends_on: vec![task.id.clone()],
             landing: None,
@@ -187,13 +182,14 @@ async fn an_approved_task_is_landed_by_its_own_author() {
     // And the briefing it was picked up with is this repository's procedure,
     // whole: the squash it is about to run, and not a word of the forge half
     // it would have had to skip.
-    let argv = h.spawn_argv(&author.id);
+    let argv = h.told(&author.id);
     assert!(
         argv.contains("git reset --soft main"),
         "the landing briefing does not carry the squash: {argv}"
     );
     // The forge commands themselves, not a bare "gh": the seat's own prompt
-    // rides in the same argv, and "Enough approvals" carries those two letters.
+    // rides beside the briefing, and "Enough approvals" carries those two
+    // letters.
     for published in ["gh pr", "glab mr", "pull request", "merge request"] {
         assert!(
             !argv.contains(published),
@@ -371,7 +367,7 @@ async fn a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to() {
 
     // The briefing is the publishing procedure, and only that: no squash onto
     // the base for the author to run by mistake.
-    let argv = h.spawn_argv(&author.id);
+    let argv = h.told(&author.id);
     assert!(
         argv.contains("gh pr create --base main"),
         "the author was not briefed to publish it: {argv}"

@@ -19,8 +19,8 @@
  * task panel's facts card keeps showing what they are.
  *
  * What each agent runs on can be chosen in both modes, one control per agent:
- * the author's and every reviewer's. The pin is a model — the agent CLI and,
- * after a `:`, the model of it — and the effort that model is run at, and one
+ * the author's and every reviewer's. The pin is a model — the registry agent
+ * and, after a `:`, the model of it — and the effort that model is run at, and one
  * picker holds both, so a reviewer row stays three controls wide: the skills,
  * what they run on, and the remove. Every agent must name a model.
  *
@@ -307,7 +307,7 @@ function TaskFormDialog({
               <FieldError>{form.formState.errors.author_model.message}</FieldError>
             ) : (
               <FieldDescription>
-                The agent CLI and, after a <code>:</code>, the model of it.
+                The agent and, after a <code>:</code>, the model of it.
               </FieldDescription>
             )}
           </Field>

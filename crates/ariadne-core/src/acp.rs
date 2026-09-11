@@ -1,18 +1,15 @@
-//! The launch file shared by the ACP adapter and the CLI-side ACP client.
+//! The launch file of one ACP agent session.
 //!
-//! The daemon writes this beside the normal spawn plan. The `ariadne _spawn`
-//! process reads it, launches the configured `acp` agent, and speaks ACP over
-//! that process's standard input and output.
+//! The daemon's ACP adapter writes it into the session's run dir, and the ACP
+//! runtime reads it back as the protocol half of the launch: what the agent
+//! is told, pinned to and connected to once its process is up.
 
 use serde::{Deserialize, Serialize};
-
-/// The spawn-plan environment key that selects the ACP client path.
-pub const CONFIG_ENV: &str = "ARIADNE_ACP_CONFIG";
 
 /// The ACP launch-file format written by this build.
 pub const VERSION: u32 = 1;
 
-/// Everything the CLI-side ACP client sends after it starts the agent.
+/// Everything the ACP runtime sends after it starts the agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchConfig {
@@ -23,7 +20,6 @@ pub struct LaunchConfig {
     pub effort: Option<String>,
     pub resume_session_id: Option<String>,
     pub mcp_servers: Vec<McpServer>,
-    pub event_sink: Hook,
 }
 
 /// One standard-input MCP server passed through `session/new` or restore.
@@ -41,11 +37,4 @@ pub struct McpServer {
 pub struct EnvVariable {
     pub name: String,
     pub value: String,
-}
-
-/// The command invoked when the ACP client maps a protocol event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Hook {
-    pub command: String,
-    pub args: Vec<String>,
 }

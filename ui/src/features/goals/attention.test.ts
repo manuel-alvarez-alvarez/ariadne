@@ -59,8 +59,7 @@ function task(overrides: Partial<TaskDto>): TaskDto {
  */
 function session(overrides: Partial<SessionDto>): SessionDto {
   return {
-    agent_kind: "claude_code",
-    model: "claude-sonnet-5",
+    model: "claude-code-acp:claude-sonnet-5",
     attention_reason: "disconnected",
     created_at: "2026-08-16T10:00:00Z",
     goal_id: "g1",
@@ -68,7 +67,6 @@ function session(overrides: Partial<SessionDto>): SessionDto {
     task_agent_id: "p1",
     seat: "author",
     status: "failed",
-    tmux_session: "ariadne-s1",
     usage: NO_TOKENS,
     ...overrides,
   }
@@ -79,7 +77,7 @@ function goal(overrides: Partial<GoalDto>): GoalDto {
     created_at: "2026-08-16T09:00:00Z",
     description: "",
     id: "g1",
-    model: "claude_code:claude-sonnet-5",
+    model: "claude-code-acp:claude-sonnet-5",
     repos: [],
     status: "active",
     title: "A goal",

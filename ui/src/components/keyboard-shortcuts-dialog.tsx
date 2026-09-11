@@ -35,7 +35,7 @@ export function KeyboardShortcutsDialog({
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
             The ⌘ chords answer to Ctrl as well, on every platform. The typed ones are ignored while
-            a field, an editor or a session's terminal has the keystroke.
+            a field, an editor or a session's console has the keystroke.
           </DialogDescription>
         </DialogHeader>
         {/* A description list, because that is what this is: the chord names

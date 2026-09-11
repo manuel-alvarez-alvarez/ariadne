@@ -8,7 +8,7 @@
  * empty state pointing there.
  *
  * What the orchestrator runs on is one choice made in one control: a model, written
- * `<agent_kind>:<model>` — the agent CLI and, after a `:`, the model of it —
+ * `<agent>:<model>` — the registry agent and, after a `:`, the model of it —
  * and the effort that model is run at. A model is required and the empty effort
  * uses the model's default effort.
  *
@@ -53,10 +53,10 @@ const formSchema = z.object({
   title: z.string().trim().min(1, "Give the goal a title."),
   description: z.string(),
   // Free text: the catalog only suggests, and a model it does not carry is
-  // handed to the CLI named before the `:` as typed.
+  // handed to the agent named before the `:` as typed.
   model: modelRefField(),
   // The effort that model is run at, scoped by the box beside it; empty is
-  // whatever the agent CLI runs it at.
+  // whatever the agent runs it at.
   effort: z.string(),
   repository_ids: z.array(z.string()).min(1, "Pick at least one repository."),
 })
@@ -225,7 +225,7 @@ export function CreateGoalDialog({
               <FieldError>{errors.model.message}</FieldError>
             ) : (
               <FieldDescription>
-                The agent CLI and, after a <code>:</code>, the model of it.
+                The agent and, after a <code>:</code>, the model of it.
               </FieldDescription>
             )}
           </Field>

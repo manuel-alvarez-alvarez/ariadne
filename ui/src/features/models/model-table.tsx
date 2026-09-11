@@ -1,19 +1,18 @@
 /**
- * The model catalog of one agent CLI: what it can be staffed on, and which of
+ * The model catalog of one agent: what it can be staffed on, and which of
  * those the user allows.
  *
- * The catalog is not the user's to edit — it is what each agent CLI ships,
- * plus what `opencode models --verbose` discovers — so there is nothing here
- * to create and nothing to delete. What there is, is one switch per row: a
+ * The catalog is not the user's to edit — it is what discovery found each
+ * agent offering — so there is nothing here to create and nothing to delete. What there is, is one switch per row: a
  * model turned off is refused as a pin and never offered to an orchestrator
  * sizing a plan, while work already staffed on it keeps running, because a
  * pin is the snapshot a task was created with rather than a lookup.
  *
- * A table per CLI rather than one flat list, because the CLI is half of what a
- * model *is*: the id carries it, and turning a whole CLI off is the common
- * gesture. The section around each of these is the agent it belongs to (see
- * `features/agents/agents-page.tsx`), which is why no row repeats the CLI's
- * name — its heading has already said it.
+ * A table per agent rather than one flat list, because the agent is half of
+ * what a model *is*: the id carries it, and turning a whole agent off is the
+ * common gesture. The section around each of these is the agent it belongs to
+ * (see `features/agents/agents-page.tsx`), which is why no row repeats the
+ * agent's name — its heading has already said it.
  *
  * A disabled row stays where it is, greyed, rather than moving to a section
  * of its own: what a reader came for is "is this one on", and a row that
@@ -93,7 +92,7 @@ export function ModelTable({ models, isPending }: { models: ModelDto[]; isPendin
         ) : (
           <TableRow className="bg-background hover:bg-transparent">
             <TableCell colSpan={4} className="py-6 text-center text-muted-foreground text-sm">
-              No models — the daemon reported none for this CLI. The same catalog is{" "}
+              No models — the daemon reported none for this agent. The same catalog is{" "}
               <span className="font-mono text-xs">ariadne models ls</span>.
             </TableCell>
           </TableRow>

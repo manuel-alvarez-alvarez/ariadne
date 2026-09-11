@@ -98,7 +98,7 @@ pub enum DomainEvent {
     SessionCreated(SessionDto),
     /// Covers status changes: kill, resume, exit, activity.
     SessionUpdated(SessionDto),
-    /// A raw agent event reported by a hook.
+    /// A raw agent event the ACP runtime recorded.
     AgentEvent(AgentEventDto),
     SkillCreated(SkillDto),
     SkillUpdated(SkillDto),

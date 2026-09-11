@@ -12,15 +12,6 @@ import { OutsideSessionsPage } from "./outside-sessions-page"
 type OutsideSessionDto = components["schemas"]["OutsideSessionDto"]
 
 const OUTSIDE: OutsideSessionDto = {
-  agent_kind: "codex",
-  internal_session_id: "thread-123",
-  working_directory: "/Users/me/dev/ariadne",
-  last_activity_at: "2026-09-10T08:30:00Z",
-  first_prompt: "Implement session adoption.",
-}
-
-const ACP_OUTSIDE: OutsideSessionDto = {
-  agent_kind: "acp",
   agent_id: "claude-code-acp",
   internal_session_id: "acp-session-1",
   working_directory: "/Users/me/dev/other",
@@ -28,25 +19,32 @@ const ACP_OUTSIDE: OutsideSessionDto = {
   first_prompt: "Fix the flaky test.",
 }
 
+/** A ready task whose author runs the session's agent. */
 const READY: TaskDto = aTask({
   id: "01JTASK000000000000000READY",
   status: "ready",
-  title: "Show outside sessions",
+  title: "Adopt an agent session",
   agents: [
-    { id: "01JAGENT0000000000000AUTH", seat: "author", skills: ["coding"], model: "codex:gpt-5" },
+    {
+      id: "01JAGENT0000000000000AUTH",
+      seat: "author",
+      skills: ["coding"],
+      model: "claude-code-acp:sonnet-5",
+    },
   ],
 })
 
-const ACP_READY: TaskDto = aTask({
-  id: "01JTASK00000000000000ACPRDY",
+/** A ready task whose author runs another agent. */
+const ELSEWHERE: TaskDto = aTask({
+  id: "01JTASK0000000000000ELSEWH",
   status: "ready",
-  title: "Adopt an acp session",
+  title: "Run on another agent",
   agents: [
     {
-      id: "01JAGENT0000000000000ACPAU",
+      id: "01JAGENT0000000000000ELSE",
       seat: "author",
       skills: ["coding"],
-      model: "acp:claude-code-acp:sonnet-5",
+      model: "codex-acp:gpt-5",
     },
   ],
 })
@@ -101,11 +99,12 @@ function stubDaemon({
 
 beforeEach(() => stubDaemon())
 
-it("lists each outside session with its CLI, directory, activity, and first prompt", async () => {
+it("lists each outside session with its agent, directory, activity, and first prompt", async () => {
   renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
 
-  expect(await screen.findByText("Codex")).toBeTruthy()
-  expect(screen.getByRole("columnheader", { name: "CLI" })).toBeTruthy()
+  // Named by its registry id, which is what tells one ACP agent from another.
+  expect(await screen.findByText(OUTSIDE.agent_id)).toBeTruthy()
+  expect(screen.getByRole("columnheader", { name: "Agent" })).toBeTruthy()
   expect(screen.getByRole("columnheader", { name: "Working directory" })).toBeTruthy()
   expect(screen.getByRole("columnheader", { name: "Last activity" })).toBeTruthy()
   expect(screen.getByRole("columnheader", { name: "First prompt" })).toBeTruthy()
@@ -114,11 +113,11 @@ it("lists each outside session with its CLI, directory, activity, and first prom
   expect(document.querySelector(`time[datetime="${OUTSIDE.last_activity_at}"]`)).not.toBeNull()
 })
 
-it("adopts an outside session as the author of a matching ready task", async () => {
+it("adopts a stored session, sending the registry agent id along with it", async () => {
   const user = userEvent.setup()
   renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
 
-  await user.click(await screen.findByRole("button", { name: "Adopt Codex session" }))
+  await user.click(await screen.findByRole("button", { name: `Adopt ${OUTSIDE.agent_id} session` }))
   await user.click(await screen.findByRole("button", { name: `Use ${READY.title}` }))
   await user.click(screen.getByRole("button", { name: "Adopt session" }))
 
@@ -132,43 +131,20 @@ it("adopts an outside session as the author of a matching ready task", async () 
   if (!request) throw new Error("no adoption request")
   expect(request.method).toBe("POST")
   expect(JSON.parse(await request.text())).toEqual({
-    agent_kind: OUTSIDE.agent_kind,
+    agent_id: OUTSIDE.agent_id,
     internal_session_id: OUTSIDE.internal_session_id,
   })
 })
 
-it("names an ACP session's row by its registry agent id, not by the ACP kind", async () => {
-  stubDaemon({ outside: [ACP_OUTSIDE], tasks: [ACP_READY] })
-  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
-
-  expect(await screen.findByText("claude-code-acp")).toBeTruthy()
-  expect(screen.queryByText("ACP")).toBeNull()
-})
-
-it("adopts a stored ACP session, sending the registry agent id along with it", async () => {
-  stubDaemon({ outside: [ACP_OUTSIDE], tasks: [ACP_READY] })
+it("offers only the ready tasks whose author runs the session's agent", async () => {
+  stubDaemon({ tasks: [READY, ELSEWHERE] })
   const user = userEvent.setup()
   renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
 
-  await user.click(
-    await screen.findByRole("button", { name: `Adopt ${ACP_OUTSIDE.agent_id} session` }),
-  )
-  await user.click(await screen.findByRole("button", { name: `Use ${ACP_READY.title}` }))
-  await user.click(screen.getByRole("button", { name: "Adopt session" }))
+  await user.click(await screen.findByRole("button", { name: `Adopt ${OUTSIDE.agent_id} session` }))
 
-  let request: Request | undefined
-  await waitFor(() => {
-    request = daemonFetch.mock.calls
-      .map(([input, init]) => (input instanceof Request ? input : new Request(input, init)))
-      .find(({ url }) => new URL(url).pathname === `/v1/tasks/${ACP_READY.id}/author-session`)
-    expect(request).toBeDefined()
-  })
-  if (!request) throw new Error("no adoption request")
-  expect(JSON.parse(await request.text())).toEqual({
-    agent_kind: ACP_OUTSIDE.agent_kind,
-    agent_id: ACP_OUTSIDE.agent_id,
-    internal_session_id: ACP_OUTSIDE.internal_session_id,
-  })
+  expect(await screen.findByRole("button", { name: `Use ${READY.title}` })).toBeTruthy()
+  expect(screen.queryByRole("button", { name: `Use ${ELSEWHERE.title}` })).toBeNull()
 })
 
 it("shows why an ACP agent without the session-listing capability offers no adoption", async () => {

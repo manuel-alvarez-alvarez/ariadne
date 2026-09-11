@@ -16,7 +16,7 @@ mod common;
 
 use std::ops::Deref;
 
-use ariadne_core::{Actor, AgentKind, Seat, TaskStatus};
+use ariadne_core::{Actor, Seat, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_store::{Goal, NewTask, NewTaskAgent, Task};
 
@@ -47,13 +47,7 @@ impl World {
     async fn on(h: Harness) -> World {
         let (goal, repo) = h.goal().await;
         let first = h
-            .task_on(
-                &goal,
-                &repo,
-                "Build the engine",
-                1,
-                test_pin(AgentKind::ClaudeCode),
-            )
+            .task_on(&goal, &repo, "Build the engine", 1, test_pin())
             .await;
         let second = h
             .store
@@ -63,12 +57,8 @@ impl World {
                 title: "Drive what the engine built".into(),
                 description: "do things".into(),
                 agents: vec![
-                    NewTaskAgent::new(Seat::Author, ["coding"], test_pin(AgentKind::ClaudeCode)),
-                    NewTaskAgent::new(
-                        Seat::Reviewer,
-                        ["code-review"],
-                        test_pin(AgentKind::ClaudeCode),
-                    ),
+                    NewTaskAgent::new(Seat::Author, ["coding"], test_pin()),
+                    NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
                 ],
                 depends_on: vec![first.id.clone()],
                 landing: None,

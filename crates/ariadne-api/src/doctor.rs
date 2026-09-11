@@ -4,7 +4,6 @@
 //! daemon started by launchd or systemd gets the PATH its service file bakes
 //! in, and it is the one that spawns sessions, so its view decides.
 
-use ariadne_core::AgentKind;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -15,19 +14,18 @@ use crate::agents::AcpAgentDto;
 pub struct DaemonReportDto {
     #[schema(example = "0.1.0")]
     pub version: String,
-    /// The daemon's `PATH`, the one every agent, tmux and git lookup uses.
+    /// The daemon's `PATH`, the one every agent and git lookup uses.
     pub path: Option<String>,
     /// Home directory the daemon resolved, and the socket it listens on.
     pub home: String,
     pub socket_path: String,
-    /// One entry per [`AgentKind`], in `AgentKind::ALL` order.
-    pub agents: Vec<BinaryDto>,
-    /// Every registry ACP agent and its cached discovery result.
+    /// Every registry ACP agent and its cached discovery result: the agents
+    /// a session can be spawned on.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentDto>,
-    /// The other binaries the daemon runs: tmux and git, without which no
-    /// session can be spawned at all, and the forge CLIs `gh` and `glab`,
-    /// which are what a published task is watched through.
+    /// The other binaries the daemon runs: git, without which no worktree can
+    /// be cut at all, and the forge CLIs `gh` and `glab`, which are what a
+    /// published task is watched through.
     pub tools: Vec<BinaryDto>,
     pub db: PathStateDto,
     pub worktree_root: PathStateDto,
@@ -36,11 +34,9 @@ pub struct DaemonReportDto {
 /// A binary as the daemon can — or cannot — find it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BinaryDto {
-    /// Executable name as it is looked up on PATH ("claude", "tmux").
-    #[schema(example = "claude")]
+    /// Executable name as it is looked up on PATH ("git", "gh").
+    #[schema(example = "git")]
     pub name: String,
-    /// Set for the coding-agent CLIs, absent for tmux and git.
-    pub agent_kind: Option<AgentKind>,
     /// Absolute path, when it was found.
     pub path: Option<String>,
     /// First line of its version output, when it answered in time. A binary
@@ -49,8 +45,8 @@ pub struct BinaryDto {
     /// Whether it holds credentials for the service it speaks to, for the
     /// binaries that hold any: `gh auth status` and `glab auth status`, asked
     /// of the daemon's own environment because that is where the polling
-    /// runs. `None` for a binary with nothing to sign in to — tmux, git, the
-    /// agent CLIs — and for one that was not found to ask.
+    /// runs. `None` for a binary with nothing to sign in to — git — and for
+    /// one that was not found to ask.
     ///
     /// The distinction it exists for is the one that used to be invisible: a
     /// `gh` that is installed and signed out answers every poll of a pull

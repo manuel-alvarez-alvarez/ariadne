@@ -1,7 +1,7 @@
 //! Integration tests for the domain-event bus, the SSE stream and CORS.
 //!
 //! No external binaries needed: the scheduler test only asserts on the
-//! transition it makes before it reaches out to git/tmux.
+//! transition it makes before it reaches out to git or an agent.
 
 mod common;
 
@@ -15,7 +15,7 @@ use ariadne_api::stream::{DeletedDto, DomainEvent};
 use ariadne_api::tasks::TaskDto;
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
+    Actor, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::http::{self, AppState};
@@ -40,28 +40,15 @@ async fn hand_to_author(h: &Harness, task: &Task) {
     }
 }
 
-/// A Claude `Notification` payload for a permission prompt: what a session
-/// blocked on a dialog reports, whoever it belongs to.
-fn permission_prompt() -> serde_json::Value {
+/// A permission request as the runtime reports it: the call the agent asks
+/// about and the options it offers — what a session waiting on an approval
+/// reports, whoever it belongs to.
+fn permission_request() -> serde_json::Value {
     serde_json::json!({
-        "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
-        "cwd": "/tmp/wt",
-        "hook_event_name": "Notification",
-        "message": "Claude needs your permission to use Bash",
-        "notification_type": "permission_prompt",
-    })
-}
-
-/// A Claude tool-call hook payload: the pre/post pair of every call of a turn
-/// carries the tool it is about, which is where a question put to the user is
-/// told apart from the rest of the batch running around it.
-fn tool_call(tool_name: &str) -> serde_json::Value {
-    serde_json::json!({
-        "session_id": "01m14w406nt3nh03zynd7qg2sa",
-        "cwd": "/tmp/wt",
-        "hook_event_name": "PreToolUse",
-        "tool_name": tool_name,
-        "tool_input": {},
+        "session_id": "stub-session",
+        "tool_name": "Bash",
+        "tool_input": {"command": "touch /tmp/probe"},
+        "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"}],
     })
 }
 
@@ -81,7 +68,8 @@ async fn recorded(h: &Harness, session: &ariadne_store::AgentSession, kind: &str
         .count()
 }
 
-async fn notifications_recorded(h: &Harness, session_id: &str) -> usize {
+/// How many permission requests this session has reported.
+async fn permission_requests_recorded(h: &Harness, session_id: &str) -> usize {
     h.store
         .list_events(EventFilter {
             session_id: Some(session_id.to_string()),
@@ -92,7 +80,7 @@ async fn notifications_recorded(h: &Harness, session_id: &str) -> usize {
         .await
         .unwrap()
         .iter()
-        .filter(|e| e.kind == "notification")
+        .filter(|e| e.kind == "permission_request")
         .count()
 }
 
@@ -416,16 +404,15 @@ async fn launcher_session_writes_emit_session_events() {
 }
 
 /// A relaunch starts a new agent under the same session row, and the agent it
-/// replaced still has its exit hook to fire: for half a second the daemon
-/// hears from two processes under one ARIADNE_SESSION_ID, on a resumed
-/// conversation even under one internal id. The launch each of them reports is
-/// the only thing that says which is in the pane.
+/// replaced still has its exit to report: for a moment the daemon hears from
+/// two processes under one session, on a resumed conversation even under one
+/// internal id. The launch each of them reports is the only thing that says
+/// which is the agent running.
 ///
-/// So the dead one's word moves nothing. Believed, its `session_end` retires a
-/// session whose agent is working — and the goal then spends its spawn budget
-/// replacing an agent it already has, on a tmux name that pane still holds.
-/// The event is recorded all the same: it is what happened, it is simply no
-/// longer news about the pane.
+/// So the dead one's word moves nothing. Believed, its `session_end` retires
+/// a session whose agent is working — and the goal then spends its spawn
+/// budget replacing an agent it already has. The event is recorded all the
+/// same: it is what happened, it is simply no longer news about the agent.
 #[tokio::test]
 async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
     let h = harness().await;
@@ -440,13 +427,13 @@ async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
         .unwrap();
     h.set_status(&session, SessionStatus::Running).await;
 
-    // The agent that was killed, still going through its exit: a dialog it
+    // The agent that was killed, still going through its exit: a question it
     // will never be answered on, and the end of a process nobody is watching.
     h.ingest_from(
         &session,
         "01launchonexxxxxxxxxxxxxxx",
-        "notification",
-        permission_prompt(),
+        "permission_request",
+        permission_request(),
     )
     .await;
     assert_eq!(h.attention(&session).await, None);
@@ -464,7 +451,7 @@ async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
         "the event still landed"
     );
 
-    // The agent that is actually in the pane, saying the same words.
+    // The agent that is actually running, saying the same words.
     h.ingest_from(
         &session,
         "01launchtwoxxxxxxxxxxxxxxx",
@@ -506,7 +493,6 @@ async fn an_events_summary_reaches_the_snapshot_and_the_stream_alike() {
         "pre_tool_use",
         serde_json::json!({
             "cwd": "/tmp/wt",
-            "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
             "tool_input": {"command": "cargo nextest run"},
         }),
@@ -534,13 +520,7 @@ async fn ingested_events_raise_and_clear_session_attention() {
     let cast = h.active_cast().await;
     hand_to_author(&h, &cast.task).await;
     let session = h
-        .session_on(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Author,
-            &cast.author.id,
-            AgentKind::Opencode,
-        )
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     let mut rx = h.bus.subscribe();
 
@@ -565,13 +545,12 @@ async fn ingested_events_raise_and_clear_session_attention() {
 
     // A turn that ends on idle rather than on another error has recovered:
     // the error goes, and the session is nobody's business again.
-    h.ingest(&session, "session.idle", serde_json::json!({}))
-        .await;
+    h.ingest(&session, "stop", serde_json::json!({})).await;
     assert_eq!(h.attention(&session).await, None);
 
     // Back to work, with the error raised again: the agent needs nobody now.
     h.raise(&session, AttentionReason::AgentError).await;
-    h.ingest(&session, "tool.execute.before", serde_json::json!({}))
+    h.ingest(&session, "pre_tool_use", serde_json::json!({}))
         .await;
     let cleared = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(cleared.attention_reason(), None);
@@ -587,7 +566,7 @@ async fn ingested_events_raise_and_clear_session_attention() {
     // arriving afterwards resurrects neither its status nor its flag.
     h.set_status(&session, SessionStatus::Exited).await;
     h.raise(&session, AttentionReason::Disconnected).await;
-    h.ingest(&session, "tool.execute.before", serde_json::json!({}))
+    h.ingest(&session, "pre_tool_use", serde_json::json!({}))
         .await;
     let ended = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(
@@ -596,10 +575,10 @@ async fn ingested_events_raise_and_clear_session_attention() {
     );
     assert_eq!(ended.status(), SessionStatus::Exited);
 
-    // Nor does a late dialog: an approval asked for by a session already
-    // recorded as ended has no pane the user could answer it in, so it
-    // neither goes up nor writes over the reason the session ended with.
-    h.ingest(&session, "permission.asked", serde_json::json!({}))
+    // Nor does a late request: an approval asked for by a session already
+    // recorded as ended has no agent left to hear the answer, so it neither
+    // goes up nor writes over the reason the session ended with.
+    h.ingest(&session, "permission_request", permission_request())
         .await;
     assert_eq!(
         h.attention(&session).await,
@@ -611,196 +590,102 @@ async fn ingested_events_raise_and_clear_session_attention() {
 /// after a failed turn has recovered from it: those two flags come down, and
 /// the task's stall column with them.
 ///
-/// Nothing else does. Going idle is exactly when a permission dialog or a
-/// question is up, so a prompt survives it, and `waiting_user` was never the
-/// agent's to take down.
+/// Nothing else does. Going idle is exactly when a permission request is
+/// waiting, so a prompt survives it, and `waiting_user` was never the agent's
+/// to take down.
 #[tokio::test]
 async fn an_idle_report_clears_the_stall_and_the_error_and_nothing_else() {
     let h = harness().await;
     let cast = h.active_cast().await;
     hand_to_author(&h, &cast.task).await;
     let stalled = async || h.store.get_task(&cast.task.id).await.unwrap().is_stalled();
-    let claude = h
+    let session = h
         .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
-    let opencode = h
-        .session_on(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Author,
-            &cast.author.id,
-            AgentKind::Opencode,
-        )
-        .await;
 
-    // A stalled Claude author that answers its nudge: the `stop` ending the
-    // turn is the agent reporting, which is the one thing the flag denied.
-    h.raise(&claude, AttentionReason::Stalled).await;
+    // A stalled author that answers its nudge: the `stop` ending the turn is
+    // the agent reporting, which is the one thing the flag denied.
+    h.raise(&session, AttentionReason::Stalled).await;
     assert!(stalled().await, "the task says what its agent's flag says");
-    h.ingest(&claude, "stop", serde_json::json!({})).await;
-    assert_eq!(h.attention(&claude).await, None);
+    h.ingest(&session, "stop", serde_json::json!({})).await;
+    assert_eq!(h.attention(&session).await, None);
     assert!(!stalled().await, "and follows it back down");
 
-    // The opencode half of the same sentence: a turn of assistant text alone
-    // ends on `session.idle`, which never reads as liveness.
-    h.raise(&opencode, AttentionReason::Stalled).await;
-    assert!(stalled().await);
-    h.ingest(&opencode, "session.idle", serde_json::json!({}))
-        .await;
-    assert_eq!(h.attention(&opencode).await, None);
-    assert!(!stalled().await);
-
     // A turn that failed and then ended on idle is a turn that recovered.
-    h.raise(&opencode, AttentionReason::AgentError).await;
-    h.ingest(&opencode, "session.idle", serde_json::json!({}))
-        .await;
-    assert_eq!(h.attention(&opencode).await, None);
+    h.raise(&session, AttentionReason::AgentError).await;
+    h.ingest(&session, "stop", serde_json::json!({})).await;
+    assert_eq!(h.attention(&session).await, None);
 
-    // The dialog the user still has to answer stands through the idle it is
+    // The request the user still has to answer stands through the idle it is
     // waiting in...
-    h.raise(&claude, AttentionReason::WaitingPermission).await;
-    h.ingest(&claude, "stop", serde_json::json!({})).await;
+    h.raise(&session, AttentionReason::WaitingPermission).await;
+    h.ingest(&session, "stop", serde_json::json!({})).await;
     assert_eq!(
-        h.attention(&claude).await,
+        h.attention(&session).await,
         Some(AttentionReason::WaitingPermission)
     );
 
     // ...and so does what the daemon raised for the user, which no event of
     // the agent's has ever been allowed to clear.
-    h.raise(&opencode, AttentionReason::WaitingUser).await;
-    h.ingest(&opencode, "session.idle", serde_json::json!({}))
-        .await;
+    h.store.clear_session_attention(&session.id).await.unwrap();
+    h.raise(&session, AttentionReason::WaitingUser).await;
+    h.ingest(&session, "stop", serde_json::json!({})).await;
     assert_eq!(
-        h.attention(&opencode).await,
+        h.attention(&session).await,
         Some(AttentionReason::WaitingUser)
     );
 }
 
-/// OpenCode's approval dialog reaches Ariadne as `permission.asked` on the
-/// plugin's event stream — the payloads below are what opencode 1.18.15
-/// actually sent during a run with `permission.bash = "ask"`. The session
-/// looks no different while the dialog is up, so this is the only signal.
+/// A permission request is the one signal that an agent is blocked on the
+/// user: it raises the wait without reading as liveness, keeps the internal
+/// id the session already reported, and comes down when the answer hands
+/// control back — whichever way it went.
 #[tokio::test]
-async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
+async fn a_permission_request_flags_the_session_as_blocked() {
     let h = harness().await;
     let cast = h.active_cast().await;
     hand_to_author(&h, &cast.task).await;
     let session = h
-        .session_on(
-            &cast.goal,
-            Some(&cast.task),
-            Seat::Author,
-            &cast.author.id,
-            AgentKind::Opencode,
-        )
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
 
     // Working, so the internal id is already known and the flag is down.
     h.ingest(
         &session,
-        "session.created",
-        serde_json::json!({
-            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
-            "info": {"id": "ses_fe5cb9641ffeQPvwaIKtSsLAqP", "version": "1.18.15"},
-        }),
+        "session_start",
+        serde_json::json!({"session_id": "stub-session"}),
     )
     .await;
     let running = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(running.status(), SessionStatus::Running);
-    assert_eq!(
-        running.internal_session_id.as_deref(),
-        Some("ses_fe5cb9641ffeQPvwaIKtSsLAqP")
-    );
+    assert_eq!(running.internal_session_id.as_deref(), Some("stub-session"));
 
-    // The dialog goes up: flagged, and the status is left where it was.
-    h.ingest(
-        &session,
-        "permission.asked",
-        serde_json::json!({
-            "id": "per_01a3575b4001aOsIrUVWB44A4e",
-            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
-            "permission": "bash",
-            "patterns": ["echo hello-from-bash"],
-            "metadata": {"command": "echo hello-from-bash"},
-            "always": ["echo *"],
-            "tool": {"messageID": "msg_01a346a620011crwCE4oJgZDqr", "callID": "call_vt3e3umm"},
-        }),
-    )
-    .await;
+    // The request goes up: flagged, and the status is left where it was.
+    h.ingest(&session, "permission_request", permission_request())
+        .await;
     let flagged = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(
         flagged.attention_reason(),
         Some(AttentionReason::WaitingPermission)
     );
     assert_eq!(flagged.status(), SessionStatus::Running);
-    // The permission's own id must not be mistaken for the session's.
-    assert_eq!(
-        flagged.internal_session_id.as_deref(),
-        Some("ses_fe5cb9641ffeQPvwaIKtSsLAqP")
-    );
-
-    // `session.updated` keeps firing while the dialog waits: it must not
-    // look like the agent went back to work.
-    h.ingest(
-        &session,
-        "session.updated",
-        serde_json::json!({"info": {"id": "ses_fe5cb9641ffeQPvwaIKtSsLAqP"}}),
-    )
-    .await;
-    assert_eq!(
-        h.attention(&session).await,
-        Some(AttentionReason::WaitingPermission)
-    );
+    assert!(flagged.last_activity_at.is_some());
 
     // The user answered — rejected, here, which still hands control back.
     h.ingest(
         &session,
         "permission.replied",
-        serde_json::json!({
-            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
-            "requestID": "per_01a3575b4001aOsIrUVWB44A4e",
-            "reply": "reject",
-        }),
+        serde_json::json!({"session_id": "stub-session", "option_id": null}),
     )
     .await;
     let cleared = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(cleared.attention_reason(), None);
     assert_eq!(cleared.status(), SessionStatus::Running);
 
-    // A question is the other family: a wait for an answer, cleared by one.
-    h.ingest(
-        &session,
-        "question.asked",
-        serde_json::json!({
-            "id": "ask_01a3575b4001aOsIrUVWB44A4f",
-            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
-        }),
-    )
-    .await;
-    assert_eq!(
-        h.attention(&session).await,
-        Some(AttentionReason::WaitingInput)
-    );
-    h.ingest(
-        &session,
-        "question.replied",
-        serde_json::json!({
-            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
-            "requestID": "ask_01a3575b4001aOsIrUVWB44A4f",
-            "answers": [],
-        }),
-    )
-    .await;
-    assert_eq!(h.attention(&session).await, None);
-
-    // An error while a dialog is up must not be traded for the wait, and
+    // An error while a request is up must not be traded for the wait, and
     // neither may clear the other: the flag stands until real work resumes.
-    h.ingest(
-        &session,
-        "permission.asked",
-        serde_json::json!({"id": "per_2"}),
-    )
-    .await;
+    h.ingest(&session, "permission_request", permission_request())
+        .await;
     h.ingest(&session, "session.error", serde_json::json!({}))
         .await;
     let errored = h.store.get_session(&session.id).await.unwrap();
@@ -809,249 +694,6 @@ async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
         Some(AttentionReason::AgentError)
     );
     assert_eq!(errored.status(), SessionStatus::Running);
-}
-
-/// Claude Code's `Notification` hook is the only signal that an
-/// idle-looking session is actually blocked on the user: it must raise the
-/// right attention reason, survive the `touch_session` of its own ingestion,
-/// and be cleared only once the agent does real work again.
-#[tokio::test]
-async fn a_claude_notification_flags_the_session_as_blocked() {
-    let h = harness().await;
-    let cast = h.active_cast().await;
-    hand_to_author(&h, &cast.task).await;
-    let session = h
-        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
-        .await;
-    let notification = |notification_type: &str, message: &str| {
-        serde_json::json!({
-            "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
-            "cwd": "/tmp/wt",
-            "hook_event_name": "Notification",
-            "message": message,
-            "notification_type": notification_type,
-        })
-    };
-
-    // Blocked on a permission dialog: flagged, and still not "running" —
-    // the ingestion's own touch_session must not undo the flag.
-    h.ingest(
-        &session,
-        "notification",
-        notification(
-            "permission_prompt",
-            "Claude needs your permission to use Bash",
-        ),
-    )
-    .await;
-    let flagged = h.store.get_session(&session.id).await.unwrap();
-    assert_eq!(
-        flagged.attention_reason(),
-        Some(AttentionReason::WaitingPermission)
-    );
-    assert_eq!(flagged.status(), SessionStatus::Starting);
-    assert!(flagged.last_activity_at.is_some());
-
-    // The user answered and the agent runs a tool: attention drops.
-    h.ingest(
-        &session,
-        "pre_tool_use",
-        serde_json::json!({"tool_name": "Bash"}),
-    )
-    .await;
-    let cleared = h.store.get_session(&session.id).await.unwrap();
-    assert_eq!(cleared.attention_reason(), None);
-    assert_eq!(cleared.status(), SessionStatus::Running);
-
-    // A subagent asking a question of its own: the other wait on a person.
-    h.ingest(
-        &session,
-        "notification",
-        notification(
-            "agent_needs_input",
-            "docs-writer needs your input: a heading",
-        ),
-    )
-    .await;
-    assert_eq!(
-        h.attention(&session).await,
-        Some(AttentionReason::WaitingInput)
-    );
-
-    // Submitting a prompt is the other half of the clearing rule.
-    h.ingest(
-        &session,
-        "user_prompt_submit",
-        serde_json::json!({"prompt": "go on"}),
-    )
-    .await;
-    assert_eq!(h.attention(&session).await, None);
-
-    // The notification an idle Claude fires a minute after every turn says
-    // nothing about a person: under Ariadne that agent is waiting for the
-    // daemon's nudge, and a flag here is what used to stop it ever coming.
-    h.ingest(
-        &session,
-        "notification",
-        notification("idle_prompt", "Claude is waiting for your input"),
-    )
-    .await;
-    assert_eq!(h.attention(&session).await, None);
-
-    // An unrecognized notification is recorded but changes nothing.
-    h.ingest(
-        &session,
-        "notification",
-        notification("auth_success", "Logged in as me@example.com"),
-    )
-    .await;
-    let untouched = h.store.get_session(&session.id).await.unwrap();
-    assert_eq!(untouched.attention_reason(), None);
-    assert_eq!(untouched.status(), SessionStatus::Running);
-    assert_eq!(notifications_recorded(&h, &session.id).await, 4);
-}
-
-/// A question Claude Code puts to the user with `AskUserQuestion` is a wait
-/// nothing announces on its own: the turn goes on running the other tool
-/// calls of the same batch around the blocked one, and the dialog surfaces —
-/// half a minute later — as the `permission_prompt` notification an ordinary
-/// approval fires. The replay below is an orchestrator session of 2026-08-28
-/// as the daemon recorded it, and every event after the ask used to take the
-/// flag back down.
-#[tokio::test]
-async fn a_pending_question_holds_the_strip_until_it_is_answered() {
-    let h = harness().await;
-    // An orchestrator is asking, and its goal is still being planned: exactly
-    // the work the user is waiting on.
-    let cast = h.cast().await;
-    let session = h.orchestrator_session(&cast.goal, "orc").await;
-
-    // The `pre_tool_use` of the call is the first and only word of the ask.
-    h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
-        .await;
-    let asked = h.store.get_session(&session.id).await.unwrap();
-    assert_eq!(
-        asked.attention_reason(),
-        Some(AttentionReason::WaitingInput)
-    );
-    assert_eq!(
-        asked.status(),
-        SessionStatus::Running,
-        "the ask is still the agent reporting itself alive"
-    );
-
-    // Everything the same turn reports around it — the pre/post pair of
-    // another tool call, twice over, and the notification the dialog itself
-    // fires in between — leaves the question exactly where it is.
-    for (kind, payload) in [
-        ("pre_tool_use", tool_call("Bash")),
-        ("post_tool_use", tool_call("Bash")),
-        ("notification", permission_prompt()),
-        ("pre_tool_use", tool_call("Bash")),
-        ("post_tool_use", tool_call("Bash")),
-    ] {
-        h.ingest(&session, kind, payload).await;
-        assert_eq!(
-            h.attention(&session).await,
-            Some(AttentionReason::WaitingInput),
-            "{kind} took a pending question off the strip"
-        );
-    }
-
-    // The answer, and the pane has nothing to say to anybody again.
-    h.ingest(&session, "post_tool_use", tool_call("AskUserQuestion"))
-        .await;
-    let answered = h.store.get_session(&session.id).await.unwrap();
-    assert_eq!(answered.attention_reason(), None);
-    assert_eq!(answered.attention_since, None);
-    assert_eq!(answered.status(), SessionStatus::Running);
-
-    // And the hold is over: an ordinary permission dialog after it is a
-    // permission dialog again.
-    h.ingest(&session, "notification", permission_prompt())
-        .await;
-    assert_eq!(
-        h.attention(&session).await,
-        Some(AttentionReason::WaitingPermission)
-    );
-}
-
-/// The other two ways a question leaves the pane: Esc, which ends the turn and
-/// reaches the daemon as `stop`, and a prompt typed at it instead of an answer.
-/// Neither reports the tool call at all, so the flag has to come down on the
-/// event itself — a `stop` in particular clears no prompt of its own accord.
-#[tokio::test]
-async fn a_question_comes_down_when_the_turn_or_the_user_moves_on() {
-    let h = harness().await;
-    for (kind, payload) in [
-        ("stop", serde_json::json!({"hook_event_name": "Stop"})),
-        (
-            "user_prompt_submit",
-            serde_json::json!({"hook_event_name": "UserPromptSubmit", "prompt": "never mind"}),
-        ),
-    ] {
-        // One pane each, since the first of them ends the question for good.
-        let session = h.lone_session(&format!("question-{kind}")).await;
-        h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
-            .await;
-        assert_eq!(
-            h.attention(&session).await,
-            Some(AttentionReason::WaitingInput),
-            "{kind}"
-        );
-
-        h.ingest(&session, kind, payload).await;
-        assert_eq!(h.attention(&session).await, None, "{kind}");
-
-        // What the turn ending does not touch is the dialog somebody still
-        // has to answer: that one is still on the screen while the agent
-        // sits idle.
-        h.raise(&session, AttentionReason::WaitingPermission).await;
-        h.ingest(&session, "stop", serde_json::json!({})).await;
-        assert_eq!(
-            h.attention(&session).await,
-            Some(AttentionReason::WaitingPermission),
-            "{kind}"
-        );
-    }
-}
-
-/// A question is a raise like any other, so it asks the same thing first:
-/// whether anybody is still waiting on this agent. The orchestrator is the
-/// one agent that stays waited-on for the whole goal — it is what the user
-/// talks to about work already running — so a question from it is theirs to
-/// answer while the goal is going, and nobody's once it is over.
-#[tokio::test]
-async fn a_question_from_an_orchestrator_is_the_users_until_the_goal_is_over() {
-    let h = harness().await;
-    // `active_cast` finalizes the plan: the goal is already active.
-    let cast = h.active_cast().await;
-    let session = h.orchestrator_session(&cast.goal, "orc").await;
-
-    h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
-        .await;
-    assert_eq!(
-        h.attention(&session).await,
-        Some(AttentionReason::WaitingInput),
-        "the goal is under way, and its orchestrator is who the user talks to"
-    );
-
-    // A goal that is over is one nobody is waiting on, whatever its
-    // orchestrator's pane still puts on the screen.
-    h.store.clear_session_attention(&session.id).await.unwrap();
-    h.store
-        .set_goal_status(&cast.goal.id, GoalStatus::Completed)
-        .await
-        .unwrap();
-    h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
-        .await;
-    let quiet = h.store.get_session(&session.id).await.unwrap();
-    assert_eq!(quiet.attention_reason(), None);
-    assert_eq!(
-        quiet.status(),
-        SessionStatus::Running,
-        "withholding the flag changes nothing else about the ingestion"
-    );
 }
 
 /// Attention says a human must act, so it is only raised on an agent somebody
@@ -1080,7 +722,7 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
         .await;
 
     // The round is still waiting on this reviewer: the prompt is raised.
-    h.ingest(&session, "notification", permission_prompt())
+    h.ingest(&session, "permission_request", permission_request())
         .await;
     assert_eq!(
         h.attention(&session).await,
@@ -1097,7 +739,7 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
     // ...and once the verdict is in, the same prompt raises nothing.
     h.verdict_from(&task, &session, MessageKind::Approve, "looks right")
         .await;
-    h.ingest(&session, "notification", permission_prompt())
+    h.ingest(&session, "permission_request", permission_request())
         .await;
     let quiet = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(
@@ -1111,22 +753,23 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
         "withholding the flag changes nothing else about the ingestion"
     );
     assert_eq!(
-        notifications_recorded(&h, &session.id).await,
+        permission_requests_recorded(&h, &session.id).await,
         2,
         "the event itself is recorded either way"
     );
 }
 
-/// Same for a permission prompt: the orchestrator's pane is the user's for as
-/// long as the goal runs, and nobody's afterwards.
+/// Same for an orchestrator: it is the agent the user talks to about work
+/// already running, so a permission it asks for is the user's to answer for
+/// as long as the goal runs, and nobody's afterwards.
 #[tokio::test]
 async fn an_orchestrator_of_a_finished_goal_raises_no_attention() {
     let h = harness().await;
     // `active_cast` finalizes the plan: the goal is already active.
     let cast = h.active_cast().await;
-    let session = h.orchestrator_session(&cast.goal, "orc").await;
+    let session = h.orchestrator_session(&cast.goal).await;
 
-    h.ingest(&session, "notification", permission_prompt())
+    h.ingest(&session, "permission_request", permission_request())
         .await;
     assert_eq!(
         h.attention(&session).await,
@@ -1139,7 +782,7 @@ async fn an_orchestrator_of_a_finished_goal_raises_no_attention() {
         .set_goal_status(&cast.goal.id, GoalStatus::Completed)
         .await
         .unwrap();
-    h.ingest(&session, "notification", permission_prompt())
+    h.ingest(&session, "permission_request", permission_request())
         .await;
     assert_eq!(
         h.attention(&session).await,
@@ -1158,11 +801,9 @@ fn tokens(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> To
     }
 }
 
-/// An event carrying the totals of one transcript, exactly as the hooks and
-/// the plugin report them.
+/// An event carrying the totals of one transcript in its `ariadne_usage`.
 fn reports(source: &str, usage: TokenUsageDto) -> serde_json::Value {
     serde_json::json!({
-        "hook_event_name": "Stop",
         "ariadne_usage": {
             "source": source,
             "input_tokens": usage.input_tokens,
@@ -1191,7 +832,7 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
             &cast.reviewer.id,
         )
         .await;
-    let orchestrator = h.orchestrator_session(&cast.goal, "orc").await;
+    let orchestrator = h.orchestrator_session(&cast.goal).await;
     let mut rx = h.bus.subscribe();
 
     h.ingest(&author, "stop", reports("/x.jsonl", tokens(100, 80, 10)))
@@ -1294,7 +935,6 @@ async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
         &author,
         "stop",
         serde_json::json!({
-            "hook_event_name": "Stop",
             "ariadne_usage": {"source": "/x.jsonl", "input_tokens": -5, "output_tokens": 1},
         }),
     )

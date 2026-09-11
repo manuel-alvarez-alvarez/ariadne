@@ -3,7 +3,7 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 import { api, type ModelDto, qk, type SetModelEnabledRequest, unwrap } from "@/api"
 
 /**
- * The catalog an agent can be pinned to: every model of every agent CLI, with
+ * The catalog an agent can be pinned to: every model of every registry agent, with
  * the efforts each one takes and whether an agent can be staffed on it.
  *
  * One unfiltered list — the picker narrows it client-side, and the daemon

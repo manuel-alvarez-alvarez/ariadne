@@ -1,18 +1,17 @@
-//! The daemon drives an `acp` author itself: the agent is a child process on
-//! piped stdio, spoken to over ACP version 1, and there is no tmux session
-//! anywhere in its life.
+//! The daemon drives every agent itself: a child process on piped stdio,
+//! spoken to over ACP version 1.
 //!
-//! The agent is the scriptable stub from test support (`common::acp`): every
-//! JSON-RPC message the daemon sends lands in its log, which is where the
-//! handshake, the pins and the prompt are asserted. `git` is real — spawning
-//! an author creates its worktree. `tmux` is the recording stub, so a pane
-//! created or killed anywhere in the path would show in its command log.
+//! The agent is the scriptable stub from test support (`common::acp`),
+//! registered as the registry agent `stub`: every JSON-RPC message the daemon
+//! sends lands in its log, which is where the handshake, the pins and the
+//! prompt are asserted. `git` is real — spawning an author creates its
+//! worktree.
 
 mod common;
 
 use serde_json::{Value, json};
 
-use ariadne_core::{AgentKind, SessionStatus};
+use ariadne_core::SessionStatus;
 use ariadne_store::{AgentPin, EventFilter};
 
 use common::acp::{
@@ -20,20 +19,12 @@ use common::acp::{
 };
 use common::{Cast, Harness, TIMEOUT, eventually, harness, sh};
 
-/// A task whose author runs on `acp`, in a real repo, with an effort pinned
-/// so the launch has one to set.
+/// A task whose author runs on the registry agent `stub`, in a real repo,
+/// with an effort pinned so the launch has one to set.
 async fn acp_cast(h: &Harness) -> Cast {
-    h.git_repo("repo");
-    let cast = h.cast_on(AgentKind::Acp).await;
+    let cast = registry_cast(h).await;
     h.store
-        .set_agent_pin(
-            &cast.author.id,
-            &AgentPin {
-                agent_kind: AgentKind::Acp,
-                model: "test-model".into(),
-                effort: Some("high".into()),
-            },
-        )
+        .set_agent_pin(&cast.author.id, &registry_pin(Some("high")))
         .await
         .unwrap();
     cast
@@ -64,7 +55,6 @@ async fn scheduled_registry_harness(stub: &StubAcpAgent) -> Harness {
 /// model, `<agent-id>:<model>`.
 fn registry_pin(effort: Option<&str>) -> AgentPin {
     AgentPin {
-        agent_kind: AgentKind::Acp,
         model: "stub:test-model".into(),
         effort: effort.map(str::to_string),
     }
@@ -73,7 +63,7 @@ fn registry_pin(effort: Option<&str>) -> AgentPin {
 /// A task whose agents run on the registry agent `stub`, in a real repo.
 async fn registry_cast(h: &Harness) -> Cast {
     h.git_repo("repo");
-    h.cast_pinned(AgentKind::Acp, "stub:test-model", 1).await
+    h.cast_pinned("stub:test-model", 1).await
 }
 
 /// The kinds of every event this session put in the store, in order.
@@ -101,13 +91,13 @@ async fn spawned_idle(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
 }
 
 /// Launch, handshake, model and effort pins, the briefing as the first
-/// prompt, the events in the store, the captured agent session id — and not
-/// one tmux call for any of it.
+/// prompt, the events in the store, the captured agent session id — and the
+/// agent a child of the daemon, on its own stdio.
 #[tokio::test]
-async fn an_acp_author_runs_on_daemon_stdio_with_no_tmux_session() {
+async fn an_acp_author_runs_on_daemon_stdio() {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), script());
-    let h = harness().acp_bin(&stub.bin).await;
+    let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
 
     let session = spawned_idle(&h, &cast).await;
@@ -161,20 +151,18 @@ async fn an_acp_author_runs_on_daemon_stdio_with_no_tmux_session() {
     let row = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(row.internal_session_id.as_deref(), Some("stub-session"));
 
-    // No pane: tmux was never asked to create one, and the agent sits at its
-    // prompt waiting for the next turn.
-    assert_eq!(h.tmux_calls_of("new-session"), Vec::<String>::new());
+    // The agent sits at its prompt waiting for the next turn.
     assert!(stub.process_is_alive());
     assert!(h.launcher.acp.is_running(&session.id));
 }
 
 /// Killing the session kills the daemon-owned agent process and retires the
-/// row; no pane is asked to die.
+/// row.
 #[tokio::test]
 async fn killing_an_acp_session_kills_its_agent_process() {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), script());
-    let h = harness().acp_bin(&stub.bin).await;
+    let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
     let session = spawned_idle(&h, &cast).await;
     assert!(stub.process_is_alive());
@@ -187,7 +175,6 @@ async fn killing_an_acp_session_kills_its_agent_process() {
         !stub.process_is_alive()
     })
     .await;
-    assert_eq!(h.killed_panes(), Vec::<String>::new());
 }
 
 /// A resumed acp author keeps its conversation: a fresh agent process loads
@@ -199,7 +186,7 @@ async fn resuming_an_acp_author_replaces_the_agent_and_keeps_the_session() {
     scripted["stored_sessions"] = json!(["stub-session"]);
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().acp_bin(&stub.bin).await;
+    let h = registry_harness(&stub).await;
     let cast = acp_cast(&h).await;
     let session = spawned_idle(&h, &cast).await;
     let first_pid = stub.pid().expect("the first agent wrote its pid");
@@ -245,7 +232,6 @@ async fn resuming_an_acp_author_replaces_the_agent_and_keeps_the_session() {
     assert!(pid_is_alive(second_pid));
     assert!(h.launcher.acp.is_running(&session.id));
     assert_eq!(h.session_status(&session).await, SessionStatus::Idle);
-    assert_eq!(h.tmux_calls_of("new-session"), Vec::<String>::new());
 }
 
 /// In auto mode every permission request is approved: the agent hears the
@@ -268,7 +254,7 @@ async fn auto_approves_a_permission_request_with_the_allowing_option() {
     }]);
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().acp_bin(&stub.bin).await;
+    let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
 
     let session = spawned_idle(&h, &cast).await;
@@ -300,7 +286,7 @@ async fn a_dead_acp_agent_is_reaped_and_its_session_retired() {
     scripted["prompts"] = json!([{"exit": 0}]);
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().acp_bin(&stub.bin).await;
+    let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
@@ -321,10 +307,10 @@ async fn a_dead_acp_agent_is_reaped_and_its_session_retired() {
 }
 
 /// An orchestrator seat runs on the agent its pin names in the registry:
-/// the registry command is spawned, the bare model half is pinned, the
-/// session opens with the ariadne MCP server, and no pane exists anywhere.
+/// the registry command is spawned, the bare model half is pinned, and the
+/// session opens with the ariadne MCP server.
 #[tokio::test]
-async fn an_orchestrator_runs_on_the_registry_agent_with_no_tmux_session() {
+async fn an_orchestrator_runs_on_the_registry_agent() {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), script());
     let h = registry_harness(&stub).await;
@@ -352,20 +338,18 @@ async fn an_orchestrator_runs_on_the_registry_agent_with_no_tmux_session() {
     assert_eq!(new["mcpServers"][0]["name"], "ariadne");
     assert_eq!(new["mcpServers"][0]["args"], json!(["mcp", "serve"]));
 
-    // The briefing rides the first prompt, and there is no pane.
+    // The briefing rides the first prompt.
     let prompt = &stub.calls_of("session/prompt")[0];
     let text = prompt["prompt"][0]["text"].as_str().unwrap();
     assert!(text.contains("Ship the UI"), "{text}");
-    // Not one tmux call: no pane created, and no pane claimed.
-    assert_eq!(h.tmux_calls(), Vec::<String>::new());
     assert!(h.launcher.acp.is_running(&session.id));
 }
 
 /// A reviewer seat runs on the registry agent the same way: a detached
-/// worktree as its cwd, the ariadne MCP server, the briefing as the first
-/// prompt, and no tmux session.
+/// worktree as its cwd, the ariadne MCP server, and the briefing as the
+/// first prompt.
 #[tokio::test]
-async fn a_reviewer_runs_on_the_registry_agent_with_no_tmux_session() {
+async fn a_reviewer_runs_on_the_registry_agent() {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), script());
     let h = registry_harness(&stub).await;
@@ -397,7 +381,6 @@ async fn a_reviewer_runs_on_the_registry_agent_with_no_tmux_session() {
     let prompt = &stub.calls_of("session/prompt")[0];
     let text = prompt["prompt"][0]["text"].as_str().unwrap();
     assert!(text.contains("do things"), "{text}");
-    assert_eq!(h.tmux_calls_of("new-session"), Vec::<String>::new());
     assert!(h.launcher.acp.is_running(&session.id));
 }
 
@@ -421,7 +404,6 @@ async fn a_stub_session_resumes_through_session_load_after_a_daemon_restart() {
     let restarted = ariadne_daemon::launcher::Launcher {
         cfg: h.launcher.cfg.clone(),
         store: h.store.clone(),
-        tmux: h.launcher.tmux.clone(),
         git: ariadne_daemon::gitwt::GitManager,
         acp: ariadne_daemon::acp::AcpRuntime::new(h.store.clone()),
         registry: h.launcher.registry.clone(),
@@ -475,8 +457,8 @@ async fn a_session_of_an_agent_without_session_load_is_not_resumable() {
     assert!(!h.launcher.acp.is_running(&session.id));
 }
 
-/// A scheduler nudge reaches an idle acp agent as a `session/prompt`: the
-/// resume text arrives as a new turn, and nothing takes the keystroke path.
+/// A scheduler nudge reaches an idle agent as a `session/prompt`: the resume
+/// text arrives as a new turn.
 #[tokio::test]
 async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
     let agent_dir = tempfile::tempdir().unwrap();
@@ -512,8 +494,6 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
         })
     })
     .await;
-    // Nothing was typed anywhere: the nudge left the keystroke path.
-    assert_eq!(h.keystrokes(&author), 0);
 
     // End the goal and take its agents down, so nothing respawns and no
     // child outlives the test.

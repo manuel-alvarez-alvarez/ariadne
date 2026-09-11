@@ -34,9 +34,9 @@ const BANNER = `/**
  * requires them to be unique. Qualify each one with its tag before generating;
  * the committed `openapi.json` stays the daemon's verbatim document.
  *
- * Two handlers can also share both a tag and a name — `sessions::input` (the
- * pane) and `console::input` (an acp session's console) are both tagged
- * `sessions` — so a tag alone does not always disambiguate. Anything still
+ * Two handlers can also share both a tag and a name — two modules can each
+ * hold an `input` under the `sessions` tag — so a tag alone does not always
+ * disambiguate. Anything still
  * colliding after that first pass is qualified again, by its path instead:
  * unlike the function name, no two routes answer to the same one.
  */

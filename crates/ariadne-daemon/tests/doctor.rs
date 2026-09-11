@@ -1,43 +1,51 @@
 //! Integration tests for the daemon-side environment report.
 //!
 //! The contract is that `GET /v1/doctor` answers for the daemon's own
-//! environment — every agent kind accounted for whether or not it is
-//! installed, tmux and git beside them, and the paths this daemon was
-//! configured with — and that it answers at all on a host that has none of
-//! those binaries, because a report that fails where the news is bad is no
-//! report. Which binaries the machine running the tests happens to have is
-//! not asserted; that it says something about each of them is.
+//! environment — every registry agent with what discovery made of it, git and
+//! the forge CLIs, and the paths this daemon was configured with — and that
+//! it answers at all on a host that has none of those binaries, because a
+//! report that fails where the news is bad is no report. Which binaries the
+//! machine running the tests happens to have is not asserted; that it says
+//! something about each of them is.
 
 mod common;
 
+use ariadne_api::agents::AcpAgentStatus;
 use ariadne_api::doctor::DaemonReportDto;
-use ariadne_core::AgentKind;
 
-use common::{Harness, harness};
+use common::{Harness, STUB, harness};
 
 async fn report(h: &Harness) -> DaemonReportDto {
     h.get("/v1/doctor").await
 }
 
-/// Every agent kind is accounted for, installed or not: a kind left out of
-/// the list would read as one nobody has to worry about.
+/// Every registry agent is accounted for, ready or not: an agent left out of
+/// the list would read as one nobody has to worry about, and one discovery
+/// rejected says why.
 #[tokio::test]
-async fn every_agent_kind_is_reported() {
-    let h = harness().await;
+async fn every_registry_agent_is_reported_with_what_discovery_made_of_it() {
+    let h = harness().discover_agents().await;
     let report = report(&h).await;
-    assert_eq!(report.agents.len(), AgentKind::ALL.len());
-    for (binary, kind) in report.agents.iter().zip(AgentKind::ALL) {
-        assert_eq!(binary.agent_kind, Some(kind));
-        assert_eq!(binary.name, kind.binary());
-        // Found or not, a path always comes with the binary it names.
-        if binary.path.is_none() {
-            assert!(binary.version.is_none(), "{binary:?}");
+    assert_eq!(
+        report
+            .acp_agents
+            .iter()
+            .map(|agent| agent.id.as_str())
+            .collect::<Vec<_>>(),
+        ["claude-code-acp", "codex-acp", "opencode-acp", STUB]
+    );
+    for agent in &report.acp_agents {
+        match agent.status {
+            AcpAgentStatus::Ready => assert!(agent.rejection_reason.is_none(), "{agent:?}"),
+            AcpAgentStatus::Rejected => assert!(agent.rejection_reason.is_some(), "{agent:?}"),
         }
     }
+    let stub = report.acp_agents.iter().find(|a| a.id == STUB).unwrap();
+    assert_eq!(stub.status, AcpAgentStatus::Ready, "{stub:?}");
 }
 
-/// tmux and git are what a session is made of, and `gh` and `glab` are what a
-/// published task is watched through, so all four are reported beside the
+/// git is what a worktree is made of, and `gh` and `glab` are what a
+/// published task is watched through, so all three are reported beside the
 /// agents rather than left to the caller to ask about. A forge CLI that is
 /// missing or signed out fails every poll of a pull request, and there is
 /// nowhere else that shows.
@@ -46,8 +54,7 @@ async fn the_tools_a_session_and_a_published_task_need_are_reported() {
     let h = harness().await;
     let report = report(&h).await;
     let names: Vec<&str> = report.tools.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["tmux", "git", "gh", "glab"]);
-    assert!(report.tools.iter().all(|t| t.agent_kind.is_none()));
+    assert_eq!(names, ["git", "gh", "glab"]);
 
     // Which of them are installed on the machine running the tests is not
     // this test's business; that each is asked the questions that apply to it
@@ -59,10 +66,6 @@ async fn the_tools_a_session_and_a_published_task_need_are_reported() {
             assert_eq!(tool.authenticated, None, "{tool:?}");
         }
     }
-    assert!(
-        report.agents.iter().all(|a| a.authenticated.is_none()),
-        "an agent CLI signs in to nothing this can ask about"
-    );
 }
 
 /// The paths are this daemon's own, not the ambient home's — a report about

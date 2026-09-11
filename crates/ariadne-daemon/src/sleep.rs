@@ -1,6 +1,6 @@
 //! Keeping the machine awake while agents are working.
 //!
-//! Agents live in tmux panes driven by long-running CLI processes; if the box
+//! Agents are long-running processes the daemon drives; if the box
 //! sleeps mid-task — the idle timer running out, or a lid coming down — they
 //! stall until someone wakes it. The scheduler already knows how many
 //! sessions are live on every tick, so it flips this inhibitor on the edges

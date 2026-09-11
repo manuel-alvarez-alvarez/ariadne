@@ -1,8 +1,6 @@
 //! CLI command implementations.
 
-pub mod acp;
 pub mod agent;
-pub mod agent_event;
 pub mod attach;
 pub mod attention;
 pub mod completions;
@@ -20,9 +18,7 @@ pub mod models;
 pub mod repo;
 pub mod resolve;
 pub mod session;
-pub mod setup;
 pub mod skill;
-pub mod spawn;
 pub mod task;
 
 use std::io::{IsTerminal, Write};
@@ -179,7 +175,7 @@ pub fn agent_label(skills: &[String]) -> String {
 /// `skills · model @ effort`: what an agent knows, and what it runs on.
 ///
 /// An effort that was never pinned says nothing at all rather than a word for
-/// it: the model is then run at whatever its agent CLI runs it at, and a `@`
+/// it: the model is then run at whatever its agent runs it at, and a `@`
 /// with a guess after it would read as a choice somebody made.
 pub fn agent_pin_label(skills: &[String], model: &str, effort: Option<&str>) -> String {
     match effort {
@@ -226,21 +222,20 @@ pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
     })
 }
 
-/// The word `--effort` writes for "the CLI's own", which is also how the
+/// The word `--effort` writes for "the agent's own", which is also how the
 /// daemon reads it: `task update --effort default` runs the model at whatever
-/// its agent CLI runs it at. Efforts only — a model is required, so no
+/// its agent runs it at. Efforts only — a model is required, so no
 /// `--model` takes it.
 pub const DEFAULT: &str = "default";
 
 /// One `--model <agent>:<model>` off the command line, as the daemon spells
-/// it back: the agent CLI that runs it, and after the `:` one model of it —
-/// both required, since a model is required and no CLI default stands in for
-/// one.
+/// it back: the registry agent that runs it, and after the `:` one model of
+/// it — both required, since a model is required and no agent default stands
+/// in for one.
 ///
 /// [`ModelRef`] is where the spelling lives, so a typo is refused here in the
-/// same words the daemon would have refused it in — and never leaves the shell.
-/// The hyphenated spelling of a CLI (`claude-code`) names the same one, and
-/// travels as the daemon writes it.
+/// same words the daemon would have refused it in — and never leaves the
+/// shell. Whether the registry holds the agent is the daemon's to answer.
 pub fn parse_model(s: &str) -> Result<String, String> {
     s.parse::<ModelRef>().map(|m| m.to_string())
 }
@@ -249,8 +244,8 @@ pub fn parse_model(s: &str) -> Result<String, String> {
 /// pinned model is run at.
 ///
 /// Which efforts a model takes is the model's own business — `ariadne models
-/// ls` lists them, and they differ between agent CLIs and between models of
-/// one CLI — so the only thing settled here is that an effort was written at
+/// ls` lists them, and they differ between agents and between models of one
+/// agent — so the only thing settled here is that an effort was written at
 /// all. The daemon knows the model this effort will run at, and refuses one
 /// that does not belong to it in words this side could not have written.
 pub fn parse_effort(s: &str) -> Result<String, String> {
@@ -265,7 +260,7 @@ pub fn parse_effort(s: &str) -> Result<String, String> {
 }
 
 /// The same, plus the one word an update takes beside an effort: [`DEFAULT`],
-/// which runs the model at whatever its agent CLI runs it at.
+/// which runs the model at whatever its agent runs it at.
 pub fn parse_effort_or_default(s: &str) -> Result<String, String> {
     if s == DEFAULT {
         return Ok(DEFAULT.to_string());
@@ -406,7 +401,7 @@ mod tests {
     }
 
     /// The one word an update writes beside an effort, and it is the same word
-    /// `--model` takes: the pin goes back to whatever the agent CLI runs the
+    /// `--model` takes: the pin goes back to whatever the agent runs the
     /// model at.
     #[test]
     fn an_update_takes_default_beside_an_effort() {
@@ -424,12 +419,12 @@ mod tests {
     fn an_agent_label_says_the_skills_and_the_pin_beside_them() {
         let skills = ["code-review".to_string(), "security-review".to_string()];
         assert_eq!(
-            agent_pin_label(&skills, "codex:gpt-5.6-luna", Some("high")),
-            "code-review, security-review · codex:gpt-5.6-luna @ high"
+            agent_pin_label(&skills, "codex-acp:gpt-5.6-luna", Some("high")),
+            "code-review, security-review · codex-acp:gpt-5.6-luna @ high"
         );
         assert_eq!(
-            agent_pin_label(&skills, "codex:gpt-5.6-luna", None),
-            "code-review, security-review · codex:gpt-5.6-luna",
+            agent_pin_label(&skills, "codex-acp:gpt-5.6-luna", None),
+            "code-review, security-review · codex-acp:gpt-5.6-luna",
             "no effort pinned is the CLI's own, which is not a choice to print"
         );
 

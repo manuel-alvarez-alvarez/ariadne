@@ -73,7 +73,7 @@ pub fn render(template: &str, values: &[(&str, &str)]) -> String {
 ///
 /// `skills_dir` is where the documents were written
 /// ([`write_skills`](super::write_skills)); each line names the file, so an
-/// agent whose CLI loads no skill of its own can still open it.
+/// agent opens the one it needs itself.
 pub fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Path>) -> String {
     let mut prompt = default_system_prompt(seat).trim().to_string();
     if skills.is_empty() {
@@ -94,7 +94,7 @@ pub fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Path>) ->
 ///
 /// The index carries one line per skill and no more: the document itself is
 /// on disk beside the session, and the agent reads it when it needs it. That
-/// is what the agent CLIs do with a skill of their own, and it is why a broad
+/// is what an agent does with a skill of its own, and it is why a broad
 /// set of skills costs an agent a few lines rather than a few pages.
 const SKILLS_HEADER: &str =
     "\n\nYour skills. Read the document of a skill before you do the work it covers:";
@@ -297,8 +297,7 @@ mod tests {
             title: "Ship the UI".into(),
             description: "The board needs swimlanes.".into(),
             status: "planning".into(),
-            agent_kind: "claude_code".into(),
-            model: "claude-sonnet-5".into(),
+            model: "stub:test-model".into(),
             effort: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),

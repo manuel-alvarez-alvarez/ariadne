@@ -11,16 +11,16 @@
  * Picking one is drilling into it: {@link TaskSessionView} takes over the whole
  * panel (see `task-panel.tsx`), header and tabs included, with a link back to
  * the task. Both pieces are the sessions feature's own components, so a session
- * shown here is the same one the rest of the app shows, terminal and actions
+ * shown here is the same one the rest of the app shows, console and actions
  * included.
  *
  * The selection lives in the URL (`?session=`), like the tab itself: a link
- * can point at one agent's terminal inside a task, and the panel closing takes
+ * can point at one agent's console inside a task, and the panel closing takes
  * it away again (see `detail-panels.tsx`).
  *
- * The terminal only exists while a session is the selected one — going back to
- * the list unmounts it, which drops the log stream. That is the default and it
- * is kept: the stream replays the whole pane on connect, so coming back costs a
+ * The console only exists while a session is the selected one — going back to
+ * the list unmounts it, which drops its stream. That is the default and it
+ * is kept: the stream replays the whole transcript on connect, so coming back costs a
  * reconnect and shows the same thing, where keeping it mounted would hold a
  * stream open for a session nobody is looking at.
  */

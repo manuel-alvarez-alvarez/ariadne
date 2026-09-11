@@ -1,5 +1,6 @@
 /**
- * What the agent's hooks reported: `GET /v1/events?session={id}`, tailed live.
+ * What the ACP runtime recorded for the agent: `GET /v1/events?session={id}`,
+ * tailed live.
  *
  * The endpoint is cursor-forward only — it returns the *oldest* events after a
  * given id, never the newest — so the feed is built by sweeping forward once
@@ -86,7 +87,7 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
       <EmptyState
         emphasis="quiet"
         title="No agent events yet"
-        description="Hooks report them as the agent starts, uses tools and finishes turns."
+        description="The ACP runtime records them as the agent starts, uses tools and finishes turns."
         className="border-0"
       />
     )

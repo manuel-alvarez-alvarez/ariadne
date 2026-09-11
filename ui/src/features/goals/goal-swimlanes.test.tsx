@@ -60,7 +60,6 @@ const SESSION: SessionDto = aSession({
   goal_id: GOAL.id,
   task_id: TASK.id,
   task_agent_id: "01JPROF0000000000000000ENG",
-  tmux_session: "ariadne-01JSESS0000000000000000001",
 })
 
 /** The orchestrator, which belongs to no task and so to no card. */

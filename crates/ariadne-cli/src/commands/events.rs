@@ -1,7 +1,7 @@
 //! `ariadne events` — everything the daemon does, one line at a time.
 //!
 //! Two sources behind one vocabulary. The recorded half is `GET /v1/events`:
-//! the agent events hooks reported, which is the only history there is. The
+//! the agent events the runtime recorded, which is the only history there is. The
 //! live half is `GET /v1/events/stream`, the daemon's domain events — every
 //! goal, task, session and review as it changes, with the agent
 //! events among them. So `ariadne events` prints what has happened and
@@ -23,6 +23,7 @@ use ariadne_api::stream::{
 };
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent};
+use ariadne_core::models::agent_of;
 
 use super::attention::reason_label;
 use super::follow::{self, Next};
@@ -321,8 +322,7 @@ fn domain_event(frame: &SseEvent) -> Option<DomainEvent> {
 }
 
 /// One recorded agent event as a line: its own kind, the session that
-/// reported it, and which agent that was — with the daemon's own gist of its
-/// payload beside it, `<agent kind> · <summary>`.
+/// reported it, and the daemon's own gist of its payload beside it.
 fn agent_line(e: &AgentEventDto) -> Line {
     Line {
         at: e.created_at.clone(),
@@ -332,7 +332,7 @@ fn agent_line(e: &AgentEventDto) -> Line {
             .clone()
             .or_else(|| e.task_id.clone())
             .unwrap_or_else(|| "-".into()),
-        detail: format!("{} · {}", e.agent_kind.as_deref().unwrap_or("-"), e.summary),
+        detail: e.summary.clone(),
         session: e.session_id.clone(),
         status: None,
     }
@@ -440,7 +440,7 @@ fn session_line(kind: String, s: &SessionDto) -> Line {
     let mut detail = format!(
         "{} {} [{}]",
         s.seat.as_str(),
-        s.agent_kind.as_str(),
+        agent_of(&s.model),
         s.status.as_str()
     );
     // Why the daemon wants a person for it, when it does: the one thing about
@@ -658,7 +658,7 @@ mod tests {
     fn a_session_line_carries_its_attention_beside_its_status() {
         assert_eq!(
             rendered(&domain_line(&DomainEvent::SessionUpdated(session()))),
-            "<time> · session_updated · 01SESS · author claude_code [running]"
+            "<time> · session_updated · 01SESS · author stub [running]"
         );
         let waiting = SessionDto {
             attention_reason: Some(AttentionReason::WaitingInput),
@@ -666,7 +666,7 @@ mod tests {
         };
         assert_eq!(
             rendered(&domain_line(&DomainEvent::SessionUpdated(waiting))),
-            "<time> · session_updated · 01SESS · author claude_code [running] · waiting for input"
+            "<time> · session_updated · 01SESS · author stub [running] · waiting for input"
         );
     }
 
@@ -681,7 +681,7 @@ mod tests {
     }
 
     /// A recorded agent event and the same event arriving live read
-    /// identically — kind, session, agent and the daemon's own summary of its
+    /// identically — kind, session and the daemon's own summary of its
     /// payload — so the history and the tail are one list and `--kind stop`
     /// means one thing in both.
     #[test]
@@ -690,13 +690,12 @@ mod tests {
             id: "01EV".into(),
             session_id: Some("01SESS".into()),
             task_id: Some("01TASK".into()),
-            agent_kind: Some("claude_code".into()),
             kind: "stop".into(),
             payload: serde_json::json!({}),
             summary: "ran cargo nextest run".into(),
             created_at: AT.into(),
         };
-        let expected = "<time> · stop · 01SESS · claude_code · ran cargo nextest run";
+        let expected = "<time> · stop · 01SESS · ran cargo nextest run";
         assert_eq!(rendered(&agent_line(&event)), expected);
         assert_eq!(
             rendered(&domain_line(&DomainEvent::AgentEvent(event))),

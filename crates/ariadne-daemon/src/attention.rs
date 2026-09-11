@@ -2,10 +2,10 @@
 //!
 //! Attention on a session means "a human must act", and that is only true
 //! while the work the session was started for is still its own to do. Both
-//! detectors ask the same question: the sweep that flags a vanished pane, and
-//! the event ingestion that flags a permission prompt. A reviewer that has
-//! voted and an author whose task is under review are agents nobody is
-//! waiting on, whatever their pane puts on the screen.
+//! detectors ask the same question: the sweep that flags a vanished agent,
+//! and the event ingestion that flags a permission request. A reviewer that
+//! has voted and an author whose task is under review are agents nobody is
+//! waiting on, whatever they ask.
 
 use ariadne_core::{GoalStatus, Seat, TaskStatus};
 use ariadne_store::{AgentSession, Store, Task};
@@ -21,7 +21,7 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
         // The goal is the orchestrator's whole job, and it holds that job
         // for the whole goal: the plan is a hand-off, not an ending. It is
         // the agent the user talks to about work already running, and the
-        // one the daemon tells when a task needs a decision, so a pane of
+        // one the daemon tells when a task needs a decision, so an agent of
         // its own that vanishes under a goal still going is news.
         Seat::Orchestrator => matches!(
             store.get_goal(&session.goal_id).await.map(|g| g.status()),

@@ -6,7 +6,7 @@
 //! and that what it said comes back on the task rather than only in the audit
 //! log a person has to go and read.
 //!
-//! No tmux and no agent CLI: the sessions here are rows, and the calls are the
+//! No agent is started: the sessions here are rows, and the calls are the
 //! ones the MCP server makes on the author's behalf.
 
 mod common;

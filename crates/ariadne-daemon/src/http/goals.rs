@@ -27,9 +27,7 @@ pub struct GoalListQuery {
 /// A goal with the repositories it references and what its agents have
 /// spent, which is how every one of these endpoints answers.
 async fn to_dto(state: &AppState, goal: Goal) -> ApiResult<Json<GoalDto>> {
-    Ok(Json(
-        goal_dto_of(&state.store, &state.agent_registry, goal).await?,
-    ))
+    Ok(Json(goal_dto_of(&state.store, goal).await?))
 }
 
 impl GoalListQuery {
@@ -66,7 +64,7 @@ pub async fn create(
         return Err(ApiError::bad_request("a goal needs at least one repo"));
     }
     // Refused before anything is looked up: a missing model, or one that
-    // names no agent CLI, is a fact about the request rather than about
+    // names no registry agent, is a fact about the request rather than about
     // anything it refers to.
     pins::readable(Some(&req.model), &state.agent_registry)?;
 
@@ -108,7 +106,7 @@ pub async fn list(
     let goals = state.store.list_goals(&q.statuses()?).await?;
     let mut out = Vec::with_capacity(goals.len());
     for goal in goals {
-        out.push(goal_dto_of(&state.store, &state.agent_registry, goal).await?);
+        out.push(goal_dto_of(&state.store, goal).await?);
     }
     Ok(Json(out))
 }
@@ -161,7 +159,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let goal = state.store.get_goal(&id).await?;
-    // Terminal goals only: an active one still owns tmux sessions and git
+    // Terminal goals only: an active one still owns agent sessions and git
     // worktrees that only the cancel path tears down, and a hard delete here
     // would orphan them.
     if !goal.status().is_terminal() {
@@ -171,7 +169,7 @@ pub async fn delete(
         )));
     }
     // A terminal goal is *supposed* to own nothing live, but the delete is
-    // what makes a mistake permanent: the rows cascade away and a pane that
+    // what makes a mistake permanent: the rows cascade away and an agent that
     // outlived them is no longer anything the daemon can name, let alone
     // reap. So whatever is still standing is taken down first, and only a
     // clean teardown gets to delete.

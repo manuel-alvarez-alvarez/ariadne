@@ -112,7 +112,7 @@ describe("isTypingTarget", () => {
     expect(isTypingTarget(undefined)).toBe(false)
   })
 
-  it("is true for form fields, xterm's hidden textarea included", () => {
+  it("is true for form fields, the console's textarea included", () => {
     expect(isTypingTarget({ tagName: "INPUT" })).toBe(true)
     expect(isTypingTarget({ tagName: "TEXTAREA" })).toBe(true)
     expect(isTypingTarget({ tagName: "SELECT" })).toBe(true)

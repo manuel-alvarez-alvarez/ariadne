@@ -1,16 +1,17 @@
-//! Attach/logs helpers: resolve an Ariadne id to a tmux session or ACP console.
+//! Attach/logs helpers: resolve an Ariadne id to a session's console.
 //!
 //! The id is a session, task or goal id — a task or goal one resolves to the
 //! session of the wanted seat (default author for tasks, orchestrator for
-//! goals). With no tmux alive for it, attach revives the most recent matching
-//! session (`POST /v1/sessions/{id}/resume`) and attaches to the fresh tmux
-//! that resumes the same agent conversation.
+//! goals). With no live session for it, attach revives the most recent
+//! matching session (`POST /v1/sessions/{id}/resume`) and attaches to the
+//! fresh agent that resumes the same conversation.
 
 use anyhow::{Result, bail};
 
 use ariadne_api::sessions::SessionDto;
 use ariadne_client::{Client, ClientError};
-use ariadne_core::{AgentKind, Seat};
+use ariadne_core::Seat;
+use ariadne_core::models::agent_of;
 
 use crate::output::{style, view};
 
@@ -60,41 +61,14 @@ async fn found<T: serde::de::DeserializeOwned>(client: &Client, path: &str) -> R
     }
 }
 
-/// Whether the tmux session actually exists — the database may lag it by up
-/// to the 15s liveness sweep.
-fn tmux_alive(name: &str) -> bool {
-    std::process::Command::new("tmux")
-        .args(["has-session", "-t", name])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-/// Find the live tmux session for a task or goal.
-pub async fn resolve_tmux(client: &Client, id: &str, seat: Option<Seat>) -> Result<SessionDto> {
-    let (sessions, wanted) = candidates(client, id, seat).await?;
-    sessions
-        .into_iter()
-        .find(|s| s.seat == wanted && s.status.is_live() && tmux_alive(&s.tmux_session))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no live {} session found for {id} (is the agent running?)",
-                wanted.as_str()
-            )
-        })
-}
-
-/// Find the live session for a task or goal seat. An ACP session is live
-/// through the daemon runtime rather than tmux, so its persisted status is
-/// the liveness check that takes the pane check's place.
+/// Find the live session for a task or goal seat. Its persisted status is
+/// the liveness check: the daemon's runtime owns the agent, and the liveness
+/// sweep keeps the row honest.
 pub async fn resolve_live(client: &Client, id: &str, seat: Option<Seat>) -> Result<SessionDto> {
-    if let Ok(session) = resolve_tmux(client, id, seat).await {
-        return Ok(session);
-    }
     let (sessions, wanted) = candidates(client, id, seat).await?;
     sessions
         .into_iter()
-        .find(|s| s.seat == wanted && s.status.is_live() && s.agent_kind == AgentKind::Acp)
+        .find(|s| s.seat == wanted && s.status.is_live())
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no live {} session found for {id} (is the agent running?)",
@@ -103,7 +77,8 @@ pub async fn resolve_live(client: &Client, id: &str, seat: Option<Seat>) -> Resu
         })
 }
 
-/// No live tmux: revive the most recent resumable session of the wanted seat.
+/// No live session: revive the most recent resumable session of the wanted
+/// seat.
 async fn revive(client: &Client, id: &str, seat: Option<Seat>) -> Result<SessionDto> {
     let (sessions, wanted) = candidates(client, id, seat).await?;
     let target = sessions
@@ -119,25 +94,15 @@ async fn revive(client: &Client, id: &str, seat: Option<Seat>) -> Result<Session
     eprintln!(
         "{}",
         hint(&format!(
-            "no live tmux for {id} — reviving session {} ({})",
+            "no live session for {id} — reviving session {} ({})",
             target.id,
-            target.agent_kind.as_str()
+            agent_of(&target.model)
         ))
     );
     client
         .post_empty(&format!("/v1/sessions/{}/resume", target.id))
         .await
         .map_err(Into::into)
-}
-
-/// Replace this process with `tmux attach`.
-pub fn exec_tmux_attach(tmux_session: &str) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new("tmux")
-        .args(["attach", "-t", tmux_session])
-        .exec();
-    // exec only returns on failure.
-    bail!("failed to exec tmux attach -t {tmux_session}: {err}");
 }
 
 /// A terminal task whose worktrees were removed — the normal end of a merged
@@ -164,29 +129,18 @@ async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Attach to one specific session: its own tmux when alive, else revive it.
-/// The tmux itself decides — the persisted status can be stale either way, and
-/// the daemon's resume treats tmux existence as authoritative too.
+/// Attach to one specific session: its console when it is live, else revive
+/// it first.
 async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
-    if session.agent_kind == AgentKind::Acp {
-        let session = if session.status.is_live() {
-            session
-        } else {
-            client
-                .post_empty(&format!("/v1/sessions/{}/resume", session.id))
-                .await?
-        };
-        return attach_to(client, &session).await;
-    }
-    let session = if tmux_alive(&session.tmux_session) {
+    let session = if session.status.is_live() {
         session
     } else {
         eprintln!(
             "{}",
             hint(&format!(
-                "no live tmux for {} — reviving it ({})",
+                "session {} has ended — reviving it ({})",
                 session.id,
-                session.agent_kind.as_str()
+                agent_of(&session.model)
             ))
         );
         client
@@ -196,7 +150,7 @@ async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
     attach_to(client, &session).await
 }
 
-/// Attach to a task or goal id: the live tmux of the wanted seat, or the
+/// Attach to a task or goal id: the live session of the wanted seat, or the
 /// most recent resumable session of that seat revived.
 pub async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
     let session = match resolve_live(client, id, seat).await {
@@ -229,25 +183,13 @@ pub async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) -> Result
 }
 
 async fn attach_to(client: &Client, session: &SessionDto) -> Result<()> {
-    if session.agent_kind == AgentKind::Acp {
-        eprintln!(
-            "{}",
-            hint(&format!(
-                "attaching to ACP console ({} / {})",
-                session.seat.as_str(),
-                session.agent_kind.as_str()
-            ))
-        );
-        return crate::commands::console::attach(client, &session.id).await;
-    }
     eprintln!(
         "{}",
         hint(&format!(
-            "attaching to {} ({} / {})",
-            session.tmux_session,
+            "attaching to the console ({} / {})",
             session.seat.as_str(),
-            session.agent_kind.as_str()
+            agent_of(&session.model)
         ))
     );
-    exec_tmux_attach(&session.tmux_session)
+    crate::commands::console::attach(client, &session.id).await
 }

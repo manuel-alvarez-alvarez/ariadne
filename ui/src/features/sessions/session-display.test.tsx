@@ -51,7 +51,7 @@ describe("the session status colours", () => {
     expect(dotClasses("running")).toContain("bg-status-active")
   })
 
-  it("keeps the pulse to the sessions with a pane that may still speak", () => {
+  it("keeps the pulse to the sessions with an agent that may still speak", () => {
     expect(isLiveStatus("idle")).toBe(true)
     expect(isLiveStatus("exited")).toBe(false)
     expect(isLiveStatus("failed")).toBe(false)

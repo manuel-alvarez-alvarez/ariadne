@@ -1,8 +1,8 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, Landing, MessageKind, Seat, SessionStatus,
-    TaskStatus, TokenUsage,
+    Actor, AttentionReason, GoalStatus, Landing, MessageKind, Seat, SessionStatus, TaskStatus,
+    TokenUsage,
 };
 use ariadne_store::defaults::default_landing_prompt;
 use ariadne_store::*;
@@ -13,42 +13,72 @@ async fn test_store() -> (Store, tempfile::TempDir) {
     (store, dir)
 }
 
-/// Registry agent ids are open strings throughout the schema.
+/// The schema names an agent only by the registry id at the head of a pin:
+/// no table keeps an agent kind beside it, and a session is its row, its
+/// agent and its conversation — nothing names a terminal it runs in.
 #[tokio::test]
-async fn agent_ids_have_no_closed_check_constraint() {
+async fn the_schema_names_agents_by_registry_id_alone() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.db");
     let _store = Store::open(&path).await.unwrap();
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
         .await
         .unwrap();
-    for table in ["agent_configs", "goals", "task_agents", "agent_events"] {
-        let schema: String =
-            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
-                .bind(table)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert!(
-            !schema.contains("agent_kind IN"),
-            "{table} still closes agent ids: {schema}"
-        );
+    let schemas: Vec<(String, String)> =
+        sqlx::query_as("SELECT name, sql FROM sqlite_master WHERE type = 'table'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    for (table, schema) in schemas {
+        assert!(!schema.contains("agent_kind"), "{table}: {schema}");
     }
+    let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")
+        .bind("agent_sessions")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        columns,
+        [
+            "id",
+            "goal_id",
+            "task_id",
+            "seat",
+            "task_agent_id",
+            "internal_session_id",
+            "worktree_path",
+            "status",
+            "last_activity_at",
+            "created_at",
+            "ended_at",
+            "attention_reason",
+            "attention_since",
+            "model",
+            "effort",
+            "launched_at",
+            "launch_id",
+        ]
+    );
+    let config: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")
+        .bind("agent_configs")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(config, ["agent_id", "extra_flags", "updated_at"]);
 }
 
 /// The pin every seeded agent runs on: a model is required everywhere, so the
 /// fixtures name one and the tests that care name their own.
-fn pin(agent_kind: AgentKind, model: &str) -> AgentPin {
+fn pin(model: &str) -> AgentPin {
     AgentPin {
-        agent_kind,
         model: model.into(),
         effort: None,
     }
 }
 
-/// The claude_code pin the fixtures default to.
+/// The pin the fixtures default to.
 fn default_pin() -> AgentPin {
-    pin(AgentKind::ClaudeCode, "claude-sonnet-5")
+    pin("stub:test-model")
 }
 
 /// A registered repository, on a path of its own so goals can be seeded side
@@ -107,7 +137,6 @@ impl World {
     /// otherwise — an orchestrator's has none.
     async fn session(
         &self,
-        tmux: &str,
         seat: Seat,
         agent_id: Option<&str>,
         task_id: Option<&str>,
@@ -118,10 +147,8 @@ impl World {
                 task_id: task_id.map(str::to_string),
                 seat,
                 task_agent_id: agent_id.map(str::to_string),
-                agent_kind: AgentKind::ClaudeCode,
-                model: "claude-sonnet-5".into(),
+                model: "stub:test-model".into(),
                 effort: None,
-                tmux_session: tmux.into(),
                 worktree_path: Some("/tmp/wt".into()),
             })
             .await
@@ -131,13 +158,8 @@ impl World {
     /// The author session of this world's task.
     async fn author_session(&self) -> AgentSession {
         let author = self.store.task_author(&self.task.id).await.unwrap();
-        self.session(
-            "ariadne-test-eng",
-            Seat::Author,
-            Some(&author.id),
-            Some(&self.task.id),
-        )
-        .await
+        self.session(Seat::Author, Some(&author.id), Some(&self.task.id))
+            .await
     }
 
     /// This world's task as it now stands.
@@ -201,79 +223,42 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
         .unwrap()
 }
 
-/// A fresh database knows how to launch every agent CLI, with the flags the
-/// core defaults name — nothing to configure before the first spawn.
+/// A fresh database holds no flags: an agent nobody configured is launched
+/// with its registry command alone.
 #[tokio::test]
-async fn agent_configs_are_seeded_with_the_defaults() {
+async fn an_agent_nobody_configured_has_no_flags() {
     let (store, _dir) = test_store().await;
-    let configs = store.list_agent_configs().await.unwrap();
-    assert_eq!(
-        configs.iter().map(|c| c.agent_kind()).collect::<Vec<_>>(),
-        AgentKind::ALL.to_vec()
-    );
-    for config in configs {
-        assert_eq!(config.extra_flags(), config.default_flags());
-    }
-    assert!(
-        store
-            .get_agent_config(AgentKind::Acp)
-            .await
-            .unwrap()
-            .extra_flags()
-            .is_empty()
-    );
-    // The bypass each CLI spells its own way, spelled out: this is what an
-    // unconfigured Ariadne launches them with.
-    for (kind, flag) in [
-        (AgentKind::ClaudeCode, "--dangerously-skip-permissions"),
-        (
-            AgentKind::Codex,
-            "--dangerously-bypass-approvals-and-sandbox",
-        ),
-        (AgentKind::Opencode, "--auto"),
-    ] {
-        assert_eq!(
-            store.get_agent_config(kind).await.unwrap().extra_flags(),
-            vec![flag.to_string()]
-        );
-    }
+    assert!(store.list_agent_configs().await.unwrap().is_empty());
+    assert!(store.agent_flags("codex-acp").await.unwrap().is_empty());
 }
 
-/// The flags are the user's to replace, emptying them included, and the
-/// defaults stay readable beside them so a reset needs nothing remembered.
+/// The flags are the user's to replace, emptying them included, and one
+/// agent's flags are its own.
 #[tokio::test]
 async fn agent_config_flags_are_replaced_whole() {
     let (store, _dir) = test_store().await;
     let updated = store
-        .update_agent_config(
-            AgentKind::ClaudeCode,
-            vec!["--permission-mode=acceptEdits".into()],
-        )
+        .update_agent_config("claude-code-acp", vec!["--verbose".into()])
         .await
         .unwrap();
-    assert_eq!(
-        updated.extra_flags(),
-        vec!["--permission-mode=acceptEdits".to_string()]
-    );
-    assert_eq!(
-        updated.default_flags(),
-        vec!["--dangerously-skip-permissions".to_string()]
-    );
+    assert_eq!(updated.agent_id, "claude-code-acp");
+    assert_eq!(updated.extra_flags(), vec!["--verbose".to_string()]);
+    store
+        .update_agent_config("codex-acp", vec!["--quiet".into()])
+        .await
+        .unwrap();
     let emptied = store
-        .update_agent_config(AgentKind::Codex, vec![])
+        .update_agent_config("codex-acp", vec![])
         .await
         .unwrap();
     assert!(emptied.extra_flags().is_empty());
     // The edit is read back from the database, and one agent's flags are its
     // own: emptying codex left claude alone.
     assert_eq!(
-        store
-            .get_agent_config(AgentKind::ClaudeCode)
-            .await
-            .unwrap()
-            .extra_flags(),
-        vec!["--permission-mode=acceptEdits".to_string()]
+        store.agent_flags("claude-code-acp").await.unwrap(),
+        vec!["--verbose".to_string()]
     );
+    assert!(store.agent_flags("codex-acp").await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -877,7 +862,7 @@ async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
 }
 
 /// A message goes to exactly one recipient and is delivered once: the stamp is
-/// what says which of them have reached a pane.
+/// what says which of them have reached their agent.
 #[tokio::test]
 async fn a_message_is_delivered_once_and_the_stamp_says_so() {
     let w = World::new().await;
@@ -999,7 +984,6 @@ async fn sessions_and_events_round_trip() {
         .create_event(NewAgentEvent {
             session_id: Some(session.id.clone()),
             task_id: Some(task.id.clone()),
-            agent_kind: Some(AgentKind::ClaudeCode),
             kind: "post_tool_use".into(),
             payload: serde_json::json!({"tool_name": "Bash"}),
         })
@@ -1377,86 +1361,6 @@ async fn an_idle_report_clears_only_the_silence_and_the_error() {
     );
 }
 
-/// Whether a tool that asks the user something is still waiting on them is
-/// read off the session's own log, and the last event about such a call is the
-/// whole of the answer: everything the turn reports in between belongs to its
-/// other tool calls. Answered, dismissed by a prompt or ended with the turn,
-/// the question is over — and the clear it takes with it is the narrow one.
-#[tokio::test]
-async fn a_pending_question_is_the_last_word_of_a_sessions_log() {
-    let w = World::new().await;
-    let store = &w.store;
-    let session = w.author_session().await;
-    let pending = async || {
-        store
-            .tool_call_is_pending(&session.id, "AskUserQuestion")
-            .await
-            .unwrap()
-    };
-
-    // A log with nothing in it has no question in it.
-    assert!(!pending().await);
-    for (kind, tool, expected) in [
-        ("pre_tool_use", Some("Bash"), false),
-        ("pre_tool_use", Some("AskUserQuestion"), true),
-        // The rest of the turn's batch, running around the blocked call.
-        ("pre_tool_use", Some("Bash"), true),
-        ("post_tool_use", Some("Bash"), true),
-        ("notification", None, true),
-        // Answered, asked again, ended with the turn, asked again, typed over.
-        ("post_tool_use", Some("AskUserQuestion"), false),
-        ("pre_tool_use", Some("AskUserQuestion"), true),
-        ("stop", None, false),
-        ("pre_tool_use", Some("AskUserQuestion"), true),
-        ("user_prompt_submit", None, false),
-    ] {
-        store
-            .create_event(NewAgentEvent {
-                session_id: Some(session.id.clone()),
-                task_id: None,
-                agent_kind: Some(AgentKind::ClaudeCode),
-                kind: kind.into(),
-                payload: match tool {
-                    Some(tool) => serde_json::json!({"tool_name": tool}),
-                    None => serde_json::json!({}),
-                },
-            })
-            .await
-            .unwrap();
-        assert_eq!(pending().await, expected, "{kind} {tool:?}");
-    }
-
-    // What an answered question takes down is its own flag and no other: the
-    // dialog and what the user owes the task are answered somewhere else.
-    for (raised, left) in [
-        (AttentionReason::WaitingInput, None),
-        (
-            AttentionReason::WaitingPermission,
-            Some(AttentionReason::WaitingPermission),
-        ),
-        (
-            AttentionReason::WaitingUser,
-            Some(AttentionReason::WaitingUser),
-        ),
-    ] {
-        store.clear_session_attention(&session.id).await.unwrap();
-        store
-            .set_session_attention(&session.id, raised)
-            .await
-            .unwrap();
-        store.clear_question_attention(&session.id).await.unwrap();
-        assert_eq!(
-            store
-                .get_session(&session.id)
-                .await
-                .unwrap()
-                .attention_reason(),
-            left,
-            "{raised:?}"
-        );
-    }
-}
-
 /// What an agent's own detectors may raise over, and what they may not.
 ///
 /// `waiting_user` is the one flag no agent put up: it says a person owes this
@@ -1664,12 +1568,7 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
     let author = w.author_session().await;
     let staffed = w.store.list_task_reviewers(&task.id).await.unwrap();
     let reviewer = w
-        .session(
-            "ariadne-test-rev",
-            Seat::Reviewer,
-            Some(&staffed[0].id),
-            Some(&task.id),
-        )
+        .session(Seat::Reviewer, Some(&staffed[0].id), Some(&task.id))
         .await;
     assert!(!w.task().await.is_stalled());
 
@@ -1718,9 +1617,7 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
 
     // An orchestrator has no task to project onto, and says so on its own row.
     // An orchestrator is staffed on no task, so its session carries no agent.
-    let alone = w
-        .session("ariadne-test-plan", Seat::Orchestrator, None, None)
-        .await;
+    let alone = w.session(Seat::Orchestrator, None, None).await;
     store
         .set_session_attention(&alone.id, AttentionReason::Stalled)
         .await
@@ -1736,7 +1633,7 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
     assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
 }
 
-/// A prompt is a dialog on the agent's terminal, so it cannot outlive the
+/// A prompt is a question the live agent waits on, so it cannot outlive the
 /// session it was raised on: retiring one takes `waiting_permission` /
 /// `waiting_input` down with it, and leaves every reason a session ends
 /// *carrying* exactly where it is.
@@ -2090,15 +1987,15 @@ async fn a_user_skill_under_a_shipped_name_becomes_a_built_in_on_its_own_text() 
 ///
 /// There is nothing behind a pin to inherit from and no auto to fall back to:
 /// what the orchestrator sized an agent at, or what the user chose instead,
-/// is the whole of the answer, and every agent names its CLI and its model.
+/// is the whole of the answer, and every agent names its registry agent and
+/// its model.
 #[tokio::test]
 async fn an_agent_is_written_on_the_pin_it_was_given_whole() {
     let (store, _dir) = test_store().await;
     let (goal, repo) = seed_goal(&store).await;
 
     let pinned = AgentPin {
-        agent_kind: AgentKind::Codex,
-        model: "gpt-5.6-luna".into(),
+        model: "codex-acp:gpt-5.6-luna".into(),
         effort: Some("max".into()),
     };
     let task = store
@@ -2122,13 +2019,11 @@ async fn an_agent_is_written_on_the_pin_it_was_given_whole() {
         .unwrap();
 
     let author = store.task_author(&task.id).await.unwrap();
-    assert_eq!(author.agent_kind(), AgentKind::Codex);
-    assert_eq!(author.model, "gpt-5.6-luna");
+    assert_eq!(author.model, "codex-acp:gpt-5.6-luna");
     assert_eq!(author.effort.as_deref(), Some("max"));
 
     let reviewers = store.list_task_reviewers(&task.id).await.unwrap();
-    assert_eq!(reviewers[0].agent_kind(), AgentKind::ClaudeCode);
-    assert_eq!(reviewers[0].model, "claude-sonnet-5");
+    assert_eq!(reviewers[0].model, "stub:test-model");
     assert_eq!(reviewers[0].effort, None);
 
     // And the user's later choice replaces it whole, with no half left behind.
@@ -2136,15 +2031,13 @@ async fn an_agent_is_written_on_the_pin_it_was_given_whole() {
         .set_agent_pin(
             &author.id,
             &AgentPin {
-                agent_kind: AgentKind::ClaudeCode,
-                model: "claude-opus-5".into(),
+                model: "claude-code-acp:claude-opus-5".into(),
                 effort: None,
             },
         )
         .await
         .unwrap();
-    assert_eq!(moved.agent_kind(), AgentKind::ClaudeCode);
-    assert_eq!(moved.model, "claude-opus-5");
+    assert_eq!(moved.model, "claude-code-acp:claude-opus-5");
     assert_eq!(
         moved.effort, None,
         "the effort belonged to the model that was left behind"
@@ -2302,20 +2195,10 @@ async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
         .id
         .clone();
     let first_round = w
-        .session(
-            "rev-round-1",
-            Seat::Reviewer,
-            Some(&reviewer_id),
-            Some(&w.task.id),
-        )
+        .session(Seat::Reviewer, Some(&reviewer_id), Some(&w.task.id))
         .await;
     let second_round = w
-        .session(
-            "rev-round-2",
-            Seat::Reviewer,
-            Some(&reviewer_id),
-            Some(&w.task.id),
-        )
+        .session(Seat::Reviewer, Some(&reviewer_id), Some(&w.task.id))
         .await;
 
     for (session, spent) in [
@@ -2371,13 +2254,13 @@ async fn a_session_that_has_reported_nothing_reads_as_zeros() {
 #[tokio::test]
 async fn a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator() {
     let w = World::new().await;
-    let orchestrator = w.session("plan", Seat::Orchestrator, None, None).await;
+    let orchestrator = w.session(Seat::Orchestrator, None, None).await;
     let author = w.author_session().await;
     let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0]
         .id
         .clone();
     let reviewer = w
-        .session("rev", Seat::Reviewer, Some(&reviewer_id), Some(&w.task.id))
+        .session(Seat::Reviewer, Some(&reviewer_id), Some(&w.task.id))
         .await;
 
     for (session, spent) in [
@@ -2691,7 +2574,7 @@ async fn an_edit_replaces_the_whole_author_list() {
             NewTaskAgent::new(
                 Seat::Author,
                 ["coding", "testing"],
-                pin(AgentKind::Codex, "gpt-5.6-terra"),
+                pin("codex-acp:gpt-5.6-terra"),
             ),
         ]
     };
@@ -2709,7 +2592,7 @@ async fn an_edit_replaces_the_whole_author_list() {
         .unwrap();
     let authors = w.store.list_task_authors(&task.id).await.unwrap();
     assert_eq!(authors.len(), 2);
-    assert_eq!(authors[1].agent_kind(), AgentKind::Codex);
+    assert_eq!(authors[1].model, "codex-acp:gpt-5.6-terra");
 
     // The task's own model field means "the author's", and it has several
     // now: the edit is refused rather than guessed about.
@@ -2763,14 +2646,14 @@ async fn an_edit_replaces_the_whole_author_list() {
         .update_task(
             &w.task.id,
             TaskUpdate {
-                pin: Some(pin(AgentKind::Codex, "gpt-5.6-terra")),
+                pin: Some(pin("codex-acp:gpt-5.6-terra")),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
     let author = w.store.task_author(&w.task.id).await.unwrap();
-    assert_eq!(author.agent_kind(), AgentKind::Codex);
+    assert_eq!(author.model, "codex-acp:gpt-5.6-terra");
 }
 
 /// The pick as the store holds it: one row per reviewer, a second one refused

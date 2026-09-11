@@ -2,149 +2,150 @@
 id: sessions-terminals-and-logs
 status: current
 updated: 2026-09-11
-areas: [daemon, store]
+areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
   - crates/ariadne-daemon/tests/resume.rs
-  - crates/ariadne-daemon/tests/session_logs.rs
-  - crates/ariadne-daemon/tests/session_input.rs
-  - crates/ariadne-daemon/tests/session_resize.rs
-  - crates/ariadne-daemon/tests/managers.rs
-  - crates/ariadne-daemon/tests/keystroke_delivery.rs
-  - crates/ariadne-daemon/tests/session_adoption.rs
   - crates/ariadne-daemon/tests/acp_console.rs
+  - crates/ariadne-daemon/tests/acp_runtime.rs
+  - crates/ariadne-daemon/tests/events.rs
+  - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-cli/src/commands/console.rs
 ---
 
-# Sessions, terminals and logs
+# Sessions and the console
 
-An agent session is a tmux pane the daemon owns — except a session of kind
-`acp`, which is a daemon-owned child process with no pane (021) and its own
-console instead. This is what may be done to a pane and to a console, and how
-each reaches a client.
+An agent session is a row the daemon keeps for one agent on one seat, and the
+agent behind it is a daemon-owned ACP child process (021). This is what a
+session holds, what may be done to it, and how a client reads it and speaks
+to it: through the session's console.
 
 ## Scope
 
-In: the session row and its statuses, tmux session naming and lifecycle,
-reading a pane as a live log stream, typing into a pane, resizing it,
-confirmed keystroke delivery, and — for a session of kind `acp` — its
-console: the transcript, its live stream, and posted input.
+In: the session row and its statuses, launches and relaunches of one row,
+kill and resume, the console — its transcript, its live stream and posted
+input — and how the CLI reaches the console.
 
-Out: sessions discovered outside Ariadne and adopted as authors (020), the
-`acp` runtime itself — the child process, the protocol conversation and its
-event vocabulary (021) — when the daemon decides to type something (009,
-010), and what it types (006).
+Out: the ACP runtime itself — the child process, the protocol conversation,
+permission modes and the event vocabulary (021); sessions started outside
+Ariadne and adopted as authors (020); when the daemon hands an agent a prompt
+(009) and what the prompt says (006); how `ariadne attach` resolves a task or
+goal id to a seat (014).
 
 ## Behavior
 
 1. A session belongs to a goal, a seat and — for authors and reviewers — a
-   task, and holds the tmux session name, the worktree, the agent kind, the
-   model it runs on — always named, frozen off its seat's pin at creation —
-   the effort where one was pinned, and its internal agent id.
-2. Sessions are long-lived: one author per task, one reviewer per task
-   across every review of it, one orchestrator per goal. Restarting one reopens the same
-   row, and every launch of it is dated and named.
-3. A launch is refused rather than duplicated: a spawn asks first whether the
-   seat already has a live session, and counts "tmux could not be asked" as a
-   yes — a wrong no would put two agents on one piece of work.
-4. tmux session names are stable and short, derived from the goal, the task
-   and the seat. A seat therefore has one name, and a spawn that finds a pane
-   still holding it while nothing live claims it takes the name rather than
-   failing on it — a leftover pane would otherwise cost every attempt its
-   session row.
-5. The name of a launch is what the agent it started reports under
-   (`ARIADNE_LAUNCH_ID`), and it is written to the row before the pane exists:
-   a relaunch has two processes under one session id for as long as the one it
-   replaced takes to exit, and only this tells their reports apart (012).
-6. A session's output is served as a log: a snapshot of the grid the pane
-   draws against, then deltas as it writes. A resize under the stream is
-   reported as a new grid, and output in flight is replaced rather than
-   reordered.
-7. Output is withheld once the pane stops answering, and tmux being
-   unreachable does not end a session. A pane that cannot be measured or
-   captured is not reported as finished.
-8. An exited session serves its full log and then ends the stream, and ignores
-   a pane that later took over its name.
-9. A client may type into a live pane. The bytes reach the pane verbatim,
-   control bytes included, and a long paste is split into ordered batches. A
-   finished session, or one with no pane, refuses input.
-10. Typing into a pane takes down whatever the session was flagged for: an
-   answer is an answer, whoever gave it.
-11. A client may resize a pane within bounds; a size outside them is rejected
-    before tmux sees it, and a finished or pane-less session refuses.
-12. Everything the daemon types is delivered under confirmation: the pane is
-    read back, and an Enter that was swallowed is pressed again until the
-    message goes. A message that never submits is never called delivered, and
-    an instruction still sitting in the composer raises the session.
-13. An adopted session is a normal author session after it is created: it has
-    the task worktree, its CLI resume id, and the same lifecycle as a session
-    Ariadne started (020).
-14. An `acp` session's console snapshot is its events so far, in order: every
-    one the runtime reported (021), with no fixed list of kinds — a message
-    chunk, a thought, a tool call, a plan, a permission request or a turn's
-    status all pass through exactly as the runtime named them.
-15. The console's live stream opens with that snapshot, then sends every later
-    event as it is recorded. It is not a pane reading: there is no grid, no
-    resync on a resize, and a client that falls too far behind is told how
-    many events it missed and the connection closes, the same as
-    `/v1/events/stream` (012) — reconnecting starts again from a fresh
-    snapshot.
-16. Posted console input becomes a `session/prompt`. An agent can run only one
-    turn at a time, so input posted while one is running is queued and sent
-    the moment it ends, in the order it was posted; a finished session, or one
-    of any kind but `acp`, refuses it.
+   task.
+2. A session holds its worktree, the model it runs on, the effort where one
+   was pinned, and the agent's own session id once the agent reports one.
+3. The model is one `<agent>:<model>` pin (011), frozen off the seat's pin
+   when the session is created. The agent is the registry id before the
+   pin's first `:`, and no agent kind is stored beside it.
+4. Every session's agent is an ACP child process that the daemon owns. No
+   session has a terminal, a pane or a grid.
+5. A session is `starting`, `running`, `idle`, `exited` or `failed`. The
+   first three are live.
+6. Sessions are long-lived: one author per task, one reviewer per task across
+   every review of it, one orchestrator per goal. Restarting one reopens the
+   same row.
+7. Every launch of a session is dated, and every launch runs under a launch
+   id of its own. The id is written to the row before the agent starts and is
+   handed to the agent's MCP server as `ARIADNE_LAUNCH_ID`.
+8. A report from a launch the row has moved past changes nothing (012). A
+   relaunch has two processes under one session id for as long as the old
+   one takes to exit, and only the launch id tells their reports apart.
+9. A relaunch announces the session as updated on the event stream.
+10. Killing a session kills its agent process and marks a live session
+    `exited`. The conversation stays with the agent, so the session can be
+    resumed.
+11. Resuming a session revives it in place: the same row, the same id, the
+    same model, on the conversation its agent id names.
+12. A session with no agent id to resume from is not revived. A session whose
+    goal is finished is not revived either, and it stays as it ended.
+13. A session's console snapshot (`GET /v1/sessions/{id}/console`) is the
+    session's events so far, in order. Every event the runtime reported
+    passes through as the runtime named it, with no fixed list of kinds.
+14. The console stream (`GET /v1/sessions/{id}/console/stream`) opens with
+    that snapshot, then sends each later event as it is recorded.
+15. The console stream has no replay. A client that falls too far behind is
+    told how many events it missed, and the connection closes, the same as
+    `/v1/events/stream` (012). A reconnect starts again from a fresh snapshot.
+16. Console input (`POST /v1/sessions/{id}/console/input`) becomes a
+    `session/prompt`. An agent runs one turn at a time, so input posted while
+    a turn runs is queued and sent the moment the turn ends, in the order it
+    was posted.
+17. Console input that answers a pending permission question is taken as the
+    selected option (021).
+18. Console input takes down whatever the session was flagged for: an answer
+    is an answer, whoever gave it.
+19. A finished session refuses console input with `409`, and so does a
+    session whose agent process is gone.
+20. The CLI reaches a session through its console. `ariadne attach` prints
+    the transcript, follows the stream and posts each line typed as input.
+    `ariadne session logs` prints the snapshot, and with `--follow` it
+    follows the console stream.
 
 ## Acceptance criteria
 
-- A live stream opens with the grid the pane draws against
-  (`session_logs.rs::a_live_stream_opens_with_the_grid_the_pane_draws_against`) and
-  follows with deltas (`::output_reaches_the_client_as_soon_as_it_is_written`,
-  `::a_burst_bigger_than_one_frame_arrives_as_several_deltas`).
-- A resize is reported, and in-flight output is replaced rather than reordered
-  (`session_logs.rs::a_pane_resized_under_the_stream_reports_its_new_grid`,
-  `::output_in_flight_when_the_pane_resizes_is_replaced_rather_than_reordered`).
-- tmux being unreachable does not end a session
-  (`session_logs.rs::tmux_being_unreachable_does_not_end_a_session`), and a pane
-  that cannot be measured or captured is not reported as finished
-  (`::a_pane_that_cannot_be_measured_is_not_reported_as_a_finished_session`,
-  `::a_pane_that_cannot_be_captured_is_not_reported_as_a_finished_session`).
-- Typing reaches the pane byte for byte
-  (`session_input.rs::typing_reaches_the_pane_byte_for_byte`), a long paste is
-  split into ordered batches (`::a_long_paste_is_split_into_ordered_batches`),
-  and a finished or pane-less session refuses
-  (`::a_finished_session_refuses_input`,
-  `::a_session_without_a_pane_refuses_input`).
-- Typing into a pane takes down what the session was flagged for
-  (`session_input.rs::typing_into_a_pane_takes_down_what_the_session_was_flagged_for`).
-- A resize sizes the window and leaves a client free to resize again
-  (`session_resize.rs::a_resize_sizes_the_window_and_leaves_a_client_free_to_resize_it_again`);
-  a size outside the bounds is rejected before tmux sees it
-  (`::a_size_outside_the_bounds_is_rejected_before_tmux_sees_it`).
-- A swallowed Enter is pressed again until the message goes
-  (`keystroke_delivery.rs::a_swallowed_enter_is_pressed_again_until_the_message_goes`),
-  and a message that never submits is never called delivered
-  (`::a_message_that_never_submits_is_never_called_delivered`).
-- Session names are stable and short
-  (`managers.rs::session_names_are_stable_and_short`); the tmux lifecycle and a
-  plan no command line could carry are covered
-  (`::tmux_session_lifecycle`, `::tmux_runs_a_plan_no_command_line_could_carry`).
+- A session keeps the model it started on, however the seat's pin moves
+  afterwards
+  (`resume.rs::a_running_reviewer_keeps_the_model_its_session_started_on`,
+  `::a_resumed_author_stays_on_the_model_its_session_started_on`).
+- The schema names an agent by its registry id alone, and a session stores no
+  agent kind (`store.rs::the_schema_names_agents_by_registry_id_alone`).
+- A session's agent runs on the daemon's own stdio
+  (`acp_runtime.rs::an_acp_author_runs_on_daemon_stdio`).
+- A session row and its events round-trip through the store, and a live one
+  is found as live (`store.rs::sessions_and_events_round_trip`).
 - Restarting a session reopens the same row
   (`store.rs::restarting_a_session_reopens_the_same_row`), and every launch is
-  dated (`::every_launch_of_a_session_is_dated`) and reports under a name of
-  its own (`resume.rs::every_launch_of_a_session_reports_under_a_new_id`).
-- A pane left behind is taken rather than spawned around
-  (`resume.rs::a_pane_left_behind_is_taken_rather_than_spawned_around`).
-- The console stream gives the snapshot, then deltas, for an `acp` session
+  dated (`::every_launch_of_a_session_is_dated`).
+- Every launch reports under an id of its own, carried by the agent's MCP
+  server (`resume.rs::every_launch_of_a_session_reports_under_a_new_id`), and
+  a report from a launch the row has moved past changes nothing
+  (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`).
+- A relaunch announces the session as updated
+  (`resume.rs::a_relaunch_announces_the_session_as_updated`).
+- The author and the reviewer reuse one session across reviews
+  (`resume.rs::resuming_the_author_reuses_its_session_across_reviews`,
+  `::a_reviewer_reuses_its_session_across_reviews`).
+- Killing a session kills its agent process
+  (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`).
+- Reviving a session revives it in place
+  (`resume.rs::reviving_a_session_revives_it_in_place`); a session without an
+  agent id is not revived (`::a_session_without_an_agent_id_is_not_revived`),
+  and neither is a session of a finished goal
+  (`::a_session_of_a_finished_goal_is_not_revived`).
+- The console stream gives the snapshot, then deltas
   (`acp_console.rs::the_console_stream_gives_the_snapshot_then_deltas`).
+- A permission request and its reply appear in the console stream
+  (`acp_console.rs::a_permission_request_appears_in_the_console_stream`).
 - Posted input reaches the agent as a prompt, and input posted while a turn
   runs is queued and sent once it ends
   (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).
-- A permission request appears in the console stream
-  (`acp_console.rs::a_permission_request_appears_in_the_console_stream`).
+- A console answer selects the option of a pending question, and takes the
+  session's flag down
+  (`acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`).
+- The CLI console renders a transcript and delivers an input line
+  (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`),
+  and renders a permission question and delivers the selected answer
+  (`::a_permission_question_renders_and_delivers_the_selected_answer`).
+- `ariadne session logs` prints the snapshot in table and JSON form
+  (`console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`),
+  and follows the console stream
+  (`::a_followed_log_uses_the_console_event_stream`).
+
+## Known gap
+
+- The launcher refuses a second live session on one seat, and no test pins
+  that refusal on its own.
+- No test pins the `409` a finished session gives to console input.
 
 ## Sources
 
-`crates/ariadne-daemon/src/tmux.rs`, `crates/ariadne-daemon/src/log/`,
-`crates/ariadne-daemon/src/http/session_logs.rs`,
-`crates/ariadne-daemon/src/http/pane.rs`,
-`crates/ariadne-daemon/src/scheduler/delivery.rs`,
-`crates/ariadne-daemon/src/http/console.rs`, `crates/ariadne-daemon/src/acp.rs`.
+`crates/ariadne-daemon/src/launcher.rs`,
+`crates/ariadne-daemon/src/http/sessions.rs`,
+`crates/ariadne-daemon/src/http/console.rs`,
+`crates/ariadne-daemon/src/acp.rs`,
+`crates/ariadne-cli/src/commands/attach.rs`,
+`crates/ariadne-cli/src/commands/console.rs`.

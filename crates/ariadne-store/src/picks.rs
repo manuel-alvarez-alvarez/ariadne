@@ -170,8 +170,7 @@ mod tests {
             task_id: "01task".into(),
             seat: "author".into(),
             ordinal,
-            agent_kind: "claude_code".into(),
-            model: "claude-sonnet-5".into(),
+            model: "stub:test-model".into(),
             effort: None,
             brief: None,
         }

@@ -13,7 +13,7 @@
 
 mod common;
 
-use ariadne_core::{AgentKind, MessageKind, TaskStatus};
+use ariadne_core::{MessageKind, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_store::MessageFilter;
 
@@ -26,13 +26,7 @@ async fn a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks() {
     let h = harness().await;
     let (goal, repo) = h.goal().await;
     let task = h
-        .task_on(
-            &goal,
-            &repo,
-            "Cut the release",
-            0,
-            test_pin(AgentKind::ClaudeCode),
-        )
+        .task_on(&goal, &repo, "Cut the release", 0, test_pin())
         .await;
     h.activate(&goal).await;
     h.advance(&task, TaskStatus::UnderReview).await;
@@ -69,16 +63,8 @@ async fn a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks() {
 async fn a_task_needs_no_more_approvals_than_it_has_reviewers_to_give() {
     let h = harness().await;
     let repo = h.repository(&h.at("repo")).await;
-    let goal = h.goal_on(&repo, test_pin(AgentKind::ClaudeCode)).await;
-    let task = h
-        .task_on(
-            &goal,
-            &repo,
-            "Wire it up",
-            1,
-            test_pin(AgentKind::ClaudeCode),
-        )
-        .await;
+    let goal = h.goal_on(&repo, test_pin()).await;
+    let task = h.task_on(&goal, &repo, "Wire it up", 1, test_pin()).await;
     let reviewer = h
         .store
         .list_task_reviewers(&task.id)

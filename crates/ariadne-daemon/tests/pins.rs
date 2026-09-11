@@ -3,19 +3,20 @@
 //! The pins live on `task_agents` and `goals`, and the launcher spawns from
 //! them. There is nothing behind a pin to fall back to: what the orchestrator
 //! sized an agent at, or what the user chose instead, is the whole of the
-//! answer, and a model is required wherever an agent is pinned — no CLI
+//! answer, and a model is required wherever an agent is pinned — no agent
 //! default stands in for one.
 //!
-//! One field carries the whole choice, `<agent_kind>:<model>`, on the way in
-//! and on the way out. The effort rides in the field beside it, checked
-//! against the model it is to run at before anything is written; `default`
-//! stays legal for the effort alone.
+//! One field carries the whole choice, `<agent>:<model>` — the id of an agent
+//! in the ACP registry and a model of it — on the way in and on the way out.
+//! The effort rides in the field beside it, checked against the model it is
+//! to run at before anything is written; `default` stays legal for the
+//! effort alone.
 
 mod common;
 
 use ariadne_api::goals::GoalDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{AgentKind, Seat};
+use ariadne_core::Seat;
 
 use axum::http::StatusCode;
 
@@ -70,20 +71,34 @@ fn agent(task: &TaskDto, seat: Seat) -> &ariadne_api::tasks::TaskAgentDto {
         .unwrap_or_else(|| panic!("the task staffs no {}", seat.as_str()))
 }
 
-/// A goal created on an agent CLI and a model plans on both, and the session
-/// its orchestrator is spawned into is launched with them.
+/// A harness whose registry agent offers two models, discovered: a catalog
+/// with one to turn off and one left on, since the last one left on cannot
+/// be turned off.
+async fn two_model_harness(dir: &std::path::Path) -> Harness {
+    let mut two_models = script();
+    two_models["config_options"][0]["options"] = serde_json::json!([
+        {"value": "old-model"},
+        {"value": "new-model"},
+    ]);
+    let stub = stub_acp_agent(dir, two_models);
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
+    h
+}
+
+/// A goal created on a model plans on it, and the session its orchestrator
+/// is spawned into is launched with it: the registry agent the pin names, and
+/// the model half of the pin in the launch file.
 #[tokio::test]
-async fn a_goal_created_with_an_agent_and_a_model_plans_on_them() {
+async fn a_goal_created_with_a_model_plans_on_it() {
     let h = harness().await;
-    let goal = goal_on(&h, serde_json::json!({ "model": "codex:gpt-5.3-codex" })).await;
-    assert_eq!(goal.model, "codex:gpt-5.3-codex");
+    let goal = goal_on(&h, serde_json::json!({ "model": "stub:model-one" })).await;
+    assert_eq!(goal.model, "stub:model-one");
 
     let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
-    assert_eq!(session.agent_kind(), AgentKind::Codex);
-    assert_eq!(session.model, "gpt-5.3-codex");
-    let argv = h.spawn_argv(&session.id);
-    assert!(argv.starts_with("codex "), "{argv}");
-    assert!(argv.contains("gpt-5.3-codex"), "{argv}");
+    assert_eq!(session.model, "stub:model-one");
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    assert_eq!(launch.model, "model-one");
 }
 
 /// A goal or a task with no model at all, an empty one, or the word `default`
@@ -112,7 +127,7 @@ async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
 
     // Empty, whitespace-only and `default` deserialize, and are refused by
     // the rule — a colon followed by whitespace alone is an empty model too.
-    for model in ["", " ", "default", "codex: ", "codex:   "] {
+    for model in ["", " ", "default", "stub: ", "stub:   "] {
         let err = h
             .error(
                 post_json(
@@ -135,11 +150,7 @@ async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
 
     // An agent assignment is held to the same rule: the field is required on
     // the wire, and the words that used to clear it are refused by the rule.
-    let goal = goal_on(
-        &h,
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
-    )
-    .await;
+    let goal = goal_on(&h, serde_json::json!({ "model": "stub:model-one" })).await;
     for (author, status) in [
         (
             serde_json::json!({ "seat": "author", "skills": ["coding"] }),
@@ -154,7 +165,7 @@ async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
             StatusCode::BAD_REQUEST,
         ),
         (
-            serde_json::json!({ "seat": "author", "skills": ["coding"], "model": "codex: " }),
+            serde_json::json!({ "seat": "author", "skills": ["coding"], "model": "stub: " }),
             StatusCode::BAD_REQUEST,
         ),
     ] {
@@ -175,11 +186,11 @@ async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
     let task = task_on(
         &h,
         &goal,
-        serde_json::json!({ "model": "codex:gpt-5.3-codex" }),
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+        serde_json::json!({ "model": "stub:model-two" }),
+        serde_json::json!({ "model": "stub:model-one" }),
     )
     .await;
-    for model in ["", " ", "default", "codex: "] {
+    for model in ["", " ", "default", "stub: "] {
         let err = h
             .error(
                 patch_json(
@@ -198,7 +209,7 @@ async fn a_request_with_no_model_is_refused_because_a_model_is_required() {
     let untouched: TaskDto = h.json(get_task(&task.id), StatusCode::OK).await;
     assert_eq!(
         agent(&untouched, Seat::Author).model,
-        "codex:gpt-5.3-codex",
+        "stub:model-two",
         "a refused edit moved nothing"
     );
 }
@@ -207,10 +218,9 @@ fn get_task(id: &str) -> axum::http::Request<axum::body::Body> {
     common::get(&format!("/v1/tasks/{id}"))
 }
 
-/// A bare agent CLI parses nowhere: it names no model, and a model is
-/// required.
+/// A bare agent parses nowhere: it names no model, and a model is required.
 #[tokio::test]
-async fn a_bare_agent_cli_is_refused_wherever_a_model_is_written() {
+async fn a_bare_agent_is_refused_wherever_a_model_is_written() {
     let h = harness().await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
 
@@ -221,14 +231,14 @@ async fn a_bare_agent_cli_is_refused_wherever_a_model_is_written() {
                 serde_json::json!({
                     "title": "Ship it",
                     "repository_ids": [repo.id],
-                    "model": "codex",
+                    "model": "stub",
                 }),
             ),
             StatusCode::BAD_REQUEST,
         )
         .await;
     assert!(
-        err.error.message.contains("`codex` names no model")
+        err.error.message.contains("`stub` names no agent")
             && err.error.message.contains("a model is required"),
         "{}",
         err.error.message
@@ -240,26 +250,22 @@ async fn a_bare_agent_cli_is_refused_wherever_a_model_is_written() {
 #[tokio::test]
 async fn a_task_staffs_each_agent_on_its_own_pin() {
     let h = harness().await;
-    let goal = goal_on(
-        &h,
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
-    )
-    .await;
+    let goal = goal_on(&h, serde_json::json!({ "model": "stub:model-one" })).await;
     let task = task_on(
         &h,
         &goal,
-        serde_json::json!({ "model": "codex:gpt-5.3-codex", "effort": "high" }),
-        serde_json::json!({ "model": "claude_code:claude-opus-5" }),
+        serde_json::json!({ "model": "stub:model-two", "effort": "high" }),
+        serde_json::json!({ "model": "stub:model-three" }),
     )
     .await;
 
     let author = agent(&task, Seat::Author);
-    assert_eq!(author.model, "codex:gpt-5.3-codex");
+    assert_eq!(author.model, "stub:model-two");
     assert_eq!(author.effort.as_deref(), Some("high"));
 
     let reviewer = agent(&task, Seat::Reviewer);
-    assert_eq!(reviewer.model, "claude_code:claude-opus-5");
-    assert_eq!(reviewer.effort, None, "no effort chosen is the CLI's own");
+    assert_eq!(reviewer.model, "stub:model-three");
+    assert_eq!(reviewer.effort, None, "no effort chosen is the agent's own");
 }
 
 /// An edit moves the author's pin whole: the new model, and no effort left
@@ -267,16 +273,12 @@ async fn a_task_staffs_each_agent_on_its_own_pin() {
 #[tokio::test]
 async fn an_edit_moves_the_pin_whole() {
     let h = harness().await;
-    let goal = goal_on(
-        &h,
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
-    )
-    .await;
+    let goal = goal_on(&h, serde_json::json!({ "model": "stub:model-one" })).await;
     let task = task_on(
         &h,
         &goal,
-        serde_json::json!({ "model": "codex:gpt-5.3-codex", "effort": "high" }),
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+        serde_json::json!({ "model": "stub:model-two", "effort": "high" }),
+        serde_json::json!({ "model": "stub:model-one" }),
     )
     .await;
 
@@ -284,21 +286,22 @@ async fn an_edit_moves_the_pin_whole() {
         .json(
             patch_json(
                 &format!("/v1/tasks/{}", task.id),
-                serde_json::json!({ "model": "claude_code:claude-opus-5" }),
+                serde_json::json!({ "model": "stub:model-three" }),
             ),
             StatusCode::OK,
         )
         .await;
     let author = agent(&moved, Seat::Author);
-    assert_eq!(author.model, "claude_code:claude-opus-5");
+    assert_eq!(author.model, "stub:model-three");
     assert_eq!(
         author.effort, None,
         "the effort belonged to the model that was left behind"
     );
 }
 
-/// A model is one field, and it names the agent CLI that runs it: a string
-/// that names none is refused, and the refusal writes the form it wanted.
+/// A model is one field, and it names the registry agent that runs it: a
+/// string that names none is refused, and so is one whose agent the registry
+/// does not hold.
 #[tokio::test]
 async fn a_model_naming_no_agent_is_refused_by_name() {
     let h = harness().await;
@@ -316,144 +319,48 @@ async fn a_model_naming_no_agent_is_refused_by_name() {
         )
         .await;
     assert!(
-        err.error
-            .message
-            .contains("`claude-opus-5` names no agent CLI")
-            && err.error.message.contains("`claude_code:claude-opus-5`"),
+        err.error.message.contains("`claude-opus-5` names no agent")
+            && err.error.message.contains("`<agent>:claude-opus-5`"),
         "the refusal names the model and writes the form it wanted: {}",
         err.error.message
     );
 
-    // An agent half that is no CLI is refused with the three that are.
+    // An agent half the registry does not hold is refused by name, and the
+    // refusal says where the agents are.
     let err = h
         .error(
             goal_with(serde_json::json!({ "model": "llama:x" })),
             StatusCode::BAD_REQUEST,
         )
         .await;
-    for kind in AgentKind::ALL {
-        assert!(
-            err.error.message.contains(kind.as_str()),
-            "the refusal lists {}: {}",
-            kind.as_str(),
-            err.error.message
-        );
-    }
+    assert!(
+        err.error.message.contains("unknown agent `llama`")
+            && err.error.message.contains("ACP registry"),
+        "{}",
+        err.error.message
+    );
 }
 
-/// The model half is free text handed to the agent CLI as typed: an id with
-/// colons and slashes of its own reaches the row whole, catalog or no catalog.
+/// The model half is free text handed to the agent as typed: an id with
+/// colons and slashes of its own reaches the row whole, catalog or no
+/// catalog, and reaches the agent whole behind its registry id.
 #[tokio::test]
 async fn a_model_is_stored_as_typed_whatever_the_catalogs_list() {
     let h = harness().await;
-    let goal = goal_on(
-        &h,
-        serde_json::json!({ "model": "opencode:ollama/llama3:8b" }),
-    )
-    .await;
-    assert_eq!(goal.model, "opencode:ollama/llama3:8b");
+    let goal = goal_on(&h, serde_json::json!({ "model": "stub:ollama/llama3:8b" })).await;
+    assert_eq!(goal.model, "stub:ollama/llama3:8b");
 
     let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
-    assert_eq!(session.model, "ollama/llama3:8b");
-}
-
-/// An opencode model is `provider/model` — that is the spelling opencode
-/// itself takes back — so one with no provider prefix is refused when it is
-/// pinned, wherever that is.
-#[tokio::test]
-async fn an_opencode_model_with_no_provider_prefix_is_refused() {
-    let h = harness().await;
-    let repo = h.repository(&h.dir.path().join("plain-repo")).await;
-
-    let err = h
-        .error(
-            post_json(
-                "/v1/goals",
-                serde_json::json!({
-                    "title": "Ship it",
-                    "repository_ids": [repo.id],
-                    "model": "opencode:llama3",
-                }),
-            ),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-    assert!(
-        err.error.message.contains("`llama3` names no provider")
-            && err.error.message.contains("provider/model"),
-        "{}",
-        err.error.message
-    );
-
-    // The same rule on a staffed agent and on an edit.
-    let goal = goal_on(
-        &h,
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
-    )
-    .await;
-    let err = h
-        .error(
-            post_json(
-                &format!("/v1/goals/{}/tasks", goal.id),
-                serde_json::json!({
-                    "title": "A task",
-                    "agents": [{ "seat": "author", "skills": ["coding"],
-                                 "model": "opencode:llama3" }],
-                }),
-            ),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-    assert!(
-        err.error.message.contains("provider/model"),
-        "{}",
-        err.error.message
-    );
-
-    let task = task_on(
-        &h,
-        &goal,
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
-    )
-    .await;
-    let err = h
-        .error(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
-                serde_json::json!({ "model": "opencode:llama3" }),
-            ),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-    assert!(
-        err.error.message.contains("provider/model"),
-        "{}",
-        err.error.message
-    );
-
-    // With the prefix it is stored as typed.
-    let pinned: GoalDto = h
-        .json(
-            post_json(
-                "/v1/goals",
-                serde_json::json!({
-                    "title": "Ship it",
-                    "repository_ids": [repo.id],
-                    "model": "opencode:ollama/llama3",
-                }),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
-    assert_eq!(pinned.model, "opencode:ollama/llama3");
+    assert_eq!(session.model, "stub:ollama/llama3:8b");
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    assert_eq!(launch.model, "ollama/llama3:8b");
 }
 
 /// An effort belongs to a model, so it is checked against the one it will run
 /// at, and one that model does not take is refused before anything is written.
 #[tokio::test]
 async fn an_effort_is_checked_against_the_model_it_runs_at() {
-    let h = harness().await;
+    let h = harness().discover_agents().await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
 
     let err = h
@@ -463,7 +370,7 @@ async fn an_effort_is_checked_against_the_model_it_runs_at() {
                 serde_json::json!({
                     "title": "Ship it",
                     "repository_ids": [repo.id],
-                    "model": "claude_code:claude-opus-5",
+                    "model": "stub:old-model",
                     "effort": "nonsense",
                 }),
             ),
@@ -479,20 +386,16 @@ async fn an_effort_is_checked_against_the_model_it_runs_at() {
 
 /// The effort rides beside the model and moves with it: an edit that names an
 /// effort alone leaves the model where it is, and `default` — still legal for
-/// the effort — clears it back to the CLI's own.
+/// the effort — clears it back to the agent's own.
 #[tokio::test]
 async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
     let h = harness().await;
-    let goal = goal_on(
-        &h,
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
-    )
-    .await;
+    let goal = goal_on(&h, serde_json::json!({ "model": "stub:model-one" })).await;
     let task = task_on(
         &h,
         &goal,
-        serde_json::json!({ "model": "claude_code:claude-opus-5", "effort": "high" }),
-        serde_json::json!({ "model": "claude_code:claude-sonnet-5" }),
+        serde_json::json!({ "model": "stub:model-two", "effort": "high" }),
+        serde_json::json!({ "model": "stub:model-one" }),
     )
     .await;
 
@@ -507,7 +410,7 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
         .await;
     let author = agent(&deeper, Seat::Author);
     assert_eq!(
-        author.model, "claude_code:claude-opus-5",
+        author.model, "stub:model-two",
         "the model stayed where it was"
     );
     assert_eq!(author.effort.as_deref(), Some("xhigh"));
@@ -522,7 +425,7 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
         )
         .await;
     let author = agent(&plain, Seat::Author);
-    assert_eq!(author.model, "claude_code:claude-opus-5");
+    assert_eq!(author.model, "stub:model-two");
     assert_eq!(author.effort, None);
 }
 
@@ -535,9 +438,10 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
 /// effort moved on its own goes through untouched.
 #[tokio::test]
 async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
-    let h = harness().await;
-    let off = "claude_code:claude-opus-5";
-    let on = "claude_code:claude-sonnet-5";
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    let off = "stub:old-model";
+    let on = "stub:new-model";
 
     // Staffed before it goes off, which is the row that has to keep working.
     let goal = goal_on(&h, serde_json::json!({ "model": on })).await;
@@ -627,7 +531,7 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
         .json(
             patch_json(
                 &format!("/v1/tasks/{}", task.id),
-                serde_json::json!({ "effort": "high" }),
+                serde_json::json!({ "effort": "low" }),
             ),
             StatusCode::OK,
         )
@@ -638,7 +542,7 @@ async fn a_model_that_is_turned_off_cannot_be_staffed_on() {
         .find(|a| a.seat == Seat::Author)
         .expect("the task keeps its author");
     assert_eq!(author.model, off);
-    assert_eq!(author.effort.as_deref(), Some("high"));
+    assert_eq!(author.effort.as_deref(), Some("low"));
 }
 
 /// A discovered catalog id — `<agent-id>:<model>`, the id `GET /v1/models`
@@ -686,7 +590,6 @@ async fn a_discovered_catalog_id_pins_agents_through_the_api() {
     // The pin reaches the registry command: the orchestrator spawned off it
     // runs the stub, with the bare model and effort halves pinned.
     let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
-    assert_eq!(session.agent_kind(), AgentKind::Acp);
     assert_eq!(session.model, "stub:old-model");
     eventually(TIMEOUT, "the stub to be launched and pinned", || async {
         stub.calls_of("session/set_config_option").len() >= 2
@@ -707,16 +610,15 @@ async fn a_discovered_catalog_id_pins_agents_through_the_api() {
         )
         .await;
     assert!(
-        err.error.message.contains("names no agent CLI")
-            || err.error.message.contains("unknown agent"),
+        err.error.message.contains("unknown agent `nobody`"),
         "{}",
         err.error.message
     );
 }
 
-/// A discovered model's effort choices bound its pin, the way a curated
-/// model's do: an effort discovery never listed for it is refused by name,
-/// and a model the catalog does not list stays free text, held to nothing.
+/// A discovered model's effort choices bound its pin: an effort discovery
+/// never listed for it is refused by name, and a model the catalog does not
+/// list stays free text, held to nothing.
 #[tokio::test]
 async fn a_discovered_models_effort_choices_bound_its_pin() {
     let dir = tempfile::tempdir().unwrap();
@@ -747,9 +649,8 @@ async fn a_discovered_models_effort_choices_bound_its_pin() {
         err.error.message
     );
 
-    // A model discovery never listed is free text, as an opencode model is:
-    // the agent is real, and the model and effort halves are handed on as
-    // typed.
+    // A model discovery never listed is free text: the agent is real, and
+    // the model and effort halves are handed on as typed.
     let goal = goal_on(
         &h,
         serde_json::json!({ "model": "stub:unlisted-model", "effort": "anything" }),
@@ -760,14 +661,11 @@ async fn a_discovered_models_effort_choices_bound_its_pin() {
 }
 
 /// A discovered model turned off is refused under the same id the switch
-/// stores: the catalog id whole, not an `acp:`-prefixed spelling nothing
-/// serves.
+/// stores: the catalog id whole.
 #[tokio::test]
 async fn a_discovered_model_turned_off_cannot_be_staffed_on() {
     let dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(dir.path(), script());
-    let h = harness().home(registry_home(&stub)).discover_agents().await;
-    discovery_settled(&h, &stub).await;
+    let h = two_model_harness(dir.path()).await;
 
     let _: serde_json::Value = h
         .json(
@@ -798,39 +696,4 @@ async fn a_discovered_model_turned_off_cannot_be_staffed_on() {
         "the refusal names the catalog id: {}",
         err.error.message
     );
-}
-
-/// A fallback `acp` model that carries a colon of its own keeps its `acp:`
-/// prefix in every response: its first segment names no registry agent, so
-/// that prefix is the only spelling a re-submit parses — and it does, back
-/// to the same pin.
-#[tokio::test]
-async fn an_acp_fallback_model_with_a_colon_keeps_its_prefix() {
-    let h = harness().await;
-    let goal = goal_on(&h, serde_json::json!({ "model": "acp:vendor:model" })).await;
-    assert_eq!(goal.model, "acp:vendor:model");
-
-    let task = task_on(
-        &h,
-        &goal,
-        serde_json::json!({ "model": "acp:vendor:model" }),
-        // The reviewer is staffed with the goal response's own spelling,
-        // which is the round trip: what a response says is re-submittable.
-        serde_json::json!({ "model": goal.model }),
-    )
-    .await;
-    assert_eq!(agent(&task, Seat::Author).model, "acp:vendor:model");
-    assert_eq!(agent(&task, Seat::Reviewer).model, "acp:vendor:model");
-
-    let respelled = agent(&task, Seat::Author).model.clone();
-    let moved: TaskDto = h
-        .json(
-            patch_json(
-                &format!("/v1/tasks/{}", task.id),
-                serde_json::json!({ "model": respelled }),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(agent(&moved, Seat::Author).model, "acp:vendor:model");
 }

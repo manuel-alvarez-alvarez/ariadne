@@ -46,8 +46,8 @@ pub struct AgentReq {
     /// The names of the skills this agent loads, from `list_skills`. They are
     /// the whole of what it can do.
     pub skills: Vec<String>,
-    /// What it runs on, `<agent_kind>:<model>` as `list_models` spells it.
-    /// Required: every agent names its CLI and its model.
+    /// What it runs on, `<agent>:<model>` as `list_models` spells it.
+    /// Required: every agent names its agent and its model.
     pub model: String,
     /// An `efforts[].id` `list_models` lists for that model. Omit it for the
     /// default effort.
@@ -93,7 +93,7 @@ pub struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the author runs on, `<agent_kind>:<model>`. Omit it to keep the
+    /// What the author runs on, `<agent>:<model>`. Omit it to keep the
     /// model it has; a model is required, so `default` is refused. Refused
     /// on a task with several authors: replace them with `authors`.
     pub author_model: Option<String>,
@@ -124,8 +124,8 @@ pub struct TaskId {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ListModelsReq {
-    /// Filter: claude_code | codex | opencode
-    pub agent_kind: Option<String>,
+    /// Filter: an `agent_id` as `list_models` gives it.
+    pub agent_id: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -296,7 +296,7 @@ fn assignment(seat: Seat, agent: AgentReq) -> AgentAssignment {
     }
 }
 
-/// The catalog narrowed to one agent CLI, or all of it, and always to the
+/// The catalog narrowed to one agent, or all of it, and always to the
 /// models an agent can actually be staffed on. Entries pass through as the
 /// daemon wrote them: what a model is called and what it can be run at is the
 /// daemon's answer, not this file's.
@@ -305,12 +305,12 @@ fn assignment(seat: Seat, agent: AgentReq) -> AgentAssignment {
 /// catalog is what an orchestrator sizes from, and an entry it is told about
 /// is one it will pin sooner or later — which the daemon then refuses, in the
 /// middle of a plan, over a choice nobody could have made differently.
-fn of_agent(models: Vec<serde_json::Value>, agent_kind: Option<String>) -> Vec<serde_json::Value> {
+fn of_agent(models: Vec<serde_json::Value>, agent_id: Option<String>) -> Vec<serde_json::Value> {
     models
         .into_iter()
         .filter(|m| m["enabled"] != serde_json::Value::Bool(false))
-        .filter(|m| match &agent_kind {
-            Some(kind) => m["agent_kind"] == serde_json::Value::String(kind.clone()),
+        .filter(|m| match &agent_id {
+            Some(id) => m["agent_id"] == serde_json::Value::String(id.clone()),
             None => true,
         })
         .collect()
@@ -512,16 +512,16 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the agent CLIs and models a slot can run on. Each entry gives:\n- a description and a `tier`, frontier to fast, or `unknown` with no bands or shapes\n- `cost` and `speed` 1-5, low to high, slow to fast\n- `best_for` and `avoid_for` shapes\n- `efforts`, each an id and what it buys, one `default`"
+        description = "List the agents and models a slot can run on. Each entry gives:\n- a description and a `tier`, frontier to fast, or `unknown` with no bands or shapes\n- `cost` and `speed` 1-5, low to high, slow to fast\n- `best_for` and `avoid_for` shapes\n- `efforts`, each an id and what it buys, one `default`"
     )]
     async fn list_models(
         &self,
         Parameters(req): Parameters<ListModelsReq>,
     ) -> Result<CallToolResult, McpError> {
-        // The catalog is the union and takes no filter, so an agent kind
-        // narrows what it answered rather than what was asked for.
+        // The catalog is the union and takes no filter, so an agent narrows
+        // what it answered rather than what was asked for.
         let models: Vec<serde_json::Value> = self.get("/v1/models").await?;
-        json_result(serde_json::Value::Array(of_agent(models, req.agent_kind)))
+        json_result(serde_json::Value::Array(of_agent(models, req.agent_id)))
     }
 
     #[tool(
@@ -844,9 +844,9 @@ mod tests {
     #[test]
     fn the_catalog_an_agent_sees_holds_only_the_models_it_can_be_staffed_on() {
         let catalog = vec![
-            serde_json::json!({"id": "claude_code:a", "agent_kind": "claude_code", "enabled": true}),
-            serde_json::json!({"id": "claude_code:b", "agent_kind": "claude_code", "enabled": false}),
-            serde_json::json!({"id": "codex:c", "agent_kind": "codex", "enabled": true}),
+            serde_json::json!({"id": "claude-code-acp:a", "agent_id": "claude-code-acp", "enabled": true}),
+            serde_json::json!({"id": "claude-code-acp:b", "agent_id": "claude-code-acp", "enabled": false}),
+            serde_json::json!({"id": "codex-acp:c", "agent_id": "codex-acp", "enabled": true}),
         ];
         let ids = |models: Vec<serde_json::Value>| -> Vec<String> {
             models
@@ -857,19 +857,20 @@ mod tests {
 
         assert_eq!(
             ids(of_agent(catalog.clone(), None)),
-            ["claude_code:a", "codex:c"]
+            ["claude-code-acp:a", "codex-acp:c"]
         );
         assert_eq!(
-            ids(of_agent(catalog.clone(), Some("claude_code".into()))),
-            ["claude_code:a"],
-            "and narrowing to a CLI does not bring back what is off"
+            ids(of_agent(catalog.clone(), Some("claude-code-acp".into()))),
+            ["claude-code-acp:a"],
+            "and narrowing to an agent does not bring back what is off"
         );
 
         // An entry from a daemon that says nothing about it is offered: an
         // older daemon serves no `enabled` at all, and a catalog that went
         // empty against one would leave nothing to staff.
-        let older = vec![serde_json::json!({"id": "codex:gpt-5.6-sol", "agent_kind": "codex"})];
-        assert_eq!(ids(of_agent(older, None)), ["codex:gpt-5.6-sol"]);
+        let older =
+            vec![serde_json::json!({"id": "codex-acp:gpt-5.6-sol", "agent_id": "codex-acp"})];
+        assert_eq!(ids(of_agent(older, None)), ["codex-acp:gpt-5.6-sol"]);
     }
 
     /// The schema of one tool, as the agent reading the listing gets it.
@@ -1207,7 +1208,7 @@ mod tests {
     ///
     /// There is nothing to ask with and nothing to answer with: a message is
     /// one agent telling another what it needs from it, and each one arrives
-    /// in a pane as a turn — a channel that invites one back spends two turns
+    /// at its agent as a turn — a channel that invites one back spends two turns
     /// saying nothing.
     #[tokio::test]
     async fn a_message_names_the_agent_it_is_for() {
@@ -1325,7 +1326,7 @@ mod tests {
 
         // An approval carries a note or, where the reviewer wrote none, the
         // one word that says what it is: a message with nothing in it is not
-        // one a pane can be handed.
+        // one an agent can be handed.
         let approved = verdict_message(Verdict::Approve, None).expect("approval");
         assert_eq!(approved.kind, MessageKind::Approve);
         assert_eq!(approved.body, "Approved.");
@@ -1383,13 +1384,13 @@ mod tests {
                 description: "Beside the model.".into(),
                 authors: vec![AgentReq {
                     skills: vec!["coding".into()],
-                    model: "codex:gpt-5.6-sol".into(),
+                    model: "codex-acp:gpt-5.6-sol".into(),
                     effort: Some("xhigh".into()),
                     brief: None,
                 }],
                 reviewers: vec![AgentReq {
                     skills: vec!["code-review".into()],
-                    model: "claude_code:claude-haiku-4-5".into(),
+                    model: "claude-code-acp:claude-haiku-4-5".into(),
                     effort: Some("low".into()),
                     brief: None,
                 }],
@@ -1413,14 +1414,14 @@ mod tests {
                 {
                     "seat": "author",
                     "skills": ["coding"],
-                    "model": "codex:gpt-5.6-sol",
+                    "model": "codex-acp:gpt-5.6-sol",
                     "effort": "xhigh",
                     "brief": null,
                 },
                 {
                     "seat": "reviewer",
                     "skills": ["code-review"],
-                    "model": "claude_code:claude-haiku-4-5",
+                    "model": "claude-code-acp:claude-haiku-4-5",
                     "effort": "low",
                     "brief": null,
                 },
@@ -1446,7 +1447,7 @@ mod tests {
                 authors: None,
                 reviewers: Some(vec![AgentReq {
                     skills: vec!["code-review".into()],
-                    model: "codex:gpt-5.6-luna".into(),
+                    model: "codex-acp:gpt-5.6-luna".into(),
                     effort: None,
                     brief: None,
                 }]),
@@ -1468,7 +1469,7 @@ mod tests {
             serde_json::json!([{
                 "seat": "reviewer",
                 "skills": ["code-review"],
-                "model": "codex:gpt-5.6-luna",
+                "model": "codex-acp:gpt-5.6-luna",
                 "effort": null,
                 "brief": null,
             }])
@@ -1502,12 +1503,12 @@ mod tests {
 
     /// The catalog is what an orchestrator sizes a task from, so it reaches
     /// it whole — what each model is for, and every effort it takes with what
-    /// that effort buys — and an agent kind narrows the answer rather than
+    /// that effort buys — and an agent narrows the answer rather than
     /// the question, since `GET /v1/models` takes no filter.
     #[tokio::test]
     async fn the_catalog_reaches_the_orchestrator_with_the_efforts_on_it() {
         const CATALOG: &str = r#"[
-            {"id": "codex:gpt-5.6-sol", "agent_kind": "codex",
+            {"id": "codex-acp:gpt-5.6-sol", "agent_id": "codex-acp",
              "description": "frontier", "tier": "frontier", "cost": 4, "speed": 2,
              "best_for": ["cross-subsystem design"], "avoid_for": ["small fixes"],
              "efforts": [
@@ -1515,7 +1516,7 @@ mod tests {
                {"id": "high", "description": "greater depth", "default": true},
                {"id": "xhigh", "description": "deeper still", "default": false}
              ]},
-            {"id": "claude_code:claude-haiku-4-5", "agent_kind": "claude_code",
+            {"id": "claude-code-acp:claude-haiku-4-5", "agent_id": "claude-code-acp",
              "description": "cheap", "tier": "fast", "cost": 2, "speed": 5,
              "best_for": ["inline edits"], "avoid_for": ["cross-subsystem design"],
              "efforts": []}
@@ -1523,15 +1524,15 @@ mod tests {
         for (filter, ids) in [
             (
                 None,
-                vec!["codex:gpt-5.6-sol", "claude_code:claude-haiku-4-5"],
+                vec!["codex-acp:gpt-5.6-sol", "claude-code-acp:claude-haiku-4-5"],
             ),
-            (Some("codex"), vec!["codex:gpt-5.6-sol"]),
-            (Some("opencode"), vec![]),
+            (Some("codex-acp"), vec!["codex-acp:gpt-5.6-sol"]),
+            (Some("opencode-acp"), vec![]),
         ] {
             let (endpoint, seen) = recording_daemon_answering(CATALOG).await;
             let answered = orchestrator_at(&endpoint)
                 .list_models(Parameters(ListModelsReq {
-                    agent_kind: filter.map(str::to_string),
+                    agent_id: filter.map(str::to_string),
                 }))
                 .await
                 .expect("list the models");

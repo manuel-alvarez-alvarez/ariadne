@@ -51,7 +51,7 @@ export const ALL = "all"
 
 /**
  * The one choice the daemon cannot answer on its own: the three statuses a
- * session with a live pane can be in. `GET /v1/sessions` takes a single status,
+ * session with a live agent can be in. `GET /v1/sessions` takes a single status,
  * so this one is narrowed client-side — see `SessionListFilters.live`.
  */
 export const LIVE = "live"

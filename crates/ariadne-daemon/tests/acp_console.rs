@@ -10,25 +10,22 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::json;
 
-use ariadne_core::{
-    Actor, AgentKind, AttentionReason, PermissionMode, Seat, SessionStatus, TaskStatus,
-};
+use ariadne_core::{Actor, AttentionReason, PermissionMode, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{AgentPin, NewTask, NewTaskAgent, Store};
 
-use common::acp::{script, stub_acp_agent};
+use common::acp::{StubAcpAgent, registry_home, script, stub_acp_agent};
 use common::{Cast, Harness, TIMEOUT, eventually, expect_sse, get, harness, post_json};
 
-/// A task whose author runs on `acp`, in a real repo, with an effort pinned —
-/// the same fixture `acp_runtime.rs` casts.
+/// A task whose author runs on the registry agent `stub`, in a real repo,
+/// with an effort pinned — the same fixture `acp_runtime.rs` casts.
 async fn acp_cast(h: &Harness) -> Cast {
     h.git_repo("repo");
-    let cast = h.cast_on(AgentKind::Acp).await;
+    let cast = h.cast_pinned("stub:test-model", 1).await;
     h.store
         .set_agent_pin(
             &cast.author.id,
             &AgentPin {
-                agent_kind: AgentKind::Acp,
-                model: "test-model".into(),
+                model: "stub:test-model".into(),
                 effort: Some("high".into()),
             },
         )
@@ -75,13 +72,21 @@ fn permission_script() -> serde_json::Value {
 }
 
 /// A home whose configured ACP permission policy is read as the daemon would
-/// read it, before the harness starts the runtime around it.
-fn home_with_permission_mode(dir: &tempfile::TempDir, mode: &str) -> std::path::PathBuf {
+/// read it, before the harness starts the runtime around it, with the stub
+/// registered as the agent `stub`.
+fn home_with_permission_mode(
+    dir: &tempfile::TempDir,
+    mode: &str,
+    stub: &StubAcpAgent,
+) -> std::path::PathBuf {
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
         home.join("config.toml"),
-        format!("permission_mode = \"{mode}\"\n"),
+        format!(
+            "permission_mode = \"{mode}\"\n\n[[acp_agents]]\nid = \"stub\"\ncommand = [{:?}]\n",
+            stub.bin
+        ),
     )
     .unwrap();
     home
@@ -101,7 +106,7 @@ async fn ready(h: &Harness, task_id: &str) {
 async fn the_console_stream_gives_the_snapshot_then_deltas() {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), script());
-    let h = harness().acp_bin(&stub.bin).await;
+    let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
     let session = spawned_idle(&h, &cast).await;
 
@@ -159,7 +164,7 @@ async fn posted_input_reaches_the_agent_and_queues_behind_a_running_turn() {
         {"updates": [], "stop_reason": "end_turn"},
     ]);
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().acp_bin(&stub.bin).await;
+    let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
     let session = spawned_idle(&h, &cast).await;
 
@@ -222,8 +227,7 @@ async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), permission_script());
     let h = harness()
-        .home(home_with_permission_mode(&root, "auto"))
-        .acp_bin(&stub.bin)
+        .home(home_with_permission_mode(&root, "auto", &stub))
         .await;
     let cast = acp_cast(&h).await;
     let task = h
@@ -234,12 +238,8 @@ async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
             title: "Ask before writing".into(),
             description: "do things".into(),
             agents: vec![
-                NewTaskAgent::new(Seat::Author, ["coding"], common::test_pin(AgentKind::Acp)),
-                NewTaskAgent::new(
-                    Seat::Reviewer,
-                    ["code-review"],
-                    common::test_pin(AgentKind::Acp),
-                ),
+                NewTaskAgent::new(Seat::Author, ["coding"], common::test_pin()),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], common::test_pin()),
             ],
             depends_on: vec![],
             landing: None,
@@ -286,8 +286,7 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), permission_script());
     let h = harness()
-        .home(home_with_permission_mode(&root, "learn"))
-        .acp_bin(&stub.bin)
+        .home(home_with_permission_mode(&root, "learn", &stub))
         .await;
     let cast = acp_cast(&h).await;
     ready(&h, &cast.task.id).await;
@@ -312,13 +311,7 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     );
 
     let asked_again = h
-        .task_on(
-            &cast.goal,
-            &cast.repo,
-            "Ask again",
-            1,
-            common::test_pin(AgentKind::Acp),
-        )
+        .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
         .await;
     ready(&h, &asked_again.id).await;
     let approved = h.launcher.spawn_author(&asked_again.id).await.unwrap();
@@ -348,7 +341,7 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
             &cast.repo,
             "Use approval",
             1,
-            common::test_pin(AgentKind::Acp),
+            common::test_pin(),
         )
         .await;
     ready(&h, &remembered.id).await;
@@ -390,7 +383,7 @@ async fn a_permission_request_appears_in_the_console_stream() {
     }]);
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().acp_bin(&stub.bin).await;
+    let h = harness().home(registry_home(&stub)).await;
     let cast = acp_cast(&h).await;
     let session = spawned_idle(&h, &cast).await;
 

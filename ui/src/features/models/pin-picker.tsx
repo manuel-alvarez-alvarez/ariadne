@@ -6,22 +6,21 @@
  * catalog under it, and a select beside it scoped by whatever that field held
  * — which is what made a reviewer row four controls wide and the effort easy
  * to miss entirely. Here the field is a button that reads like a sentence
- * (`Claude Code claude-sonnet-5 · medium`) and everything that changes it
+ * (`claude-code-acp claude-sonnet-5 · medium`) and everything that changes it
  * lives in one popover: the catalog above, and under it the efforts *that*
  * model can be run at.
  *
  * Neither half changes what goes on the wire. The value is still two strings,
  * held by the form:
  *
- * - the model, `<agent_kind>:<model>` — the agent CLI and, after the first
- *   `:`, the model of it (see `model-ref.ts`) — free text the daemon hands to
- *   the CLI as typed, which is why the catalog only suggests and the "Other…"
- *   row at the end of the list is a first-class way to answer;
- * - the effort, which is the *model's* closed list rather than the CLI's:
- *   `claude_code:claude-opus-5` takes five levels, `claude_code:claude-haiku-4-5`
- *   takes none at all, and an opencode model discovery has not seen takes
- *   whichever variants it alone was configured with, so nothing here can name
- *   them and the strip becomes a text box.
+ * - the model, `<agent>:<model>` — the registry id of an agent and, after the
+ *   first `:`, the model of it (see `model-ref.ts`) — free text the daemon
+ *   hands to the agent as typed, which is why the catalog only suggests and
+ *   the "Other…" row at the end of the list is a first-class way to answer;
+ * - the effort, which is the *model's* closed list as discovery found it: one
+ *   model takes five levels, another takes none at all, and a model discovery
+ *   has not seen takes whichever effort its agent alone was configured with,
+ *   so nothing here can name them and the strip becomes a text box.
  *
  * A model is required. No effort is the model's default effort, which the
  * strip offers as `auto (high)` rather than as a blank.
@@ -51,14 +50,14 @@ import {
 } from "@/components/ui/command"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/format"
-import { AGENT_KINDS, agentKindLabel } from "./labels"
+
 import { modelRefError, parseModelRef } from "./model-ref"
 
 /** The whole choice, which is what the forms hold and what a pick yields. */
 interface Pin {
-  /** `<agent_kind>:<model>`. */
+  /** `<agent>:<model>`. */
   model: string
-  /** One of that model's efforts, or the empty string for the CLI's own. */
+  /** One of that model's efforts, or the empty string for the agent's own. */
   effort: string
 }
 
@@ -83,7 +82,7 @@ export function PinPicker({
 }: {
   /** The chosen model, or the empty string until one is chosen. */
   model: string
-  /** The pinned effort, or the empty string for the agent CLI's own. */
+  /** The pinned effort, or the empty string for the agent's own. */
   effort: string
   onChange: (pin: Pin) => void
   /** The catalog, or undefined while it is loading or failed to load. */
@@ -107,8 +106,8 @@ export function PinPicker({
   const choices = useMemo(() => effortChoices(pinned, models), [pinned, models])
 
   /**
-   * The catalog under one heading per agent CLI, in the order the daemon
-   * probes them.
+   * The catalog under one heading per agent, in the order the catalog lists
+   * them.
    *
    * A model turned off on the models screen is not offered at all. It is not
    * a choice — the daemon refuses it as a pin — and a row that can be picked
@@ -116,16 +115,14 @@ export function PinPicker({
    * slot is *already* pinned to still shows: it was pinned while the model
    * was on, and the picker has to be able to say what a field holds.
    */
-  const groups = useMemo(
-    () =>
-      AGENT_KINDS.map((kind) => ({
-        kind,
-        models: (models ?? [])
-          .filter((entry) => entry.agent_kind === kind)
-          .filter((entry) => entry.enabled || entry.id === pinned),
-      })).filter((group) => group.models.length > 0),
-    [models, pinned],
-  )
+  const groups = useMemo(() => {
+    const offered = (models ?? []).filter((entry) => entry.enabled || entry.id === pinned)
+    const agents = [...new Set(offered.map((entry) => entry.agent_id))]
+    return agents.map((agent) => ({
+      agent,
+      models: offered.filter((entry) => entry.agent_id === agent),
+    }))
+  }, [models, pinned])
 
   // An effort belongs to the model it runs at, so a model moved out from under
   // one that does not take it clears the effort — the daemon's own rule
@@ -228,7 +225,7 @@ export function PinPicker({
               >
                 <CommandEmpty>Nothing in the catalog matches.</CommandEmpty>
                 {groups.map((group) => (
-                  <CommandGroup key={group.kind} heading={agentKindLabel(group.kind)}>
+                  <CommandGroup key={group.agent} heading={group.agent}>
                     {group.models.map((entry) => (
                       <CommandItem
                         key={entry.id}
@@ -285,7 +282,7 @@ export function PinPicker({
                         )}
                       >
                         {typedError ??
-                          "The agent CLI and, after a “:”, the model of it, handed over as typed."}
+                          "The agent and, after a “:”, the model of it, handed over as typed."}
                       </span>
                     </span>
                   </CommandItem>
@@ -308,7 +305,7 @@ export function PinPicker({
 /**
  * The pin as the trigger reads it: a sentence rather than two boxes.
  *
- * The agent CLI is the muted half — it is also the heading the model was
+ * The agent is the muted half — it is also the heading the model was
  * picked under — and the model is the part that identifies the choice, so
  * that is what survives the truncation of a narrow row.
  */
@@ -320,7 +317,7 @@ function TriggerLabel({ model, effort }: { model: string; effort: string }) {
   if (!ref) return <span className="font-mono">{model}</span>
   return (
     <>
-      <span className="text-muted-foreground">{agentKindLabel(ref.agentKind)} </span>
+      <span className="text-muted-foreground">{ref.agent} </span>
       <span className="font-mono">{ref.model}</span>
       {effort.length > 0 ? (
         <>
@@ -360,7 +357,7 @@ function modelTitle(entry: ModelDto): string | undefined {
 /**
  * Tier, cost and speed, compact enough to sit beside the id: a pill is left
  * out rather than shown empty where the catalog does not know it, which for
- * an opencode model nothing has been written about is all three.
+ * a model nothing has been written about is all three.
  */
 function ModelPills({ entry }: { entry: ModelDto }) {
   return (
@@ -427,7 +424,7 @@ function EffortStrip({
 
   const items: { label: string; description: string | null; value: string }[] = [
     {
-      // A choice, not a blank: the CLI's own level, named where the catalog
+      // A choice, not a blank: the agent's own level, named where the catalog
       // says what it is.
       label: choices.defaultEffort
         ? `${AUTO_EFFORT_LABEL} (${choices.defaultEffort})`
@@ -477,7 +474,7 @@ function EffortStrip({
 
 /** What can be offered beside a model, and why nothing can where nothing is. */
 type EffortChoices =
-  /** The efforts to offer, cheapest first, and what the CLI runs the model at. */
+  /** The efforts to offer, cheapest first, and what the agent runs the model at. */
   | { kind: "options"; efforts: EffortDto[]; defaultEffort: string | null }
   /** Nothing knows the list: whatever is typed is passed on, as a model is. */
   | { kind: "free" }
@@ -499,9 +496,8 @@ function effortChoices(model: string, models: ModelDto[] | undefined): EffortCho
   if (id.length === 0) {
     return { kind: "none", reason: "An effort is run at a model — choose one first." }
   }
-  const ref = parseModelRef(id)
-  if (!ref) {
-    return { kind: "none", reason: "An effort is run at a model — that one names no agent CLI." }
+  if (!parseModelRef(id)) {
+    return { kind: "none", reason: "An effort is run at a model — that one names no agent." }
   }
 
   // No catalog — loading, or the endpoint failed — so nothing here can name a
@@ -519,30 +515,9 @@ function effortChoices(model: string, models: ModelDto[] | undefined): EffortCho
     return { kind: "options", efforts: entry.efforts, defaultEffort }
   }
 
-  // An opencode model the catalog does not carry takes whichever variants it
-  // was configured with, which only that model knows: its efforts are its own,
-  // never its CLI's, so there is no list to hold it to and whatever is typed is
-  // passed on — exactly what the daemon does with one (`known_efforts` is empty
-  // for opencode).
-  if (ref.agentKind === "opencode") return { kind: "free" }
-
-  // Any other model the catalog does not carry takes an effort from the union
-  // its CLI accepts. The strip does not claim a model-specific description.
-  const union = unionOfEfforts(models, ref.agentKind)
-  if (union.length === 0) return { kind: "free" }
-  return {
-    kind: "options",
-    efforts: union.map((id) => ({ id, description: null, default: false })),
-    defaultEffort: null,
-  }
-}
-
-/** Every effort id the catalog lists for one agent CLI, in the order it lists them. */
-function unionOfEfforts(models: ModelDto[], kind: ModelDto["agent_kind"]): string[] {
-  const seen: string[] = []
-  for (const model of models) {
-    if (model.agent_kind !== kind) continue
-    for (const effort of model.efforts) if (!seen.includes(effort.id)) seen.push(effort.id)
-  }
-  return seen
+  // A model the catalog does not carry takes whichever effort its agent was
+  // configured with, which only that agent knows: there is no list to hold it
+  // to, and whatever is typed is passed on — exactly what the daemon does with
+  // one (`effort_error` takes any effort that is not blank).
+  return { kind: "free" }
 }

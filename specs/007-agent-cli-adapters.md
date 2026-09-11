@@ -2,208 +2,176 @@
 id: agent-cli-adapters
 status: current
 updated: 2026-09-11
-areas: [cli, daemon, core]
+areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
-  - crates/ariadne-daemon/src/launcher.rs
-  - crates/ariadne-daemon/tests/adapter_contract.rs
   - crates/ariadne-daemon/tests/adapters.rs
   - crates/ariadne-daemon/tests/agents.rs
+  - crates/ariadne-daemon/tests/acp_discovery.rs
+  - crates/ariadne-daemon/tests/acp_runtime.rs
   - crates/ariadne-daemon/tests/resume.rs
-  - crates/ariadne-cli/src/commands/acp.rs
+  - crates/ariadne-daemon/tests/skill_documents.rs
+  - crates/ariadne-daemon/src/agents/acp.rs
 ---
 
-# Agent CLI adapters
+# Agent launch
 
-How Ariadne launches a concrete coding-agent CLI: the argv, the environment,
-the generated config, and the hooks that report back.
+How Ariadne launches an agent: which agents there are, what discovery learns
+about each, and what one launch is made of — the command, the environment,
+the launch file, and the resume.
 
-Four CLI integrations are supported: **ACP**, **Claude Code**, **OpenAI Codex
-CLI**, and **OpenCode**. ACP runs any compatible agent exposed as `acp` on
-`PATH`, driven by the daemon's own runtime rather than a tmux pane (021). An
-adapter turns a spawn or resume request into that CLI's argv, environment,
-and generated files. Every adapter meets the same contract. Only the spelling
-of each clause changes between CLIs.
+Every agent is an ACP agent in the daemon's registry. A launch runs the
+registry command of the agent the session's pin names, as a child of the
+daemon, and the ACP runtime (021) drives it from the launch file this spec
+describes.
 
 ## Scope
 
-In: the contract an adapter meets, the spelling each CLI takes it in,
-per-agent launch flags, the session context in the environment, hook
-installation, and resuming or reviving a session.
+In: the agent registry, discovery and the capabilities it caches, the flags
+each agent is launched with, the launch plan and its launch file, the session
+context in the environment, the skill documents on disk, and resuming or
+reviving a session.
 
-Out: which model to pick (011), what the session is briefed with (006), and
-what a skill says (017).
-
-## The contract
-
-Fourteen clauses, each of them true of every adapter. `AdapterContract`
-(`crates/ariadne-daemon/src/agents/contract.rs`) is this list as one Rust
-interface: an adapter declares how it spells each clause, and one suite —
-`tests/adapter_contract.rs` — holds every adapter to it.
-
-1. **argv.** A launch runs the binary of its agent kind, and hands it no empty
-   argument.
-2. **Environment.** Every launch carries the Ariadne identity of its session —
-   session, launch, goal, seat and task, and the daemon's socket — which is
-   what the MCP server and the hook sink read to act as that session. It runs
-   in the directory the launcher named.
-3. **Generated config.** Everything a launch generates is written in the run
-   directory of its session, and nothing at all in the worktree, which belongs
-   to the repository.
-4. **Model.** The model the session is pinned to is passed on every launch.
-   Nothing falls back to a CLI default, and a model is never dropped silently.
-5. **Effort.** A pinned effort is passed on every launch, and a session that
-   pinned none passes none: the CLI runs the model at its own default.
-6. **System prompt.** A spawn briefs the agent with the system prompt.
-7. **MCP.** Every launch points the CLI at `ariadne mcp serve`, with nothing
-   after `serve` and the session context in the server's environment.
-8. **Hooks.** Every launch tells the CLI to report what it does to
-   `ariadne agent-event --kind <agent kind>`.
-9. **Flags.** The flags of the agent config reach the argv once, and the
-   adapter adds none of its own. The permission bypasses are **configuration**
-   — `--dangerously-skip-permissions`,
-   `--dangerously-bypass-approvals-and-sandbox`, and `--auto` — read from the
-   per-agent config on every launch. ACP has no universal bypass flag, so its
-   default list is empty. An agent whose flags the user emptied gets no bypass.
-10. **Resume.** A resume names the session it continues and delivers its
-    instruction once, through the one channel that CLI takes it on. An empty
-    instruction is an interactive resume: it delivers nothing, and it puts
-    nothing of the adapter's own in its place, so the agent drops into its TUI
-    and waits for the user.
-11. **Session id.** A spawn knows the CLI's own session id up front only where
-    the CLI lets the caller choose it; every other adapter waits for the event
-    that carries it. Either way the id is tracked, so the session can be
-    resumed and attached.
-12. **Skills.** The skill documents the launcher wrote reach the CLI the way
-    that CLI takes a folder of them, and an agent that loads none is pointed
-    at nothing.
-13. **Trust dialogs.** A spawn types nothing into the pane. A CLI that opens a
-    directory-trust dialog over the folder it was launched in has it answered
-    by the user, never by the daemon.
-14. **Compaction.** The adapter knows the event with which its CLI says a
-    compaction is over, and reads no other event as one.
-
-## The spellings
-
-One column per CLI, one row per clause that has a spelling. This table is the
-declaration each adapter returns from `contract()`.
-
-| Clause | ACP | Claude Code | Codex | OpenCode |
-| --- | --- | --- | --- | --- |
-| Binary | `acp` | `claude` | `codex` | `opencode` |
-| Generated files | `acp.json`, selected by `ARIADNE_ACP_CONFIG` | `system-prompt.md`, `mcp.json`, `settings.json` | none — everything is on the argv | `opencode.json`, passed as `OPENCODE_CONFIG` |
-| System prompt | prepended to each user prompt | `--append-system-prompt <content>` | prepended to the first message — no append-safe flag | `agent.ariadne.prompt` |
-| Model | `session/set_config_option`, category `model` | `--model` | `-m` | `agent.ariadne.model` |
-| Effort | `session/set_config_option`, category `thought_level` | `--effort`, after the model | `-c model_reasoning_effort=<level>` | `agent.ariadne.variant` |
-| MCP | `mcpServers` on session setup and restore | `--mcp-config <run>/mcp.json`: `command`, `args`, `env` | `-c mcp_servers.ariadne.command`, `.args`, `.env` | `mcp.ariadne`: `command`, which heads the arguments, and `environment` |
-| Hooks | none — the daemon's ACP runtime records the updates itself (021) | command hooks in `settings.json` | `-c hooks.<Event>=[...]` ([`ariadne_core::codex_hooks`]) | the events plugin the daemon installs, named in `plugin` |
-| Session id | returned by `session/new` | chosen by Ariadne, `--session-id <uuid>` | reported by the `SessionStart` hook | reported by the plugin's `session.created` event |
-| Resume | `session/resume`, or `session/load` when only loading is available | `--resume <id>` | `codex resume <id>`, every config flag re-passed | `--session <id>` |
-| Instruction | `session/prompt` after setup | last argument of the argv | last argument of the argv | typed into the TUI: OpenCode drops `--prompt` on a resume |
-| Skills | the index in the system prompt | a session plugin at `<run>/plugin`, passed with `--plugin-dir` | none — the index in the system prompt | `skills.paths` |
-| Compaction | completed `compaction_update` | `session_start` whose `source` is `compact` | `post_compact` | `session.compacted` |
+Out: the process and the protocol conversation (021), the model catalog and
+where a pin is set (011), what the session is briefed with (006), and what a
+skill says (017).
 
 ## Behavior
 
-1. Every session names its agent CLI and its model: both come off the pin its
-   seat carries, and there is no auto — nothing detects an installed CLI, and
-   no launch falls back to a CLI default model.
-2. Per-agent flags are replaced whole when they are edited, and an unknown
-   agent kind is refused by name.
-3. A resume replays the whole transcript as its first prompt. Shortening it is
-   the agent's own business: the daemon asks no session to compact, and reads
-   the compaction a CLI reports (clause 14) as the agent being back at its
-   prompt.
-4. A session with no internal agent id cannot be revived and is spawned
-   afresh; a session of a finished goal is not revived at all.
-5. A launch hands tmux nothing that can outgrow a command line: the prompt
-   goes through a plan file rather than argv.
-6. The skill documents of the agent are written into its run directory before
-   the adapter plans anything, one `<name>/SKILL.md` under `skills/`. They go
-   there and never into the worktree. A skill the agent no longer holds is
-   removed by the same write.
-7. Codex is given no skill folder because it discovers skills only under its
-   own home or under the project root, and the project root of an agent is its
-   worktree. The index in the system prompt names every document by its
-   run-directory path (006), which is the floor under all four: a CLI with no
-   skill loading of its own still has a file the agent can open.
-8. A freshly launched pane is watched for a trust dialog, and the session says
-   it is waiting on a person. The dialog stands until they answer it — typing
-   into the pane is what takes the flag down (008), and an agent waiting on a
-   person is neither nudged nor relaunched (009). Nothing is pressed on the
-   daemon's own account: which answer such a dialog highlights belongs to the
-   CLI and moves between its releases, and one of them closes the agent.
+1. The registry holds three built-in agents — `claude-code-acp`
+   (`claude-code-acp`), `codex-acp` (`codex acp`) and `opencode-acp`
+   (`opencode acp`) — and every `[[acp_agents]]` entry of the daemon config,
+   each an `id` and a `command`. `GET /v1/acp-agents` lists them all, the
+   built-ins first.
+2. A registry id is any non-empty word without `:`, the delimiter that splits
+   a pin into its agent and its model. The first holder of an id keeps it:
+   built-ins first, then the configured entries in configuration order. A
+   later entry with a taken id, an empty id, or an id with `:` is listed as
+   rejected with the reason on it, is never probed, and never answers for its
+   id.
+3. Discovery probes every entry at once: it starts the command, runs
+   `initialize`, `session/new` and one empty `session/prompt`, and caches
+   what it measured. `POST /v1/acp-agents/refresh` runs it again and replaces
+   the cache as one snapshot.
+4. An agent is `ready` only when it negotiates ACP version 1, opens a
+   session, offers a model option with at least one choice, and answers a
+   prompt. Anything short of that is `rejected`, with the reason on the
+   entry.
+5. A ready agent that lacks an optional capability is degraded, one flag per
+   gap: `no_efforts` for no effort option, `no_adoption` for no
+   `session_list`, and `no_restart_resume` for no `session_load`.
+6. Each registry agent has one list of extra flags. `GET /v1/agents` lists
+   every registry agent with its flags and an empty `default_flags`.
+   `PUT /v1/agents/{id}` replaces the list whole, an empty list included, and
+   refuses an id the registry does not hold by name.
+7. A launch runs the registry command of the agent the pin names, with that
+   agent's flags behind it. The flags are read on every launch, spawn and
+   resume alike, and the launch adds no flag of its own.
+8. The pin is `<agent>:<model>` (011). The agent is told only the model half,
+   and the effort only where the session pinned one. Both come off the
+   session row, so no launch of a session moves either.
+9. Every launch carries the session context in its environment —
+   `ARIADNE_SESSION_ID`, `ARIADNE_LAUNCH_ID`, `ARIADNE_GOAL_ID`,
+   `ARIADNE_SEAT`, `ARIADNE_SOCKET`, and `ARIADNE_TASK_ID` for a task seat —
+   and runs in the seat's worktree, or the repository for the orchestrator.
+10. The launch id is fresh for every process started under a session row,
+    and the row is told it before the process starts. That is what tells the
+    events of a replaced agent from those of the agent that replaces it.
+11. Every launch writes `acp.json` into the session's run directory: the
+    system prompt, the first prompt, the model, the effort, the session it
+    resumes, and one MCP server, `ariadne` — the `ariadne` CLI with the
+    arguments `mcp serve` and the session context as its environment. The
+    runtime sends the agent exactly what this file says.
+12. A spawn opens a new agent session and carries the briefing as the first
+    prompt. A resume names the agent session it continues and carries its
+    instruction once, as the next prompt; an empty instruction resumes an
+    agent that is told nothing.
+13. A briefing has no size limit on its way to the agent: it travels in the
+    launch file and the protocol, never on a command line.
+14. The skill documents of the agent are written into its run directory
+    before the launch is planned, one `<name>/SKILL.md` under `skills/`, and
+    never into the worktree. The index in the system prompt names each one by
+    that path (006). A skill the agent no longer holds is removed by the same
+    write.
+15. A resume is gated on discovery: an agent whose cached capabilities lack
+    `session_load` is refused as not resumable, and no process starts.
+16. A session with no agent session id is not revived, and the next launch of
+    its seat is a fresh spawn. A session of a finished goal is not revived at
+    all. A revive brings back the very row it names, on the same agent and
+    model.
+17. The daemon asks no agent to compact. A completed `compaction_update`
+    reads as the agent back at its prompt, and no other event does.
 
 ## Acceptance criteria
 
-Every clause of the contract is proven for all four adapters at once, by
-`adapter_contract.rs`:
-
-- Clause 1 (`::every_launch_runs_the_binary_of_its_agent_kind`).
-- Clause 2 (`::every_launch_carries_the_session_context_in_its_environment`).
-- Clause 3
-  (`::every_launch_generates_its_files_in_the_run_dir_and_none_in_the_worktree`).
-- Clause 4 (`::every_launch_passes_the_pinned_model`).
-- Clause 5 (`::an_effort_reaches_the_cli_only_when_the_session_pinned_one`).
-- Clause 6 (`::every_spawn_briefs_the_agent_with_the_system_prompt`).
-- Clause 7 (`::every_launch_points_the_cli_at_the_ariadne_mcp_server`).
-- Clause 8 (`::every_launch_reports_the_cli_events_to_the_daemon`).
-- Clause 9
-  (`::the_configured_flags_reach_every_launch_once_and_the_adapter_adds_none`).
-- Clause 10 (`::a_resume_names_its_session_and_delivers_its_instruction_once`,
-  `::an_interactive_resume_delivers_no_instruction`).
-- Clause 11 (`::a_spawn_knows_its_session_id_only_where_the_cli_lets_it_be_chosen`).
-- Clause 12 (`::the_skill_documents_reach_the_cli_the_way_it_takes_them`).
-- Clause 13 (`::a_spawn_types_nothing_into_the_pane`).
-- Clause 14 (`::each_cli_says_a_compaction_is_over_in_the_event_the_contract_names`).
-
-The spelling of each CLI is asserted whole beside it:
-
-- Each adapter's spawn plan is asserted whole
-  (`adapters.rs::acp_spawn_plan`, `::claude_spawn_plan`,
-  `::codex_spawn_plan`, `::opencode_spawn_plan`).
-- A stub ACP server proves the protocol handshake, session setup, model,
-  effort, MCP, mapped events, compaction, and resume
-  (`commands/acp.rs::the_acp_contract_runs_against_a_stub`,
-  `::resume_uses_the_saved_acp_session`).
-- The adapters hardcode no bypass flag
-  (`adapters.rs::the_adapters_hardcode_no_bypass_flag`) and pass the configured
-  flags once (`::the_configured_flags_are_passed_once`).
-- Each spawn plan carries its model, and the effort reaches each CLI the way
-  that CLI spells it
-  (`adapters.rs::claude_passes_the_effort_after_the_model`,
-  `::codex_passes_the_effort_as_a_config_override`,
-  `::opencode_writes_the_effort_as_the_agents_variant`).
-- The base environment carries the session context
-  (`adapters.rs::base_env_carries_session_context`).
-- Every agent kind is listed with its flags and defaults
-  (`agents.rs::every_agent_kind_is_listed_with_its_flags_and_its_defaults`),
-  flags are replaced whole (`::flags_are_replaced_whole_and_the_defaults_stay_readable`),
-  an unknown kind is refused (`::an_unknown_agent_kind_is_refused_by_name`), and a
-  launch takes its flags from the config (`::a_launch_takes_its_flags_from_the_agent_config`).
-- A launch hands tmux nothing that can outgrow it
-  (`resume.rs::a_launch_hands_tmux_nothing_that_can_outgrow_it`).
-- Claude Code gets the skills as a session plugin
-  (`adapters.rs::claude_loads_the_skills_as_a_session_plugin`), and an agent
-  with none gets no plugin
-  (`::claude_passes_no_plugin_for_an_agent_with_no_skills`).
-- OpenCode looks for them in the run directory
-  (`adapters.rs::opencode_points_its_skill_paths_at_the_run_dir`).
-- A skill the agent dropped is gone from the run directory
+- The registry lists the three built-ins and a configured agent
+  (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`).
+- An id that spells a CLI name is an agent like any other
+  (`acp_discovery.rs::a_registry_id_that_spells_a_cli_name_is_an_agent_like_any_other`),
+  a taken id is rejected and its first holder keeps it
+  (`::a_registry_id_already_taken_is_rejected`), and an id with `:` is
+  rejected (`::a_registry_id_with_the_catalog_delimiter_is_rejected`).
+- Discovery refreshes on demand and replaces the cache
+  (`acp_discovery.rs::discovery_refreshes_on_demand`).
+- Every required capability is enforced
+  (`acp_discovery.rs::every_required_acp_capability_is_enforced`), and an agent
+  with no model option is rejected with the reason shown
+  (`::an_agent_without_a_model_option_is_rejected_and_doctor_shows_why`).
+- Every optional gap sets its own degradation flag
+  (`acp_discovery.rs::every_optional_capability_gap_sets_its_degraded_flag`).
+- Every registry agent is listed with its flags
+  (`agents.rs::every_registry_agent_is_listed_with_its_flags_and_its_defaults`),
+  the flags are replaced whole
+  (`::flags_are_replaced_whole_and_the_defaults_stay_readable`), and an
+  unknown agent is refused by name (`::an_unknown_agent_is_refused_by_name`).
+- A launch takes its flags from the agent config, on spawn and resume
+  (`agents.rs::a_launch_takes_its_flags_from_the_agent_config`), and the
+  plan adds none of its own
+  (`adapters.rs::the_configured_flags_are_passed_once_and_the_adapter_adds_none`).
+- A seat runs the registry command its pin names, with the bare model half
+  pinned (`acp_runtime.rs::an_orchestrator_runs_on_the_registry_agent`).
+- The model and effort of a session never move across its launches
+  (`resume.rs::a_running_reviewer_keeps_the_model_its_session_started_on`,
+  `::a_resumed_author_stays_on_the_model_its_session_started_on`,
+  `::an_orchestrator_respawn_stays_on_the_goals_pin`).
+- Every launch carries the session context, in the agent's environment and
+  the MCP server's (`adapters.rs::every_launch_carries_the_session_context`).
+- Every launch of a session reports under a new launch id
+  (`resume.rs::every_launch_of_a_session_reports_under_a_new_id`).
+- A spawn writes the launch file with the briefing, the pins and the
+  `ariadne` MCP server, and the plan carries what the file says
+  (`adapters.rs::a_spawn_plans_a_new_session_briefed_and_pinned`).
+- A resume names its session and delivers its instruction once, and an empty
+  one delivers nothing
+  (`adapters.rs::a_resume_names_its_session_and_delivers_its_instruction_once`).
+- A briefing of any size reaches the agent whole
+  (`resume.rs::a_briefing_of_any_size_reaches_the_agent_whole`).
+- The skill documents are on disk where the index names them
+  (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`),
+  and a dropped skill leaves nothing behind
   (`adapters.rs::a_dropped_skill_leaves_nothing_behind`).
-- A session without an agent id is not revived
-  (`resume.rs::a_session_without_an_agent_id_is_not_revived`), nor is one of a
-  finished goal (`::a_session_of_a_finished_goal_is_not_revived`).
-- Each CLI's own compaction vocabulary is read and nothing else is mistaken
-  for it (`agents/mod.rs::a_compaction_is_done_when_the_cli_says_so_and_not_before`).
-- A trust dialog is recognised on a pane through the colours it is drawn in
-  (`launcher.rs::a_trust_dialog_is_recognised_on_a_pane`,
-  `::a_pane_reads_as_what_is_on_the_screen`), and an agent at work is not
-  mistaken for one (`::a_working_pane_is_not_a_question`).
+- A session of an agent without `session_load` is refused as not resumable
+  (`acp_runtime.rs::a_session_of_an_agent_without_session_load_is_not_resumable`).
+- A session without an agent session id is not revived
+  (`resume.rs::a_session_without_an_agent_id_is_not_revived`), a reviewer
+  without one is spawned afresh
+  (`::a_reviewer_without_an_agent_id_is_spawned_afresh`), a session of a
+  finished goal is not revived
+  (`::a_session_of_a_finished_goal_is_not_revived`), and a revive brings back
+  the row it names (`::reviving_a_session_revives_it_in_place`).
+- Only a completed `compaction_update` reads as a finished compaction
+  (`agents/acp.rs::a_compaction_is_done_when_the_agent_says_so_and_not_before`).
+
+## Known gap
+
+Discovery also runs once when the daemon starts. No test starts the daemon
+binary, so the suite proves that probe only through the refresh endpoint.
 
 ## Sources
 
-`crates/ariadne-daemon/src/agents/contract.rs` (the contract),
-`crates/ariadne-daemon/src/agents/` (one module per CLI),
-`crates/ariadne-cli/src/commands/acp.rs` (the ACP client),
-`crates/ariadne-daemon/src/launcher.rs`, `crates/ariadne-store/src/agents.rs`.
+`crates/ariadne-daemon/src/acp_discovery.rs` (the registry and discovery),
+`crates/ariadne-daemon/src/agents/` (the launch plan and the launch file),
+`crates/ariadne-core/src/acp.rs` (the launch-file format),
+`crates/ariadne-daemon/src/launcher.rs` (the launch, the flags, the resume
+gate), `crates/ariadne-daemon/src/http/catalog.rs` (the agent endpoints),
+`crates/ariadne-store/src/agents.rs` (the flags).

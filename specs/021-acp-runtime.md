@@ -6,80 +6,63 @@ areas: [daemon]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/acp_runtime.rs
+  - crates/ariadne-daemon/tests/acp_console.rs
+  - crates/ariadne-daemon/tests/acp_discovery.rs
   - crates/ariadne-daemon/src/acp.rs
 ---
 
 # ACP runtime
 
-How the daemon runs an agent of kind `acp`: as its own child process, driven
-over the Agent Client Protocol, with no tmux session anywhere in its life.
+How the daemon runs an agent: as its own child process, driven over the Agent
+Client Protocol.
 
-Every other agent kind runs a CLI in a tmux pane (008). The `acp` kind is the
-first to run inside the daemon instead: `ariadned` spawns the agent
-executable with piped standard input and output, speaks ACP version 1 over
-newline-delimited JSON-RPC, and reports what the agent does through the same
-event ingestion its hooks would use. The runtime is
-`crates/ariadne-daemon/src/acp.rs`; the launch it consumes is the ACP
-adapter's own plan (007), `acp.json` included.
+`ariadned` spawns the agent executable with piped standard input and output,
+speaks ACP version 1 over newline-delimited JSON-RPC, and reports what the
+agent does through the daemon's one event ingestion path. Every seat of every
+session runs this way — orchestrator, author and reviewer. The runtime is
+`crates/ariadne-daemon/src/acp.rs`; the launch it consumes — the command and
+the launch file — is described in 007.
 
 ## Scope
 
 In: the child process and its lifecycle, the protocol conversation, the model
-and effort pins, event persistence, liveness, and the kill.
+and effort pins, the events the runtime reports, permission requests, prompt
+delivery, liveness, and the kill.
 
-Out: what the adapter plans and how `acp.json` is spelled (007), which model
-is pinned and how discovery catalogs it (011), what the session is briefed
-with (006), and the CLI-side ACP client
-`ariadne _spawn` still carries for launches outside the daemon (007).
+Out: the registry, discovery, and what a launch is made of (007), which model
+is pinned (011), what the session is briefed with (006), the console a person
+reads and types into (008), and the sweep that retires a row whose agent is
+gone (009).
 
 ## Behavior
 
-1. A session of kind `acp` never has a tmux session. The launcher routes its
-   every launch — spawn, resume, revive or retry, whatever the seat:
-   orchestrator, author or reviewer — through the runtime: no pane is ever
-   created for it, no pane is claimed for it, and killing the session
-   touches no pane. The row's `tmux_session` column keeps its derived name,
-   no pane ever holds it, and a spawn asks tmux nothing at all. Shared paths
-   outside the spawns — the `has_session` asks of the resume paths and of
-   task cleanup — still ask tmux about the stored name and find nothing;
-   they retire with the tmux path itself.
-2. The agent is a direct child of the daemon, and the pin picks it by
-   registry id: a session's model of `<agent-id>:<model>` — the id of a
-   discovered catalog entry (011) — runs that registry agent's command, and
-   the bare model half is what the runtime pins. A model naming no registry
-   agent runs `Config::acp_bin` (the contract's `acp` on `PATH` outside a
-   test) with the model as pinned. Either command runs with the rest of the
-   adapter's argv, the plan's environment, and the worktree as its working
-   directory, on piped stdio. The spawn plan is still written to the run
-   directory as the record of the launch, its argv the resolved command.
-3. The runtime speaks ACP version 1: `initialize` (refusing an agent that
-   negotiates anything else), `session/new` — or `session/resume`, falling
-   back to `session/load`, where the launch resumes a stored session — then
-   `session/prompt`, reading `session/update` notifications throughout.
-   Every seat's session is opened with the MCP servers its config carries;
-   the ariadne server is among them for every seat, the orchestrator's
-   included.
-4. A resume of a registry agent is gated on what discovery measured: an
-   agent whose cached capabilities lack `session_load` is refused before any
-   process starts, and the refusal reports the session as not resumable. A
-   session on the `Config::acp_bin` fallback has no snapshot to read and is
-   left to the runtime's own protocol errors.
-5. The model the session is pinned to is set through
-   `session/set_config_option` on the option of category `model` — or, where
-   the agent categorizes none, on the option whose id or name is `model`.
-   The effort is set the same way, on the category `thought_level` with
-   `effort`, `reasoning` and `thought_level` as the id-or-name fallback, and
-   only when the pin carries one. An agent offering no matching option fails
-   the launch rather than running on a default.
-6. What the agent does becomes agent events on the existing ingestion path
-   (012), in the ACP adapter's vocabulary (007): `session_start`,
-   `user_prompt_submit`, tool calls as `pre_tool_use` and `post_tool_use`,
-   `stop` with the turn's last assistant text, `compaction_update`,
+1. The agent is a direct child of the daemon. It runs the registry command
+   the launch names (007), with the launch's environment, in the seat's
+   working directory, on piped stdio. A launch for a session that already
+   has an agent here kills that agent first: one seat, one agent.
+2. The runtime speaks ACP version 1. It sends `initialize` and refuses an
+   agent that negotiates any other version (see Known gap). It then opens
+   the session with `session/new` — or, for a resume, `session/resume` where
+   the agent advertises it and `session/load` where it only advertises
+   loading — and passes the MCP servers of the launch file every time.
+3. The model is set through `session/set_config_option` on the option of
+   category `model`, or, where no option has that category, on the option
+   whose id or name is `model`. The effort is set the same way, on category
+   `thought_level` with `effort`, `reasoning` and `thought_level` as the
+   id-or-name fallback, and only when the launch carries one. An agent that
+   offers no matching option fails the launch rather than run on a default
+   (see Known gap).
+4. Every prompt the runtime sends is the system prompt, a blank line, and
+   the text of the prompt. The first prompt of a launch is the one its launch
+   file carries, if any.
+5. What the agent does becomes agent events on the ingestion path (012):
+   `session_start` with the agent's own session id, `user_prompt_submit`,
+   tool calls as `pre_tool_use` and `post_tool_use`, `stop` with the turn's
+   last assistant text, a completed `compaction_update`,
    `permission_request` and `permission.replied`, `session.error`, and
-   `session_end`. The events carry the launch id, so a replaced agent's last
-   words are told from the live one's; the agent's own session id rides
-   `session_start` and is recorded on the row.
-7. ACP permission mode defaults to `auto` from daemon configuration, and a
+   `session_end`. Every event carries the launch id (007), and the agent's
+   session id is recorded on the row.
+6. ACP permission mode defaults to `auto` from daemon configuration, and a
    task may override it with `auto`, `ask` or `learn`. `auto` selects the
    first allowing option, then the first option, and cancels only an empty
    list. `ask` records the request in the console, raises session attention
@@ -87,29 +70,43 @@ with (006), and the CLI-side ACP client
    the first request for one repository, tool name and tool kind; an allowing
    answer is stored and later matching requests are selected automatically.
    A denial is not stored.
-8. After the initial prompt's turn ends the agent stays up, the way a TUI
-   stays at its prompt, and the runtime keeps serving what it sends. The
-   child is reaped whenever it ends: its own exit retires the session
-   (`session_end`, and `session.error` first if the protocol failed), and
-   killing the session kills the child. Everything the daemon says to the
-   agent after the launch — a scheduler nudge, a review briefing, an agent
-   message — arrives the same way: a `session/prompt`, sent at once between
-   turns and queued in order behind a running one (009). Console input (008)
-   does too, except that a pending `ask` consumes it as the answer (rule 7):
-   only a person's input ever answers a permission, never a delivery.
-9. Liveness is the runtime's registry, not tmux: the spawn guards and the
-   scheduler ask it for `acp` sessions, and it always answers — there is no
-   "could not be asked". A daemon restart answers no for every child of the
-   daemon that died, and the liveness sweep retires such rows (009).
+7. After a turn ends the agent stays up and the runtime keeps serving it.
+   Everything the daemon says to the agent after the launch — a scheduler
+   nudge, a review briefing, an agent message — is a `session/prompt`, sent
+   at once between turns and queued in order behind a running one. Console
+   input (008) arrives the same way, except that a pending `ask` takes it as
+   the answer (rule 6): only a person's input ever answers a permission.
+8. The child is reaped whenever it ends. Its own exit ends the session on
+   the record: `session.error` first if the protocol failed, then
+   `session_end`. Killing the session kills the child and retires the row.
+9. A resume starts a fresh agent process on the stored conversation. The
+   predecessor is reaped, and its exit takes neither the seat nor the row
+   down.
+10. Liveness is the runtime's own registry of running agents, and it always
+    answers. After a daemon restart no child of the old daemon is running,
+    and a revive reaches the stored conversation through a new process.
 
 ## Acceptance criteria
 
-- An `acp` author runs end to end — launch, handshake, worktree, MCP, model
-  and effort pins, briefing as the first prompt, events in the store, the
-  captured agent session id — with no tmux session
-  (`acp_runtime.rs::an_acp_author_runs_on_daemon_stdio_with_no_tmux_session`).
-- Killing the session kills the agent process, and no pane is asked to die
+- An author runs end to end — the handshake in order, the worktree, the
+  `ariadne` MCP server, the model and effort pins, the briefing behind the
+  system prompt as the first prompt, the events in the store, the captured
+  agent session id, and the agent still up after the turn
+  (`acp_runtime.rs::an_acp_author_runs_on_daemon_stdio`).
+- An orchestrator seat runs the same way, with the ariadne MCP server in
+  `session/new` (`acp_runtime.rs::an_orchestrator_runs_on_the_registry_agent`).
+- A reviewer seat runs the same way, in its detached worktree
+  (`acp_runtime.rs::a_reviewer_runs_on_the_registry_agent`).
+- Killing the session kills the agent process and retires the row
   (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`).
+- An agent that dies mid-turn is reaped, and its session ends on the record
+  (`acp_runtime.rs::a_dead_acp_agent_is_reaped_and_its_session_retired`).
+- A resume loads the stored conversation on a fresh process, the instruction
+  rides the new prompt, and the predecessor's exit takes nothing down
+  (`acp_runtime.rs::resuming_an_acp_author_replaces_the_agent_and_keeps_the_session`).
+- After a daemon restart a revive reaches the stored conversation through
+  `session/load`, on an agent that advertises no `session/resume`
+  (`acp_runtime.rs::a_stub_session_resumes_through_session_load_after_a_daemon_restart`).
 - `auto` approves a permission request with the allowing option, and the ask
   and answer are events
   (`acp_runtime.rs::auto_approves_a_permission_request_with_the_allowing_option`),
@@ -120,34 +117,25 @@ with (006), and the CLI-side ACP client
 - `learn` remembers an approval per repository across a daemon restart, and
   does not remember a denial
   (`acp_console.rs::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
-- An agent that dies mid-turn is reaped and its session retired on the record
-  (`acp_runtime.rs::a_dead_acp_agent_is_reaped_and_its_session_retired`).
-- A resume loads the stored conversation on a fresh agent process:
-  `session/resume` names the stored id, the instruction rides the new
-  prompt, the predecessor is reaped, and its exit takes neither the seat nor
-  the row down
-  (`acp_runtime.rs::resuming_an_acp_author_replaces_the_agent_and_keeps_the_session`).
-- An orchestrator seat runs on the agent its pin names in the registry: the
-  registry command, the bare model and effort halves pinned, the ariadne MCP
-  server in `session/new`, and not one tmux call
-  (`acp_runtime.rs::an_orchestrator_runs_on_the_registry_agent_with_no_tmux_session`).
-- A reviewer seat runs the same way, in its detached worktree
-  (`acp_runtime.rs::a_reviewer_runs_on_the_registry_agent_with_no_tmux_session`).
-- After a daemon restart a revive reaches the stored conversation through
-  `session/load`, on an agent that advertises no `session/resume`
-  (`acp_runtime.rs::a_stub_session_resumes_through_session_load_after_a_daemon_restart`).
-- A session of an agent discovery measured without `session_load` is refused
-  as not resumable, with no process started
-  (`acp_runtime.rs::a_session_of_an_agent_without_session_load_is_not_resumable`).
-- A scheduler nudge arrives at the agent as a `session/prompt`, off the
-  keystroke path
+- Console input reaches the agent and queues behind a running turn
+  (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).
+- A scheduler nudge arrives at the agent as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
+- An option is found by its category, or by its id or name where no option
+  has the category — the lookup the runtime shares with discovery
+  (`acp_discovery.rs::model_and_effort_name_fallbacks_enter_the_discovered_catalog`).
+
+## Known gap
+
+Two refusals of rules 2 and 3 are proven only at discovery, not at launch:
+an agent on another protocol version, and an agent with no model option.
+Discovery rejects both (007), and no pin can name a model of a rejected
+agent (011), so no test launches one.
 
 ## Sources
 
 `crates/ariadne-daemon/src/acp.rs` (the runtime),
-`crates/ariadne-daemon/src/launcher.rs` (the routing, liveness and kill),
-`crates/ariadne-daemon/src/acp_discovery.rs` (the registry a pin picks by),
-`crates/ariadne-daemon/src/scheduler/delivery.rs` (the prompt delivery),
-`crates/ariadne-daemon/src/scheduler/sweeps.rs` (the liveness sweep),
+`crates/ariadne-daemon/src/acp_rpc.rs` (the JSON-RPC transport),
+`crates/ariadne-daemon/src/launcher.rs` (the launch, liveness and kill),
+`crates/ariadne-daemon/src/scheduler/mod.rs` (the prompt delivery),
 `crates/ariadne-daemon/tests/common/acp.rs` (the scriptable stub agent).

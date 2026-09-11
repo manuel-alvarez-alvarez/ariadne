@@ -140,7 +140,10 @@ async fn an_orchestrator_session_indexes_the_orchestration_skill() {
     let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
 
     let run_dir = h.launcher.cfg.run_dir.join(&session.id);
-    let system = std::fs::read_to_string(run_dir.join("system-prompt.md")).unwrap();
+    let system = h
+        .launch_file(&session.id)
+        .expect("a launch file")
+        .system_prompt;
     let (owed, index) = system
         .split_once(
             "\n\nYour skills. Read the document of a skill before you do the work it covers:",

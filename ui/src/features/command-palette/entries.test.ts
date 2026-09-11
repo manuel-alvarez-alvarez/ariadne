@@ -23,7 +23,6 @@ const SESSION: SessionDto = aSession({
   goal_id: GOAL.id,
   task_id: TASK.id,
   task_agent_id: "01JPROF0000000000000000AA",
-  tmux_session: "ariadne-eng-01jsess",
 })
 
 const PLANNER_SESSION: SessionDto = {
@@ -31,7 +30,6 @@ const PLANNER_SESSION: SessionDto = {
   id: "01JSESS00000000000000000D",
   task_id: null,
   seat: "orchestrator",
-  tmux_session: "ariadne-plan-01jsess",
 }
 
 const SKILL: SkillDto = aSkill({

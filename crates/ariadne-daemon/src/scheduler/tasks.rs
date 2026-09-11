@@ -252,9 +252,8 @@ impl super::Scheduler {
                             ..Default::default()
                         })
                         .await?;
-                    // As in `live_sessions`: a pane tmux would not answer for
-                    // counts as one, so an outage cannot put a second reviewer
-                    // on a review that already has one.
+                    // As in `live_sessions`: only a running agent counts, so
+                    // a reviewer whose agent died is started again.
                     let mut running = None;
                     for s in &live {
                         if s.seat() == Seat::Reviewer
@@ -499,12 +498,12 @@ impl super::Scheduler {
             let situation = format!("pick:{}", task.id);
             if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
                 self.spent_on_a_dead_launch(&reviewer.id, &task.id, &session);
-                // Asked once, straight into the pane; from there the quiet
+                // Asked once, straight to the agent; from there the quiet
                 // clock takes over like any other owed answer.
                 let key = (task.id.clone(), reviewer.id.clone());
-                if !self.pane_busy(&session.id) && self.pick_briefed.insert(key) {
+                if self.pick_briefed.insert(key) {
                     info!(task = %task.id, reviewer = %reviewer.id, "asking the reviewer to pick the winner");
-                    self.spawn_delivery(&session, briefing.clone());
+                    self.hand_prompt(&session, briefing.clone());
                 } else {
                     self.check_session_quiet(&session, situation, &briefing)
                         .await?;
@@ -622,8 +621,7 @@ impl super::Scheduler {
         self.check_session_quiet(&session, situation, &resume).await
     }
 
-    /// The live session one staffed author runs, if it has one — a pane tmux
-    /// would not answer for counts, as everywhere.
+    /// The live session one staffed author runs, if it has one.
     async fn live_author_session(
         &self,
         task_id: &str,
@@ -670,7 +668,7 @@ impl super::Scheduler {
 
     /// One reviewer that owes a verdict on one author's review of a contested
     /// task: resumed onto that author's branch where its session is gone,
-    /// and — where its pane survived the last review — handed this one's
+    /// and — where its agent survived the last review — handed this one's
     /// briefing the moment it owes it, its worktree moved to the branch the
     /// briefing names first. The quiet clock watches it from there.
     async fn rouse_reviewer_for(
@@ -696,8 +694,8 @@ impl super::Scheduler {
 
         if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
             self.spent_on_a_dead_launch(&session.id, &task.id, &session);
-            if !self.pane_busy(&session.id) && !self.review_briefed.contains(&briefed) {
-                // A live pane is briefed the way a resumed one is, and at the
+            if !self.review_briefed.contains(&briefed) {
+                // A live agent is briefed the way a resumed one is, and at the
                 // same moment: when the verdict becomes owed, not when the
                 // quiet clock notices. Its detached worktree moves first, so
                 // the briefing lands in a tree already on the branch it
@@ -714,7 +712,7 @@ impl super::Scheduler {
                 }
                 info!(task = %task.id, reviewer = %reviewer.id, author = %author.id, "briefing the live reviewer for this author's review");
                 self.review_briefed.insert(briefed);
-                self.spawn_delivery(&session, resume.clone());
+                self.hand_prompt(&session, resume.clone());
                 // The briefing is this review request's delivery: generic
                 // delivery leaves a contested request alone, so the channel's
                 // stamp is written here, as the briefing goes out.
@@ -749,7 +747,7 @@ impl super::Scheduler {
                 .resume_reviewer_for(&task.id, &reviewer.id, Some(&author.id), &resume)
                 .await?;
             // The launch's briefing is this review request's delivery, the
-            // same as the live pane's above.
+            // same as the live agent's above.
             self.store
                 .mark_review_requests_delivered(&task.id, &author.id, &reviewer.id)
                 .await?;
@@ -779,13 +777,8 @@ impl super::Scheduler {
         true
     }
 
-    /// The sessions for this seat that are still running — including the ones
-    /// tmux would not answer for.
-    ///
-    /// Their number decides whether to spawn, so an unanswered question has to
-    /// count as a session: the sweep leaves such rows alone precisely because
-    /// nothing is known about them, and reconciling on the assumption they are
-    /// dead is how a tmux outage turns into two agents on one task.
+    /// The sessions for this seat whose agent is still running, as the
+    /// runtime answers for it. Their number decides whether to spawn.
     pub(super) async fn live_sessions(
         &self,
         goal_id: &str,

@@ -106,7 +106,7 @@ async fn model_and_effort_name_fallbacks_enter_the_discovered_catalog() {
         ["test-agent:small", "test-agent:large"]
     );
     for model in found {
-        assert_eq!(model["agent_kind"], "acp");
+        assert!(model.get("agent_kind").is_none(), "{model}");
         assert_eq!(model["efforts"][0]["id"], "low");
         assert_eq!(model["efforts"][1]["id"], "high");
         assert_eq!(model["efforts"][1]["default"], true);
@@ -254,43 +254,23 @@ async fn discovery_refreshes_on_demand() {
     );
 }
 
-/// A configured registry id that spells a native agent CLI is refused: the
-/// CLI reading wins every pin parse, so such an agent could never be
-/// selected. The entry stays listed with the reason on it, nothing resolves
-/// its command, and a pin naming that CLI still runs the native adapter.
+/// A registry id is any word without the catalog's delimiter in it: one
+/// that happens to spell the name of an agent's own CLI is an agent like any
+/// other, probed, resolved, and pinned by its id.
 #[tokio::test]
-async fn a_registry_id_that_spells_a_native_cli_is_rejected() {
+async fn a_registry_id_that_spells_a_cli_name_is_an_agent_like_any_other() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let home = dir.path().join("home");
-    std::fs::create_dir_all(&home).unwrap();
-    std::fs::write(
-        home.join("config.toml"),
-        format!(
-            "[[acp_agents]]\nid = \"codex\"\ncommand = [{bin:?}]\n\n\
-             [[acp_agents]]\nid = \"claude-code\"\ncommand = [{bin:?}]\n",
-            bin = agent.bin
-        ),
-    )
-    .unwrap();
-    let h = harness().home(home).discover_agents().await;
+    let h = harness_with_agent("codex", &agent).await;
 
     let agents: Vec<Value> = h.get("/v1/acp-agents").await;
-    for id in ["codex", "claude-code"] {
-        let entry = agents.iter().find(|a| a["id"] == id).unwrap();
-        assert_eq!(entry["status"], "rejected", "{entry}");
-        assert!(
-            entry["rejection_reason"]
-                .as_str()
-                .unwrap()
-                .contains("native agent CLI"),
-            "{entry}"
-        );
-        assert!(h.launcher.registry.command_of(id).is_none());
-    }
+    let entry = agents.iter().find(|a| a["id"] == "codex").unwrap();
+    assert_eq!(entry["status"], "ready", "{entry}");
+    assert_eq!(
+        h.launcher.registry.command_of("codex"),
+        Some(vec![agent.bin.clone()])
+    );
 
-    // The precedence stands: `codex:<model>` is the native CLI, whatever the
-    // config named.
     let repo = h.repository(&dir.path().join("plain-repo")).await;
     let goal: Value = h
         .json(
@@ -299,13 +279,13 @@ async fn a_registry_id_that_spells_a_native_cli_is_rejected() {
                 json!({
                     "title": "Ship it",
                     "repository_ids": [repo.id],
-                    "model": "codex:gpt-5.3-codex",
+                    "model": "codex:old-model",
                 }),
             ),
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(goal["model"], "codex:gpt-5.3-codex");
+    assert_eq!(goal["model"], "codex:old-model");
 }
 
 /// The first holder of an id keeps it — built-ins first, then configuration

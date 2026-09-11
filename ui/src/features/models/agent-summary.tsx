@@ -4,8 +4,8 @@
  *
  * An agent has no name and no page: it is what it knows and what it runs on.
  * So the skills are the identity — each one linking to itself — and the model
- * after them is quiet secondary text. Since a model names the agent CLI that
- * runs it (`claude_code:claude-opus-5`), that is one fact and not two.
+ * after them is quiet secondary text. Since a model names the agent that runs
+ * it (`claude-code-acp:claude-opus-5`), that is one fact and not two.
  *
  * There is nothing behind the pin to disagree with it. What the orchestrator
  * sized this agent at, or what the user chose instead, is simply what it runs
@@ -32,7 +32,7 @@ export function AgentSummary({
    */
   model: string
   /**
-   * The effort that model is run at: null is the agent CLI's own, which shows
+   * The effort that model is run at: null is the agent's own, which shows
    * as nothing at all — an effort nobody pinned is not a fact about this
    * agent.
    */

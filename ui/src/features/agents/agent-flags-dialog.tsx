@@ -1,12 +1,12 @@
 /**
- * Edit dialog for one agent kind's extra flags.
+ * Edit dialog for one registry agent's extra flags.
  *
- * There is nothing to create and nothing to delete — the three agent kinds are
- * the daemon's, and every one of them always has a flag list — so this is the
+ * There is nothing to create and nothing to delete — the agents are the
+ * daemon's registry, and every one of them always has a flag list — so this is the
  * edit half of the profiles dialog and no more: repeatable rows with add and
  * remove, and a submit that replaces the list whole.
  *
- * "Restore defaults" fills the rows with what Ariadne ships for the kind and
+ * "Restore defaults" fills the rows with what Ariadne ships for the agent and
  * writes nothing on its own, the same way the prompt editors' own restore
  * does: the daemon hands the defaults out with the config, and sending them
  * back is all a reset is.
@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { AGENT_KIND_LABELS, describeError } from "@/lib/format"
+import { describeError } from "@/lib/format"
 import {
   type AgentFlagsFormValues,
   agentFlagsSchema,
@@ -79,12 +79,12 @@ export function AgentFlagsDialog({
     if (!config) return
     const extraFlags = cleanFlags(values.flags)
     try {
-      await updateConfig.mutateAsync({ kind: config.agent_kind, extraFlags })
+      await updateConfig.mutateAsync({ agentId: config.agent_id, extraFlags })
       toast.success("Flags saved", {
         description:
           extraFlags.length > 0
-            ? `${AGENT_KIND_LABELS[config.agent_kind]} is launched with ${extraFlags.join(" ")}.`
-            : `${AGENT_KIND_LABELS[config.agent_kind]} is launched with no extra flags.`,
+            ? `${config.agent_id} is launched with ${extraFlags.join(" ")}.`
+            : `${config.agent_id} is launched with no extra flags.`,
       })
       onOpenChange(false)
     } catch (error) {
@@ -92,7 +92,7 @@ export function AgentFlagsDialog({
     }
   }
 
-  const label = config ? AGENT_KIND_LABELS[config.agent_kind] : ""
+  const label = config?.agent_id ?? ""
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

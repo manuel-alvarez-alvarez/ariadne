@@ -143,7 +143,7 @@ it("raises one toast for an agent that gets stuck on another screen", async () =
   // What it is about, so the toast is worth reading before it is clicked.
   expect(screen.getByText(TASK.title)).not.toBeNull()
 
-  // The same place the strip's row would have gone: the pane the prompt is
+  // The same place the strip's row would have gone: the console the prompt is
   // waiting in, with the keyboard already in it.
   // Fired rather than typed: a toast tracks a swipe through pointer capture,
   // which jsdom does not implement.

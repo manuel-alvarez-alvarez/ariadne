@@ -26,7 +26,7 @@ type PaletteTarget =
   | { kind: "session"; sessionId: string; goalId: string; taskId: string | null }
   /**
    * A row of the attention list, which decides where it goes itself: the
-   * thread a question was asked in, the pane a prompt is waiting in, or the
+   * thread a question was asked in, the console a prompt is waiting in, or the
    * panel of whatever is stuck ({@link attentionTarget}). Carried as the item
    * rather than as a route so the palette cannot drift from the strip — they
    * ask the same function the same question.
@@ -112,7 +112,7 @@ export function buildPaletteEntries({
         value: `${SEAT_LABELS[session.seat]} ${of ?? ""} ${shortId(session.id)}`,
         label: of ? `${SEAT_LABELS[session.seat]} · ${of}` : SEAT_LABELS[session.seat],
         detail: shortId(session.id),
-        keywords: [session.id, session.status, session.tmux_session, session.agent_kind],
+        keywords: [session.id, session.status, session.model],
         target: {
           kind: "session",
           sessionId: session.id,

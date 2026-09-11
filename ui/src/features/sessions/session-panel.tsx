@@ -34,10 +34,8 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
   const session = useQuery(sessionQueryOptions(sessionId))
 
   return (
-    // The panel is a terminal with a header on it, so Escape is the pane's
-    // whenever the pane has the keyboard; see `PanelSheet`.
     <PanelSheet onClose={onClose}>
-      {/* As wide as the other panels: the terminal is the point of this one. */}
+      {/* As wide as the other panels: the console is the point of this one. */}
       <SheetContent className="sm:max-w-3xl" aria-describedby={undefined}>
         <SheetHeader>
           {/* The panel is a dialog and needs a name of its own; the view below

@@ -185,7 +185,6 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
- "dirs",
  "futures-util",
  "http-body-util",
  "keepawake",
@@ -202,7 +201,6 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
- "uuid",
  "zbus",
 ]
 

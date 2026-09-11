@@ -20,7 +20,7 @@ pub struct MessageDto {
     /// The staffed agent it is for, or None for the orchestrator.
     pub to_agent_id: Option<String>,
     pub body: String,
-    /// When it reached the recipient's pane, or None while it is still
+    /// When it was handed to the recipient's agent, or None while it is still
     /// waiting for one to be free.
     pub delivered_at: Option<String>,
     pub created_at: String,
@@ -50,7 +50,7 @@ pub struct SendMessageRequest {
 pub struct MessageListQuery {
     /// Only the messages for this staffed agent.
     pub to_agent_id: Option<String>,
-    /// Only the ones that have not reached a pane yet.
+    /// Only the ones that have not reached their agent yet.
     #[serde(default)]
     pub undelivered: bool,
 }

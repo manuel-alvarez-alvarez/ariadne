@@ -5,8 +5,8 @@ import { ApiError } from "./errors"
 import { cacheRow, dropRow, optimisticStatus, restoreCache, shouldRetryQuery } from "./queries"
 import { qk } from "./query-keys"
 
-const RUNNING = { id: "s1", status: "running", tmux_session: "ariadne-s1" }
-const OTHER = { id: "s2", status: "running", tmux_session: "ariadne-s2" }
+const RUNNING = { id: "s1", status: "running", model: "stub:s1" }
+const OTHER = { id: "s2", status: "running", model: "stub:s2" }
 
 function seed(): QueryClient {
   const queryClient = new QueryClient()

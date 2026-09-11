@@ -1,6 +1,6 @@
 //! Agent-session DTOs.
 
-use ariadne_core::{AgentKind, AttentionReason, Seat, SessionStatus};
+use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -16,17 +16,15 @@ pub struct SessionDto {
     /// The staffed agent this session runs; None for an orchestrator,
     /// which no task staffs.
     pub task_agent_id: Option<String>,
-    pub agent_kind: AgentKind,
-    /// Model requested at launch.
+    /// Model requested at launch, `<agent>:<model>`: the registry agent the
+    /// session runs on, and the model of it.
     pub model: String,
     /// Effort that model was launched at, off the same pin as `model`; null =
-    /// whatever the agent CLI runs it at.
+    /// whatever the agent runs it at.
     #[schema(example = "high")]
     pub effort: Option<String>,
-    /// Agent-internal id: ACP session id / claude session uuid / codex thread id / opencode
-    /// session id.
+    /// The ACP agent's own session id.
     pub internal_session_id: Option<String>,
-    pub tmux_session: String,
     pub worktree_path: Option<String>,
     pub status: SessionStatus,
     /// Why this session needs the user's attention, if it does. Orthogonal to
@@ -42,32 +40,26 @@ pub struct SessionDto {
     pub ended_at: Option<String>,
 }
 
-/// A coding-agent session found in a CLI transcript store, but not started by
-/// Ariadne.
+/// A stored session of an ACP agent that Ariadne did not start, listed over
+/// `session/list`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OutsideSessionDto {
-    pub agent_kind: AgentKind,
     /// Which ACP registry agent this session belongs to (`GET
-    /// /v1/acp-agents`). `None` for a native CLI session, where `agent_kind`
-    /// alone says which CLI it is.
-    #[serde(default)]
-    pub agent_id: Option<String>,
-    /// The id the CLI uses to resume this conversation.
+    /// /v1/acp-agents`).
+    pub agent_id: String,
+    /// The id the agent loads this conversation back by.
     pub internal_session_id: String,
     pub working_directory: String,
     pub last_activity_at: String,
     pub first_prompt: String,
 }
 
-/// The outside CLI session to adopt as a task author.
+/// The stored ACP session to adopt as a task author.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AdoptOutsideSessionRequest {
-    pub agent_kind: AgentKind,
-    /// Required alongside an `agent_kind` of `acp`: which registry agent the
-    /// session belongs to.
-    #[serde(default)]
-    pub agent_id: Option<String>,
+    /// Which registry agent the session belongs to.
+    pub agent_id: String,
     pub internal_session_id: String,
 }
 
@@ -83,74 +75,11 @@ pub struct SessionListQuery {
     pub attention: Option<bool>,
 }
 
-/// Response of `GET /v1/sessions/{id}/logs`.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct SessionLogsResponse {
-    pub session_id: String,
-    pub tmux_session: String,
-    /// Recent pane contents captured from tmux.
-    pub logs: String,
-}
-
-/// Body of `POST /v1/sessions/{id}/input`.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SessionInputRequest {
-    /// Keystrokes to type into the pane, exactly as the terminal produced
-    /// them: `\r` for Return, `\x03` for Ctrl-C, `\x1b[A` for Up. Sent
-    /// verbatim — nothing is appended, so a submit has to carry its own `\r`.
-    pub data: String,
-}
-
-/// Body of `POST /v1/sessions/{id}/resize`.
-///
-/// The grid a viewer wants the pane to draw at, in cells — what a terminal
-/// hands its pty when its window changes, and what `tmux attach` gives the
-/// pane it attaches to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SessionResizeRequest {
-    pub cols: u16,
-    pub rows: u16,
-}
-
-/// Payload of the `snapshot` and `delta` events of
-/// `GET /v1/sessions/{id}/logs/stream`.
-///
-/// Terminal output is raw bytes — newlines, escape sequences, control
-/// characters — none of which survive SSE's line-oriented `data:` framing on
-/// their own, so every chunk travels as JSON.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct SessionLogChunk {
-    /// Terminal output as written, decoded lossily from UTF-8.
-    pub chunk: String,
-}
-
-/// Payload of the `resize` event of `GET /v1/sessions/{id}/logs/stream`: the
-/// grid the pane is drawing against, in cells.
-///
-/// A terminal stream only means anything at a size. The agent addresses the
-/// cursor and erases lines against *this* grid, so a viewer that renders the
-/// bytes at any other one has every repaint land on the wrong row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct SessionPaneSize {
-    pub cols: u16,
-    pub rows: u16,
-}
-
-/// Payload of the final `end` event of `GET /v1/sessions/{id}/logs/stream`:
-/// the session is over and no further output is coming.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct SessionLogEnd {
-    pub session_id: String,
-}
-
 /// Body of `POST /v1/sessions/{id}/console/input`.
 ///
-/// An ACP session has no pane to type into. While a permission request is
-/// pending, the text selects that request's option; otherwise it becomes a
-/// fresh `session/prompt`, sent at once or queued behind the turn still
-/// running.
+/// While a permission request is pending, the text selects that request's
+/// option; otherwise it becomes a fresh `session/prompt`, sent at once or
+/// queued behind the turn still running.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConsoleInputRequest {

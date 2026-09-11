@@ -50,7 +50,7 @@ export function GoalActions({
 
   const terminal = isTerminalGoalStatus(goal.status)
   const canCancel = !terminal
-  // A running goal still owns tmux sessions and git worktrees that only
+  // A running goal still owns agent sessions and git worktrees that only
   // cancelling tears down, so the daemon refuses to delete one — and the
   // button is never offered rather than offered and refused.
   const canDelete = terminal

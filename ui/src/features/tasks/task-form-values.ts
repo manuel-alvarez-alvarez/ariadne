@@ -16,8 +16,8 @@
  * refuses a name no skill answers to, and the picker offers the ones it has —
  * because the catalog is the user's to extend.
  *
- * **What an agent runs on** is one string, `<agent_kind>:<model>` — the CLI
- * and, after a `:`, the model of it (see `features/models/model-ref.ts`) — and
+ * **What an agent runs on** is one string, `<agent>:<model>` — the registry
+ * agent and, after a `:`, the model of it (see `features/models/model-ref.ts`) — and
  * beside it the effort that model is run at. A model is required, and an empty
  * effort uses the model's default effort.
  *

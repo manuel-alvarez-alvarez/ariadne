@@ -125,8 +125,8 @@ const TYPING_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"])
 
 /**
  * Whether the keystroke is going somewhere that owns its keyboard: a text
- * field, a `contenteditable` (CodeMirror's editors), or the hidden textarea
- * xterm reads a session's pane through — where ⌘K belongs to the pane, not to
+ * field, a `contenteditable` (CodeMirror's editors), or the box a session's
+ * console is typed into — where a bare letter belongs to the field, not to
  * us.
  */
 export function isTypingTarget(target: TypingTarget | null | undefined): boolean {
