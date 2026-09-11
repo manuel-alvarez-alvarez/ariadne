@@ -143,6 +143,7 @@ impl AppState {
     tags(
         (name = "system", description = "Daemon health and metadata"),
         (name = "agents", description = "Per-agent-CLI launch configuration"),
+        (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "memories", description = "Searchable facts learned about one repository"),

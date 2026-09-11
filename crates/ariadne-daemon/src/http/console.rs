@@ -108,6 +108,7 @@ pub async fn stream(
 /// because a finished session takes no more input, and the runtime itself,
 /// since a session of any other kind has no agent here to hand a prompt to.
 #[utoipa::path(post, path = "/v1/sessions/{id}/console/input", tag = "sessions",
+    operation_id = "console_input",
     request_body = ConsoleInputRequest,
     params(("id" = String, Path, description = "session id")),
     responses((status = 204, description = "Permission answer or prompt accepted"),

@@ -47,6 +47,11 @@ pub struct SessionDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OutsideSessionDto {
     pub agent_kind: AgentKind,
+    /// Which ACP registry agent this session belongs to (`GET
+    /// /v1/acp-agents`). `None` for a native CLI session, where `agent_kind`
+    /// alone says which CLI it is.
+    #[serde(default)]
+    pub agent_id: Option<String>,
     /// The id the CLI uses to resume this conversation.
     pub internal_session_id: String,
     pub working_directory: String,
@@ -59,6 +64,10 @@ pub struct OutsideSessionDto {
 #[serde(deny_unknown_fields)]
 pub struct AdoptOutsideSessionRequest {
     pub agent_kind: AgentKind,
+    /// Required alongside an `agent_kind` of `acp`: which registry agent the
+    /// session belongs to.
+    #[serde(default)]
+    pub agent_id: Option<String>,
     pub internal_session_id: String,
 }
 

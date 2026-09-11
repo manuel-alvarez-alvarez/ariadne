@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use clap::Subcommand;
 
+use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus};
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{
     AdoptOutsideSessionRequest, OutsideSessionDto, SessionDto, SessionInputRequest,
@@ -109,7 +110,7 @@ pub enum SessionCommand {
     },
     /// List CLI sessions Ariadne did not start
     Discover,
-    /// Resume an outside CLI session as the author of a ready task
+    /// Resume an outside session as the author of a ready task
     Adopt {
         /// Internal session id from `ariadne session discover`
         session_id: String,
@@ -119,6 +120,10 @@ pub enum SessionCommand {
         /// CLI that owns the outside session
         #[arg(long, value_parser = crate::commands::agent::parse_kind)]
         agent: ariadne_core::AgentKind,
+        /// The ACP agent id the session belongs to (`session discover`'s
+        /// `agent` column), required when `--agent acp`
+        #[arg(long)]
+        acp_agent: Option<String>,
     },
     /// Show a session
     Inspect {
@@ -188,6 +193,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             session_id,
             task_id,
             agent,
+            acp_agent,
         } => {
             let task_id = resolve::id(client, Kind::Task, &task_id).await?;
             let session: SessionDto = client
@@ -195,6 +201,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                     &format!("/v1/tasks/{task_id}/author-session"),
                     &AdoptOutsideSessionRequest {
                         agent_kind: agent,
+                        agent_id: acp_agent,
                         internal_session_id: session_id,
                     },
                 )
@@ -293,7 +300,8 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
     Ok(())
 }
 
-/// `session discover`: session transcripts that the daemon does not own.
+/// `session discover`: session transcripts that the daemon does not own, and
+/// the stored sessions of every ACP agent that can list them.
 async fn discover(client: &Client, format: Format) -> Result<()> {
     let sessions: Vec<OutsideSessionDto> = client.get_json("/v1/outside-sessions").await?;
     print_list(
@@ -303,7 +311,10 @@ async fn discover(client: &Client, format: Format) -> Result<()> {
         |session| {
             vec![
                 session.internal_session_id.clone(),
-                session.agent_kind.as_str().into(),
+                session
+                    .agent_id
+                    .clone()
+                    .unwrap_or_else(|| session.agent_kind.as_str().into()),
                 session.working_directory.clone(),
                 at(Some(&session.last_activity_at)),
                 session.first_prompt.clone(),
@@ -313,7 +324,34 @@ async fn discover(client: &Client, format: Format) -> Result<()> {
             "No outside sessions found.",
             Some("start claude, codex or opencode in a project"),
         ),
-    )
+    )?;
+    if format == Format::Table {
+        let agents: Vec<AcpAgentDto> = client.get_json("/v1/acp-agents").await?;
+        for line in unavailable_acp_agents(&agents) {
+            note(&line);
+        }
+    }
+    Ok(())
+}
+
+/// Why each ACP agent that cannot list its sessions is missing from the
+/// table above: rejected outright, or ready but without the capability.
+fn unavailable_acp_agents(agents: &[AcpAgentDto]) -> Vec<String> {
+    agents
+        .iter()
+        .filter(|agent| !agent.capabilities.session_list)
+        .map(|agent| {
+            let reason = match agent.status {
+                AcpAgentStatus::Rejected => agent
+                    .rejection_reason
+                    .as_deref()
+                    .unwrap_or("rejected")
+                    .to_string(),
+                AcpAgentStatus::Ready => "the agent does not support listing sessions".to_string(),
+            };
+            format!("{}: adoption unavailable — {reason}", agent.id)
+        })
+        .collect()
 }
 
 /// What `session send` types into the pane: the text, and the Return that
@@ -844,6 +882,57 @@ mod tests {
             keystrokes("", false),
             "\r",
             "a bare Return is a legitimate keystroke"
+        );
+    }
+
+    /// An agent this discovery run cannot list sessions for is named with why:
+    /// its own rejection reason where discovery rejected it outright, and a
+    /// fixed line where it is ready but simply lacks the capability. An agent
+    /// that can list sessions is left off the notes entirely.
+    #[test]
+    fn an_agent_without_the_capability_is_named_with_its_reason() {
+        use ariadne_api::agents::{AcpAgentStatus, AcpCapabilitiesDto};
+
+        let agent = |id: &str, status, session_list, rejection_reason: Option<&str>| AcpAgentDto {
+            id: id.to_string(),
+            command: vec![id.to_string()],
+            builtin: false,
+            status,
+            capabilities: AcpCapabilitiesDto {
+                session_list,
+                ..Default::default()
+            },
+            degraded: Vec::new(),
+            rejection_reason: rejection_reason.map(str::to_string),
+        };
+        let agents = [
+            agent("listable", AcpAgentStatus::Ready, true, None),
+            agent("degraded", AcpAgentStatus::Ready, false, None),
+            agent(
+                "broken",
+                AcpAgentStatus::Rejected,
+                false,
+                Some("no model option"),
+            ),
+        ];
+
+        let notes = unavailable_acp_agents(&agents);
+
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(
+            notes.iter().any(|line| line.contains("degraded")
+                && line.contains("does not support listing sessions")),
+            "{notes:?}"
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|line| line.contains("broken") && line.contains("no model option")),
+            "{notes:?}"
+        );
+        assert!(
+            !notes.iter().any(|line| line.contains("listable")),
+            "{notes:?}"
         );
     }
 

@@ -68,10 +68,12 @@ Out: the daemon endpoints themselves (012).
     mark, staying editable and resettable like any other shipped skill.
 15. The agent activity feed shows each event's one-line summary from the
     daemon; its raw payload stays available under the row.
-16. The outside-sessions view lists the CLI, working directory, last activity
-    and first prompt from `GET /v1/outside-sessions`, then adopts a matching
-    session as the author of a ready task through `POST
-    /v1/tasks/{id}/author-session`.
+16. The outside-sessions view lists the CLI (or, for an ACP session, its
+    registry agent id), working directory, last activity and first prompt
+    from `GET /v1/outside-sessions`, then adopts a matching session as the
+    author of a ready task through `POST /v1/tasks/{id}/author-session`. Below
+    the table it names every ACP agent from `GET /v1/acp-agents` that cannot
+    list its sessions, with why.
 17. On a task staffed with several authors (004) the task panel shows every
     one of them — its skills, its model, its own branch, and its status in the
     pick: the votes it has so far, or "Picked" once it is the one that won —
@@ -143,9 +145,10 @@ Out: the daemon endpoints themselves (012).
 - The agent activity feed shows the daemon's summary and opens and closes the
   raw payload under its row
   (`ui/src/features/sessions/session-activity.test.tsx`).
-- The outside-sessions view lists each discovered session and adopts one as the
-  author of a matching ready task
-  (`ui/src/features/sessions/outside-sessions-page.test.tsx`).
+- The outside-sessions view lists each discovered session, an ACP one named by
+  its registry agent id, adopts one as the author of a matching ready task,
+  and shows why an ACP agent without the session-listing capability offers
+  none (`ui/src/features/sessions/outside-sessions-page.test.tsx`).
 - An `acp` session's console renders a transcript from its stream, sends
   typed text to its input endpoint and shows it pending until confirmed, and
   answers an inline permission question the same way

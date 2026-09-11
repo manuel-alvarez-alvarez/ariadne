@@ -78,14 +78,14 @@ pub mod acp_agents {
     use crate::http::error::{ApiResult, Json};
 
     /// Every built-in and configured ACP agent with its cached probe result.
-    #[utoipa::path(get, path = "/v1/acp-agents", tag = "agents",
+    #[utoipa::path(get, path = "/v1/acp-agents", tag = "acp-agents",
         responses((status = 200, body = [AcpAgentDto])))]
     pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<AcpAgentDto>>> {
         Ok(Json(state.agent_registry.agents().await))
     }
 
     /// Probe every registry entry and replace the cached discovery snapshot.
-    #[utoipa::path(post, path = "/v1/acp-agents/refresh", tag = "agents",
+    #[utoipa::path(post, path = "/v1/acp-agents/refresh", tag = "acp-agents",
         responses((status = 200, body = [AcpAgentDto])))]
     pub async fn refresh(State(state): State<AppState>) -> ApiResult<Json<Vec<AcpAgentDto>>> {
         Ok(Json(state.agent_registry.refresh().await))

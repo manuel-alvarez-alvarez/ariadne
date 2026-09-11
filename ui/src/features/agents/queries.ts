@@ -24,6 +24,19 @@ export function agentConfigsQueryOptions() {
 }
 
 /**
+ * `GET /v1/acp-agents` — every built-in and configured ACP agent with its
+ * cached discovery result: whether it is `ready` or `rejected`, and — the
+ * `session_list` capability among them — whether it can list its own stored
+ * sessions for adoption.
+ */
+export function acpAgentsQueryOptions() {
+  return queryOptions({
+    queryKey: qk.acpAgents.list(),
+    queryFn: () => unwrap(api().GET("/v1/acp-agents")),
+  })
+}
+
+/**
  * `PUT /v1/agents/{kind}` — the whole flag list, empty included.
  *
  * There is no adding to the list and no clearing sentinel: what is sent is

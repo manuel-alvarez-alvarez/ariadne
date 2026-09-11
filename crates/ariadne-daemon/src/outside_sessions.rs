@@ -199,6 +199,7 @@ fn record(
         |(((internal_session_id, working_directory), last_activity_at), first_prompt)| {
             OutsideSessionDto {
                 agent_kind,
+                agent_id: None,
                 internal_session_id,
                 working_directory,
                 last_activity_at,

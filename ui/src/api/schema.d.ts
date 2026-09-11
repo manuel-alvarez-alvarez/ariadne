@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/v1/acp-agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every built-in and configured ACP agent with its cached probe result. */
+        get: operations["acp-agents_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/acp-agents/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Probe every registry entry and replace the cached discovery snapshot. */
+        post: operations["acp-agents_refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents": {
         parameters: {
             query?: never;
@@ -397,8 +431,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List sessions found in supported CLI transcript stores that Ariadne did
-         *     not start.
+         * List sessions Ariadne did not start: hand-started CLI conversations found
+         *     in a supported CLI's own transcript store, and stored sessions of an ACP
+         *     agent that can list them.
          */
         get: operations["sessions_list_outside"];
         put?: never;
@@ -559,8 +594,9 @@ export interface paths {
         put?: never;
         /**
          * Type into an ACP session: the console's counterpart of `/input`.
-         * @description There is no pane for the text to land on, so it becomes a fresh
-         *     `session/prompt` instead — sent at once if the agent is between turns, or
+         * @description There is no pane for the text to land on. While a permission request is
+         *     pending, the text selects that request's option; otherwise it becomes a
+         *     fresh `session/prompt` — sent at once if the agent is between turns, or
          *     queued, in order, behind whichever one is running and sent the moment it
          *     ends.
          *
@@ -568,7 +604,7 @@ export interface paths {
          *     because a finished session takes no more input, and the runtime itself,
          *     since a session of any other kind has no agent here to hand a prompt to.
          */
-        post: operations["sessions_console_input_post"];
+        post: operations["sessions_console_input"];
         delete?: never;
         options?: never;
         head?: never;
@@ -626,7 +662,7 @@ export interface paths {
          *     because tmux names are reused and a `send-keys` at a stale name would land
          *     in a successor's pane.
          */
-        post: operations["sessions_input_post"];
+        post: operations["sessions_input"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1068,6 +1104,39 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description One ACP agent known to the daemon and its latest discovery result. */
+        AcpAgentDto: {
+            /** @description Whether Ariadne supplied this entry. */
+            builtin: boolean;
+            capabilities: components["schemas"]["AcpCapabilitiesDto"];
+            /** @description Program followed by its arguments. */
+            command: string[];
+            /** @description One flag for every optional capability that is absent. */
+            degraded: components["schemas"]["AcpDegradation"][];
+            /** @description Stable id used as the model-id prefix. */
+            id: string;
+            /** @description Why discovery rejected this agent. */
+            rejection_reason?: string | null;
+            status: components["schemas"]["AcpAgentStatus"];
+        };
+        /** @enum {string} */
+        AcpAgentStatus: "ready" | "rejected";
+        /** @description Required and optional ACP capabilities measured by discovery. */
+        AcpCapabilitiesDto: {
+            model: boolean;
+            protocol_v1: boolean;
+            session_list: boolean;
+            session_load: boolean;
+            session_new: boolean;
+            session_prompt: boolean;
+            stdio: boolean;
+            thought_level: boolean;
+        };
+        /**
+         * @description An optional ACP capability missing from an otherwise usable agent.
+         * @enum {string}
+         */
+        AcpDegradation: "no_efforts" | "no_adoption" | "no_restart_resume";
         /**
          * @description Who is attempting a transition: a seat, the daemon, or the user.
          * @enum {string}
@@ -1075,6 +1144,11 @@ export interface components {
         Actor: "orchestrator" | "author" | "reviewer" | "daemon" | "user";
         /** @description The outside CLI session to adopt as a task author. */
         AdoptOutsideSessionRequest: {
+            /**
+             * @description Required alongside an `agent_kind` of `acp`: which registry agent the
+             *     session belongs to.
+             */
+            agent_id?: string | null;
             agent_kind: components["schemas"]["AgentKind"];
             internal_session_id: string;
         };
@@ -1213,8 +1287,9 @@ export interface components {
         /**
          * @description Body of `POST /v1/sessions/{id}/console/input`.
          *
-         *     An ACP session has no pane to type into: the text becomes a fresh
-         *     `session/prompt` instead, sent at once or queued behind the turn still
+         *     An ACP session has no pane to type into. While a permission request is
+         *     pending, the text selects that request's option; otherwise it becomes a
+         *     fresh `session/prompt`, sent at once or queued behind the turn still
          *     running.
          */
         ConsoleInputRequest: {
@@ -1281,6 +1356,7 @@ export interface components {
             depends_on?: string[];
             description?: string;
             landing?: null | components["schemas"]["Landing"];
+            permission_mode?: null | components["schemas"]["PermissionMode"];
             /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
@@ -1290,6 +1366,8 @@ export interface components {
         };
         /** @description The daemon's own environment, as `ariadne doctor` renders it. */
         DaemonReportDto: {
+            /** @description Every registry ACP agent and its cached discovery result. */
+            acp_agents?: components["schemas"]["AcpAgentDto"][];
             /** @description One entry per [`AgentKind`], in `AgentKind::ALL` order. */
             agents: components["schemas"]["BinaryDto"][];
             db: components["schemas"]["PathStateDto"];
@@ -1604,15 +1682,17 @@ export interface components {
          *     names both halves — there is no bare-CLI entry, because a model is
          *     required wherever an agent is pinned.
          *
-         *     The id is what a request writes as its `model`, whole. `agent_kind` is the
-         *     same fact taken apart, so a picker can group the catalog by CLI without
-         *     parsing anything. The rest is what an orchestrator sizes a task from: what
-         *     this model is, what it costs and how fast it answers next to every other
-         *     entry, the work it is and is not the choice for, and what each of its
-         *     efforts buys.
+         *     The id is what a request writes as its `model`, whole. `agent_id` is its
+         *     registry prefix. `agent_kind` keeps the native adapter family, and is
+         *     `acp` for a discovered entry. The rest is what an orchestrator sizes a task
+         *     from: what this model is, what it costs and how fast it answers next to
+         *     every other entry, the work it is and is not the choice for, and what each
+         *     of its efforts buys.
          */
         ModelDto: {
-            /** @description The agent CLI this entry runs on. */
+            /** @description Stable registry agent id. Native catalog entries use their agent kind. */
+            agent_id?: string;
+            /** @description The native adapter family this entry runs through. */
             agent_kind: components["schemas"]["AgentKind"];
             /**
              * @description Task shapes it is the wrong choice for; empty where nothing knows.
@@ -1683,6 +1763,12 @@ export interface components {
          *     Ariadne.
          */
         OutsideSessionDto: {
+            /**
+             * @description Which ACP registry agent this session belongs to (`GET
+             *     /v1/acp-agents`). `None` for a native CLI session, where `agent_kind`
+             *     alone says which CLI it is.
+             */
+            agent_id?: string | null;
             agent_kind: components["schemas"]["AgentKind"];
             first_prompt: string;
             /** @description The id the CLI uses to resume this conversation. */
@@ -1703,6 +1789,11 @@ export interface components {
              */
             writable: boolean;
         };
+        /**
+         * @description How the ACP runtime answers a tool permission request.
+         * @enum {string}
+         */
+        PermissionMode: "auto" | "ask" | "learn";
         /**
          * @description One reviewer picking the winning author of a task staffed with several:
          *     the author whose branch lands.
@@ -2198,6 +2289,44 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "acp-agents_list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcpAgentDto"][];
+                };
+            };
+        };
+    };
+    "acp-agents_refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcpAgentDto"][];
+                };
+            };
+        };
+    };
     agents_list: {
         parameters: {
             query?: never;
@@ -3185,7 +3314,7 @@ export interface operations {
             };
         };
     };
-    sessions_console_input_post: {
+    sessions_console_input: {
         parameters: {
             query?: never;
             header?: never;
@@ -3201,7 +3330,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Prompt sent, or queued behind a running turn */
+            /** @description Permission answer or prompt accepted */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -3251,7 +3380,7 @@ export interface operations {
             };
         };
     };
-    sessions_input_post: {
+    sessions_input: {
         parameters: {
             query?: never;
             header?: never;

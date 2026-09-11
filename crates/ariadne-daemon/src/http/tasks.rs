@@ -70,17 +70,25 @@ pub async fn adopt_author_session(
 ) -> ApiResult<Json<SessionDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
-    let available = crate::outside_sessions::discover(&state.store, &state.launcher.cfg.agent_home)
-        .await
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                error.to_string(),
-            )
-        })?;
+    let internal_error = |error: anyhow::Error| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            error.to_string(),
+        )
+    };
+    let mut available =
+        crate::outside_sessions::discover(&state.store, &state.launcher.cfg.agent_home)
+            .await
+            .map_err(internal_error)?;
+    available.extend(
+        crate::acp_sessions::discover(&state.agent_registry, &state.store)
+            .await
+            .map_err(internal_error)?,
+    );
     if !available.iter().any(|session| {
         session.agent_kind == req.agent_kind
+            && session.agent_id == req.agent_id
             && session.internal_session_id == req.internal_session_id
     }) {
         return Err(ApiError::new(
@@ -91,7 +99,12 @@ pub async fn adopt_author_session(
     }
     let session = state
         .launcher
-        .adopt_author(&id, req.agent_kind, &req.internal_session_id)
+        .adopt_author(
+            &id,
+            req.agent_kind,
+            req.agent_id.as_deref(),
+            &req.internal_session_id,
+        )
         .await
         .map_err(|error| ApiError::conflict(error.to_string()))?;
     state.notify_scheduler(&id);

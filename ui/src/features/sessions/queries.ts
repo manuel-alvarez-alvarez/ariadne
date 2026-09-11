@@ -104,6 +104,7 @@ export function useAdoptOutsideSession() {
           params: { path: { id: taskId } },
           body: {
             agent_kind: body.agent_kind,
+            agent_id: body.agent_id,
             internal_session_id: body.internal_session_id,
           },
         }),

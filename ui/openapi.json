@@ -10,6 +10,54 @@
     "version": "0.6.0"
   },
   "paths": {
+    "/v1/acp-agents": {
+      "get": {
+        "tags": [
+          "acp-agents"
+        ],
+        "summary": "Every built-in and configured ACP agent with its cached probe result.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AcpAgentDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/acp-agents/refresh": {
+      "post": {
+        "tags": [
+          "acp-agents"
+        ],
+        "summary": "Probe every registry entry and replace the cached discovery snapshot.",
+        "operationId": "refresh",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AcpAgentDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agents": {
       "get": {
         "tags": [
@@ -796,7 +844,7 @@
         "tags": [
           "sessions"
         ],
-        "summary": "List sessions found in supported CLI transcript stores that Ariadne did\nnot start.",
+        "summary": "List sessions Ariadne did not start: hand-started CLI conversations found\nin a supported CLI's own transcript store, and stored sessions of an ACP\nagent that can list them.",
         "operationId": "list_outside",
         "responses": {
           "200": {
@@ -1317,8 +1365,8 @@
           "sessions"
         ],
         "summary": "Type into an ACP session: the console's counterpart of `/input`.",
-        "description": "There is no pane for the text to land on, so it becomes a fresh\n`session/prompt` instead — sent at once if the agent is between turns, or\nqueued, in order, behind whichever one is running and sent the moment it\nends.\n\nBoth halves of \"live\" matter, as they do for a pane: the row's status,\nbecause a finished session takes no more input, and the runtime itself,\nsince a session of any other kind has no agent here to hand a prompt to.",
-        "operationId": "input",
+        "description": "There is no pane for the text to land on. While a permission request is\npending, the text selects that request's option; otherwise it becomes a\nfresh `session/prompt` — sent at once if the agent is between turns, or\nqueued, in order, behind whichever one is running and sent the moment it\nends.\n\nBoth halves of \"live\" matter, as they do for a pane: the row's status,\nbecause a finished session takes no more input, and the runtime itself,\nsince a session of any other kind has no agent here to hand a prompt to.",
+        "operationId": "console_input",
         "parameters": [
           {
             "name": "id",
@@ -1342,7 +1390,7 @@
         },
         "responses": {
           "204": {
-            "description": "Prompt sent, or queued behind a running turn"
+            "description": "Permission answer or prompt accepted"
           },
           "404": {
             "description": ""
@@ -2449,6 +2497,111 @@
   },
   "components": {
     "schemas": {
+      "AcpAgentDto": {
+        "type": "object",
+        "description": "One ACP agent known to the daemon and its latest discovery result.",
+        "required": [
+          "id",
+          "command",
+          "builtin",
+          "status",
+          "capabilities",
+          "degraded"
+        ],
+        "properties": {
+          "builtin": {
+            "type": "boolean",
+            "description": "Whether Ariadne supplied this entry."
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/AcpCapabilitiesDto"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Program followed by its arguments."
+          },
+          "degraded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AcpDegradation"
+            },
+            "description": "One flag for every optional capability that is absent."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable id used as the model-id prefix."
+          },
+          "rejection_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why discovery rejected this agent."
+          },
+          "status": {
+            "$ref": "#/components/schemas/AcpAgentStatus"
+          }
+        }
+      },
+      "AcpAgentStatus": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "rejected"
+        ]
+      },
+      "AcpCapabilitiesDto": {
+        "type": "object",
+        "description": "Required and optional ACP capabilities measured by discovery.",
+        "required": [
+          "stdio",
+          "protocol_v1",
+          "session_new",
+          "session_prompt",
+          "model",
+          "thought_level",
+          "session_list",
+          "session_load"
+        ],
+        "properties": {
+          "model": {
+            "type": "boolean"
+          },
+          "protocol_v1": {
+            "type": "boolean"
+          },
+          "session_list": {
+            "type": "boolean"
+          },
+          "session_load": {
+            "type": "boolean"
+          },
+          "session_new": {
+            "type": "boolean"
+          },
+          "session_prompt": {
+            "type": "boolean"
+          },
+          "stdio": {
+            "type": "boolean"
+          },
+          "thought_level": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AcpDegradation": {
+        "type": "string",
+        "description": "An optional ACP capability missing from an otherwise usable agent.",
+        "enum": [
+          "no_efforts",
+          "no_adoption",
+          "no_restart_resume"
+        ]
+      },
       "Actor": {
         "type": "string",
         "description": "Who is attempting a transition: a seat, the daemon, or the user.",
@@ -2468,6 +2621,13 @@
           "internal_session_id"
         ],
         "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required alongside an `agent_kind` of `acp`: which registry agent the\nsession belongs to."
+          },
           "agent_kind": {
             "$ref": "#/components/schemas/AgentKind"
           },
@@ -2695,7 +2855,7 @@
       },
       "ConsoleInputRequest": {
         "type": "object",
-        "description": "Body of `POST /v1/sessions/{id}/console/input`.\n\nAn ACP session has no pane to type into: the text becomes a fresh\n`session/prompt` instead, sent at once or queued behind the turn still\nrunning.",
+        "description": "Body of `POST /v1/sessions/{id}/console/input`.\n\nAn ACP session has no pane to type into. While a permission request is\npending, the text selects that request's option; otherwise it becomes a\nfresh `session/prompt`, sent at once or queued behind the turn still\nrunning.",
         "required": [
           "text"
         ],
@@ -2841,6 +3001,17 @@
               }
             ]
           },
+          "permission_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PermissionMode",
+                "description": "ACP permission handling for this task. Omitted = the daemon default."
+              }
+            ]
+          },
           "repo_id": {
             "type": [
               "string",
@@ -2867,6 +3038,13 @@
           "worktree_root"
         ],
         "properties": {
+          "acp_agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AcpAgentDto"
+            },
+            "description": "Every registry ACP agent and its cached discovery result."
+          },
           "agents": {
             "type": "array",
             "items": {
@@ -3604,7 +3782,7 @@
       },
       "ModelDto": {
         "type": "object",
-        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`). Every entry\nnames both halves — there is no bare-CLI entry, because a model is\nrequired wherever an agent is pinned.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything. The rest is what an orchestrator sizes a task from: what\nthis model is, what it costs and how fast it answers next to every other\nentry, the work it is and is not the choice for, and what each of its\nefforts buys.",
+        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`). Every entry\nnames both halves — there is no bare-CLI entry, because a model is\nrequired wherever an agent is pinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. `agent_kind` keeps the native adapter family, and is\n`acp` for a discovered entry. The rest is what an orchestrator sizes a task\nfrom: what this model is, what it costs and how fast it answers next to\nevery other entry, the work it is and is not the choice for, and what each\nof its efforts buys.",
         "required": [
           "id",
           "agent_kind",
@@ -3615,9 +3793,13 @@
           "enabled"
         ],
         "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Stable registry agent id. Native catalog entries use their agent kind."
+          },
           "agent_kind": {
             "$ref": "#/components/schemas/AgentKind",
-            "description": "The agent CLI this entry runs on."
+            "description": "The native adapter family this entry runs through."
           },
           "avoid_for": {
             "type": "array",
@@ -3711,6 +3893,13 @@
           "first_prompt"
         ],
         "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which ACP registry agent this session belongs to (`GET\n/v1/acp-agents`). `None` for a native CLI session, where `agent_kind`\nalone says which CLI it is."
+          },
           "agent_kind": {
             "$ref": "#/components/schemas/AgentKind"
           },
@@ -3749,6 +3938,15 @@
             "description": "Whether the daemon may write it, asked of the kernel (`access(2)`)\nrather than inferred from the permission bits, which say nothing\nabout the user the daemon happens to run as. For a path that does not\nexist yet this is its directory's answer: whether it could be created.\nNothing is written to find out."
           }
         }
+      },
+      "PermissionMode": {
+        "type": "string",
+        "description": "How the ACP runtime answers a tool permission request.",
+        "enum": [
+          "auto",
+          "ask",
+          "learn"
+        ]
       },
       "PickWinnerRequest": {
         "type": "object",
@@ -4690,6 +4888,10 @@
     {
       "name": "agents",
       "description": "Per-agent-CLI launch configuration"
+    },
+    {
+      "name": "acp-agents",
+      "description": "The ACP agent registry: what's on PATH or configured, and what discovery found"
     },
     {
       "name": "skills",

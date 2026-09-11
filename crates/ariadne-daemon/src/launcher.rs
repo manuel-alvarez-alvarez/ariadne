@@ -795,8 +795,9 @@ impl Launcher {
             .map_err(Into::into)
     }
 
-    /// Give a ready task an author session that resumes an outside CLI
-    /// conversation in the task's worktree.
+    /// Give a ready task an author session that resumes an outside
+    /// conversation in the task's worktree: a hand-started CLI transcript, or
+    /// a stored ACP session, continued through `session/load`.
     ///
     /// The adopted conversation becomes the task's first author. A task
     /// staffed with several authors adopts into that seat alone; its
@@ -805,6 +806,7 @@ impl Launcher {
         &self,
         task_id: &str,
         agent_kind: AgentKind,
+        agent_id: Option<&str>,
         internal_session_id: &str,
     ) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
@@ -821,6 +823,20 @@ impl Launcher {
                 author.agent_kind().as_str()
             );
         }
+        // An acp author's model carries `<agent id>:<model>`: which ACP
+        // agent this is is part of the pin, not a separate field, so the
+        // outside session's agent id has to match it the same way the CLI
+        // kind above does.
+        if agent_kind == AgentKind::Acp {
+            let pinned_agent_id = author.model.split_once(':').map(|(id, _)| id);
+            if agent_id != pinned_agent_id {
+                anyhow::bail!(
+                    "outside session belongs to acp agent {}, but task author uses {}",
+                    agent_id.unwrap_or("<none>"),
+                    pinned_agent_id.unwrap_or("<none>")
+                );
+            }
+        }
         let seat = self.author_seat(&task, &author.id).await?;
         let guard = seat.sibling_tail().map(|_| author.id.clone());
         self.assert_no_live_session(&goal.id, Some(task_id), Seat::Author, guard.as_deref())
@@ -831,7 +847,10 @@ impl Launcher {
             "author",
             seat.sibling_tail().as_deref(),
         );
-        self.claim_pane(&tmux_session).await?;
+        // An acp author runs no pane, exactly as a fresh spawn does.
+        if agent_kind != AgentKind::Acp {
+            self.claim_pane(&tmux_session).await?;
+        }
         let worktree = self.author_worktree(&task, &repo, None, &seat).await?;
         let session = self
             .store

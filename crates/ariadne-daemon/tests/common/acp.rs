@@ -196,6 +196,8 @@ def respond(request):
         if wanted in script.get("stored_sessions", []):
             return {"configOptions": options}
         raise Failure(-32001, "unknown session %s" % wanted)
+    if method == "session/list":
+        return {"sessions": script.get("session_list", [])}
     if method == "session/set_config_option":
         params = request["params"]
         for option in options:

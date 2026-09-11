@@ -13,23 +13,31 @@ use super::AppState;
 use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
 
-/// List sessions found in supported CLI transcript stores that Ariadne did
-/// not start.
+/// List sessions Ariadne did not start: hand-started CLI conversations found
+/// in a supported CLI's own transcript store, and stored sessions of an ACP
+/// agent that can list them.
 #[utoipa::path(get, path = "/v1/outside-sessions", tag = "sessions",
     responses((status = 200, body = [OutsideSessionDto])))]
 pub async fn list_outside(
     State(state): State<AppState>,
 ) -> ApiResult<Json<Vec<OutsideSessionDto>>> {
-    crate::outside_sessions::discover(&state.store, &state.launcher.cfg.agent_home)
+    let internal_error = |error: anyhow::Error| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            error.to_string(),
+        )
+    };
+    let mut sessions =
+        crate::outside_sessions::discover(&state.store, &state.launcher.cfg.agent_home)
+            .await
+            .map_err(internal_error)?;
+    let mut acp = crate::acp_sessions::discover(&state.agent_registry, &state.store)
         .await
-        .map(Json)
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                error.to_string(),
-            )
-        })
+        .map_err(internal_error)?;
+    sessions.append(&mut acp);
+    sessions.sort_by(|left, right| right.last_activity_at.cmp(&left.last_activity_at));
+    Ok(Json(sessions))
 }
 
 /// The session behind `id`, with a pane to act on — or the conflict saying

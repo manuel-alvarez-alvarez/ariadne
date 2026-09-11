@@ -13,6 +13,7 @@ use tokio::sync::RwLock;
 
 use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus, AcpCapabilitiesDto, AcpDegradation};
 use ariadne_api::models::{EffortDto, ModelDto};
+use ariadne_api::sessions::OutsideSessionDto;
 use ariadne_client::endpoint::AcpAgentConfig;
 use ariadne_core::{AgentKind, ModelTier};
 
@@ -123,6 +124,46 @@ impl AgentRegistry {
             .iter()
             .map(|result| result.agent.clone())
             .collect()
+    }
+
+    /// The stored sessions of every agent the last discovery found ready and
+    /// able to list them (`session_list`), asked over `session/list`.
+    ///
+    /// One short-lived process per agent, the same shape as a probe: the
+    /// cached discovery result says who to ask and whether to bother, this
+    /// asks each of them, and the child is gone again before it returns. An
+    /// agent that fails to answer contributes nothing rather than failing the
+    /// whole listing.
+    pub async fn stored_sessions(&self) -> Vec<OutsideSessionDto> {
+        let cwd = self.probe_cwd.clone();
+        let capable: Vec<AcpAgentDto> = self
+            .results
+            .read()
+            .await
+            .iter()
+            .map(|result| result.agent.clone())
+            .filter(|agent| {
+                agent.status == AcpAgentStatus::Ready && agent.capabilities.session_list
+            })
+            .collect();
+        let calls = capable.into_iter().map(|agent| {
+            let cwd = cwd.clone();
+            async move {
+                match tokio::time::timeout(PROBE_TIMEOUT, list_stored_sessions(&agent, &cwd)).await
+                {
+                    Ok(Ok(sessions)) => sessions,
+                    Ok(Err(error)) => {
+                        tracing::warn!(agent = %agent.id, error = %format!("{error:#}"), "listing an ACP agent's stored sessions failed");
+                        Vec::new()
+                    }
+                    Err(_) => {
+                        tracing::warn!(agent = %agent.id, "listing an ACP agent's stored sessions timed out");
+                        Vec::new()
+                    }
+                }
+            }
+        });
+        join_all(calls).await.into_iter().flatten().collect()
     }
 
     /// Convert every accepted discovery choice into the shared model catalog.
@@ -333,6 +374,96 @@ async fn probe_protocol(
         models,
         efforts,
         default_effort,
+    })
+}
+
+/// Ask one agent for its stored sessions: spawn it, `initialize`, `session/list`,
+/// then kill it — the same one-shot shape as [`probe`], for a call that has
+/// no session to keep open.
+async fn list_stored_sessions(agent: &AcpAgentDto, cwd: &Path) -> Result<Vec<OutsideSessionDto>> {
+    let Some((program, args)) = agent.command.split_first() else {
+        bail!("command is empty");
+    };
+    let mut child = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("starting `{}`", agent.command.join(" ")))?;
+    let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        bail!("agent did not open stdio");
+    };
+    let mut rpc = RpcTransport::new(stdout, stdin);
+    let mut incoming = ProbeIncoming;
+    let result = sessions_over_rpc(agent, &mut rpc, &mut incoming).await;
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+    result
+}
+
+async fn sessions_over_rpc(
+    agent: &AcpAgentDto,
+    rpc: &mut RpcTransport,
+    incoming: &mut ProbeIncoming,
+) -> Result<Vec<OutsideSessionDto>> {
+    rpc.request(
+        "initialize",
+        json!({
+            "protocolVersion": 1,
+            "clientCapabilities": {
+                "fs": {"readTextFile": false, "writeTextFile": false},
+                "terminal": false,
+                "session": {"configOptions": {}},
+                "auth": {}
+            },
+            "clientInfo": {"name": "ariadne-discovery", "version": env!("CARGO_PKG_VERSION")}
+        }),
+        incoming,
+    )
+    .await
+    .context("initialize failed")?;
+    let listed = rpc
+        .request("session/list", json!({}), incoming)
+        .await
+        .context("session/list failed")?;
+    Ok(listed
+        .get("sessions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|session| stored_session(agent, session))
+        .collect())
+}
+
+/// One `session/list` entry as an outside session, or `None` where it names
+/// no session id — the one field there is nothing to show without.
+fn stored_session(agent: &AcpAgentDto, session: &Value) -> Option<OutsideSessionDto> {
+    let internal_session_id = session
+        .get("sessionId")
+        .and_then(Value::as_str)?
+        .to_string();
+    Some(OutsideSessionDto {
+        agent_kind: AgentKind::Acp,
+        agent_id: Some(agent.id.clone()),
+        internal_session_id,
+        working_directory: session
+            .get("cwd")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        last_activity_at: session
+            .get("updatedAt")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        first_prompt: session
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 

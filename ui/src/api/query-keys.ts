@@ -114,6 +114,15 @@ export const qk = {
     lists: () => ["models", "list"] as const,
     list: () => ["models", "list", {}] as const,
   },
+  /**
+   * The ACP agent registry and its cached discovery result
+   * (`GET /v1/acp-agents`), one unfiltered list.
+   */
+  acpAgents: {
+    all: () => ["acp-agents"] as const,
+    lists: () => ["acp-agents", "list"] as const,
+    list: () => ["acp-agents", "list", {}] as const,
+  },
   /** Raw hook-reported agent events (`GET /v1/events`). */
   agentEvents: {
     all: () => ["agent-events"] as const,

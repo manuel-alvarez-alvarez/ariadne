@@ -58,6 +58,7 @@ export type EffortDto = Schemas["EffortDto"]
 export type SetModelEnabledRequest = Schemas["SetModelEnabledRequest"]
 
 export type AgentConfigDto = Schemas["AgentConfigDto"]
+export type AcpAgentDto = Schemas["AcpAgentDto"]
 
 export type LogLineDto = Schemas["LogLineDto"]
 
