@@ -91,8 +91,10 @@ and the ACP runtime that reports the agent events (021).
     `tool_call_update`, which carries only the call under `acp`, reads its
     `title` and `rawInput` the same way. Where the payload
     carries the agent's own words instead — the prompt that began the turn,
-    the message or thought a turn produced, whole or as one chunk on the
-    console stream, a `session.error`'s message — those are shown verbatim.
+    its `text` alone where the event carries it beside the whole `prompt`
+    (021), the message or thought a turn produced, whole or as one chunk on
+    the console stream, a `session.error`'s message — those are shown
+    verbatim.
     A path under the payload's `cwd` is printed relative to it, and the cwd
     itself is never printed. The summary is
     flattened to one line and cut at 200 characters with a trailing `…`,

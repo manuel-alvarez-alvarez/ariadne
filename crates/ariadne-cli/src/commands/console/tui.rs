@@ -60,6 +60,9 @@ const TICK: Duration = Duration::from_millis(120);
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 const USER: Style = Style::new().fg(Color::Cyan);
+/// A prompt the daemon sent: the user's colour, dimmed — it was said to the
+/// agent on the user's behalf, not by them.
+const DAEMON: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::DIM);
 const AGENT: Style = Style::new().fg(Color::Green);
 const TOOL: Style = Style::new().fg(Color::Yellow);
 const PLAN: Style = Style::new().fg(Color::Blue);
@@ -246,12 +249,44 @@ impl Console {
     /// Fold one streamed event into the transcript.
     pub fn apply(&mut self, event: &AgentEventDto) {
         self.follow_turn(event);
+        // A daemon that predates `source` and `text` (021) names neither.
+        // Its prompt event is the typed prompt's confirmation where the
+        // whole it carries is the system prompt, a blank line and the typed
+        // text — so it ends in the blank line and the text, and a daemon
+        // prompt that merely ends in the same words does not — and a prompt
+        // of the daemon's own otherwise. Left unconfirmed, the typed prompt
+        // would wait for ever and hold everything after it out of the
+        // scrollback.
+        let source = event.payload.get("source").and_then(|s| s.as_str());
+        let prompt = event.payload.get("prompt").and_then(|p| p.as_str());
+        let confirmed = self
+            .pending
+            .front()
+            .copied()
+            .filter(|at| *at < self.items.len())
+            .filter(|at| match (&self.items[*at], source) {
+                (TranscriptItem::UserPrompt { .. }, Some("console")) => true,
+                (TranscriptItem::UserPrompt { text: typed, .. }, None) => {
+                    prompt.is_some_and(|whole| whole.ends_with(&format!("\n\n{typed}")))
+                }
+                _ => false,
+            });
         if event.kind == "user_prompt_submit"
-            && event.payload.get("source").and_then(|s| s.as_str()) == Some("console")
-            && let Some(at) = self.pending.pop_front()
-            && at < self.items.len()
+            && let Some(at) = confirmed
         {
-            self.items[at] = TranscriptItem::from(event);
+            self.pending.pop_front();
+            let mut item = TranscriptItem::from(event);
+            // A confirmation with no `text` knows what was typed no better
+            // than the console does, and the console has it.
+            if event.payload.get("text").and_then(|t| t.as_str()).is_none()
+                && let (
+                    TranscriptItem::UserPrompt { text, .. },
+                    TranscriptItem::UserPrompt { text: typed, .. },
+                ) = (&mut item, &self.items[at])
+            {
+                text.clone_from(typed);
+            }
+            self.items[at] = item;
             return;
         }
         if event.kind == "permission_request" {
@@ -635,6 +670,9 @@ fn chunk_text(event: &AgentEventDto) -> String {
 fn block(item: &TranscriptItem, width: usize, picked: Option<usize>) -> Vec<Line<'static>> {
     let width = width.max(8);
     match item {
+        TranscriptItem::UserPrompt { text, source, .. } if source.as_deref() == Some("daemon") => {
+            daemon_prompt(text, width)
+        }
         TranscriptItem::UserPrompt { text, .. } => prefixed(text, "> ", USER, USER, width, None),
         TranscriptItem::AgentText { text, .. } => {
             let mut lines = vec![Line::from(Span::styled("● ", AGENT))];
@@ -686,6 +724,19 @@ fn block(item: &TranscriptItem, width: usize, picked: Option<usize>) -> Vec<Line
             vec![Line::from(Span::styled(kind.clone(), DIM))]
         }
     }
+}
+
+/// A prompt the daemon itself sent — a briefing, a nudge, a message — under
+/// its own marker and label, so it reads apart from what was typed.
+fn daemon_prompt(text: &str, width: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(Span::styled("» daemon", DAEMON))];
+    for line in wrap(text, width.saturating_sub(2)) {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(line, DAEMON),
+        ]));
+    }
+    lines
 }
 
 /// Pull the first line of text up onto the marker line above it.
@@ -1791,6 +1842,176 @@ mod tests {
             1,
             "the confirmed prompt took the pending one's place: {shown}"
         );
+    }
+
+    /// The seat's system prompt, as the daemon sends it ahead of every
+    /// prompt (021): the one thing the console must never draw.
+    const SYSTEM_PROMPT: &str = "You plan one Ariadne goal into tasks, with the user.";
+
+    #[tokio::test]
+    async fn a_prompt_draws_its_text_alone_and_never_the_system_prompt() {
+        let (shown, _, _) = console(
+            Stub::new(vec![event(
+                "user_prompt_submit",
+                SYSTEM_PROMPT,
+                json!({
+                    "prompt": format!("{SYSTEM_PROMPT}\n\nRun the tests"),
+                    "text": "Run the tests",
+                    "source": "console",
+                }),
+            )])
+            .deltas(vec![ended()]),
+            Vec::new(),
+        )
+        .await;
+
+        assert!(shown.contains("> Run the tests"), "{shown}");
+        assert!(
+            !shown.contains("You plan"),
+            "the system prompt stays off the screen: {shown}"
+        );
+    }
+
+    /// A daemon older than 021 rule 4 stored the whole prompt and no `text`.
+    /// The typed text cannot be told from the system prompt in it, so the
+    /// console says so rather than draw the whole.
+    #[tokio::test]
+    async fn a_prompt_carrying_only_the_whole_prompt_draws_no_system_prompt() {
+        let (shown, _, _) = console(
+            Stub::new(vec![event(
+                "user_prompt_submit",
+                SYSTEM_PROMPT,
+                json!({
+                    "prompt": format!("{SYSTEM_PROMPT}\n\nRun the tests"),
+                    "source": "console",
+                }),
+            )])
+            .deltas(vec![ended()]),
+            Vec::new(),
+        )
+        .await;
+
+        assert!(
+            !shown.contains("You plan"),
+            "the system prompt stays off the screen: {shown}"
+        );
+        assert!(
+            shown.contains("> (prompt text not recorded)"),
+            "the prompt is on the transcript, said to be unrecorded: {shown}"
+        );
+    }
+
+    /// A daemon older than 021 rule 4 confirms with the whole `prompt` and
+    /// neither `text` nor `source`.
+    #[tokio::test]
+    async fn a_typed_line_confirmed_without_its_text_keeps_what_was_typed() {
+        let mut keys = typed("hi");
+        keys.push(key(KeyCode::Enter));
+        let (shown, prompts, _) = console(
+            Stub::new(Vec::new()).on_input(vec![
+                event(
+                    "user_prompt_submit",
+                    SYSTEM_PROMPT,
+                    json!({"prompt": format!("{SYSTEM_PROMPT}\n\nhi")}),
+                ),
+                ended(),
+            ]),
+            keys,
+        )
+        .await;
+
+        assert_eq!(prompts, ["hi"]);
+        assert_eq!(
+            shown.matches("> hi").count(),
+            1,
+            "the typed text stays, once: {shown}"
+        );
+        assert!(
+            !shown.contains("(prompt text not recorded)"),
+            "the confirmation took the pending prompt's place: {shown}"
+        );
+    }
+
+    /// An older daemon's own prompt — a nudge — names no `source` either. It
+    /// reaches the console ahead of the typed prompt's confirmation, which
+    /// the daemon queued behind the running turn, and it happens to end in
+    /// the typed words: only the blank line ahead of them tells the
+    /// confirmation from it.
+    #[test]
+    fn an_older_daemons_own_prompt_does_not_take_a_pending_prompts_place() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        for character in "tests".chars() {
+            console.key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        console.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        console.apply(&event(
+            "user_prompt_submit",
+            SYSTEM_PROMPT,
+            json!({"prompt": format!("{SYSTEM_PROMPT}\n\nRun the tests")}),
+        ));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+        assert_eq!(
+            shown.matches("> tests").count(),
+            1,
+            "the typed prompt is still pending: {shown}"
+        );
+        assert_eq!(
+            shown.matches("(prompt text not recorded)").count(),
+            1,
+            "the nudge is a prompt of its own, its text unknown: {shown}"
+        );
+
+        console.apply(&event(
+            "user_prompt_submit",
+            SYSTEM_PROMPT,
+            json!({"prompt": format!("{SYSTEM_PROMPT}\n\ntests")}),
+        ));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+        assert_eq!(
+            shown.matches("> tests").count(),
+            1,
+            "the confirmation took the typed prompt's place: {shown}"
+        );
+        assert_eq!(
+            shown.matches("(prompt text not recorded)").count(),
+            1,
+            "and added no placeholder: {shown}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_daemon_sourced_prompt_draws_under_its_own_marker() {
+        let (shown, _, _) = console(
+            Stub::new(vec![
+                event(
+                    "user_prompt_submit",
+                    "Land the change.",
+                    json!({"text": "Land the change.", "source": "daemon"}),
+                ),
+                event(
+                    "user_prompt_submit",
+                    "Go ahead.",
+                    json!({"text": "Go ahead.", "source": "console"}),
+                ),
+            ])
+            .deltas(vec![ended()]),
+            Vec::new(),
+        )
+        .await;
+
+        assert!(
+            shown.contains("» daemon\n  Land the change."),
+            "the briefing is labelled and drawn under its own marker: {shown}"
+        );
+        assert!(
+            !shown.contains("> Land the change."),
+            "and not as typed input: {shown}"
+        );
+        assert!(shown.contains("> Go ahead."), "{shown}");
     }
 
     #[tokio::test]

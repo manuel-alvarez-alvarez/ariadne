@@ -159,7 +159,11 @@ fn tool_call_summary(payload: &serde_json::Value) -> Option<String> {
 /// shape `session.error` carries it in.
 fn agent_text(kind: &str, payload: &serde_json::Value) -> Option<String> {
     let text = match kind {
-        "user_prompt_submit" => non_empty_str(payload.get("prompt")),
+        // The prompt's own text first: `prompt` is the seat's system prompt
+        // over it (021), which every prompt of a session begins with alike.
+        "user_prompt_submit" => {
+            non_empty_str(payload.get("text")).or_else(|| non_empty_str(payload.get("prompt")))
+        }
         "agent_message" | "agent_thought" | "agent_message_chunk" | "agent_thought_chunk" => {
             non_empty_str(payload.get("text"))
         }
@@ -418,6 +422,12 @@ mod tests {
             (
                 "user_prompt_submit",
                 json!({"prompt": "run the tests"}),
+                "run the tests",
+            ),
+            // The text alone, where the event carries it beside the whole.
+            (
+                "user_prompt_submit",
+                json!({"prompt": "You plan one goal.\n\nrun the tests", "text": "run the tests"}),
                 "run the tests",
             ),
             (

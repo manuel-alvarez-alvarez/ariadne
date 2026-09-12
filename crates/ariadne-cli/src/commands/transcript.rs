@@ -208,15 +208,21 @@ impl TranscriptItem {
     }
 }
 
+/// What a prompt reads as when its event carries no `text`.
+pub const UNRECORDED_PROMPT: &str = "(prompt text not recorded)";
+
 impl From<&AgentEventDto> for TranscriptItem {
     fn from(event: &AgentEventDto) -> Self {
         let meta = ItemMeta::from_event(event);
         match event.kind.as_str() {
+            // `text` is the prompt alone. `prompt` is the seat's system
+            // prompt over it (021), and the summary is that whole cut short,
+            // so neither stands in for it: an event with no `text` is from a
+            // daemon that predates the field, and its text is unknown.
             "user_prompt_submit" => Self::UserPrompt {
                 meta,
                 text: string_at(&event.payload, "/text")
-                    .or_else(|| string_at(&event.payload, "/prompt"))
-                    .unwrap_or_else(|| event.summary.clone()),
+                    .unwrap_or_else(|| UNRECORDED_PROMPT.into()),
                 source: string_at(&event.payload, "/source"),
             },
             "agent_message" | "agent_message_chunk" => Self::AgentText {

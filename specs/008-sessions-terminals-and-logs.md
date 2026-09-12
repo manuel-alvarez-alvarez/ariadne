@@ -111,11 +111,17 @@ goal id to a seat (014).
     crossterm's timeout gets the same pane opened from the bottom row instead,
     on a backend that answers every later cursor query itself. There is no
     alternate-screen fallback.
-23. The pane renders each block as it arrives: a prompt as `> text`, agent
-    text as markdown chunk by chunk under one marker, a thought dimmed and
-    folded, a tool call as one line with a status glyph, its name and its
-    input with its output folded under it, a diff coloured, a plan as a
-    checklist, and a permission question as a picker.
+23. The pane renders each block as it arrives: a prompt as `> text`, holding
+    the event's `text` alone — never the whole `prompt` with the system
+    prompt ahead of it (021), nor the summary, one line cut short; an event
+    carrying no `text` says the text was not recorded rather than draw the
+    whole. A prompt the daemon sent (`source: daemon`: a briefing,
+    a nudge, a message) draws under its own marker and label, `» daemon`,
+    with its text beneath, so it reads apart from what was typed. Agent text
+    is markdown chunk by chunk under one marker, a thought dimmed and folded,
+    a tool call one line with a status glyph, its name and its input with its
+    output folded under it, a diff coloured, a plan a checklist, and a
+    permission question a picker.
 24. A chunk continues the block last written, and starts a block of its own
     where anything else came between: a turn that speaks around a tool call
     reads as two blocks with the call between them. The whole text the daemon
@@ -124,7 +130,13 @@ goal id to a seat (014).
     streamed nothing renders that stored text as its one block.
 25. Enter posts the input box to console input, Shift+Enter and Alt+Enter add
     a line to it, and each prompt typed shows at once and is replaced by its
-    own `user_prompt_submit`, in the order they were posted. On a permission
+    own `user_prompt_submit`, in the order they were posted. An older
+    daemon's (021) prompt event carries neither `text` nor `source`: it takes
+    the oldest pending prompt's place where its whole `prompt` ends in a
+    blank line and then the typed text — the whole is the system prompt, a
+    blank line and the text, so a daemon prompt that merely ends in the same
+    words does not match — keeping what was typed, and is a prompt of its
+    own otherwise. On a permission
     question the arrows and the number keys move the pick and Enter posts the
     option's id. A post the daemon refuses is said on the transcript, and the
     console stays open.
@@ -201,6 +213,16 @@ goal id to a seat (014).
   and markdown keeps a heading, a code block and a list apart
   (`console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
+- A prompt draws its text alone, never the system prompt
+  (`console/tui.rs::a_prompt_draws_its_text_alone_and_never_the_system_prompt`);
+  an event carrying only the whole prompt draws none of it
+  (`::a_prompt_carrying_only_the_whole_prompt_draws_no_system_prompt`); a
+  confirmation without `text` keeps what was typed
+  (`::a_typed_line_confirmed_without_its_text_keeps_what_was_typed`) while
+  an older daemon's own prompt takes no pending prompt's place
+  (`::an_older_daemons_own_prompt_does_not_take_a_pending_prompts_place`); and a
+  daemon-sourced prompt draws under its own marker
+  (`::a_daemon_sourced_prompt_draws_under_its_own_marker`).
 - Where the cursor position cannot be read, the pane opens from the bottom
   row
   (`console/tui.rs::the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read`)
