@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-09-11
+updated: 2026-09-12
 areas: [daemon]
 commits: []
 tests:
@@ -54,15 +54,38 @@ gone (009).
    (see Known gap).
 4. Every prompt the runtime sends is the system prompt, a blank line, and
    the text of the prompt. The first prompt of a launch is the one its launch
-   file carries, if any.
+   file carries, if any. `user_prompt_submit` carries the whole as `prompt`,
+   the text alone as `text`, and a `source`: `console` for console input
+   (008), `daemon` for everything the daemon itself says.
 5. What the agent does becomes agent events on the ingestion path (012):
    `session_start` with the agent's own session id, `user_prompt_submit`,
-   tool calls as `pre_tool_use` and `post_tool_use`, `stop` with the turn's
-   last assistant text, a completed `compaction_update`,
-   `permission_request` and `permission.replied`, `session.error`, and
-   `session_end`. Every event carries the launch id (007), and the agent's
-   session id is recorded on the row.
-6. ACP permission mode defaults to `auto` from daemon configuration, and a
+   tool calls as `pre_tool_use` and `post_tool_use`, `plan` with the entries
+   of each ACP plan update, the turn's text (rule 6), `stop` with the stop
+   reason, a completed `compaction_update`, `permission_request` and
+   `permission.replied`, `session.error`, and `session_end`. Every event
+   carries the launch id (007), and the agent's session id is recorded on
+   the row.
+6. A turn's text is stored once, whole, when the turn ends: `agent_thought`
+   `{session_id, text}` where thought chunks arrived, then `agent_message`
+   `{session_id, text}` where message chunks arrived, then `stop`. While the
+   turn runs, each chunk goes live to the session's console stream alone
+   (008) — `agent_message_chunk` and `agent_thought_chunk`, each
+   `{session_id, text}` — and so does each non-terminal `tool_call_update`
+   as `tool_call_update` `{session_id, tool_call_id, acp}`. None of the
+   three is stored, and none reaches `/v1/events` or `/v1/events/stream`.
+7. Tool call updates are merged per `toolCallId`: every field an update sets
+   replaces the one on record, `content` included. `pre_tool_use` carries
+   the call as it opened; `post_tool_use`, on a `completed` or `failed`
+   update, carries the merged call under `acp` — `title`, `kind`, `status`,
+   `content`, `locations`, `rawInput`, `rawOutput` — beside the same
+   `tool_name` and `tool_input` as before. A live `tool_call_update` carries
+   the call merged so far.
+8. A running turn is cancelled with ACP `session/cancel`, sent while the
+   `session/prompt` it interrupts is still in flight. The response then ends
+   the turn as any other: the text so far stored, and `stop` with
+   `stop_reason: cancelled`. Between turns there is nothing to cancel, and
+   the runtime refuses.
+9. ACP permission mode defaults to `auto` from daemon configuration, and a
    task may override it with `auto`, `ask` or `learn`. `auto` selects the
    first allowing option, then the first option, and cancels only an empty
    list. `ask` records the request in the console, raises session attention
@@ -70,19 +93,19 @@ gone (009).
    the first request for one repository, tool name and tool kind; an allowing
    answer is stored and later matching requests are selected automatically.
    A denial is not stored.
-7. After a turn ends the agent stays up and the runtime keeps serving it.
+10. After a turn ends the agent stays up and the runtime keeps serving it.
    Everything the daemon says to the agent after the launch — a scheduler
    nudge, a review briefing, an agent message — is a `session/prompt`, sent
    at once between turns and queued in order behind a running one. Console
    input (008) arrives the same way, except that a pending `ask` takes it as
-   the answer (rule 6): only a person's input ever answers a permission.
-8. The child is reaped whenever it ends. Its own exit ends the session on
+   the answer (rule 9): only a person's input ever answers a permission.
+11. The child is reaped whenever it ends. Its own exit ends the session on
    the record: `session.error` first if the protocol failed, then
    `session_end`. Killing the session kills the child and retires the row.
-9. A resume starts a fresh agent process on the stored conversation. The
+12. A resume starts a fresh agent process on the stored conversation. The
    predecessor is reaped, and its exit takes neither the seat nor the row
    down.
-10. Liveness is the runtime's own registry of running agents, and it always
+13. Liveness is the runtime's own registry of running agents, and it always
     answers. After a daemon restart no child of the old daemon is running,
     and a revive reaches the stored conversation through a new process.
 
@@ -121,6 +144,22 @@ gone (009).
   (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).
 - A scheduler nudge arrives at the agent as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
+- Message chunks reach the console stream before the turn ends
+  (`acp_console.rs::a_console_stream_client_sees_message_chunks_before_the_turn_ends`),
+  and so do thought chunks and a tool call's progress
+  (`::thought_chunks_and_tool_call_progress_reach_the_console_stream_live`).
+- After the turn the whole thought and message are stored once each, before
+  the `stop`, and no chunk is
+  (`acp_console.rs::the_snapshot_after_a_turn_holds_the_whole_thought_and_message_once`);
+  neither `GET /v1/events` nor `/v1/events/stream` carries a chunk
+  (`::the_events_listing_and_the_domain_stream_carry_no_chunk`).
+- `post_tool_use` carries the call merged from every update
+  (`acp_console.rs::post_tool_use_carries_the_tool_call_merged_from_every_update`).
+- `user_prompt_submit` carries the typed text and its source
+  (`acp_console.rs::console_input_is_reported_as_its_text_from_the_console`).
+- A cancel ends the running turn as `cancelled`
+  (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), and is
+  refused between turns (`::cancel_with_no_turn_running_is_refused`).
 - An option is found by its category, or by its id or name where no option
   has the category — the lookup the runtime shares with discovery
   (`acp_discovery.rs::model_and_effort_name_fallbacks_enter_the_discovered_catalog`).

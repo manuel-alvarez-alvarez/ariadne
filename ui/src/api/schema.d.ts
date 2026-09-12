@@ -568,11 +568,36 @@ export interface paths {
         };
         /**
          * The session's events so far, in order: the whole transcript a console
-         *     opens on.
+         *     opens on. While a turn runs, one `agent_thought_chunk` and one
+         *     `agent_message_chunk` holding the text so far follow the stored events.
          */
         get: operations["sessions_snapshot"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/console/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel the turn a session is running.
+         * @description Sends ACP `session/cancel` to the agent while its `session/prompt` is
+         *     still in flight. The turn then ends as any other does — the text so far
+         *     stored, then a `stop` whose `stop_reason` is `cancelled`. A session that
+         *     is not live, one whose agent process is gone, and one between turns all
+         *     have nothing to cancel, and say so with `409`.
+         */
+        post: operations["sessions_console_cancel"];
         delete?: never;
         options?: never;
         head?: never;
@@ -622,10 +647,12 @@ export interface paths {
         /**
          * Follow a session's console.
          * @description Opens with a `snapshot` event carrying what `GET /console` would return —
-         *     every event recorded so far, oldest first — then an `event` per later one,
-         *     each an `AgentEventDto`. Subscribing happens before the snapshot is read
-         *     and every later event is compared against the snapshot's last id, so
-         *     nothing committed in between is ever missed or delivered twice.
+         *     every event recorded so far, oldest first, then the running turn's text so
+         *     far — then an `event` per later one, each an `AgentEventDto`. Subscribing
+         *     happens before the snapshot is read and every later stored event is
+         *     compared against the snapshot's last id, so nothing committed in between
+         *     is ever missed or delivered twice; the live events are read under the
+         *     runtime's own turn lock for the same guarantee.
          *
          *     There is no replay and no `Last-Event-ID`: reconnecting starts again from a
          *     fresh snapshot. A client that falls too far behind gets a final `resync`
@@ -3100,6 +3127,39 @@ export interface operations {
             };
         };
     };
+    sessions_console_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The running turn was told to cancel */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     sessions_console_input: {
         parameters: {
             query?: never;
@@ -3149,7 +3209,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying every event recorded so far (`[AgentEventDto]`), then an `event` per new one (`AgentEventDto`) — message chunks, thoughts, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
+            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying every event recorded so far (`[AgentEventDto]`) and the running turn's text so far, then an `event` per new one (`AgentEventDto`) — message and thought chunks, tool call progress, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. The chunks and the progress are live only: they are never stored and never reach `/v1/events`. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
             200: {
                 headers: {
                     [name: string]: unknown;

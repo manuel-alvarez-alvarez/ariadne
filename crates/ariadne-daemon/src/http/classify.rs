@@ -118,7 +118,7 @@ const TOOL_INPUT_FIELDS: [&str; 7] = [
 /// reports in (this module's own docs): `tool_name`/`tool_input` on every
 /// tool event. `cwd` is read only to relativize a path already read off one
 /// of those — it is never a summary of its own, and it never appears in one.
-pub(super) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
+pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
     let text = tool_call_summary(payload).or_else(|| agent_text(kind, payload));
     finish(&text.unwrap_or_else(|| "…".to_string()))
 }
@@ -134,10 +134,15 @@ fn non_empty_str(value: Option<&serde_json::Value>) -> Option<&str> {
 ///
 /// A permission request carries the same two fields, so the same reading
 /// covers it: it is a tool event too, just one whose outcome is not known
-/// yet.
+/// yet. A live `tool_call_update` carries only the call itself under `acp`,
+/// whose `title` and `rawInput` are the same two things.
 fn tool_call_summary(payload: &serde_json::Value) -> Option<String> {
-    let tool = non_empty_str(payload.get("tool_name"))?;
-    let input = payload.get("tool_input")?;
+    let acp = payload.get("acp");
+    let tool = non_empty_str(payload.get("tool_name"))
+        .or_else(|| non_empty_str(acp.and_then(|call| call.get("title"))))?;
+    let input = payload
+        .get("tool_input")
+        .or_else(|| acp.and_then(|call| call.get("rawInput")))?;
     let (field, value) = TOOL_INPUT_FIELDS
         .iter()
         .find_map(|field| non_empty_str(input.get(field)).map(|v| (*field, v)))?;
@@ -149,12 +154,15 @@ fn tool_call_summary(payload: &serde_json::Value) -> Option<String> {
 }
 
 /// The agent's own words, wherever the payload carries any: the prompt that
-/// began the turn, the message it ended on, or an error's —
-/// `{data: {message, …}}`, the shape `session.error` carries it in.
+/// began the turn, the message or thought it produced — whole, or one chunk
+/// of it on the console stream — or an error's — `{data: {message, …}}`, the
+/// shape `session.error` carries it in.
 fn agent_text(kind: &str, payload: &serde_json::Value) -> Option<String> {
     let text = match kind {
         "user_prompt_submit" => non_empty_str(payload.get("prompt")),
-        "stop" => non_empty_str(payload.get("last_assistant_message")),
+        "agent_message" | "agent_thought" | "agent_message_chunk" | "agent_thought_chunk" => {
+            non_empty_str(payload.get("text"))
+        }
         "session.error" => non_empty_str(
             payload
                 .get("error")
@@ -388,6 +396,18 @@ mod tests {
             summarize("permission_request", &permission_request()),
             "Bash: touch /tmp/probe"
         );
+        // A tool call's live progress carries the call alone, and reads off
+        // its own title and input.
+        let progress = json!({
+            "session_id": "stub-session",
+            "tool_call_id": "call-2",
+            "acp": {"toolCallId": "call-2", "title": "Bash", "status": "in_progress",
+                    "rawInput": {"command": "cargo nextest run"}},
+        });
+        assert_eq!(
+            summarize("tool_call_update", &progress),
+            "Bash: cargo nextest run"
+        );
     }
 
     /// The agent's own words, wherever the payload carries any — read
@@ -401,14 +421,24 @@ mod tests {
                 "run the tests",
             ),
             (
-                "stop",
-                json!({"last_assistant_message": "Which of the two do you want?"}),
+                "agent_message",
+                json!({"text": "Which of the two do you want?"}),
                 "Which of the two do you want?",
+            ),
+            (
+                "agent_thought",
+                json!({"text": "The tests cover the seam."}),
+                "The tests cover the seam.",
+            ),
+            (
+                "agent_message_chunk",
+                json!({"text": "Which of"}),
+                "Which of",
             ),
             // A newline in the words themselves is flattened, not cut short.
             (
-                "stop",
-                json!({"last_assistant_message": "Line one\nLine two"}),
+                "agent_message",
+                json!({"text": "Line one\nLine two"}),
                 "Line one Line two",
             ),
             (

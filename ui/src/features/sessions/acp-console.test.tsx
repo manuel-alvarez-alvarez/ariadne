@@ -56,8 +56,8 @@ it("renders the transcript the stream delivers: a snapshot, then a delta", async
     anAgentEvent({ id: "01E1", kind: "session_start", payload: { session_id: SESSION } }),
     anAgentEvent({
       id: "01E2",
-      kind: "stop",
-      payload: { last_assistant_message: "All done here." },
+      kind: "agent_message",
+      payload: { text: "All done here." },
     }),
   ])
 

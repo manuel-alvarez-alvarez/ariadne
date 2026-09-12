@@ -4,7 +4,7 @@ pub use events::ingest_event;
 
 mod caller;
 mod catalog;
-mod classify;
+pub(crate) mod classify;
 mod console;
 pub(crate) mod convert;
 mod doctor;
@@ -128,7 +128,7 @@ impl AppState {
         goals::list_goal_messages, goals::post_goal_message, landing::diff,
         landing::record_pull_request, landing::pick_winner,
         sessions::list, sessions::list_outside, sessions::get, sessions::kill, sessions::resume,
-        console::snapshot, console::stream, console::input,
+        console::snapshot, console::stream, console::input, console::cancel,
         events::list, stream::stream,
         models::list,
         models::set_enabled,
@@ -244,6 +244,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/console", get(console::snapshot))
         .route("/v1/sessions/{id}/console/stream", get(console::stream))
         .route("/v1/sessions/{id}/console/input", post(console::input))
+        .route("/v1/sessions/{id}/console/cancel", post(console::cancel))
         // models
         .route("/v1/models", get(models::list))
         .route("/v1/models/enabled", put(models::set_enabled))

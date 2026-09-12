@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-11
+updated: 2026-09-12
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -15,6 +15,7 @@ tests:
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/memories.rs
+  - crates/ariadne-daemon/tests/acp_console.rs
 ---
 
 # HTTP API, event stream and usage
@@ -55,16 +56,21 @@ and the ACP runtime that reports the agent events (021).
    attention raised and cleared, and a task branch's head moving (002).
 8. A session is read and driven over HTTP through its row, its kill and
    resume, and its console (`/v1/sessions/{id}/console`, `/console/input`,
-   `/console/stream`, 021). There is no endpoint that types into, resizes or
-   reads a terminal, and no endpoint an agent reports events to: the
-   daemon's own ACP runtime is the one reporter, and it ingests in process.
+   `/console/stream`, `/console/cancel`, 008, 021). There is no endpoint
+   that types into, resizes or reads a terminal, and no endpoint an agent
+   reports events to: the daemon's own ACP runtime is the one reporter, and
+   it ingests in process.
 9. An ingested event is recorded whole, then read in the runtime's one
    vocabulary. `session_start`, `user_prompt_submit`, `pre_tool_use`,
    `post_tool_use` and `permission.replied` mark the session running; `stop`
    marks it idle; `session_end` marks it exited. `permission_request` raises
    `waiting_permission`, and `session.error` raises `agent_error`; neither
-   reads as liveness. An event that matches nothing is recorded and moves
-   nothing.
+   reads as liveness. An event that matches nothing — `agent_thought`,
+   `agent_message`, `plan` — is recorded and moves nothing. The live-only
+   console events (021) — `agent_message_chunk`, `agent_thought_chunk`,
+   `tool_call_update` — are never ingested: they reach the session's
+   console stream alone, and neither `GET /v1/events` nor
+   `/v1/events/stream` carries one.
 10. An idle report clears the stall and the error and nothing else, so a
     permission request survives it. A permission reply hands control back to
     the agent and takes the wait down.
@@ -81,11 +87,14 @@ and the ACP runtime that reports the agent events (021).
     payload when the DTO is built, never stored. A tool call reads as its
     action and its subject — `Bash: cargo nextest run` — off `tool_name` and
     the first field of `tool_input` it carries among `command`, `file_path`,
-    `path`, `pattern`, `url`, `prompt` and `description`. Where the payload
+    `path`, `pattern`, `url`, `prompt` and `description`; a live
+    `tool_call_update`, which carries only the call under `acp`, reads its
+    `title` and `rawInput` the same way. Where the payload
     carries the agent's own words instead — the prompt that began the turn,
-    the last assistant message a turn ended on, a `session.error`'s message —
-    those are shown verbatim. A path under the payload's `cwd` is printed
-    relative to it, and the cwd itself is never printed. The summary is
+    the message or thought a turn produced, whole or as one chunk on the
+    console stream, a `session.error`'s message — those are shown verbatim.
+    A path under the payload's `cwd` is printed relative to it, and the cwd
+    itself is never printed. The summary is
     flattened to one line and cut at 200 characters with a trailing `…`,
     which is also what a payload nothing here can read summarizes to.
 14. An event may carry an `ariadne_usage`: the cumulative totals of one
@@ -152,6 +161,9 @@ and the ACP runtime that reports the agent events (021).
 - An event from a launch the session has moved past is recorded and changes
   nothing
   (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`).
+- The live-only console events reach neither the events listing nor the
+  domain stream
+  (`acp_console.rs::the_events_listing_and_the_domain_stream_carry_no_chunk`).
 - An agent event's `summary` reads a tool call as its action and its subject,
   the agent's own words where the payload carries any, a path relative to the
   cwd and never the cwd itself, one flattened line cut at 200 characters, and
@@ -199,6 +211,7 @@ and the ACP runtime that reports the agent events (021).
   `::a_worktree_root_the_daemon_cannot_write_is_reported_as_such`).
 - Every endpoint is in the OpenAPI document
   (`logs.rs::both_endpoints_are_in_the_openapi_document`,
+  `acp_console.rs::the_cancel_endpoint_is_in_the_openapi_document`,
   `doctor.rs::endpoint_is_in_the_openapi_document`,
   `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`).
 - ACP registry endpoints expose the cached result and refresh it on demand

@@ -3,9 +3,12 @@
 //! [`stub_acp_agent`] writes a python3 program that speaks ACP version 1 over
 //! its standard input and output, answering from a script the test wrote:
 //! the capabilities it declares, the configuration options it offers, the
-//! reply to each prompt — updates, a permission request, the stop reason, an
-//! exit mid-turn, or a pause (`wait_for`) a test holds the turn open on — and
-//! the stored sessions a load or resume finds, which `session/list` answers
+//! reply to each prompt — updates of any kind (message and thought chunks, a
+//! plan, tool calls and as many updates of each as the test lists), a
+//! permission request, the stop reason, an exit mid-turn, or a pause
+//! (`wait_for`) a test holds the turn open on after its updates went out,
+//! during which a `session/cancel` ends the turn as `cancelled` — and the
+//! stored sessions a load or resume finds, which `session/list` answers
 //! whole, or `session_page_size` at a time behind a `nextCursor` — and never
 //! answers a page from `session_list_stall_from` on. The harness
 //! registers it as
@@ -261,9 +264,12 @@ fn write_script_file(
 /// it answers exactly what the script says, logs every incoming message, and
 /// exits on stdin closing, the way an ACP agent ends with its client.
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, sys, time
+import json, os, select, sys, time
 
 script = json.load(open(sys.argv[1]))
+# Unbuffered, so a poll on the descriptor is the truth about what is left to
+# read: a buffered reader could hold a line the poll can no longer see.
+stdin = os.fdopen(0, "rb", buffering=0)
 with open(script["pid_file"], "w") as f:
     f.write(str(os.getpid()))
 with open(script["launches"], "a") as f:
@@ -293,12 +299,22 @@ def send(message):
 
 
 def read():
-    line = sys.stdin.readline()
+    line = stdin.readline()
     if not line:
         sys.exit(0)
     message = json.loads(line)
     log(message)
     return message
+
+
+def cancelled_meanwhile():
+    """Whether a `session/cancel` arrived on stdin — read without blocking,
+    so a paused turn can keep waiting on its file. Anything else that
+    arrives is logged and dropped, as an agent mid-turn would ignore it."""
+    while select.select([stdin], [], [], 0)[0]:
+        if read().get("method") == "session/cancel":
+            return True
+    return False
 
 
 def respond(request):
@@ -349,14 +365,6 @@ def respond(request):
         return {"configOptions": options}
     if method == "session/prompt":
         turn = prompts.pop(0) if prompts else {}
-        wait_for = turn.get("wait_for")
-        if wait_for:
-            # Say the turn has started, then sit on it until the test lets go
-            # — the window a "queued while a turn runs" test needs.
-            with open(wait_for + ".reached", "w") as f:
-                f.write("1")
-            while not os.path.exists(wait_for):
-                time.sleep(0.01)
         if "permission" in turn:
             permissions += 1
             request_permission = dict(turn["permission"])
@@ -368,6 +376,17 @@ def respond(request):
         for update in turn.get("updates", []):
             send({"jsonrpc": "2.0", "method": "session/update",
                   "params": {"sessionId": sid, "update": update}})
+        wait_for = turn.get("wait_for")
+        if wait_for:
+            # Everything the turn has to say is out; now sit on it until the
+            # test lets go — the window a "while a turn runs" test needs —
+            # or until the client cancels the turn.
+            with open(wait_for + ".reached", "w") as f:
+                f.write("1")
+            while not os.path.exists(wait_for):
+                if cancelled_meanwhile():
+                    return {"stopReason": "cancelled"}
+                time.sleep(0.01)
         if "exit" in turn:
             sys.exit(int(turn["exit"]))
         return {"stopReason": turn.get("stop_reason", "end_turn")}

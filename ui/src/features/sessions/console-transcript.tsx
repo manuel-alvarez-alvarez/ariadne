@@ -73,14 +73,10 @@ function ConsoleEventRow({ event, context }: { event: AgentEventDto; context: Co
   switch (event.kind) {
     case "user_prompt_submit":
       return <TextBubble who="you" text={context.resolvedPromptText.get(event.id)} event={event} />
+    case "agent_message":
+      return <TextBubble who="agent" text={nonEmptyString(event.payload, "text")} event={event} />
     case "stop":
-      return (
-        <TextBubble
-          who="agent"
-          text={nonEmptyString(event.payload, "last_assistant_message")}
-          event={event}
-        />
-      )
+      return <SystemNote>Turn ended</SystemNote>
     case "pre_tool_use":
       return <ToolRow event={event} state="running" />
     case "post_tool_use":

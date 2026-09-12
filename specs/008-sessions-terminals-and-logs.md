@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-11
+updated: 2026-09-12
 areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
@@ -65,8 +65,15 @@ goal id to a seat (014).
 13. A session's console snapshot (`GET /v1/sessions/{id}/console`) is the
     session's events so far, in order. Every event the runtime reported
     passes through as the runtime named it, with no fixed list of kinds.
+    While a turn runs, the snapshot ends on the text so far: one
+    `agent_thought_chunk` and one `agent_message_chunk`, each only where
+    there is text, after the stored events.
 14. The console stream (`GET /v1/sessions/{id}/console/stream`) opens with
-    that snapshot, then sends each later event as it is recorded.
+    that snapshot, then sends each later event as it is recorded, and each
+    live-only event as the runtime streams it (021): message and thought
+    chunks, and tool call progress. A client that connects mid-turn reads
+    the text so far in its snapshot and every later chunk on the stream,
+    none of them twice.
 15. The console stream has no replay. A client that falls too far behind is
     told how many events it missed, and the connection closes, the same as
     `/v1/events/stream` (012). A reconnect starts again from a fresh snapshot.
@@ -80,7 +87,11 @@ goal id to a seat (014).
     is an answer, whoever gave it.
 19. A finished session refuses console input with `409`, and so does a
     session whose agent process is gone.
-20. The CLI reaches a session through its console. `ariadne attach` prints
+20. `POST /v1/sessions/{id}/console/cancel` cancels the turn the session is
+    running (021) and answers `204`. A session that is not live, one whose
+    agent process is gone, and one between turns have nothing to cancel, and
+    answer `409`.
+21. The CLI reaches a session through its console. `ariadne attach` prints
     the transcript, follows the stream and posts each line typed as input.
     `ariadne session logs` prints the snapshot, and with `--follow` it
     follows the console stream.
@@ -126,6 +137,16 @@ goal id to a seat (014).
 - A console answer selects the option of a pending question, and takes the
   session's flag down
   (`acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`).
+- A lagged console client is told to resync, and the connection closes
+  (`acp_console.rs::a_lagged_console_client_gets_a_resync_and_the_stream_ends`).
+- A stream opened mid-turn reads the text so far in its snapshot
+  (`acp_console.rs::a_stream_opened_mid_turn_gets_the_text_so_far_in_its_snapshot`),
+  and the chunks arrive live before the turn ends
+  (`::a_console_stream_client_sees_message_chunks_before_the_turn_ends`).
+- Cancel ends the running turn as `cancelled`
+  (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), is
+  refused between turns (`::cancel_with_no_turn_running_is_refused`), and is
+  in the OpenAPI document (`::the_cancel_endpoint_is_in_the_openapi_document`).
 - The CLI console renders a transcript and delivers an input line
   (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`),
   and renders a permission question and delivers the selected answer

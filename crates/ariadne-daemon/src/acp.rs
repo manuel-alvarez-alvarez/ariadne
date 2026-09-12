@@ -18,17 +18,22 @@ use std::sync::{Arc, Mutex, OnceLock};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::{mpsc, oneshot};
+use tokio::process::{Child, Command};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
-use ariadne_api::events::IngestEventRequest;
+use ariadne_api::events::{AgentEventDto, IngestEventRequest};
 use ariadne_core::PermissionMode;
 use ariadne_core::acp::LaunchConfig;
+use ariadne_core::id::new_id;
 use ariadne_store::Store;
 
-use crate::acp_rpc::{Incoming, RpcTransport};
+use crate::acp_rpc::{Incoming, Outbound, RpcTransport};
+use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
 use crate::scheduler::SchedEvent;
+
+/// Live console events buffered per subscriber before it is told to resync.
+const CONSOLE_CAPACITY: usize = 1024;
 
 /// Everything one launch of an ACP agent is made of. The launcher builds it
 /// from the adapter's spawn plan: the registry command with the planned
@@ -69,6 +74,79 @@ struct Inner {
     /// Wakes the scheduler after an event lands, the way the HTTP ingestion
     /// does — present once a scheduler is running.
     scheduler: OnceLock<mpsc::UnboundedSender<SchedEvent>>,
+    /// The live-only events — message and thought chunks, tool call
+    /// progress — on their way to the console streams and nowhere else: none
+    /// of them is stored, and none reaches the domain bus. One channel per
+    /// session, so a chatty session never lags another session's console,
+    /// kept for as long as an agent runs for it or somebody listens.
+    consoles: Mutex<HashMap<String, broadcast::Sender<AgentEventDto>>>,
+}
+
+/// Where a prompt came from, as `user_prompt_submit` reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromptSource {
+    /// Typed into the session's console.
+    Console,
+    /// Everything the daemon itself says: the briefing, a nudge, a message.
+    Daemon,
+}
+
+impl PromptSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Console => "console",
+            Self::Daemon => "daemon",
+        }
+    }
+}
+
+/// One `session/prompt` waiting its turn.
+struct Prompt {
+    text: String,
+    source: PromptSource,
+}
+
+/// The turn in flight, as far as the agent has told it: the text so far, and
+/// every tool call still open, merged per `toolCallId` from the updates the
+/// agent sent about it.
+#[derive(Default)]
+struct Turn {
+    running: bool,
+    /// The agent's own session id, as the turn's events name it.
+    agent_session: Option<String>,
+    thought: String,
+    message: String,
+    tools: HashMap<String, Value>,
+}
+
+impl Turn {
+    /// The running turn's text so far as the two chunk events a console
+    /// snapshot appends — none for a turn that has said nothing yet, and none
+    /// between turns.
+    fn so_far(&self, session_id: &str, task_id: &Option<String>) -> Vec<AgentEventDto> {
+        if !self.running {
+            return Vec::new();
+        }
+        let agent_session = self
+            .agent_session
+            .clone()
+            .map_or(Value::Null, Value::String);
+        [
+            ("agent_thought_chunk", &self.thought),
+            ("agent_message_chunk", &self.message),
+        ]
+        .into_iter()
+        .filter(|(_, text)| !text.is_empty())
+        .map(|(kind, text)| {
+            live_event(
+                session_id,
+                task_id.clone(),
+                kind,
+                json!({"session_id": agent_session, "text": text}),
+            )
+        })
+        .collect()
+    }
 }
 
 struct RunningAgent {
@@ -83,16 +161,24 @@ struct RunningAgent {
     /// Console input for this agent: each send becomes a `session/prompt`,
     /// sent at once if the agent is between turns and queued, in order,
     /// behind whichever one is running.
-    prompts: mpsc::UnboundedSender<String>,
+    prompts: mpsc::UnboundedSender<Prompt>,
     /// The reply channel while the agent waits on one permission request.
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+    /// The turn in flight, shared with the driver that fills it.
+    turn: Arc<tokio::sync::Mutex<Turn>>,
+    /// The task the session works on, copied onto every live event.
+    task_id: Option<String>,
+    /// The notification path into the agent, for `session/cancel`.
+    outbound: Outbound,
 }
 
-/// The pipe endpoints and permission reply slot a driver owns for one child.
+/// The transport, the permission reply slot and the turn a driver owns for
+/// one child.
 struct DriverIo {
-    stdout: ChildStdout,
-    stdin: ChildStdin,
+    transport: RpcTransport,
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+    turn: Arc<tokio::sync::Mutex<Turn>>,
+    task_id: Option<String>,
 }
 
 impl AcpRuntime {
@@ -102,6 +188,7 @@ impl AcpRuntime {
                 store,
                 running: Mutex::new(HashMap::new()),
                 scheduler: OnceLock::new(),
+                consoles: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -137,7 +224,10 @@ impl AcpRuntime {
             .get(session_id)
             .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?
             .prompts
-            .send(text)
+            .send(Prompt {
+                text,
+                source: PromptSource::Daemon,
+            })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
 
@@ -160,8 +250,96 @@ impl AcpRuntime {
             });
         }
         prompts
-            .send(text)
+            .send(Prompt {
+                text,
+                source: PromptSource::Console,
+            })
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
+    }
+
+    /// Cancel the turn in flight: ACP `session/cancel`, sent while the
+    /// `session/prompt` it interrupts is still outstanding, whose response
+    /// then ends the turn with `stopReason: cancelled`.
+    ///
+    /// Errs where there is nothing to cancel: no agent runs for this session,
+    /// or the agent is between turns. The agent's stdin is held from the
+    /// check to the send: a turn that ends meanwhile cannot have its
+    /// successor's prompt written first, so the cancel never lands on the
+    /// next turn. The turn lock itself is taken only for the check, so a
+    /// child that stops reading its stdin stalls this call and not the
+    /// driver.
+    pub async fn cancel(&self, session_id: &str) -> Result<()> {
+        let (turn, outbound) = {
+            let running = self.inner.running.lock().expect("acp registry lock");
+            let agent = running
+                .get(session_id)
+                .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
+            (agent.turn.clone(), agent.outbound.clone())
+        };
+        let mut pipe = outbound.lock().await;
+        let agent_session = {
+            let turn = turn.lock().await;
+            turn.running.then(|| turn.agent_session.clone()).flatten()
+        };
+        let Some(agent_session) = agent_session else {
+            bail!("no turn is running for session {session_id}");
+        };
+        pipe.notify("session/cancel", json!({"sessionId": agent_session}))
+            .await
+    }
+
+    /// The running turn's text so far, as the chunk events a console snapshot
+    /// appends after the stored ones; empty between turns, and for a session
+    /// with no agent here.
+    pub async fn turn_so_far(&self, session_id: &str) -> Vec<AgentEventDto> {
+        let Some((turn, task_id)) = self.turn_of(session_id) else {
+            return Vec::new();
+        };
+        turn.lock().await.so_far(session_id, &task_id)
+    }
+
+    /// Follow the live console events, and read the running turn's text so
+    /// far under the same lock the driver appends and publishes under: every
+    /// chunk is then either in the text returned or on the subscription, and
+    /// never in both.
+    pub async fn subscribe_console(
+        &self,
+        session_id: &str,
+    ) -> (broadcast::Receiver<AgentEventDto>, Vec<AgentEventDto>) {
+        let Some((turn, task_id)) = self.turn_of(session_id) else {
+            return (self.console_of(session_id).subscribe(), Vec::new());
+        };
+        let turn = turn.lock().await;
+        let rx = self.console_of(session_id).subscribe();
+        (rx, turn.so_far(session_id, &task_id))
+    }
+
+    /// The session's live console channel, made on first use — by a launch
+    /// or by a subscriber, whichever comes first, so a console opened before
+    /// the agent is up still hears its first turn.
+    ///
+    /// Each channel holds its whole buffer from the start, so the ones
+    /// nobody needs any more — no agent running, no console listening — are
+    /// pruned here, on the way to making the next one.
+    fn console_of(&self, session_id: &str) -> broadcast::Sender<AgentEventDto> {
+        let running = self.inner.running.lock().expect("acp registry lock");
+        let mut consoles = self.inner.consoles.lock().expect("acp console lock");
+        consoles.retain(|session, console| {
+            console.receiver_count() > 0 || running.contains_key(session)
+        });
+        consoles
+            .entry(session_id.to_string())
+            .or_insert_with(|| broadcast::Sender::new(CONSOLE_CAPACITY))
+            .clone()
+    }
+
+    fn turn_of(&self, session_id: &str) -> Option<(Arc<tokio::sync::Mutex<Turn>>, Option<String>)> {
+        self.inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get(session_id)
+            .map(|agent| (agent.turn.clone(), agent.task_id.clone()))
     }
 
     /// Spawn the agent and drive it until it exits or is killed. A driver
@@ -205,6 +383,15 @@ impl AcpRuntime {
         let (stop, stopped) = oneshot::channel();
         let (prompts, queued) = mpsc::unbounded_channel();
         let permission = Arc::new(Mutex::new(None));
+        let turn = Arc::new(tokio::sync::Mutex::new(Turn::default()));
+        let task_id = self
+            .inner
+            .store
+            .get_session(&launch.session_id)
+            .await
+            .ok()
+            .and_then(|session| session.task_id);
+        let transport = RpcTransport::new(stdout, stdin);
         self.inner
             .running
             .lock()
@@ -216,6 +403,9 @@ impl AcpRuntime {
                     stop,
                     prompts,
                     permission: permission.clone(),
+                    turn: turn.clone(),
+                    task_id: task_id.clone(),
+                    outbound: transport.outbound(),
                 },
             );
         let runtime = self.clone();
@@ -225,9 +415,10 @@ impl AcpRuntime {
                     launch,
                     child,
                     DriverIo {
-                        stdout,
-                        stdin,
+                        transport,
                         permission,
+                        turn,
+                        task_id,
                     },
                     stopped,
                     queued,
@@ -264,6 +455,15 @@ impl AcpRuntime {
         {
             running.remove(session_id);
         }
+        // The console channel goes with the last agent, once nobody listens;
+        // a console still open keeps it for the agent that comes next.
+        let mut consoles = self.inner.consoles.lock().expect("acp console lock");
+        if consoles
+            .get(session_id)
+            .is_some_and(|console| console.receiver_count() == 0)
+        {
+            consoles.remove(session_id);
+        }
     }
 
     /// One agent's whole life: the protocol until it ends, is killed, or
@@ -274,15 +474,17 @@ impl AcpRuntime {
         mut child: Child,
         io: DriverIo,
         stopped: oneshot::Receiver<()>,
-        prompts: mpsc::UnboundedReceiver<String>,
+        prompts: mpsc::UnboundedReceiver<Prompt>,
     ) {
         let sink = EventSink {
             runtime: self.clone(),
             session_id: launch.session_id.clone(),
             launch_id: launch.launch_id.clone(),
+            task_id: io.task_id,
             agent_session: Arc::new(OnceLock::new()),
+            console: self.console_of(&launch.session_id),
         };
-        let mut rpc = Rpc::new(io.stdout, io.stdin, sink.clone(), io.permission, &launch);
+        let mut rpc = Rpc::new(io.transport, sink.clone(), io.permission, io.turn, &launch);
         let outcome = tokio::select! {
             result = run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts) => Some(result),
             _ = stopped => None,
@@ -312,19 +514,54 @@ impl AcpRuntime {
 }
 
 /// Where the driver reports what its agent does: the one ingestion path
-/// every event takes into the store.
+/// every event takes into the store, and the live path the chunks take to
+/// the console streams alone.
 #[derive(Clone)]
 struct EventSink {
     runtime: AcpRuntime,
     session_id: String,
     launch_id: String,
+    task_id: Option<String>,
     /// The agent's own session id, once setup has learned it: what every
     /// payload names as `session_id`, and what the ingestion records on the
     /// row.
     agent_session: Arc<OnceLock<String>>,
+    /// The session's live console channel.
+    console: broadcast::Sender<AgentEventDto>,
+}
+
+/// A live-only event as the console streams frame it: an id and a timestamp
+/// of its own, and the same summary a stored event gets, so a client reads
+/// both the same way.
+fn live_event(
+    session_id: &str,
+    task_id: Option<String>,
+    kind: &str,
+    payload: Value,
+) -> AgentEventDto {
+    AgentEventDto {
+        id: new_id(),
+        session_id: Some(session_id.to_string()),
+        task_id,
+        kind: kind.to_string(),
+        summary: summarize(kind, &payload),
+        payload,
+        created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+    }
 }
 
 impl EventSink {
+    /// Publish a live-only event to the console streams. Nothing is stored,
+    /// nothing wakes the scheduler, and nobody listening costs nothing.
+    fn emit_live(&self, kind: &str, payload: Value) {
+        let _ = self.console.send(live_event(
+            &self.session_id,
+            self.task_id.clone(),
+            kind,
+            payload,
+        ));
+    }
+
     /// Event reporting is fail-safe: an event that cannot be recorded costs
     /// the record, never the agent.
     async fn emit(&self, kind: &str, payload: Value) {
@@ -357,7 +594,7 @@ impl EventSink {
 struct Rpc {
     transport: RpcTransport,
     sink: EventSink,
-    assistant_text: String,
+    turn: Arc<tokio::sync::Mutex<Turn>>,
     repository_id: String,
     permission_mode: PermissionMode,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
@@ -365,16 +602,16 @@ struct Rpc {
 
 impl Rpc {
     fn new(
-        stdout: ChildStdout,
-        stdin: ChildStdin,
+        transport: RpcTransport,
         sink: EventSink,
         pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+        turn: Arc<tokio::sync::Mutex<Turn>>,
         launch: &AcpLaunch,
     ) -> Self {
         Self {
-            transport: RpcTransport::new(stdout, stdin),
+            transport,
             sink,
-            assistant_text: String::new(),
+            turn,
             repository_id: launch.repository_id.clone(),
             permission_mode: launch.permission_mode,
             pending_permission,
@@ -384,7 +621,7 @@ impl Rpc {
     async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
         let mut incoming = RuntimeIncoming {
             sink: &self.sink,
-            assistant_text: &mut self.assistant_text,
+            turn: &self.turn,
             repository_id: &self.repository_id,
             permission_mode: self.permission_mode,
             pending_permission: &self.pending_permission,
@@ -395,7 +632,7 @@ impl Rpc {
     async fn receive(&mut self) -> Result<bool> {
         let mut incoming = RuntimeIncoming {
             sink: &self.sink,
-            assistant_text: &mut self.assistant_text,
+            turn: &self.turn,
             repository_id: &self.repository_id,
             permission_mode: self.permission_mode,
             pending_permission: &self.pending_permission,
@@ -406,7 +643,7 @@ impl Rpc {
 
 struct RuntimeIncoming<'a> {
     sink: &'a EventSink,
-    assistant_text: &'a mut String,
+    turn: &'a Arc<tokio::sync::Mutex<Turn>>,
     repository_id: &'a str,
     permission_mode: PermissionMode,
     pending_permission: &'a Arc<Mutex<Option<oneshot::Sender<String>>>>,
@@ -438,20 +675,60 @@ impl RuntimeIncoming<'_> {
         let update = params.get("update").cloned().unwrap_or_default();
         let update_kind = update.get("sessionUpdate").and_then(Value::as_str);
         match update_kind {
-            Some("agent_message_chunk") => {
+            // The text so far is appended and its chunk published under the
+            // one lock, so a console opening mid-turn reads a text that ends
+            // exactly where its subscription begins.
+            Some(kind @ ("agent_message_chunk" | "agent_thought_chunk")) => {
                 if let Some(text) = update.pointer("/content/text").and_then(Value::as_str) {
-                    self.assistant_text.push_str(text);
+                    let mut turn = self.turn.lock().await;
+                    match kind {
+                        "agent_thought_chunk" => turn.thought.push_str(text),
+                        _ => turn.message.push_str(text),
+                    }
+                    self.sink
+                        .emit_live(kind, json!({"session_id": session_id, "text": text}));
                 }
             }
-            Some("tool_call") => {
+            Some("plan") => {
                 self.sink
-                    .emit("pre_tool_use", tool_payload(session_id, &update))
+                    .emit(
+                        "plan",
+                        json!({"session_id": session_id, "entries": update.get("entries")}),
+                    )
                     .await;
             }
-            Some("tool_call_update") if terminal_tool_status(&update) => {
+            Some("tool_call") => {
+                let (id, call) = tool_call_of(&update);
+                self.turn.lock().await.tools.insert(id, call.clone());
                 self.sink
-                    .emit("post_tool_use", tool_payload(session_id, &update))
+                    .emit("pre_tool_use", tool_payload(session_id, &call))
                     .await;
+            }
+            Some("tool_call_update") => {
+                let (id, update) = tool_call_of(&update);
+                let terminal = terminal_tool_status(&update);
+                let merged = {
+                    let mut turn = self.turn.lock().await;
+                    let call = turn
+                        .tools
+                        .entry(id.clone())
+                        .or_insert_with(|| json!({"toolCallId": id}));
+                    merge_tool_call(call, &update);
+                    match terminal {
+                        true => turn.tools.remove(&id).unwrap_or_default(),
+                        false => call.clone(),
+                    }
+                };
+                if terminal {
+                    self.sink
+                        .emit("post_tool_use", tool_payload(session_id, &merged))
+                        .await;
+                } else {
+                    self.sink.emit_live(
+                        "tool_call_update",
+                        json!({"session_id": session_id, "tool_call_id": id, "acp": merged}),
+                    );
+                }
             }
             Some("compaction_update")
                 if update.get("status").and_then(Value::as_str) == Some("completed") =>
@@ -549,7 +826,7 @@ async fn run_protocol(
     rpc: &mut Rpc,
     cwd: &Path,
     config: &LaunchConfig,
-    prompts: mpsc::UnboundedReceiver<String>,
+    prompts: mpsc::UnboundedReceiver<Prompt>,
 ) -> Result<()> {
     let initialized = rpc
         .request(
@@ -610,7 +887,11 @@ async fn run_protocol(
         .emit("session_start", json!({"session_id": session_id}))
         .await;
     if let Some(prompt) = config.initial_prompt.as_deref() {
-        prompt_once(rpc, &session_id, &config.system_prompt, prompt).await?;
+        let prompt = Prompt {
+            text: prompt.to_string(),
+            source: PromptSource::Daemon,
+        };
+        prompt_once(rpc, &session_id, &config.system_prompt, &prompt).await?;
     }
     serve_with_input(rpc, &session_id, &config.system_prompt, prompts).await
 }
@@ -629,7 +910,7 @@ async fn serve_with_input(
     rpc: &mut Rpc,
     session_id: &str,
     system_prompt: &str,
-    mut prompts: mpsc::UnboundedReceiver<String>,
+    mut prompts: mpsc::UnboundedReceiver<Prompt>,
 ) -> Result<()> {
     // Once the console side is gone there is nothing left to queue, but the
     // agent may still have plenty to say — the branch is dropped rather than
@@ -752,18 +1033,34 @@ pub(crate) fn find_config_option<'a>(
         })
 }
 
+/// One turn: the prompt out, the turn's chunks as they come, and — once the
+/// response is in — the whole thought and message text, stored once each,
+/// then the `stop`.
 async fn prompt_once(
     rpc: &mut Rpc,
     session_id: &str,
     system_prompt: &str,
-    prompt: &str,
+    prompt: &Prompt,
 ) -> Result<()> {
-    let prompt = format!("{system_prompt}\n\n{prompt}");
-    rpc.assistant_text.clear();
+    let full = format!("{system_prompt}\n\n{}", prompt.text);
+    {
+        let mut turn = rpc.turn.lock().await;
+        turn.running = true;
+        turn.agent_session = Some(session_id.to_string());
+        turn.thought.clear();
+        turn.message.clear();
+        // A call the last turn left open is not this turn's to finish.
+        turn.tools.clear();
+    }
     rpc.sink
         .emit(
             "user_prompt_submit",
-            json!({"session_id": session_id, "prompt": prompt}),
+            json!({
+                "session_id": session_id,
+                "prompt": full,
+                "text": prompt.text,
+                "source": prompt.source.as_str(),
+            }),
         )
         .await;
     let response = rpc
@@ -771,34 +1068,78 @@ async fn prompt_once(
             "session/prompt",
             json!({
                 "sessionId": session_id,
-                "prompt": [{"type": "text", "text": prompt}],
+                "prompt": [{"type": "text", "text": full}],
             }),
         )
         .await?;
+    let (thought, message) = {
+        let mut turn = rpc.turn.lock().await;
+        turn.running = false;
+        (
+            std::mem::take(&mut turn.thought),
+            std::mem::take(&mut turn.message),
+        )
+    };
+    for (kind, text) in [("agent_thought", thought), ("agent_message", message)] {
+        if !text.is_empty() {
+            rpc.sink
+                .emit(kind, json!({"session_id": session_id, "text": text}))
+                .await;
+        }
+    }
     rpc.sink
         .emit(
             "stop",
             json!({
                 "session_id": session_id,
                 "stop_reason": response.get("stopReason"),
-                "last_assistant_message": rpc.assistant_text.clone(),
             }),
         )
         .await;
     Ok(())
 }
 
-fn tool_payload(session_id: Value, update: &Value) -> Value {
-    let name = update
+/// A tool call update's id, and the update as a record of the call: what it
+/// says about the call, without the `sessionUpdate` that said which kind of
+/// message it came in.
+fn tool_call_of(update: &Value) -> (String, Value) {
+    let id = update
+        .get("toolCallId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let mut call = update.clone();
+    if let Some(fields) = call.as_object_mut() {
+        fields.remove("sessionUpdate");
+    }
+    (id, call)
+}
+
+/// Fold one update into the call it is about: every field the update sets
+/// replaces the one on record, `content` included — an ACP update carries the
+/// whole collection, never a delta of it.
+fn merge_tool_call(call: &mut Value, update: &Value) {
+    let (Some(call), Some(update)) = (call.as_object_mut(), update.as_object()) else {
+        return;
+    };
+    for (key, value) in update {
+        if !value.is_null() {
+            call.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn tool_payload(session_id: Value, call: &Value) -> Value {
+    let name = call
         .get("title")
-        .or_else(|| update.get("toolCallId"))
+        .or_else(|| call.get("toolCallId"))
         .cloned()
         .unwrap_or_else(|| Value::String("ACP tool".into()));
     json!({
         "session_id": session_id,
         "tool_name": name,
-        "tool_input": update.get("rawInput").cloned().unwrap_or_default(),
-        "acp": update,
+        "tool_input": call.get("rawInput").cloned().unwrap_or_default(),
+        "acp": call,
     })
 }
 
