@@ -61,7 +61,7 @@ const TASK: TaskDto = {
       id: "01AGENTSTRICT",
       seat: "reviewer",
       skills: ["code-review"],
-      model: "claude-code-acp:claude-sonnet-5",
+      model: "claude-agent-acp:claude-sonnet-5",
       effort: "high",
     },
     {
@@ -205,7 +205,7 @@ it("shows each reviewer slot's own pin, in review order", () => {
   mount()
 
   const reviewers = fact("Reviewers")
-  expect(reviewers).toContain("code-review · claude-code-acp:claude-sonnet-5 @ high")
+  expect(reviewers).toContain("code-review · claude-agent-acp:claude-sonnet-5 @ high")
   expect(reviewers).toContain("security-review · codex-acp:gpt-5.6-luna")
 })
 
@@ -260,7 +260,7 @@ const TWO_AUTHOR_TASK: TaskDto = {
       id: "01AGENTAUTHOR2",
       seat: "author",
       skills: ["testing"],
-      model: "claude-code-acp:claude-sonnet-5",
+      model: "claude-agent-acp:claude-sonnet-5",
       branch: "surface-the-pins-000001-b",
     },
     ...TASK.agents.filter((agent) => agent.seat === "reviewer"),
@@ -274,7 +274,7 @@ it("shows every author's own branch, marking only the one the reviewers picked",
 
   const authors = fact("Authors")
   expect(authors).toContain("coding · codex-acp:gpt-5 @ xhigh")
-  expect(authors).toContain("testing · claude-code-acp:claude-sonnet-5")
+  expect(authors).toContain("testing · claude-agent-acp:claude-sonnet-5")
   expect(authors).toContain("surface-the-pins-000001")
   expect(authors).toContain("surface-the-pins-000001-b")
 

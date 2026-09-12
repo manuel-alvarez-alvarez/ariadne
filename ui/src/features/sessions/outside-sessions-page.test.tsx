@@ -12,7 +12,7 @@ import { OutsideSessionsPage } from "./outside-sessions-page"
 type OutsideSessionDto = components["schemas"]["OutsideSessionDto"]
 
 const OUTSIDE: OutsideSessionDto = {
-  agent_id: "claude-code-acp",
+  agent_id: "claude-agent-acp",
   internal_session_id: "acp-session-1",
   working_directory: "/Users/me/dev/other",
   last_activity_at: "2026-09-10T09:00:00Z",
@@ -29,7 +29,7 @@ const READY: TaskDto = aTask({
       id: "01JAGENT0000000000000AUTH",
       seat: "author",
       skills: ["coding"],
-      model: "claude-code-acp:sonnet-5",
+      model: "claude-agent-acp:sonnet-5",
     },
   ],
 })
@@ -51,15 +51,14 @@ const ELSEWHERE: TaskDto = aTask({
 
 function anAcpAgent(overrides: Partial<AcpAgentDto> = {}): AcpAgentDto {
   return {
-    id: "claude-code-acp",
-    command: ["claude-code-acp"],
+    id: "claude-agent-acp",
+    command: ["claude-agent-acp"],
     builtin: true,
     status: "ready",
     capabilities: {
       stdio: true,
       protocol_v1: true,
       session_new: true,
-      session_prompt: true,
       model: true,
       thought_level: true,
       session_list: true,

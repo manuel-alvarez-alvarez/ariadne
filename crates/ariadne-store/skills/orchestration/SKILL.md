@@ -38,10 +38,9 @@ conversation with the user.
 6. Ask the user how each task ends. `merge` puts it on the base branch.
    `pull_request` opens a request and sees it through. `none` lands nothing.
    Done when every task carries one ending.
-7. Give each agent one model from `list_models`. Size it: shape from
-   `best_for` and `avoid_for`, risk from `cost`, routine from `speed`,
-   effort from its description. Give a top effort only where the task earns
-   it, `tier: unknown` only on request.
+7. Give each agent one model from `list_models`. Size it from the model's
+   description and the task, and the effort from what each effort buys.
+   Give a top effort only where the task earns it.
    Mix the agents evenly over the tasks.
    Take only an agent that suits the task. Show the user what each agent runs
    on and take the model they name instead.

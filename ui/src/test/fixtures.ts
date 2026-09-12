@@ -43,7 +43,7 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     id: GOAL_ID,
     title: "Ship the board",
     description: "",
-    model: "claude-code-acp:claude-sonnet-5",
+    model: "claude-agent-acp:claude-sonnet-5",
     repos: [],
     status: "active",
     usage: {
@@ -74,13 +74,13 @@ export function aTask(overrides: Partial<TaskDto> = {}): TaskDto {
         id: AUTHOR_ID,
         seat: "author",
         skills: ["coding"],
-        model: "claude-code-acp:claude-sonnet-5",
+        model: "claude-agent-acp:claude-sonnet-5",
       },
       {
         id: REVIEWER_ID,
         seat: "reviewer",
         skills: ["code-review"],
-        model: "claude-code-acp:claude-sonnet-5",
+        model: "claude-agent-acp:claude-sonnet-5",
       },
     ],
     depends_on: [],
@@ -100,7 +100,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     task_id: TASK_ID,
     seat: "author",
     task_agent_id: AUTHOR_ID,
-    model: "claude-code-acp:claude-sonnet-5",
+    model: "claude-agent-acp:claude-sonnet-5",
     internal_session_id: null,
     worktree_path: null,
     status: "running",
@@ -170,7 +170,7 @@ export function aMemory(overrides: Partial<MemoryDto> = {}): MemoryDto {
 
 export function anAgentConfig(overrides: Partial<AgentConfigDto> = {}): AgentConfigDto {
   return {
-    agent_id: "claude-code-acp",
+    agent_id: "claude-agent-acp",
     extra_flags: [],
     default_flags: [],
     ...overrides,
@@ -190,14 +190,9 @@ export function anEffort(overrides: Partial<EffortDto> = {}): EffortDto {
 /** One entry of the model catalog `GET /v1/models` serves. */
 export function aModel(overrides: Partial<ModelDto> = {}): ModelDto {
   return {
-    id: "claude-code-acp:claude-sonnet-5",
-    agent_id: "claude-code-acp",
+    id: "claude-agent-acp:claude-sonnet-5",
+    agent_id: "claude-agent-acp",
     description: null,
-    tier: "unknown",
-    cost: null,
-    speed: null,
-    best_for: [],
-    avoid_for: [],
     efforts: [],
     enabled: true,
     ...overrides,

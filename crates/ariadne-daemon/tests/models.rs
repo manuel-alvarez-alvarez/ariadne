@@ -15,7 +15,6 @@
 mod common;
 
 use ariadne_api::models::ModelDto;
-use ariadne_core::ModelTier;
 
 use axum::http::StatusCode;
 
@@ -56,7 +55,7 @@ async fn two_model_harness(dir: &std::path::Path) -> Harness {
 /// Every model an agent offered is listed under that agent's registry id,
 /// with the efforts it offered, cheapest first as offered, and the one it
 /// runs at by default flagged. Nothing is written about a discovered model
-/// beyond what the agent said.
+/// beyond what the agent said: its description and its efforts.
 #[tokio::test]
 async fn every_discovered_model_is_listed_as_its_agent_runs_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -68,7 +67,6 @@ async fn every_discovered_model_is_listed_as_its_agent_runs_it() {
     );
     for model in &got {
         assert_eq!(model.agent_id, "stub");
-        assert_eq!(model.tier, ModelTier::Unknown);
         assert_eq!(
             model
                 .efforts
@@ -89,6 +87,19 @@ async fn every_discovered_model_is_listed_as_its_agent_runs_it() {
         assert!(model.enabled);
     }
     assert_eq!(got[1].description.as_deref(), Some("The new one"));
+
+    let raw: Vec<serde_json::Value> = h.get("/v1/models").await;
+    let mut fields: Vec<&str> = raw[0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(
+        fields,
+        ["agent_id", "description", "efforts", "enabled", "id"]
+    );
 }
 
 /// An agent discovery has not accepted offers nothing: the catalog is what

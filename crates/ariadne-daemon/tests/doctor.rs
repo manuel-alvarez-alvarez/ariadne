@@ -32,7 +32,7 @@ async fn every_registry_agent_is_reported_with_what_discovery_made_of_it() {
             .iter()
             .map(|agent| agent.id.as_str())
             .collect::<Vec<_>>(),
-        ["claude-code-acp", "codex-acp", "opencode-acp", STUB]
+        ["claude-agent-acp", "codex-acp", "opencode-acp", STUB]
     );
     for agent in &report.acp_agents {
         match agent.status {

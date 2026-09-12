@@ -34,11 +34,6 @@ const CATALOG: ModelDto[] = [
     id: "codex-acp:gpt-5.5",
     agent_id: "codex-acp",
     description: "Frontier reasoning: agentic loops",
-    tier: "frontier",
-    cost: 5,
-    speed: 2,
-    best_for: ["cross-subsystem design"],
-    avoid_for: ["small scoped edits"],
     efforts: [
       effort("low"),
       effort("medium", { description: "Balanced reasoning for everyday work", default: true }),
@@ -49,13 +44,9 @@ const CATALOG: ModelDto[] = [
     ],
   }),
   aModel({
-    id: "claude-code-acp:claude-sonnet-5",
-    agent_id: "claude-code-acp",
+    id: "claude-agent-acp:claude-sonnet-5",
+    agent_id: "claude-agent-acp",
     description: "Everyday coding",
-    tier: "balanced",
-    cost: 3,
-    speed: 3,
-    best_for: ["everyday coding"],
     efforts: [
       effort("low"),
       effort("medium"),
@@ -65,12 +56,9 @@ const CATALOG: ModelDto[] = [
     ],
   }),
   aModel({
-    id: "claude-code-acp:claude-haiku-4-5",
-    agent_id: "claude-code-acp",
+    id: "claude-agent-acp:claude-haiku-4-5",
+    agent_id: "claude-agent-acp",
     description: "Fast and cheap",
-    tier: "fast",
-    cost: 1,
-    speed: 5,
   }),
   aModel({
     // Discovered, with the variants that model was configured with: an
@@ -181,11 +169,11 @@ it("offers only concrete catalog models, grouped by agent", async () => {
   const options = within(await listbox()).getAllByRole("option")
   const ids = options.map((option) => option.textContent ?? "")
 
-  expect(within(await listbox()).getByText("claude-code-acp")).toBeDefined()
+  expect(within(await listbox()).getByText("claude-agent-acp")).toBeDefined()
   expect(within(await listbox()).getByText("codex-acp")).toBeDefined()
   expect(within(await listbox()).getByText("opencode-acp")).toBeDefined()
   const catalogIds = ids.filter((id) => !id.startsWith("Other"))
-  expect(catalogIds.some((id) => id.includes("claude-code-acp:claude-sonnet-5"))).toBe(true)
+  expect(catalogIds.some((id) => id.includes("claude-agent-acp:claude-sonnet-5"))).toBe(true)
   expect(catalogIds.every((id) => id.includes(":"))).toBe(true)
   expect(ids.at(-1)).toContain("Other")
 })
@@ -201,7 +189,7 @@ it("offers only concrete catalog models, grouped by agent", async () => {
 it("leaves out a model that is turned off, unless it is the one pinned", async () => {
   const user = userEvent.setup()
   const off = CATALOG.map((model) =>
-    model.id === "claude-code-acp:claude-sonnet-5" ? { ...model, enabled: false } : model,
+    model.id === "claude-agent-acp:claude-sonnet-5" ? { ...model, enabled: false } : model,
   )
   function Host({ model }: { model: string }) {
     return <PinPicker label={LABEL} model={model} effort="" onChange={() => {}} models={off} />
@@ -214,11 +202,11 @@ it("leaves out a model that is turned off, unless it is the one pinned", async (
       .getAllByRole("option")
       .every((option) => !(option.textContent ?? "").includes("claude-sonnet-5")),
   ).toBe(true)
-  expect(within(await listbox()).getByText("claude-code-acp:claude-haiku-4-5")).toBeDefined()
+  expect(within(await listbox()).getByText("claude-agent-acp:claude-haiku-4-5")).toBeDefined()
 
   // Pinned to it already: the row is back, because the field has to be able
   // to say what it holds.
-  view.rerender(<Host model="claude-code-acp:claude-sonnet-5" />)
+  view.rerender(<Host model="claude-agent-acp:claude-sonnet-5" />)
   expect(
     within(await listbox())
       .getAllByRole("option")
@@ -226,48 +214,23 @@ it("leaves out a model that is turned off, unless it is the one pinned", async (
   ).toBe(true)
 })
 
-it("shows tier and cost/speed pills for a curated model", async () => {
+it("shows a model's id and what its agent said about it, and nothing else", async () => {
   const user = userEvent.setup()
   renderPicker()
 
   await openPicker(user)
-  const row = await modelRow("claude-code-acp:claude-sonnet-5")
+  const row = await modelRow("claude-agent-acp:claude-sonnet-5")
 
-  expect(within(row).getByText("balanced")).toBeDefined()
-  expect(within(row).getByText("cost 3/5")).toBeDefined()
-  expect(within(row).getByText("speed 3/5")).toBeDefined()
+  expect(row.textContent).toBe("claude-agent-acp:claude-sonnet-5Everyday coding")
+  expect(row.querySelector("[title]")).toBeNull()
 })
 
-it("shows no pills for a model nothing knows the tier, cost or speed of", async () => {
+it("finds a model by what its agent said about it", async () => {
   const user = userEvent.setup()
   renderPicker()
 
   await openPicker(user)
-  const row = await modelRow("opencode-acp:zai-coding-plan/glm-4.6")
-
-  expect(within(row).queryByText("unknown")).toBeNull()
-  expect(within(row).queryByText(/cost \d\/5/)).toBeNull()
-  expect(within(row).queryByText(/speed \d\/5/)).toBeNull()
-})
-
-it("puts what the catalog says a model is and is not for in the row's tooltip", async () => {
-  const user = userEvent.setup()
-  renderPicker()
-
-  await openPicker(user)
-  const row = await modelRow("codex-acp:gpt-5.5")
-
-  expect(row.querySelector("[title]")?.getAttribute("title")).toBe(
-    "best for: cross-subsystem design\navoid for: small scoped edits",
-  )
-})
-
-it("finds a model by what the catalog says it is best for", async () => {
-  const user = userEvent.setup()
-  renderPicker()
-
-  await openPicker(user)
-  await search(user, "cross-subsystem design")
+  await search(user, "agentic loops")
 
   expect(within(await listbox()).getByText("codex-acp:gpt-5.5")).toBeDefined()
 })
@@ -292,12 +255,12 @@ it("picks with the keyboard: search, arrow, enter", async () => {
   await search(user, "claude-sonnet")
   await user.keyboard("{Enter}")
 
-  expect(pin.model).toBe("claude-code-acp:claude-sonnet-5")
+  expect(pin.model).toBe("claude-agent-acp:claude-sonnet-5")
 })
 
 it("offers the efforts of the pinned model, the agent's own first, and stores the pick", async () => {
   const user = userEvent.setup()
-  const pin = renderPicker({ model: "claude-code-acp:claude-sonnet-5" })
+  const pin = renderPicker({ model: "claude-agent-acp:claude-sonnet-5" })
 
   await openPicker(user)
   expect(efforts()).toEqual(["auto (high)", "low", "medium", "high", "xhigh", "max"])
@@ -307,7 +270,7 @@ it("offers the efforts of the pinned model, the agent's own first, and stores th
 
   await user.click(effortRadio("medium"))
   expect(pin.effort).toBe("medium")
-  expect(reads()).toBe("claude-code-acp claude-sonnet-5 · medium")
+  expect(reads()).toBe("claude-agent-acp claude-sonnet-5 · medium")
 
   await user.click(effortRadio("auto (high)"))
   expect(pin.effort).toBe("")
@@ -315,7 +278,7 @@ it("offers the efforts of the pinned model, the agent's own first, and stores th
 
 it("shows no strip, and says why, for a model that takes no effort at all", async () => {
   const user = userEvent.setup()
-  renderPicker({ model: "claude-code-acp:claude-haiku-4-5" })
+  renderPicker({ model: "claude-agent-acp:claude-haiku-4-5" })
 
   await openPicker(user)
 
@@ -348,7 +311,7 @@ it("takes free text for a model of a known agent the catalog does not list", asy
 
 it("drops an effort the model moved to does not take", async () => {
   const user = userEvent.setup()
-  const pin = renderPicker({ model: "claude-code-acp:claude-sonnet-5", effort: "medium" })
+  const pin = renderPicker({ model: "claude-agent-acp:claude-sonnet-5", effort: "medium" })
 
   // The glm model runs at the variants it alone was configured with, and
   // `medium` is not one of them.
@@ -360,17 +323,17 @@ it("drops an effort the model moved to does not take", async () => {
 
 it("drops an effort where the model moved to takes none at all", async () => {
   const user = userEvent.setup()
-  const pin = renderPicker({ model: "claude-code-acp:claude-sonnet-5", effort: "medium" })
+  const pin = renderPicker({ model: "claude-agent-acp:claude-sonnet-5", effort: "medium" })
 
   await openPicker(user)
-  await user.click(within(await listbox()).getByText("claude-code-acp:claude-haiku-4-5"))
+  await user.click(within(await listbox()).getByText("claude-agent-acp:claude-haiku-4-5"))
 
-  expect(pin).toEqual({ model: "claude-code-acp:claude-haiku-4-5", effort: "" })
+  expect(pin).toEqual({ model: "claude-agent-acp:claude-haiku-4-5", effort: "" })
 })
 
 it("keeps an effort the model moved to takes as well", async () => {
   const user = userEvent.setup()
-  const pin = renderPicker({ model: "claude-code-acp:claude-sonnet-5", effort: "max" })
+  const pin = renderPicker({ model: "claude-agent-acp:claude-sonnet-5", effort: "max" })
 
   await openPicker(user)
   await user.click(within(await listbox()).getByText("codex-acp:gpt-5.5"))
@@ -399,10 +362,10 @@ it("takes a model the catalog does not carry, as typed", async () => {
   const pin = renderPicker()
 
   await openPicker(user)
-  await search(user, "claude-code-acp:some-future-model")
+  await search(user, "claude-agent-acp:some-future-model")
   await user.click(screen.getByText(/^Other — run/))
 
-  expect(pin.model).toBe("claude-code-acp:some-future-model")
+  expect(pin.model).toBe("claude-agent-acp:some-future-model")
 })
 
 it("says why a typed id is no model reference, and pins it anyway for the field to refuse", async () => {
@@ -422,15 +385,15 @@ it("still takes free text when the catalog never arrived", async () => {
   const pin = renderPicker({ catalog: false })
 
   await openPicker(user)
-  await search(user, "claude-code-acp:claude-opus-5")
+  await search(user, "claude-agent-acp:claude-opus-5")
   await user.click(screen.getByText(/^Other — run/))
 
-  expect(pin.model).toBe("claude-code-acp:claude-opus-5")
+  expect(pin.model).toBe("claude-agent-acp:claude-opus-5")
 })
 
 it("closes on Escape, leaving the pin as it was", async () => {
   const user = userEvent.setup()
-  const pin = renderPicker({ model: "claude-code-acp:claude-sonnet-5", effort: "medium" })
+  const pin = renderPicker({ model: "claude-agent-acp:claude-sonnet-5", effort: "medium" })
 
   await openPicker(user)
   await user.keyboard("{Escape}")
@@ -438,5 +401,5 @@ it("closes on Escape, leaving the pin as it was", async () => {
   await waitFor(() => {
     expect(screen.queryByRole("listbox", { name: "Models" })).toBeNull()
   })
-  expect(pin).toEqual({ model: "claude-code-acp:claude-sonnet-5", effort: "medium" })
+  expect(pin).toEqual({ model: "claude-agent-acp:claude-sonnet-5", effort: "medium" })
 })

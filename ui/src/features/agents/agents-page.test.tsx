@@ -43,9 +43,8 @@ const CODEX = anAgentConfig({
 const OPENCODE = anAgentConfig({ agent_id: "opencode-acp", default_flags: ["--auto"] })
 
 const OPUS = aModel({
-  id: "claude-code-acp:claude-opus-5",
+  id: "claude-agent-acp:claude-opus-5",
   description: "the frontier model",
-  tier: "frontier",
 })
 /** Offered by opencode-acp, so its id carries a `/` of its own. */
 const LOCAL = aModel({
@@ -144,7 +143,7 @@ describe("AgentsPage", () => {
     renderScreen(<AgentsPage />)
 
     // The strip is the list of agents there are, whichever one is open.
-    expect(await screen.findByRole("tab", { name: /^claude-code-acp/ })).toBeDefined()
+    expect(await screen.findByRole("tab", { name: /^claude-agent-acp/ })).toBeDefined()
     expect(screen.getByRole("tab", { name: /^codex-acp/ })).toBeDefined()
     expect(screen.getByRole("tab", { name: /^opencode-acp/ })).toBeDefined()
 
@@ -162,7 +161,7 @@ describe("AgentsPage", () => {
     const user = userEvent.setup()
     renderScreen(<AgentsPage />)
 
-    // claude-code-acp has a flag added, opencode-acp has the default dropped; only
+    // claude-agent-acp has a flag added, opencode-acp has the default dropped; only
     // codex-acp is still exactly what Ariadne ships.
     expect(await screen.findByText("Customized")).toBeDefined()
 
@@ -189,8 +188,8 @@ describe("AgentsPage", () => {
     renderScreen(<AgentsPage />)
 
     const claude = await screen.findByRole("tabpanel")
-    expect(await within(claude).findByText("claude-code-acp:claude-opus-5")).toBeDefined()
-    expect(within(claude).queryByText(/^claude-code-acp$/)).toBeNull()
+    expect(await within(claude).findByText("claude-agent-acp:claude-opus-5")).toBeDefined()
+    expect(within(claude).queryByText(/^claude-agent-acp$/)).toBeNull()
     const opencode = await selectAgent(user, "opencode-acp")
     expect(
       await within(opencode).findByText("opencode-acp:anthropic/claude-sonnet-4"),
@@ -249,7 +248,7 @@ describe("editing an agent's flags", () => {
     const user = userEvent.setup()
     renderScreen(<AgentsPage />)
 
-    await openFlags(user, "claude-code-acp")
+    await openFlags(user, "claude-agent-acp")
     await user.click(screen.getByRole("button", { name: "Remove flag 2" }))
     await user.click(screen.getByRole("button", { name: "Remove flag 1" }))
     await user.click(screen.getByRole("button", { name: "Save flags" }))
@@ -264,7 +263,7 @@ describe("editing an agent's flags", () => {
     const user = userEvent.setup()
     renderScreen(<AgentsPage />)
 
-    await openFlags(user, "claude-code-acp")
+    await openFlags(user, "claude-agent-acp")
     await user.clear(screen.getByLabelText("Flag 2"))
     await user.type(screen.getByLabelText("Flag 2"), "--debug")
     await user.click(screen.getByRole("button", { name: "Save flags" }))
@@ -323,7 +322,7 @@ describe("restoring the defaults", () => {
     const user = userEvent.setup()
     renderScreen(<AgentsPage />)
 
-    await openFlags(user, "claude-code-acp")
+    await openFlags(user, "claude-agent-acp")
     await user.click(screen.getByRole("button", { name: "Restore defaults" }))
 
     expect(lastWrite()).toBeUndefined()
@@ -353,7 +352,7 @@ describe("the models under each agent", () => {
     const user = userEvent.setup()
     renderScreen(<AgentsPage />)
 
-    // claude-code-acp's tab holds the Claude model and not opencode-acp's.
+    // claude-agent-acp's tab holds the Claude model and not opencode-acp's.
     const claude = (await screen.findByRole("tabpanel")) as HTMLElement
     expect(within(claude).getByText(OPUS.id)).toBeDefined()
     expect(within(claude).getByText("the frontier model")).toBeDefined()
@@ -370,7 +369,7 @@ describe("the models under each agent", () => {
 
     // The pill's own `aria-label` runs straight on after the agent's name, which
     // is how every tab strip in the app already reads.
-    expect(await screen.findByRole("tab", { name: /^claude-code-acp\s*1 model$/ })).toBeDefined()
+    expect(await screen.findByRole("tab", { name: /^claude-agent-acp\s*1 model$/ })).toBeDefined()
     expect(screen.getByRole("tab", { name: /^opencode-acp\s*1 model$/ })).toBeDefined()
     // An agent the catalog has nothing for still says so, rather than nothing.
     expect(screen.getByRole("tab", { name: /^codex-acp\s*0 models$/ })).toBeDefined()
@@ -424,7 +423,7 @@ describe("the models under each agent", () => {
    * says rather than to what was asked for.
    */
   it("says why, where the daemon refuses to turn a model off", async () => {
-    const refusal = "`claude-code-acp:claude-opus-5` is the last model left enabled"
+    const refusal = "`claude-agent-acp:claude-opus-5` is the last model left enabled"
     stubDaemon([CLAUDE_CODE], [{ ...OPUS, enabled: true }], refusal)
     const user = userEvent.setup()
     renderScreen(

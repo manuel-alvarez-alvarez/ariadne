@@ -201,6 +201,7 @@ impl HarnessBuilder {
         let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
             &config.acp_agents,
             config.root.clone(),
+            store.clone(),
         );
         // Installed before anything writes, exactly as the daemon does at
         // startup.
@@ -208,7 +209,7 @@ impl HarnessBuilder {
         let settle = own_home && self.spawns && !self.dies;
         let discover = self.discover_agents || settle;
         if discover {
-            agent_registry.refresh().await;
+            agent_registry.discover().await;
         }
         let launcher = Arc::new(Launcher {
             cfg: Arc::new(config),

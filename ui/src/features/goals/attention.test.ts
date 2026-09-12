@@ -59,7 +59,7 @@ function task(overrides: Partial<TaskDto>): TaskDto {
  */
 function session(overrides: Partial<SessionDto>): SessionDto {
   return {
-    model: "claude-code-acp:claude-sonnet-5",
+    model: "claude-agent-acp:claude-sonnet-5",
     attention_reason: "disconnected",
     created_at: "2026-08-16T10:00:00Z",
     goal_id: "g1",
@@ -77,7 +77,7 @@ function goal(overrides: Partial<GoalDto>): GoalDto {
     created_at: "2026-08-16T09:00:00Z",
     description: "",
     id: "g1",
-    model: "claude-code-acp:claude-sonnet-5",
+    model: "claude-agent-acp:claude-sonnet-5",
     repos: [],
     status: "active",
     title: "A goal",

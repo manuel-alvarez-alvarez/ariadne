@@ -54,7 +54,7 @@ async fn the_api_lists_the_three_known_agents_and_one_user_agent() {
 
     let agents: Vec<Value> = h.get("/v1/acp-agents").await;
     let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
-    assert!(ids.contains(&"claude-code-acp"), "{ids:?}");
+    assert!(ids.contains(&"claude-agent-acp"), "{ids:?}");
     assert!(ids.contains(&"codex-acp"), "{ids:?}");
     assert!(ids.contains(&"opencode-acp"), "{ids:?}");
     assert!(ids.contains(&"test-agent"), "{ids:?}");
@@ -173,7 +173,7 @@ async fn every_optional_capability_gap_sets_its_degraded_flag() {
     );
 }
 
-/// Version one, session creation, and prompting are all required.
+/// Version one and session creation are both required.
 #[tokio::test]
 async fn every_required_acp_capability_is_enforced() {
     let cases = [
@@ -182,11 +182,6 @@ async fn every_required_acp_capability_is_enforced() {
             "no-new",
             json!({"unsupported_methods": ["session/new"]}),
             "session/new",
-        ),
-        (
-            "no-prompt",
-            json!({"unsupported_methods": ["session/prompt"]}),
-            "session/prompt",
         ),
     ];
     for (id, changes, reason) in cases {
@@ -208,6 +203,61 @@ async fn every_required_acp_capability_is_enforced() {
             "{id}: {rejected}"
         );
     }
+}
+
+/// Discovery never prompts — a prompt would be a real model turn, billed on
+/// every probe — so an agent that refuses `session/prompt` is still ready.
+#[tokio::test]
+async fn discovery_sends_no_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["unsupported_methods"] = json!(["session/prompt"]);
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("unprompted", &agent).await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ready = agents.iter().find(|a| a["id"] == "unprompted").unwrap();
+    assert_eq!(ready["status"], "ready", "{ready}");
+    let methods = agent.methods();
+    assert!(methods.contains(&"session/new".to_string()), "{methods:?}");
+    assert!(
+        !methods.contains(&"session/prompt".to_string()),
+        "{methods:?}"
+    );
+}
+
+/// A probe that runs out its time is rejected with every capability it had
+/// already shown, not reported as an agent that showed nothing.
+#[tokio::test]
+async fn a_timed_out_probe_keeps_what_it_measured() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["silent_methods"] = json!(["session/new"]);
+    let agent = stub_acp_agent(dir.path(), setup);
+    let h = harness()
+        .home(home_with_agent("silent", &agent.bin))
+        .discover_agents()
+        .await;
+
+    // Under full-suite load even `initialize` can run out the probe's time,
+    // so probe again until a snapshot shows the agent got past it.
+    eventually(TIMEOUT, "a probe that reaches session/new", || async {
+        let agents = h.launcher.registry.agents().await;
+        let silent = agents.iter().find(|a| a.id == "silent").unwrap();
+        let reached = silent.capabilities.protocol_v1;
+        if reached {
+            assert_eq!(
+                silent.rejection_reason.as_deref(),
+                Some("discovery timed out")
+            );
+            assert!(silent.capabilities.stdio);
+            assert!(!silent.capabilities.session_new);
+        } else {
+            h.launcher.registry.refresh().await;
+        }
+        reached
+    })
+    .await;
 }
 
 /// Refresh replaces the cached models with a new probe result.
@@ -252,6 +302,94 @@ async fn discovery_refreshes_on_demand() {
             .iter()
             .any(|model| model["id"] == "refreshable:old-model")
     );
+}
+
+/// Run discovery as a daemon start does, again until the agent is ready — a
+/// probe under full-suite load can run out its time.
+async fn start_discovery(h: &Harness, id: &str) {
+    eventually(TIMEOUT, "discovery to accept the agent", || async {
+        h.launcher.registry.discover().await.iter().any(|agent| {
+            agent.id == id && agent.status == ariadne_api::agents::AcpAgentStatus::Ready
+        })
+    })
+    .await;
+}
+
+fn has(methods: &[String], method: &str) -> bool {
+    methods.iter().any(|m| m == method)
+}
+
+/// A daemon start reads an agent's catalog once per agent version: the store
+/// keeps it, a start at the same version opens no session, a new version is
+/// read again, and so is every version on an explicit refresh. The session a
+/// read opens is closed where the agent can close one.
+#[tokio::test]
+async fn a_catalog_is_read_once_per_agent_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["agent_info"] = json!({"name": "stub", "version": "1.0"});
+    setup["capabilities"]["sessionCapabilities"]["close"] = json!({});
+    let agent = stub_acp_agent(dir.path(), setup.clone());
+    let h = harness_with_agent("versioned", &agent).await;
+    let methods = agent.methods();
+    assert!(has(&methods, "session/new"), "{methods:?}");
+    assert!(has(&methods, "session/close"), "{methods:?}");
+    let kept = h.store.list_acp_catalogs().await.unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].agent_id, "versioned");
+    assert_eq!(kept[0].version, "1.0");
+    assert_eq!(kept[0].command(), vec![agent.bin.clone()]);
+
+    agent.clear_messages();
+    start_discovery(&h, "versioned").await;
+    let methods = agent.methods();
+    assert!(has(&methods, "initialize"), "{methods:?}");
+    assert!(!has(&methods, "session/new"), "{methods:?}");
+    let models: Vec<Value> = h.get("/v1/models").await;
+    let model = models
+        .iter()
+        .find(|model| model["id"] == "versioned:old-model")
+        .unwrap_or_else(|| panic!("{models:#?}"));
+    assert_eq!(model["efforts"][0]["id"], "low");
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let kept_agent = agents.iter().find(|a| a["id"] == "versioned").unwrap();
+    assert_eq!(kept_agent["capabilities"]["session_new"], true);
+    assert_eq!(kept_agent["capabilities"]["thought_level"], true);
+
+    setup["agent_info"]["version"] = json!("2.0");
+    stub_acp_agent(dir.path(), setup.clone());
+    agent.clear_messages();
+    start_discovery(&h, "versioned").await;
+    assert!(has(&agent.methods(), "session/new"));
+    assert_eq!(h.store.list_acp_catalogs().await.unwrap()[0].version, "2.0");
+
+    setup["config_options"] = json!([option("model-id", "model", "new-model")]);
+    stub_acp_agent(dir.path(), setup);
+    let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
+    let models: Vec<Value> = h.get("/v1/models").await;
+    assert!(
+        models
+            .iter()
+            .any(|model| model["id"] == "versioned:new-model"),
+        "{models:#?}"
+    );
+}
+
+/// An agent that reports no version gives nothing to keep its catalog under,
+/// so every start reads it again; one that cannot close a session is not
+/// asked to.
+#[tokio::test]
+async fn an_agent_without_a_version_is_read_on_every_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let h = harness_with_agent("unversioned", &agent).await;
+    assert!(h.store.list_acp_catalogs().await.unwrap().is_empty());
+
+    agent.clear_messages();
+    start_discovery(&h, "unversioned").await;
+    let methods = agent.methods();
+    assert!(has(&methods, "session/new"), "{methods:?}");
+    assert!(!has(&methods, "session/close"), "{methods:?}");
 }
 
 /// A registry id is any word without the catalog's delimiter in it: one
@@ -301,7 +439,7 @@ async fn a_registry_id_already_taken_is_rejected() {
     std::fs::write(
         home.join("config.toml"),
         format!(
-            "[[acp_agents]]\nid = \"claude-code-acp\"\ncommand = [{bin:?}]\n\n\
+            "[[acp_agents]]\nid = \"claude-agent-acp\"\ncommand = [{bin:?}]\n\n\
              [[acp_agents]]\nid = \"twin\"\ncommand = [{bin:?}]\n\n\
              [[acp_agents]]\nid = \"twin\"\ncommand = [{bin:?}, \"second\"]\n",
             bin = agent.bin
@@ -336,7 +474,7 @@ async fn a_registry_id_already_taken_is_rejected() {
 
     // The configured duplicate of a built-in id is rejected; the built-in
     // keeps the id and its command.
-    let duplicate = taken("claude-code-acp", false);
+    let duplicate = taken("claude-agent-acp", false);
     assert_eq!(duplicate["status"], "rejected", "{duplicate}");
     assert!(
         duplicate["rejection_reason"]
@@ -346,8 +484,8 @@ async fn a_registry_id_already_taken_is_rejected() {
         "{duplicate}"
     );
     assert_eq!(
-        h.launcher.registry.command_of("claude-code-acp"),
-        Some(vec!["claude-code-acp".to_string()]),
+        h.launcher.registry.command_of("claude-agent-acp"),
+        Some(vec!["claude-agent-acp".to_string()]),
         "the built-in keeps its id"
     );
 

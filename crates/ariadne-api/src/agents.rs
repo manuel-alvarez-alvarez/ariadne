@@ -33,7 +33,6 @@ pub struct AcpCapabilitiesDto {
     pub stdio: bool,
     pub protocol_v1: bool,
     pub session_new: bool,
-    pub session_prompt: bool,
     pub model: bool,
     pub thought_level: bool,
     pub session_list: bool,

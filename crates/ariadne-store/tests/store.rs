@@ -238,10 +238,10 @@ async fn an_agent_nobody_configured_has_no_flags() {
 async fn agent_config_flags_are_replaced_whole() {
     let (store, _dir) = test_store().await;
     let updated = store
-        .update_agent_config("claude-code-acp", vec!["--verbose".into()])
+        .update_agent_config("claude-agent-acp", vec!["--verbose".into()])
         .await
         .unwrap();
-    assert_eq!(updated.agent_id, "claude-code-acp");
+    assert_eq!(updated.agent_id, "claude-agent-acp");
     assert_eq!(updated.extra_flags(), vec!["--verbose".to_string()]);
     store
         .update_agent_config("codex-acp", vec!["--quiet".into()])
@@ -255,10 +255,53 @@ async fn agent_config_flags_are_replaced_whole() {
     // The edit is read back from the database, and one agent's flags are its
     // own: emptying codex left claude alone.
     assert_eq!(
-        store.agent_flags("claude-code-acp").await.unwrap(),
+        store.agent_flags("claude-agent-acp").await.unwrap(),
         vec!["--verbose".to_string()]
     );
     assert!(store.agent_flags("codex-acp").await.unwrap().is_empty());
+}
+
+/// One catalog per agent: a newer read replaces the older one whole, and one
+/// agent's catalog is its own.
+#[tokio::test]
+async fn an_acp_catalog_is_kept_per_agent_and_replaced_by_a_newer_read() {
+    let (store, _dir) = test_store().await;
+    assert!(store.list_acp_catalogs().await.unwrap().is_empty());
+    let command = vec!["codex-acp".to_string()];
+    store
+        .put_acp_catalog("codex-acp", &command, "1.0", r#"{"models":[]}"#)
+        .await
+        .unwrap();
+    store
+        .put_acp_catalog(
+            "opencode-acp",
+            &["opencode".into(), "acp".into()],
+            "1.18",
+            "{}",
+        )
+        .await
+        .unwrap();
+    let replaced = store
+        .put_acp_catalog("codex-acp", &command, "1.1", r#"{"models":["m"]}"#)
+        .await
+        .unwrap();
+    assert_eq!(replaced.version, "1.1");
+    assert_eq!(replaced.command(), command);
+
+    let kept = store.list_acp_catalogs().await.unwrap();
+    assert_eq!(
+        kept.iter()
+            .map(|row| (
+                row.agent_id.as_str(),
+                row.version.as_str(),
+                row.catalog.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("codex-acp", "1.1", r#"{"models":["m"]}"#),
+            ("opencode-acp", "1.18", "{}"),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -2031,13 +2074,13 @@ async fn an_agent_is_written_on_the_pin_it_was_given_whole() {
         .set_agent_pin(
             &author.id,
             &AgentPin {
-                model: "claude-code-acp:claude-opus-5".into(),
+                model: "claude-agent-acp:claude-opus-5".into(),
                 effort: None,
             },
         )
         .await
         .unwrap();
-    assert_eq!(moved.model, "claude-code-acp:claude-opus-5");
+    assert_eq!(moved.model, "claude-agent-acp:claude-opus-5");
     assert_eq!(
         moved.effort, None,
         "the effort belonged to the model that was left behind"

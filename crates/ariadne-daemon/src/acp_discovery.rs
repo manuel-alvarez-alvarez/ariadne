@@ -1,5 +1,6 @@
 //! Runtime discovery for ACP agents and their session configuration catalogs.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -7,6 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::future::join_all;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -15,7 +17,7 @@ use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus, AcpCapabilitiesDto, AcpDe
 use ariadne_api::models::{EffortDto, ModelDto};
 use ariadne_api::sessions::OutsideSessionDto;
 use ariadne_client::endpoint::AcpAgentConfig;
-use ariadne_core::ModelTier;
+use ariadne_store::Store;
 
 use crate::acp::find_config_option;
 use crate::acp_rpc::{Incoming, RpcTransport};
@@ -24,8 +26,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The ACP commands Ariadne knows without configuration.
 const BUILTINS: [(&str, &[&str]); 3] = [
-    ("claude-code-acp", &["claude-code-acp"]),
-    ("codex-acp", &["codex", "acp"]),
+    ("claude-agent-acp", &["claude-agent-acp"]),
+    ("codex-acp", &["codex-acp"]),
     ("opencode-acp", &["opencode", "acp"]),
 ];
 
@@ -34,6 +36,8 @@ pub struct AgentRegistry {
     entries: Arc<Vec<RegistryEntry>>,
     results: Arc<RwLock<Vec<Discovery>>>,
     probe_cwd: Arc<PathBuf>,
+    /// Where each agent's catalog is kept across restarts, under its version.
+    store: Store,
 }
 
 #[derive(Clone)]
@@ -72,29 +76,56 @@ fn refusal(id: &str, taken: &std::collections::HashSet<String>) -> Option<String
 #[derive(Clone)]
 struct Discovery {
     agent: AcpAgentDto,
+    catalog: Catalog,
+    /// The version the agent reported in `initialize`: what its catalog is
+    /// kept under. An agent that reports none has its catalog read afresh on
+    /// every probe, since nothing tells when it changes.
+    version: Option<String>,
+}
+
+/// What one `session/new` said about an agent's configuration.
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct Catalog {
     models: Vec<Choice>,
+    thought_level: bool,
     efforts: Vec<Choice>,
     default_effort: Option<String>,
 }
 
+/// One agent's catalog as the store keeps it: it stands for the same command
+/// at the same version, and for nothing else.
 #[derive(Clone)]
+struct CachedCatalog {
+    command: Vec<String>,
+    version: String,
+    catalog: Catalog,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 struct Choice {
     value: String,
     description: Option<String>,
 }
 
 impl AgentRegistry {
-    pub fn new(custom: &[AcpAgentConfig], probe_cwd: PathBuf) -> Self {
-        Self::build(custom, probe_cwd, true)
+    /// The registry of a daemon: probes run in `probe_cwd`, and the catalogs
+    /// they read are kept in `store`.
+    pub fn new(custom: &[AcpAgentConfig], probe_cwd: PathBuf, store: Store) -> Self {
+        Self::build(custom, probe_cwd, store, true)
     }
 
     /// Build the real registry without launching installed agents from tests.
     #[doc(hidden)]
-    pub fn test_registry(custom: &[AcpAgentConfig], probe_cwd: PathBuf) -> Self {
-        Self::build(custom, probe_cwd, false)
+    pub fn test_registry(custom: &[AcpAgentConfig], probe_cwd: PathBuf, store: Store) -> Self {
+        Self::build(custom, probe_cwd, store, false)
     }
 
-    fn build(custom: &[AcpAgentConfig], probe_cwd: PathBuf, probe_builtins: bool) -> Self {
+    fn build(
+        custom: &[AcpAgentConfig],
+        probe_cwd: PathBuf,
+        store: Store,
+        probe_builtins: bool,
+    ) -> Self {
         // The first holder of an id keeps it: built-ins first, then the
         // configured entries in configuration order.
         let mut taken: std::collections::HashSet<String> =
@@ -125,14 +156,39 @@ impl AgentRegistry {
             entries: Arc::new(entries),
             results: Arc::new(RwLock::new(results)),
             probe_cwd: Arc::new(probe_cwd),
+            store,
         }
     }
 
-    /// Probe every command concurrently and replace the cache as one snapshot.
+    /// Discovery as a daemon start runs it: every agent is asked to
+    /// `initialize`, and only one whose version has no kept catalog opens a
+    /// session to read one.
+    pub async fn discover(&self) -> Vec<AcpAgentDto> {
+        self.probe_all(false).await
+    }
+
+    /// Discovery on demand: every agent opens a session and its catalog is
+    /// read again, for a catalog that moved without a new version — a model
+    /// configured, or installed locally.
     pub async fn refresh(&self) -> Vec<AcpAgentDto> {
+        self.probe_all(true).await
+    }
+
+    /// Probe every command concurrently, replace the results as one snapshot,
+    /// and keep every catalog read afresh under its agent's version.
+    async fn probe_all(&self, reread: bool) -> Vec<AcpAgentDto> {
+        let kept = if reread {
+            BTreeMap::new()
+        } else {
+            self.kept_catalogs().await
+        };
         let cwd = self.probe_cwd.clone();
         let probes = self.entries.iter().cloned().map(|entry| {
             let cwd = cwd.clone();
+            let cached = kept
+                .get(&entry.id)
+                .filter(|cached| cached.command == entry.command)
+                .cloned();
             async move {
                 if let Some(reason) = &entry.refused {
                     return rejected(&entry, reason.clone());
@@ -140,19 +196,70 @@ impl AgentRegistry {
                 if !entry.probe {
                     return rejected(&entry, "not probed by the test harness".into());
                 }
-                match tokio::time::timeout(PROBE_TIMEOUT, probe(entry.clone(), &cwd)).await {
-                    Ok(discovery) => discovery,
-                    Err(_) => rejected(&entry, "discovery timed out".into()),
-                }
+                probe(entry, &cwd, cached).await
             }
         });
         let discovered = join_all(probes).await;
+
+        for result in &discovered {
+            let (AcpAgentStatus::Ready, Some(version)) = (result.agent.status, &result.version)
+            else {
+                continue;
+            };
+            let unchanged = kept.get(&result.agent.id).is_some_and(|cached| {
+                &cached.version == version && cached.command == result.agent.command
+            });
+            if !unchanged {
+                self.keep_catalog(&result.agent, version, &result.catalog)
+                    .await;
+            }
+        }
+
         let agents = discovered
             .iter()
             .map(|result| result.agent.clone())
             .collect();
         *self.results.write().await = discovered;
         agents
+    }
+
+    /// Every catalog the store keeps, by agent id. One the store cannot give
+    /// back is read again, so it costs a session, never the agent.
+    async fn kept_catalogs(&self) -> BTreeMap<String, CachedCatalog> {
+        let rows = match self.store.list_acp_catalogs().await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(error = %error, "reading the kept ACP catalogs failed");
+                return BTreeMap::new();
+            }
+        };
+        rows.into_iter()
+            .filter_map(|row| {
+                let catalog = serde_json::from_str(&row.catalog).ok()?;
+                Some((
+                    row.agent_id.clone(),
+                    CachedCatalog {
+                        command: row.command(),
+                        version: row.version,
+                        catalog,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    async fn keep_catalog(&self, agent: &AcpAgentDto, version: &str, catalog: &Catalog) {
+        let kept = match serde_json::to_string(catalog) {
+            Ok(json) => {
+                self.store
+                    .put_acp_catalog(&agent.id, &agent.command, version, &json)
+                    .await
+            }
+            Err(error) => Err(ariadne_store::StoreError::Invalid(error.to_string())),
+        };
+        if let Err(error) = kept {
+            tracing::warn!(agent = %agent.id, error = %error, "keeping an ACP agent's catalog failed");
+        }
     }
 
     pub async fn agents(&self) -> Vec<AcpAgentDto> {
@@ -236,22 +343,18 @@ impl AgentRegistry {
             .iter()
             .filter(|result| result.agent.status == AcpAgentStatus::Ready)
             .flat_map(|result| {
-                result.models.iter().map(|model| ModelDto {
+                let catalog = &result.catalog;
+                catalog.models.iter().map(|model| ModelDto {
                     id: format!("{}:{}", result.agent.id, model.value),
                     agent_id: result.agent.id.clone(),
                     description: model.description.clone(),
-                    tier: ModelTier::Unknown,
-                    cost: None,
-                    speed: None,
-                    best_for: Vec::new(),
-                    avoid_for: Vec::new(),
-                    efforts: result
+                    efforts: catalog
                         .efforts
                         .iter()
                         .map(|effort| EffortDto {
                             id: effort.value.clone(),
                             description: effort.description.clone(),
-                            default: result.default_effort.as_deref()
+                            default: catalog.default_effort.as_deref()
                                 == Some(effort.value.as_str()),
                         })
                         .collect(),
@@ -288,13 +391,14 @@ fn rejected_with(
             degraded: Vec::new(),
             rejection_reason: Some(reason),
         },
-        models: Vec::new(),
-        efforts: Vec::new(),
-        default_effort: None,
+        catalog: Catalog::default(),
+        version: None,
     }
 }
 
-async fn probe(entry: RegistryEntry, cwd: &Path) -> Discovery {
+/// Probe one agent: `initialize` always, and a `session/new` only where
+/// `cached` holds no catalog for the version the agent reports.
+async fn probe(entry: RegistryEntry, cwd: &Path, cached: Option<CachedCatalog>) -> Discovery {
     let Some((program, args)) = entry.command.split_first() else {
         return rejected(&entry, "command is empty".into());
     };
@@ -322,7 +426,21 @@ async fn probe(entry: RegistryEntry, cwd: &Path) -> Discovery {
     capabilities.stdio = true;
     let mut rpc = RpcTransport::new(stdout, stdin);
     let mut incoming = ProbeIncoming;
-    let result = probe_protocol(&entry, &mut rpc, &mut incoming, cwd, &mut capabilities).await;
+    // The timeout sits inside the probe so a slow agent is still reported
+    // with every capability it showed before it stopped answering.
+    let result = tokio::time::timeout(
+        PROBE_TIMEOUT,
+        probe_protocol(
+            &entry,
+            &mut rpc,
+            &mut incoming,
+            cwd,
+            cached,
+            &mut capabilities,
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| Err(anyhow!("discovery timed out")));
     let _ = child.start_kill();
     let _ = child.wait().await;
     match result {
@@ -336,6 +454,7 @@ async fn probe_protocol(
     rpc: &mut RpcTransport,
     incoming: &mut ProbeIncoming,
     cwd: &Path,
+    cached: Option<CachedCatalog>,
     capabilities: &mut AcpCapabilitiesDto,
 ) -> Result<Discovery> {
     let initialized = rpc
@@ -367,54 +486,26 @@ async fn probe_protocol(
     capabilities.session_load =
         advertised.get("loadSession").and_then(Value::as_bool) == Some(true);
 
-    let setup = rpc
-        .request(
-            "session/new",
-            json!({"cwd": cwd.display().to_string(), "mcpServers": []}),
-            incoming,
-        )
-        .await
-        .context("session/new failed")?;
-    capabilities.session_new = true;
-    let session_id = setup
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("session/new returned no session id"))?;
-    let options = setup
-        .get("configOptions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let model = find_config_option(&options, &["model"], &["model"]);
-    capabilities.model = model.is_some();
-    let Some(model) = model else {
-        bail!("session/new returned no model option");
-    };
-    let models = choices(model);
-    if models.is_empty() {
-        bail!("the model option has no choices or current value");
-    }
-    let thought = find_config_option(
-        &options,
-        &["thought_level"],
-        &["effort", "reasoning", "thought_level"],
-    );
-    capabilities.thought_level = thought.is_some();
-    let efforts = thought.map(choices).unwrap_or_default();
-    let default_effort = thought
-        .and_then(|option| option.get("currentValue"))
+    let version = initialized
+        .pointer("/agentInfo/version")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let catalog = match cached.filter(|cached| version.as_deref() == Some(&cached.version)) {
+        // `session/new` answered for this command at this version already.
+        Some(cached) => {
+            capabilities.session_new = true;
+            capabilities.model = true;
+            capabilities.thought_level = cached.catalog.thought_level;
+            cached.catalog
+        }
+        None => {
+            let closes = capability(&advertised["sessionCapabilities"], "close");
+            read_catalog(rpc, incoming, cwd, closes, capabilities).await?
+        }
+    };
 
-    rpc.request(
-        "session/prompt",
-        json!({"sessionId": session_id, "prompt": [{"type": "text", "text": ""}]}),
-        incoming,
-    )
-    .await
-    .context("session/prompt failed")?;
-    capabilities.session_prompt = true;
-
+    // No prompt is sent: every ACP v1 agent answers `session/prompt`, and a
+    // prompt here would be a real model turn, billed on every probe.
     let mut degraded = Vec::new();
     if !capabilities.thought_level {
         degraded.push(AcpDegradation::NoEfforts);
@@ -435,9 +526,69 @@ async fn probe_protocol(
             degraded,
             rejection_reason: None,
         },
+        catalog,
+        version,
+    })
+}
+
+/// Open a session to read the agent's catalog off it, then close it again
+/// where the agent can (`closes`), so it holds nothing for a session nobody
+/// will prompt.
+async fn read_catalog(
+    rpc: &mut RpcTransport,
+    incoming: &mut ProbeIncoming,
+    cwd: &Path,
+    closes: bool,
+    capabilities: &mut AcpCapabilitiesDto,
+) -> Result<Catalog> {
+    let setup = rpc
+        .request(
+            "session/new",
+            json!({"cwd": cwd.display().to_string(), "mcpServers": []}),
+            incoming,
+        )
+        .await
+        .context("session/new failed")?;
+    let session_id = setup
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("session/new returned no session id"))?;
+    capabilities.session_new = true;
+    if closes {
+        // Best effort: the catalog is read either way, and the process is
+        // gone as soon as the probe ends.
+        let _ = rpc
+            .request("session/close", json!({"sessionId": session_id}), incoming)
+            .await;
+    }
+    let options = setup
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let model = find_config_option(&options, &["model"], &["model"]);
+    capabilities.model = model.is_some();
+    let Some(model) = model else {
+        bail!("session/new returned no model option");
+    };
+    let models = choices(model);
+    if models.is_empty() {
+        bail!("the model option has no choices or current value");
+    }
+    let thought = find_config_option(
+        &options,
+        &["thought_level"],
+        &["effort", "reasoning", "thought_level"],
+    );
+    capabilities.thought_level = thought.is_some();
+    Ok(Catalog {
         models,
-        efforts,
-        default_effort,
+        thought_level: thought.is_some(),
+        efforts: thought.map(choices).unwrap_or_default(),
+        default_effort: thought
+            .and_then(|option| option.get("currentValue"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
     })
 }
 

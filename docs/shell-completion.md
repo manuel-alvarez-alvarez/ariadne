@@ -28,7 +28,7 @@ ariadne completions fish > ~/.config/fish/completions/ariadne.fish
 completions zsh)` works in a shell you have open now. A daemon that is down or
 slow leaves TAB with nothing rather than an error, and `--model` and
 `--effort` complete from a catalog cached under the ariadne home — `--model`
-candidates carry the tier, cost and speed beside the description, and
-`--effort` candidates carry what that effort buys. For somewhere a completion has
+candidates carry the description the agent gave, and `--effort` candidates
+carry what that effort buys. For somewhere a completion has
 to be a file on disk, `ariadne completions <shell> --static` prints the old
 snapshot script, which has the command tree but none of the live candidates.

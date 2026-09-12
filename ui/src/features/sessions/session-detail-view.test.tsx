@@ -42,7 +42,7 @@ const TASK: TaskDto = aTask({
 
 const SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000001",
-  model: "claude-code-acp:claude-opus-5",
+  model: "claude-agent-acp:claude-opus-5",
   effort: "xhigh",
   usage: { input_tokens: 12_345, cached_input_tokens: 10_000, output_tokens: 950 },
   last_activity_at: "2026-01-01T00:10:00Z",
@@ -172,11 +172,11 @@ it("falls back to the console for a tab that is not one of its own", () => {
 it("shows the model the session was launched with, once", async () => {
   renderView()
 
-  // The profile has `claude-code-acp:claude-sonnet-5` pinned today; what this
+  // The profile has `claude-agent-acp:claude-sonnet-5` pinned today; what this
   // agent runs is the snapshot taken when it started, not the profile as
   // edited since.
   await waitFor(() => expect(detail("Agent")).toContain("Author"))
-  expect(detail("Agent")).toContain("claude-code-acp:claude-opus-5 @ xhigh")
+  expect(detail("Agent")).toContain("claude-agent-acp:claude-opus-5 @ xhigh")
   // And it says it once: a Model row under this one carried the same tail with
   // the agent taken off it.
   expect(screen.queryByText("Model")).toBeNull()

@@ -444,7 +444,7 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
         "--title",
         "t",
         "--author",
-        "coding=claude-code-acp:claude-sonnet-5",
+        "coding=claude-agent-acp:claude-sonnet-5",
         "--landing",
         "pull-request",
         "--permission-mode",
@@ -543,7 +543,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         "--title",
         "Do it",
         "--author",
-        "coding,testing=claude-code-acp:claude-opus-5",
+        "coding,testing=claude-agent-acp:claude-opus-5",
         "--reviewer",
         "code-review=codex-acp:o3",
         "--reviewer",
@@ -555,7 +555,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     };
     assert_eq!(authors.len(), 1);
     assert_eq!(authors[0].skills, ["coding", "testing"]);
-    assert_eq!(authors[0].model, "claude-code-acp:claude-opus-5");
+    assert_eq!(authors[0].model, "claude-agent-acp:claude-opus-5");
     assert_eq!(
         reviewers
             .iter()
@@ -701,11 +701,11 @@ fn an_effort_can_be_chosen_beside_every_model() {
         "--title",
         "Do it",
         "--author",
-        "coding=claude-code-acp:claude-opus-5@xhigh",
+        "coding=claude-agent-acp:claude-opus-5@xhigh",
         "--reviewer",
         "code-review=codex-acp:gpt-5.6-sol@xhigh",
         "--reviewer",
-        "security-review=claude-code-acp:claude-sonnet-5@high",
+        "security-review=claude-agent-acp:claude-sonnet-5@high",
         "--reviewer",
         "performance-review=codex-acp:gpt-5.6-luna",
     ])
@@ -727,7 +727,7 @@ fn an_effort_can_be_chosen_beside_every_model() {
             ),
             (
                 "security-review".to_string(),
-                "claude-code-acp:claude-sonnet-5",
+                "claude-agent-acp:claude-sonnet-5",
                 Some("high")
             ),
             (
@@ -777,7 +777,7 @@ fn an_effort_that_says_nothing_is_a_usage_error() {
             "update",
             "01TASK",
             "--model",
-            "claude-code-acp:claude-opus-5",
+            "claude-agent-acp:claude-opus-5",
             "--effort",
             "ultra",
         ])
@@ -973,7 +973,7 @@ fn a_hidden_format_flag_is_still_parsed() {
 #[test]
 fn updating_an_agent_takes_flags_or_clear_or_reset_but_only_one() {
     let update = |args: &[&str]| {
-        let mut argv = vec!["ariadne", "agent", "update", "claude-code-acp"];
+        let mut argv = vec!["ariadne", "agent", "update", "claude-agent-acp"];
         argv.extend_from_slice(args);
         try_parse(&argv).is_ok()
     };
@@ -1000,7 +1000,7 @@ fn an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is() {
         "ariadne",
         "agent",
         "update",
-        "claude-code-acp",
+        "claude-agent-acp",
         "--flag",
         "--model-config",
         "--flag",
@@ -1010,7 +1010,7 @@ fn an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is() {
     else {
         panic!("agent update");
     };
-    assert_eq!(agent, "claude-code-acp");
+    assert_eq!(agent, "claude-agent-acp");
     assert_eq!(flags, ["--model-config", "--verbose"]);
 }
 
@@ -1180,8 +1180,8 @@ fn models_ls_takes_an_agent_to_narrow_the_catalogue() {
     };
     assert_eq!(agent(&["ariadne", "models", "ls"]), None);
     assert_eq!(
-        agent(&["ariadne", "models", "ls", "--agent", "claude-code-acp"]).as_deref(),
-        Some("claude-code-acp")
+        agent(&["ariadne", "models", "ls", "--agent", "claude-agent-acp"]).as_deref(),
+        Some("claude-agent-acp")
     );
 }
 

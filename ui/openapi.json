@@ -2147,7 +2147,7 @@
           "tasks"
         ],
         "summary": "Record the pull or merge request the author opened for a task.",
-        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported.\n\nAnd this is the moment the task becomes the user's: a request nobody can\nmerge but a human is exactly what `waiting_user` says, so it goes up here,\non the session that opened it — the pane they answer in, and the one place\nthe request can be traced back to. It used to be raised by the message the\nlanding briefing told the author to write, and a published task with\nnothing on the strip is one nobody knows to go and merge.\n\nIt stays up until the user acts: an agent's own events never take\n`waiting_user` down (`clear_agent_attention`), and the author polling its\nrequest is exactly such an agent. `Scheduler::keep_waiting_user` puts it\nback on whatever comes up when that author is restarted, which is what\nmakes the two halves one flag rather than two.",
+        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported.\n\nAnd this is the moment the task becomes the user's: a request nobody can\nmerge but a human is exactly what `waiting_user` says, so it goes up here,\non the session that opened it — the console they answer in, and the one place\nthe request can be traced back to. It used to be raised by the message the\nlanding briefing told the author to write, and a published task with\nnothing on the strip is one nobody knows to go and merge.\n\nIt stays up until the user acts: an agent's own events never take\n`waiting_user` down (`clear_agent_attention`), and the author polling its\nrequest is exactly such an agent. `Scheduler::keep_waiting_user` puts it\nback on whatever comes up when that author is restarted, which is what\nmakes the two halves one flag rather than two.",
         "operationId": "record_pull_request",
         "parameters": [
           {
@@ -2399,7 +2399,6 @@
           "stdio",
           "protocol_v1",
           "session_new",
-          "session_prompt",
           "model",
           "thought_level",
           "session_list",
@@ -2419,9 +2418,6 @@
             "type": "boolean"
           },
           "session_new": {
-            "type": "boolean"
-          },
-          "session_prompt": {
             "type": "boolean"
           },
           "stdio": {
@@ -3074,7 +3070,7 @@
           },
           {
             "type": "object",
-            "description": "A raw agent event reported by a hook.",
+            "description": "A raw agent event the ACP runtime recorded.",
             "required": [
               "data",
               "event"
@@ -3082,7 +3078,7 @@
             "properties": {
               "data": {
                 "$ref": "#/components/schemas/AgentEventDto",
-                "description": "A raw agent event reported by a hook."
+                "description": "A raw agent event the ACP runtime recorded."
               },
               "event": {
                 "type": "string",
@@ -3302,8 +3298,8 @@
           },
           "model": {
             "type": "string",
-            "description": "What the orchestrator runs on, `<agent>:<model>`: the registry agent\nand, after the `:`, the model of it (`claude-code-acp:claude-opus-5`).",
-            "example": "claude-code-acp:claude-opus-5"
+            "description": "What the orchestrator runs on, `<agent>:<model>`: the registry agent\nand, after the `:`, the model of it (`claude-agent-acp:claude-opus-5`).",
+            "example": "claude-agent-acp:claude-opus-5"
           },
           "repos": {
             "type": "array",
@@ -3571,7 +3567,7 @@
       },
       "MessageKind": {
         "type": "string",
-        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells a\nmessage from the three steps of a review. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what carries a review's whole\nconversation in one place.\n\nOne kind carries everything the agents say outside a review, whether it\nasks something or answers it. There is no `answer` kind and no `reply`\ntool: an answer is a message to whoever asked, addressed the way the\nquestion was, so nothing threads. Each message arrives in a pane as a turn\n— which is why the tool that sends one takes questions and answers and\nnothing else, no acknowledgement and no thanks.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), and the rest are said and left.",
+        "description": "What one agent is saying to another.\n\nAgents talk to each other through one channel, and this is what tells a\nmessage from the three steps of a review. A verdict used to be a row of its own; it is a\nmessage like the rest now, which is what carries a review's whole\nconversation in one place.\n\nOne kind carries everything the agents say outside a review, whether it\nasks something or answers it. There is no `answer` kind and no `reply`\ntool: an answer is a message to whoever asked, addressed the way the\nquestion was, so nothing threads. Each message reaches its agent as a turn\n— which is why the tool that sends one takes questions and answers and\nnothing else, no acknowledgement and no thanks.\n\nThe kind is what the daemon reads. Two of them move the task\n([`TaskStatus`]), and the rest are said and left.",
         "enum": [
           "review_request",
           "approve",
@@ -3581,13 +3577,10 @@
       },
       "ModelDto": {
         "type": "object",
-        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: a\nregistry agent on a model discovery found it offering\n(`claude-code-acp:claude-opus-5`). Every entry names both halves — there\nis no bare-agent entry, because a model is required wherever an agent is\npinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. The rest is what an orchestrator sizes a task from: what\nthis model is, what it costs and how fast it answers next to every other\nentry, the work it is and is not the choice for, and what each of its\nefforts buys.",
+        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: a\nregistry agent on a model discovery found it offering\n(`claude-agent-acp:claude-opus-5`). Every entry names both halves — there\nis no bare-agent entry, because a model is required wherever an agent is\npinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. The rest is what the agent itself said when discovery\nasked: one line about the model, and the efforts it can be run at.",
         "required": [
           "id",
           "agent_id",
-          "tier",
-          "best_for",
-          "avoid_for",
           "efforts",
           "enabled"
         ],
@@ -3595,37 +3588,6 @@
           "agent_id": {
             "type": "string",
             "description": "Stable registry agent id."
-          },
-          "avoid_for": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Task shapes it is the wrong choice for; empty where nothing knows.",
-            "example": [
-              "cross-subsystem design"
-            ]
-          },
-          "best_for": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Task shapes this entry is the right choice for; empty where nothing\nknows.",
-            "example": [
-              "well-specified single-file fixes"
-            ]
-          },
-          "cost": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "description": "What it costs to run: 1 (free) to 5 (frontier), ranked across the whole\ncatalog so entries of different agents compare. `null` where nothing\nknows.",
-            "example": 3,
-            "maximum": 5,
-            "minimum": 1
           },
           "description": {
             "type": [
@@ -3647,35 +3609,9 @@
           },
           "id": {
             "type": "string",
-            "example": "claude-code-acp:claude-opus-5"
-          },
-          "speed": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "description": "How fast it answers: 1 (thinks for minutes) to 5 (near-instant),\nranked the same way. `null` where nothing knows.",
-            "example": 4,
-            "maximum": 5,
-            "minimum": 1
-          },
-          "tier": {
-            "$ref": "#/components/schemas/ModelTier",
-            "description": "The capability class this entry belongs to, or `unknown` where nothing\nsays — a model discovered at runtime that nothing has been written\nabout."
+            "example": "claude-agent-acp:claude-opus-5"
           }
         }
-      },
-      "ModelTier": {
-        "type": "string",
-        "description": "Roughly what a model is, as a picker and an orchestrator compare models: the\ncapability class it belongs to, across every agent at once.\n\nOne ladder for the whole catalog, so two agents' entries that sit at the\nsame rung really are alternatives for the same work. `Unknown` is what an\nentry nothing has been written about says — every model discovery finds at\nruntime — and it is a genuine answer rather than a missing one.",
-        "enum": [
-          "frontier",
-          "strong",
-          "balanced",
-          "fast",
-          "unknown"
-        ]
       },
       "OutsideSessionDto": {
         "type": "object",
@@ -3980,7 +3916,7 @@
           "id": {
             "type": "string",
             "description": "The entry, as `GET /v1/models` spells its `id`.",
-            "example": "claude-code-acp:claude-opus-5"
+            "example": "claude-agent-acp:claude-opus-5"
           }
         }
       },

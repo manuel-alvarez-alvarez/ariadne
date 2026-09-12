@@ -6,7 +6,7 @@
  * catalog under it, and a select beside it scoped by whatever that field held
  * — which is what made a reviewer row four controls wide and the effort easy
  * to miss entirely. Here the field is a button that reads like a sentence
- * (`claude-code-acp claude-sonnet-5 · medium`) and everything that changes it
+ * (`claude-agent-acp claude-sonnet-5 · medium`) and everything that changes it
  * lives in one popover: the catalog above, and under it the efforts *that*
  * model can be run at.
  *
@@ -35,10 +35,9 @@
 
 import { Popover } from "@base-ui/react/popover"
 import { ChevronsUpDownIcon } from "lucide-react"
-import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 
 import type { EffortDto, ModelDto } from "@/api"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Command,
@@ -234,11 +233,8 @@ export function PinPicker({
                         data-checked={entry.id === pinned ? "true" : "false"}
                         onSelect={pick}
                       >
-                        <span className="flex min-w-0 flex-col" title={modelTitle(entry)}>
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate font-mono text-[13px]">{entry.id}</span>
-                            <ModelPills entry={entry} />
-                          </span>
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate font-mono text-[13px]">{entry.id}</span>
                           {entry.description ? (
                             // Two lines, so a long blurb is readable without
                             // one option taking over the list.
@@ -330,56 +326,12 @@ function TriggerLabel({ model, effort }: { model: string; effort: string }) {
 }
 
 /**
- * What a search matches beyond the id: the blurb, and the task shapes the
- * catalog says this entry is and is not for — so typing "review" or "design"
- * finds a model by what it is good at, not only by its name.
+ * What a search matches beyond the id: the one line the agent gave about the
+ * model, so typing "reasoning" or "fast" finds a model by what it says it
+ * is, not only by its name.
  */
 function modelKeywords(entry: ModelDto): string[] | undefined {
-  const words = [entry.description, ...entry.best_for, ...entry.avoid_for].filter(
-    (word): word is string => Boolean(word),
-  )
-  return words.length > 0 ? words : undefined
-}
-
-/**
- * The row's tooltip: what the catalog says this entry is and is not the
- * choice for, one line each — kept off the row itself so a model with a long
- * list of either stays the same three lines as one with none.
- */
-function modelTitle(entry: ModelDto): string | undefined {
-  const lines = [
-    entry.best_for.length > 0 ? `best for: ${entry.best_for.join(", ")}` : null,
-    entry.avoid_for.length > 0 ? `avoid for: ${entry.avoid_for.join(", ")}` : null,
-  ].filter((line): line is string => line !== null)
-  return lines.length > 0 ? lines.join("\n") : undefined
-}
-
-/**
- * Tier, cost and speed, compact enough to sit beside the id: a pill is left
- * out rather than shown empty where the catalog does not know it, which for
- * a model nothing has been written about is all three.
- */
-function ModelPills({ entry }: { entry: ModelDto }) {
-  return (
-    <span className="flex shrink-0 items-center gap-1">
-      {entry.tier !== "unknown" ? <Pill>{entry.tier}</Pill> : null}
-      {entry.cost !== null && entry.cost !== undefined ? <Pill>cost {entry.cost}/5</Pill> : null}
-      {entry.speed !== null && entry.speed !== undefined ? (
-        <Pill>speed {entry.speed}/5</Pill>
-      ) : null}
-    </span>
-  )
-}
-
-function Pill({ children }: { children: ReactNode }) {
-  return (
-    <Badge
-      variant="outline"
-      className="h-4 rounded-sm px-1 py-0 text-[10px] font-normal leading-none"
-    >
-      {children}
-    </Badge>
-  )
+  return entry.description ? [entry.description] : undefined
 }
 
 /**

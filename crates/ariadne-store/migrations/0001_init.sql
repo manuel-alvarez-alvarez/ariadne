@@ -46,6 +46,19 @@ CREATE TABLE agent_configs (
     updated_at  TEXT NOT NULL
 );
 
+-- What a registry agent's `session/new` offered — its models and efforts —
+-- read once per agent version, so a daemon start opens no session on an
+-- agent it has already read. A row stands only for the command and version
+-- it was read from; an upgrade, or another command under the id, reads
+-- again and replaces it.
+CREATE TABLE acp_catalogs (
+    agent_id TEXT PRIMARY KEY,
+    command  TEXT NOT NULL,                     -- JSON array of argv strings
+    version  TEXT NOT NULL,                     -- the agent's `agentInfo.version`
+    catalog  TEXT NOT NULL,                     -- JSON, written and read by discovery
+    read_at  TEXT NOT NULL
+);
+
 -- The models the user has turned off. A model is available unless a row here
 -- says otherwise, so the catalog — discovered live from each registry agent —
 -- keeps every entry it grows usable without a write here.

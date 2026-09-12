@@ -902,7 +902,7 @@ export interface paths {
          *
          *     And this is the moment the task becomes the user's: a request nobody can
          *     merge but a human is exactly what `waiting_user` says, so it goes up here,
-         *     on the session that opened it — the pane they answer in, and the one place
+         *     on the session that opened it — the console they answer in, and the one place
          *     the request can be traced back to. It used to be raised by the message the
          *     landing briefing told the author to write, and a published task with
          *     nothing on the strip is one nobody knows to go and merge.
@@ -1004,7 +1004,6 @@ export interface components {
             session_list: boolean;
             session_load: boolean;
             session_new: boolean;
-            session_prompt: boolean;
             stdio: boolean;
             thought_level: boolean;
         };
@@ -1315,7 +1314,7 @@ export interface components {
             /** @enum {string} */
             event: "session_updated";
         } | {
-            /** @description A raw agent event reported by a hook. */
+            /** @description A raw agent event the ACP runtime recorded. */
             data: components["schemas"]["AgentEventDto"];
             /** @enum {string} */
             event: "agent_event";
@@ -1389,8 +1388,8 @@ export interface components {
             id: string;
             /**
              * @description What the orchestrator runs on, `<agent>:<model>`: the registry agent
-             *     and, after the `:`, the model of it (`claude-code-acp:claude-opus-5`).
-             * @example claude-code-acp:claude-opus-5
+             *     and, after the `:`, the model of it (`claude-agent-acp:claude-opus-5`).
+             * @example claude-agent-acp:claude-opus-5
              */
             model: string;
             /**
@@ -1537,7 +1536,7 @@ export interface components {
          *     One kind carries everything the agents say outside a review, whether it
          *     asks something or answers it. There is no `answer` kind and no `reply`
          *     tool: an answer is a message to whoever asked, addressed the way the
-         *     question was, so nothing threads. Each message arrives in a pane as a turn
+         *     question was, so nothing threads. Each message reaches its agent as a turn
          *     — which is why the tool that sends one takes questions and answers and
          *     nothing else, no acknowledgement and no thanks.
          *
@@ -1549,42 +1548,17 @@ export interface components {
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: a
          *     registry agent on a model discovery found it offering
-         *     (`claude-code-acp:claude-opus-5`). Every entry names both halves — there
+         *     (`claude-agent-acp:claude-opus-5`). Every entry names both halves — there
          *     is no bare-agent entry, because a model is required wherever an agent is
          *     pinned.
          *
          *     The id is what a request writes as its `model`, whole. `agent_id` is its
-         *     registry prefix. The rest is what an orchestrator sizes a task from: what
-         *     this model is, what it costs and how fast it answers next to every other
-         *     entry, the work it is and is not the choice for, and what each of its
-         *     efforts buys.
+         *     registry prefix. The rest is what the agent itself said when discovery
+         *     asked: one line about the model, and the efforts it can be run at.
          */
         ModelDto: {
             /** @description Stable registry agent id. */
             agent_id: string;
-            /**
-             * @description Task shapes it is the wrong choice for; empty where nothing knows.
-             * @example [
-             *       "cross-subsystem design"
-             *     ]
-             */
-            avoid_for: string[];
-            /**
-             * @description Task shapes this entry is the right choice for; empty where nothing
-             *     knows.
-             * @example [
-             *       "well-specified single-file fixes"
-             *     ]
-             */
-            best_for: string[];
-            /**
-             * Format: int32
-             * @description What it costs to run: 1 (free) to 5 (frontier), ranked across the whole
-             *     catalog so entries of different agents compare. `null` where nothing
-             *     knows.
-             * @example 3
-             */
-            cost?: number | null;
             /** @description One line about the model, which is what a picker shows beside the id. */
             description?: string | null;
             /**
@@ -1598,33 +1572,9 @@ export interface components {
              *     where it is shown as off and refused as a pin.
              */
             enabled: boolean;
-            /** @example claude-code-acp:claude-opus-5 */
+            /** @example claude-agent-acp:claude-opus-5 */
             id: string;
-            /**
-             * Format: int32
-             * @description How fast it answers: 1 (thinks for minutes) to 5 (near-instant),
-             *     ranked the same way. `null` where nothing knows.
-             * @example 4
-             */
-            speed?: number | null;
-            /**
-             * @description The capability class this entry belongs to, or `unknown` where nothing
-             *     says — a model discovered at runtime that nothing has been written
-             *     about.
-             */
-            tier: components["schemas"]["ModelTier"];
         };
-        /**
-         * @description Roughly what a model is, as a picker and an orchestrator compare models: the
-         *     capability class it belongs to, across every agent at once.
-         *
-         *     One ladder for the whole catalog, so two agents' entries that sit at the
-         *     same rung really are alternatives for the same work. `Unknown` is what an
-         *     entry nothing has been written about says — every model discovery finds at
-         *     runtime — and it is a genuine answer rather than a missing one.
-         * @enum {string}
-         */
-        ModelTier: "frontier" | "strong" | "balanced" | "fast" | "unknown";
         /**
          * @description A stored session of an ACP agent that Ariadne did not start, listed over
          *     `session/list`.
@@ -1784,7 +1734,7 @@ export interface components {
             enabled: boolean;
             /**
              * @description The entry, as `GET /v1/models` spells its `id`.
-             * @example claude-code-acp:claude-opus-5
+             * @example claude-agent-acp:claude-opus-5
              */
             id: string;
         };

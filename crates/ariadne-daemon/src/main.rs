@@ -94,8 +94,11 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("opening database {}", config.db_path.display()))?;
 
-    let agent_registry =
-        ariadne_daemon::acp_discovery::AgentRegistry::new(&config.acp_agents, config.root.clone());
+    let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::new(
+        &config.acp_agents,
+        config.root.clone(),
+        store.clone(),
+    );
     // Installed before anything writes, so no state change goes unannounced.
     let events = ariadne_daemon::bus::start(store.clone());
 
@@ -104,7 +107,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("writing {}", config.pid_file.display()))?;
 
     let config = std::sync::Arc::new(config);
-    agent_registry.refresh().await;
+    agent_registry.discover().await;
     let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
         cfg: config.clone(),
         store: store.clone(),

@@ -25,7 +25,7 @@ async fn every_registry_agent_is_listed_with_its_flags_and_its_defaults() {
             .iter()
             .map(|c| c.agent_id.as_str())
             .collect::<Vec<_>>(),
-        ["claude-code-acp", "codex-acp", "opencode-acp", STUB]
+        ["claude-agent-acp", "codex-acp", "opencode-acp", STUB]
     );
     for config in &configs {
         assert!(config.extra_flags.is_empty(), "{}", config.agent_id);
@@ -42,13 +42,13 @@ async fn flags_are_replaced_whole_and_the_defaults_stay_readable() {
     let updated: AgentConfigDto = h
         .json(
             put_json(
-                "/v1/agents/claude-code-acp",
+                "/v1/agents/claude-agent-acp",
                 serde_json::json!({"extra_flags": ["--verbose"]}),
             ),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(updated.agent_id, "claude-code-acp");
+    assert_eq!(updated.agent_id, "claude-agent-acp");
     assert_eq!(updated.extra_flags, ["--verbose"]);
     assert!(updated.default_flags.is_empty());
 
@@ -76,7 +76,7 @@ async fn flags_are_replaced_whole_and_the_defaults_stay_readable() {
     let configs: Vec<AgentConfigDto> = h.json(get("/v1/agents"), StatusCode::OK).await;
     let claude = configs
         .iter()
-        .find(|config| config.agent_id == "claude-code-acp")
+        .find(|config| config.agent_id == "claude-agent-acp")
         .unwrap();
     assert_eq!(
         claude.extra_flags,

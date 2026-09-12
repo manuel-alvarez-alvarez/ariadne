@@ -18,25 +18,18 @@ use crate::output::{
 /// copies out of has to be copyable. `agent` repeats the half of it that
 /// groups the table, which is what the eye scans by.
 ///
-/// `tier`, `cost` and `speed` are one word or one digit each, and they say
-/// nothing the description does not already say in a sentence — so they are
-/// the first three to go on a narrow terminal, ranked below everything else.
 /// `efforts` is what a reader still needs to choose `--effort`, and the
-/// description is the fullest account of what a model is for, so between the
-/// two that a narrow terminal must still drop, description goes first, the
-/// way it always has: `--model` and `--effort` are the choice a reader came
-/// to make, and are kept longest.
+/// description — the one line the agent gave about the model — is the first
+/// to go on a narrow terminal: `--model` and `--effort` are the choice a
+/// reader came to make, and are kept longest.
 const LS: &[Column] = &[
     col("agent", UNCAPPED),
     col("title", UNCAPPED).title(),
     // Never dropped: a row a reader cannot pin is a row they have to be able
     // to tell apart, whatever the terminal is wide enough for.
     col("on", UNCAPPED),
-    col("tier", UNCAPPED).rank(0),
-    col("cost", UNCAPPED).rank(1),
-    col("speed", UNCAPPED).rank(2),
-    col("efforts", 36).rank(4),
-    col("description", 60).rank(3),
+    col("efforts", 36).rank(1),
+    col("description", 60).rank(0),
 ];
 
 /// Where a continuation line of `models show` starts: [`print_kv`] pads its
@@ -51,7 +44,7 @@ pub enum ModelsCommand {
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
         agent: Option<String>,
     },
-    /// Show what one model is, costs and is for
+    /// Show what one model is and the efforts it takes
     Show {
         /// Model id, `<agent>:<model>` — the same spelling `--model` takes
         #[arg(value_parser = parse_model,
@@ -155,9 +148,6 @@ fn row(m: &ModelDto) -> Vec<String> {
         m.agent_id.clone(),
         m.id.clone(),
         yes_no(m.enabled, "no"),
-        m.tier.as_str().to_string(),
-        band(m.cost),
-        band(m.speed),
         effort_cell(&m.efforts),
         m.description.clone().unwrap_or_else(|| "-".into()),
     ]
@@ -180,9 +170,6 @@ fn print_card(m: &ModelDto) {
 /// The key/value pairs `models show` prints, in the order it prints them —
 /// pulled out of [`print_card`] so the card's own content is testable
 /// without printing anything.
-///
-/// `tier` stays as plain as it is in `models ls`: the table gives that column
-/// no colour of its own, and a card is not the place to invent one.
 fn card_pairs(m: &ModelDto) -> Vec<(&'static str, Kv)> {
     let indent = format!("\n{}", " ".repeat(SHOW_KEY_WIDTH + 2));
     vec![
@@ -195,15 +182,10 @@ fn card_pairs(m: &ModelDto) -> Vec<(&'static str, Kv)> {
             }
             .into(),
         ),
-        ("tier", m.tier.as_str().to_string().into()),
-        ("cost", band(m.cost).into()),
-        ("speed", band(m.speed).into()),
         (
             "description",
             m.description.clone().unwrap_or_else(|| "-".into()).into(),
         ),
-        ("best for", shapes(&m.best_for, &indent).into()),
-        ("avoid for", shapes(&m.avoid_for, &indent).into()),
         ("efforts", efforts_block(&m.efforts, &indent).into()),
     ]
 }
@@ -214,15 +196,6 @@ fn of_agent(models: Vec<ModelDto>, agent: Option<&str>) -> Vec<ModelDto> {
         .into_iter()
         .filter(|m| agent.is_none_or(|id| m.agent_id == id))
         .collect()
-}
-
-/// `cost` or `speed` as a table or card cell: the band out of five, or `-`
-/// where nothing knows it.
-fn band(n: Option<u8>) -> String {
-    match n {
-        Some(n) => format!("{n}/5"),
-        None => "-".into(),
-    }
 }
 
 /// The `efforts` cell of `models ls`: every effort this entry takes,
@@ -239,15 +212,6 @@ fn effort_cell(efforts: &[EffortDto]) -> String {
             })
             .collect::<Vec<_>>()
             .join(", "),
-    }
-}
-
-/// A `best_for` / `avoid_for` list as `models show` prints it: one shape per
-/// line, or `-` where nothing knows any.
-fn shapes(shapes: &[String], indent: &str) -> String {
-    match shapes.is_empty() {
-        true => "-".into(),
-        false => shapes.join(indent),
     }
 }
 
@@ -273,8 +237,6 @@ fn efforts_block(efforts: &[EffortDto], indent: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ariadne_core::ModelTier;
-
     use super::*;
     use crate::output::{View, render_table};
 
@@ -283,11 +245,6 @@ mod tests {
             id: id.to_string(),
             agent_id: agent_id.to_string(),
             description: None,
-            tier: ModelTier::Unknown,
-            cost: None,
-            speed: None,
-            best_for: Vec::new(),
-            avoid_for: Vec::new(),
             efforts: Vec::new(),
             enabled: true,
         }
@@ -295,8 +252,8 @@ mod tests {
 
     fn catalogue() -> Vec<ModelDto> {
         vec![
-            model("claude-code-acp:claude-fable-5", "claude-code-acp"),
-            model("claude-code-acp:claude-opus-5", "claude-code-acp"),
+            model("claude-agent-acp:claude-fable-5", "claude-agent-acp"),
+            model("claude-agent-acp:claude-opus-5", "claude-agent-acp"),
             model("codex-acp:gpt-5.6-luna", "codex-acp"),
         ]
     }
@@ -311,25 +268,16 @@ mod tests {
     fn an_agent_narrows_the_catalogue_to_its_own() {
         assert_eq!(ids(of_agent(catalogue(), None)).len(), 3);
         assert_eq!(
-            ids(of_agent(catalogue(), Some("claude-code-acp"))),
+            ids(of_agent(catalogue(), Some("claude-agent-acp"))),
             [
-                "claude-code-acp:claude-fable-5",
-                "claude-code-acp:claude-opus-5"
+                "claude-agent-acp:claude-fable-5",
+                "claude-agent-acp:claude-opus-5"
             ]
         );
         assert_eq!(
             ids(of_agent(catalogue(), Some("opencode-acp"))),
             [] as [String; 0]
         );
-    }
-
-    /// A band is the digit and its ceiling, or a dash for a model nothing
-    /// has ranked.
-    #[test]
-    fn a_band_is_out_of_five_or_a_dash() {
-        assert_eq!(band(Some(3)), "3/5");
-        assert_eq!(band(Some(5)), "5/5");
-        assert_eq!(band(None), "-");
     }
 
     fn effort(id: &str, description: Option<&str>, default: bool) -> EffortDto {
@@ -376,20 +324,14 @@ mod tests {
         assert_eq!(efforts_block(&[], " | "), "-");
     }
 
-    /// A curated model, an entry with no bands at all, and one whose default
-    /// effort is marked — the shape a daemon built from the merged base
-    /// actually serves.
+    /// A model the agent described, with its default effort marked, and a
+    /// bare one turned off — the shapes discovery serves.
     fn fixture() -> Vec<ModelDto> {
         vec![
             ModelDto {
                 id: "codex-acp:gpt-5.6-luna".into(),
                 agent_id: "codex-acp".into(),
                 description: Some("balanced coding model".into()),
-                tier: ModelTier::Balanced,
-                cost: Some(3),
-                speed: Some(3),
-                best_for: vec!["well-specified fixes".into()],
-                avoid_for: vec!["cross-subsystem design".into()],
                 efforts: vec![
                     EffortDto {
                         id: "low".into(),
@@ -413,44 +355,32 @@ mod tests {
         ]
     }
 
-    /// `models ls` carries the tier, cost and speed of a curated entry, `-`
-    /// for the bands of one nothing curates, and the default effort starred.
+    /// `models ls` carries what the agent said about a model — its efforts,
+    /// the default one starred, and its description — and `-` where it said
+    /// nothing.
     #[test]
-    fn a_row_carries_the_bands_and_stars_the_default_effort() {
+    fn a_row_stars_the_default_effort_and_dashes_what_is_unsaid() {
         assert_eq!(
             row(&fixture()[0]),
             [
                 "codex-acp",
                 "codex-acp:gpt-5.6-luna",
                 "yes",
-                "balanced",
-                "3/5",
-                "3/5",
                 "low, medium*",
                 "balanced coding model",
             ]
         );
         assert_eq!(
             row(&fixture()[1]),
-            [
-                "opencode-acp",
-                "opencode-acp:llama3",
-                "no",
-                "unknown",
-                "-",
-                "-",
-                "-",
-                "-"
-            ]
+            ["opencode-acp", "opencode-acp:llama3", "no", "-", "-"]
         );
     }
 
-    /// `tier`, `cost` and `speed` are the first three columns dropped on a
-    /// narrow terminal — they say nothing the description does not already
-    /// say — and `--model`/`--effort`, the choice a reader came to make,
-    /// are the two kept longest.
+    /// The description is the first column dropped on a narrow terminal, and
+    /// `--model`/`--effort`, the choice a reader came to make, are kept
+    /// longest.
     #[test]
-    fn the_bands_drop_before_efforts_and_description_do() {
+    fn the_description_drops_before_the_efforts_do() {
         let rows: Vec<Vec<String>> = fixture().iter().map(row).collect();
         let headers = |view: &View| -> Vec<String> {
             render_table(LS, &rows, view)
@@ -464,24 +394,10 @@ mod tests {
         };
         assert_eq!(
             headers(&View::plain()),
-            [
-                "AGENT",
-                "TITLE",
-                "ON",
-                "TIER",
-                "COST",
-                "SPEED",
-                "EFFORTS",
-                "DESCRIPTION"
-            ]
+            ["AGENT", "TITLE", "ON", "EFFORTS", "DESCRIPTION"]
         );
         let narrow = headers(&View::at(40));
-        assert!(
-            !narrow.contains(&"TIER".to_string())
-                && !narrow.contains(&"COST".to_string())
-                && !narrow.contains(&"SPEED".to_string()),
-            "{narrow:?}"
-        );
+        assert!(!narrow.contains(&"DESCRIPTION".to_string()), "{narrow:?}");
         assert!(
             narrow.contains(&"AGENT".to_string()) && narrow.contains(&"TITLE".to_string()),
             "agent and title never drop: {narrow:?}"
@@ -507,9 +423,8 @@ mod tests {
     }
 
     /// The card carries every field the acceptance criteria name, in order:
-    /// id, whether an agent can be staffed on it, tier, cost, speed,
-    /// description, `best for`, `avoid for`, then every effort with what it
-    /// buys and the default one marked.
+    /// id, whether an agent can be staffed on it, description, then every
+    /// effort with what it buys and the default one marked.
     #[test]
     fn the_card_carries_every_field_and_marks_the_default_effort() {
         let indent = format!("\n{}", " ".repeat(SHOW_KEY_WIDTH + 2));
@@ -520,12 +435,7 @@ mod tests {
             vec![
                 ("id", Kv::id("codex-acp:gpt-5.6-luna")),
                 ("enabled", "yes".into()),
-                ("tier", "balanced".into()),
-                ("cost", "3/5".into()),
-                ("speed", "3/5".into()),
                 ("description", "balanced coding model".into()),
-                ("best for", "well-specified fixes".into()),
-                ("avoid for", "cross-subsystem design".into()),
                 (
                     "efforts",
                     format!("low — lighter reasoning{indent}medium — balanced reasoning (default)")
@@ -535,8 +445,8 @@ mod tests {
         );
     }
 
-    /// An entry nothing curates has nothing to show either: every band and
-    /// every list is a dash, the way `models ls` shows the same entry.
+    /// An entry the agent said nothing about shows a dash for the
+    /// description and the efforts, the way `models ls` shows the same entry.
     #[test]
     fn the_card_dashes_what_nothing_knows() {
         let bare = ModelDto {
@@ -548,12 +458,7 @@ mod tests {
             vec![
                 ("id", Kv::id("opencode-acp:llama3")),
                 ("enabled", "no — nothing can be staffed on it".into()),
-                ("tier", "unknown".into()),
-                ("cost", "-".into()),
-                ("speed", "-".into()),
                 ("description", "-".into()),
-                ("best for", "-".into()),
-                ("avoid for", "-".into()),
                 ("efforts", "-".into()),
             ]
         );

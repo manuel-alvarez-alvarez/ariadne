@@ -445,7 +445,7 @@ fn catalog_effort_entries(catalog: &[Value]) -> Vec<EffortEntry> {
 /// What `--effort <id>` is described as: the description every agent that
 /// takes it agrees on, when they agree — an effort need not mean the same
 /// thing on two agents — or, where two agents write different words for it,
-/// each named beside its own: `low — claude-code-acp: …; codex-acp: …`.
+/// each named beside its own: `low — claude-agent-acp: …; codex-acp: …`.
 ///
 /// `None` where nothing that lists this effort has written a description for
 /// it at all.
@@ -613,35 +613,15 @@ fn store_models(models: &[Value]) {
 }
 
 fn model_candidate(m: &Value) -> CompletionCandidate {
-    let tier = s(m, "tier");
-    let tier = if tier.is_empty() { "unknown" } else { tier };
-    let cost = m.get("cost").and_then(Value::as_u64).map(|n| n as u8);
-    let speed = m.get("speed").and_then(Value::as_u64).map(|n| n as u8);
-    let description = match m.get("description").and_then(|d| d.as_str()) {
-        Some(d) => d,
-        None => s(m, "agent_id"),
-    };
-    candidate(s(m, "id"), model_help(tier, cost, speed, description))
+    candidate(s(m, "id"), model_help(m).to_string())
 }
 
-/// A `--model` candidate's help: the three figures a picker sizes a task
-/// from, then the sentence they summarize — `frontier · cost 5/5 · speed
-/// 2/5 — deepest reasoning there is`.
-fn model_help(tier: &str, cost: Option<u8>, speed: Option<u8>, description: &str) -> String {
-    format!(
-        "{tier} · cost {} · speed {} — {description}",
-        band(cost),
-        band(speed)
-    )
-}
-
-/// A cost or speed band as `--model` help spells it: `3/5`, or `-` where
-/// nothing has ranked it.
-fn band(n: Option<u8>) -> String {
-    match n {
-        Some(n) => format!("{n}/5"),
-        None => "-".to_string(),
-    }
+/// A `--model` candidate's help: the one line its agent gave about the model,
+/// or the agent's id where it gave none.
+fn model_help(m: &Value) -> &str {
+    m.get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| s(m, "agent_id"))
 }
 
 #[cfg(test)]
@@ -762,27 +742,28 @@ mod tests {
             words(&["low", "high"])
         );
         assert_eq!(
-            catalog_efforts(&json!({"id": "claude-code-acp:claude-haiku-4-5", "efforts": []})),
+            catalog_efforts(&json!({"id": "claude-agent-acp:claude-haiku-4-5", "efforts": []})),
             Vec::<String>::new()
         );
         assert_eq!(
-            catalog_efforts(&json!({"id": "claude-code-acp:claude-opus-5"})),
+            catalog_efforts(&json!({"id": "claude-agent-acp:claude-opus-5"})),
             Vec::<String>::new()
         );
     }
 
-    /// A `--model` candidate's help leads with the three figures a picker
-    /// sizes a task from, then the description — bands and all, or dashes
-    /// where nothing has ranked them.
+    /// A `--model` candidate's help is what its agent said about the model,
+    /// or the agent's id where it said nothing.
     #[test]
-    fn a_models_help_leads_with_its_bands_then_its_description() {
+    fn a_models_help_is_its_description_or_its_agent() {
         assert_eq!(
-            model_help("frontier", Some(5), Some(2), "deepest reasoning there is"),
-            "frontier · cost 5/5 · speed 2/5 — deepest reasoning there is"
+            model_help(
+                &json!({"agent_id": "codex-acp", "description": "deepest reasoning there is"})
+            ),
+            "deepest reasoning there is"
         );
         assert_eq!(
-            model_help("unknown", None, None, "codex-acp"),
-            "unknown · cost - · speed - — codex-acp"
+            model_help(&json!({"agent_id": "codex-acp", "description": null})),
+            "codex-acp"
         );
     }
 
@@ -794,7 +775,7 @@ mod tests {
     fn an_effort_is_described_once_when_every_agent_agrees_and_per_agent_when_they_do_not() {
         let entries = catalog_effort_entries(
             json!([
-                {"agent_id": "claude-code-acp", "efforts": [
+                {"agent_id": "claude-agent-acp", "efforts": [
                     {"id": "high", "description": "greater depth"},
                     {"id": "low", "description": "lighter reasoning"},
                 ]},
@@ -814,7 +795,7 @@ mod tests {
         );
         assert_eq!(
             effort_help("high", &entries).as_deref(),
-            Some("claude-code-acp: greater depth; codex-acp: more thinking time"),
+            Some("claude-agent-acp: greater depth; codex-acp: more thinking time"),
             "and where they do not, each is named beside its own"
         );
         assert_eq!(
@@ -832,7 +813,7 @@ mod tests {
         let current = json!([
             {"id": "codex-acp:gpt-5.6-sol", "efforts": [{"id": "low", "default": true}]},
             {"id": "codex-acp:gpt-5.6-luna", "efforts": []},
-            {"id": "claude-code-acp:claude-fable-5"},
+            {"id": "claude-agent-acp:claude-fable-5"},
         ]);
         assert!(current_shape(current.as_array().expect("an array")));
         for stale in [

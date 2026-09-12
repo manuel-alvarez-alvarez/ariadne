@@ -38,8 +38,8 @@ skill says (017).
 
 ## Behavior
 
-1. The registry holds three built-in agents — `claude-code-acp`
-   (`claude-code-acp`), `codex-acp` (`codex acp`) and `opencode-acp`
+1. The registry holds three built-in agents — `claude-agent-acp`
+   (`claude-agent-acp`), `codex-acp` (`codex-acp`) and `opencode-acp`
    (`opencode acp`) — and every `[[acp_agents]]` entry of the daemon config,
    each an `id` and a `command`. `GET /v1/acp-agents` lists them all, the
    built-ins first.
@@ -50,13 +50,21 @@ skill says (017).
    rejected with the reason on it, is never probed, and never answers for its
    id.
 3. Discovery probes every entry at once: it starts the command, runs
-   `initialize`, `session/new` and one empty `session/prompt`, and caches
-   what it measured. `POST /v1/acp-agents/refresh` runs it again and replaces
-   the cache as one snapshot.
+   `initialize`, and caches what it measured. An agent's catalog — its
+   models and efforts — comes off a `session/new`, and the store keeps it
+   under the command and the version the agent reported in `initialize`
+   (`agentInfo.version`). A daemon start opens a session only on an agent
+   whose command and version have no kept catalog. An agent that reports no
+   version is read on every start. `POST /v1/acp-agents/refresh` reads every
+   catalog again and replaces the cache as one snapshot. The session a read
+   opens is closed (`session/close`) where the agent advertises it. No
+   prompt is ever sent, since a prompt is a model turn the agent bills. A
+   probe has five seconds; one that runs out is rejected with every
+   capability it measured before it did.
 4. An agent is `ready` only when it negotiates ACP version 1, opens a
-   session, offers a model option with at least one choice, and answers a
-   prompt. Anything short of that is `rejected`, with the reason on the
-   entry.
+   session — now, or at the version its kept catalog was read from — and
+   offers a model option with at least one choice. Anything short of that is
+   `rejected`, with the reason on the entry.
 5. A ready agent that lacks an optional capability is degraded, one flag per
    gap: `no_efforts` for no effort option, `no_adoption` for no
    `session_list`, and `no_restart_resume` for no `session_load`.
@@ -112,7 +120,16 @@ skill says (017).
   (`::a_registry_id_already_taken_is_rejected`), and an id with `:` is
   rejected (`::a_registry_id_with_the_catalog_delimiter_is_rejected`).
 - Discovery refreshes on demand and replaces the cache
-  (`acp_discovery.rs::discovery_refreshes_on_demand`).
+  (`acp_discovery.rs::discovery_refreshes_on_demand`), sends no prompt
+  (`::discovery_sends_no_prompt`), and a probe that runs out its time keeps
+  what it measured (`::a_timed_out_probe_keeps_what_it_measured`).
+- A start reads a catalog once per agent version, closes the session it
+  opened, and reads again on a new version or an explicit refresh
+  (`acp_discovery.rs::a_catalog_is_read_once_per_agent_version`). An agent
+  with no version is read on every start
+  (`::an_agent_without_a_version_is_read_on_every_start`), and the store
+  keeps one catalog per agent
+  (`store.rs::an_acp_catalog_is_kept_per_agent_and_replaced_by_a_newer_read`).
 - Every required capability is enforced
   (`acp_discovery.rs::every_required_acp_capability_is_enforced`), and an agent
   with no model option is rejected with the reason shown

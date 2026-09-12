@@ -185,7 +185,7 @@ it("says nothing about what the task runs on, however it is pinned", () => {
         id: "01AGENTAUTHOR",
         seat: "author",
         skills: ["coding"],
-        model: "claude-code-acp:claude-fable-5",
+        model: "claude-agent-acp:claude-fable-5",
         effort: "high",
       },
     ],

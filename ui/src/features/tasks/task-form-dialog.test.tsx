@@ -25,11 +25,11 @@ const CATALOG: ModelDto[] = [
     efforts: [anEffort({ id: "high", default: true })],
   }),
   aModel({
-    id: "claude-code-acp:claude-sonnet-5",
-    agent_id: "claude-code-acp",
+    id: "claude-agent-acp:claude-sonnet-5",
+    agent_id: "claude-agent-acp",
     efforts: [anEffort({ id: "high", default: true })],
   }),
-  aModel({ id: "claude-code-acp:claude-haiku-4-5", agent_id: "claude-code-acp" }),
+  aModel({ id: "claude-agent-acp:claude-haiku-4-5", agent_id: "claude-agent-acp" }),
 ]
 
 let writes: unknown[]
@@ -44,7 +44,7 @@ const TASK: TaskDto = aTask({
       id: "01AGENTREVIEW",
       seat: "reviewer",
       skills: ["code-review"],
-      model: "claude-code-acp:claude-sonnet-5",
+      model: "claude-agent-acp:claude-sonnet-5",
     },
   ],
 })
@@ -128,7 +128,7 @@ it("disables create until the author and every reviewer have models", async () =
   expect(submit.disabled).toBe(true)
   await pickModel(user, "Author", "codex-acp:gpt-5.6")
   expect(submit.disabled).toBe(true)
-  await pickModel(user, "Reviewer 1", "claude-code-acp:claude-sonnet-5")
+  await pickModel(user, "Reviewer 1", "claude-agent-acp:claude-sonnet-5")
   expect(submit.disabled).toBe(false)
 })
 
@@ -138,14 +138,14 @@ it("sends each concrete model with the task staffing", async () => {
 
   await user.type(screen.getByLabelText("Title"), "Demand a model")
   await pickModel(user, "Author", "codex-acp:gpt-5.6")
-  await pickModel(user, "Reviewer 1", "claude-code-acp:claude-sonnet-5")
+  await pickModel(user, "Reviewer 1", "claude-agent-acp:claude-sonnet-5")
   await user.click(screen.getByRole("button", { name: "Create task" }))
 
   await waitFor(() => expect(writes).toHaveLength(1))
   expect(writes[0]).toMatchObject({
     agents: [
       { seat: "author", model: "codex-acp:gpt-5.6" },
-      { seat: "reviewer", model: "claude-code-acp:claude-sonnet-5" },
+      { seat: "reviewer", model: "claude-agent-acp:claude-sonnet-5" },
     ],
   })
 })
@@ -157,12 +157,12 @@ it("refuses a bare agent before it sends the task", async () => {
   await user.type(screen.getByLabelText("Title"), "Demand a model")
   await pickModel(user, "Author", "codex-acp:gpt-5.6")
   await user.click(await screen.findByRole("button", { name: "Reviewer 1 runs on" }))
-  await user.type(screen.getByRole("combobox", { name: "Reviewer 1 runs on" }), "claude-code-acp")
+  await user.type(screen.getByRole("combobox", { name: "Reviewer 1 runs on" }), "claude-agent-acp")
   await user.click(screen.getByText(/^Other — run/))
   await user.keyboard("{Escape}")
   await user.click(screen.getByRole("button", { name: "Create task" }))
 
-  expect(await screen.findByText(/claude-code-acp:<model>/)).toBeDefined()
+  expect(await screen.findByText(/claude-agent-acp:<model>/)).toBeDefined()
   expect(writes).toEqual([])
 })
 
@@ -179,7 +179,11 @@ describe("editing a pending task", () => {
     await waitFor(() => expect(writePaths).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
     expect(writes[0]).toMatchObject({
       reviewers: [
-        { seat: "reviewer", skills: ["security-review"], model: "claude-code-acp:claude-sonnet-5" },
+        {
+          seat: "reviewer",
+          skills: ["security-review"],
+          model: "claude-agent-acp:claude-sonnet-5",
+        },
       ],
     })
   })
@@ -281,7 +285,7 @@ describe("the rest of the task form", () => {
 
     await user.type(screen.getByLabelText("Title"), "Do not land this")
     await pickModel(user, "Author", "codex-acp:gpt-5.6")
-    await pickModel(user, "Reviewer 1", "claude-code-acp:claude-sonnet-5")
+    await pickModel(user, "Reviewer 1", "claude-agent-acp:claude-sonnet-5")
     await user.click(screen.getByRole("combobox", { name: "Ends with" }))
     await user.click(await screen.findByRole("option", { name: "Land nothing" }))
     await user.click(screen.getByRole("button", { name: "Create task" }))
@@ -296,16 +300,16 @@ describe("the rest of the task form", () => {
 
     await user.type(screen.getByLabelText("Title"), "Move the model")
     const models = await openPicker(user, "Author")
-    await user.click(within(models).getByText("claude-code-acp:claude-sonnet-5"))
+    await user.click(within(models).getByText("claude-agent-acp:claude-sonnet-5"))
     await user.click(await screen.findByRole("radio", { name: "high" }))
-    await user.click(within(models).getByText("claude-code-acp:claude-haiku-4-5"))
+    await user.click(within(models).getByText("claude-agent-acp:claude-haiku-4-5"))
     await closePicker(user)
     await pickModel(user, "Reviewer 1", "codex-acp:gpt-5.6")
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await waitFor(() => expect(writePaths).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
     const author = (writes[0] as { agents: Record<string, unknown>[] }).agents[0]
-    expect(author).toMatchObject({ model: "claude-code-acp:claude-haiku-4-5" })
+    expect(author).toMatchObject({ model: "claude-agent-acp:claude-haiku-4-5" })
     expect(author).not.toHaveProperty("effort")
   })
 })

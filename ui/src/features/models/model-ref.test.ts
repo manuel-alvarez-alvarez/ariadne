@@ -20,7 +20,7 @@ describe("modelRefError", () => {
   })
 
   it("takes any agent and any model, one colon apart", () => {
-    expect(modelRefError("claude-code-acp:claude-opus-5")).toBeNull()
+    expect(modelRefError("claude-agent-acp:claude-opus-5")).toBeNull()
     expect(modelRefError("my-agent:some-model")).toBeNull()
     // Only the first colon is structure, so an id with colons of its own is
     // one model and not a malformed reference.

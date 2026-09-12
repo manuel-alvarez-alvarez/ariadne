@@ -62,7 +62,7 @@ pub fn acp_agents(agents: &[AcpAgentDto]) -> Vec<Check> {
     {
         checks.push(
             Check::fail("any agent", "no ACP agent is ready on the daemon's PATH").hint(
-                "install claude-code-acp, codex or opencode, or add an [[acp_agents]] entry \
+                "install claude-agent-acp, codex-acp or opencode, or add an [[acp_agents]] entry \
                  to config.toml — sessions cannot be spawned without one",
             ),
         );
@@ -74,11 +74,10 @@ fn acp_capabilities(agent: &AcpAgentDto) -> String {
     let yes_no = |available| if available { "yes" } else { "no" };
     let capabilities = &agent.capabilities;
     format!(
-        "stdio {}; version 1 {}; new {}; prompt {}; model {}; thought level {}; list {}; load {}",
+        "stdio {}; version 1 {}; new {}; model {}; thought level {}; list {}; load {}",
         yes_no(capabilities.stdio),
         yes_no(capabilities.protocol_v1),
         yes_no(capabilities.session_new),
-        yes_no(capabilities.session_prompt),
         yes_no(capabilities.model),
         yes_no(capabilities.thought_level),
         yes_no(capabilities.session_list),
@@ -157,7 +156,6 @@ mod tests {
             stdio: true,
             protocol_v1: true,
             session_new: true,
-            session_prompt: true,
             model: true,
             thought_level: false,
             session_list: false,

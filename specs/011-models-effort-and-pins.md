@@ -62,8 +62,8 @@ orchestrator decides (003).
     the task staffs (017), one per author and per reviewer.
 11. A session freezes its pin at its first launch: a re-pin steers the next
     spawn, never the conversation already running.
-12. The registry holds three built-in agents — `claude-code-acp` (command
-    `claude-code-acp`), `codex-acp` (`codex acp`) and `opencode-acp`
+12. The registry holds three built-in agents — `claude-agent-acp` (command
+    `claude-agent-acp`), `codex-acp` (`codex-acp`) and `opencode-acp`
     (`opencode acp`) — plus every entry configured under `acp_agents`. Each
     entry's id is the agent half of every pin on it.
 13. A registry id is any word without the `:` delimiter. An id that spells a
@@ -73,10 +73,12 @@ orchestrator decides (003).
     the reason, and is never resolved.
 14. The daemon probes every registry entry at startup and caches the result.
     `POST /v1/acp-agents/refresh` replaces that cache on demand. A probe
-    speaks ACP version 1 over standard input and output, creates a session,
-    and verifies prompting before it accepts the agent.
-15. An agent without version 1, `session/new`, `session/prompt`, or a usable
-    model option is rejected with its reason. A missing thought level,
+    speaks ACP version 1 over standard input and output. It creates a
+    session only to read a catalog the store does not keep for the agent's
+    version, or on a refresh, and closes it again. It sends no prompt, which
+    would be a billed model turn (007).
+15. An agent without version 1, `session/new`, or a usable model option is
+    rejected with its reason. A missing thought level,
     session listing or session loading marks the agent degraded — no
     efforts, no adoption, or no restart resume respectively.
 16. The catalog is what discovery found, and nothing else: no model is listed
@@ -87,8 +89,9 @@ orchestrator decides (003).
     runs at flagged as the default. An option whose id or name says model or
     effort counts as one when its category does not.
 17. A discovered model carries only what the agent said about it: its
-    description, and tier `unknown`. An agent discovery has not accepted
-    offers no model. No agent is listed bare.
+    description and its efforts. Nothing ranks a model — no tier, cost,
+    speed or task shapes. An agent discovery has not accepted offers no
+    model. No agent is listed bare.
 18. Each entry of the catalog can be turned off, and every model is on until
     it is. What is stored is the subtraction from discovery, so a model an
     agent gains arrives usable.

@@ -40,10 +40,9 @@ const ARIADNE: RepositoryDto = aRepository({
 /** Two agents' worth of catalog, which the picker offers whole. */
 const CATALOG: ModelDto[] = [
   aModel({
-    id: "claude-code-acp:claude-opus-5",
-    agent_id: "claude-code-acp",
+    id: "claude-agent-acp:claude-opus-5",
+    agent_id: "claude-agent-acp",
     description: "Opus tier: deep analysis",
-    tier: "strong",
     efforts: [
       anEffort({ id: "low" }),
       anEffort({ id: "medium" }),
@@ -56,7 +55,6 @@ const CATALOG: ModelDto[] = [
     id: "codex-acp:gpt-5.3-codex",
     agent_id: "codex-acp",
     description: "Frontier reasoning: agentic loops",
-    tier: "frontier",
     efforts: [
       anEffort({ id: "low" }),
       anEffort({ id: "medium", default: true }),
@@ -407,8 +405,8 @@ describe("choosing what the orchestrator runs on", () => {
 
     expect(within(models).getByText("codex-acp")).toBeDefined()
     expect(within(models).getByText("codex-acp:gpt-5.3-codex")).toBeDefined()
-    expect(within(models).getByText("claude-code-acp")).toBeDefined()
-    expect(within(models).getByText("claude-code-acp:claude-opus-5")).toBeDefined()
+    expect(within(models).getByText("claude-agent-acp")).toBeDefined()
+    expect(within(models).getByText("claude-agent-acp:claude-opus-5")).toBeDefined()
   })
 
   it("disables submit until the orchestrator has a model", async () => {

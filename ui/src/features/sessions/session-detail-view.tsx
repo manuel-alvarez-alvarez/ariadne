@@ -147,7 +147,7 @@ export function SessionDetailView({
           </Fact>
         )}
         {/* One fact, not two: what the agent runs on is the tail of this line
-            (`claude-code-acp:claude-opus-5`), and a Model row under it repeated
+            (`claude-agent-acp:claude-opus-5`), and a Model row under it repeated
             that tail with the agent half taken off. The session's own snapshot,
             not the profile's current fields — the profile may have been edited
             since this agent was launched. */}

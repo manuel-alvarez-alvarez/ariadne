@@ -51,14 +51,14 @@ describe("seeding the form from a task", () => {
     const values = taskToFormValues(
       task([
         agent("author", { skills: ["coding", "testing"], model: "codex-acp:o3", effort: "high" }),
-        agent("reviewer", { skills: ["code-review"], model: "claude-code-acp:claude-sonnet-5" }),
+        agent("reviewer", { skills: ["code-review"], model: "claude-agent-acp:claude-sonnet-5" }),
       ]),
     )
     expect(values.author_skills).toBe("coding, testing")
     expect(values.author_model).toBe("codex-acp:o3")
     expect(values.author_effort).toBe("high")
     expect(values.reviewers).toEqual([
-      { skills: "code-review", model: "claude-code-acp:claude-sonnet-5", effort: "" },
+      { skills: "code-review", model: "claude-agent-acp:claude-sonnet-5", effort: "" },
     ])
   })
 
@@ -85,7 +85,7 @@ describe("creating a task", () => {
         author_model: "codex-acp:o3",
         author_effort: "high",
         reviewers: [
-          { skills: "code-review", model: "claude-code-acp:claude-sonnet-5", effort: "" },
+          { skills: "code-review", model: "claude-agent-acp:claude-sonnet-5", effort: "" },
           { skills: "security-review", model: "codex-acp:gpt-5.6", effort: "" },
         ],
       },
@@ -93,7 +93,7 @@ describe("creating a task", () => {
     )
     expect(body.agents).toEqual([
       { seat: "author", skills: ["coding", "testing"], model: "codex-acp:o3", effort: "high" },
-      { seat: "reviewer", skills: ["code-review"], model: "claude-code-acp:claude-sonnet-5" },
+      { seat: "reviewer", skills: ["code-review"], model: "claude-agent-acp:claude-sonnet-5" },
       { seat: "reviewer", skills: ["security-review"], model: "codex-acp:gpt-5.6" },
     ])
   })
@@ -136,10 +136,10 @@ describe("updating a task", () => {
 
   it("sends the model chosen, trimmed", () => {
     const body = toUpdateTaskRequest(
-      { ...BLANK, author_model: " claude-code-acp:claude-opus-5 ", author_effort: "" },
+      { ...BLANK, author_model: " claude-agent-acp:claude-opus-5 ", author_effort: "" },
       seeded,
     )
-    expect(body.model).toBe("claude-code-acp:claude-opus-5")
+    expect(body.model).toBe("claude-agent-acp:claude-opus-5")
   })
 
   it("moves the effort on its own, leaving the model where it is", () => {
@@ -155,10 +155,10 @@ describe("updating a task", () => {
     // The daemon drops the effort from a pin whose model moves, so the form's
     // reading of it has to travel with the model or it is silently lost.
     const body = toUpdateTaskRequest(
-      { ...BLANK, author_model: "claude-code-acp:claude-opus-5", author_effort: "high" },
+      { ...BLANK, author_model: "claude-agent-acp:claude-opus-5", author_effort: "high" },
       seeded,
     )
-    expect(body.model).toBe("claude-code-acp:claude-opus-5")
+    expect(body.model).toBe("claude-agent-acp:claude-opus-5")
     expect(body.effort).toBe("high")
   })
 
@@ -169,14 +169,14 @@ describe("updating a task", () => {
         author_model: "codex-acp:o3",
         author_effort: "high",
         reviewers: [
-          { skills: "code-review", model: "claude-code-acp:claude-sonnet-5", effort: "" },
+          { skills: "code-review", model: "claude-agent-acp:claude-sonnet-5", effort: "" },
           { skills: "performance-review", model: "codex-acp:gpt-5.6", effort: "" },
         ],
       },
       seeded,
     )
     expect(body.reviewers).toEqual([
-      { seat: "reviewer", skills: ["code-review"], model: "claude-code-acp:claude-sonnet-5" },
+      { seat: "reviewer", skills: ["code-review"], model: "claude-agent-acp:claude-sonnet-5" },
       { seat: "reviewer", skills: ["performance-review"], model: "codex-acp:gpt-5.6" },
     ])
   })

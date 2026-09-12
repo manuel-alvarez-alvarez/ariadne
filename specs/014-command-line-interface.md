@@ -245,8 +245,8 @@ same binary also serves (013).
   (`task.rs::the_inspect_block_types_its_id_title_and_status`).
 - Session and model subject columns use `title`, and model booleans use
   `yes` or `no` (`session.rs::the_session_subject_column_is_title`,
-  `models.rs::the_bands_drop_before_efforts_and_description_do`,
-  `::a_row_carries_the_bands_and_stars_the_default_effort`).
+  `models.rs::the_description_drops_before_the_efforts_do`,
+  `::a_row_stars_the_default_effort_and_dashes_what_is_unsaid`).
 - `agent update` takes flags, a clear or a reset but only one, and keeps a
   flag that looks like a flag as it is
   (`cli/tests.rs::updating_an_agent_takes_flags_or_clear_or_reset_but_only_one`,

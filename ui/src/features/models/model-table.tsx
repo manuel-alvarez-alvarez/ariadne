@@ -23,7 +23,6 @@ import { toast } from "sonner"
 
 import type { ModelDto } from "@/api"
 import { ScrollableTable } from "@/components/scroll-edge"
-import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -67,7 +66,6 @@ export function ModelTable({ models, isPending }: { models: ModelDto[]; isPendin
             and would only be pushed off the edge instead.
           */}
           <TableHead>Model</TableHead>
-          <TableHead className="w-20">Tier</TableHead>
           <TableHead>What it is for</TableHead>
           {/*
             Headed by what it decides, not by "Enabled": the question a reader
@@ -80,7 +78,7 @@ export function ModelTable({ models, isPending }: { models: ModelDto[]; isPendin
         {isPending ? (
           PLACEHOLDER_ROWS.map((row) => (
             <TableRow key={row} className="bg-background hover:bg-transparent">
-              {[0, 1, 2, 3].map((cell) => (
+              {[0, 1, 2].map((cell) => (
                 <TableCell key={cell}>
                   <Skeleton className="h-4 w-full" />
                 </TableCell>
@@ -91,7 +89,7 @@ export function ModelTable({ models, isPending }: { models: ModelDto[]; isPendin
           models.map((model) => <ModelRow key={model.id} model={model} />)
         ) : (
           <TableRow className="bg-background hover:bg-transparent">
-            <TableCell colSpan={4} className="py-6 text-center text-muted-foreground text-sm">
+            <TableCell colSpan={3} className="py-6 text-center text-muted-foreground text-sm">
               No models — the daemon reported none for this agent. The same catalog is{" "}
               <span className="font-mono text-xs">ariadne models ls</span>.
             </TableCell>
@@ -132,9 +130,6 @@ function ModelRow({ model }: { model: ModelDto }) {
       */}
       <TableCell className="whitespace-normal">
         <span className="break-all font-mono text-xs">{model.id}</span>
-      </TableCell>
-      <TableCell>
-        <Badge variant={model.enabled ? "secondary" : "outline"}>{model.tier}</Badge>
       </TableCell>
       {/*
         `wrap-anywhere` for the same reason, on the other end of it: a

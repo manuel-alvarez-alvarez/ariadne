@@ -512,7 +512,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the agents and models a slot can run on. Each entry gives:\n- a description and a `tier`, frontier to fast, or `unknown` with no bands or shapes\n- `cost` and `speed` 1-5, low to high, slow to fast\n- `best_for` and `avoid_for` shapes\n- `efforts`, each an id and what it buys, one `default`"
+        description = "List the agents and models a slot can run on. Each entry gives:\n- its `id`, `<agent>:<model>`, and the description its agent gave\n- `efforts`, each an id and what it buys, one `default`"
     )]
     async fn list_models(
         &self,
@@ -844,8 +844,8 @@ mod tests {
     #[test]
     fn the_catalog_an_agent_sees_holds_only_the_models_it_can_be_staffed_on() {
         let catalog = vec![
-            serde_json::json!({"id": "claude-code-acp:a", "agent_id": "claude-code-acp", "enabled": true}),
-            serde_json::json!({"id": "claude-code-acp:b", "agent_id": "claude-code-acp", "enabled": false}),
+            serde_json::json!({"id": "claude-agent-acp:a", "agent_id": "claude-agent-acp", "enabled": true}),
+            serde_json::json!({"id": "claude-agent-acp:b", "agent_id": "claude-agent-acp", "enabled": false}),
             serde_json::json!({"id": "codex-acp:c", "agent_id": "codex-acp", "enabled": true}),
         ];
         let ids = |models: Vec<serde_json::Value>| -> Vec<String> {
@@ -857,11 +857,11 @@ mod tests {
 
         assert_eq!(
             ids(of_agent(catalog.clone(), None)),
-            ["claude-code-acp:a", "codex-acp:c"]
+            ["claude-agent-acp:a", "codex-acp:c"]
         );
         assert_eq!(
-            ids(of_agent(catalog.clone(), Some("claude-code-acp".into()))),
-            ["claude-code-acp:a"],
+            ids(of_agent(catalog.clone(), Some("claude-agent-acp".into()))),
+            ["claude-agent-acp:a"],
             "and narrowing to an agent does not bring back what is off"
         );
 
@@ -1390,7 +1390,7 @@ mod tests {
                 }],
                 reviewers: vec![AgentReq {
                     skills: vec!["code-review".into()],
-                    model: "claude-code-acp:claude-haiku-4-5".into(),
+                    model: "claude-agent-acp:claude-haiku-4-5".into(),
                     effort: Some("low".into()),
                     brief: None,
                 }],
@@ -1421,7 +1421,7 @@ mod tests {
                 {
                     "seat": "reviewer",
                     "skills": ["code-review"],
-                    "model": "claude-code-acp:claude-haiku-4-5",
+                    "model": "claude-agent-acp:claude-haiku-4-5",
                     "effort": "low",
                     "brief": null,
                 },
@@ -1509,22 +1509,19 @@ mod tests {
     async fn the_catalog_reaches_the_orchestrator_with_the_efforts_on_it() {
         const CATALOG: &str = r#"[
             {"id": "codex-acp:gpt-5.6-sol", "agent_id": "codex-acp",
-             "description": "frontier", "tier": "frontier", "cost": 4, "speed": 2,
-             "best_for": ["cross-subsystem design"], "avoid_for": ["small fixes"],
+             "description": "frontier",
              "efforts": [
                {"id": "low", "description": "lighter reasoning", "default": false},
                {"id": "high", "description": "greater depth", "default": true},
                {"id": "xhigh", "description": "deeper still", "default": false}
              ]},
-            {"id": "claude-code-acp:claude-haiku-4-5", "agent_id": "claude-code-acp",
-             "description": "cheap", "tier": "fast", "cost": 2, "speed": 5,
-             "best_for": ["inline edits"], "avoid_for": ["cross-subsystem design"],
-             "efforts": []}
+            {"id": "claude-agent-acp:claude-haiku-4-5", "agent_id": "claude-agent-acp",
+             "description": "fast", "efforts": []}
         ]"#;
         for (filter, ids) in [
             (
                 None,
-                vec!["codex-acp:gpt-5.6-sol", "claude-code-acp:claude-haiku-4-5"],
+                vec!["codex-acp:gpt-5.6-sol", "claude-agent-acp:claude-haiku-4-5"],
             ),
             (Some("codex-acp"), vec!["codex-acp:gpt-5.6-sol"]),
             (Some("opencode-acp"), vec![]),
@@ -1555,12 +1552,7 @@ mod tests {
                 "filtered by {filter:?}"
             );
             if filter.is_none() {
-                assert_eq!(models[0]["tier"], serde_json::json!("frontier"));
-                assert_eq!(models[0]["cost"], serde_json::json!(4));
-                assert_eq!(
-                    models[0]["best_for"],
-                    serde_json::json!(["cross-subsystem design"])
-                );
+                assert_eq!(models[0]["description"], serde_json::json!("frontier"));
                 assert_eq!(
                     models[0]["efforts"]
                         .as_array()

@@ -280,7 +280,7 @@ mod tests {
         // Which efforts a model takes is the daemon's to know: anything that
         // is an effort at all travels, and is refused where the model is.
         let unknown =
-            parse_reviewer("Reviewer=claude-code-acp:claude-opus-5@ultra").expect("an effort");
+            parse_reviewer("Reviewer=claude-agent-acp:claude-opus-5@ultra").expect("an effort");
         assert_eq!(unknown.effort.as_deref(), Some("ultra"));
     }
 
@@ -354,7 +354,7 @@ mod tests {
 
         let req = update_request(Edits {
             reviewers: vec![
-                parse_reviewer("code-review=claude-code-acp:claude-sonnet-5").expect("a model"),
+                parse_reviewer("code-review=claude-agent-acp:claude-sonnet-5").expect("a model"),
                 parse_reviewer("security-review=codex-acp:gpt-5.6-luna@high").expect("a model"),
             ],
             depends_on: vec!["01TASK".into()],
@@ -369,7 +369,7 @@ mod tests {
             Some(vec![
                 (
                     "code-review".to_string(),
-                    "claude-code-acp:claude-sonnet-5",
+                    "claude-agent-acp:claude-sonnet-5",
                     None
                 ),
                 (
@@ -448,12 +448,12 @@ mod tests {
         }
 
         let req = update_request(Edits {
-            model: Some("claude-code-acp:claude-opus-5".into()),
+            model: Some("claude-agent-acp:claude-opus-5".into()),
             effort: Some("xhigh".into()),
             ..Edits::default()
         })
         .expect("body");
-        assert_eq!(req.model.as_deref(), Some("claude-code-acp:claude-opus-5"));
+        assert_eq!(req.model.as_deref(), Some("claude-agent-acp:claude-opus-5"));
         assert_eq!(req.effort.as_deref(), Some("xhigh"));
     }
 

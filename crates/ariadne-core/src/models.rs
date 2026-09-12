@@ -175,8 +175,8 @@ mod tests {
         for (text, agent, model) in [
             ("codex-acp:o3", "codex-acp", "o3"),
             (
-                "claude-code-acp:claude-opus-5",
-                "claude-code-acp",
+                "claude-agent-acp:claude-opus-5",
+                "claude-agent-acp",
                 "claude-opus-5",
             ),
             (

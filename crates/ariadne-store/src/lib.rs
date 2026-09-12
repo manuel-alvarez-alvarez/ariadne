@@ -5,6 +5,7 @@
 //! [`Store::transition_task`], which validates against the core state machine
 //! and records the audit row in the same transaction.
 
+mod acp_catalogs;
 mod agents;
 mod change;
 pub mod defaults;

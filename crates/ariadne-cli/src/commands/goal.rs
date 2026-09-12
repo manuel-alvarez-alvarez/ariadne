@@ -48,7 +48,7 @@ const CREATE_EXAMPLES: &str = "\
 Examples:
   # a goal in one registered repository
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
-      --model claude-code-acp:claude-sonnet-5
+      --model claude-agent-acp:claude-sonnet-5
 
   # an orchestrator reasoned deeply
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
@@ -56,7 +56,7 @@ Examples:
 
   # a goal that works in two repositories
   ariadne goal create --title \"Split the API\" --repo ~/projects/api \\
-      --repo ~/projects/ui --model claude-code-acp:claude-sonnet-5
+      --repo ~/projects/ui --model claude-agent-acp:claude-sonnet-5
 ";
 
 #[derive(Subcommand)]

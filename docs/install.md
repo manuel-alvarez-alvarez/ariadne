@@ -22,11 +22,11 @@ Every agent runs through the [Agent Client Protocol][ACP] (ACP). Ariadne
 includes these registry entries. Install the command you want to use and make
 it available on the daemon's `PATH`.
 
-| Agent id | Command Ariadne starts |
-| --- | --- |
-| `claude-code-acp` | `claude-code-acp` |
-| `codex-acp` | `codex acp` |
-| `opencode-acp` | `opencode acp` |
+| Agent id | Command Ariadne starts | Where it comes from |
+| --- | --- | --- |
+| `claude-agent-acp` | `claude-agent-acp` | `npm install -g @agentclientprotocol/claude-agent-acp` |
+| `codex-acp` | `codex-acp` | `npm install -g @agentclientprotocol/codex-acp` |
+| `opencode-acp` | `opencode acp` | [OpenCode](https://opencode.ai) itself |
 
 Start the daemon, then check which agents and models it found:
 
@@ -67,9 +67,18 @@ shows the active flags. The next launch uses the new flags.
 ### ACP capability contract
 
 An agent must communicate over standard input and output, negotiate ACP
-version 1, support `session/new` and `session/prompt`, and offer at least one
-`model` session configuration option. Ariadne rejects an agent that lacks any
-of those requirements.
+version 1, support `session/new`, and offer at least one `model` session
+configuration option. Ariadne rejects an agent that lacks any of those
+requirements. Discovery sends no prompt, so probing an agent costs no model
+turn.
+
+Every daemon start asks each agent to `initialize`. The models and efforts
+come off a `session/new`, which Ariadne opens only when an agent reports a
+version it has not read yet, and closes again. The database keeps the result
+under that version, so later starts open no session at all. An agent that
+reports no version is read on every start. After you configure a new model
+without upgrading the agent, for example by pulling a local one, re-read
+every catalog with `POST /v1/acp-agents/refresh`.
 
 An agent may omit `thought_level`; Ariadne can run it, but the model has no
 selectable effort. `session/list` enables session discovery and adoption.

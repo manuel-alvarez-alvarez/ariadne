@@ -25,8 +25,8 @@ id = "my-agent"                    # stable model-id prefix
 command = ["my-agent", "acp"]      # program followed by its arguments
 ```
 
-The built-in registry contains the ids `claude-code-acp`, `codex-acp`, and
-`opencode-acp`. They launch the commands `claude-code-acp`, `codex acp`, and
+The built-in registry contains the ids `claude-agent-acp`, `codex-acp`, and
+`opencode-acp`. They launch the commands `claude-agent-acp`, `codex-acp`, and
 `opencode acp`, respectively. The daemon probes every entry at startup. See
 [Installing Ariadne](install.md) to add an agent, and
 [Permission modes](permissions.md) to choose how it handles tool requests.

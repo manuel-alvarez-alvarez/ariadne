@@ -154,6 +154,26 @@ impl AgentConfig {
     }
 }
 
+/// The catalog discovery last read from one registry agent, and the command
+/// and version it was read from.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AcpCatalog {
+    /// The id of the agent in the ACP registry.
+    pub agent_id: String,
+    /// JSON array of argv strings.
+    pub command: String,
+    pub version: String,
+    /// JSON, opaque to the store: discovery writes it and reads it back.
+    pub catalog: String,
+    pub read_at: String,
+}
+
+impl AcpCatalog {
+    pub fn command(&self) -> Vec<String> {
+        serde_json::from_str(&self.command).unwrap_or_default()
+    }
+}
+
 /// A git repository registered once, globally, and named by id from there on.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Repository {

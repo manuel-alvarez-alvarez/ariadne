@@ -428,38 +428,6 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Roughly what a model is, as a picker and an orchestrator compare models: the
-/// capability class it belongs to, across every agent at once.
-///
-/// One ladder for the whole catalog, so two agents' entries that sit at the
-/// same rung really are alternatives for the same work. `Unknown` is what an
-/// entry nothing has been written about says — every model discovery finds at
-/// runtime — and it is a genuine answer rather than a missing one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum ModelTier {
-    /// The deepest reasoning there is, at the price of it.
-    Frontier,
-    /// Heavy reasoning, a rung below the current frontier.
-    Strong,
-    /// The everyday working model: capable, and affordable enough to run all
-    /// day.
-    Balanced,
-    /// Built for latency and volume rather than for depth.
-    Fast,
-    /// Nothing here knows.
-    Unknown,
-}
-
-wire_enum! { ModelTier, "model tier", [
-    Frontier = "frontier",
-    Strong = "strong",
-    Balanced = "balanced",
-    Fast = "fast",
-    Unknown = "unknown",
-]}
-
 /// Goal lifecycle status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

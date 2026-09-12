@@ -278,8 +278,11 @@ def respond(request):
         raise Failure(-32601, "method not supported: %s" % method)
     sid = script.get("session_id", "stub-session")
     if method == "initialize":
-        return {"protocolVersion": script.get("protocol_version", 1),
-                "agentCapabilities": script.get("capabilities", {})}
+        initialized = {"protocolVersion": script.get("protocol_version", 1),
+                       "agentCapabilities": script.get("capabilities", {})}
+        if "agent_info" in script:
+            initialized["agentInfo"] = script["agent_info"]
+        return initialized
     if method == "session/new":
         return {"sessionId": sid, "configOptions": options}
     if method in ("session/load", "session/resume"):
@@ -287,6 +290,8 @@ def respond(request):
         if wanted in script.get("stored_sessions", []):
             return {"configOptions": options}
         raise Failure(-32001, "unknown session %s" % wanted)
+    if method == "session/close":
+        return {}
     if method == "session/list":
         return {"sessions": script.get("session_list", [])}
     if method == "session/set_config_option":
@@ -326,6 +331,8 @@ while True:
     message = read()
     if "method" not in message or "id" not in message:
         continue  # a response to our own request, or a notification
+    if message["method"] in script.get("silent_methods", []):
+        continue  # an agent that stops answering, for the client's timeout
     try:
         send({"jsonrpc": "2.0", "id": message["id"], "result": respond(message)})
     except Failure as failure:
