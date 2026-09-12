@@ -16,6 +16,7 @@ tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/memories.rs
   - crates/ariadne-daemon/tests/acp_console.rs
+  - crates/ariadne-daemon/tests/acp_terminal.rs
 ---
 
 # HTTP API, event stream and usage
@@ -56,10 +57,13 @@ and the ACP runtime that reports the agent events (021).
    attention raised and cleared, and a task branch's head moving (002).
 8. A session is read and driven over HTTP through its row, its kill and
    resume, and its console (`/v1/sessions/{id}/console`, `/console/input`,
-   `/console/stream`, `/console/cancel`, 008, 021). There is no endpoint
-   that types into, resizes or reads a terminal, and no endpoint an agent
-   reports events to: the daemon's own ACP runtime is the one reporter, and
-   it ingests in process.
+   `/console/stream`, `/console/cancel`, 008, 021). The one WebSocket,
+   `/console/terminal` (008), serves that same console drawn as terminal
+   bytes for an emulator, and reads the emulator's keys and size; its
+   messages are DTOs of `ariadne-api` like every other. No endpoint types
+   into, resizes or reads an agent's own terminal, and no endpoint is one an
+   agent reports events to: the daemon's own ACP runtime is the one
+   reporter, and it ingests in process.
 9. An ingested event is recorded whole, then read in the runtime's one
    vocabulary. `session_start`, `user_prompt_submit`, `pre_tool_use`,
    `post_tool_use` and `permission.replied` mark the session running; `stop`
@@ -226,6 +230,7 @@ and the ACP runtime that reports the agent events (021).
 - Every endpoint is in the OpenAPI document
   (`logs.rs::both_endpoints_are_in_the_openapi_document`,
   `acp_console.rs::the_cancel_endpoint_is_in_the_openapi_document`,
+  `acp_terminal.rs::the_terminal_endpoint_is_in_the_openapi_document`,
   `doctor.rs::endpoint_is_in_the_openapi_document`,
   `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`).
 - ACP registry endpoints expose the cached result and refresh it on demand

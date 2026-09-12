@@ -33,6 +33,9 @@ unicode-width = { workspace = true }
 # `start_paused`: the console's turn clock is asserted at a minute without
 # waiting one out.
 tokio = { workspace = true, features = ["test-util"] }
+# A terminal emulator: what the ANSI backend's bytes draw, read back as a
+# screen and compared with what the test backend draws.
+vt100 = { workspace = true }
 
 [lints]
 workspace = true

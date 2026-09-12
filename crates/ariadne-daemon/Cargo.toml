@@ -16,11 +16,15 @@ ariadne-store = { workspace = true }
 # For the shared home/socket resolution: the daemon and its clients must not
 # drift on where the socket is.
 ariadne-client = { workspace = true }
+# The session console the daemon hosts in process for a terminal at the far
+# end of a WebSocket, and the key events it is driven by.
+ariadne-console = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+crossterm = { workspace = true }
 futures-util = { workspace = true }
 notify = { workspace = true }
 rustix = { workspace = true }
@@ -49,7 +53,11 @@ http-body-util = { workspace = true }
 # only ever stamped "now", and an idle threshold is many minutes away.
 sqlx = { workspace = true }
 tempfile = "3"
+# The WebSocket client the terminal console tests connect with, and the
+# terminal emulator they read its bytes back through.
+tokio-tungstenite = { workspace = true }
 tower = { workspace = true }
+vt100 = { workspace = true }
 
 [lints]
 workspace = true

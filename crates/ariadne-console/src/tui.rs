@@ -1417,9 +1417,13 @@ where
 
     // The stream opens with the transcript snapshot. Take it before any key,
     // so the first thing drawn is the conversation as it stands and a key
-    // pressed at once answers a question that is already on the screen.
-    if let Some(frame) = source.next().await {
-        console.frame(frame?);
+    // pressed at once answers a question that is already on the screen. A
+    // session that had already ended is over here too: the caller's close
+    // puts the transcript in the scrollback, and nothing more will come.
+    if let Some(frame) = source.next().await
+        && console.frame(frame?)
+    {
+        return Ok(());
     }
 
     loop {
@@ -3168,6 +3172,42 @@ mod tests {
         assert!(
             !shown.contains("reconnecting") && shown.contains("running"),
             "{shown}"
+        );
+    }
+
+    /// A snapshot that already holds the session's end is the whole of the
+    /// stream: the loop leaves on it without a key, and the transcript is
+    /// on the screen.
+    #[tokio::test]
+    async fn a_snapshot_that_holds_the_session_end_leaves_the_console() {
+        let mut stub = Stub::new(vec![
+            event("agent_message", "over", json!({"text": "all done"})),
+            ended(),
+        ]);
+        let source = stub.source();
+        let mut terminal = terminal();
+        let mut console = Console::new(header());
+        let keys = stream::pending();
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            drive(
+                &mut terminal,
+                source,
+                &mut stub,
+                Box::pin(keys),
+                &mut console,
+            ),
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "the loop must leave without a key");
+        outcome.unwrap().unwrap();
+        console.close(&mut terminal).unwrap();
+        assert!(
+            screen(&terminal).contains("all done"),
+            "{}",
+            screen(&terminal)
         );
     }
 }

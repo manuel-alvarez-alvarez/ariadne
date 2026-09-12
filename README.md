@@ -95,7 +95,8 @@ markdown as it streams, a picker for permissions, Escape to cancel a turn.
 <td width="50%" valign="top">
 <h4>⚡ Nothing polls</h4>
 The daemon streams: events, agent consoles and its own log, over a REST API with OpenAPI at
-<code>/api-docs/openapi.json</code> and SSE at <code>/v1/events/stream</code>.
+<code>/api-docs/openapi.json</code> and SSE at <code>/v1/events/stream</code>. A session's
+console is also served as terminal bytes over a WebSocket, for a terminal emulator.
 </td>
 </tr>
 </table>

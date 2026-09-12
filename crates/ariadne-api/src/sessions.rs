@@ -182,3 +182,73 @@ pub struct SessionListQuery {
 pub struct ConsoleInputRequest {
     pub text: String,
 }
+
+/// What a client sends over `GET /v1/sessions/{id}/console/terminal`, the
+/// session's console as a terminal: one of these per JSON text frame.
+///
+/// The daemon draws the console into the terminal the client emulates, so
+/// the first message is the terminal's size, and every change of it is
+/// another. A key and a paste are what the terminal read, as the console
+/// takes them; the daemon reads nothing else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TerminalClientMessage {
+    /// The size of the terminal the bytes are drawn on, in cells. Sent
+    /// first, before the daemon draws anything, and on every change.
+    Resize { cols: u16, rows: u16 },
+    /// One key press: what crossterm's `KeyEvent` holds, one to one.
+    Key {
+        code: TerminalKey,
+        #[serde(default)]
+        modifiers: Vec<TerminalModifier>,
+    },
+    /// Text pasted whole, line breaks and all.
+    Paste { text: String },
+}
+
+/// The key a [`TerminalClientMessage::Key`] names: crossterm's `KeyCode`,
+/// as far as the console reads it. A printable character is
+/// `{"char": "a"}`, a function key `{"f": 5}`, and every other key its name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalKey {
+    Char(char),
+    F(u8),
+    Enter,
+    Backspace,
+    Tab,
+    BackTab,
+    Esc,
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Delete,
+    Insert,
+}
+
+/// A modifier held with a key: crossterm's `KeyModifiers`, one flag each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalModifier {
+    Shift,
+    Control,
+    Alt,
+    Super,
+    Hyper,
+    Meta,
+}
+
+/// What the daemon sends over `GET /v1/sessions/{id}/console/terminal` as a
+/// JSON text frame, beside the binary frames of terminal bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TerminalServerMessage {
+    /// The session's status: once as the socket opens, and again as the
+    /// console ends, right before the socket closes.
+    Status { status: SessionStatus },
+}

@@ -21,6 +21,7 @@ mod skills;
 mod sse;
 mod stream;
 mod tasks;
+mod terminal;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -130,6 +131,7 @@ impl AppState {
         sessions::list, sessions::list_outside, sessions::adopt_outside,
         sessions::get, sessions::kill, sessions::resume,
         console::snapshot, console::stream, console::input, console::cancel,
+        terminal::terminal,
         events::list, stream::stream,
         models::list,
         models::set_enabled,
@@ -243,6 +245,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/console/stream", get(console::stream))
         .route("/v1/sessions/{id}/console/input", post(console::input))
         .route("/v1/sessions/{id}/console/cancel", post(console::cancel))
+        .route(
+            "/v1/sessions/{id}/console/terminal",
+            get(terminal::terminal),
+        )
         // models
         .route("/v1/models", get(models::list))
         .route("/v1/models/enabled", put(models::set_enabled))

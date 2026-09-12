@@ -21,7 +21,14 @@ ariadne-console = { path = "crates/ariadne-console" }
 
 # async runtime / http
 tokio = { version = "1", features = ["full"] }
-axum = "0.8"
+# `ws`: the daemon serves a session's console as terminal bytes over a
+# WebSocket (`/v1/sessions/{id}/console/terminal`).
+axum = { version = "0.8", features = ["ws"] }
+# The WebSocket client the daemon tests connect to that console with.
+tokio-tungstenite = "0.29"
+# A terminal emulator for the tests: what the console's bytes draw, read
+# back as a screen of text.
+vt100 = "0.16"
 hyper = { version = "1", features = ["http1"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 hyperlocal = "0.9"

@@ -154,7 +154,15 @@ pub async fn input(
     Path(id): Path<String>,
     Json(req): Json<ConsoleInputRequest>,
 ) -> ApiResult<StatusCode> {
-    let session = state.store.get_session(&id).await?;
+    take_input(&state, &id, req.text).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// What `POST /console/input` does, for every console that types into a
+/// session: the HTTP handler, and the terminal console the daemon hosts
+/// in process (`super::terminal`).
+pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiResult<()> {
+    let session = state.store.get_session(id).await?;
     if !session.status().is_live() {
         return Err(ApiError::conflict(format!(
             "session {id} is {} and cannot take input",
@@ -164,11 +172,11 @@ pub async fn input(
     state
         .launcher
         .acp
-        .send_input(&id, req.text)
+        .send_input(id, text)
         .map_err(|e| ApiError::conflict(e.to_string()))?;
-    state.store.clear_session_attention(&id).await?;
-    state.notify_scheduler_session(&id);
-    Ok(StatusCode::NO_CONTENT)
+    state.store.clear_session_attention(id).await?;
+    state.notify_scheduler_session(id);
+    Ok(())
 }
 
 /// Cancel the turn a session is running.
@@ -187,7 +195,14 @@ pub async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    let session = state.store.get_session(&id).await?;
+    cancel_turn(&state, &id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// What `POST /console/cancel` does, for the HTTP handler and the terminal
+/// console alike.
+pub(super) async fn cancel_turn(state: &AppState, id: &str) -> ApiResult<()> {
+    let session = state.store.get_session(id).await?;
     if !session.status().is_live() {
         return Err(ApiError::conflict(format!(
             "session {id} is {} and has no turn to cancel",
@@ -197,8 +212,8 @@ pub async fn cancel(
     state
         .launcher
         .acp
-        .cancel(&id)
+        .cancel(id)
         .await
         .map_err(|e| ApiError::conflict(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(())
 }

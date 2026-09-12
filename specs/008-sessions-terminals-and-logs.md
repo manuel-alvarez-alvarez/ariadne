@@ -7,12 +7,14 @@ commits: [e4816cf6, 39937143, a69b953f]
 tests:
   - crates/ariadne-daemon/tests/resume.rs
   - crates/ariadne-daemon/tests/acp_console.rs
+  - crates/ariadne-daemon/tests/acp_terminal.rs
   - crates/ariadne-daemon/tests/acp_runtime.rs
   - crates/ariadne-daemon/tests/events.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/console.rs
   - crates/ariadne-cli/src/commands/console/tui.rs
   - crates/ariadne-cli/src/commands/transcript.rs
+  - crates/ariadne-console/src/ansi.rs
   - crates/ariadne-console/src/markdown.rs
   - crates/ariadne-console/src/transcript.rs
   - crates/ariadne-console/src/tui.rs
@@ -29,7 +31,8 @@ to it: through the session's console.
 
 In: the session row and its statuses, launches and relaunches of one row,
 kill and resume, the console — its transcript, its live stream and posted
-input — and how the CLI reaches the console.
+input — how the CLI reaches the console, and the console served as a
+terminal over a WebSocket for the desktop app.
 
 Out: the ACP runtime itself — the child process, the protocol conversation,
 permission modes and the event vocabulary (021); sessions started outside
@@ -96,7 +99,40 @@ goal id to a seat (014).
     running (021) and answers `204`. A session that is not live, one whose
     agent process is gone, and one between turns have nothing to cancel, and
     answer `409`.
-21. The CLI reaches a session through its console. `ariadne attach` renders
+21. A session's console is also served as a terminal
+    (`GET /v1/sessions/{id}/console/terminal`), for a client that is a
+    terminal emulator rather than a terminal: the desktop app's xterm.js.
+    The request upgrades to a WebSocket; an id that names no session
+    answers `404` before the upgrade. The daemon runs the console of rules
+    22 to 29 itself, in process, on a ratatui backend of its own that writes
+    the escape sequences a terminal reads and answers the cursor position
+    and the size from what it wrote and what the client said, so no query
+    ever goes to a terminal; the scrollback is the emulator's. The protocol
+    is defined once, in `ariadne-api` (`TerminalClientMessage`,
+    `TerminalServerMessage`). Client to server, as JSON text frames: a
+    `resize` with `cols` and `rows`, sent first — nothing is drawn before it
+    — and on every change, a size of no rows or no columns counting as one;
+    a `key` with a `code` (a printable character as `{"char": "a"}`, a
+    function key as `{"f": 5}`, and `enter`, `backspace`, `tab`, `back_tab`,
+    `esc`, `left`, `right`, `up`, `down`, `home`, `end`, `page_up`,
+    `page_down`, `delete`, `insert` by name) and its `modifiers` (`shift`,
+    `control`, `alt`, `super`, `hyper`, `meta`), one to one onto crossterm's
+    `KeyEvent`; and a `paste` with its `text`. Server to client: binary
+    frames of the terminal bytes that draw the console, and a text frame
+    `{"type": "status", "status": ...}` with the session's status as the
+    socket opens and as the console ends. The console's events are the
+    snapshot and the stored and live events of rules 13 and 14, from the
+    same channels; a receiver that fell behind says the stream dropped and
+    subscribes again from a fresh snapshot, as the CLI does. What is typed
+    and Escape take the paths of rules 16 to 20, so a permission answer, a
+    queued prompt and the attention flag behave the same whichever console
+    it was. The console runs while the socket is open: the client closing
+    it ends the console and frees the session's receivers, and the session
+    stays alive; the session ending sends the last bytes, the final status
+    and closes the socket, and a socket opened after the session ended
+    draws the transcript and closes on it the same way; Ctrl-C twice and
+    Ctrl-D over the socket close it too, and the session stays alive.
+22. The CLI reaches a session through its console. `ariadne attach` renders
     the transcript, follows the stream and posts what is typed as input.
     `ariadne session logs` and `ariadne task logs` print the snapshot as typed
     transcript blocks. Paired tool and permission events form one block;
@@ -104,7 +140,7 @@ goal id to a seat (014).
     `--since` and `--kind` filter the snapshot. With `--follow`, chunks stream
     under one item header and `--kind` also filters later events. JSON output
     keeps each event object unchanged.
-22. `ariadne attach` on a terminal is an inline pane, never the alternate
+23. `ariadne attach` on a terminal is an inline pane, never the alternate
     screen. A finished block goes into the terminal's own buffer above the
     pane, so it stays in the scrollback; the pane holds the block still being
     written, a status line and the input box. The status line names the seat,
@@ -122,7 +158,7 @@ goal id to a seat (014).
     within crossterm's timeout gets the same pane opened from the bottom row
     instead, on a backend that answers every later cursor query itself. There
     is no alternate-screen fallback.
-23. The pane renders each block as it arrives: a prompt as `> text`, holding
+24. The pane renders each block as it arrives: a prompt as `> text`, holding
     the event's `text` alone — never the whole `prompt` with the system
     prompt ahead of it (021), nor the summary, one line cut short; an event
     carrying no `text` says the text was not recorded rather than draw the
@@ -132,7 +168,7 @@ goal id to a seat (014).
     is markdown chunk by chunk under one marker, a thought dimmed and folded,
     a tool call the block of the next rule, a plan a checklist, and a
     permission question a picker.
-24. A tool call reads as a coding agent's. Its head line is a status glyph —
+25. A tool call reads as a coding agent's. Its head line is a status glyph —
     `○` pending, `●` in progress, `✓` completed, `✗` failed — then a glyph
     for the ACP `kind` (`$` execute, `≡` read, `✎` edit, `⌫` delete, `→`
     move, `⌕` search, `↓` fetch, `∴` think, `⇄` switch mode, `•` otherwise)
@@ -156,13 +192,13 @@ goal id to a seat (014).
     header from the entry's `path`. A permission question draws the call it asks about under
     the question — the same head line, then the rest of a command that has
     more than one line, or the diff — above its options.
-25. A chunk continues the block last written, and starts a block of its own
+26. A chunk continues the block last written, and starts a block of its own
     where anything else came between: a turn that speaks around a tool call
     reads as two blocks with the call between them. The whole text the daemon
     stores at the end of that turn (021) is every chunk of it joined, so it
     closes the blocks the chunks opened and repeats none of them. A turn that
     streamed nothing renders that stored text as its one block.
-26. Enter posts the input box to console input, Shift+Enter and Alt+Enter add
+27. Enter posts the input box to console input, Shift+Enter and Alt+Enter add
     a line to it, and each prompt typed shows at once and is replaced by its
     own `user_prompt_submit`, in the order they were posted. An older
     daemon's (021) prompt event carries neither `text` nor `source`: it takes
@@ -180,14 +216,14 @@ goal id to a seat (014).
     permission question the arrows and the number keys move the pick and
     Enter posts the option's id. A post the daemon refuses is said on the
     transcript, and the console stays open.
-27. Escape during a running turn posts to console cancel. Ctrl-C twice, or
+28. Escape during a running turn posts to console cancel. Ctrl-C twice, or
     Ctrl-D, leaves the console, and the session stays alive. Every way out
     puts the terminal back: raw mode off, bracketed paste off and the cursor
     shown.
-28. A dropped stream says "reconnecting" and is dialled again on the backoff
+29. A dropped stream says "reconnecting" and is dialled again on the backoff
     every other follow uses. The fresh snapshot redraws what was open and does
     not repeat what is already in the scrollback.
-29. With stdin or stdout redirected there is no pane. `ariadne attach` is then
+30. With stdin or stdout redirected there is no pane. `ariadne attach` is then
     the plain line protocol: one `kind · summary` per event, numbered options
     for a permission question, and one prompt per line read (014).
 
@@ -242,6 +278,36 @@ goal id to a seat (014).
   (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), is
   refused between turns (`::cancel_with_no_turn_running_is_refused`), and is
   in the OpenAPI document (`::the_cancel_endpoint_is_in_the_openapi_document`).
+- The terminal socket serves bytes that draw the transcript and the status
+  line at the size the client sent
+  (`acp_terminal.rs::the_terminal_draws_the_transcript_and_the_status_line_at_the_client_size`),
+  typed keys and Enter reach the agent as a prompt
+  (`::typed_keys_and_enter_reach_the_stub_agent_as_a_prompt`), a key answers
+  a pending permission question
+  (`::a_key_answers_a_pending_permission_question`), closing the socket
+  leaves the session alive and the session ending closes the socket
+  (`::closing_the_socket_leaves_the_session_alive_and_the_session_ending_closes_it`),
+  a socket opened after the session ended gets the transcript and closes
+  (`::a_socket_opened_after_the_session_ended_gets_the_transcript_and_closes`;
+  the loop leaves on such a snapshot:
+  `ariadne-console/tui.rs::a_snapshot_that_holds_the_session_end_leaves_the_console`),
+  Ctrl-C twice and Ctrl-D close it with the session alive
+  (`::ctrl_c_twice_or_ctrl_d_closes_the_socket_and_the_session_stays_alive`),
+  a resize redraws at the new size (`::a_resize_redraws_at_the_new_size`),
+  an unknown session is refused before the upgrade
+  (`::a_terminal_for_an_unknown_session_is_refused_before_the_upgrade`), and
+  the endpoint is in the OpenAPI document
+  (`::the_terminal_endpoint_is_in_the_openapi_document`).
+- The ANSI backend draws what the test backend draws
+  (`ariadne-console/ansi.rs::the_bytes_draw_what_the_test_backend_draws`),
+  keeps a bold cell bold when the dim beside it ends
+  (`::a_cell_keeps_its_bold_when_the_dim_beside_it_ends`),
+  knows the cursor and the size without a query
+  (`::the_cursor_and_the_size_are_known_without_a_query`), pushes inserted
+  lines into the emulator's scrollback
+  (`::an_inline_viewport_pushes_inserted_lines_into_the_scrollback`), and
+  redraws the viewport at a new size
+  (`::a_resize_redraws_the_viewport_at_the_new_size`).
 - The CLI console renders a transcript and delivers an input line
   (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`),
   and renders a permission question and delivers the selected answer
@@ -390,11 +456,13 @@ goal id to a seat (014).
 `crates/ariadne-daemon/src/launcher.rs`,
 `crates/ariadne-daemon/src/http/sessions.rs`,
 `crates/ariadne-daemon/src/http/console.rs`,
+`crates/ariadne-daemon/src/http/terminal.rs`,
 `crates/ariadne-daemon/src/acp.rs`,
 `crates/ariadne-cli/src/commands/attach.rs`,
 `crates/ariadne-cli/src/commands/console.rs`,
 `crates/ariadne-cli/src/commands/console/tui.rs`,
 `crates/ariadne-cli/src/commands/transcript.rs`,
+`crates/ariadne-console/src/ansi.rs`,
 `crates/ariadne-console/src/markdown.rs`,
 `crates/ariadne-console/src/transcript.rs`,
 `crates/ariadne-console/src/tui.rs`.
