@@ -193,7 +193,7 @@ impl TranscriptItem {
         }
     }
 
-    fn meta_mut(&mut self) -> &mut ItemMeta {
+    pub fn meta_mut(&mut self) -> &mut ItemMeta {
         match self {
             Self::UserPrompt { meta, .. }
             | Self::AgentText { meta, .. }
@@ -285,62 +285,70 @@ impl From<&AgentEventDto> for TranscriptItem {
 pub fn fold(events: &[AgentEventDto]) -> Vec<TranscriptItem> {
     let mut items = Vec::new();
     for event in events {
-        if event.kind == "permission.replied"
-            && let Some(TranscriptItem::PermissionQuestion {
-                meta,
-                options,
-                answer,
-                ..
-            }) = items.iter_mut().rev().find(|item| {
-                matches!(
-                    item,
-                    TranscriptItem::PermissionQuestion { answer: None, .. }
-                )
-            })
-        {
-            *answer = Some(permission_answer(&event.payload, options));
-            meta.kinds.push(event.kind.clone());
-            continue;
-        }
-
-        let mut item = TranscriptItem::from(event);
-        if event.kind == "post_tool_use"
-            && let TranscriptItem::ToolCall { id, name, .. } = &item
-            && let Some(previous) = items.iter_mut().rev().find(|previous| {
-                matches!(previous,
-                    TranscriptItem::ToolCall {
-                        id: old_id,
-                        name: old_name,
-                        status,
-                        ..
-                    } if !tool_is_terminal(status.as_deref())
-                        && ((!id.is_empty() && old_id == id)
-                            || (id.is_empty() && old_name == name)))
-            })
-        {
-            let created_at = previous.meta().created_at.clone();
-            let mut kinds = previous.meta().kinds.clone();
-            kinds.push(event.kind.clone());
-            *previous = item;
-            previous.meta_mut().created_at = created_at;
-            previous.meta_mut().kinds = kinds;
-            continue;
-        }
-        if event.kind == "permission.replied" {
-            item = TranscriptItem::SystemNote {
-                meta: ItemMeta::from_event(event),
-                text: format!(
-                    "permission answered: {}",
-                    string_at(&event.payload, "/option_id").unwrap_or_else(|| "cancelled".into())
-                ),
-            };
-        }
-        items.push(item);
+        fold_into(&mut items, event);
     }
     items
 }
 
-fn tool_is_terminal(status: Option<&str>) -> bool {
+/// Fold one event into the blocks built so far.
+///
+/// [`fold`] is this over a whole snapshot; the inline console is this over a
+/// live stream, which is why the one event is a seam of its own.
+pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
+    if event.kind == "permission.replied"
+        && let Some(TranscriptItem::PermissionQuestion {
+            meta,
+            options,
+            answer,
+            ..
+        }) = items.iter_mut().rev().find(|item| {
+            matches!(
+                item,
+                TranscriptItem::PermissionQuestion { answer: None, .. }
+            )
+        })
+    {
+        *answer = Some(permission_answer(&event.payload, options));
+        meta.kinds.push(event.kind.clone());
+        return;
+    }
+
+    let mut item = TranscriptItem::from(event);
+    if event.kind == "post_tool_use"
+        && let TranscriptItem::ToolCall { id, name, .. } = &item
+        && let Some(previous) = items.iter_mut().rev().find(|previous| {
+            matches!(previous,
+                TranscriptItem::ToolCall {
+                    id: old_id,
+                    name: old_name,
+                    status,
+                    ..
+                } if !tool_is_terminal(status.as_deref())
+                    && ((!id.is_empty() && old_id == id)
+                        || (id.is_empty() && old_name == name)))
+        })
+    {
+        let created_at = previous.meta().created_at.clone();
+        let mut kinds = previous.meta().kinds.clone();
+        kinds.push(event.kind.clone());
+        *previous = item;
+        previous.meta_mut().created_at = created_at;
+        previous.meta_mut().kinds = kinds;
+        return;
+    }
+    if event.kind == "permission.replied" {
+        item = TranscriptItem::SystemNote {
+            meta: ItemMeta::from_event(event),
+            text: format!(
+                "permission answered: {}",
+                string_at(&event.payload, "/option_id").unwrap_or_else(|| "cancelled".into())
+            ),
+        };
+    }
+    items.push(item);
+}
+
+pub fn tool_is_terminal(status: Option<&str>) -> bool {
     matches!(status, Some("completed" | "failed"))
 }
 

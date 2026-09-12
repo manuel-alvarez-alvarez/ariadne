@@ -27,9 +27,11 @@ each task author works in its own git worktree.
 A session is the conversation an ACP agent holds for an orchestrator, author,
 or reviewer. `ariadne session ls` shows live sessions and `ariadne attention`
 shows those waiting for a person. Connect with `ariadne attach <id>` to read
-events and send a prompt; Ctrl-C disconnects your console but does not stop
-the agent. `ariadne session resume <session-id>` starts a new agent process
-for an ended conversation when its agent can restore it.
+events and send a prompt: in a terminal it is an inline pane with the
+transcript above and a status line and input box pinned under it. Escape
+cancels the running turn, and Ctrl-C twice disconnects your console without
+stopping the agent. `ariadne session resume <session-id>` starts a new agent
+process for an ended conversation when its agent can restore it.
 
 Permission requests can pause a session. In the CLI or desktop console, select
 one of the displayed options. Configure whether Ariadne approves, asks, or

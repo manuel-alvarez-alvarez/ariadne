@@ -17,6 +17,7 @@ tests:
   - crates/ariadne-cli/src/commands/doctor/checks.rs
   - crates/ariadne-cli/src/commands/doctor/agents.rs
   - crates/ariadne-cli/src/commands/events.rs
+  - crates/ariadne-cli/src/commands/console/tui.rs
   - crates/ariadne-cli/src/output/table.rs
   - crates/ariadne-cli/src/commands/attention.rs
   - crates/ariadne-cli/src/commands/agent.rs
@@ -160,9 +161,10 @@ same binary also serves (013).
 27. `ariadne memory ls|search|delete` reads and removes active repository
     memories. Each command names the repository by id or path (019).
 28. `ariadne attach`, `goal attach` and `task attach` open the console of the
-    session an id names, revived first when it is gone: it renders the event
-    transcript, submits each typed line as a prompt, and lists permission
-    choices for numeric answers. `session send` posts one line to that same
+    session an id names, revived first when it is gone. On a terminal it is an
+    inline pane (008); with stdin or stdout redirected it is the plain line
+    protocol — one `kind · summary` per event, numbered permission choices,
+    and one prompt per line read. `session send` posts one line to that same
     console input. `session logs` and `task logs` print readable transcript
     blocks with local timestamps, complete text, plans, tool results and
     permission answers. `--tail`, `--since` and repeatable `--kind` narrow the
@@ -202,6 +204,11 @@ same binary also serves (013).
   `::models_show_takes_a_model_in_the_spelling_dash_dash_model_takes`).
 - Completion offers the efforts an entry lists and no others
   (`complete.rs::an_entry_offers_the_efforts_it_lists_and_no_others`).
+- Only a terminal on both ends gets the inline console
+  (`console/tui.rs::only_a_terminal_on_both_ends_gets_the_inline_console`),
+  and the plain line protocol is unchanged behind it
+  (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
+  `::a_permission_question_renders_and_delivers_the_selected_answer`).
 - `ariadne events` prints the daemon's summary in an agent event's detail
   (`commands/events.rs::an_event_reads_as_time_kind_subject_and_detail`,
   `::an_agent_event_reads_the_same_recorded_as_it_does_live`).

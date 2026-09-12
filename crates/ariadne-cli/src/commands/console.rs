@@ -2,6 +2,15 @@
 //!
 //! An agent's recorded events are its transcript, and a line typed here
 //! becomes the next `session/prompt`.
+//!
+//! There are two consoles behind one command. A terminal on both ends gets
+//! the inline TUI in [`tui`]: a scrolling transcript with a pinned status
+//! line and input box under it. Anything else — a pipe, a file, a test
+//! harness — gets the plain line protocol of [`run_with_io`], one
+//! `kind · summary` per event, which is what a script reads.
+
+mod markdown;
+mod tui;
 
 use anyhow::Result;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -14,9 +23,15 @@ use super::follow::{self, Ending, Next};
 use super::transcript::{self, Filters};
 use crate::output::{Format, note, pager, print_json, view};
 
-/// Open a session's ACP console, rendering its recorded events and accepting
-/// one prompt on each input line.
+/// Open a session's ACP console.
+///
+/// A terminal on both ends gets the inline TUI. Anything else keeps the plain
+/// line protocol, so `ariadne attach <id> < answers.txt` and everything else a
+/// script does still reads and writes the same thing it always did.
 pub async fn attach(client: &Client, id: &str) -> Result<()> {
+    if tui::on_a_terminal() {
+        return tui::attach(client, id).await;
+    }
     run_with_io(
         client,
         id,

@@ -41,6 +41,18 @@ const SETTLE: Duration = Duration::from_millis(250);
 const RETRY: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(15);
 
+/// How long to wait before the next redial, given the wait before it — the
+/// backoff every reconnecting follow shares, the inline console included.
+///
+/// `None` is the first try after a drop: the daemon that is coming right back
+/// is picked up in a beat.
+pub fn backoff(previous: Option<Duration>) -> Duration {
+    match previous {
+        None => RETRY,
+        Some(wait) => (wait * 2).min(RETRY_MAX),
+    }
+}
+
 /// Whether a frame handler wants the next frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Next {
@@ -150,7 +162,7 @@ async fn read(
 /// notice by the screen having gone quiet. Ctrl-C is what ends it, and every
 /// wait here is interruptible.
 async fn reconnect(client: &Client, path: &str) -> Option<SseStream> {
-    let mut wait = RETRY;
+    let mut wait = backoff(None);
     loop {
         if interrupted(wait).await {
             return None;
@@ -159,7 +171,7 @@ async fn reconnect(client: &Client, path: &str) -> Option<SseStream> {
             Ok(stream) => return Some(stream),
             Err(e) => {
                 note(&format!("{} — reconnecting", e.human()));
-                wait = (wait * 2).min(RETRY_MAX);
+                wait = backoff(Some(wait));
             }
         }
     }

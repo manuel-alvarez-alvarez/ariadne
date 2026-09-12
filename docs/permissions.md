@@ -43,10 +43,12 @@ The accepted values are `auto`, `ask`, and `learn`. A task with no
 | `learn` | Ariadne asks the first time, then remembers an allowing answer for a matching request. | You want review at first use without repeating the same approval. |
 
 For `ask` and a new `learn` request, `ariadne attention` marks the session as
-waiting. Open it with `ariadne attach <session-id>`. The console displays the
-choices; enter its number, id, or name. The desktop console displays the same
-choices inline: select one, or press its number key while the input is empty.
-Either sends the selected answer to the same session.
+waiting. Open it with `ariadne attach <session-id>`. The console shows the
+choices as a picker: move with ↑ and ↓ or press a number key, and Enter
+answers. With stdin or stdout redirected the choices are a numbered list
+instead, and the number typed on a line answers it. The desktop console
+displays the same choices inline: select one, or press its number key while
+the input is empty. All of them send the selected answer to the same session.
 
 `auto` chooses an allowing option when one exists. If the request offers no
 options, it is cancelled. In `learn`, Ariadne remembers only an allowing

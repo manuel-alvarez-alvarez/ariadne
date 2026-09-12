@@ -22,8 +22,17 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
+# The three the inline console of `ariadne attach` is made of: the raw mode
+# and the key stream under it, the widgets drawn in its viewport, and the
+# parser that turns an agent's markdown into styled lines.
+crossterm = { workspace = true }
 dirs = { workspace = true }
+# `StreamExt::next`, for awaiting the console's key stream beside the daemon's
+# event stream in one `select!`.
+futures-util = { workspace = true }
 http = { workspace = true }
+pulldown-cmark = { workspace = true }
+ratatui = { workspace = true }
 rmcp = { version = "3", features = ["server", "transport-io", "macros"] }
 # For two questions std does not answer: the uid whose launchd domain the
 # daemon's service lives in (`gui/<uid>/dev.ariadne.daemon`), and how wide the
@@ -45,7 +54,6 @@ toml = { workspace = true }
 [dev-dependencies]
 # The console tests run a small API server for the CLI client.
 axum = { workspace = true }
-futures-util = { workspace = true }
 # Only to plant the migration row that makes a database a pre-squash one, for
 # the doctor check that reports it.
 sqlx = { workspace = true }

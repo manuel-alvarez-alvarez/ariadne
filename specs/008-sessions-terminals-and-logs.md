@@ -11,6 +11,8 @@ tests:
   - crates/ariadne-daemon/tests/events.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/console.rs
+  - crates/ariadne-cli/src/commands/console/tui.rs
+  - crates/ariadne-cli/src/commands/console/markdown.rs
 ---
 
 # Sessions and the console
@@ -91,14 +93,46 @@ goal id to a seat (014).
     running (021) and answers `204`. A session that is not live, one whose
     agent process is gone, and one between turns have nothing to cancel, and
     answer `409`.
-21. The CLI reaches a session through its console. `ariadne attach` prints
-    the transcript, follows the stream and posts each line typed as input.
+21. The CLI reaches a session through its console. `ariadne attach` renders
+    the transcript, follows the stream and posts what is typed as input.
     `ariadne session logs` and `ariadne task logs` print the snapshot as typed
     transcript blocks. Paired tool and permission events form one block;
     agent text stays whole, and diffs retain their line colouring. `--tail`,
     `--since` and `--kind` filter the snapshot. With `--follow`, chunks stream
     under one item header and `--kind` also filters later events. JSON output
     keeps each event object unchanged.
+22. `ariadne attach` on a terminal is an inline pane, never the alternate
+    screen. A finished block goes into the terminal's own buffer above the
+    pane, so it stays in the scrollback; the pane holds the block still being
+    written, a status line and the input box. The status line names the seat,
+    the model and the session's status, and turns a spinner with "thinking" or
+    "running &lt;tool&gt;" while a turn runs.
+23. The pane renders each block as it arrives: a prompt as `> text`, agent
+    text as markdown chunk by chunk under one marker, a thought dimmed and
+    folded, a tool call as one line with a status glyph, its name and its
+    input with its output folded under it, a diff coloured, a plan as a
+    checklist, and a permission question as a picker.
+24. A chunk continues the block last written, and starts a block of its own
+    where anything else came between: a turn that speaks around a tool call
+    reads as two blocks with the call between them. The whole text the daemon
+    stores at the end of that turn (021) is every chunk of it joined, so it
+    closes the blocks the chunks opened and repeats none of them. A turn that
+    streamed nothing renders that stored text as its one block.
+25. Enter posts the input box to console input, Shift+Enter and Alt+Enter add
+    a line to it, and each prompt typed shows at once and is replaced by its
+    own `user_prompt_submit`, in the order they were posted. On a permission
+    question the arrows and the number keys move the pick and Enter posts the
+    option's id. A post the daemon refuses is said on the transcript, and the
+    console stays open.
+26. Escape during a running turn posts to console cancel. Ctrl-C twice, or
+    Ctrl-D, leaves the console, and the session stays alive. Every way out
+    puts the terminal back: raw mode off and the cursor shown.
+27. A dropped stream says "reconnecting" and is dialled again on the backoff
+    every other follow uses. The fresh snapshot redraws what was open and does
+    not repeat what is already in the scrollback.
+28. With stdin or stdout redirected there is no pane. `ariadne attach` is then
+    the plain line protocol: one `kind · summary` per event, numbered options
+    for a permission question, and one prompt per line read (014).
 
 ## Acceptance criteria
 
@@ -154,7 +188,45 @@ goal id to a seat (014).
 - The CLI console renders a transcript and delivers an input line
   (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`),
   and renders a permission question and delivers the selected answer
-  (`::a_permission_question_renders_and_delivers_the_selected_answer`).
+  (`::a_permission_question_renders_and_delivers_the_selected_answer`). Both
+  are the plain protocol a redirected console keeps
+  (`console/tui.rs::only_a_terminal_on_both_ends_gets_the_inline_console`).
+- The inline pane renders the prompt, the agent's markdown, a folded tool
+  result and the status line
+  (`console/tui.rs::a_transcript_renders_the_prompt_the_markdown_the_tool_call_and_the_status_line`),
+  and markdown keeps a heading, a code block and a list apart
+  (`console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
+  `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
+- Streamed chunks append to the block already open
+  (`console/tui.rs::streamed_chunks_append_to_the_agent_block_that_is_already_open`),
+  and text after a tool call is a block of its own that the stored whole does
+  not repeat (`::agent_text_after_a_tool_call_is_a_block_of_its_own`).
+- A permission question is a picker the arrows move
+  (`console/tui.rs::a_permission_question_renders_as_a_picker_the_arrows_move`),
+  and Enter posts the option it is on
+  (`::enter_posts_the_permission_option_the_picker_is_on`).
+- A typed line is posted and its pending prompt shows at once
+  (`console/tui.rs::a_pending_prompt_is_on_the_screen_before_the_daemon_confirms_it`)
+  and is replaced by the confirmed one
+  (`::a_typed_line_is_posted_and_its_pending_prompt_is_replaced_by_the_confirmed_one`);
+  Shift+Enter and Alt+Enter add a line instead
+  (`::shift_enter_and_alt_enter_add_a_line_instead_of_sending`), and a line
+  longer than the box scrolls under the cursor
+  (`::a_line_longer_than_the_input_box_scrolls_under_the_cursor`). Two
+  prompts posted before the first is confirmed stay apart
+  (`::a_second_prompt_typed_before_the_first_is_confirmed_keeps_both_apart`).
+  A refused prompt is said on the transcript and does not close the console
+  (`::a_refused_prompt_is_said_on_the_transcript_and_does_not_close_the_console`).
+- Escape cancels the running turn
+  (`console/tui.rs::escape_during_a_running_turn_cancels_it`), one Ctrl-C
+  keeps the console and the second leaves it
+  (`::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`), and the
+  terminal is given back on every way out
+  (`::the_terminal_is_given_back_on_the_normal_path_on_an_error_and_on_ctrl_c`).
+- A dropped stream says so
+  (`console/tui.rs::a_dropped_stream_says_reconnecting_on_the_status_line`) and
+  its fresh snapshot is not printed twice
+  (`::a_reconnect_redraws_the_fresh_snapshot_without_repeating_the_scrollback`).
 - A readable transcript folds tool and permission pairs, keeps full text and
   renders plain output without colour
   (`transcript.rs::a_transcript_renders_one_full_block_per_item`,
@@ -182,4 +254,6 @@ goal id to a seat (014).
 `crates/ariadne-daemon/src/acp.rs`,
 `crates/ariadne-cli/src/commands/attach.rs`,
 `crates/ariadne-cli/src/commands/console.rs`,
+`crates/ariadne-cli/src/commands/console/tui.rs`,
+`crates/ariadne-cli/src/commands/console/markdown.rs`,
 `crates/ariadne-cli/src/commands/transcript.rs`.
