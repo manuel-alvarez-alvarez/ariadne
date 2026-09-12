@@ -553,7 +553,12 @@ fn live_event(
 impl EventSink {
     /// Publish a live-only event to the console streams. Nothing is stored,
     /// nothing wakes the scheduler, and nobody listening costs nothing.
-    fn emit_live(&self, kind: &str, payload: Value) {
+    async fn emit_live(&self, kind: &str, payload: Value) {
+        // The id is taken and the event sent under the store's event lock,
+        // the one a stored event holds from its id to its publication: a live
+        // event cannot pass a stored event with a lower id, nor the other way
+        // round, whichever driver of a relaunched session emits it.
+        let _order = self.runtime.inner.store.event_order().lock().await;
         let _ = self.console.send(live_event(
             &self.session_id,
             self.task_id.clone(),
@@ -686,7 +691,8 @@ impl RuntimeIncoming<'_> {
                         _ => turn.message.push_str(text),
                     }
                     self.sink
-                        .emit_live(kind, json!({"session_id": session_id, "text": text}));
+                        .emit_live(kind, json!({"session_id": session_id, "text": text}))
+                        .await;
                 }
             }
             Some("plan") => {
@@ -724,10 +730,12 @@ impl RuntimeIncoming<'_> {
                         .emit("post_tool_use", tool_payload(session_id, &merged))
                         .await;
                 } else {
-                    self.sink.emit_live(
-                        "tool_call_update",
-                        json!({"session_id": session_id, "tool_call_id": id, "acp": merged}),
-                    );
+                    self.sink
+                        .emit_live(
+                            "tool_call_update",
+                            json!({"session_id": session_id, "tool_call_id": id, "acp": merged}),
+                        )
+                        .await;
                 }
             }
             Some("compaction_update")
@@ -1271,6 +1279,46 @@ mod tests {
     /// Every permission request is approved: the allowing option wins
     /// wherever the agent put it, an unmarked list falls back to its first
     /// option, and only an empty one is answered with nothing to select.
+    /// A live event takes its id and goes out under the store's event lock,
+    /// the one a stored event holds from its id to its publication. A live
+    /// event that has to wait for it takes its id after the one that held
+    /// it, so it cannot pass a stored event with a lower id.
+    #[tokio::test]
+    async fn a_live_event_that_waits_for_the_event_lock_takes_its_id_after_the_one_that_held_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ariadne_store::Store::open(dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let runtime = super::AcpRuntime::new(store.clone());
+        let (console, mut rx) = tokio::sync::broadcast::channel(8);
+        let sink = super::EventSink {
+            runtime,
+            session_id: "session".into(),
+            launch_id: "launch".into(),
+            task_id: None,
+            agent_session: std::sync::Arc::new(std::sync::OnceLock::new()),
+            console,
+        };
+        let held = store.event_order().lock().await;
+        let emitter = tokio::spawn(async move {
+            sink.emit_live("agent_message_chunk", json!({"text": "late"}))
+                .await;
+        });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        let meanwhile = ariadne_core::id::new_id();
+        drop(held);
+        emitter.await.unwrap();
+
+        let event = rx.recv().await.unwrap();
+        assert!(
+            event.id > meanwhile,
+            "the waiting live event took its id after the lock was released: {} > {meanwhile}",
+            event.id
+        );
+    }
+
     #[test]
     fn the_allowing_option_is_selected_wherever_it_stands() {
         let request = json!({"options": [

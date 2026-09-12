@@ -182,10 +182,14 @@ pub struct Console {
     since: Option<Instant>,
     /// One Ctrl-C has been seen: the next one leaves.
     armed: bool,
+    /// The row had ended when the console attached: the daemon moves a live
+    /// row only, so no replayed event moves the status line off that end.
+    ended: bool,
 }
 
 impl Console {
     pub fn new(header: Header) -> Self {
+        let ended = matches!(header.status.as_str(), "exited" | "failed");
         Self {
             header,
             items: Vec::new(),
@@ -198,6 +202,7 @@ impl Console {
             tick: 0,
             since: None,
             armed: false,
+            ended,
         }
     }
 
@@ -274,11 +279,45 @@ impl Console {
         if event.kind == "permission_request" {
             self.picked = 0;
         }
-        absorb(&mut self.items, event);
+        // Input posted while a turn runs is queued behind it (008): what the
+        // turn says arrives after the prompt was typed, and is the turn
+        // before the prompt's, so it is drawn above the prompt.
+        match self
+            .pending
+            .front()
+            .copied()
+            .filter(|at| *at < self.items.len())
+        {
+            Some(at) => {
+                let queued = self.items.split_off(at);
+                absorb(&mut self.items, event);
+                let grown = self.items.len() - at;
+                self.items.extend(queued);
+                for pending in &mut self.pending {
+                    *pending += grown;
+                }
+            }
+            None => absorb(&mut self.items, event),
+        }
     }
 
-    /// What the status line says the agent is doing.
+    /// What the status line says the agent is doing, and what the session's
+    /// status is.
     fn follow_turn(&mut self, event: &AgentEventDto) {
+        // The session's status follows its events the way the daemon moves
+        // the row on them (021): the header read at attach is what it was
+        // then, and every later event the daemon stores moves it here too —
+        // unless the row had ended by then. The daemon moves a live row
+        // only, so a row its sweep marked exited, with no session_end
+        // stored, or one marked failed, is not revived by the events
+        // replayed under it. A live row's replay may hold an earlier
+        // launch's session_end before this launch's session_start, and
+        // follows both: a resumed session reads as running, not exited.
+        if !self.ended
+            && let Some(status) = status_of(&event.kind)
+        {
+            self.header.status = status.into();
+        }
         let turn = match event.kind.as_str() {
             "stop" | "session_end" | "session.error" => Turn::Idle,
             "pre_tool_use" | "tool_call_update" | "post_tool_use" => {
@@ -330,6 +369,7 @@ impl Console {
             meta: transcript::ItemMeta {
                 created_at: chrono::Utc::now().to_rfc3339(),
                 kinds: vec!["session.error".into()],
+                closed_by: None,
             },
             text: text.to_string(),
         });
@@ -463,6 +503,7 @@ impl Console {
             meta: transcript::ItemMeta {
                 created_at: chrono::Utc::now().to_rfc3339(),
                 kinds: vec!["user_prompt_submit".into()],
+                closed_by: None,
             },
             text: text.to_string(),
             source: Some("console".into()),
@@ -481,20 +522,30 @@ impl Console {
     ///
     /// The last item is never one of them — it is what is still being written
     /// — and neither is an unanswered question, which is the picker, nor a
-    /// prompt still waiting to be confirmed.
+    /// prompt still waiting to be confirmed, nor a tool call that has not
+    /// ended: the question about a call comes after the call, and the event
+    /// that ends the call comes after the answer, so a call committed while
+    /// its question waited would sit in the scrollback as pending for ever.
     ///
     /// It never goes backwards: what is in the scrollback is in the
     /// scrollback, whatever a fresh snapshot makes of the items around it.
     fn settled(&self) -> usize {
         let mut end = self.items.len().saturating_sub(1);
         if let Some(pending) = self.pending.front() {
-            end = end.min(*pending);
+            // The turn a queued prompt waits behind is still writing the
+            // block before the prompt, chunk by chunk: that block is the one
+            // being written, not the prompt.
+            end = end.min(pending.saturating_sub(1));
         }
         for (at, item) in self.items.iter().enumerate().take(end).skip(self.committed) {
-            if matches!(
-                item,
-                TranscriptItem::PermissionQuestion { answer: None, .. }
-            ) {
+            let open = match item {
+                TranscriptItem::PermissionQuestion { answer, .. } => answer.is_none(),
+                TranscriptItem::ToolCall { tool, .. } => {
+                    !transcript::tool_is_terminal(tool.status.as_deref())
+                }
+                _ => false,
+            };
+            if open {
                 return at;
             }
         }
@@ -545,15 +596,24 @@ impl Console {
         .areas(frame.area());
 
         let width = usize::from(live.width);
+        let height = usize::from(live.height);
         let asking = self.question();
         let mut lines = Vec::new();
         for (at, item) in self.items.iter().enumerate().skip(self.committed) {
-            let picked = (Some(at) == asking).then_some(self.picked);
-            lines.extend(block(item, width, picked));
+            if Some(at) != asking {
+                lines.extend(block(item, width, None));
+            }
+        }
+        // The picker is what the keys act on, so it is drawn last, above the
+        // box, whatever came after it — a snapshot taken mid-turn ends on the
+        // text so far (008), which would otherwise push it off the top — and
+        // its command or diff is folded to the room its question and options
+        // leave, so both are on the screen however long the diff.
+        if let Some(at) = asking {
+            lines.extend(picker(&self.items[at], self.picked, width, height));
         }
         // The tail is what is happening now; the head of a long block has
         // scrolled past, exactly as it would have in the scrollback.
-        let height = usize::from(live.height);
         let skip = lines.len().saturating_sub(height);
         frame.render_widget(Paragraph::new(Text::from(lines[skip..].to_vec())), live);
 
@@ -608,6 +668,20 @@ impl Console {
 
     fn spinner(&self) -> &'static str {
         SPINNER[self.tick % SPINNER.len()]
+    }
+}
+
+/// The session status an event moves the row to, as the daemon maps it
+/// (021): the agent is running from its start, a prompt, a tool event or an
+/// answered permission; idle once a turn stops or a compaction ends; exited
+/// once the session ends. Any other event leaves the status where it was.
+fn status_of(kind: &str) -> Option<&'static str> {
+    match kind {
+        "session_start" | "user_prompt_submit" | "pre_tool_use" | "post_tool_use"
+        | "permission.replied" => Some("running"),
+        "stop" | "compaction_update" => Some("idle"),
+        "session_end" => Some("exited"),
+        _ => None,
     }
 }
 
@@ -671,6 +745,31 @@ fn absorb(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
             meta.kinds.push(event.kind.clone());
             return;
         }
+        // A turn that ends at once has its last chunk and its stored whole
+        // ready together, and a stream can hand over the whole first. A
+        // chunk that arrives after the whole of its kind, with an id below
+        // that whole's, and says nothing the whole does not, is that late
+        // chunk: it is folded in, not drawn again. The id is what tells it
+        // from the next turn's first chunk handed over before its prompt —
+        // the daemon gives the live chunks and the stored events their ids
+        // from one monotonic generator, and a new turn's chunk gets its id
+        // after its prompt, which is after the whole before it.
+        let said = chunk_text(event);
+        if let Some(
+            TranscriptItem::Thought { meta, text } | TranscriptItem::AgentText { meta, text },
+        ) = items.last_mut().filter(|last| is_kind(last, thought))
+            && meta
+                .closed_by
+                .as_deref()
+                .is_some_and(|whole| event.id.as_str() < whole)
+            && text.contains(&said)
+        {
+            // Recorded under the whole that closed the block, which stays
+            // its last kind: the block is not reopened for the next chunk.
+            let closing = meta.kinds.len().saturating_sub(1);
+            meta.kinds.insert(closing, event.kind.clone());
+            return;
+        }
         items.push(TranscriptItem::from(event));
         return;
     }
@@ -687,27 +786,38 @@ fn absorb(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
                 item
         {
             meta.kinds.push(event.kind.clone());
+            meta.closed_by = Some(event.id.clone());
             closed = true;
         }
     }
     if !closed {
-        items.push(TranscriptItem::from(event));
+        let mut item = TranscriptItem::from(event);
+        if let TranscriptItem::Thought { meta, .. } | TranscriptItem::AgentText { meta, .. } =
+            &mut item
+        {
+            meta.closed_by = Some(event.id.clone());
+        }
+        items.push(item);
     }
 }
 
 /// Whether this block is still taking chunks of the kind asked for.
 fn is_open(item: &TranscriptItem, thought: bool) -> bool {
-    let is_kind = match item {
-        TranscriptItem::Thought { .. } => thought,
-        TranscriptItem::AgentText { .. } => !thought,
-        _ => false,
-    };
-    is_kind
+    is_kind(item, thought)
         && item
             .meta()
             .kinds
             .last()
             .is_some_and(|kind| kind.ends_with("_chunk"))
+}
+
+/// Whether this block is a thought, or the agent's text, as asked for.
+fn is_kind(item: &TranscriptItem, thought: bool) -> bool {
+    match item {
+        TranscriptItem::Thought { .. } => thought,
+        TranscriptItem::AgentText { .. } => !thought,
+        _ => false,
+    }
 }
 
 /// The text one chunk carries, whichever of the two kinds it is.
@@ -759,13 +869,57 @@ fn block(item: &TranscriptItem, width: usize, picked: Option<usize>) -> Vec<Line
             options,
             answer,
             ..
-        } => permission(question, tool, options, answer.as_deref(), picked, width),
+        } => permission(
+            question,
+            tool,
+            options,
+            answer.as_deref(),
+            picked,
+            width,
+            DIFF_FOLD,
+        ),
         TranscriptItem::SystemNote { text, .. } => prefixed(text, "  ", DIM, DIM, width, None),
         TranscriptItem::Error { text, .. } => prefixed(text, "✗ ", FAIL, FAIL, width, None),
         TranscriptItem::Raw { kind, .. } => {
             vec![Line::from(Span::styled(kind.clone(), DIM))]
         }
     }
+}
+
+/// The pending permission question as the picker being answered, in a pane
+/// `height` rows tall: the question, its call's command or diff folded to
+/// the room left, and its options, so the head and the options are on the
+/// screen together however long what is between them.
+fn picker(item: &TranscriptItem, picked: usize, width: usize, height: usize) -> Vec<Line<'static>> {
+    let TranscriptItem::PermissionQuestion {
+        question,
+        tool,
+        options,
+        answer,
+        ..
+    } = item
+    else {
+        return block(item, width, None);
+    };
+    let draw = |fold| {
+        permission(
+            question,
+            tool,
+            options,
+            answer.as_deref(),
+            Some(picked),
+            width.max(8),
+            fold,
+        )
+    };
+    let whole = draw(usize::MAX);
+    if whole.len() <= height {
+        return whole;
+    }
+    // The question and the head, the options, and the line that counts what
+    // the fold left out.
+    let room = height.saturating_sub(2 + options.len() + 1).max(1);
+    draw(room)
 }
 
 /// A prompt the daemon itself sent — a briefing, a nudge, a message — under
@@ -842,7 +996,7 @@ fn call(tool: &Tool, started_at: &str, width: usize) -> Vec<Line<'static>> {
         lines.extend(folded(output, width, DIM));
     }
     if let Some(diff) = &tool.diff {
-        lines.extend(folded_diff(diff, width));
+        lines.extend(folded_diff(diff, width, DIFF_FOLD));
     }
     lines
 }
@@ -1020,13 +1174,13 @@ fn folded(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
 }
 
 /// Text read from the top — a command, a diff — indented and folded to its
-/// first lines, with a count of what was left out.
-fn folded_top(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
-    let hidden = lines.len().saturating_sub(DIFF_FOLD);
+/// first `fold` lines, with a count of what was left out.
+fn folded_top(lines: Vec<Line<'static>>, fold: usize) -> Vec<Line<'static>> {
+    let hidden = lines.len().saturating_sub(fold);
     if hidden == 0 {
         return lines;
     }
-    let mut kept: Vec<_> = lines.into_iter().take(DIFF_FOLD).collect();
+    let mut kept: Vec<_> = lines.into_iter().take(fold).collect();
     kept.push(Line::from(Span::styled(
         format!("    … {hidden} more lines"),
         DIM,
@@ -1036,8 +1190,8 @@ fn folded_top(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
 
 /// A unified diff: the file it changes as a header — the old name to the new
 /// where they differ — then each line coloured for what it is, folded past
-/// the limit.
-fn folded_diff(diff: &str, width: usize) -> Vec<Line<'static>> {
+/// `fold` lines.
+fn folded_diff(diff: &str, width: usize, fold: usize) -> Vec<Line<'static>> {
     let indent =
         |text: String, style: Style| Line::from(vec![Span::raw("    "), Span::styled(text, style)]);
     let room = width.saturating_sub(4);
@@ -1077,7 +1231,7 @@ fn folded_diff(diff: &str, width: usize) -> Vec<Line<'static>> {
         };
         lines.push(indent(clip(line, room), style));
     }
-    folded_top(lines)
+    folded_top(lines, fold)
 }
 
 /// The path a diff's file header names, bare of git's `a/` and `b/`, and
@@ -1097,8 +1251,9 @@ fn file_name(header: &str) -> Option<String> {
 
 /// A permission question: the options as a picker while it is open, and as
 /// the answer once it is given. The call it asks about is drawn under the
-/// question — its head, and the command or the diff where it carries one —
-/// so what is being allowed can be read before it is.
+/// question — its head, and the command or the diff where it carries one,
+/// folded past `fold` lines — so what is being allowed can be read before
+/// it is.
 fn permission(
     question: &str,
     tool: &Tool,
@@ -1106,6 +1261,7 @@ fn permission(
     answer: Option<&str>,
     picked: Option<usize>,
     width: usize,
+    fold: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(vec![
         Span::styled("? ", ASK),
@@ -1130,10 +1286,11 @@ fn permission(
                 .into_iter()
                 .map(|line| Line::from(vec![Span::raw("    "), Span::styled(line, DIM)]))
                 .collect(),
+            fold,
         ));
     }
     if let Some(diff) = &tool.diff {
-        lines.extend(folded_diff(diff, width));
+        lines.extend(folded_diff(diff, width, fold));
     }
     for (at, option) in options.iter().enumerate() {
         let chosen = picked == Some(at);
@@ -1157,6 +1314,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut out = Vec::new();
     for source in text.split('\n') {
+        let source = detab(source);
         let mut line = String::new();
         let mut used = 0usize;
         for word in source.split_inclusive(char::is_whitespace) {
@@ -1169,6 +1327,28 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
             line.push_str(word);
         }
         out.push(line.trim_end().to_string());
+    }
+    out
+}
+
+/// A line with its tabs as the columns they take, to the next stop of eight.
+/// A cell holds one character, so a tab drawn as itself is nothing at all,
+/// and the text on either side of it runs together.
+fn detab(line: &str) -> String {
+    if !line.contains('\t') {
+        return line.to_string();
+    }
+    let mut out = String::new();
+    let mut column = 0;
+    for grapheme in line.graphemes(true) {
+        if grapheme == "\t" {
+            let stop = 8 - column % 8;
+            out.extend(std::iter::repeat_n(' ', stop));
+            column += stop;
+        } else {
+            out.push_str(grapheme);
+            column += grapheme.width();
+        }
     }
     out
 }
@@ -1484,9 +1664,17 @@ where
 /// for one — costs crossterm's timeout and the error "The cursor position
 /// could not be read within a normal duration". The console opens all the
 /// same: the cursor is moved to the bottom row, which needs no answer, and
-/// the viewport is opened from there on a backend that answers every later
-/// query itself. It is the one inline viewport on both paths, never the
-/// alternate screen, so the scrollback keeps the transcript either way.
+/// the viewport is opened from there. It is the one inline viewport on both
+/// paths, never the alternate screen, so the scrollback keeps the transcript
+/// either way.
+///
+/// The terminal is asked once, here, and never again: on both paths the
+/// backend answers every later query itself, from where the cursor was last
+/// put. ratatui asks after every block it inserts above the viewport and on
+/// every resize, and by then the key stream is reading the terminal — and
+/// crossterm's answer to a cursor query comes through the same reader the
+/// key stream holds, so a query made while keys are read times out and would
+/// end the console on its first finished block.
 ///
 /// `fresh` makes a backend, and makes another for the second attempt: the
 /// one the failed attempt took cannot be had back.
@@ -1511,14 +1699,15 @@ pub fn open<B: Screen>(fresh: impl Fn() -> B) -> Result<Terminal<Anchored<B>>> {
     Ok(inline(Anchored::at(backend, bottom))?)
 }
 
-/// A backend whose cursor position can be known without asking the terminal.
+/// A backend whose cursor position is known without asking the terminal.
 ///
 /// ratatui asks where the cursor is when it opens an inline viewport, when it
-/// clears one and when the terminal is resized. Anchored to a position, every
-/// one of those is answered from here — where the last
-/// [`Backend::set_cursor_position`] put it, which is where ratatui's own
-/// drawing leaves it — rather than sent to a terminal that has already failed
-/// to answer once. Asking, it is the backend it wraps and nothing more.
+/// clears one — which it does after every block it inserts above it — and
+/// when the terminal is resized. Anchored to a position, every one of those
+/// is answered from here — where the last [`Backend::set_cursor_position`]
+/// put it, which is where ratatui's own drawing leaves it. Asking, it puts
+/// the one query it is made through to the terminal, and is anchored to the
+/// answer from then on.
 pub struct Anchored<B> {
     inner: B,
     known: Option<Position>,
@@ -1562,16 +1751,18 @@ impl<B: Backend> Backend for Anchored<B> {
     fn get_cursor_position(&mut self) -> Result<Position, B::Error> {
         match self.known {
             Some(at) => Ok(at),
-            None => self.inner.get_cursor_position(),
+            None => {
+                let at = self.inner.get_cursor_position()?;
+                self.known = Some(at);
+                Ok(at)
+            }
         }
     }
 
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), B::Error> {
         let at = position.into();
         self.inner.set_cursor_position(at)?;
-        if self.known.is_some() {
-            self.known = Some(at);
-        }
+        self.known = Some(at);
         Ok(())
     }
 
@@ -2191,6 +2382,351 @@ mod tests {
             row_of(&shown, "-fn a() {}") < row_of(&shown, "+fn b() {}")
                 && row_of(&shown, "+fn b() {}") < row_of(&shown, "1. Reject"),
             "the diff is above the options: {shown}"
+        );
+    }
+
+    /// A snapshot taken mid-turn ends on the text so far (008), which comes
+    /// after the question in it; and a question's diff can be longer than
+    /// the pane. The picker is drawn last, with its diff folded to the room
+    /// its question and options leave, so the keys act on what is on the
+    /// screen.
+    #[test]
+    fn a_pending_picker_is_on_the_screen_whatever_came_after_it_and_however_long_its_diff() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        let old: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+        let new: String = (1..=30).map(|n| format!("row {n}\n")).collect();
+        let so_far: String = (1..=12).map(|n| format!("paragraph {n}\n\n")).collect();
+        console.snapshot(&[
+            event(
+                "permission_request",
+                "Permission requested for Edit",
+                json!({"tool_name": "Edit",
+                       "acp": {"toolCallId": "edit", "kind": "edit",
+                               "rawInput": {"file_path": "src/lib.rs"},
+                               "content": [{"type": "diff", "path": "src/lib.rs",
+                                            "oldText": old, "newText": new}]},
+                       "options": [{"optionId": "no", "name": "Reject"},
+                                   {"optionId": "yes", "name": "Allow"}]}),
+            ),
+            event("agent_message_chunk", "so far", json!({"text": so_far})),
+        ]);
+
+        console.commit(&mut terminal).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        // Nothing is committed while the question waits, so the pane is the
+        // whole of what is drawn.
+        let shown = screen(&terminal);
+
+        assert!(
+            shown.contains("? Edit\n  ✎ src/lib.rs\n"),
+            "the question is on the screen, whatever came after it: {shown}"
+        );
+        assert!(
+            shown.contains("› 1. Reject") && shown.contains("2. Allow"),
+            "and so are its options: {shown}"
+        );
+        assert!(
+            shown.contains("-line 1\n") && shown.contains("more lines"),
+            "the diff is folded to the room the question and its options leave: {shown}"
+        );
+    }
+
+    /// The status line names the session's status: what the row said at
+    /// attach, then what the events move it to, the way the daemon moves the
+    /// row on them — running on a prompt, idle on a stop, exited at the end.
+    #[test]
+    fn the_status_line_follows_the_sessions_status_from_its_events() {
+        let mut console = Console::new(Header {
+            seat: "author".into(),
+            model: "claude:opus".into(),
+            status: "idle".into(),
+        });
+        let mut terminal = terminal();
+        let status = |console: &Console, terminal: &mut Terminal<TestBackend>| {
+            terminal.draw(|frame| console.render(frame)).unwrap();
+            let shown = screen(terminal);
+            shown
+                .lines()
+                .find(|line| line.starts_with("author claude:opus · "))
+                .map(|line| {
+                    line.trim_start_matches("author claude:opus · ")
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .unwrap_or_else(|| shown.clone())
+        };
+
+        assert_eq!(status(&console, &mut terminal), "idle", "as the row said");
+        console.apply(&event(
+            "user_prompt_submit",
+            "go",
+            json!({"text": "go", "source": "console"}),
+        ));
+        assert_eq!(status(&console, &mut terminal), "running", "a prompt");
+        console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
+        assert_eq!(status(&console, &mut terminal), "idle", "a stop");
+        console.apply(&ended());
+        assert_eq!(status(&console, &mut terminal), "exited", "the end");
+    }
+
+    /// An event with the id the daemon's monotonic generator would have given
+    /// it at that point of the stream.
+    fn numbered(mut event: AgentEventDto, id: u32) -> AgentEventDto {
+        event.id = format!("{id:04}");
+        event
+    }
+
+    /// A turn that ends at once has its last chunks and its stored whole
+    /// ready together, and a stream can hand over the whole first. The late
+    /// chunks say nothing the whole did not and carry ids below it: they
+    /// fold in, not drawn again, and the first of them does not reopen the
+    /// block for the second. The next turn's first chunk, with an id above
+    /// the whole, is a block of its own even when the stream hands it over
+    /// before the prompt that began its turn, and even when it repeats the
+    /// words.
+    #[test]
+    fn a_chunk_that_arrives_after_the_whole_of_its_turn_is_not_drawn_again() {
+        let text = |words: &str| json!({"text": words});
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&numbered(
+            event("agent_message", "whole", text("All three steps are done.")),
+            3,
+        ));
+        console.apply(&numbered(
+            event("agent_message_chunk", "late-1", text("All three ")),
+            1,
+        ));
+        console.apply(&numbered(
+            event("agent_message_chunk", "late-2", text("steps are done.")),
+            2,
+        ));
+        // The next turn's first chunk, handed over before its prompt.
+        console.apply(&numbered(
+            event(
+                "agent_message_chunk",
+                "next",
+                text("All three steps are done."),
+            ),
+            5,
+        ));
+        console.apply(&numbered(
+            event(
+                "user_prompt_submit",
+                "more",
+                json!({"text": "more", "source": "console"}),
+            ),
+            4,
+        ));
+
+        console.commit(&mut terminal).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert_eq!(
+            shown.matches("● All three steps are done.").count(),
+            2,
+            "once per turn: the late chunks fold in, the next turn's does not: {shown}"
+        );
+        assert!(
+            !shown.contains("done.All") && !shown.contains("done.steps"),
+            "no late chunk is appended to the whole: {shown}"
+        );
+    }
+
+    /// A live row's snapshot can hold an earlier launch's end before this
+    /// launch's start: a session resumed after it exited. The status line
+    /// follows both, and reads the turns since as the daemon does.
+    #[test]
+    fn a_live_session_resumed_after_its_end_follows_its_new_launch_not_the_old_end() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.snapshot(&[
+            ended(),
+            event("session_start", "started", json!({})),
+            event(
+                "user_prompt_submit",
+                "go",
+                json!({"text": "go", "source": "console"}),
+            ),
+            event("stop", "stop", json!({"stop_reason": "end_turn"})),
+        ]);
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(
+            shown.contains("author claude:opus · idle"),
+            "the row is live and its last turn stopped: {shown}"
+        );
+    }
+
+    /// A row the daemon's sweep marked exited has no session_end stored, and
+    /// its last event maps to idle or running. The daemon moves a live row
+    /// only, and so does the status line: an end is not undone by the events
+    /// replayed under it.
+    #[test]
+    fn a_header_that_says_exited_or_failed_is_not_revived_by_the_events_replayed() {
+        for ended in ["exited", "failed"] {
+            let mut console = Console::new(Header {
+                seat: "author".into(),
+                model: "claude:opus".into(),
+                status: ended.into(),
+            });
+            let mut terminal = terminal();
+            console.snapshot(&[
+                event(
+                    "user_prompt_submit",
+                    "go",
+                    json!({"text": "go", "source": "console"}),
+                ),
+                event("stop", "stop", json!({"stop_reason": "end_turn"})),
+            ]);
+
+            terminal.draw(|frame| console.render(frame)).unwrap();
+            let shown = screen(&terminal);
+
+            assert!(
+                shown.contains(&format!("author claude:opus · {ended}")),
+                "the status line still says {ended}: {shown}"
+            );
+        }
+    }
+
+    /// Input posted while a turn runs is queued behind it (008). What the
+    /// turn says arrives after the prompt was typed, and is drawn above the
+    /// prompt: the prompt is the next turn's.
+    #[test]
+    fn what_a_running_turn_says_is_drawn_above_a_prompt_typed_while_it_ran() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&event(
+            "user_prompt_submit",
+            "one",
+            json!({"text": "one", "source": "console"}),
+        ));
+        type_into(&mut console, "two");
+        enter(&mut console);
+
+        // The turn streams on, and the pane is redrawn between its chunks.
+        console.apply(&event(
+            "agent_message_chunk",
+            "answer",
+            json!({"text": "answer "}),
+        ));
+        console.commit(&mut terminal).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        console.apply(&event(
+            "agent_message_chunk",
+            "answer-end",
+            json!({"text": "to one"}),
+        ));
+        console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
+        console.apply(&event(
+            "user_prompt_submit",
+            "two",
+            json!({"text": "two", "source": "console"}),
+        ));
+        console.commit(&mut terminal).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        let answer = row_of(&shown, "answer to one").expect(&shown);
+        let two = row_of(&shown, "> two").expect(&shown);
+        assert!(
+            answer < two,
+            "the answer to the first prompt is above the second: {shown}"
+        );
+        assert_eq!(
+            shown.matches("answer").count(),
+            1,
+            "the answer is whole, not cut at the chunk the pane was redrawn on: {shown}"
+        );
+        assert_eq!(
+            shown.matches("> two").count(),
+            1,
+            "and the typed prompt is drawn once: {shown}"
+        );
+    }
+
+    /// The question about a call comes after the call, and the event that
+    /// ends the call comes after the answer. The call stays in the pane until
+    /// it has ended, so the scrollback gets it as it ended — with its mark
+    /// and its time — and never as pending.
+    #[test]
+    fn a_call_a_question_asks_about_reaches_the_scrollback_as_it_ended_not_as_pending() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        let acp = |status: &str| {
+            json!({"toolCallId": "edit", "kind": "edit", "status": status,
+                   "rawInput": {"file_path": "src/lib.rs"}})
+        };
+        console.apply(&event(
+            "pre_tool_use",
+            "Edit",
+            json!({"tool_name": "Edit", "acp": acp("pending")}),
+        ));
+        console.apply(&event(
+            "permission_request",
+            "Permission requested for Edit",
+            json!({"tool_name": "Edit", "acp": acp("pending"),
+                   "options": [{"optionId": "yes", "name": "Allow"}]}),
+        ));
+        console.commit(&mut terminal).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({"option_id": "yes"}),
+        ));
+        let mut ended = event(
+            "post_tool_use",
+            "Edit",
+            json!({"tool_name": "Edit", "acp": acp("completed")}),
+        );
+        ended.created_at = "2026-09-12T00:00:02Z".into();
+        console.apply(&ended);
+        console.apply(&event("agent_message", "done", json!({"text": "done"})));
+        console.commit(&mut terminal).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(
+            shown.contains("✓ ✎ src/lib.rs  2.0s"),
+            "the call is drawn as it ended: {shown}"
+        );
+        assert!(
+            !shown.contains("○ ✎ src/lib.rs"),
+            "and not as pending above it: {shown}"
+        );
+    }
+
+    /// A tool's output with tabs in it — a numbered file read, for one — is
+    /// drawn with the columns the tabs take, not with the text on either
+    /// side of them run together.
+    #[test]
+    fn a_tab_in_a_tool_output_takes_the_columns_to_the_next_tab_stop() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&event(
+            "post_tool_use",
+            "Read notes.txt",
+            json!({"tool_name": "Read",
+                   "acp": {"toolCallId": "read", "kind": "read", "status": "completed",
+                           "rawInput": {"file_path": "notes.txt"},
+                           "rawOutput": "1\tline 1\n2\tline 2\n"}}),
+        ));
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(
+            shown.contains("    1       line 1\n    2       line 2"),
+            "{shown}"
         );
     }
 
@@ -3014,13 +3550,22 @@ mod tests {
         );
     }
 
-    /// A screen that never says where its cursor is: the terminal that
-    /// answers no query, as ratatui sees it.
-    struct Mute(TestBackend);
+    /// A screen that says where its cursor is `answers` times and never
+    /// again: the terminal that answers no query, as ratatui sees it, and the
+    /// one that answers the first and none after it.
+    struct Mute(TestBackend, usize);
 
     impl Mute {
         fn new() -> Self {
-            Self(TestBackend::new(72, 40))
+            Self(TestBackend::new(72, 40), 0)
+        }
+
+        /// The terminal once the key stream is reading it: crossterm's
+        /// answer to a cursor query comes through the reader the stream
+        /// holds, so the query made at the open is answered and every later
+        /// one times out.
+        fn answering_once() -> Self {
+            Self(TestBackend::new(72, 40), 1)
         }
     }
 
@@ -3055,6 +3600,10 @@ mod tests {
         }
 
         fn get_cursor_position(&mut self) -> std::io::Result<Position> {
+            if self.1 > 0 {
+                self.1 -= 1;
+                return sure(self.0.get_cursor_position());
+            }
             Err(std::io::Error::other(
                 "The cursor position could not be read within a normal duration",
             ))
@@ -3130,6 +3679,40 @@ mod tests {
         assert!(
             prompt < 40 - usize::from(VIEWPORT),
             "the finished prompt is above the pane, in the scrollback: {shown}"
+        );
+    }
+
+    /// The terminal answered where its cursor was at the open, and answers
+    /// nothing after: ratatui asks again after every block it inserts above
+    /// the viewport, and the console answers that itself rather than end on
+    /// its first finished block.
+    #[test]
+    fn a_finished_block_reaches_the_scrollback_when_only_the_first_cursor_query_is_answered() {
+        let mut terminal = super::open(Mute::answering_once).unwrap();
+        let mut console = Console::new(header());
+        console.snapshot(&[
+            event(
+                "user_prompt_submit",
+                "first",
+                json!({"text": "first", "source": "console"}),
+            ),
+            event("agent_message", "second", json!({"text": "second"})),
+        ]);
+
+        console
+            .commit(&mut terminal)
+            .expect("the block is inserted without asking the terminal again");
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        let shown = rows(terminal.backend().inner.0.buffer());
+        let prompt = row_of(&shown, "> first").expect(&shown);
+        assert!(
+            prompt < 40 - usize::from(VIEWPORT),
+            "the finished prompt is above the pane, in the scrollback: {shown}"
+        );
+        assert!(
+            console.close(&mut terminal).is_ok(),
+            "and closing, which asks where the cursor is again, still works"
         );
     }
 

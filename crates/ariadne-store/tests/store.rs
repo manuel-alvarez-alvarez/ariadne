@@ -2762,3 +2762,86 @@ async fn a_reviewer_picks_once_and_the_picks_settle_a_winner() {
     assert!(w.store.list_task_picks(&task.id).await.unwrap().is_empty());
     assert_eq!(w.task().await.picked_agent_id, None);
 }
+
+/// An agent event takes its id and is published under one lock. A writer
+/// that has to wait for the lock takes its id after the one that held it, so
+/// a higher id is never taken by a writer that publishes before a lower one.
+#[tokio::test]
+async fn an_event_that_waits_for_the_event_lock_takes_its_id_after_the_one_that_held_it() {
+    let (store, _dir) = test_store().await;
+    let held = store.event_order().lock().await;
+    let writer = {
+        let store = store.clone();
+        tokio::spawn(async move {
+            store
+                .create_event(NewAgentEvent {
+                    session_id: None,
+                    task_id: None,
+                    kind: "stop".into(),
+                    payload: serde_json::json!({}),
+                })
+                .await
+                .unwrap()
+        })
+    };
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    // Taken while the writer waits: the id the writer would have taken
+    // already, had it not waited.
+    let meanwhile = ariadne_core::id::new_id();
+    drop(held);
+
+    let written = writer.await.unwrap();
+
+    assert!(
+        written.id > meanwhile,
+        "the waiting writer took its id after the lock was released: {} > {meanwhile}",
+        written.id
+    );
+}
+
+/// Two events written at once are published in the order of their ids,
+/// whichever of them reached the write pool first.
+#[tokio::test]
+async fn events_written_at_once_are_published_in_id_order() {
+    let (store, _dir) = test_store().await;
+    let mut changes = store.watch_changes().expect("the only watcher");
+    let held = store.event_order().lock().await;
+    let writers: Vec<_> = ["first", "second"]
+        .into_iter()
+        .map(|kind| {
+            let store = store.clone();
+            tokio::spawn(async move {
+                store
+                    .create_event(NewAgentEvent {
+                        session_id: None,
+                        task_id: None,
+                        kind: kind.into(),
+                        payload: serde_json::json!({}),
+                    })
+                    .await
+                    .unwrap()
+            })
+        })
+        .collect();
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    drop(held);
+    for writer in writers {
+        writer.await.unwrap();
+    }
+
+    let mut published = Vec::new();
+    while published.len() < 2 {
+        if let Change::AgentEventCreated(event) = changes.recv().await.expect("the store is open") {
+            published.push(event.id);
+        }
+    }
+
+    assert!(
+        published[0] < published[1],
+        "published in id order: {published:?}"
+    );
+}

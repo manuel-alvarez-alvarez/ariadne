@@ -158,6 +158,12 @@ pub struct Store {
     /// Change sink installed by [`Store::watch_changes`]. Shared by every
     /// clone, so a write through any handle is announced.
     changes: Arc<OnceLock<mpsc::UnboundedSender<Change>>>,
+    /// Held from the moment an agent event takes its id to the moment it is
+    /// published, so the ids go out in the order they were taken. Shared by
+    /// every clone, and lent to whoever else gives events ids from the same
+    /// generator — the live events of the console — so they keep that order
+    /// too.
+    event_order: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Store {
@@ -200,6 +206,7 @@ impl Store {
             write,
             read,
             changes: Arc::default(),
+            event_order: Arc::default(),
         };
         store.seed_builtin_skills().await?;
         Ok(store)
@@ -217,6 +224,21 @@ impl Store {
     }
 
     /// Announce a committed write. Non-blocking; a no-op without a watcher.
+    /// The lock an agent event holds from its id to its publication. A
+    /// caller that gives an event an id from the same generator and sends it
+    /// another way — the console's live events — holds it too, so that no
+    /// event is published before one with a lower id.
+    pub fn event_order(&self) -> &tokio::sync::Mutex<()> {
+        &self.event_order
+    }
+
+    /// Close the store: every query after this fails, on every clone. What a
+    /// test needs to stand in for a store that cannot be read.
+    pub async fn close(&self) {
+        self.read.close().await;
+        self.write.close().await;
+    }
+
     pub(crate) fn publish(&self, change: Change) {
         if let Some(tx) = self.changes.get() {
             let _ = tx.send(change);

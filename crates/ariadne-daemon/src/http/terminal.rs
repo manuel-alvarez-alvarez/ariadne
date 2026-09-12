@@ -27,22 +27,18 @@ use axum::response::Response;
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures_util::stream::{SplitSink, SplitStream, unfold};
 use futures_util::{SinkExt, Stream, StreamExt};
-use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 
-use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::{
     TerminalClientMessage, TerminalKey, TerminalModifier, TerminalServerMessage,
 };
-use ariadne_api::stream::DomainEvent;
 use ariadne_console::{AnsiBackend, Console, Frame, Header, Sink, Window, drive, open};
 use ariadne_core::SessionStatus;
 
 use super::AppState;
-use super::console;
-use super::convert::{event_dto, session_dto_of};
+use super::console::{self, Merge, open_console};
+use super::convert::session_dto_of;
 use super::error::ApiResult;
-use crate::bus::BusEvent;
 
 /// A session's console as a terminal.
 ///
@@ -291,19 +287,14 @@ enum Link {
     /// Not subscribed yet, or subscribed again after a lag: the next frame
     /// is a fresh snapshot.
     Fresh,
-    Open {
-        stored: broadcast::Receiver<BusEvent>,
-        live: broadcast::Receiver<AgentEventDto>,
-        /// The last stored event the snapshot held: a stored event committed
-        /// while the snapshot was read is on both, and is sent once.
-        last_id: Option<String>,
-    },
+    /// Subscribed: the stored and the live channels, read in id order.
+    Open(Merge),
     Ended,
 }
 
 /// The session's console as the loop's source: the snapshot `GET /console`
 /// answers, then every stored and live event `GET /console/stream` sends,
-/// read from the same channels.
+/// read from the same channels through the same [`Merge`], in id order.
 ///
 /// There is no replay. A receiver that fell behind says the stream dropped
 /// — `Frame::Dropped`, which the status line shows as reconnecting — and
@@ -314,72 +305,19 @@ fn frames(state: AppState, id: String) -> impl Stream<Item = Result<Frame>> {
         let state = state.clone();
         let id = id.clone();
         async move {
-            let mut link = link;
-            loop {
-                link = match link {
-                    Link::Fresh => {
-                        // Subscribed before the snapshot is read, so nothing
-                        // committed in between is missed.
-                        let stored = state.events.subscribe();
-                        let recorded = match state.store.list_session_events(&id).await {
-                            Ok(recorded) => recorded,
-                            Err(error) => return Some((Err(error.into()), Link::Ended)),
-                        };
-                        let last_id = recorded.last().map(|event| event.id.clone());
-                        let mut snapshot: Vec<AgentEventDto> =
-                            recorded.into_iter().map(event_dto).collect();
-                        let (live, so_far) = state.launcher.acp.subscribe_console(&id).await;
-                        snapshot.extend(so_far);
-                        return Some((
-                            Ok(Frame::Snapshot(snapshot)),
-                            Link::Open {
-                                stored,
-                                live,
-                                last_id,
-                            },
-                        ));
+            match link {
+                Link::Fresh => match open_console(&state, id).await {
+                    Ok((snapshot, merge)) => {
+                        Some((Ok(Frame::Snapshot(snapshot)), Link::Open(merge)))
                     }
-                    Link::Open {
-                        mut stored,
-                        mut live,
-                        last_id,
-                    } => {
-                        let next = tokio::select! {
-                            biased;
-                            stored = stored.recv() => match stored {
-                                Ok(BusEvent { event: DomainEvent::AgentEvent(dto), .. })
-                                    if dto.session_id.as_deref() == Some(id.as_str())
-                                        && last_id.as_deref().is_none_or(|last| dto.id.as_str() > last) =>
-                                {
-                                    Some(dto)
-                                }
-                                Ok(_) => None,
-                                Err(RecvError::Lagged(_)) => {
-                                    return Some((Ok(Frame::Dropped), Link::Fresh));
-                                }
-                                Err(RecvError::Closed) => return None,
-                            },
-                            live = live.recv() => match live {
-                                Ok(dto) if dto.session_id.as_deref() == Some(id.as_str()) => Some(dto),
-                                Ok(_) => None,
-                                Err(RecvError::Lagged(_)) => {
-                                    return Some((Ok(Frame::Dropped), Link::Fresh));
-                                }
-                                Err(RecvError::Closed) => return None,
-                            },
-                        };
-                        let link = Link::Open {
-                            stored,
-                            live,
-                            last_id,
-                        };
-                        match next {
-                            Some(dto) => return Some((Ok(Frame::Event(dto)), link)),
-                            None => link,
-                        }
-                    }
-                    Link::Ended => return None,
-                };
+                    Err(error) => Some((Err(error.into()), Link::Ended)),
+                },
+                Link::Open(mut merge) => match merge.next().await {
+                    Some(Ok(dto)) => Some((Ok(Frame::Event(dto)), Link::Open(merge))),
+                    Some(Err(_)) => Some((Ok(Frame::Dropped), Link::Fresh)),
+                    None => None,
+                },
+                Link::Ended => None,
             }
         }
     })

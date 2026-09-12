@@ -23,6 +23,10 @@ pub struct EventFilter {
 
 impl Store {
     pub async fn create_event(&self, new: NewAgentEvent) -> Result<AgentEvent> {
+        // The id is taken and the event published under one lock, so two
+        // writers racing on the write pool cannot publish a higher id before
+        // a lower one: the order on the change channel is the order of ids.
+        let _order = self.event_order().lock().await;
         let id = new_id();
         sqlx::query(
             "INSERT INTO agent_events (id, session_id, task_id, kind, payload, created_at)
@@ -42,6 +46,23 @@ impl Store {
             .await?;
         self.publish(Change::AgentEventCreated(event.clone()));
         Ok(event)
+    }
+
+    /// The events of a session with an id above `after`, in order: what a
+    /// console stream committed to the store but not yet published on the
+    /// bus when a live event overtook it (008). `None` is every event.
+    pub async fn list_session_events_after(
+        &self,
+        session_id: &str,
+        after: Option<&str>,
+    ) -> Result<Vec<AgentEvent>> {
+        Ok(sqlx::query_as::<_, AgentEvent>(
+            "SELECT * FROM agent_events WHERE session_id = ? AND id > ? ORDER BY id",
+        )
+        .bind(session_id)
+        .bind(after.unwrap_or(""))
+        .fetch_all(self.r())
+        .await?)
     }
 
     /// Every event a session has produced, in order: the whole transcript an

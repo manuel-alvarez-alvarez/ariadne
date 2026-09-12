@@ -73,15 +73,38 @@ goal id to a seat (014).
 13. A session's console snapshot (`GET /v1/sessions/{id}/console`) is the
     session's events so far, in order. Every event the runtime reported
     passes through as the runtime named it, with no fixed list of kinds.
-    While a turn runs, the snapshot ends on the text so far: one
+    While a turn runs, the snapshot holds the text so far: one
     `agent_thought_chunk` and one `agent_message_chunk`, each only where
-    there is text, after the stored events.
+    there is text. The text so far is read first, under the runtime's turn
+    lock, and the stored events after it, and the snapshot is the two in id
+    order: the chunks take fresh ids as they are read, so they fall after
+    every event stored before the read and before every event stored after
+    it — a turn that ended, or a prompt that began, between the two reads is
+    in the snapshot, in its place, rather than missing from it and arriving
+    later behind the text. A live event sent between the two reads — the last
+    chunk of a turn that ended in between, the progress of a call that ended —
+    has an id below the last stored event read, and joins the snapshot in its
+    place too; one sent after the stored events were read follows the
+    snapshot on the stream. A live channel that dropped events while the
+    stored ones were read has lost text the snapshot cannot show: the
+    snapshot goes out as it is, and the first thing the stream says after it
+    is a resync (rule 15). `GET /console` has no stream to say resync on: it
+    opens again while the channel lags under the open, and when the channel
+    lags every time it refuses with 503 rather than answer short. Between
+    turns the snapshot is the stored events alone.
 14. The console stream (`GET /v1/sessions/{id}/console/stream`) opens with
     that snapshot, then sends each later event as it is recorded, and each
     live-only event as the runtime streams it (021): message and thought
-    chunks, and tool call progress. A client that connects mid-turn reads
-    the text so far in its snapshot and every later chunk on the stream,
-    none of them twice.
+    chunks, and tool call progress. The stored and the live events go out in
+    the order the daemon gave them ids, which one monotonic generator gives
+    both: whenever both channels hold events, they are sorted by id before
+    they go out, so a stored whole never passes the live chunk that preceded
+    it and a live chunk never passes the stored prompt that began its turn.
+    A client that connects mid-turn reads the text so far in its snapshot and
+    every later chunk on the stream, none of them twice. A stream that cannot
+    read the store for the stored events a live event overtook does not send
+    the live event out of its place: the client is told to resync, as when
+    it fell behind (rule 15), with no count of events missed.
 15. The console stream has no replay. A client that falls too far behind is
     told how many events it missed, and the connection closes, the same as
     `/v1/events/stream` (012). A reconnect starts again from a fresh snapshot.
@@ -144,7 +167,17 @@ goal id to a seat (014).
     screen. A finished block goes into the terminal's own buffer above the
     pane, so it stays in the scrollback; the pane holds the block still being
     written, a status line and the input box. The status line names the seat,
-    the model and the session's status, and turns a spinner with "thinking" or
+    the model and the session's status — the row's at attach, then what the
+    stored events move it to, as the daemon moves the row on them (021):
+    `running` on the session's start, a prompt, a tool event or an answered
+    permission, `idle` on a stop or a compaction, `exited` on the session's
+    end. A row that had ended when the console attached — `exited` or
+    `failed` — stays so whatever the events replayed under it say, since the
+    daemon moves a live row only and a row its sweep ended has no
+    `session_end` stored; a live row's replay may hold an earlier launch's
+    `session_end` before this launch's `session_start`, and follows both, so
+    a resumed session reads as the daemon has it. The status line also turns
+    a spinner with "thinking" or
     "running &lt;tool&gt;" while a turn runs, followed by how long the turn
     has run — `12s`, or `1m 04s` past a minute — counted from the event that
     began it, so a turn already running at attach counts from its prompt;
@@ -154,10 +187,14 @@ goal id to a seat (014).
     takes the two columns it draws on, and a cut falls between grapheme
     clusters, so an emoji of several characters is never split. A resize of
     the terminal redraws the pane at the new size. The pane opens from the
-    cursor, which the terminal is asked for; a terminal that does not answer
-    within crossterm's timeout gets the same pane opened from the bottom row
-    instead, on a backend that answers every later cursor query itself. There
-    is no alternate-screen fallback.
+    cursor, which the terminal is asked for once, at the open; a terminal that
+    does not answer within crossterm's timeout gets the same pane opened from
+    the bottom row instead. On both paths every later cursor query — the one
+    ratatui makes after each block it inserts above the pane, and on a resize
+    — is answered by the backend itself, from where it last put the cursor,
+    and never sent to the terminal: once the key stream reads the terminal, a
+    query's answer would come through the reader the stream holds, and time
+    out. There is no alternate-screen fallback.
 24. The pane renders each block as it arrives: a prompt as `> text`, holding
     the event's `text` alone — never the whole `prompt` with the system
     prompt ahead of it (021), nor the summary, one line cut short; an event
@@ -180,9 +217,17 @@ goal id to a seat (014).
     name follow it. Once the call has ended, the head carries the time from
     the event that opened it to the one that ended it. A live
     `tool_call_update` merges into the open call with the same `toolCallId`:
-    one block per call, however many updates arrive. The output is folded to
-    its last lines with a count of the hidden ones, trailing blank lines
-    trimmed; the fold is the thought's. A `diff` content entry draws as a
+    one block per call, however many updates arrive. A call that has not
+    ended stays in the pane, and so does everything after it: the question
+    about a call comes after the call and the event that ends it after the
+    answer, so the scrollback gets the call as it ended, never as pending.
+    The output is the
+    call's `rawOutput` where that is text or a stdout and stderr pair, the
+    text of its `content` entries otherwise, and the structure as JSON only
+    where there is neither. It is folded to its last lines with a count of
+    the hidden ones, trailing blank lines trimmed; the fold is the thought's.
+    A tab in the output takes the columns to the next stop of eight, since a
+    cell drawn with a tab draws nothing. A `diff` content entry draws as a
     unified diff under a file header — the path, or the old name to the new
     where they differ — with added, removed, hunk and context lines each in
     their own colour, folded past a line limit with a count. Where the agent
@@ -197,10 +242,23 @@ goal id to a seat (014).
     reads as two blocks with the call between them. The whole text the daemon
     stores at the end of that turn (021) is every chunk of it joined, so it
     closes the blocks the chunks opened and repeats none of them. A turn that
-    streamed nothing renders that stored text as its one block.
+    streamed nothing renders that stored text as its one block. A turn that
+    ends at once has its last chunks and its stored whole ready together, and
+    a stream can hand over the whole first: a chunk that arrives after the
+    whole of its kind, with an id below that whole's, and says nothing the
+    whole did not is a late chunk of that turn, folded in and not drawn
+    again, and it does not reopen the block for the chunk after it. The id is
+    what tells it from the next turn's first chunk handed over before its
+    prompt: the daemon gives the live chunks and the stored events their ids
+    from one monotonic generator, and a new turn's chunk gets its id after
+    its prompt, which is after the whole before it.
 27. Enter posts the input box to console input, Shift+Enter and Alt+Enter add
     a line to it, and each prompt typed shows at once and is replaced by its
-    own `user_prompt_submit`, in the order they were posted. An older
+    own `user_prompt_submit`, in the order they were posted. A prompt typed
+    while a turn runs is queued behind it (rule 16), so what that turn says
+    after the prompt was typed is drawn above the prompt — the prompt is the
+    next turn's — and the block above the prompt stays in the pane while the
+    turn writes into it. An older
     daemon's (021) prompt event carries neither `text` nor `source`: it takes
     the oldest pending prompt's place where its whole `prompt` ends in a
     blank line and then the typed text — the whole is the system prompt, a
@@ -214,8 +272,13 @@ goal id to a seat (014).
     Alt-Left and Alt-Right — or Alt-B and Alt-F, which is what a terminal
     that sends the readline sequences for them gives — moving by word. On a
     permission question the arrows and the number keys move the pick and
-    Enter posts the option's id. A post the daemon refuses is said on the
-    transcript, and the console stays open.
+    Enter posts the option's id. While it waits, the picker is the last block
+    of the pane, above the box, whatever came after it — a snapshot taken
+    mid-turn ends on the text so far (rule 13), which comes after the
+    question in it — and its command or diff is folded to the room its
+    question and options leave, so the question and every option are on the
+    screen together. A post the daemon refuses is said on the transcript, and
+    the console stays open.
 28. Escape during a running turn posts to console cancel. Ctrl-C twice, or
     Ctrl-D, leaves the console, and the session stays alive. Every way out
     puts the terminal back: raw mode off, bracketed paste off and the cursor
@@ -270,8 +333,41 @@ goal id to a seat (014).
   (`acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`).
 - A lagged console client is told to resync, and the connection closes
   (`acp_console.rs::a_lagged_console_client_gets_a_resync_and_the_stream_ends`).
+- The stored and the live events go out in id order, on the console stream
+  and the terminal socket alike
+  (`http/console.rs::a_stored_whole_does_not_pass_the_live_chunk_that_preceded_it`),
+  and the merge keeps other sessions' events and the snapshot's last event out
+  (`::the_merge_keeps_other_sessions_and_the_snapshots_last_event_out`). The
+  ids are published in the order they are taken: a stored event holds the
+  store's event lock from its id to its publication
+  (`store.rs::an_event_that_waits_for_the_event_lock_takes_its_id_after_the_one_that_held_it`,
+  `::events_written_at_once_are_published_in_id_order`), and a live event
+  takes its id and goes out under the same lock
+  (`acp.rs::a_live_event_that_waits_for_the_event_lock_takes_its_id_after_the_one_that_held_it`).
+  A stored event reaches the bus only after the bus has loaded what its
+  event carries, so a live event can still reach the merge first; the store
+  holds every stored event with a lower id by then, and the merge reads
+  those it has not sent before the live event goes out, and drops their
+  later copies off the bus
+  (`http/console.rs::a_live_event_waits_for_the_stored_events_below_it_that_the_bus_has_not_delivered`).
+  A merge that cannot read the store holds the live event back and says
+  resync
+  (`::a_merge_that_cannot_read_the_store_says_resync_instead_of_sending_a_live_event`),
+  and one whose live channel dropped events while the console opened says
+  resync before anything else
+  (`::a_live_channel_that_lagged_while_the_console_opened_is_told_to_resync_first`);
+  `GET /console` opens again under such a lag and refuses when it keeps
+  lagging
+  (`::the_snapshot_get_answers_is_opened_again_under_a_lag_and_refused_when_it_keeps_lagging`).
 - A stream opened mid-turn reads the text so far in its snapshot
   (`acp_console.rs::a_stream_opened_mid_turn_gets_the_text_so_far_in_its_snapshot`),
+  where the text sits by id among the stored events
+  (`http/console.rs::the_text_so_far_sits_by_id_among_the_stored_events`),
+  a live chunk sent between the two reads joins the snapshot in its place
+  and is not sent again
+  (`::a_live_chunk_sent_between_the_two_reads_joins_the_snapshot_in_its_place`),
+  a live event above the snapshot's last stored event follows it once
+  (`::a_live_event_above_the_snapshots_last_stored_event_follows_it_once`),
   and the chunks arrive live before the turn ends
   (`::a_console_stream_client_sees_message_chunks_before_the_turn_ends`).
 - Cancel ends the running turn as `cancelled`
@@ -321,8 +417,14 @@ goal id to a seat (014).
   and markdown keeps a heading, a code block and a list apart
   (`ariadne-console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
-- The status line counts the running turn and stops between turns
-  (`ariadne-console/tui.rs::the_status_line_counts_the_running_turn_and_stops_between_turns`),
+- The status line follows the session's status from its events
+  (`ariadne-console/tui.rs::the_status_line_follows_the_sessions_status_from_its_events`)
+  and is not revived off an end by the events replayed under it
+  (`::a_header_that_says_exited_or_failed_is_not_revived_by_the_events_replayed`),
+  while a live row resumed after an earlier end follows its new launch
+  (`::a_live_session_resumed_after_its_end_follows_its_new_launch_not_the_old_end`),
+  counts the running turn and stops between turns
+  (`::the_status_line_counts_the_running_turn_and_stops_between_turns`),
   a turn already running at attach counts from its prompt
   (`::an_attach_during_a_turn_counts_from_the_prompt_that_began_it`), a
   reconnect's replay keeps the clock of the turn still running
@@ -350,7 +452,10 @@ goal id to a seat (014).
   (`::a_completed_call_draws_its_duration`); and updates of one call draw one
   block (`::updates_of_one_call_draw_one_block`), because they fold into the
   open call and the last dates its end
-  (`ariadne-console/transcript.rs::updates_of_one_call_fold_into_it_and_the_last_dates_its_end`).
+  (`ariadne-console/transcript.rs::updates_of_one_call_fold_into_it_and_the_last_dates_its_end`);
+  a call a question asks about reaches the scrollback as it ended, not as
+  pending
+  (`ariadne-console/tui.rs::a_call_a_question_asks_about_reaches_the_scrollback_as_it_ended_not_as_pending`).
 - A diff draws a file header, coloured lines and a fold count past the limit
   (`ariadne-console/tui.rs::a_diff_draws_its_file_header_its_lines_coloured_and_a_fold_count`),
   and an old text and a new text fold to hunks with context rather than every
@@ -360,7 +465,14 @@ goal id to a seat (014).
   (`ariadne-console/transcript.rs::a_patch_without_file_headers_takes_them_from_the_entry_path`).
 - A permission question draws the call's head and its command or its diff
   above the options
-  (`ariadne-console/tui.rs::a_permission_question_draws_the_call_above_its_options`).
+  (`ariadne-console/tui.rs::a_permission_question_draws_the_call_above_its_options`),
+  and while it waits the picker is on the screen whatever came after it and
+  however long its diff
+  (`::a_pending_picker_is_on_the_screen_whatever_came_after_it_and_however_long_its_diff`).
+- A tab in a tool's output takes the columns to the next tab stop
+  (`ariadne-console/tui.rs::a_tab_in_a_tool_output_takes_the_columns_to_the_next_tab_stop`),
+  and a call whose raw output is a structure draws its content text
+  (`ariadne-console/transcript.rs::a_structured_raw_output_gives_way_to_the_content_text`).
 - A prompt draws its text alone, never the system prompt
   (`ariadne-console/tui.rs::a_prompt_draws_its_text_alone_and_never_the_system_prompt`);
   an event carrying only the whole prompt draws none of it
@@ -376,8 +488,14 @@ goal id to a seat (014).
   (`ariadne-console/tui.rs::the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read`)
   and a finished block still reaches the scrollback
   (`::a_finished_block_reaches_the_scrollback_when_the_cursor_position_cannot_be_read`).
+  A terminal that answered at the open and answers nothing after — the
+  terminal once the key stream reads it — is never asked again, and a
+  finished block still reaches the scrollback
+  (`::a_finished_block_reaches_the_scrollback_when_only_the_first_cursor_query_is_answered`).
 - Streamed chunks append to the block already open
   (`ariadne-console/tui.rs::streamed_chunks_append_to_the_agent_block_that_is_already_open`),
+  a chunk that arrives after the whole of its turn is not drawn again
+  (`::a_chunk_that_arrives_after_the_whole_of_its_turn_is_not_drawn_again`),
   and text after a tool call is a block of its own that the stored whole does
   not repeat (`::agent_text_after_a_tool_call_is_a_block_of_its_own`).
 - A permission question is a picker the arrows move
@@ -393,7 +511,9 @@ goal id to a seat (014).
   longer than the box scrolls under the cursor
   (`::a_line_longer_than_the_input_box_scrolls_under_the_cursor`). Two
   prompts posted before the first is confirmed stay apart
-  (`::a_second_prompt_typed_before_the_first_is_confirmed_keeps_both_apart`).
+  (`::a_second_prompt_typed_before_the_first_is_confirmed_keeps_both_apart`),
+  and what a running turn says is drawn above a prompt typed while it ran
+  (`::what_a_running_turn_says_is_drawn_above_a_prompt_typed_while_it_ran`).
   A refused prompt is said on the transcript and does not close the console
   (`::a_refused_prompt_is_said_on_the_transcript_and_does_not_close_the_console`).
 - A pasted text with two line breaks is one prompt with two line breaks, and

@@ -38,19 +38,22 @@ ariadne attach <session-id>              # one specific session
 In a terminal the console is a small inline pane. The transcript scrolls in
 the terminal's own buffer, so it is still there in your scrollback after you
 leave; a status line and the input box stay pinned under it. The status line
-names the seat, the model and the session's status, and a spinner says
+names the seat, the model and the session's status — `running` while the
+agent works, `idle` between turns, `exited` once it has gone, moving as the
+session does — and a spinner says
 "thinking" or "running &lt;tool&gt;" while a turn runs, with how long the
 turn has been running next to it: `12s`, or `1m 04s` past a minute. The
 count starts again with each turn and is not shown between turns; attaching
 in the middle of a turn counts from its prompt. Resizing the terminal
 redraws the pane at the new size.
 
-The pane opens where the cursor is, which the console asks the terminal for.
-A terminal that does not answer — a pseudo-terminal with nothing behind it,
-as `script` gives a process with no terminal of its own — keeps the console
-waiting a few seconds, and then the same pane opens from the bottom row of
-the screen. Nothing else changes: the transcript still scrolls into your
-scrollback, and the console never switches to the alternate screen.
+The pane opens where the cursor is, which the console asks the terminal for
+once. A terminal that does not answer — a pseudo-terminal with nothing behind
+it, as `script` gives a process with no terminal of its own — keeps the
+console waiting a few seconds, and then the same pane opens from the bottom
+row of the screen. Nothing else changes: the transcript still scrolls into
+your scrollback, and the console never switches to the alternate screen. The
+terminal is not asked again after that, however many blocks scroll past.
 
 The agent's text streams in as it is written and renders as markdown:
 headings, bold, code spans, fenced code and lists. A thought is dimmed and

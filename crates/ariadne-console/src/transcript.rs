@@ -106,6 +106,11 @@ impl FromStr for Since {
 pub struct ItemMeta {
     pub created_at: String,
     pub kinds: Vec<String>,
+    /// The id of the whole the daemon stored at the end of the turn, once it
+    /// has closed this block of agent text or thought (008). The daemon's
+    /// ids are monotonic, so a chunk with a lower id is a chunk of that turn,
+    /// however late it arrives.
+    pub closed_by: Option<String>,
 }
 
 impl ItemMeta {
@@ -113,6 +118,7 @@ impl ItemMeta {
         Self {
             created_at: event.created_at.clone(),
             kinds: vec![event.kind.clone()],
+            closed_by: None,
         }
     }
 }
@@ -464,22 +470,23 @@ fn error_text(event: &AgentEventDto) -> String {
         .unwrap_or_else(|| event.summary.clone())
 }
 
+/// What a call gave back, in words: its `rawOutput` where that is text or a
+/// stdout and stderr pair, the text of its `content` entries otherwise, and
+/// the structure as JSON only where there is neither.
 fn tool_output(acp: &Value) -> Option<String> {
-    if let Some(raw) = acp.get("rawOutput").filter(|value| !value.is_null()) {
-        if let Some(text) = raw.as_str() {
-            return Some(text.to_string());
+    let raw = acp.get("rawOutput").filter(|value| !value.is_null());
+    if let Some(text) = raw.and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+    if let Some(object) = raw.and_then(Value::as_object) {
+        let streams: Vec<_> = ["stdout", "stderr"]
+            .into_iter()
+            .filter_map(|key| object.get(key)?.as_str())
+            .filter(|text| !text.is_empty())
+            .collect();
+        if !streams.is_empty() {
+            return Some(streams.join("\n"));
         }
-        if let Some(object) = raw.as_object() {
-            let streams: Vec<_> = ["stdout", "stderr"]
-                .into_iter()
-                .filter_map(|key| object.get(key)?.as_str())
-                .filter(|text| !text.is_empty())
-                .collect();
-            if !streams.is_empty() {
-                return Some(streams.join("\n"));
-            }
-        }
-        return serde_json::to_string(raw).ok();
     }
     let text: Vec<_> = acp
         .get("content")
@@ -489,7 +496,10 @@ fn tool_output(acp: &Value) -> Option<String> {
         .filter(|content| content.get("type").and_then(Value::as_str) == Some("content"))
         .filter_map(|content| string_at(content, "/content/text"))
         .collect();
-    (!text.is_empty()).then(|| text.join("\n"))
+    if !text.is_empty() {
+        return Some(text.join("\n"));
+    }
+    raw.and_then(|raw| serde_json::to_string(raw).ok())
 }
 
 fn tool_diff(acp: &Value) -> Option<String> {
@@ -682,6 +692,35 @@ mod tests {
         };
         assert_eq!(tool.status.as_deref(), Some("completed"));
         assert_eq!(tool.ended_at.as_deref(), Some("2026-09-11T12:35:00Z"));
+    }
+
+    /// A call whose `rawOutput` is a structure rather than text — a tool
+    /// search's references, for one — says what it found in its `content`
+    /// entries, and that is what is drawn, not the structure as JSON.
+    #[test]
+    fn a_structured_raw_output_gives_way_to_the_content_text() {
+        let events = [event(
+            "tool",
+            "post_tool_use",
+            json!({
+                "acp": {"toolCallId": "search", "title": "ToolSearch", "kind": "other",
+                        "status": "completed",
+                        "content": [
+                            {"type": "content", "content": {"type": "text", "text": "Tool: list_tasks"}},
+                            {"type": "content", "content": {"type": "text", "text": "Tool: finalize_plan"}}],
+                        "rawOutput": [{"tool_name": "list_tasks", "type": "tool_reference"}]}
+            }),
+        )];
+
+        let items = fold(&events);
+        let TranscriptItem::ToolCall { tool, .. } = &items[0] else {
+            panic!("{items:?}");
+        };
+
+        assert_eq!(
+            tool.output.as_deref(),
+            Some("Tool: list_tasks\nTool: finalize_plan")
+        );
     }
 
     #[test]
