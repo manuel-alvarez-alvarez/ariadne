@@ -545,8 +545,8 @@ async fn a_permission_request_appears_in_the_console_stream() {
 }
 
 /// A second turn that says everything a turn can: thought chunks, a plan, a
-/// tool call with two updates, message chunks — then holds the turn open on
-/// `wait_for` until the test lets go or cancels it.
+/// message chunk, a tool call with two updates, message chunks — then holds
+/// the turn open on `wait_for` until the test lets go or cancels it.
 fn streaming_script(wait_for: &std::path::Path) -> serde_json::Value {
     let mut scripted = script();
     let first_turn = scripted["prompts"][0].clone();
@@ -559,6 +559,7 @@ fn streaming_script(wait_for: &std::path::Path) -> serde_json::Value {
                 {"sessionUpdate": "plan", "entries": [
                     {"content": "List the files", "priority": "high", "status": "pending"},
                 ]},
+                {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Look."}},
                 {"sessionUpdate": "tool_call", "toolCallId": "call-2", "title": "Bash",
                  "kind": "execute", "status": "pending", "rawInput": {"command": "ls"}},
                 {"sessionUpdate": "tool_call_update", "toolCallId": "call-2", "status": "in_progress"},
@@ -675,12 +676,14 @@ async fn a_console_stream_client_sees_message_chunks_before_the_turn_ends() {
     expect_sse(&mut body, "snapshot").await;
 
     t.begin_turn().await;
-    let seen = events_until(&mut body, "agent_message_chunk").await;
-    let seen = [seen, events_until(&mut body, "agent_message_chunk").await].concat();
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        seen.extend(events_until(&mut body, "agent_message_chunk").await);
+    }
 
     assert_eq!(
         text_of(&seen, "agent_message_chunk"),
-        ["Half ", "done."],
+        ["Look.", "Half ", "done."],
         "{seen:?}"
     );
     assert!(
@@ -716,35 +719,40 @@ async fn thought_chunks_and_tool_call_progress_reach_the_console_stream_live() {
     t.end_turn().await;
 }
 
-/// Once the turn is over the snapshot holds the whole thought and the whole
-/// message once each, then the `stop`, and no chunk at all.
+/// Once the turn is over the snapshot holds each run of text once, whole,
+/// where the agent wrote it — before the plan, the call or the `stop` that
+/// came after it — and no chunk at all.
 #[tokio::test]
-async fn the_snapshot_after_a_turn_holds_the_whole_thought_and_message_once() {
+async fn the_snapshot_after_a_turn_holds_each_run_of_text_where_it_was_written() {
     let t = Streaming::start().await;
     t.begin_turn().await;
     t.end_turn().await;
 
     let events = t.snapshot().await;
     let kinds = kinds(&events);
-    let turn: Vec<&str> = kinds
+    let prompt = kinds
         .iter()
-        .map(String::as_str)
-        .filter(|k| ["agent_thought", "agent_message", "stop"].contains(k))
-        .collect();
-    // The first turn said "done" with no thought; the streaming one both.
+        .rposition(|k| k == "user_prompt_submit")
+        .unwrap();
     assert_eq!(
-        turn,
+        kinds[prompt + 1..],
         [
-            "agent_message",
-            "stop",
             "agent_thought",
+            "plan",
+            "agent_message",
+            "pre_tool_use",
+            "post_tool_use",
             "agent_message",
             "stop"
         ],
         "{kinds:?}"
     );
     assert_eq!(text_of(&events, "agent_thought"), ["Think first."]);
-    assert_eq!(text_of(&events, "agent_message"), ["done", "Half done."]);
+    // The first turn said "done"; the streaming one said two runs.
+    assert_eq!(
+        text_of(&events, "agent_message"),
+        ["done", "Look.", "Half done."]
+    );
     assert!(
         !kinds
             .iter()
@@ -865,8 +873,9 @@ async fn console_input_is_reported_as_its_text_from_the_console() {
 }
 
 /// A client that opens the console mid-turn reads the text so far in its
-/// snapshot: one thought chunk and one message chunk, after the stored
-/// events, on the stream and on the plain snapshot alike.
+/// snapshot: the run still being written, as one chunk after the stored
+/// events, on the stream and on the plain snapshot alike. The runs before it
+/// are stored where they were written, not drawn at the end.
 #[tokio::test]
 async fn a_stream_opened_mid_turn_gets_the_text_so_far_in_its_snapshot() {
     let t = Streaming::start().await;
@@ -876,13 +885,24 @@ async fn a_stream_opened_mid_turn_gets_the_text_so_far_in_its_snapshot() {
     let snapshot = expect_sse(&mut body, "snapshot").await;
     let events = snapshot.as_array().unwrap().clone();
     let opened_on = kinds(&events);
-    let tail = &opened_on[opened_on.len() - 2..];
+    let prompt = opened_on
+        .iter()
+        .rposition(|k| k == "user_prompt_submit")
+        .unwrap();
     assert_eq!(
-        tail,
-        ["agent_thought_chunk", "agent_message_chunk"],
+        opened_on[prompt + 1..],
+        [
+            "agent_thought",
+            "plan",
+            "agent_message",
+            "pre_tool_use",
+            "post_tool_use",
+            "agent_message_chunk"
+        ],
         "{opened_on:?}"
     );
-    assert_eq!(text_of(&events, "agent_thought_chunk"), ["Think first."]);
+    assert_eq!(text_of(&events, "agent_thought"), ["Think first."]);
+    assert_eq!(text_of(&events, "agent_message"), ["done", "Look."]);
     assert_eq!(text_of(&events, "agent_message_chunk"), ["Half done."]);
 
     let plain = t.snapshot().await;
@@ -919,7 +939,10 @@ async fn cancelling_a_running_turn_ends_it_as_cancelled() {
     let events = t.snapshot().await;
     let stop = events.iter().rfind(|e| e["kind"] == "stop").unwrap();
     assert_eq!(stop["payload"]["stop_reason"], "cancelled");
-    assert_eq!(text_of(&events, "agent_message"), ["done", "Half done."]);
+    assert_eq!(
+        text_of(&events, "agent_message"),
+        ["done", "Look.", "Half done."]
+    );
 }
 
 /// With no turn running there is nothing to cancel, and the call says so.

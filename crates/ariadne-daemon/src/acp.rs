@@ -106,46 +106,72 @@ struct Prompt {
     source: PromptSource,
 }
 
-/// The turn in flight, as far as the agent has told it: the text so far, and
-/// every tool call still open, merged per `toolCallId` from the updates the
-/// agent sent about it.
+/// One run of text: the chunks of one kind, and of one message where the
+/// agent names its messages, in a row.
+struct Run {
+    /// `agent_thought` or `agent_message`: the kind the run is stored as.
+    kind: &'static str,
+    /// The ACP `messageId` its chunks carry, where they carry one.
+    message_id: Option<String>,
+    text: String,
+}
+
+impl Run {
+    /// Whether a chunk of this kind and message goes on with this run. A
+    /// chunk that names no message, or a run that named none, cannot be told
+    /// apart, and goes on with it.
+    fn continues(&self, kind: &str, message_id: Option<&str>) -> bool {
+        self.kind == kind
+            && match (self.message_id.as_deref(), message_id) {
+                (Some(run), Some(chunk)) => run == chunk,
+                _ => true,
+            }
+    }
+}
+
+/// The turn in flight, as far as the agent has told it: the run of text it
+/// is writing, and every tool call still open, merged per `toolCallId` from
+/// the updates the agent sent about it.
 #[derive(Default)]
 struct Turn {
     running: bool,
     /// The agent's own session id, as the turn's events name it.
     agent_session: Option<String>,
-    thought: String,
-    message: String,
+    /// The run of chunks being written. The next thing the agent reports
+    /// ends it — or a chunk of another kind or another message — and it is
+    /// stored where it stands (021).
+    text: Option<Run>,
     tools: HashMap<String, Value>,
 }
 
 impl Turn {
-    /// The running turn's text so far as the two chunk events a console
-    /// snapshot appends — none for a turn that has said nothing yet, and none
-    /// between turns.
+    /// The running turn's text so far as the chunk event a console snapshot
+    /// appends: the run still being written, which comes after everything
+    /// stored. None for a turn that is not writing text, and none between
+    /// turns.
     fn so_far(&self, session_id: &str, task_id: &Option<String>) -> Vec<AgentEventDto> {
-        if !self.running {
+        let Some(run) = self.text.as_ref().filter(|_| self.running) else {
             return Vec::new();
-        }
-        let agent_session = self
-            .agent_session
-            .clone()
-            .map_or(Value::Null, Value::String);
-        [
-            ("agent_thought_chunk", &self.thought),
-            ("agent_message_chunk", &self.message),
-        ]
-        .into_iter()
-        .filter(|(_, text)| !text.is_empty())
-        .map(|(kind, text)| {
-            live_event(
-                session_id,
-                task_id.clone(),
+        };
+        vec![live_event(
+            session_id,
+            task_id.clone(),
+            &format!("{}_chunk", run.kind),
+            json!({"session_id": self.agent_session, "text": run.text}),
+        )]
+    }
+
+    /// End the run of text being written, and hand it back as the event to
+    /// store: `agent_thought` or `agent_message`, `{session_id, text}`. Text
+    /// that came between turns belongs to no turn and is dropped.
+    fn end_text(&mut self) -> Option<(&'static str, Value)> {
+        let Run { kind, text, .. } = self.text.take()?;
+        (self.running && !text.is_empty()).then(|| {
+            (
                 kind,
-                json!({"session_id": agent_session, "text": text}),
+                json!({"session_id": self.agent_session, "text": text}),
             )
         })
-        .collect()
     }
 }
 
@@ -682,20 +708,39 @@ impl RuntimeIncoming<'_> {
         match update_kind {
             // The text so far is appended and its chunk published under the
             // one lock, so a console opening mid-turn reads a text that ends
-            // exactly where its subscription begins.
+            // exactly where its subscription begins. A chunk of the other
+            // kind, or of another message, ends the run before it; so does
+            // every update below that reports something, which is stored
+            // after the text before it.
             Some(kind @ ("agent_message_chunk" | "agent_thought_chunk")) => {
                 if let Some(text) = update.pointer("/content/text").and_then(Value::as_str) {
+                    let whole = match kind {
+                        "agent_thought_chunk" => "agent_thought",
+                        _ => "agent_message",
+                    };
+                    let message_id = update.get("messageId").and_then(Value::as_str);
                     let mut turn = self.turn.lock().await;
-                    match kind {
-                        "agent_thought_chunk" => turn.thought.push_str(text),
-                        _ => turn.message.push_str(text),
+                    if turn
+                        .text
+                        .as_ref()
+                        .is_some_and(|run| !run.continues(whole, message_id))
+                    {
+                        self.store_text(&mut turn).await;
                     }
+                    let run = turn.text.get_or_insert_with(|| Run {
+                        kind: whole,
+                        message_id: None,
+                        text: String::new(),
+                    });
+                    run.message_id = run.message_id.take().or(message_id.map(str::to_string));
+                    run.text.push_str(text);
                     self.sink
                         .emit_live(kind, json!({"session_id": session_id, "text": text}))
                         .await;
                 }
             }
             Some("plan") => {
+                self.end_text().await;
                 self.sink
                     .emit(
                         "plan",
@@ -704,6 +749,7 @@ impl RuntimeIncoming<'_> {
                     .await;
             }
             Some("tool_call") => {
+                self.end_text().await;
                 let (id, call) = tool_call_of(&update);
                 self.turn.lock().await.tools.insert(id, call.clone());
                 self.sink
@@ -711,6 +757,7 @@ impl RuntimeIncoming<'_> {
                     .await;
             }
             Some("tool_call_update") => {
+                self.end_text().await;
                 let (id, update) = tool_call_of(&update);
                 let terminal = terminal_tool_status(&update);
                 let merged = {
@@ -741,6 +788,7 @@ impl RuntimeIncoming<'_> {
             Some("compaction_update")
                 if update.get("status").and_then(Value::as_str) == Some("completed") =>
             {
+                self.end_text().await;
                 let mut payload = update;
                 payload["session_id"] = session_id;
                 self.sink.emit("compaction_update", payload).await;
@@ -748,6 +796,22 @@ impl RuntimeIncoming<'_> {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Store the run of text the agent was writing, before whatever it
+    /// reports next.
+    async fn end_text(&self) {
+        let mut turn = self.turn.lock().await;
+        self.store_text(&mut turn).await;
+    }
+
+    /// End the run of text and store it, under the turn lock the caller
+    /// holds: a console opening meanwhile reads that text either as its text
+    /// so far or stored, and never as neither.
+    async fn store_text(&self, turn: &mut Turn) {
+        if let Some((kind, payload)) = turn.end_text() {
+            self.sink.emit(kind, payload).await;
+        }
     }
 
     async fn handle_permission(&mut self, message: &Value) -> Result<Value> {
@@ -771,6 +835,7 @@ impl RuntimeIncoming<'_> {
         let waiting = matches!(self.permission_mode, PermissionMode::Ask)
             || (self.permission_mode == PermissionMode::Learn && !learned);
         let receiver = waiting.then(|| self.begin_permission());
+        self.end_text().await;
         self.sink.emit("permission_request", payload).await;
         let selected = match receiver {
             Some(receiver) => self.wait_for_permission(params, receiver).await?,
@@ -1041,9 +1106,10 @@ pub(crate) fn find_config_option<'a>(
         })
 }
 
-/// One turn: the prompt out, the turn's chunks as they come, and — once the
-/// response is in — the whole thought and message text, stored once each,
-/// then the `stop`.
+/// One turn: the prompt out, the turn's chunks as they come — each run of
+/// text stored once the next thing the agent reports arrives — and, once the
+/// response is in, the last run stored, then the `stop`. A turn that fails
+/// stores its last run too, before the error ends the driver.
 async fn prompt_once(
     rpc: &mut Rpc,
     session_id: &str,
@@ -1055,8 +1121,7 @@ async fn prompt_once(
         let mut turn = rpc.turn.lock().await;
         turn.running = true;
         turn.agent_session = Some(session_id.to_string());
-        turn.thought.clear();
-        turn.message.clear();
+        turn.text = None;
         // A call the last turn left open is not this turn's to finish.
         turn.tools.clear();
     }
@@ -1079,22 +1144,15 @@ async fn prompt_once(
                 "prompt": [{"type": "text", "text": full}],
             }),
         )
-        .await?;
-    let (thought, message) = {
+        .await;
+    {
         let mut turn = rpc.turn.lock().await;
-        turn.running = false;
-        (
-            std::mem::take(&mut turn.thought),
-            std::mem::take(&mut turn.message),
-        )
-    };
-    for (kind, text) in [("agent_thought", thought), ("agent_message", message)] {
-        if !text.is_empty() {
-            rpc.sink
-                .emit(kind, json!({"session_id": session_id, "text": text}))
-                .await;
+        if let Some((kind, payload)) = turn.end_text() {
+            rpc.sink.emit(kind, payload).await;
         }
+        turn.running = false;
     }
+    let response = response?;
     let mut stop = json!({
         "session_id": session_id,
         "stop_reason": response.get("stopReason"),

@@ -73,10 +73,11 @@ goal id to a seat (014).
 13. A session's console snapshot (`GET /v1/sessions/{id}/console`) is the
     session's events so far, in order. Every event the runtime reported
     passes through as the runtime named it, with no fixed list of kinds.
-    While a turn runs, the snapshot holds the text so far: one
-    `agent_thought_chunk` and one `agent_message_chunk`, each only where
-    there is text. The text so far is read first, under the runtime's turn
-    lock, and the stored events after it, and the snapshot is the two in id
+    While a turn runs, the snapshot holds the text so far: the run of text
+    the agent is still writing (021), as one `agent_thought_chunk` or
+    `agent_message_chunk`, and only where there is one. The runs before it
+    are stored events, in their place among the calls. The text so far is
+    read first, under the runtime's turn lock, and the stored events after it, and the snapshot is the two in id
     order: the chunks take fresh ids as they are read, so they fall after
     every event stored before the read and before every event stored after
     it — a turn that ended, or a prompt that began, between the two reads is
@@ -239,11 +240,11 @@ goal id to a seat (014).
     more than one line, or the diff — above its options.
 26. A chunk continues the block last written, and starts a block of its own
     where anything else came between: a turn that speaks around a tool call
-    reads as two blocks with the call between them. The whole text the daemon
-    stores at the end of that turn (021) is every chunk of it joined, so it
-    closes the blocks the chunks opened and repeats none of them. A turn that
-    streamed nothing renders that stored text as its one block. A turn that
-    ends at once has its last chunks and its stored whole ready together, and
+    reads as two blocks with the call between them. The daemon stores each
+    run of text whole once the next thing arrives (021), so a stored run
+    closes the block its chunks opened and repeats none of it. A run that
+    streamed nothing renders its stored text as a block of its own. A turn
+    that ends at once has its last chunks and its stored whole ready together, and
     a stream can hand over the whole first: a chunk that arrives after the
     whole of its kind, with an id below that whole's, and says nothing the
     whole did not is a late chunk of that turn, folded in and not drawn

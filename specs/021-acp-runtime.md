@@ -67,9 +67,17 @@ gone (009).
    the row.
    The `stop` event carries `ariadne_usage` from a well-formed prompt response:
    quota totals before standard usage, with the launch id as its source.
-6. A turn's text is stored once, whole, when the turn ends: `agent_thought`
-   `{session_id, text}` where thought chunks arrived, then `agent_message`
-   `{session_id, text}` where message chunks arrived, then `stop`. While the
+6. A turn's text is stored run by run, where the agent wrote it. A run is
+   the chunks of one kind in a row, and of one message where the chunks
+   carry an ACP `messageId`; it ends at a chunk of the other kind, a chunk
+   that names another `messageId` than the run's, a plan, a tool call or its
+   update, a completed compaction, a permission request, or the end of the
+   turn, and it is stored then, once, whole —
+   `agent_thought` or `agent_message` `{session_id, text}` — before whatever
+   ended it. A turn that speaks around a tool call stores its text before the
+   call and its text after it as two events, and the last run comes before
+   `stop`; a turn that fails stores its last run before the error. Text that
+   arrives between turns is not stored. While the
    turn runs, each chunk goes live to the session's console stream alone
    (008) — `agent_message_chunk` and `agent_thought_chunk`, each
    `{session_id, text}` — and so does each non-terminal `tool_call_update`
@@ -150,9 +158,13 @@ gone (009).
   (`acp_console.rs::a_console_stream_client_sees_message_chunks_before_the_turn_ends`),
   and so do thought chunks and a tool call's progress
   (`::thought_chunks_and_tool_call_progress_reach_the_console_stream_live`).
-- After the turn the whole thought and message are stored once each, before
-  the `stop`, and no chunk is
-  (`acp_console.rs::the_snapshot_after_a_turn_holds_the_whole_thought_and_message_once`);
+- Each run of text is stored once, whole, where the agent wrote it — before
+  the plan, the tool call or the `stop` that ended it — and no chunk is
+  (`acp_console.rs::the_snapshot_after_a_turn_holds_each_run_of_text_where_it_was_written`),
+  each message the agent names is stored on its own
+  (`acp_runtime.rs::each_message_the_agent_names_is_stored_on_its_own`),
+  and an agent that dies mid-turn keeps the run it was writing
+  (`acp_runtime.rs::an_agent_that_dies_mid_turn_keeps_the_text_it_was_writing`);
   neither `GET /v1/events` nor `/v1/events/stream` carries a chunk
   (`::the_events_listing_and_the_domain_stream_carry_no_chunk`).
 - `post_tool_use` carries the call merged from every update

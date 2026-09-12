@@ -774,11 +774,11 @@ fn absorb(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         return;
     }
 
-    // The whole the daemon stores at the end of a turn (021) is every chunk
-    // of that turn joined into one. Where chunks arrived it says again what
-    // is already on the screen — as one block, where a turn with a tool call
-    // in it drew two. So it closes the blocks the chunks opened and adds no
-    // text; only a turn that streamed nothing pushes a block of its own.
+    // The whole the daemon stores for a run of text (021) is every chunk of
+    // that run joined into one. Where chunks arrived it says again what is
+    // already on the screen, so it closes the blocks the chunks opened and
+    // adds no text; only a run that streamed nothing pushes a block of its
+    // own.
     let mut closed = false;
     for item in items.iter_mut() {
         if is_open(item, thought)

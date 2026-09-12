@@ -382,10 +382,10 @@ pub async fn snapshot(
 /// The two are read one after the other, the text so far first — under the
 /// runtime's turn lock — and the stored events after. The text so far takes
 /// fresh ids as it is read, so it falls after every event stored before the
-/// read and before every event stored after it: a turn that ended between
-/// the two reads puts its stored whole after the text, which the console
-/// folds into it, and a prompt that began a turn between them comes after
-/// the text of the turn before. Read the other way round, a prompt stored
+/// read and before every event stored after it: a run of text that ended
+/// between the two reads puts its stored whole after the text, which the
+/// console folds into it, and a prompt that began a turn between them comes
+/// after the text of the turn before. Read the other way round, a prompt stored
 /// between the reads would be missing from the snapshot and arrive later,
 /// behind the text of the turn it began. The live events sent between the
 /// two reads come with the text so far (`Merge::open`).

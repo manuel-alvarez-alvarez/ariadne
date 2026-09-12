@@ -306,6 +306,93 @@ async fn a_dead_acp_agent_is_reaped_and_its_session_retired() {
     }
 }
 
+/// An agent that dies mid-turn keeps what it wrote: the run of text it was
+/// writing is stored, in its place after the call before it and before the
+/// error that ends the session.
+#[tokio::test]
+async fn an_agent_that_dies_mid_turn_keeps_the_text_it_was_writing() {
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "updates": [
+            {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "Bash",
+             "kind": "execute", "status": "pending", "rawInput": {"command": "ls"}},
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed"},
+            {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Found it."}},
+        ],
+        "exit": 1,
+    }]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+
+    eventually(TIMEOUT, "the session to retire", || async {
+        h.session_status(&session).await == SessionStatus::Exited
+    })
+    .await;
+    let kinds = event_kinds(&h, &session.id).await;
+    let at = |kind: &str| kinds.iter().position(|k| k == kind);
+    let message = at("agent_message").unwrap_or_else(|| panic!("no text stored: {kinds:?}"));
+    assert!(at("post_tool_use") < Some(message), "{kinds:?}");
+    assert!(Some(message) < at("session.error"), "{kinds:?}");
+}
+
+/// Two messages the agent streams one after the other, with nothing between
+/// them, are stored as two: a chunk that names another `messageId` starts a
+/// run of its own, and one that names none goes on with the run before it.
+#[tokio::test]
+async fn each_message_the_agent_names_is_stored_on_its_own() {
+    let chunk = |text: &str, message_id: Option<&str>| {
+        let mut update = json!({"sessionUpdate": "agent_message_chunk",
+                                "content": {"type": "text", "text": text}});
+        if let Some(id) = message_id {
+            update["messageId"] = json!(id);
+        }
+        update
+    };
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "updates": [
+            chunk("Reading ", Some("msg-1")),
+            chunk("the files.", Some("msg-1")),
+            chunk("Now the ", Some("msg-2")),
+            chunk("tests.", None),
+        ],
+    }]);
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+
+    eventually(TIMEOUT, "the turn to end", || async {
+        event_kinds(&h, &session.id)
+            .await
+            .iter()
+            .any(|k| k == "stop")
+    })
+    .await;
+    let texts: Vec<String> = h
+        .store
+        .list_events(EventFilter {
+            session_id: Some(session.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.kind == "agent_message")
+        .map(|event| {
+            let payload: serde_json::Value = serde_json::from_str(&event.payload).unwrap();
+            payload["text"].as_str().unwrap().to_string()
+        })
+        .collect();
+    assert_eq!(texts, ["Reading the files.", "Now the tests."]);
+}
+
 /// An orchestrator seat runs on the agent its pin names in the registry:
 /// the registry command is spawned, the bare model half is pinned, and the
 /// session opens with the ariadne MCP server.
