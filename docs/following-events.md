@@ -11,6 +11,8 @@ ariadne events -f --format json        # one JSON object per line, for a pipe
 
 ariadne session logs <session-id> -f   # an agent's event transcript, until it ends
 ariadne task logs <task-id> -f         # the same, found by task (--seat reviewer)
+ariadne session logs <id> --tail 20    # only the last twenty transcript blocks
+ariadne task logs <id> --since 10m --kind agent_message
 ariadne daemon logs -f                 # the daemon's own log, over the API
 
 ariadne attention --watch              # redrawn whenever something needs you
@@ -18,6 +20,12 @@ ariadne task ls --watch --goal <id>    # redrawn whenever a task moves
 ariadne goal ls --watch                # redrawn whenever a goal moves
 ariadne session ls --watch --seat reviewer  # redrawn whenever a session moves
 ```
+
+Session and task logs print full transcript blocks. Agent message and thought
+chunks stream as the agent writes them, under one header per item. `--tail`
+and `--since` narrow the opening snapshot. Repeat `--kind` to select several
+event kinds; it also filters new events during `-f`. JSON mode keeps each
+event object unchanged.
 
 `-f` prints as it goes; `--watch` redraws the whole table, `watch(1)`-style,
 when an event says it has changed. `ariadne daemon logs` reads the daemon's own

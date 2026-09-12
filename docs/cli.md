@@ -36,7 +36,22 @@ ariadne attach <session-id>              # one specific session
 ```
 
 Use `ariadne session logs <session-id> --follow` to read without sending
-input. Use `ariadne session send <session-id> "Please explain the failure"`
+input. It prints complete prompts and replies, dimmed thoughts, plan status,
+tool input and output, diffs, and permission answers as timestamped blocks.
+The task form finds the session for you:
+
+```sh
+ariadne session logs <session-id> --tail 20
+ariadne session logs <session-id> --since 10m --kind agent_message
+ariadne task logs <task-id> --seat reviewer --follow
+```
+
+`--tail N` keeps the last N blocks. `--since` accepts RFC 3339 or a duration
+such as `10m`. Repeat `--kind` to include several event kinds. These filters
+narrow the snapshot; during `--follow`, `--kind` also narrows new events.
+`--format json` keeps each daemon event object unchanged for scripts.
+
+Use `ariadne session send <session-id> "Please explain the failure"`
 when a script or a one-line response is enough. When a session is waiting on a
 permission request, the console lists numbered choices; enter that number (or
 the option id or name) to answer it. See [Permission modes](permissions.md).

@@ -145,6 +145,31 @@ fn anything(_: &Value) -> bool {
     true
 }
 
+/// Event kinds accepted by transcript filtering, including live-only kinds.
+pub fn transcript_kinds() -> Vec<CompletionCandidate> {
+    [
+        "session_start",
+        "user_prompt_submit",
+        "agent_thought",
+        "agent_message",
+        "plan",
+        "pre_tool_use",
+        "post_tool_use",
+        "permission_request",
+        "permission.replied",
+        "stop",
+        "compaction_update",
+        "session.error",
+        "session_end",
+        "agent_message_chunk",
+        "agent_thought_chunk",
+        "tool_call_update",
+    ]
+    .into_iter()
+    .map(CompletionCandidate::new)
+    .collect()
+}
+
 // ---- tasks ---------------------------------------------------------------
 
 fn task_help(t: &Value) -> String {
@@ -658,6 +683,16 @@ mod tests {
 
     fn words(line: &[&str]) -> Vec<String> {
         line.iter().map(|w| (*w).to_string()).collect()
+    }
+
+    /// Transcript filtering completes both stored blocks and live-only
+    /// updates, so a follow can select either vocabulary without memorizing it.
+    #[test]
+    fn transcript_filtering_offers_stored_and_live_event_kinds() {
+        let kinds = offered(&transcript_kinds());
+        for kind in ["agent_message", "permission.replied", "tool_call_update"] {
+            assert!(kinds.iter().any(|candidate| candidate == kind), "{kinds:?}");
+        }
     }
 
     /// `task cancel` refuses a task that has already ended, so completion

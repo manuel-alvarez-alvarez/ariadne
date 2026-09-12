@@ -163,14 +163,19 @@ same binary also serves (013).
     session an id names, revived first when it is gone: it renders the event
     transcript, submits each typed line as a prompt, and lists permission
     choices for numeric answers. `session send` posts one line to that same
-    console input. `session logs` prints the transcript, and `session logs -f`
-    follows the console's event stream.
+    console input. `session logs` and `task logs` print readable transcript
+    blocks with local timestamps, complete text, plans, tool results and
+    permission answers. `--tail`, `--since` and repeatable `--kind` narrow the
+    snapshot. Their `-f` forms follow the console stream and print agent chunks
+    as they arrive, while JSON keeps the daemon's event objects unchanged.
 
 ## Acceptance criteria
 
 - The command tree is well formed and every command is classified
   (`cli/tests.rs::the_command_tree_is_well_formed`,
   `::every_command_in_the_tree_is_classified`).
+- Both transcript commands advertise and parse their three filters
+  (`cli/tests.rs::transcript_filters_are_pinned_on_both_log_commands`).
 - The root and every group are one help-screen shape
   (`::the_root_and_every_group_are_one_help_screen_shape`), and no help screen
   leaks the endpoint (`::no_help_screen_leaks_the_endpoint_of_the_shell_it_runs_in`).

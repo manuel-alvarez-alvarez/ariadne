@@ -17,6 +17,7 @@ use ariadne_core::{Actor, Landing, PermissionMode, Seat, TaskStatus};
 
 use super::follow;
 use super::resolve::{self, Kind};
+use super::transcript::{Filters, Since};
 use super::{
     Subject, agent_label, agent_pin_label, confirm, one_of, parse_effort_or_default, parse_model,
     query_path,
@@ -291,6 +292,15 @@ pub enum TaskCommand {
         /// Keep printing output until the session ends
         #[arg(short, long)]
         follow: bool,
+        /// Print only the last N transcript items
+        #[arg(long, value_name = "N")]
+        tail: Option<usize>,
+        /// Print items at or after an RFC 3339 time, or from a duration ago
+        #[arg(long, value_name = "TIME")]
+        since: Option<Since>,
+        /// Print only this event kind; repeatable
+        #[arg(id = "kind", long = "kind", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::transcript_kinds))]
+        kinds: Vec<String>,
     },
 }
 
@@ -456,10 +466,24 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let id = resolve::id(client, Kind::Task, &id).await?;
             crate::commands::attach::attach(client, &id, seat).await?;
         }
-        TaskCommand::Logs { id, seat, follow } => {
+        TaskCommand::Logs {
+            id,
+            seat,
+            follow,
+            tail,
+            since,
+            kinds,
+        } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let session = crate::commands::attach::resolve_live(client, &id, seat).await?;
-            crate::commands::console::logs(client, &session.id, follow, format).await?;
+            crate::commands::console::logs(
+                client,
+                &session.id,
+                follow,
+                Filters { tail, since, kinds },
+                format,
+            )
+            .await?;
         }
     }
     Ok(())

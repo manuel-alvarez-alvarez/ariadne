@@ -167,6 +167,68 @@ fn format_is_advertised_exactly_where_it_is_honored() {
     }
 }
 
+/// Transcript filters belong to both ways of naming a session transcript.
+#[test]
+fn transcript_filters_are_pinned_on_both_log_commands() {
+    let cmd = built();
+    for leaf in ["session logs", "task logs"] {
+        let path: Vec<&str> = leaf.split(' ').collect();
+        for flag in ["tail", "since", "kind"] {
+            assert!(advertises(&cmd, &path, flag), "--{flag} on {leaf:?}");
+        }
+    }
+
+    let Command::Session {
+        command: SessionCommand::Logs {
+            tail, since, kinds, ..
+        },
+    } = parse(&[
+        "ariadne",
+        "session",
+        "logs",
+        "01SESSION",
+        "--tail",
+        "2",
+        "--since",
+        "10m",
+        "--kind",
+        "agent_message",
+        "--kind",
+        "plan",
+    ])
+    .command
+    else {
+        panic!("session logs");
+    };
+    assert_eq!(tail, Some(2));
+    assert!(since.is_some());
+    assert_eq!(kinds, ["agent_message", "plan"]);
+
+    let Command::Task {
+        command: TaskCommand::Logs {
+            tail, since, kinds, ..
+        },
+    } = parse(&[
+        "ariadne",
+        "task",
+        "logs",
+        "01TASK",
+        "--tail",
+        "3",
+        "--since",
+        "2026-09-11T10:00:00Z",
+        "--kind",
+        "agent_thought",
+    ])
+    .command
+    else {
+        panic!("task logs");
+    };
+    assert_eq!(tail, Some(3));
+    assert!(since.is_some());
+    assert_eq!(kinds, ["agent_thought"]);
+}
+
 /// Table flags belong to listings, quiet belongs to listings and mutations,
 /// and the pager flag belongs to long output.
 ///

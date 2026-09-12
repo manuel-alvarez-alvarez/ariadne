@@ -22,6 +22,7 @@ use super::attention::reason_label;
 use super::follow;
 use super::resolve::{self, Kind};
 use super::task::edit::{parse_author, parse_reviewer};
+use super::transcript::{Filters, Since};
 use super::{Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
@@ -232,6 +233,15 @@ pub enum SessionCommand {
         /// Keep printing output until the session ends
         #[arg(short, long)]
         follow: bool,
+        /// Print only the last N transcript items
+        #[arg(long, value_name = "N")]
+        tail: Option<usize>,
+        /// Print items at or after an RFC 3339 time, or from a duration ago
+        #[arg(long, value_name = "TIME")]
+        since: Option<Since>,
+        /// Print only this event kind; repeatable
+        #[arg(id = "kind", long = "kind", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::transcript_kinds))]
+        kinds: Vec<String>,
     },
     /// Revive an ended session: new agent process, same conversation
     Resume {
@@ -364,9 +374,22 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 || println!("{}", ok_id_line(view().color, view().quiet, "sent", &id)),
             )?;
         }
-        SessionCommand::Logs { id, follow } => {
+        SessionCommand::Logs {
+            id,
+            follow,
+            tail,
+            since,
+            kinds,
+        } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
-            crate::commands::console::logs(client, &id, follow, format).await?;
+            crate::commands::console::logs(
+                client,
+                &id,
+                follow,
+                Filters { tail, since, kinds },
+                format,
+            )
+            .await?;
         }
         SessionCommand::Resume { id } => {
             let id = resolve::id(client, Kind::Session, &id).await?;

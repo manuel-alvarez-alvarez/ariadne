@@ -93,8 +93,12 @@ goal id to a seat (014).
     answer `409`.
 21. The CLI reaches a session through its console. `ariadne attach` prints
     the transcript, follows the stream and posts each line typed as input.
-    `ariadne session logs` prints the snapshot, and with `--follow` it
-    follows the console stream.
+    `ariadne session logs` and `ariadne task logs` print the snapshot as typed
+    transcript blocks. Paired tool and permission events form one block;
+    agent text stays whole, and diffs retain their line colouring. `--tail`,
+    `--since` and `--kind` filter the snapshot. With `--follow`, chunks stream
+    under one item header and `--kind` also filters later events. JSON output
+    keeps each event object unchanged.
 
 ## Acceptance criteria
 
@@ -151,10 +155,18 @@ goal id to a seat (014).
   (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`),
   and renders a permission question and delivers the selected answer
   (`::a_permission_question_renders_and_delivers_the_selected_answer`).
-- `ariadne session logs` prints the snapshot in table and JSON form
-  (`console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`),
-  and follows the console stream
-  (`::a_followed_log_uses_the_console_event_stream`).
+- A readable transcript folds tool and permission pairs, keeps full text and
+  renders plain output without colour
+  (`transcript.rs::a_transcript_renders_one_full_block_per_item`,
+  `::no_color_gives_plain_transcript_text`).
+- Tool diffs retain diff colouring
+  (`transcript.rs::a_tool_call_diff_uses_diff_colouring`).
+- Transcript snapshots apply tail, time and kind filters
+  (`console.rs::transcript_snapshot_filters_apply_to_folded_items`).
+- `ariadne session logs` keeps JSON events unchanged and follows the console
+  stream (`console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`,
+  `::a_followed_log_uses_the_console_event_stream`). Chunks stream under one
+  block header (`::followed_chunks_stream_text_under_one_block_header`).
 
 ## Known gap
 
@@ -169,4 +181,5 @@ goal id to a seat (014).
 `crates/ariadne-daemon/src/http/console.rs`,
 `crates/ariadne-daemon/src/acp.rs`,
 `crates/ariadne-cli/src/commands/attach.rs`,
-`crates/ariadne-cli/src/commands/console.rs`.
+`crates/ariadne-cli/src/commands/console.rs`,
+`crates/ariadne-cli/src/commands/transcript.rs`.

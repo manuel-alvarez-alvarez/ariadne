@@ -11,7 +11,8 @@ use ariadne_api::sessions::ConsoleInputRequest;
 use ariadne_client::{Client, SseEvent};
 
 use super::follow::{self, Ending, Next};
-use crate::output::{Format, note, pager, print_json};
+use super::transcript::{self, Filters};
+use crate::output::{Format, note, pager, print_json, view};
 
 /// Open a session's ACP console, rendering its recorded events and accepting
 /// one prompt on each input line.
@@ -26,17 +27,30 @@ pub async fn attach(client: &Client, id: &str) -> Result<()> {
 }
 
 /// Show an ACP session's transcript, and follow its event stream when asked.
-pub async fn logs(client: &Client, id: &str, follow: bool, format: Format) -> Result<()> {
+pub async fn logs(
+    client: &Client,
+    id: &str,
+    follow: bool,
+    filters: Filters,
+    format: Format,
+) -> Result<()> {
     if !follow {
         let events = snapshot(client, id).await?;
         return match format {
-            Format::Json => print_json(&events),
-            Format::Table => pager::page(&transcript(&events)),
+            Format::Json => print_json(&filters.apply_events(&events)),
+            Format::Table => {
+                let items = filters.apply(transcript::fold(&events));
+                pager::page(&transcript::render::transcript(
+                    &items,
+                    view().width,
+                    view().color,
+                ))
+            }
         };
     }
 
-    let ending = follow_logs(client, id, format, |line| {
-        println!("{line}");
+    let ending = follow_logs(client, id, format, &filters, |text| {
+        print!("{text}");
         let _ = std::io::Write::flush(&mut std::io::stdout());
         Ok(())
     })
@@ -64,19 +78,43 @@ async fn follow_logs(
     client: &Client,
     id: &str,
     format: Format,
+    filters: &Filters,
     mut print: impl FnMut(String) -> Result<()>,
 ) -> Result<Ending> {
-    follow::frames(
+    let mut renderer = transcript::render::StreamRenderer::new(view().width, view().color);
+    let ending = follow::frames(
         client,
         &format!("/v1/sessions/{id}/console/stream"),
         |frame| {
-            for event in events(&frame)? {
-                print(log_line(format, &event)?)?;
+            let events = events(&frame)?;
+            let session_ended = events.iter().any(|event| event.kind == "session_end");
+            match (format, frame.event.as_str()) {
+                (Format::Json, "snapshot") => {
+                    for event in filters.apply_events(&events) {
+                        print(format!("{}\n", serde_json::to_string(event)?))?;
+                    }
+                }
+                (Format::Json, "event") => {
+                    for event in events {
+                        if filters.allows_kind(&event.kind) {
+                            print(format!("{}\n", serde_json::to_string(&event)?))?;
+                        }
+                    }
+                }
+                (Format::Table, "snapshot") => print(renderer.snapshot(&events, filters))?,
+                (Format::Table, "event") => {
+                    for event in events {
+                        print(renderer.event(&event, filters))?;
+                    }
+                }
+                _ => {}
             }
-            Ok(Next::Go)
+            Ok(if session_ended { Next::Stop } else { Next::Go })
         },
     )
-    .await
+    .await?;
+    print(renderer.finish())?;
+    Ok(ending)
 }
 
 /// The console loop with supplied input and output, so its API seam can be
@@ -145,14 +183,6 @@ fn render(event: &AgentEventDto) -> String {
     format!("{} · {}", event.kind, event.summary)
 }
 
-/// One transcript event in the requested log format.
-fn log_line(format: Format, event: &AgentEventDto) -> Result<String> {
-    match format {
-        Format::Table => Ok(render(event)),
-        Format::Json => Ok(serde_json::to_string(event)?),
-    }
-}
-
 /// Write one event and return options from a permission question.
 async fn render_to<W: AsyncWrite + Unpin>(
     output: &mut W,
@@ -207,10 +237,6 @@ fn selected_option(line: &str, options: Option<Vec<PermissionOption>>) -> Option
     options?.get(index).map(|option| option.id.clone())
 }
 
-fn transcript(events: &[AgentEventDto]) -> String {
-    events.iter().map(render).collect::<Vec<_>>().join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
@@ -230,6 +256,7 @@ mod tests {
     #[derive(Clone)]
     struct StubAgent {
         events: Vec<AgentEventDto>,
+        stream_events: Vec<AgentEventDto>,
         prompts: Arc<Mutex<Vec<String>>>,
         keep_stream_open: bool,
     }
@@ -240,12 +267,21 @@ mod tests {
         let snapshot = Event::default()
             .event("snapshot")
             .data(serde_json::to_string(&agent.events).unwrap());
+        let deltas = agent.stream_events.into_iter().map(|event| {
+            Ok(Event::default()
+                .event("event")
+                .data(serde_json::to_string(&event).unwrap()))
+        });
         let remaining = if agent.keep_stream_open {
             usize::MAX
         } else {
             0
         };
-        Sse::new(stream::once(async move { Ok(snapshot) }).chain(stream::pending().take(remaining)))
+        Sse::new(
+            stream::once(async move { Ok(snapshot) })
+                .chain(stream::iter(deltas))
+                .chain(stream::pending().take(remaining)),
+        )
     }
 
     async fn console_snapshot(State(agent): State<StubAgent>) -> Json<Vec<AgentEventDto>> {
@@ -264,9 +300,18 @@ mod tests {
         events: Vec<AgentEventDto>,
         keep_stream_open: bool,
     ) -> (Client, tokio::task::JoinHandle<()>, Arc<Mutex<Vec<String>>>) {
+        api_with_stream(events, Vec::new(), keep_stream_open).await
+    }
+
+    async fn api_with_stream(
+        events: Vec<AgentEventDto>,
+        stream_events: Vec<AgentEventDto>,
+        keep_stream_open: bool,
+    ) -> (Client, tokio::task::JoinHandle<()>, Arc<Mutex<Vec<String>>>) {
         let prompts = Arc::new(Mutex::new(Vec::new()));
         let agent = StubAgent {
             events,
+            stream_events,
             prompts: prompts.clone(),
             keep_stream_open,
         };
@@ -302,14 +347,23 @@ mod tests {
     }
 
     fn event(kind: &str, summary: &str, payload: serde_json::Value) -> AgentEventDto {
+        event_at(kind, summary, payload, "2026-09-11T00:00:00Z")
+    }
+
+    fn event_at(
+        kind: &str,
+        summary: &str,
+        payload: serde_json::Value,
+        created_at: &str,
+    ) -> AgentEventDto {
         AgentEventDto {
-            id: "event".into(),
+            id: format!("event-{kind}-{created_at}"),
             session_id: Some("session".into()),
             task_id: None,
             kind: kind.into(),
             payload,
             summary: summary.into(),
-            created_at: "2026-09-11T00:00:00Z".into(),
+            created_at: created_at.into(),
         }
     }
 
@@ -354,13 +408,72 @@ mod tests {
         let (client, server, _) = api(vec![event.clone()], false).await;
 
         let events = snapshot(&client, "session").await.unwrap();
-        assert_eq!(transcript(&events), "stop · Stub agent finished");
+        let output = transcript::render::transcript(&transcript::fold(&events), None, false);
+        assert!(output.contains("turn stopped"), "{output}");
         assert_eq!(
-            serde_json::from_str::<AgentEventDto>(&log_line(Format::Json, &events[0]).unwrap())
-                .unwrap()
-                .summary,
-            "Stub agent finished"
+            serde_json::to_value(Filters::default().apply_events(&events)).unwrap(),
+            serde_json::to_value(&events).unwrap(),
+            "JSON keeps each daemon event unchanged"
         );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn transcript_snapshot_filters_apply_to_folded_items() {
+        let events = vec![
+            event_at(
+                "agent_message",
+                "old",
+                json!({"text": "old message"}),
+                "2026-09-11T10:00:00Z",
+            ),
+            event_at(
+                "user_prompt_submit",
+                "prompt",
+                json!({"text": "new prompt"}),
+                "2026-09-11T11:00:00Z",
+            ),
+            event_at(
+                "agent_message",
+                "new",
+                json!({"text": "new message"}),
+                "2026-09-11T12:00:00Z",
+            ),
+        ];
+        let (client, server, _) = api(events, false).await;
+        let events = snapshot(&client, "session").await.unwrap();
+
+        let tail = Filters {
+            tail: Some(2),
+            ..Filters::default()
+        }
+        .apply(transcript::fold(&events));
+        assert_eq!(tail.len(), 2);
+        let tail = transcript::render::transcript(&tail, None, false);
+        assert!(!tail.contains("old message"), "{tail}");
+        assert!(
+            tail.contains("new prompt") && tail.contains("new message"),
+            "{tail}"
+        );
+
+        let since = Filters {
+            since: Some("2026-09-11T10:30:00Z".parse().unwrap()),
+            ..Filters::default()
+        }
+        .apply(transcript::fold(&events));
+        assert_eq!(since.len(), 2);
+        let since = transcript::render::transcript(&since, None, false);
+        assert!(!since.contains("old message"), "{since}");
+
+        let messages = Filters {
+            kinds: vec!["agent_message".into()],
+            ..Filters::default()
+        }
+        .apply(transcript::fold(&events));
+        assert_eq!(messages.len(), 2);
+        let messages = transcript::render::transcript(&messages, None, false);
+        assert!(!messages.contains("new prompt"), "{messages}");
+        assert!(messages.contains("old message") && messages.contains("new message"));
         server.abort();
     }
 
@@ -368,22 +481,64 @@ mod tests {
     async fn a_followed_log_uses_the_console_event_stream() {
         let event = event("stop", "Stub agent finished", json!({}));
         let (client, server, _) = api(vec![event.clone()], false).await;
-        let mut lines = Vec::new();
+        let mut output = String::new();
 
-        let ending = follow_logs(&client, "session", Format::Json, |line| {
-            lines.push(line);
-            Ok(())
-        })
+        let ending = follow_logs(
+            &client,
+            "session",
+            Format::Json,
+            &Filters::default(),
+            |text| {
+                output.push_str(&text);
+                Ok(())
+            },
+        )
         .await
         .unwrap();
 
         assert_eq!(ending, Ending::Dropped);
         assert_eq!(
-            serde_json::from_str::<AgentEventDto>(&lines[0])
+            serde_json::from_str::<AgentEventDto>(output.lines().next().unwrap())
                 .unwrap()
                 .kind,
             "stop"
         );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn followed_chunks_stream_text_under_one_block_header() {
+        let snapshot = vec![event(
+            "agent_message_chunk",
+            "Half ",
+            json!({"text": "Half "}),
+        )];
+        let deltas = vec![
+            event(
+                "agent_thought_chunk",
+                "hidden thought",
+                json!({"text": "hidden thought"}),
+            ),
+            event("agent_message_chunk", "done.", json!({"text": "done."})),
+            event("agent_message", "Half done.", json!({"text": "Half done."})),
+        ];
+        let (client, server, _) = api_with_stream(snapshot, deltas, false).await;
+        let mut output = String::new();
+        let filters = Filters {
+            kinds: vec!["agent_message_chunk".into()],
+            ..Filters::default()
+        };
+
+        follow_logs(&client, "session", Format::Table, &filters, |text| {
+            output.push_str(&text);
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        assert!(output.contains("Half done."), "{output:?}");
+        assert!(!output.contains("hidden thought"), "{output:?}");
+        assert_eq!(output.matches("AGENT").count(), 1, "{output:?}");
         server.abort();
     }
 }

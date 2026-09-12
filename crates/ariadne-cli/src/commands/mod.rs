@@ -20,6 +20,7 @@ pub mod resolve;
 pub mod session;
 pub mod skill;
 pub mod task;
+pub mod transcript;
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
