@@ -131,6 +131,13 @@ pub struct Scheduler {
     /// under its own id is counted again for the run that died next. Cleared,
     /// like the count it guards, when a launch is heard from.
     dead_launch: HashMap<String, String>,
+    /// The launch each seat last gave its budget back for, keyed like the map
+    /// above: a launch that was heard from gives the attempts back once, not
+    /// on every pass. A task's agents share one budget, so an author that
+    /// keeps reporting would otherwise refund, pass after pass, every attempt
+    /// its reviewer failed, and a reviewer that cannot be started would be
+    /// tried for ever without the task ever failing.
+    refunded_launch: HashMap<String, String>,
     /// What the quiet-clock watchdog has done about each session it has had
     /// to act on, by session id (in memory like the map above).
     quiet: HashMap<String, Quiet>,
@@ -178,6 +185,7 @@ pub fn start(
         launcher,
         spawn_failures: HashMap::new(),
         dead_launch: HashMap::new(),
+        refunded_launch: HashMap::new(),
         quiet: HashMap::new(),
         goal_told: HashMap::new(),
         landing_briefed: HashSet::new(),
@@ -409,20 +417,24 @@ impl Scheduler {
         budget: &str,
         last: &AgentSession,
     ) -> bool {
+        // Once per launch, and per launch rather than per row: an author and
+        // a reviewer are put back on their feet under the id they already
+        // have, so the row says nothing about which run of it died. Every
+        // pass over the same dead launch would otherwise spend the budget
+        // again, and no relaunch of a session would ever spend it once. The
+        // same holds for giving it back: a launch heard from refunds once.
+        let launch = last.launch_id.clone().unwrap_or_else(|| last.id.clone());
         if heard_from(last) {
-            self.spawn_failures.remove(budget);
             self.dead_launch.remove(seat);
+            if self.refunded_launch.get(seat) != Some(&launch) {
+                self.refunded_launch.insert(seat.to_string(), launch);
+                self.spawn_failures.remove(budget);
+            }
             return false;
         }
         if !died_on_arrival(last) {
             return false;
         }
-        // Once per launch, and per launch rather than per row: an author and
-        // a reviewer are put back on their feet under the id they already
-        // have, so the row says nothing about which run of it died. Every
-        // pass over the same dead launch would otherwise spend the budget
-        // again, and no relaunch of a session would ever spend it once.
-        let launch = last.launch_id.clone().unwrap_or_else(|| last.id.clone());
         if self.dead_launch.get(seat) == Some(&launch) {
             return false;
         }

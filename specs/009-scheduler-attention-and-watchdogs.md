@@ -109,7 +109,10 @@ the ACP runtime that takes a prompt (021).
     session's activity. Otherwise a death on arrival would read as an agent
     that spoke.
 29. The attempts are given back when an agent reports, not when a launch
-    returns. A goal whose orchestrator dies on arrival every time is left
+    returns, and once per launch that reported: a task's agents share one
+    budget, so an agent that keeps reporting, or one that reported before it
+    went away, does not give back what another agent of the task keeps
+    failing. A goal whose orchestrator dies on arrival every time is left
     with one alarm and nothing started again. A task whose author or
     reviewer does fails, saying its agent stopped as soon as it started.
 30. A goal whose tasks have all landed wakes its orchestrator, which decides
@@ -187,6 +190,9 @@ the ACP runtime that takes a prompt (021).
   (`::an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on`), and a
   task whose agent does fails with the reason on it
   (`::a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it`).
+- A reviewer heard from once that cannot be started again fails its task
+  rather than being tried for ever
+  (`::a_reviewer_heard_from_once_that_cannot_be_started_again_fails_its_task`).
 - A session outliving its completed goal is killed
   (`::a_session_that_outlived_its_completed_goal_is_killed`).
 - An orchestrator whose agent went away is resumed in its own row, on its

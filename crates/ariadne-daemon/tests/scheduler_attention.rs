@@ -939,6 +939,37 @@ async fn a_task_that_could_never_be_started_fails_with_the_reason_on_it() {
     );
 }
 
+/// An agent that was heard from once and then went away is not an agent that
+/// runs. Its old word used to give the task's budget back on every pass, so a
+/// reviewer that could not be started again — a worktree git would not move
+/// — was tried every tick for ever, the count going back to zero between
+/// attempts, and the task never failed. Only a live agent gives the budget
+/// back.
+#[tokio::test]
+async fn a_reviewer_heard_from_once_that_cannot_be_started_again_fails_its_task() {
+    let w = World::active().await;
+    w.advance(&w.task, TaskStatus::UnderReview).await;
+    let reviewer = w
+        .session(&w.goal, Some(&w.task), Seat::Reviewer, &w.reviewer)
+        .await;
+    w.store
+        .set_session_internal_id(&reviewer.id, "uuid-1234")
+        .await
+        .unwrap();
+    w.launched_ago(&reviewer, 60).await;
+    w.store.touch_session(&reviewer.id).await.unwrap();
+    w.set_status(&reviewer, SessionStatus::Exited).await;
+
+    // The task branch has no commits, so every resume of the reviewer fails
+    // before its agent is launched.
+    let sched = w.scheduler();
+    eventually(TIMEOUT, "the retry budget to run out", async || {
+        sched.task(&w.task);
+        w.store.get_task(&w.task.id).await.unwrap().status() == TaskStatus::Failed
+    })
+    .await;
+}
+
 /// Every session this goal has, which on a goal with no tasks is every
 /// orchestrator it ever tried to start.
 async fn orchestrators(h: &Harness, goal: &Goal) -> Vec<AgentSession> {
