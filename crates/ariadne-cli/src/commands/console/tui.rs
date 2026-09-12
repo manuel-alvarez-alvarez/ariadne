@@ -22,18 +22,21 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    Event as TermEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, EnableBracketedPaste, Event as TermEvent, EventStream, KeyCode,
+    KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use futures_util::{Stream, StreamExt};
 use ratatui::backend::{Backend, ClearType, CrosstermBackend, WindowSize};
 use ratatui::buffer::Cell;
-use ratatui::layout::{Constraint, Layout, Position, Size};
+use ratatui::layout::{Constraint, Layout, Position, Rect, Size};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph, Widget};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 use tokio::time::{Instant, interval, sleep_until};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::{ConsoleInputRequest, SessionDto};
@@ -212,6 +215,9 @@ pub struct Console {
     link: Link,
     input: Input,
     tick: usize,
+    /// When the running turn began, as far as the console saw it: the status
+    /// line counts up from here. `None` between turns.
+    since: Option<Instant>,
     /// One Ctrl-C has been seen: the next one leaves.
     armed: bool,
 }
@@ -228,6 +234,7 @@ impl Console {
             link: Link::Live,
             input: Input::default(),
             tick: 0,
+            since: None,
             armed: false,
         }
     }
@@ -245,6 +252,10 @@ impl Console {
     /// viewport across a reconnect. It is in the scrollback, where it was
     /// printed, and the next block redraws the viewport.
     pub fn snapshot(&mut self, events: &[AgentEventDto]) {
+        // Replaying the transcript replays every turn's start and end, and
+        // the clock follows: a turn that was running before the stream
+        // dropped counts from its own prompt again, and a turn that began
+        // while the stream was down counts from its prompt, not the old one.
         let mut items = Vec::new();
         for event in events {
             absorb(&mut items, event);
@@ -306,7 +317,7 @@ impl Console {
 
     /// What the status line says the agent is doing.
     fn follow_turn(&mut self, event: &AgentEventDto) {
-        self.turn = match event.kind.as_str() {
+        let turn = match event.kind.as_str() {
             "stop" | "session_end" | "session.error" => Turn::Idle,
             "pre_tool_use" | "tool_call_update" | "post_tool_use" => {
                 match TranscriptItem::from(event) {
@@ -328,6 +339,18 @@ impl Console {
             | "permission.replied" => Turn::Thinking,
             _ => return,
         };
+        self.set_turn(turn, instant_of(&event.created_at));
+    }
+
+    /// Move the turn on, starting the clock at `began` as it begins and
+    /// stopping it as it ends. A turn already running keeps its start.
+    fn set_turn(&mut self, turn: Turn, began: Instant) {
+        match (self.turn.running(), turn.running()) {
+            (false, true) => self.since = Some(began),
+            (_, false) => self.since = None,
+            (true, true) => {}
+        }
+        self.turn = turn;
     }
 
     /// The stream dropped: say so, until it is back.
@@ -348,7 +371,7 @@ impl Console {
             },
             text: text.to_string(),
         });
-        self.turn = Turn::Idle;
+        self.set_turn(Turn::Idle, Instant::now());
     }
 
     pub fn live(&mut self) {
@@ -459,7 +482,14 @@ impl Console {
             text: text.to_string(),
             source: Some("console".into()),
         });
-        self.turn = Turn::Thinking;
+        self.set_turn(Turn::Thinking, Instant::now());
+    }
+
+    /// Text the terminal pasted as one: into the box at the cursor, line
+    /// breaks and all. Nothing is sent until Enter.
+    pub fn paste(&mut self, text: &str) {
+        self.armed = false;
+        self.input.paste(text);
     }
 
     /// How many leading items are finished with and may leave the viewport.
@@ -576,6 +606,9 @@ impl Console {
                 spans.push(Span::styled(format!("running {tool}"), DIM));
             }
         }
+        if let Some(since) = self.since {
+            spans.push(Span::styled(format!(" {}", clock(since.elapsed())), DIM));
+        }
         spans.push(Span::styled(
             match (self.armed, self.question().is_some(), self.turn.running()) {
                 (true, _, _) => "   ctrl-c again to leave".to_string(),
@@ -590,6 +623,34 @@ impl Console {
 
     fn spinner(&self) -> &'static str {
         SPINNER[self.tick % SPINNER.len()]
+    }
+}
+
+/// When an event happened, on the console's own clock: a turn already
+/// running at attach counts from its prompt, not from the attach. An event
+/// whose time cannot be read, or that a clock ahead of this one dated in the
+/// future, counts from now.
+fn instant_of(created_at: &str) -> Instant {
+    let now = Instant::now();
+    chrono::DateTime::parse_from_rfc3339(created_at)
+        .ok()
+        .and_then(|at| {
+            (chrono::Utc::now() - at.with_timezone(&chrono::Utc))
+                .to_std()
+                .ok()
+        })
+        .and_then(|age| now.checked_sub(age))
+        .unwrap_or(now)
+}
+
+/// How long the turn has run, in whole seconds: `12s`, or `1m 04s` past a
+/// minute.
+fn clock(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
     }
 }
 
@@ -757,7 +818,7 @@ fn prefixed(
     width: usize,
     fold: Option<usize>,
 ) -> Vec<Line<'static>> {
-    let mut wrapped = wrap(text, width.saturating_sub(marker.chars().count()));
+    let mut wrapped = wrap(text, width.saturating_sub(marker.width()));
     let hidden = fold.map_or(0, |fold| wrapped.len().saturating_sub(fold));
     if hidden > 0 {
         wrapped.truncate(fold.unwrap_or(wrapped.len()));
@@ -770,7 +831,7 @@ fn prefixed(
             let lead = if at == 0 {
                 Span::styled(marker.to_string(), marker_style)
             } else {
-                Span::raw(" ".repeat(marker.chars().count()))
+                Span::raw(" ".repeat(marker.width()))
             };
             Line::from(vec![lead, Span::styled(line, style)])
         })
@@ -805,8 +866,8 @@ fn call(tool: &Tool, started_at: &str, width: usize) -> Vec<Line<'static>> {
 /// what the call is about, from its input — and how long it took, once it
 /// has ended.
 fn head(tool: &Tool, mark: Span<'static>, elapsed: Option<String>, width: usize) -> Line<'static> {
-    let lead = mark.content.chars().count() + 1;
-    let tail = elapsed.as_ref().map_or(0, |elapsed| elapsed.len() + 2);
+    let lead = mark.content.width() + 1;
+    let tail = elapsed.as_ref().map_or(0, |elapsed| elapsed.width() + 2);
     let room = width.saturating_sub(lead + 2 + tail).max(1);
     let mut spans = vec![
         mark,
@@ -917,12 +978,23 @@ fn field(input: &serde_json::Value, keys: &[&str]) -> Option<String> {
         .find_map(|key| input.get(key)?.as_str().map(str::to_string))
 }
 
-/// Cut a line to `room` columns, saying so.
+/// Cut a line to `room` columns, saying so. The cut falls between grapheme
+/// clusters, each as wide as it draws, so an emoji of several characters is
+/// kept or dropped whole.
 fn clip(text: &str, room: usize) -> String {
-    if text.chars().count() <= room {
+    if text.width() <= room {
         return text.to_string();
     }
-    let mut cut: String = text.chars().take(room.saturating_sub(1)).collect();
+    let mut cut = String::new();
+    let mut used = 0;
+    for grapheme in text.graphemes(true) {
+        let width = grapheme.width();
+        if used + width > room.saturating_sub(1) {
+            break;
+        }
+        used += width;
+        cut.push_str(grapheme);
+    }
     cut.push('…');
     cut
 }
@@ -1095,7 +1167,7 @@ fn permission(
     lines
 }
 
-/// Hard-wrap text to `width`, keeping the line breaks it already has.
+/// Hard-wrap text to `width` columns, keeping the line breaks it already has.
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut out = Vec::new();
@@ -1103,7 +1175,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         let mut line = String::new();
         let mut used = 0usize;
         for word in source.split_inclusive(char::is_whitespace) {
-            let length = word.chars().count();
+            let length = word.width();
             if used > 0 && used + length > width {
                 out.push(std::mem::take(&mut line).trim_end().to_string());
                 used = 0;
@@ -1152,13 +1224,21 @@ impl Input {
     ///
     /// A line longer than the box scrolls sideways under the cursor rather
     /// than running off the end of it, which is how a long prompt stays
-    /// readable while it is being typed.
+    /// readable while it is being typed. The cursor sits at the column the
+    /// characters before it draw up to: the width of the string they make,
+    /// which is more than their count where one is wide, and more than the
+    /// sum of their own widths where a selector or a joiner makes an emoji
+    /// of them — the same measure the drawing takes.
     fn view(&self, height: usize, width: usize) -> ((u16, u16), (u16, u16)) {
+        let column = self.lines[self.row][..self.column]
+            .iter()
+            .collect::<String>()
+            .width();
         let down = (self.row + 1).saturating_sub(height.max(1));
-        let across = (self.column + 1).saturating_sub(width.max(1));
+        let across = (column + 1).saturating_sub(width.max(1));
         let at = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
         (
-            (at(self.column - across), at(self.row - down)),
+            (at(column - across), at(self.row - down)),
             (at(down), at(across)),
         )
     }
@@ -1168,6 +1248,53 @@ impl Input {
         self.lines.insert(self.row + 1, tail);
         self.row += 1;
         self.column = 0;
+    }
+
+    /// Put pasted text in at the cursor, its line breaks kept: a terminal
+    /// pastes them as `\r`, `\r\n` or `\n`, and each is one new line.
+    fn paste(&mut self, text: &str) {
+        let mut characters = text.chars().peekable();
+        while let Some(character) = characters.next() {
+            match character {
+                '\r' => {
+                    characters.next_if_eq(&'\n');
+                    self.newline();
+                }
+                '\n' => self.newline(),
+                _ => {
+                    self.lines[self.row].insert(self.column, character);
+                    self.column += 1;
+                }
+            }
+        }
+    }
+
+    /// The start of the word before the cursor: back over the space, then
+    /// back over the word.
+    fn word_start(&self) -> usize {
+        let line = &self.lines[self.row];
+        let mut at = self.column;
+        while at > 0 && line[at - 1].is_whitespace() {
+            at -= 1;
+        }
+        while at > 0 && !line[at - 1].is_whitespace() {
+            at -= 1;
+        }
+        at
+    }
+
+    /// The end of the word after the cursor: forward over the space, then
+    /// forward over the word.
+    fn word_end(&self) -> usize {
+        let line = &self.lines[self.row];
+        let mut at = self.column;
+        while at < line.len() && line[at].is_whitespace() {
+            at += 1;
+        }
+        while at < line.len() && !line[at].is_whitespace() {
+            at += 1;
+        }
+        at
     }
 
     /// Everything typed so far, emptying the box. `None` when it holds only
@@ -1183,8 +1310,32 @@ impl Input {
         (!text.trim().is_empty()).then_some(text)
     }
 
+    /// One key in the box. The line-editing keys are the shell's: Ctrl-A and
+    /// Ctrl-E to the ends of the line, Ctrl-U and Ctrl-K deleting to them,
+    /// Ctrl-W deleting the word before the cursor, and Alt with an arrow —
+    /// or Alt-B and Alt-F, which is what a terminal that sends the readline
+    /// sequences for Alt-Left and Alt-Right gives — moving by word.
     fn key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
+            KeyCode::Char('a') if ctrl => self.column = 0,
+            KeyCode::Char('e') if ctrl => self.column = self.lines[self.row].len(),
+            KeyCode::Char('u') if ctrl => {
+                self.lines[self.row].drain(..self.column);
+                self.column = 0;
+            }
+            KeyCode::Char('k') if ctrl => {
+                self.lines[self.row].truncate(self.column);
+            }
+            KeyCode::Char('w') if ctrl => {
+                let start = self.word_start();
+                self.lines[self.row].drain(start..self.column);
+                self.column = start;
+            }
+            KeyCode::Left | KeyCode::Char('b') if alt => self.column = self.word_start(),
+            KeyCode::Right | KeyCode::Char('f') if alt => self.column = self.word_end(),
+            KeyCode::Char(_) if ctrl || alt => {}
             KeyCode::Char(character) => {
                 self.lines[self.row].insert(self.column, character);
                 self.column += 1;
@@ -1341,6 +1492,12 @@ where
                         .await;
                 }
             },
+            Step::Key(TermEvent::Paste(text)) => console.paste(&text),
+            // The loop redraws on its way round; the resize is what makes
+            // the viewport the new size before it does.
+            Step::Key(TermEvent::Resize(width, height)) => {
+                terminal.resize(Rect::new(0, 0, width, height))?;
+            }
             Step::Key(_) => {}
             Step::Closed => return Ok(()),
             Step::Tick => console.tick(),
@@ -1376,21 +1533,47 @@ pub trait Terminals {
     fn leave(&mut self);
 }
 
-/// The process terminal: raw mode, and the key protocol that tells Shift+Enter
+/// The process terminal: raw mode, bracketed paste — so a paste arrives as
+/// one event and not as keys — and the key protocol that tells Shift+Enter
 /// from Enter where the terminal can report it.
-#[derive(Default)]
-pub struct Raw {
+///
+/// The modes are switched by escape sequences written to `out`, which is
+/// stdout on the real terminal and a buffer in a test that reads what was
+/// written on the way out.
+pub struct Raw<W: Write = std::io::Stdout> {
+    out: W,
     enhanced: bool,
 }
 
-impl Terminals for Raw {
+impl Default for Raw {
+    fn default() -> Self {
+        Self::on(std::io::stdout())
+    }
+}
+
+impl<W: Write> Raw<W> {
+    fn on(out: W) -> Self {
+        Self {
+            out,
+            enhanced: false,
+        }
+    }
+}
+
+impl<W: Write> Terminals for Raw<W> {
     fn enter(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()?;
+        // Nothing holds the terminal yet: a failure here gives raw mode
+        // back itself, since no `leave` will.
+        if let Err(e) = crossterm::execute!(self.out, EnableBracketedPaste) {
+            let _ = crossterm::terminal::disable_raw_mode();
+            return Err(e.into());
+        }
         // Only a terminal that speaks the keyboard protocol can report
         // Shift+Enter at all; Alt+Enter is the newline everywhere else.
         self.enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
             && crossterm::execute!(
-                std::io::stdout(),
+                self.out,
                 PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
             )
             .is_ok();
@@ -1399,11 +1582,12 @@ impl Terminals for Raw {
 
     fn leave(&mut self) {
         if self.enhanced {
-            let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+            let _ = crossterm::execute!(self.out, PopKeyboardEnhancementFlags);
         }
+        let _ = crossterm::execute!(self.out, DisableBracketedPaste);
         let _ = crossterm::terminal::disable_raw_mode();
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
-        let _ = std::io::stdout().flush();
+        let _ = crossterm::execute!(self.out, crossterm::cursor::Show);
+        let _ = self.out.flush();
     }
 }
 
@@ -1702,14 +1886,19 @@ mod tests {
         rows(terminal.backend().buffer())
     }
 
+    /// The cell after a wide character is the blank the buffer leaves under
+    /// its second column, and is not read as a space.
     fn rows(buffer: &Buffer) -> String {
         (0..buffer.area.height)
             .map(|y| {
-                (0..buffer.area.width)
-                    .map(|x| buffer[(x, y)].symbol())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
+                let mut row = String::new();
+                let mut x = 0;
+                while x < buffer.area.width {
+                    let symbol = buffer[(x, y)].symbol();
+                    row.push_str(symbol);
+                    x += u16::try_from(symbol.width().max(1)).unwrap();
+                }
+                row.trim_end().to_string()
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -1717,6 +1906,35 @@ mod tests {
 
     fn key(code: KeyCode) -> TermEvent {
         TermEvent::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn ctrl(character: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(character), KeyModifiers::CONTROL)
+    }
+
+    fn alt(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::ALT)
+    }
+
+    fn paste(text: &str) -> TermEvent {
+        TermEvent::Paste(text.into())
+    }
+
+    /// Type `text` into the console, one key per character.
+    fn type_into(console: &mut Console, text: &str) {
+        for character in text.chars() {
+            console.key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+    }
+
+    fn enter(console: &mut Console) -> Action {
+        console.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    fn left(console: &mut Console, times: usize) {
+        for _ in 0..times {
+            console.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        }
     }
 
     fn typed(text: &str) -> Vec<TermEvent> {
@@ -2177,6 +2395,281 @@ mod tests {
         );
     }
 
+    /// Four words of three CJK characters, each six columns wide, on a
+    /// terminal sixteen columns wide: two words fill a line of the block,
+    /// where a count of characters would fit three.
+    #[test]
+    fn a_line_of_wide_characters_wraps_at_the_display_width() {
+        let mut console = Console::new(header());
+        let mut terminal = Terminal::with_options(
+            TestBackend::new(16, 40),
+            TerminalOptions {
+                viewport: Viewport::Inline(VIEWPORT),
+            },
+        )
+        .unwrap();
+        console.apply(&event(
+            "user_prompt_submit",
+            "wide",
+            json!({"text": "日本語 日本語 日本語 日本語", "source": "console"}),
+        ));
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        let shown = screen(&terminal);
+        assert!(
+            shown.contains("> 日本語 日本語\n  日本語 日本語"),
+            "{shown}"
+        );
+    }
+
+    /// A woman scientist — three characters joined into one two-column
+    /// emoji — heads a command too long for a pane sixteen columns wide.
+    /// The head has twelve columns for it: eleven of text and the mark. A
+    /// cut that counted characters would take two columns too many for the
+    /// emoji and stop two characters short.
+    #[test]
+    fn a_head_is_cut_between_whole_emoji_sequences() {
+        let mut console = Console::new(header());
+        let mut terminal = Terminal::with_options(
+            TestBackend::new(16, 40),
+            TerminalOptions {
+                viewport: Viewport::Inline(VIEWPORT),
+            },
+        )
+        .unwrap();
+        console.apply(&called(
+            "run",
+            "execute",
+            "completed",
+            json!({"command": "\u{1f469}\u{200d}\u{1f52c} lab notes now"}),
+        ));
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        let shown = screen(&terminal);
+        assert!(
+            shown.contains("✓ $ \u{1f469}\u{200d}\u{1f52c} lab note…"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn the_cursor_sits_after_the_columns_a_wide_character_draws_on() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        type_into(&mut console, "日本");
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        // The box's left border is column 0, so its text starts at 1.
+        assert_eq!(
+            terminal.get_cursor_position().unwrap().x,
+            5,
+            "two wide characters are four columns"
+        );
+    }
+
+    /// A red heart with the emoji presentation selector: two characters, one
+    /// of them a column wide on its own, drawn as one two-column emoji.
+    #[test]
+    fn the_cursor_sits_after_an_emoji_sequence_as_it_is_drawn() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        type_into(&mut console, "\u{2764}\u{fe0f}");
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        assert_eq!(
+            terminal.get_cursor_position().unwrap().x,
+            3,
+            "the sequence is two columns, past the border at column 0"
+        );
+    }
+
+    /// An event dated this many seconds ago on the wall clock, as the
+    /// daemon dates the ones it stores. Zero is an event happening now.
+    fn ago(seconds: i64, kind: &str, summary: &str, payload: serde_json::Value) -> AgentEventDto {
+        let at = chrono::Utc::now() - chrono::Duration::seconds(seconds);
+        event_at(kind, summary, payload, &at.to_rfc3339())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_attach_during_a_turn_counts_from_the_prompt_that_began_it() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+
+        console.snapshot(&[ago(
+            45,
+            "user_prompt_submit",
+            "first",
+            json!({"text": "first", "source": "console"}),
+        )]);
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        assert!(
+            screen(&terminal).contains("thinking 45s"),
+            "the turn began 45 seconds before the attach: {}",
+            screen(&terminal)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_reconnect_keeps_the_clock_of_the_turn_still_running() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        let events = vec![
+            ago(
+                40,
+                "user_prompt_submit",
+                "first",
+                json!({"text": "first", "source": "console"}),
+            ),
+            ago(35, "stop", "stopped", json!({"stop_reason": "end_turn"})),
+            ago(
+                30,
+                "user_prompt_submit",
+                "second",
+                json!({"text": "second", "source": "console"}),
+            ),
+        ];
+        console.snapshot(&events);
+
+        console.dropped();
+        console.snapshot(&events);
+        console.live();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        assert!(
+            screen(&terminal).contains("thinking 30s"),
+            "the replay did not restart the clock: {}",
+            screen(&terminal)
+        );
+    }
+
+    /// The stream is down while one turn ends and the next begins: the
+    /// replay brings both, and the clock is the new turn's.
+    #[tokio::test(start_paused = true)]
+    async fn a_turn_begun_while_the_stream_was_down_counts_from_its_own_prompt() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        let first = ago(
+            30,
+            "user_prompt_submit",
+            "first",
+            json!({"text": "first", "source": "console"}),
+        );
+        console.snapshot(std::slice::from_ref(&first));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert!(
+            screen(&terminal).contains("thinking 30s"),
+            "{}",
+            screen(&terminal)
+        );
+
+        console.dropped();
+        console.snapshot(&[
+            first,
+            ago(20, "stop", "stopped", json!({"stop_reason": "end_turn"})),
+            ago(
+                5,
+                "user_prompt_submit",
+                "second",
+                json!({"text": "second", "source": "console"}),
+            ),
+        ]);
+        console.live();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        assert!(
+            screen(&terminal).contains("thinking 5s"),
+            "the clock is the new turn's, not the old one's: {}",
+            screen(&terminal)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_status_line_counts_the_running_turn_and_stops_between_turns() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        let prompt = |text: &str| {
+            ago(
+                0,
+                "user_prompt_submit",
+                text,
+                json!({"text": text, "source": "console"}),
+            )
+        };
+        let stopped = ago(0, "stop", "stopped", json!({"stop_reason": "end_turn"}));
+        let status_line = |terminal: &Terminal<TestBackend>| {
+            screen(terminal)
+                .lines()
+                .find(|line| line.starts_with("author"))
+                .unwrap()
+                .to_string()
+        };
+
+        console.apply(&prompt("first"));
+        tokio::time::advance(Duration::from_secs(64)).await;
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert!(
+            status_line(&terminal).contains("thinking 1m 04s"),
+            "{}",
+            screen(&terminal)
+        );
+
+        console.apply(&stopped);
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert!(
+            !status_line(&terminal).contains("1m 04s"),
+            "the clock is off between turns: {}",
+            screen(&terminal)
+        );
+
+        console.apply(&prompt("second"));
+        tokio::time::advance(Duration::from_secs(5)).await;
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert!(
+            status_line(&terminal).contains("thinking 5s"),
+            "the next turn starts from zero: {}",
+            screen(&terminal)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resize_redraws_the_viewport_at_the_new_size() {
+        let (client, server) = serve(Stub::new(Vec::new())).await;
+        let mut terminal = terminal();
+        let mut console = Console::new(header());
+        terminal.backend_mut().resize(40, 20);
+        let ctrl_c = TermEvent::Key(ctrl('c'));
+        let keys = stream::iter(vec![
+            Ok(TermEvent::Resize(40, 20)),
+            Ok(ctrl_c.clone()),
+            Ok(ctrl_c),
+        ])
+        .chain(stream::pending());
+
+        drive(
+            &client,
+            "session",
+            &mut terminal,
+            Box::pin(keys),
+            &mut console,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        let shown = screen(&terminal);
+        assert!(
+            shown
+                .lines()
+                .any(|line| line.width() == 40 && line.ends_with('┐')),
+            "the box's border reaches the new right edge: {shown}"
+        );
+    }
+
     fn asked() -> AgentEventDto {
         event(
             "permission_request",
@@ -2500,6 +2993,119 @@ mod tests {
         assert_eq!(send, Action::Send("a\nb\nc".into()));
     }
 
+    /// Both runs leave by Ctrl-C rather than wait for the daemon, so a
+    /// console that sends nothing fails the assertion instead of hanging.
+    #[tokio::test]
+    async fn a_pasted_text_is_one_prompt_with_its_line_breaks_and_sends_nothing_until_enter() {
+        let ctrl_c = TermEvent::Key(ctrl('c'));
+        let (_, prompts, _) = console(
+            Stub::new(Vec::new()),
+            vec![paste("one\n\ntwo"), ctrl_c.clone(), ctrl_c.clone()],
+        )
+        .await;
+        assert!(
+            prompts.is_empty(),
+            "the paste alone sent nothing: {prompts:?}"
+        );
+
+        let (_, prompts, _) = console(
+            Stub::new(Vec::new()),
+            vec![
+                paste("one\n\ntwo"),
+                key(KeyCode::Enter),
+                ctrl_c.clone(),
+                ctrl_c,
+            ],
+        )
+        .await;
+        assert_eq!(
+            prompts,
+            ["one\n\ntwo"],
+            "Enter sent the paste as one prompt, its blank line kept"
+        );
+    }
+
+    #[test]
+    fn a_paste_goes_in_at_the_cursor_and_a_carriage_return_is_a_line_break() {
+        let mut console = Console::new(header());
+        type_into(&mut console, "ad");
+        left(&mut console, 1);
+
+        console.paste("b\r\nc\r");
+
+        assert_eq!(enter(&mut console), Action::Send("ab\nc\nd".into()));
+    }
+
+    #[test]
+    fn ctrl_a_moves_to_the_line_start() {
+        let mut console = Console::new(header());
+        type_into(&mut console, "world");
+
+        console.key(ctrl('a'));
+        type_into(&mut console, "hello ");
+
+        assert_eq!(enter(&mut console), Action::Send("hello world".into()));
+    }
+
+    #[test]
+    fn ctrl_e_moves_to_the_line_end() {
+        let mut console = Console::new(header());
+        type_into(&mut console, "hello");
+        left(&mut console, 5);
+
+        console.key(ctrl('e'));
+        type_into(&mut console, "!");
+
+        assert_eq!(enter(&mut console), Action::Send("hello!".into()));
+    }
+
+    #[test]
+    fn ctrl_u_deletes_to_the_line_start() {
+        let mut console = Console::new(header());
+        type_into(&mut console, "drop this keep");
+        left(&mut console, 4);
+
+        console.key(ctrl('u'));
+
+        assert_eq!(enter(&mut console), Action::Send("keep".into()));
+    }
+
+    #[test]
+    fn ctrl_k_deletes_to_the_line_end() {
+        let mut console = Console::new(header());
+        type_into(&mut console, "keep drop this");
+        left(&mut console, 10);
+
+        console.key(ctrl('k'));
+
+        assert_eq!(enter(&mut console), Action::Send("keep".into()));
+    }
+
+    #[test]
+    fn ctrl_w_deletes_the_word_before_the_cursor() {
+        let mut console = Console::new(header());
+        type_into(&mut console, "keep the last  ");
+
+        console.key(ctrl('w'));
+        type_into(&mut console, "one");
+
+        assert_eq!(enter(&mut console), Action::Send("keep the one".into()));
+    }
+
+    #[test]
+    fn alt_left_and_alt_right_move_by_word() {
+        let mut console = Console::new(header());
+        type_into(&mut console, "one two");
+
+        console.key(alt(KeyCode::Left));
+        console.key(alt(KeyCode::Left));
+        type_into(&mut console, "zero ");
+        console.key(alt(KeyCode::Right));
+        type_into(&mut console, "!");
+
+        assert_eq!(enter(&mut console), Action::Send("zero one! two".into()));
+    }
+
     #[test]
     fn one_ctrl_c_keeps_the_console_and_the_second_leaves_it() {
         let mut console = Console::new(header());
@@ -2759,6 +3365,24 @@ mod tests {
         }
         server.abort();
         assert_eq!(mute.0.load(Ordering::SeqCst), 1, "the fallback viewport");
+    }
+
+    /// The sequence that turns bracketed paste off, as the terminal reads it.
+    const PASTE_OFF: &[u8] = b"\x1b[?2004l";
+
+    #[test]
+    fn the_terminal_is_given_back_with_bracketed_paste_off() {
+        let mut raw = Raw::on(Vec::new());
+
+        raw.leave();
+
+        assert!(
+            raw.out
+                .windows(PASTE_OFF.len())
+                .any(|bytes| bytes == PASTE_OFF),
+            "{:?}",
+            String::from_utf8_lossy(&raw.out)
+        );
     }
 
     #[test]

@@ -64,6 +64,14 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # and the new text of a file, and the console shows the hunks between them,
 # with context, rather than every old line and then every new one.
 similar = "2"
+# How many columns a string takes on the screen: a CJK character and most
+# emoji take two, so the console wraps and cuts by this rather than by the
+# character count. The version ratatui already pulls in.
+unicode-width = "0.2"
+# Where a line is cut to fit, it is cut between grapheme clusters, so an
+# emoji made of several characters is kept or dropped whole. The version
+# ratatui already pulls in.
+unicode-segmentation = "1"
 
 # errors / logging
 anyhow = "1"

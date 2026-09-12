@@ -148,6 +148,8 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "toml",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

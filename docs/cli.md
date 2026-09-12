@@ -39,7 +39,11 @@ In a terminal the console is a small inline pane. The transcript scrolls in
 the terminal's own buffer, so it is still there in your scrollback after you
 leave; a status line and the input box stay pinned under it. The status line
 names the seat, the model and the session's status, and a spinner says
-"thinking" or "running &lt;tool&gt;" while a turn runs.
+"thinking" or "running &lt;tool&gt;" while a turn runs, with how long the
+turn has been running next to it: `12s`, or `1m 04s` past a minute. The
+count starts again with each turn and is not shown between turns; attaching
+in the middle of a turn counts from its prompt. Resizing the terminal
+redraws the pane at the new size.
 
 The pane opens where the cursor is, which the console asks the terminal for.
 A terminal that does not answer — a pseudo-terminal with nothing behind it,
@@ -78,9 +82,17 @@ added and removed lines in colour, folded past a page with a count.
 | --- | --- |
 | Enter | Sends what you typed, or answers the permission question on screen |
 | Shift+Enter, Alt+Enter | Starts a new line in the input box |
+| Ctrl-A, Ctrl-E | Moves to the start or the end of the line |
+| Ctrl-U, Ctrl-K | Deletes to the start or the end of the line |
+| Ctrl-W | Deletes the word before the cursor |
+| Alt+←, Alt+→ | Moves back or forward one word (Alt-B and Alt-F do the same) |
 | ↑ ↓, or 1 to 9 | Chooses an option of a permission question |
 | Escape | Cancels the running turn |
 | Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running |
+
+Pasting puts the text into the input box where the cursor is, line breaks
+and all; nothing is sent until you press Enter. Wide characters and emoji
+take the two columns they draw on, in the transcript and in the box alike.
 
 A typed prompt shows as `> text` straight away, and is replaced when the
 daemon confirms it. If the daemon's stream drops, the status line says

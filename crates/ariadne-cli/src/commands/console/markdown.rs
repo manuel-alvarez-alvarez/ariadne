@@ -13,6 +13,8 @@
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// A heading: the one thing on a long answer a reader's eye jumps between.
 const HEADING: Style = Style::new()
@@ -143,7 +145,7 @@ impl Writer {
                 };
                 self.push(&marker, MARK);
                 // Continuation lines of one item line up under its text.
-                self.indent.push_str(&" ".repeat(marker.chars().count()));
+                self.indent.push_str(&" ".repeat(marker.width()));
             }
             Tag::Emphasis => self.style = self.style.add_modifier(Modifier::ITALIC),
             Tag::Strong => self.style = self.style.add_modifier(Modifier::BOLD),
@@ -192,13 +194,19 @@ impl Writer {
     }
 
     /// One line of a code block: kept as written, cut rather than wrapped, so
-    /// its indentation still lines up.
+    /// its indentation still lines up. The cut falls between grapheme
+    /// clusters, each as wide as it draws, so an emoji of several characters
+    /// is kept or dropped whole.
     fn verbatim(&mut self, text: &str) {
-        let room = self
-            .width
-            .saturating_sub(self.indent.chars().count())
-            .max(1);
-        let text: String = text.chars().take(room).collect();
+        let room = self.width.saturating_sub(self.indent.width()).max(1);
+        let mut used = 0;
+        let text: String = text
+            .graphemes(true)
+            .take_while(|grapheme| {
+                used += grapheme.width();
+                used <= room
+            })
+            .collect();
         self.lines.push(Line::from(vec![
             Span::styled(self.indent.clone(), MARK),
             Span::styled(text, CODE),
@@ -235,10 +243,7 @@ impl Writer {
     /// Greedy word wrap over styled spans: words keep the style of the span
     /// they came from, and a word longer than the line stands on its own.
     fn wrap_pending(&mut self) {
-        let room = self
-            .width
-            .saturating_sub(self.indent.chars().count())
-            .max(1);
+        let room = self.width.saturating_sub(self.indent.width()).max(1);
         // The first line of a list item carries its marker, which the pending
         // spans already hold; the rest carry the indent alone.
         let mut spans: Vec<Span<'static>> = Vec::new();
@@ -255,7 +260,7 @@ impl Writer {
         };
         for span in std::mem::take(&mut self.pending) {
             for word in words(&span.content) {
-                let length = word.chars().count();
+                let length = word.width();
                 if word.trim().is_empty() {
                     // Leading space on a fresh line is the wrap's, not the
                     // text's.
@@ -374,6 +379,29 @@ mod tests {
         let lines = render("alpha beta gamma delta epsilon", 12);
 
         assert_eq!(text(&lines), ["alpha beta", "gamma delta", "epsilon"]);
+    }
+
+    /// Three words of three CJK characters, six columns each: two fill a
+    /// line thirteen columns wide, where a count of characters would fit all
+    /// three.
+    #[test]
+    fn a_paragraph_of_wide_characters_wraps_at_the_display_width() {
+        let lines = render("日本語 日本語 日本語", 13);
+
+        assert_eq!(text(&lines), ["日本語 日本語", "日本語"]);
+    }
+
+    /// A woman scientist: three characters joined into one two-column
+    /// emoji. A cut that counted characters would drop her or split her.
+    #[test]
+    fn a_code_line_is_cut_between_whole_emoji_sequences() {
+        let lines = render("```\nab\u{1f469}\u{200d}\u{1f52c}cd\n```", 4);
+
+        assert_eq!(
+            text(&lines),
+            ["```", "ab\u{1f469}\u{200d}\u{1f52c}", "```"],
+            "the emoji fits in the two columns left and is kept whole"
+        );
     }
 
     #[test]

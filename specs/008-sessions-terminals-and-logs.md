@@ -107,11 +107,19 @@ goal id to a seat (014).
     pane, so it stays in the scrollback; the pane holds the block still being
     written, a status line and the input box. The status line names the seat,
     the model and the session's status, and turns a spinner with "thinking" or
-    "running &lt;tool&gt;" while a turn runs. The pane opens from the cursor,
-    which the terminal is asked for; a terminal that does not answer within
-    crossterm's timeout gets the same pane opened from the bottom row instead,
-    on a backend that answers every later cursor query itself. There is no
-    alternate-screen fallback.
+    "running &lt;tool&gt;" while a turn runs, followed by how long the turn
+    has run — `12s`, or `1m 04s` past a minute — counted from the event that
+    began it, so a turn already running at attach counts from its prompt;
+    the count starts again with each turn, survives a reconnect's replay,
+    and is absent between turns. Every block, the agent's markdown and the
+    input box wrap and cut by display width, so a wide character or an emoji
+    takes the two columns it draws on, and a cut falls between grapheme
+    clusters, so an emoji of several characters is never split. A resize of
+    the terminal redraws the pane at the new size. The pane opens from the
+    cursor, which the terminal is asked for; a terminal that does not answer
+    within crossterm's timeout gets the same pane opened from the bottom row
+    instead, on a backend that answers every later cursor query itself. There
+    is no alternate-screen fallback.
 23. The pane renders each block as it arrives: a prompt as `> text`, holding
     the event's `text` alone — never the whole `prompt` with the system
     prompt ahead of it (021), nor the summary, one line cut short; an event
@@ -160,13 +168,20 @@ goal id to a seat (014).
     blank line and then the typed text — the whole is the system prompt, a
     blank line and the text, so a daemon prompt that merely ends in the same
     words does not match — keeping what was typed, and is a prompt of its
-    own otherwise. On a permission
-    question the arrows and the number keys move the pick and Enter posts the
-    option's id. A post the daemon refuses is said on the transcript, and the
-    console stays open.
+    own otherwise. The terminal is in bracketed paste, so a paste arrives as
+    one event: it goes into the box at the cursor with its line breaks kept,
+    and sends nothing until Enter. The box has the shell's line-editing keys:
+    Ctrl-A and Ctrl-E to the start and the end of the line, Ctrl-U and Ctrl-K
+    deleting to them, Ctrl-W deleting the word before the cursor, and
+    Alt-Left and Alt-Right — or Alt-B and Alt-F, which is what a terminal
+    that sends the readline sequences for them gives — moving by word. On a
+    permission question the arrows and the number keys move the pick and
+    Enter posts the option's id. A post the daemon refuses is said on the
+    transcript, and the console stays open.
 27. Escape during a running turn posts to console cancel. Ctrl-C twice, or
     Ctrl-D, leaves the console, and the session stays alive. Every way out
-    puts the terminal back: raw mode off and the cursor shown.
+    puts the terminal back: raw mode off, bracketed paste off and the cursor
+    shown.
 28. A dropped stream says "reconnecting" and is dialled again on the backoff
     every other follow uses. The fresh snapshot redraws what was open and does
     not repeat what is already in the scrollback.
@@ -238,6 +253,28 @@ goal id to a seat (014).
   and markdown keeps a heading, a code block and a list apart
   (`console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
+- The status line counts the running turn and stops between turns
+  (`console/tui.rs::the_status_line_counts_the_running_turn_and_stops_between_turns`),
+  a turn already running at attach counts from its prompt
+  (`::an_attach_during_a_turn_counts_from_the_prompt_that_began_it`), a
+  reconnect's replay keeps the clock of the turn still running
+  (`::a_reconnect_keeps_the_clock_of_the_turn_still_running`) and gives a
+  turn begun while the stream was down its own clock
+  (`::a_turn_begun_while_the_stream_was_down_counts_from_its_own_prompt`),
+  and a resize
+  redraws the pane at the new size
+  (`::a_resize_redraws_the_viewport_at_the_new_size`).
+- A line of wide characters wraps at the display width, in a block
+  (`console/tui.rs::a_line_of_wide_characters_wraps_at_the_display_width`)
+  and in markdown
+  (`console/markdown.rs::a_paragraph_of_wide_characters_wraps_at_the_display_width`);
+  the cursor sits after the columns a wide character draws on
+  (`console/tui.rs::the_cursor_sits_after_the_columns_a_wide_character_draws_on`),
+  an emoji sequence measured as it is drawn
+  (`::the_cursor_sits_after_an_emoji_sequence_as_it_is_drawn`); and a cut
+  keeps an emoji sequence whole, in a call's head
+  (`::a_head_is_cut_between_whole_emoji_sequences`) and in a code line
+  (`console/markdown.rs::a_code_line_is_cut_between_whole_emoji_sequences`).
 - A tool call's head is a glyph per kind and what the call is about — the
   command, the path and line, the pattern and path, the URL — never raw JSON
   (`console/tui.rs::each_kind_of_call_draws_its_glyph_and_what_it_is_about`);
@@ -291,13 +328,27 @@ goal id to a seat (014).
   (`::a_second_prompt_typed_before_the_first_is_confirmed_keeps_both_apart`).
   A refused prompt is said on the transcript and does not close the console
   (`::a_refused_prompt_is_said_on_the_transcript_and_does_not_close_the_console`).
+- A pasted text with two line breaks is one prompt with two line breaks, and
+  sends nothing until Enter
+  (`console/tui.rs::a_pasted_text_is_one_prompt_with_its_line_breaks_and_sends_nothing_until_enter`);
+  it goes in at the cursor, a carriage return being a line break
+  (`::a_paste_goes_in_at_the_cursor_and_a_carriage_return_is_a_line_break`).
+- The line-editing keys do what the shell's do: Ctrl-A
+  (`console/tui.rs::ctrl_a_moves_to_the_line_start`), Ctrl-E
+  (`::ctrl_e_moves_to_the_line_end`), Ctrl-U
+  (`::ctrl_u_deletes_to_the_line_start`), Ctrl-K
+  (`::ctrl_k_deletes_to_the_line_end`), Ctrl-W
+  (`::ctrl_w_deletes_the_word_before_the_cursor`) and the Alt arrows
+  (`::alt_left_and_alt_right_move_by_word`).
 - Escape cancels the running turn
   (`console/tui.rs::escape_during_a_running_turn_cancels_it`), one Ctrl-C
   keeps the console and the second leaves it
   (`::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`), and the
   terminal is given back on every way out, the pane opened from the bottom
   row included
-  (`::the_terminal_is_given_back_on_the_normal_path_on_an_error_and_on_ctrl_c`).
+  (`::the_terminal_is_given_back_on_the_normal_path_on_an_error_and_on_ctrl_c`),
+  with bracketed paste off
+  (`::the_terminal_is_given_back_with_bracketed_paste_off`).
 - A dropped stream says so
   (`console/tui.rs::a_dropped_stream_says_reconnecting_on_the_status_line`) and
   its fresh snapshot is not printed twice
