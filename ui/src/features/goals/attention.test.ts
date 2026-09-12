@@ -78,6 +78,7 @@ function goal(overrides: Partial<GoalDto>): GoalDto {
     description: "",
     id: "g1",
     model: "claude-agent-acp:claude-sonnet-5",
+    orchestrated: true,
     repos: [],
     status: "active",
     title: "A goal",

@@ -3,7 +3,7 @@
 //!
 //! The listing is served off one in-memory snapshot of every agent's stored
 //! sessions ([`OutsideSessions`]), cut into filtered pages at request time;
-//! adoption still asks the agents afresh ([`discover`]).
+//! adoption validates against that snapshot and refreshes it once on a miss.
 
 use std::cmp::Reverse;
 use std::collections::HashSet;
@@ -71,6 +71,27 @@ pub struct Snapshot {
     taken_at: DateTime<Utc>,
     /// The same moment, monotonic, for the age.
     taken: Instant,
+}
+
+impl Snapshot {
+    /// Find one session still outside Ariadne by its agent and internal id.
+    pub async fn find(
+        &self,
+        store: &Store,
+        agent_id: &str,
+        internal_session_id: &str,
+    ) -> Result<Option<OutsideSessionDto>> {
+        let known = adopted(store).await?;
+        Ok(self
+            .sessions
+            .iter()
+            .find(|session| {
+                session.agent_id == agent_id
+                    && session.internal_session_id == internal_session_id
+                    && !known.contains(&session_key(session))
+            })
+            .cloned())
+    }
 }
 
 /// The daemon's one snapshot of the outside sessions. Nothing of it reaches

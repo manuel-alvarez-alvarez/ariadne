@@ -228,7 +228,9 @@ pub struct Goal {
     pub title: String,
     pub description: String,
     pub status: String,
-    /// Model this goal's orchestrator runs on, `<agent>:<model>`.
+    /// Whether this goal has an orchestrator for its lifetime.
+    pub orchestrated: bool,
+    /// Model this goal's orchestrator or adopted author runs on, `<agent>:<model>`.
     pub model: String,
     /// Effort that model is run at. None = whatever the agent runs it at.
     pub effort: Option<String>,

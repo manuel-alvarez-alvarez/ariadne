@@ -26,6 +26,7 @@ pub fn goal(id: &str, title: &str) -> GoalDto {
         title: title.into(),
         description: String::new(),
         status: GoalStatus::Active,
+        orchestrated: true,
         model: "stub:test-model".into(),
         effort: None,
         repos: Vec::new(),

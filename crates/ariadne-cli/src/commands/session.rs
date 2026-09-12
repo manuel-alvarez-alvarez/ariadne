@@ -8,7 +8,7 @@ use clap::Subcommand;
 use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus};
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{
-    AdoptOutsideSessionRequest, ConsoleInputRequest, OutsideSessionListQuery,
+    AssignOutsideSessionRequest, ConsoleInputRequest, OutsideSessionListQuery,
     OutsideSessionPageDto, SessionDto, SessionListQuery,
 };
 use ariadne_api::stream::EventStreamQuery;
@@ -248,7 +248,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             let session: SessionDto = client
                 .post_json(
                     &format!("/v1/tasks/{task_id}/author-session"),
-                    &AdoptOutsideSessionRequest {
+                    &AssignOutsideSessionRequest {
                         agent_id: agent,
                         internal_session_id: session_id,
                     },

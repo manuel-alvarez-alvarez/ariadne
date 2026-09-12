@@ -12,13 +12,27 @@ pub struct NewGoal {
     /// Ids of registered repositories the goal works in; each must exist.
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
-    /// What this goal's orchestrator runs on: its model, `<agent>:<model>`,
-    /// and the effort where one was chosen.
+    /// What this goal's orchestrator or adopted author runs on: its model,
+    /// `<agent>:<model>`, and the effort where one was chosen.
     pub pin: AgentPin,
 }
 
 impl Store {
     pub async fn create_goal(&self, new: NewGoal) -> Result<Goal> {
+        self.create_goal_as(new, GoalStatus::Planning, true).await
+    }
+
+    /// Create the active, unorchestrated goal that adopts an outside session.
+    pub async fn create_adopted_goal(&self, new: NewGoal) -> Result<Goal> {
+        self.create_goal_as(new, GoalStatus::Active, false).await
+    }
+
+    async fn create_goal_as(
+        &self,
+        new: NewGoal,
+        status: GoalStatus,
+        orchestrated: bool,
+    ) -> Result<Goal> {
         if new.repository_ids.is_empty() {
             return Err(StoreError::Invalid("a goal needs at least one repo".into()));
         }
@@ -37,12 +51,14 @@ impl Store {
         let (model, effort) = AgentPin::columns(&new.pin);
         sqlx::query(
             "INSERT INTO goals (id, title, description, status,
-                                model, effort, created_at, updated_at)
-             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?)",
+                                orchestrated, model, effort, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
         .bind(&new.description)
+        .bind(status.as_str())
+        .bind(orchestrated)
         .bind(&model)
         .bind(&effort)
         .bind(&ts)

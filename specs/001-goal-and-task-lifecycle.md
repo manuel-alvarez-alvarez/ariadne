@@ -1,7 +1,7 @@
 ---
 id: goal-and-task-lifecycle
 status: current
-updated: 2026-09-10
+updated: 2026-09-12
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
@@ -31,9 +31,11 @@ Out: how each state is *worked* — planning (003), engineering and review
 
 1. A goal is `planning`, `active`, `completed` or `cancelled`. `completed`
    and `cancelled` are terminal.
-2. A goal opens in `planning` with one orchestrator session and nothing else
-   running. `finalize_plan` is what moves it to `active` and starts every
-   task at once (003).
+2. A normal goal opens in `planning` with one orchestrator session and
+   nothing else running. `finalize_plan` moves it to `active` and starts every
+   task at once (003). A goal created by outside-session adoption opens
+   `active` and unorchestrated, with its adopted author already running (020)
+   (`acp_session_adoption.rs::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`).
 3. A goal is `completed` when its orchestrator or the user says so
    (`complete_goal`, 003) — refused while any task is still going — and
    `cancelled` when the user cancels it. Cancelling records the reason on

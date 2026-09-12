@@ -4,7 +4,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
-use ariadne_api::sessions::{AdoptOutsideSessionRequest, SessionDto};
+use ariadne_api::sessions::{AssignOutsideSessionRequest, SessionDto};
 use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto,
     TransitionRequest, UpdateTaskRequest,
@@ -23,7 +23,7 @@ use super::pins::{self, Repin, Standing};
 ///
 /// An agent has nothing behind it to fall back to: every assignment names its
 /// CLI and its model, and one that names no model is refused.
-async fn resolve_agents(
+pub(super) async fn resolve_agents(
     state: &AppState,
     assignments: &[AgentAssignment],
 ) -> ApiResult<Vec<NewTaskAgent>> {
@@ -65,14 +65,14 @@ async fn resolve_seat(
 
 /// Make a stored ACP session the author of a ready task.
 #[utoipa::path(post, path = "/v1/tasks/{id}/author-session", tag = "tasks",
-    request_body = AdoptOutsideSessionRequest,
+    request_body = AssignOutsideSessionRequest,
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, body = SessionDto), (status = 404), (status = 409)))]
 pub async fn adopt_author_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    Json(req): Json<AdoptOutsideSessionRequest>,
+    Json(req): Json<AssignOutsideSessionRequest>,
 ) -> ApiResult<Json<SessionDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
@@ -83,12 +83,20 @@ pub async fn adopt_author_session(
             error.to_string(),
         )
     };
-    let available = crate::acp_sessions::discover(&state.agent_registry, &state.store)
+    let snapshot = state
+        .outside_sessions
+        .snapshot(&state.agent_registry, false)
+        .await;
+    if snapshot
+        .find(&state.store, &req.agent_id, &req.internal_session_id)
         .await
-        .map_err(internal_error)?;
-    if !available.iter().any(|session| {
-        session.agent_id == req.agent_id && session.internal_session_id == req.internal_session_id
-    }) {
+        .map_err(internal_error)?
+        .is_none()
+    {
+        state
+            .outside_sessions
+            .snapshot(&state.agent_registry, true)
+            .await;
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
             "not_found",

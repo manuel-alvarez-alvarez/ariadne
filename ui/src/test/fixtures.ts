@@ -44,6 +44,7 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     title: "Ship the board",
     description: "",
     model: "claude-agent-acp:claude-sonnet-5",
+    orchestrated: true,
     repos: [],
     status: "active",
     usage: {

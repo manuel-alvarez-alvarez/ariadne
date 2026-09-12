@@ -297,6 +297,7 @@ mod tests {
             title: "Ship the UI".into(),
             description: "The board needs swimlanes.".into(),
             status: "planning".into(),
+            orchestrated: true,
             model: "stub:test-model".into(),
             effort: None,
             created_at: "2026-01-01T00:00:00Z".into(),

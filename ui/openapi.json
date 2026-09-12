@@ -962,6 +962,49 @@
         }
       }
     },
+    "/v1/outside-sessions/adopt": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Create a task for one outside session, in a new goal or an active goal,\nand adopt that session as its author before the scheduler can start one.",
+        "operationId": "adopt_outside",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdoptOutsideSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdoptOutsideSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/repositories": {
       "get": {
         "tags": [
@@ -2001,7 +2044,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AdoptOutsideSessionRequest"
+                "$ref": "#/components/schemas/AssignOutsideSessionRequest"
               }
             }
           },
@@ -2581,21 +2624,90 @@
       },
       "AdoptOutsideSessionRequest": {
         "type": "object",
-        "description": "The stored ACP session to adopt as a task author.",
+        "description": "Adopt one outside session into a new task and goal, or an active goal.",
         "required": [
           "agent_id",
-          "internal_session_id"
+          "internal_session_id",
+          "goal",
+          "agents"
         ],
         "properties": {
           "agent_id": {
             "type": "string",
             "description": "Which registry agent the session belongs to."
           },
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentAssignment"
+            },
+            "description": "The author first, then the reviewers."
+          },
+          "description": {
+            "type": "string"
+          },
+          "goal": {
+            "$ref": "#/components/schemas/OutsideSessionGoal"
+          },
           "internal_session_id": {
             "type": "string"
+          },
+          "landing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Landing"
+              }
+            ]
+          },
+          "permission_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PermissionMode"
+              }
+            ]
+          },
+          "repo_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Id of one of the goal's repositories. Omit it when one repository or\nthe session's working directory settles the choice."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omitted uses the session's first prompt, cut at 120 characters."
           }
         },
         "additionalProperties": false
+      },
+      "AdoptOutsideSessionResponse": {
+        "type": "object",
+        "description": "The resources created or joined by an outside-session adoption.",
+        "required": [
+          "goal",
+          "task",
+          "session"
+        ],
+        "properties": {
+          "goal": {
+            "$ref": "#/components/schemas/GoalDto"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionDto"
+          },
+          "task": {
+            "$ref": "#/components/schemas/TaskDto"
+          }
+        }
       },
       "AgentAssignment": {
         "type": "object",
@@ -2734,6 +2846,24 @@
             "$ref": "#/components/schemas/TokenUsageDto"
           }
         }
+      },
+      "AssignOutsideSessionRequest": {
+        "type": "object",
+        "description": "The stored ACP session to assign to an existing ready task.",
+        "required": [
+          "agent_id",
+          "internal_session_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Which registry agent the session belongs to."
+          },
+          "internal_session_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "AttentionReason": {
         "type": "string",
@@ -3391,6 +3521,19 @@
           }
         }
       },
+      "ExistingOutsideSessionGoal": {
+        "type": "object",
+        "description": "An active goal that receives the new task.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "FinalizePlanRequest": {
         "type": "object",
         "description": "Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and\nexecution starts. The orchestrator's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote.",
@@ -3403,6 +3546,7 @@
           "title",
           "description",
           "status",
+          "orchestrated",
           "model",
           "repos",
           "usage",
@@ -3429,8 +3573,12 @@
           },
           "model": {
             "type": "string",
-            "description": "What the orchestrator runs on, `<agent>:<model>`: the registry agent\nand, after the `:`, the model of it (`claude-agent-acp:claude-opus-5`).",
+            "description": "What the orchestrator or adopted author runs on, `<agent>:<model>`:\nthe registry agent and, after the `:`, the model of it.",
             "example": "claude-agent-acp:claude-opus-5"
+          },
+          "orchestrated": {
+            "type": "boolean",
+            "description": "Whether this goal has an orchestrator for its lifetime."
           },
           "repos": {
             "type": "array",
@@ -3744,6 +3892,35 @@
           }
         }
       },
+      "NewOutsideSessionGoal": {
+        "type": "object",
+        "description": "A new active, unorchestrated goal for the adopted session.",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Registered repository ids. Omitted infers one from the session's\nworking directory."
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "OutsideSessionDto": {
         "type": "object",
         "description": "A stored session of an ACP agent that Ariadne did not start, listed over\n`session/list`.",
@@ -3773,6 +3950,17 @@
             "type": "string"
           }
         }
+      },
+      "OutsideSessionGoal": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ExistingOutsideSessionGoal"
+          },
+          {
+            "$ref": "#/components/schemas/NewOutsideSessionGoal"
+          }
+        ],
+        "description": "The goal that receives an adopted outside session."
       },
       "OutsideSessionPageDto": {
         "type": "object",

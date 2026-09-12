@@ -440,6 +440,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/outside-sessions/adopt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a task for one outside session, in a new goal or an active goal,
+         *     and adopt that session as its author before the scheduler can start one.
+         */
+        post: operations["sessions_adopt_outside"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repositories": {
         parameters: {
             query?: never;
@@ -1044,11 +1064,30 @@ export interface components {
          * @enum {string}
          */
         Actor: "orchestrator" | "author" | "reviewer" | "daemon" | "user";
-        /** @description The stored ACP session to adopt as a task author. */
+        /** @description Adopt one outside session into a new task and goal, or an active goal. */
         AdoptOutsideSessionRequest: {
             /** @description Which registry agent the session belongs to. */
             agent_id: string;
+            /** @description The author first, then the reviewers. */
+            agents: components["schemas"]["AgentAssignment"][];
+            description?: string;
+            goal: components["schemas"]["OutsideSessionGoal"];
             internal_session_id: string;
+            landing?: null | components["schemas"]["Landing"];
+            permission_mode?: null | components["schemas"]["PermissionMode"];
+            /**
+             * @description Id of one of the goal's repositories. Omit it when one repository or
+             *     the session's working directory settles the choice.
+             */
+            repo_id?: string | null;
+            /** @description Omitted uses the session's first prompt, cut at 120 characters. */
+            title?: string | null;
+        };
+        /** @description The resources created or joined by an outside-session adoption. */
+        AdoptOutsideSessionResponse: {
+            goal: components["schemas"]["GoalDto"];
+            session: components["schemas"]["SessionDto"];
+            task: components["schemas"]["TaskDto"];
         };
         /**
          * @description One agent to staff on a task: where it sits, the skills it loads, and what
@@ -1138,6 +1177,12 @@ export interface components {
             /** @description The skills the agent loads; empty only if the agent is gone. */
             skills: string[];
             usage: components["schemas"]["TokenUsageDto"];
+        };
+        /** @description The stored ACP session to assign to an existing ready task. */
+        AssignOutsideSessionRequest: {
+            /** @description Which registry agent the session belongs to. */
+            agent_id: string;
+            internal_session_id: string;
         };
         /**
          * @description Why a live agent session needs the user's attention.
@@ -1397,6 +1442,10 @@ export interface components {
             /** @example high */
             id: string;
         };
+        /** @description An active goal that receives the new task. */
+        ExistingOutsideSessionGoal: {
+            id: string;
+        };
         /**
          * @description Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and
          *     execution starts. The orchestrator's call, not the user's, and it carries
@@ -1414,11 +1463,13 @@ export interface components {
             effort?: string | null;
             id: string;
             /**
-             * @description What the orchestrator runs on, `<agent>:<model>`: the registry agent
-             *     and, after the `:`, the model of it (`claude-agent-acp:claude-opus-5`).
+             * @description What the orchestrator or adopted author runs on, `<agent>:<model>`:
+             *     the registry agent and, after the `:`, the model of it.
              * @example claude-agent-acp:claude-opus-5
              */
             model: string;
+            /** @description Whether this goal has an orchestrator for its lifetime. */
+            orchestrated: boolean;
             /**
              * @description The registered repositories the goal works in, as they stand now: a
              *     goal references them, so an edit to one shows up here.
@@ -1602,6 +1653,16 @@ export interface components {
             /** @example claude-agent-acp:claude-opus-5 */
             id: string;
         };
+        /** @description A new active, unorchestrated goal for the adopted session. */
+        NewOutsideSessionGoal: {
+            description?: string | null;
+            /**
+             * @description Registered repository ids. Omitted infers one from the session's
+             *     working directory.
+             */
+            repository_ids?: string[] | null;
+            title: string;
+        };
         /**
          * @description A stored session of an ACP agent that Ariadne did not start, listed over
          *     `session/list`.
@@ -1618,6 +1679,8 @@ export interface components {
             last_activity_at: string;
             working_directory: string;
         };
+        /** @description The goal that receives an adopted outside session. */
+        OutsideSessionGoal: components["schemas"]["ExistingOutsideSessionGoal"] | components["schemas"]["NewOutsideSessionGoal"];
         /** @description One page of `GET /v1/outside-sessions`, newest activity first. */
         OutsideSessionPageDto: {
             /** @description The `cursor` that continues after this page; null on the last one. */
@@ -2738,6 +2801,53 @@ export interface operations {
             };
         };
     };
+    sessions_adopt_outside: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdoptOutsideSessionRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdoptOutsideSessionResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     repositories_list: {
         parameters: {
             query?: never;
@@ -3565,7 +3675,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AdoptOutsideSessionRequest"];
+                "application/json": components["schemas"]["AssignOutsideSessionRequest"];
             };
         };
         responses: {

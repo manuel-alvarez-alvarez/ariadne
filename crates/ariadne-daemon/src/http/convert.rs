@@ -75,7 +75,7 @@ dto! {
         status: g.status(),
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
-        .. id, title, description, model, effort,
+        .. id, title, description, orchestrated, model, effort,
            created_at, updated_at
     }
 

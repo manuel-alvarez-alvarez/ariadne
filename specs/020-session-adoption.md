@@ -13,12 +13,12 @@ tests:
 # Session adoption
 
 Ariadne can take over a conversation that started outside it: a session an
-ACP agent stored itself, which a ready task can take as its author.
+ACP agent stored itself, which becomes the author of a new task.
 
 ## Scope
 
 In: finding the stored sessions of the registry agents that can list them,
-what a listed session says about itself, and assigning one to a ready task as
+what a listed session says about itself, and adopting one into a new task as
 its author.
 
 Out: changing a task's author pin (011), importing a transcript, sessions
@@ -63,16 +63,28 @@ that Ariadne started itself (007, 021), and the desktop screen over this
    id. The cursor is an opaque keyset over the sort key of the page's last
    row, so a page cut after a refresh continues from that key. A cursor the
    daemon cannot read is refused with a 400 envelope, code `invalid_cursor`.
-5. `POST /v1/tasks/{id}/author-session` takes `{agent_id,
-   internal_session_id}`. It refuses a session discovery no longer lists.
-6. Adoption is valid only for a `ready` task whose author is pinned to the
-   same agent the session belongs to; anything else is a conflict. An agent
-   session may adopt only into its own task.
-7. Adoption creates the normal author row and task worktree, records the
-   outside internal id, and resumes that conversation on the pinned agent
-   (007, 021) — through `session/load` on an agent that offers no
-   `session/resume`. The task then follows its normal author and review
-   lifecycle, and the author is reached afterwards the way any session is:
+5. `POST /v1/outside-sessions/adopt` is a user-only call. It takes the
+   session's `agent_id` and `internal_session_id`; a new goal's title,
+   optional description and optional repositories, or an existing goal id;
+   and the new task's optional title, description, optional repository,
+   agents, landing and permission mode. The reply carries the goal, task and
+   adopted author session. The older task-first endpoint remains until its
+   callers move. Adoption looks in the daemon snapshot first. A miss takes
+   one fresh snapshot but refuses that call with 404.
+6. An existing goal must be active. Where it has several repositories, the
+   request's `repo_id` selects one, or the session working directory selects
+   the repository that contains it. A new goal with no repository ids takes
+   the registered repository containing that directory. No match is a
+   conflict naming the directory. The first task agent is its author, and
+   its pin must name the outside session's agent. An omitted task title is
+   the first prompt, cut at 120 characters; an empty title is refused.
+7. New adopted goals open active and unorchestrated. Their model and effort
+   record the adopted author's pin. Adoption creates the goal where needed,
+   creates and staffs the task, moves it to ready, creates its worktree and
+   author row, and loads the outside internal id before waking the scheduler.
+   The author starts through `session/load`, the task becomes `in_progress`,
+   and no scheduler pass creates an orchestrator for that goal. The user
+   completes or cancels it. The author is reached afterwards through
    `POST /v1/sessions/{id}/console/input` (008).
 8. `ariadne session discover` filters and pages the outside sessions, prints
    the shown and total counts with a reusable next-page command, or follows
@@ -119,8 +131,29 @@ that Ariadne started itself (007, 021), and the desktop screen over this
   `session/load` rather than `session/resume`, and a later console prompt
   reaches the same agent
   (`acp_session_adoption.rs::an_adopted_session_binds_the_seat_and_a_follow_up_prompt_reaches_it`).
+- Adoption into a new goal returns an active, unorchestrated goal, an
+  in-progress task and the loaded author session. A scheduler pass leaves
+  exactly that author and no orchestrator
+  (`acp_session_adoption.rs::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`).
+- The new goal takes the registered repository containing the working
+  directory; no matching repository is refused by directory
+  (`acp_session_adoption.rs::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`,
+  `::a_new_goal_without_a_matching_repository_is_refused_by_directory`).
+- An active goal receives the task, while planning and completed goals refuse
+  it (`acp_session_adoption.rs::adoption_into_an_active_goal_adds_the_task_to_that_goal`,
+  `::adoption_into_a_goal_that_is_not_active_is_refused`).
+- Another agent in the author pin is refused
+  (`acp_session_adoption.rs::adoption_is_refused_when_the_author_pin_names_another_agent`).
+- A snapshot miss refreshes once and returns 404
+  (`acp_session_adoption.rs::a_session_missing_from_the_snapshot_is_refused_after_one_fresh_snapshot`),
+  and an agent-session caller is refused
+  (`::an_agent_session_cannot_adopt_an_outside_session`).
+- A message to an unorchestrated goal's orchestrator is refused with the
+  console instruction
+  (`acp_session_adoption.rs::a_message_to_an_unorchestrated_goals_orchestrator_is_refused`).
 - An adopted session is not listed as outside again
-  (`acp_session_adoption.rs::an_adopted_acp_session_no_longer_appears_in_the_listing`).
+  (`acp_session_adoption.rs::an_adopted_acp_session_no_longer_appears_in_the_listing`,
+  `::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`).
 - Adoption is refused across agents
   (`acp_session_adoption.rs::adoption_is_refused_across_acp_agents`), and an
   agent session cannot adopt into another task
@@ -139,19 +172,25 @@ that Ariadne started itself (007, 021), and the desktop screen over this
   `::discover_all_and_cursor_are_exclusive`). It names each agent that cannot
   list sessions with its reason
   (`commands/session.rs::an_agent_without_the_capability_is_named_with_its_reason`).
+- The new endpoint and its request, response and goal orchestration flag are
+  in OpenAPI
+  (`acp_session_adoption.rs::the_goal_and_task_adoption_endpoint_is_in_the_openapi_document`).
+- An empty task title is refused
+  (`acp_session_adoption.rs::adoption_with_an_empty_task_title_is_refused`),
+  and unknown request fields are refused
+  (`::the_adoption_request_denies_unknown_fields`).
 
 ## Known gap
 
-No test adopts into a task that is not `ready`, or names a session discovery
-no longer lists. Both refusals are in `Launcher::adopt_author` and
-`http/tasks.rs::adopt_author_session`.
+No test uses the legacy endpoint to adopt into a task that is not `ready`.
+That refusal is in `Launcher::adopt_author`.
 
 ## Sources
 
 `crates/ariadne-api/src/sessions.rs` (`OutsideSessionListQuery`,
 `OutsideSessionPageDto`),
 `crates/ariadne-daemon/src/acp_sessions.rs` (the snapshot, the filtered
-pages, and the listing adoption checks against),
+pages, and the snapshot adoption checks),
 `crates/ariadne-daemon/src/acp_discovery.rs` (`AgentRegistry::stored_sessions`),
 `crates/ariadne-daemon/src/http/sessions.rs`,
 `crates/ariadne-daemon/src/http/tasks.rs`,

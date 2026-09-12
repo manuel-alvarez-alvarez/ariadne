@@ -35,6 +35,7 @@ function goal(status: GoalStatus): GoalDto {
     title: "Ship the board",
     description: "",
     model: "claude-agent-acp:claude-sonnet-5",
+    orchestrated: true,
     repos: [],
     status,
     usage: {

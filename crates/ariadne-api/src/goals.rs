@@ -13,8 +13,10 @@ pub struct GoalDto {
     pub title: String,
     pub description: String,
     pub status: GoalStatus,
-    /// What the orchestrator runs on, `<agent>:<model>`: the registry agent
-    /// and, after the `:`, the model of it (`claude-agent-acp:claude-opus-5`).
+    /// Whether this goal has an orchestrator for its lifetime.
+    pub orchestrated: bool,
+    /// What the orchestrator or adopted author runs on, `<agent>:<model>`:
+    /// the registry agent and, after the `:`, the model of it.
     #[schema(example = "claude-agent-acp:claude-opus-5")]
     pub model: String,
     /// The reasoning effort that model is run at, pinned like `model`. None =

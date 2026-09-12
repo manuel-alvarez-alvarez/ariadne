@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-09-08
+updated: 2026-09-12
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -29,10 +29,12 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 
 ## Behavior
 
-1. A goal opens with one orchestrator session, started in the primary checkout
-   of the goal's first repository and briefed with the goal and its
+1. A planned goal opens with one orchestrator session, started in the primary
+   checkout of the goal's first repository and briefed with the goal and its
    repositories. No numbers: how many tasks the goal takes is what the
-   conversation settles.
+   conversation settles. Outside-session adoption instead opens an active,
+   unorchestrated goal whose user completes or cancels it (020)
+   (`acp_session_adoption.rs::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`).
 2. The orchestrator never writes code. Its whole output is the plan.
 3. It asks the user about every unclear point, until nothing about the goal is
    open: one question in plain turn text, then it waits. The user answers in

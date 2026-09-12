@@ -116,6 +116,7 @@ CREATE TABLE goals (
     description         TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'planning'
                         CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
+    orchestrated        INTEGER NOT NULL DEFAULT 1 CHECK (orchestrated IN (0, 1)),
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
     model               TEXT NOT NULL,

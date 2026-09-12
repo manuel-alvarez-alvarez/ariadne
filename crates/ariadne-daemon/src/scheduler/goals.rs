@@ -18,6 +18,9 @@ impl super::Scheduler {
         match goal.status() {
             // A goal in planning wants a live orchestrator session.
             GoalStatus::Planning => {
+                if !goal.orchestrated {
+                    return Ok(());
+                }
                 self.keep_orchestrator(&goal).await?;
                 self.deliver_goal_messages(goal_id).await;
                 // An orchestrator has no task to flag: its session carries the
@@ -41,19 +44,21 @@ impl super::Scheduler {
             // to do — so no watchdog nudges it here. It is woken by what
             // happened, and by nothing else.
             GoalStatus::Active => {
-                self.keep_orchestrator(&goal).await?;
-                // What the agents have said to the orchestrator, before it is
-                // told anything the daemon noticed: an agent waiting on an
-                // answer is waiting on this pass.
-                self.deliver_goal_messages(goal_id).await;
-                let tasks = self
-                    .store
-                    .list_tasks(TaskFilter {
-                        goal_id: Some(goal.id.clone()),
-                        status: None,
-                    })
-                    .await?;
-                self.tell_orchestrator(&goal, &tasks).await?;
+                if goal.orchestrated {
+                    self.keep_orchestrator(&goal).await?;
+                    // What the agents have said to the orchestrator, before it is
+                    // told anything the daemon noticed: an agent waiting on an
+                    // answer is waiting on this pass.
+                    self.deliver_goal_messages(goal_id).await;
+                    let tasks = self
+                        .store
+                        .list_tasks(TaskFilter {
+                            goal_id: Some(goal.id.clone()),
+                            status: None,
+                        })
+                        .await?;
+                    self.tell_orchestrator(&goal, &tasks).await?;
+                }
             }
             // Cancelled: tear everything down; tasks are cancelled on behalf
             // of the user who cancelled the goal.
