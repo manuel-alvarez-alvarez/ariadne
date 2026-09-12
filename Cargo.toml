@@ -60,6 +60,10 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 # no terminal types of its own, so the console styles every event in the one
 # palette it already uses, and no second ratatui version enters the tree.
 pulldown-cmark = { version = "0.13", default-features = false }
+# The line diff of a tool call's file change: an ACP agent sends the old text
+# and the new text of a file, and the console shows the hunks between them,
+# with context, rather than every old line and then every new one.
+similar = "2"
 
 # errors / logging
 anyhow = "1"

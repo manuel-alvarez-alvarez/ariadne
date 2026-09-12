@@ -50,9 +50,29 @@ scrollback, and the console never switches to the alternate screen.
 
 The agent's text streams in as it is written and renders as markdown:
 headings, bold, code spans, fenced code and lists. A thought is dimmed and
-folded to a few lines. A tool call is one line with its status, its name and
-its input, with its output folded under it and a file change coloured as a
-diff. A plan is a checklist.
+folded to a few lines. A plan is a checklist.
+
+A tool call is one block. Its head line says what the call did and on what:
+a status mark (`○` pending, `●` running, `✓` done, `✗` failed), a glyph for
+the kind of call (`$` a command, `≡` a read, `✎` an edit, `⌫` a delete, `→` a
+move, `⌕` a search, `↓` a fetch), then the command, the path and line, the
+pattern, or the URL. Once the call has ended, the head says how long it took.
+Its output is folded to its last lines under the head, with a count of the
+lines left out. A file change is a diff: the file's name, then the hunks with
+added and removed lines in colour, folded past a page with a count.
+
+```
+✓ $ cargo nextest run  8.2s
+    … 41 more lines
+    Summary [   7.910s] 345 tests run: 345 passed, 0 skipped
+✓ ✎ src/main.rs
+    src/main.rs
+    @@ -1,3 +1,3 @@
+     fn main() {
+    -    println!("hello");
+    +    println!("hello, world");
+     }
+```
 
 | Key | What it does |
 | --- | --- |
@@ -90,8 +110,19 @@ narrow the snapshot; during `--follow`, `--kind` also narrows new events.
 
 Use `ariadne session send <session-id> "Please explain the failure"`
 when a script or a one-line response is enough. When a session is waiting on a
-permission request, the console offers its choices; pick one with the arrow
-keys or its number key. See [Permission modes](permissions.md).
+permission request, the console shows the call it asks about — its head line,
+and the whole command or the diff under it — and then its choices; pick one
+with the arrow keys or its number key. See
+[Permission modes](permissions.md).
+
+```
+? Bash
+  $ cargo build
+    cargo build
+    cargo nextest run
+  › 1. Allow
+    2. Reject
+```
 
 The desktop app has the same console in a session's detail view, drawn as a
 terminal pane. The agent's text streams in as it is written and renders as

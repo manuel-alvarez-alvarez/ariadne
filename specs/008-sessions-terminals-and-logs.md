@@ -13,6 +13,7 @@ tests:
   - crates/ariadne-cli/src/commands/console.rs
   - crates/ariadne-cli/src/commands/console/tui.rs
   - crates/ariadne-cli/src/commands/console/markdown.rs
+  - crates/ariadne-cli/src/commands/transcript.rs
 ---
 
 # Sessions and the console
@@ -119,16 +120,39 @@ goal id to a seat (014).
     a nudge, a message) draws under its own marker and label, `» daemon`,
     with its text beneath, so it reads apart from what was typed. Agent text
     is markdown chunk by chunk under one marker, a thought dimmed and folded,
-    a tool call one line with a status glyph, its name and its input with its
-    output folded under it, a diff coloured, a plan a checklist, and a
+    a tool call the block of the next rule, a plan a checklist, and a
     permission question a picker.
-24. A chunk continues the block last written, and starts a block of its own
+24. A tool call reads as a coding agent's. Its head line is a status glyph —
+    `○` pending, `●` in progress, `✓` completed, `✗` failed — then a glyph
+    for the ACP `kind` (`$` execute, `≡` read, `✎` edit, `⌫` delete, `→`
+    move, `⌕` search, `↓` fetch, `∴` think, `⇄` switch mode, `•` otherwise)
+    and what the call is about, taken from its input: the command for
+    `execute`, the path and line for `read`, `edit`, `delete` and `move`, the
+    pattern and where it is looked for for `search`, the URL for `fetch`, and
+    the call's title where the kind names nothing. Raw JSON is never drawn
+    where a field names the subject, and `locations` the head does not already
+    name follow it. Once the call has ended, the head carries the time from
+    the event that opened it to the one that ended it. A live
+    `tool_call_update` merges into the open call with the same `toolCallId`:
+    one block per call, however many updates arrive. The output is folded to
+    its last lines with a count of the hidden ones, trailing blank lines
+    trimmed; the fold is the thought's. A `diff` content entry draws as a
+    unified diff under a file header — the path, or the old name to the new
+    where they differ — with added, removed, hunk and context lines each in
+    their own colour, folded past a line limit with a count. Where the agent
+    sent `oldText` and `newText` rather than a patch, the diff is the hunks
+    between them with three lines of context, never every old line and then
+    every new one. A patch that starts at its first hunk takes its file
+    header from the entry's `path`. A permission question draws the call it asks about under
+    the question — the same head line, then the rest of a command that has
+    more than one line, or the diff — above its options.
+25. A chunk continues the block last written, and starts a block of its own
     where anything else came between: a turn that speaks around a tool call
     reads as two blocks with the call between them. The whole text the daemon
     stores at the end of that turn (021) is every chunk of it joined, so it
     closes the blocks the chunks opened and repeats none of them. A turn that
     streamed nothing renders that stored text as its one block.
-25. Enter posts the input box to console input, Shift+Enter and Alt+Enter add
+26. Enter posts the input box to console input, Shift+Enter and Alt+Enter add
     a line to it, and each prompt typed shows at once and is replaced by its
     own `user_prompt_submit`, in the order they were posted. An older
     daemon's (021) prompt event carries neither `text` nor `source`: it takes
@@ -140,13 +164,13 @@ goal id to a seat (014).
     question the arrows and the number keys move the pick and Enter posts the
     option's id. A post the daemon refuses is said on the transcript, and the
     console stays open.
-26. Escape during a running turn posts to console cancel. Ctrl-C twice, or
+27. Escape during a running turn posts to console cancel. Ctrl-C twice, or
     Ctrl-D, leaves the console, and the session stays alive. Every way out
     puts the terminal back: raw mode off and the cursor shown.
-27. A dropped stream says "reconnecting" and is dialled again on the backoff
+28. A dropped stream says "reconnecting" and is dialled again on the backoff
     every other follow uses. The fresh snapshot redraws what was open and does
     not repeat what is already in the scrollback.
-28. With stdin or stdout redirected there is no pane. `ariadne attach` is then
+29. With stdin or stdout redirected there is no pane. `ariadne attach` is then
     the plain line protocol: one `kind · summary` per event, numbered options
     for a permission question, and one prompt per line read (014).
 
@@ -207,12 +231,31 @@ goal id to a seat (014).
   (`::a_permission_question_renders_and_delivers_the_selected_answer`). Both
   are the plain protocol a redirected console keeps
   (`console/tui.rs::only_a_terminal_on_both_ends_gets_the_inline_console`).
-- The inline pane renders the prompt, the agent's markdown, a folded tool
-  result and the status line
+- The inline pane renders the prompt, the agent's markdown, a tool result
+  folded to its last lines with its trailing blank lines trimmed, and the
+  status line
   (`console/tui.rs::a_transcript_renders_the_prompt_the_markdown_the_tool_call_and_the_status_line`),
   and markdown keeps a heading, a code block and a list apart
   (`console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
+- A tool call's head is a glyph per kind and what the call is about — the
+  command, the path and line, the pattern and path, the URL — never raw JSON
+  (`console/tui.rs::each_kind_of_call_draws_its_glyph_and_what_it_is_about`);
+  a completed call draws its duration
+  (`::a_completed_call_draws_its_duration`); and updates of one call draw one
+  block (`::updates_of_one_call_draw_one_block`), because they fold into the
+  open call and the last dates its end
+  (`transcript.rs::updates_of_one_call_fold_into_it_and_the_last_dates_its_end`).
+- A diff draws a file header, coloured lines and a fold count past the limit
+  (`console/tui.rs::a_diff_draws_its_file_header_its_lines_coloured_and_a_fold_count`),
+  and an old text and a new text fold to hunks with context rather than every
+  old line and then every new one
+  (`transcript.rs::an_old_and_a_new_text_fold_to_hunks_with_context`). A
+  patch without file headers takes them from the entry's `path`
+  (`transcript.rs::a_patch_without_file_headers_takes_them_from_the_entry_path`).
+- A permission question draws the call's head and its command or its diff
+  above the options
+  (`console/tui.rs::a_permission_question_draws_the_call_above_its_options`).
 - A prompt draws its text alone, never the system prompt
   (`console/tui.rs::a_prompt_draws_its_text_alone_and_never_the_system_prompt`);
   an event carrying only the whole prompt draws none of it

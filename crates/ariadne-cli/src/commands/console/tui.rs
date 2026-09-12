@@ -41,7 +41,7 @@ use ariadne_client::{Client, SseEvent, SseStream};
 
 use super::markdown;
 use crate::commands::follow;
-use crate::commands::transcript::{self, PermissionOption, TranscriptItem};
+use crate::commands::transcript::{self, PermissionOption, Tool, TranscriptItem};
 use crate::output::note;
 
 /// How tall the inline viewport is. The bottom [`PINNED`] rows are the status
@@ -53,8 +53,12 @@ const PINNED: u16 = 4;
 /// How many rows of typed text the input box grows to before it scrolls.
 const INPUT_ROWS: usize = 4;
 /// A thought and a tool's output are context, not the answer: they are folded
-/// to this many lines with a count of what was left out.
+/// to this many lines with a count of what was left out. The output keeps its
+/// last lines, which is where a command says how it went.
 const FOLD: usize = 4;
+/// A diff is read from the top, so it keeps its first lines: this many, with
+/// a count of what was left out.
+const DIFF_FOLD: usize = 24;
 /// How often the spinner turns while a turn runs.
 const TICK: Duration = Duration::from_millis(120);
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -69,6 +73,11 @@ const PLAN: Style = Style::new().fg(Color::Blue);
 const ASK: Style = Style::new().fg(Color::Magenta);
 const FAIL: Style = Style::new().fg(Color::Red).add_modifier(Modifier::BOLD);
 const DIM: Style = Style::new().add_modifier(Modifier::DIM);
+/// The lines of a diff: added, removed, the hunk header, and the file header.
+const ADDED: Style = Style::new().fg(Color::Green);
+const REMOVED: Style = Style::new().fg(Color::Red);
+const HUNK: Style = Style::new().fg(Color::Cyan);
+const FILE: Style = Style::new().add_modifier(Modifier::BOLD);
 
 /// A ratatui backend whose failures `anyhow` can carry: the real terminal's
 /// and the test one's alike.
@@ -301,10 +310,10 @@ impl Console {
             "stop" | "session_end" | "session.error" => Turn::Idle,
             "pre_tool_use" | "tool_call_update" | "post_tool_use" => {
                 match TranscriptItem::from(event) {
-                    TranscriptItem::ToolCall { name, status, .. }
-                        if !transcript::tool_is_terminal(status.as_deref()) =>
+                    TranscriptItem::ToolCall { tool, .. }
+                        if !transcript::tool_is_terminal(tool.status.as_deref()) =>
                     {
-                        Turn::Running(name)
+                        Turn::Running(tool.name)
                     }
                     _ => Turn::Thinking,
                 }
@@ -697,27 +706,14 @@ fn block(item: &TranscriptItem, width: usize, picked: Option<usize>) -> Vec<Line
             }
             lines
         }
-        TranscriptItem::ToolCall {
-            name,
-            input,
-            output,
-            diff,
-            status,
-            ..
-        } => tool(
-            name,
-            input,
-            output.as_deref(),
-            diff.as_deref(),
-            status.as_deref(),
-            width,
-        ),
+        TranscriptItem::ToolCall { meta, tool } => call(tool, &meta.created_at, width),
         TranscriptItem::PermissionQuestion {
             question,
+            tool,
             options,
             answer,
             ..
-        } => permission(question, options, answer.as_deref(), picked),
+        } => permission(question, tool, options, answer.as_deref(), picked, width),
         TranscriptItem::SystemNote { text, .. } => prefixed(text, "  ", DIM, DIM, width, None),
         TranscriptItem::Error { text, .. } => prefixed(text, "✗ ", FAIL, FAIL, width, None),
         TranscriptItem::Raw { kind, .. } => {
@@ -781,46 +777,174 @@ fn prefixed(
         .collect()
 }
 
-fn tool(
-    name: &str,
-    input: &serde_json::Value,
-    output: Option<&str>,
-    diff: Option<&str>,
-    status: Option<&str>,
-    width: usize,
-) -> Vec<Line<'static>> {
-    let glyph = match status {
-        Some("completed") => "✓",
-        Some("failed") => "✗",
-        Some("in_progress") => "●",
-        _ => "○",
+/// A tool call, the way a coding agent's console reads one: what it did, on
+/// what, and how it went. The head line, then the output folded to its last
+/// lines and the file change as a diff.
+fn call(tool: &Tool, started_at: &str, width: usize) -> Vec<Line<'static>> {
+    let (glyph, style) = match tool.status.as_deref() {
+        Some("completed") => ("✓", AGENT),
+        Some("failed") => ("✗", FAIL),
+        Some("in_progress") => ("●", TOOL),
+        _ => ("○", TOOL),
     };
-    let argument = match input {
-        serde_json::Value::Null => String::new(),
-        serde_json::Value::String(text) => format!(" {text}"),
-        input => format!(" {}", serde_json::to_string(input).unwrap_or_default()),
-    };
-    let head: String = format!("{name}{argument}")
-        .chars()
-        .take(width.saturating_sub(2))
-        .collect();
-    let mut lines = vec![Line::from(vec![
-        Span::styled(format!("{glyph} "), TOOL),
-        Span::raw(head),
-    ])];
-    if let Some(output) = output {
+    let elapsed = tool
+        .ended_at
+        .as_deref()
+        .and_then(|ended_at| elapsed(started_at, ended_at));
+    let mut lines = vec![head(tool, Span::styled(glyph, style), elapsed, width)];
+    if let Some(output) = &tool.output {
         lines.extend(folded(output, width, DIM));
     }
-    if let Some(diff) = diff {
+    if let Some(diff) = &tool.diff {
         lines.extend(folded_diff(diff, width));
     }
     lines
 }
 
+/// The head line of a call: a status mark, the kind's glyph, the subject —
+/// what the call is about, from its input — and how long it took, once it
+/// has ended.
+fn head(tool: &Tool, mark: Span<'static>, elapsed: Option<String>, width: usize) -> Line<'static> {
+    let lead = mark.content.chars().count() + 1;
+    let tail = elapsed.as_ref().map_or(0, |elapsed| elapsed.len() + 2);
+    let room = width.saturating_sub(lead + 2 + tail).max(1);
+    let mut spans = vec![
+        mark,
+        Span::raw(" "),
+        Span::styled(format!("{} ", kind_glyph(tool.kind.as_deref())), TOOL),
+        Span::raw(clip(&subject(tool), room)),
+    ];
+    if let Some(elapsed) = elapsed {
+        spans.push(Span::styled(format!("  {elapsed}"), DIM));
+    }
+    Line::from(spans)
+}
+
+/// One glyph per ACP kind, so the eye tells a command from a read from an
+/// edit before reading a word.
+fn kind_glyph(kind: Option<&str>) -> &'static str {
+    match kind {
+        Some("execute") => "$",
+        Some("read") => "≡",
+        Some("edit") => "✎",
+        Some("delete") => "⌫",
+        Some("move") => "→",
+        Some("search") => "⌕",
+        Some("fetch") => "↓",
+        Some("think") => "∴",
+        Some("switch_mode") => "⇄",
+        _ => "•",
+    }
+}
+
+/// What the call is about, from the field of its input that names it: the
+/// command, the path and line, the pattern and where it is looked for, the
+/// URL. The title where the kind names nothing, and never the raw JSON.
+/// Locations the head does not already name follow it.
+fn subject(tool: &Tool) -> String {
+    let input = &tool.input;
+    let named =
+        match tool.kind.as_deref() {
+            Some("execute") => {
+                command(input).map(|command| command.lines().next().unwrap_or_default().to_string())
+            }
+            Some("read" | "edit" | "delete" | "move") => place(tool),
+            Some("search") => field(input, &["pattern", "query", "regex"]).map(|pattern| {
+                match field(input, &["path", "file_path", "directory", "cwd"])
+                    .or_else(|| tool.locations.first().map(|location| location.path.clone()))
+                {
+                    Some(path) => format!("{pattern} in {path}"),
+                    None => pattern,
+                }
+            }),
+            Some("fetch") => field(input, &["url"]),
+            _ => None,
+        };
+    let mut head = named.unwrap_or_else(|| tool.name.clone());
+    let elsewhere: Vec<String> = tool
+        .locations
+        .iter()
+        .filter(|location| !head.contains(&location.path))
+        .map(|location| match location.line {
+            Some(line) => format!("{}:{line}", location.path),
+            None => location.path.clone(),
+        })
+        .collect();
+    if !elsewhere.is_empty() {
+        head.push_str(&format!(" ({})", elsewhere.join(", ")));
+    }
+    head
+}
+
+/// The command an `execute` call runs: one string, or the argument list
+/// some agents send it as.
+fn command(input: &serde_json::Value) -> Option<String> {
+    if let serde_json::Value::String(text) = input {
+        return Some(text.clone());
+    }
+    match input.get("command")? {
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Array(words) => Some(
+            words
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        _ => None,
+    }
+}
+
+/// The file a call is on, and the line where one is named: `path:line`.
+fn place(tool: &Tool) -> Option<String> {
+    let first = tool.locations.first();
+    let path = field(&tool.input, &["path", "file_path", "filePath", "file"])
+        .or_else(|| first.map(|location| location.path.clone()))?;
+    let line = tool
+        .input
+        .get("line")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| first.filter(|location| location.path == path)?.line);
+    Some(match line {
+        Some(line) => format!("{path}:{line}"),
+        None => path,
+    })
+}
+
+/// The first of `keys` the input carries as a string.
+fn field(input: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| input.get(key)?.as_str().map(str::to_string))
+}
+
+/// Cut a line to `room` columns, saying so.
+fn clip(text: &str, room: usize) -> String {
+    if text.chars().count() <= room {
+        return text.to_string();
+    }
+    let mut cut: String = text.chars().take(room.saturating_sub(1)).collect();
+    cut.push('…');
+    cut
+}
+
+/// How long a call took, in the unit that fits it.
+fn elapsed(started_at: &str, ended_at: &str) -> Option<String> {
+    let started = chrono::DateTime::parse_from_rfc3339(started_at).ok()?;
+    let ended = chrono::DateTime::parse_from_rfc3339(ended_at).ok()?;
+    let millis = (ended - started).num_milliseconds().max(0);
+    Some(if millis < 1_000 {
+        format!("{millis}ms")
+    } else if millis < 60_000 {
+        format!("{:.1}s", millis as f64 / 1_000.0)
+    } else {
+        format!("{}m {:02}s", millis / 60_000, millis % 60_000 / 1_000)
+    })
+}
+
 /// A tool's output: indented, and folded to the last few lines, which is
-/// where a command says how it went.
+/// where a command says how it went. Trailing blank lines are not output.
 fn folded(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
-    let all = wrap(text.trim_end_matches('\n'), width.saturating_sub(4));
+    let all = wrap(text.trim_end(), width.saturating_sub(4));
     let hidden = all.len().saturating_sub(FOLD);
     let mut lines = Vec::new();
     if hidden > 0 {
@@ -838,41 +962,121 @@ fn folded(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     lines
 }
 
-/// A diff, coloured the way every other diff the CLI prints is.
+/// Text read from the top — a command, a diff — indented and folded to its
+/// first lines, with a count of what was left out.
+fn folded_top(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let hidden = lines.len().saturating_sub(DIFF_FOLD);
+    if hidden == 0 {
+        return lines;
+    }
+    let mut kept: Vec<_> = lines.into_iter().take(DIFF_FOLD).collect();
+    kept.push(Line::from(Span::styled(
+        format!("    … {hidden} more lines"),
+        DIM,
+    )));
+    kept
+}
+
+/// A unified diff: the file it changes as a header — the old name to the new
+/// where they differ — then each line coloured for what it is, folded past
+/// the limit.
 fn folded_diff(diff: &str, width: usize) -> Vec<Line<'static>> {
-    diff.trim_end_matches('\n')
-        .lines()
-        .map(|line| {
-            let style = match line.chars().next() {
-                Some('+') => Style::new().fg(Color::Green),
-                Some('-') => Style::new().fg(Color::Red),
-                Some('@') => Style::new().fg(Color::Cyan),
-                _ => DIM,
+    let indent =
+        |text: String, style: Style| Line::from(vec![Span::raw("    "), Span::styled(text, style)]);
+    let room = width.saturating_sub(4);
+    let mut lines = Vec::new();
+    let (mut old, mut new) = (None, None);
+    let mut in_hunk = false;
+    for line in diff.trim_end().lines() {
+        if !in_hunk {
+            if let Some(path) = line.strip_prefix("--- ") {
+                old = file_name(path);
+                continue;
+            }
+            if let Some(path) = line.strip_prefix("+++ ") {
+                new = file_name(path);
+                continue;
+            }
+            if !line.starts_with("@@") {
+                // What git writes above a hunk — `diff --git`, `index`, a
+                // mode — names nothing the header does not.
+                continue;
+            }
+            in_hunk = true;
+            let header = match (&old, &new) {
+                (Some(old), Some(new)) if old != new => Some(format!("{old} → {new}")),
+                (_, Some(name)) | (Some(name), None) => Some(name.clone()),
+                (None, None) => None,
             };
-            let text: String = line.chars().take(width.saturating_sub(4)).collect();
-            Line::from(vec![Span::raw("    "), Span::styled(text, style)])
-        })
-        .collect()
+            if let Some(header) = header {
+                lines.push(indent(clip(&header, room), FILE));
+            }
+        }
+        let style = match line.chars().next() {
+            Some('+') => ADDED,
+            Some('-') => REMOVED,
+            Some('@') => HUNK,
+            _ => DIM,
+        };
+        lines.push(indent(clip(line, room), style));
+    }
+    folded_top(lines)
+}
+
+/// The path a diff's file header names, bare of git's `a/` and `b/`, and
+/// nothing for the `/dev/null` of a file that did not exist.
+fn file_name(header: &str) -> Option<String> {
+    let path = header.split('\t').next().unwrap_or(header).trim();
+    if path == "/dev/null" || path.is_empty() {
+        return None;
+    }
+    Some(
+        path.strip_prefix("a/")
+            .or_else(|| path.strip_prefix("b/"))
+            .unwrap_or(path)
+            .to_string(),
+    )
 }
 
 /// A permission question: the options as a picker while it is open, and as
-/// the answer once it is given.
+/// the answer once it is given. The call it asks about is drawn under the
+/// question — its head, and the command or the diff where it carries one —
+/// so what is being allowed can be read before it is.
 fn permission(
     question: &str,
+    tool: &Tool,
     options: &[PermissionOption],
     answer: Option<&str>,
     picked: Option<usize>,
+    width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(vec![
         Span::styled("? ", ASK),
         Span::styled(question.to_string(), ASK.add_modifier(Modifier::BOLD)),
     ])];
+    lines.push(head(tool, Span::styled(" ", ASK), None, width));
     if let Some(answer) = answer {
         lines.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(format!("answered: {answer}"), DIM),
         ]));
         return lines;
+    }
+    // The head shows a command's first line: the rest of a command that has
+    // more is what the question is about.
+    if tool.kind.as_deref() == Some("execute")
+        && let Some(command) = command(&tool.input)
+        && command.lines().count() > 1
+    {
+        lines.extend(folded_top(
+            wrap(command.trim_end(), width.saturating_sub(4))
+                .into_iter()
+                .map(|line| Line::from(vec![Span::raw("    "), Span::styled(line, DIM)]))
+                .collect(),
+        ));
+    }
+    if let Some(diff) = &tool.diff {
+        lines.extend(folded_diff(diff, width));
     }
     for (at, option) in options.iter().enumerate() {
         let chosen = picked == Some(at);
@@ -1582,8 +1786,8 @@ mod tests {
                     json!({
                         "tool_name": "Bash",
                         "tool_input": {"command": "cargo nextest run"},
-                        "acp": {"toolCallId": "call-1", "status": "completed",
-                                "rawOutput": {"stdout": "one\ntwo\nthree\nfour\nfive\nsix\n"}}
+                        "acp": {"toolCallId": "call-1", "kind": "execute", "status": "completed",
+                                "rawOutput": {"stdout": "one\ntwo\nthree\nfour\nfive\nsix\n\n\n"}}
                     }),
                 ),
             ])
@@ -1598,14 +1802,13 @@ mod tests {
             "the heading is a heading: {shown}"
         );
         assert!(shown.contains("```sh"), "the code block is fenced: {shown}");
-        assert!(shown.contains("cargo nextest run"), "{shown}");
         assert!(
-            shown.contains("✓ Bash"),
-            "a completed call is ticked: {shown}"
+            shown.contains("✓ $ cargo nextest run"),
+            "a completed call is ticked, and its head is its command: {shown}"
         );
         assert!(
-            shown.contains("… 2 more lines") && shown.contains("six"),
-            "the output is folded to its last lines: {shown}"
+            shown.contains("… 2 more lines") && shown.contains("    six\n\n"),
+            "the output is folded to its last lines, the blank ones trimmed: {shown}"
         );
         assert!(
             shown.contains("author") && shown.contains("claude:opus") && shown.contains("running"),
@@ -1693,9 +1896,241 @@ mod tests {
             "and the text after it is said once, not lost: {shown}"
         );
         assert!(
-            shown.find("Let me run the tests.") < shown.find("✓ Bash")
-                && shown.find("✓ Bash") < shown.find("The tests pass."),
+            shown.find("Let me run the tests.") < shown.find("✓ • Bash")
+                && shown.find("✓ • Bash") < shown.find("The tests pass."),
             "in the order the turn happened: {shown}"
+        );
+    }
+
+    /// One tool call as the daemon records it (021): the ACP call under
+    /// `acp`, with its kind and its raw input.
+    fn called(id: &str, kind: &str, status: &str, input: serde_json::Value) -> AgentEventDto {
+        event(
+            "post_tool_use",
+            id,
+            json!({
+                "tool_name": kind,
+                "tool_input": input,
+                "acp": {"toolCallId": id, "title": kind, "kind": kind, "status": status,
+                        "rawInput": input}
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn each_kind_of_call_draws_its_glyph_and_what_it_is_about() {
+        let (shown, _, _) = console(
+            Stub::new(vec![
+                called(
+                    "run",
+                    "execute",
+                    "completed",
+                    json!({"command": "cargo nextest run"}),
+                ),
+                called(
+                    "read",
+                    "read",
+                    "completed",
+                    json!({"file_path": "src/main.rs", "line": 12}),
+                ),
+                called(
+                    "grep",
+                    "search",
+                    "completed",
+                    json!({"pattern": "fn main", "path": "src"}),
+                ),
+                called(
+                    "get",
+                    "fetch",
+                    "failed",
+                    json!({"url": "https://example.com/spec"}),
+                ),
+            ])
+            .deltas(vec![ended()]),
+            Vec::new(),
+        )
+        .await;
+
+        assert!(shown.contains("✓ $ cargo nextest run"), "{shown}");
+        assert!(shown.contains("✓ ≡ src/main.rs:12"), "{shown}");
+        assert!(shown.contains("✓ ⌕ fn main in src"), "{shown}");
+        assert!(shown.contains("✗ ↓ https://example.com/spec"), "{shown}");
+        assert!(
+            !shown.contains('{'),
+            "no raw JSON where a field names the subject: {shown}"
+        );
+    }
+
+    /// A live `tool_call_update` carries the daemon's merged call under
+    /// `acp` and no `tool_name` (021).
+    fn updated(id: &str, status: &str, output: &str) -> AgentEventDto {
+        event(
+            "tool_call_update",
+            &format!("{id}-{output}"),
+            json!({
+                "tool_call_id": id,
+                "acp": {"toolCallId": id, "title": "Bash", "kind": "execute", "status": status,
+                        "rawInput": {"command": "cargo build"}, "rawOutput": output}
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn updates_of_one_call_draw_one_block() {
+        let (shown, _, _) = console(
+            Stub::new(vec![event(
+                "pre_tool_use",
+                "build",
+                json!({"tool_name": "Bash",
+                       "acp": {"toolCallId": "build", "kind": "execute", "status": "pending",
+                               "rawInput": {"command": "cargo build"}}}),
+            )])
+            .deltas(vec![
+                updated("build", "in_progress", "Compiling a"),
+                updated("build", "in_progress", "Compiling b"),
+                updated("build", "in_progress", "Compiling c"),
+                ended(),
+            ]),
+            Vec::new(),
+        )
+        .await;
+
+        assert_eq!(
+            shown.matches("$ cargo build").count(),
+            1,
+            "one block, however many updates: {shown}"
+        );
+        assert!(
+            shown.contains("Compiling c") && !shown.contains("Compiling a"),
+            "showing the latest update: {shown}"
+        );
+    }
+
+    fn event_at(kind: &str, summary: &str, payload: serde_json::Value, at: &str) -> AgentEventDto {
+        let mut event = event(kind, summary, payload);
+        event.created_at = at.into();
+        event
+    }
+
+    #[tokio::test]
+    async fn a_completed_call_draws_its_duration() {
+        let (shown, _, _) = console(
+            Stub::new(vec![
+                event_at(
+                    "pre_tool_use",
+                    "test",
+                    json!({"acp": {"toolCallId": "test", "kind": "execute", "status": "pending",
+                                   "rawInput": {"command": "cargo test"}}}),
+                    "2026-09-12T10:00:00.000Z",
+                ),
+                event_at(
+                    "post_tool_use",
+                    "test",
+                    json!({"acp": {"toolCallId": "test", "kind": "execute", "status": "completed",
+                                   "rawInput": {"command": "cargo test"}, "rawOutput": "ok"}}),
+                    "2026-09-12T10:00:01.500Z",
+                ),
+            ])
+            .deltas(vec![ended()]),
+            Vec::new(),
+        )
+        .await;
+
+        assert!(shown.contains("✓ $ cargo test  1.5s"), "{shown}");
+    }
+
+    /// The style of the first cell of the first line that, past its indent,
+    /// starts with `text`.
+    fn style_of(buffer: &Buffer, text: &str) -> Style {
+        for y in 0..buffer.area.height {
+            let row: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            if row.trim_start().starts_with(text) {
+                let x = u16::try_from(row.len() - row.trim_start().len()).unwrap();
+                return buffer[(x, y)].style();
+            }
+        }
+        panic!("{text:?} is not on the screen:\n{}", rows(buffer));
+    }
+
+    #[test]
+    fn a_diff_draws_its_file_header_its_lines_coloured_and_a_fold_count() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        let body: String = (1..=30).map(|n| format!("+line {n}\n")).collect();
+        let patch = format!("--- /dev/null\n+++ b/src/new.rs\n@@ -0,0 +1,30 @@\n{body}");
+        console.apply(&event(
+            "post_tool_use",
+            "write",
+            json!({"acp": {"toolCallId": "write", "kind": "edit", "status": "completed",
+                           "rawInput": {"file_path": "src/new.rs"},
+                           "content": [{"type": "diff", "patch": {"text": patch}}]}}),
+        ));
+        console.apply(&event("agent_message", "done", json!({"text": "Written."})));
+
+        console.commit(&mut terminal).unwrap();
+        let shown = screen(&terminal);
+        let buffer = terminal.backend().buffer();
+
+        assert!(shown.contains("✓ ✎ src/new.rs"), "{shown}");
+        assert!(
+            row_of(&shown, "    src/new.rs") < row_of(&shown, "@@ -0,0 +1,30 @@"),
+            "the file header is above the hunk: {shown}"
+        );
+        assert_eq!(style_of(buffer, "src/new.rs").add_modifier, Modifier::BOLD);
+        assert_eq!(style_of(buffer, "@@ -0,0").fg, Some(Color::Cyan));
+        assert_eq!(style_of(buffer, "+line 1").fg, Some(Color::Green));
+        // The header, the hunk line and thirty added lines.
+        assert!(
+            shown.contains(&format!("… {} more lines", 32 - DIFF_FOLD)),
+            "the tail past the limit is counted: {shown}"
+        );
+        assert!(!shown.contains("+line 30"), "{shown}");
+    }
+
+    #[test]
+    fn a_permission_question_draws_the_call_above_its_options() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&event(
+            "permission_request",
+            "Permission requested for Bash",
+            json!({"tool_name": "Bash",
+                   "acp": {"toolCallId": "run", "kind": "execute",
+                           "rawInput": {"command": "cargo build\ncargo nextest run"}},
+                   "options": [{"optionId": "no", "name": "Reject"},
+                               {"optionId": "yes", "name": "Allow"}]}),
+        ));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(shown.contains("? Bash\n  $ cargo build\n"), "{shown}");
+        assert!(
+            row_of(&shown, "    cargo nextest run") < row_of(&shown, "1. Reject"),
+            "the whole command is above the options: {shown}"
+        );
+
+        let mut console = Console::new(header());
+        console.apply(&event(
+            "permission_request",
+            "Permission requested for Edit",
+            json!({"tool_name": "Edit",
+                   "acp": {"toolCallId": "edit", "kind": "edit",
+                           "rawInput": {"file_path": "src/lib.rs"},
+                           "content": [{"type": "diff", "path": "src/lib.rs",
+                                        "oldText": "fn a() {}\n", "newText": "fn b() {}\n"}]},
+                   "options": [{"optionId": "no", "name": "Reject"},
+                               {"optionId": "yes", "name": "Allow"}]}),
+        ));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(shown.contains("? Edit\n  ✎ src/lib.rs\n"), "{shown}");
+        assert!(
+            row_of(&shown, "-fn a() {}") < row_of(&shown, "+fn b() {}")
+                && row_of(&shown, "+fn b() {}") < row_of(&shown, "1. Reject"),
+            "the diff is above the options: {shown}"
         );
     }
 

@@ -128,6 +128,110 @@ pub struct PermissionOption {
     pub name: String,
 }
 
+/// A file a tool call touches, as the ACP call names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Location {
+    pub path: String,
+    pub line: Option<u64>,
+}
+
+/// What a tool call reads as when its event names no tool.
+pub const UNNAMED_TOOL: &str = "ACP tool";
+
+/// One tool call, as the ACP call the daemon records under `payload.acp`
+/// (021): the same shape whether it opened, was updated, ended, or is the
+/// call a permission question asks about.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Tool {
+    pub id: String,
+    /// The agent's title for the call.
+    pub name: String,
+    /// The ACP kind: `read`, `edit`, `delete`, `move`, `search`, `execute`,
+    /// `think`, `fetch`, `switch_mode` or `other`.
+    pub kind: Option<String>,
+    pub input: Value,
+    pub locations: Vec<Location>,
+    pub output: Option<String>,
+    /// The file change as a unified diff: the agent's patch where it sent
+    /// one, and the hunks between the old text and the new otherwise.
+    pub diff: Option<String>,
+    pub status: Option<String>,
+    /// When the call ended: the time of the terminal event that closed the
+    /// call an earlier event opened. A terminal event with no opener has no
+    /// duration to speak of.
+    pub ended_at: Option<String>,
+}
+
+impl Tool {
+    /// The call an event carries: `tool_name` and `tool_input` over the ACP
+    /// call under `acp`, and `fallback` where nothing names the tool.
+    fn from_payload(payload: &Value, fallback: &str) -> Self {
+        let acp = payload.get("acp").unwrap_or(payload);
+        Self {
+            id: string_at(acp, "/toolCallId")
+                .or_else(|| string_at(payload, "/tool_call_id"))
+                .unwrap_or_default(),
+            name: string_at(payload, "/tool_name")
+                .or_else(|| string_at(acp, "/title"))
+                .unwrap_or_else(|| fallback.to_string()),
+            kind: string_at(acp, "/kind"),
+            input: payload
+                .get("tool_input")
+                .or_else(|| acp.get("rawInput"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            locations: acp
+                .get("locations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|location| {
+                    Some(Location {
+                        path: string_at(location, "/path")?,
+                        line: location.get("line").and_then(Value::as_u64),
+                    })
+                })
+                .collect(),
+            output: tool_output(acp),
+            diff: tool_diff(acp),
+            status: string_at(acp, "/status"),
+            ended_at: None,
+        }
+    }
+
+    /// Whether `update` is a later event of this call.
+    fn is_same(&self, update: &Self) -> bool {
+        (!update.id.is_empty() && self.id == update.id)
+            || (update.id.is_empty() && self.name == update.name)
+    }
+
+    /// Take what a later event of the call says, and keep what it does not
+    /// say again.
+    fn merge(&mut self, update: Self) {
+        if update.name != UNNAMED_TOOL {
+            self.name = update.name;
+        }
+        if update.kind.is_some() {
+            self.kind = update.kind;
+        }
+        if !update.input.is_null() {
+            self.input = update.input;
+        }
+        if !update.locations.is_empty() {
+            self.locations = update.locations;
+        }
+        if update.output.is_some() {
+            self.output = update.output;
+        }
+        if update.diff.is_some() {
+            self.diff = update.diff;
+        }
+        if update.status.is_some() {
+            self.status = update.status;
+        }
+    }
+}
+
 /// One semantic block in a session transcript.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TranscriptItem {
@@ -150,16 +254,13 @@ pub enum TranscriptItem {
     },
     ToolCall {
         meta: ItemMeta,
-        id: String,
-        name: String,
-        input: Value,
-        output: Option<String>,
-        diff: Option<String>,
-        status: Option<String>,
+        tool: Tool,
     },
     PermissionQuestion {
         meta: ItemMeta,
         question: String,
+        /// The call the question asks about.
+        tool: Tool,
         options: Vec<PermissionOption>,
         answer: Option<String>,
     },
@@ -180,20 +281,6 @@ pub enum TranscriptItem {
 
 impl TranscriptItem {
     pub fn meta(&self) -> &ItemMeta {
-        match self {
-            Self::UserPrompt { meta, .. }
-            | Self::AgentText { meta, .. }
-            | Self::Thought { meta, .. }
-            | Self::Plan { meta, .. }
-            | Self::ToolCall { meta, .. }
-            | Self::PermissionQuestion { meta, .. }
-            | Self::SystemNote { meta, .. }
-            | Self::Error { meta, .. }
-            | Self::Raw { meta, .. } => meta,
-        }
-    }
-
-    pub fn meta_mut(&mut self) -> &mut ItemMeta {
         match self {
             Self::UserPrompt { meta, .. }
             | Self::AgentText { meta, .. }
@@ -247,15 +334,20 @@ impl From<&AgentEventDto> for TranscriptItem {
                     })
                     .collect(),
             },
-            "pre_tool_use" | "post_tool_use" | "tool_call_update" => tool_item(event, meta),
-            "permission_request" => Self::PermissionQuestion {
+            "pre_tool_use" | "post_tool_use" | "tool_call_update" => Self::ToolCall {
                 meta,
-                question: string_at(&event.payload, "/tool_name")
-                    .or_else(|| string_at(&event.payload, "/acp/title"))
-                    .unwrap_or_else(|| event.summary.clone()),
-                options: permission_options(&event.payload),
-                answer: None,
+                tool: Tool::from_payload(&event.payload, UNNAMED_TOOL),
             },
+            "permission_request" => {
+                let tool = Tool::from_payload(&event.payload, &event.summary);
+                Self::PermissionQuestion {
+                    meta,
+                    question: tool.name.clone(),
+                    tool,
+                    options: permission_options(&event.payload),
+                    answer: None,
+                }
+            }
             "session.error" => Self::Error {
                 meta,
                 text: error_text(event),
@@ -319,27 +411,24 @@ pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
         return;
     }
 
+    // A later event of an open call — a live `tool_call_update`, or the
+    // `post_tool_use` that ends it — is that call, not a call of its own:
+    // one block per `toolCallId`, however many updates stream into it.
     let mut item = TranscriptItem::from(event);
-    if event.kind == "post_tool_use"
-        && let TranscriptItem::ToolCall { id, name, .. } = &item
-        && let Some(previous) = items.iter_mut().rev().find(|previous| {
-            matches!(previous,
-                TranscriptItem::ToolCall {
-                    id: old_id,
-                    name: old_name,
-                    status,
-                    ..
-                } if !tool_is_terminal(status.as_deref())
-                    && ((!id.is_empty() && old_id == id)
-                        || (id.is_empty() && old_name == name)))
-        })
+    if matches!(event.kind.as_str(), "post_tool_use" | "tool_call_update")
+        && let TranscriptItem::ToolCall { tool: update, .. } = &mut item
+        && let Some(TranscriptItem::ToolCall { meta, tool }) =
+            items.iter_mut().rev().find(|previous| {
+                matches!(previous,
+                    TranscriptItem::ToolCall { tool, .. }
+                        if !tool_is_terminal(tool.status.as_deref()) && tool.is_same(update))
+            })
     {
-        let created_at = previous.meta().created_at.clone();
-        let mut kinds = previous.meta().kinds.clone();
-        kinds.push(event.kind.clone());
-        *previous = item;
-        previous.meta_mut().created_at = created_at;
-        previous.meta_mut().kinds = kinds;
+        tool.merge(std::mem::take(update));
+        if tool_is_terminal(tool.status.as_deref()) {
+            tool.ended_at = Some(event.created_at.clone());
+        }
+        meta.kinds.push(event.kind.clone());
         return;
     }
     if event.kind == "permission.replied" {
@@ -371,28 +460,6 @@ fn error_text(event: &AgentEventDto) -> String {
         .or_else(|| string_at(&event.payload, "/error/message"))
         .or_else(|| string_at(&event.payload, "/message"))
         .unwrap_or_else(|| event.summary.clone())
-}
-
-fn tool_item(event: &AgentEventDto, meta: ItemMeta) -> TranscriptItem {
-    let acp = event.payload.get("acp").unwrap_or(&event.payload);
-    TranscriptItem::ToolCall {
-        meta,
-        id: string_at(acp, "/toolCallId")
-            .or_else(|| string_at(&event.payload, "/tool_call_id"))
-            .unwrap_or_default(),
-        name: string_at(&event.payload, "/tool_name")
-            .or_else(|| string_at(acp, "/title"))
-            .unwrap_or_else(|| "ACP tool".into()),
-        input: event
-            .payload
-            .get("tool_input")
-            .or_else(|| acp.get("rawInput"))
-            .cloned()
-            .unwrap_or(Value::Null),
-        output: tool_output(acp),
-        diff: tool_diff(acp),
-        status: string_at(acp, "/status"),
-    }
 }
 
 fn tool_output(acp: &Value) -> Option<String> {
@@ -430,15 +497,34 @@ fn tool_diff(acp: &Value) -> Option<String> {
         .iter()
         .find(|content| content.get("type").and_then(Value::as_str) == Some("diff"))?;
     if let Some(patch) = string_at(diff, "/patch/text") {
-        return Some(patch);
+        // A patch is not bound to carry file headers: one that starts at its
+        // first hunk takes them from the entry's `path`, which names the file
+        // the patch does not.
+        let headed = patch
+            .lines()
+            .take_while(|line| !line.starts_with("@@"))
+            .any(|line| line.starts_with("--- ") || line.starts_with("+++ "));
+        return Some(match string_at(diff, "/path") {
+            Some(path) if !headed => format!("--- {path}\n+++ {path}\n{patch}"),
+            _ => patch,
+        });
     }
     let path = string_at(diff, "/path")?;
     let old = string_at(diff, "/oldText").unwrap_or_default();
     let new = string_at(diff, "/newText").unwrap_or_default();
-    let mut rendered = format!("--- {path}\n+++ {path}\n");
-    rendered.extend(old.lines().map(|line| format!("-{line}\n")));
-    rendered.extend(new.lines().map(|line| format!("+{line}\n")));
-    Some(rendered)
+    Some(unified(&path, &old, &new)).filter(|diff| !diff.is_empty())
+}
+
+/// The hunks between two texts of one file, with three lines of context
+/// around each, under the file header a patch would carry. Empty where the
+/// two texts are the same.
+fn unified(path: &str, old: &str, new: &str) -> String {
+    similar::TextDiff::from_lines(old, new)
+        .unified_diff()
+        .context_radius(3)
+        .missing_newline_hint(false)
+        .header(path, path)
+        .to_string()
 }
 
 fn permission_options(payload: &Value) -> Vec<PermissionOption> {
@@ -525,21 +611,13 @@ pub mod render {
                 out.push('\n');
                 out
             }
-            TranscriptItem::ToolCall {
+            TranscriptItem::ToolCall { meta, tool } => tool_block(
                 meta,
-                name,
-                input,
-                output,
-                diff,
-                status,
-                ..
-            } => tool_block(
-                meta,
-                name,
-                input,
-                output.as_deref(),
-                diff.as_deref(),
-                status.as_deref(),
+                &tool.name,
+                &tool.input,
+                tool.output.as_deref(),
+                tool.diff.as_deref(),
+                tool.status.as_deref(),
                 color,
             ),
             TranscriptItem::PermissionQuestion {
@@ -547,6 +625,7 @@ pub mod render {
                 question,
                 options,
                 answer,
+                ..
             } => permission_block(meta, question, options, answer.as_deref(), color),
             TranscriptItem::SystemNote { meta, text } => {
                 text_block(meta, "SYSTEM", DIM, text, DIM, width, color)
@@ -738,10 +817,10 @@ pub mod render {
             self.pending_permission = None;
             for item in &items {
                 match item {
-                    TranscriptItem::ToolCall {
-                        id, name, status, ..
-                    } if !super::tool_is_terminal(status.as_deref()) => {
-                        self.open_tools.insert(Self::tool_key(id, name));
+                    TranscriptItem::ToolCall { tool, .. }
+                        if !super::tool_is_terminal(tool.status.as_deref()) =>
+                    {
+                        self.open_tools.insert(Self::tool_key(&tool.id, &tool.name));
                     }
                     TranscriptItem::PermissionQuestion {
                         options,
@@ -843,11 +922,11 @@ pub mod render {
                     .kinds
                     .last()
                     .is_some_and(|kind| kind == "agent_thought_chunk"),
-                TranscriptItem::ToolCall { meta, status, .. } => {
+                TranscriptItem::ToolCall { meta, tool } => {
                     meta.kinds
                         .last()
                         .is_some_and(|kind| kind == "pre_tool_use" || kind == "tool_call_update")
-                        && !matches!(status.as_deref(), Some("completed" | "failed"))
+                        && !matches!(tool.status.as_deref(), Some("completed" | "failed"))
                 }
                 TranscriptItem::PermissionQuestion { answer, .. } => answer.is_none(),
                 _ => false,
@@ -884,15 +963,7 @@ pub mod render {
         }
 
         fn tool_start(&mut self, event: &AgentEventDto) -> String {
-            let TranscriptItem::ToolCall {
-                meta,
-                id,
-                name,
-                input,
-                status,
-                ..
-            } = TranscriptItem::from(event)
-            else {
+            let TranscriptItem::ToolCall { meta, tool } = TranscriptItem::from(event) else {
                 return String::new();
             };
             let mut out = self.close_agent();
@@ -902,28 +973,24 @@ pub mod render {
             out.push_str(&format!(
                 "{}  {}\n",
                 header(&meta, "TOOL", TOOL, self.color),
-                tool_line(&name, &input, status.as_deref())
+                tool_line(&tool.name, &tool.input, tool.status.as_deref())
             ));
-            self.open_tools.insert(Self::tool_key(&id, &name));
+            self.open_tools.insert(Self::tool_key(&tool.id, &tool.name));
             out
         }
 
         fn tool_end(&mut self, event: &AgentEventDto) -> String {
             let item = TranscriptItem::from(event);
-            let TranscriptItem::ToolCall {
-                id,
-                name,
-                output,
-                diff,
-                ..
-            } = &item
-            else {
+            let TranscriptItem::ToolCall { tool, .. } = &item else {
                 return String::new();
             };
-            if self.open_tools.remove(&Self::tool_key(id, name)) {
+            if self
+                .open_tools
+                .remove(&Self::tool_key(&tool.id, &tool.name))
+            {
                 return format!(
                     "{}\n",
-                    tool_result(output.as_deref(), diff.as_deref(), self.color)
+                    tool_result(tool.output.as_deref(), tool.diff.as_deref(), self.color)
                 );
             }
             let mut out = self.close_agent();
@@ -933,23 +1000,22 @@ pub mod render {
 
         fn tool_update(&mut self, event: &AgentEventDto) -> String {
             let item = TranscriptItem::from(event);
-            let TranscriptItem::ToolCall {
-                id,
-                name,
-                output,
-                diff,
-                status,
-                ..
-            } = &item
-            else {
+            let TranscriptItem::ToolCall { tool, .. } = &item else {
                 return String::new();
             };
-            if self.open_tools.contains(&Self::tool_key(id, name)) {
+            if self
+                .open_tools
+                .contains(&Self::tool_key(&tool.id, &tool.name))
+            {
                 let mut out = String::new();
-                if let Some(status) = status {
+                if let Some(status) = &tool.status {
                     out.push_str(&format!("  status: {status}\n"));
                 }
-                out.push_str(&tool_result(output.as_deref(), diff.as_deref(), self.color));
+                out.push_str(&tool_result(
+                    tool.output.as_deref(),
+                    tool.diff.as_deref(),
+                    self.color,
+                ));
                 return out;
             }
             self.tool_start(event)
@@ -999,7 +1065,7 @@ mod tests {
     use ariadne_api::events::AgentEventDto;
     use serde_json::json;
 
-    use super::{Since, fold, render};
+    use super::{Since, TranscriptItem, fold, render};
 
     fn event(id: &str, kind: &str, payload: serde_json::Value) -> AgentEventDto {
         AgentEventDto {
@@ -1101,6 +1167,115 @@ mod tests {
 
         assert!(output.contains("\u{1b}[32m+new\u{1b}[0m"), "{output:?}");
         assert!(output.contains("\u{1b}[31m-old\u{1b}[0m"), "{output:?}");
+    }
+
+    #[test]
+    fn a_patch_without_file_headers_takes_them_from_the_entry_path() {
+        let patch = "@@ -1 +1 @@\n-old\n+new\n";
+        let events = [event(
+            "tool",
+            "post_tool_use",
+            json!({
+                "acp": {"toolCallId": "call-1", "title": "Edit", "kind": "edit",
+                        "status": "completed",
+                        "content": [{"type": "diff", "path": "a.txt",
+                                     "patch": {"format": "git_patch", "text": patch}}]}
+            }),
+        )];
+
+        let items = fold(&events);
+        let TranscriptItem::ToolCall { tool, .. } = &items[0] else {
+            panic!("{items:?}");
+        };
+
+        assert_eq!(
+            tool.diff.as_deref(),
+            Some("--- a.txt\n+++ a.txt\n@@ -1 +1 @@\n-old\n+new\n")
+        );
+    }
+
+    #[test]
+    fn an_old_and_a_new_text_fold_to_hunks_with_context() {
+        let old = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n";
+        let new = "one\ntwo\nthree\n4\nfive\nsix\nseven\n";
+        let events = [event(
+            "tool",
+            "post_tool_use",
+            json!({
+                "acp": {"toolCallId": "call-1", "title": "Edit", "kind": "edit",
+                        "status": "completed",
+                        "content": [{"type": "diff", "path": "count.txt",
+                                     "oldText": old, "newText": new}]}
+            }),
+        )];
+
+        let items = fold(&events);
+        let TranscriptItem::ToolCall { tool, .. } = &items[0] else {
+            panic!("{items:?}");
+        };
+
+        assert_eq!(
+            tool.diff.as_deref(),
+            Some(
+                "--- count.txt\n+++ count.txt\n@@ -1,7 +1,7 @@\n one\n two\n three\n-four\n+4\n five\n six\n seven\n"
+            )
+        );
+    }
+
+    #[test]
+    fn updates_of_one_call_fold_into_it_and_the_last_dates_its_end() {
+        let update = |id: &str, status: &str, output: &str| {
+            let mut event = event(
+                &format!("{id}-{output}"),
+                "tool_call_update",
+                json!({"tool_call_id": id,
+                       "acp": {"toolCallId": id, "title": "Bash", "kind": "execute",
+                               "status": status, "rawInput": {"command": "make"},
+                               "rawOutput": output}}),
+            );
+            event.created_at = "2026-09-11T12:35:00Z".into();
+            event
+        };
+        let events = [
+            event(
+                "pre",
+                "pre_tool_use",
+                json!({"tool_name": "Bash",
+                       "acp": {"toolCallId": "one", "kind": "execute", "status": "pending",
+                               "rawInput": {"command": "make"}}}),
+            ),
+            update("one", "in_progress", "first"),
+            update("one", "in_progress", "second"),
+            update("one", "in_progress", "third"),
+            event(
+                "pre-2",
+                "pre_tool_use",
+                json!({"acp": {"toolCallId": "two", "kind": "read", "status": "pending"}}),
+            ),
+        ];
+
+        let items = fold(&events);
+
+        assert_eq!(items.len(), 2, "{items:?}");
+        let TranscriptItem::ToolCall { meta, tool } = &items[0] else {
+            panic!("{items:?}");
+        };
+        assert_eq!(tool.output.as_deref(), Some("third"));
+        assert_eq!(tool.kind.as_deref(), Some("execute"));
+        assert_eq!(meta.created_at, "2026-09-11T12:34:56Z", "the opener's time");
+        assert_eq!(tool.ended_at, None, "still open");
+
+        let mut items = items;
+        let mut end = update("one", "completed", "done");
+        end.kind = "post_tool_use".into();
+        super::fold_into(&mut items, &end);
+
+        assert_eq!(items.len(), 2, "{items:?}");
+        let TranscriptItem::ToolCall { tool, .. } = &items[0] else {
+            panic!("{items:?}");
+        };
+        assert_eq!(tool.status.as_deref(), Some("completed"));
+        assert_eq!(tool.ended_at.as_deref(), Some("2026-09-11T12:35:00Z"));
     }
 
     #[test]
