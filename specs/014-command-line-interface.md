@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-11
+updated: 2026-09-12
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -144,8 +144,19 @@ same binary also serves (013).
     command when the daemon returns a cursor. `--all` follows every cursor
     into one table and cannot be combined with `--cursor`. JSON preserves the
     page object, while quiet output prints its session ids.
-    `ariadne session adopt` assigns one to a ready task through the same REST
-    surface (020).
+    `ariadne session adopt <session-id> --agent <agent-id>` creates a task for
+    one of them and adopts it as that task's author, through the same REST
+    surface (020). The task lands in exactly one goal: a new one with
+    `--new-goal <title>`, `--goal-description` and a repeatable `--repo`, or an
+    active one with `--goal`. The two are exclusive and one is required, and
+    `--goal-description` is refused beside `--goal`. The rest are the task
+    flags of `task create`: an omitted `--title` leaves the title to the
+    daemon, one `--author` is required and leads the `agents` the `--reviewer`
+    slots follow in review order, and `--repo` names registered repositories
+    by id or by path, as `goal create` takes them. `--goal` completes goal
+    ids, `--repo` repository ids and `--agent` registry agent ids. The
+    command prints a status line each for the goal, the task and the session;
+    JSON preserves all three, and quiet output prints the task id.
 27. `ariadne memory ls|search|delete` reads and removes active repository
     memories. Each command names the repository by id or path (019).
 28. `ariadne attach`, `goal attach` and `task attach` open the console of the
@@ -275,6 +286,21 @@ same binary also serves (013).
   `::discover_all_and_cursor_are_exclusive`). It names each agent that cannot
   list sessions with its reason
   (`session.rs::an_agent_without_the_capability_is_named_with_its_reason`).
+- `session adopt` sends the goal it was given — one by id, or a new one with
+  its title, description and repositories — and no repository ids where the
+  line named none
+  (`session.rs::a_goal_id_adopts_the_session_into_that_goal`,
+  `::a_new_goal_carries_its_title_description_and_repositories`,
+  `::no_repository_named_sends_no_repository_ids`). The author leads the
+  agents and the reviewers follow in review order
+  (`::the_author_leads_the_agents_and_the_reviewers_follow_in_review_order`),
+  an omitted title is no title (`::an_omitted_title_sends_no_title`), and the
+  output names the goal, the task and the session
+  (`::the_adoption_output_names_the_goal_the_task_and_the_session`). Every
+  flag lands in its field, and a line that names both goals, neither, or no
+  author is refused
+  (`cli/tests.rs::adopt_takes_the_session_the_new_goal_and_the_task_flags`,
+  `::adopt_takes_a_goal_or_a_new_goal_and_exactly_one`).
 - The memory commands are classified like other lists and mutations
   (`cli/tests.rs::every_command_in_the_tree_is_classified`), and delete takes
   its entry and repository (`::memory_delete_takes_the_entry_and_its_repository`).

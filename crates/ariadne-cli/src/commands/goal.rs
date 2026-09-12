@@ -447,7 +447,7 @@ async fn goal_tasks(client: &Client, goal_id: &str) -> Vec<TaskDto> {
 
 /// The ids the `--repo` arguments name, among the registered repositories:
 /// nothing here registers one on the fly.
-async fn resolve_repositories(client: &Client, specs: &[String]) -> Result<Vec<String>> {
+pub(super) async fn resolve_repositories(client: &Client, specs: &[String]) -> Result<Vec<String>> {
     let registered: Vec<RepositoryDto> = client.get_json("/v1/repositories").await?;
     specs
         .iter()

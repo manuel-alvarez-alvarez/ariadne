@@ -50,6 +50,7 @@ retry, change the task, or cancel it.
 ## Continue an existing conversation
 
 An ACP agent can list conversations that it stored outside Ariadne. Use
-`ariadne session discover` to find them, then adopt one as the author of a
-ready task that uses the same agent. [Adopting a session](adopting-sessions.md)
-has the compatibility rules and commands.
+`ariadne session discover` to find them, then `ariadne session adopt` to create
+a task for one — in a new goal or in a goal already under way — with that
+conversation as its author. [Adopting a session](adopting-sessions.md) has the
+compatibility rules and commands.

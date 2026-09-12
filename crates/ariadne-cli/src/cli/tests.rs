@@ -353,6 +353,138 @@ fn discover_takes_filters_pages_refresh_and_all() {
     assert!(all);
 }
 
+/// `session adopt` takes the session, the agent it belongs to, the goal that
+/// receives the work, and the task flags `task create` takes — one author,
+/// the reviewers in review order, and the two enums a task ends on.
+#[test]
+fn adopt_takes_the_session_the_new_goal_and_the_task_flags() {
+    let Command::Session {
+        command:
+            SessionCommand::Adopt {
+                session_id,
+                agent,
+                goal,
+                new_goal,
+                goal_description,
+                repos,
+                title,
+                description,
+                author,
+                reviewers,
+                no_reviewer,
+                landing,
+                permission_mode,
+            },
+    } = parse(&[
+        "ariadne",
+        "session",
+        "adopt",
+        "codex-outside-1",
+        "--agent",
+        "codex-acp",
+        "--new-goal",
+        "Finish the rate limiter",
+        "--goal-description",
+        "What the outside session started",
+        "--repo",
+        "01REPO",
+        "--repo",
+        "/work/ui",
+        "--title",
+        "Wire the limiter in",
+        "-d",
+        "The brief",
+        "--author",
+        "coding,testing=codex-acp:gpt-5.6-sol@xhigh",
+        "--reviewer",
+        "code-review=claude-agent-acp:claude-opus-5@high",
+        "--reviewer",
+        "security-review=codex-acp:gpt-5.6-luna",
+        "--landing",
+        "pull-request",
+        "--permission-mode",
+        "learn",
+    ])
+    .command
+    else {
+        panic!("session adopt");
+    };
+
+    assert_eq!(session_id, "codex-outside-1");
+    assert_eq!(agent, "codex-acp");
+    assert_eq!(goal, None);
+    assert_eq!(new_goal.as_deref(), Some("Finish the rate limiter"));
+    assert_eq!(
+        goal_description.as_deref(),
+        Some("What the outside session started")
+    );
+    assert_eq!(repos, ["01REPO", "/work/ui"]);
+    assert_eq!(title.as_deref(), Some("Wire the limiter in"));
+    assert_eq!(description, "The brief");
+    assert_eq!(author.skills, ["coding", "testing"]);
+    assert_eq!(author.model, "codex-acp:gpt-5.6-sol");
+    assert_eq!(author.effort.as_deref(), Some("xhigh"));
+    assert_eq!(
+        reviewers
+            .iter()
+            .map(|r| (r.skills.join(","), r.model.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("code-review".to_string(), "claude-agent-acp:claude-opus-5"),
+            ("security-review".to_string(), "codex-acp:gpt-5.6-luna"),
+        ]
+    );
+    assert!(!no_reviewer);
+    assert_eq!(landing, Some(Landing::PullRequest));
+    assert_eq!(permission_mode, Some(PermissionMode::Learn));
+}
+
+/// An adopted task lands in one place: a goal that is already active, or a new
+/// one. A line that names both places, or neither, says nothing about where.
+#[test]
+fn adopt_takes_a_goal_or_a_new_goal_and_exactly_one() {
+    let line = |args: &[&str]| {
+        let mut argv = vec![
+            "ariadne",
+            "session",
+            "adopt",
+            "codex-outside-1",
+            "--agent",
+            "codex-acp",
+            "--author",
+            "coding=codex-acp:gpt-5.6-sol",
+        ];
+        argv.extend_from_slice(args);
+        try_parse(&argv)
+    };
+
+    assert!(line(&["--goal", "01GOAL"]).is_ok());
+    assert!(line(&["--new-goal", "Finish the rate limiter"]).is_ok());
+    assert!(
+        line(&["--goal", "01GOAL", "--new-goal", "Finish it"]).is_err(),
+        "one adoption cannot open a goal and join one"
+    );
+    assert!(line(&[]).is_err(), "nothing says where the task belongs");
+    assert!(
+        line(&["--goal", "01GOAL", "--goal-description", "Why"]).is_err(),
+        "an existing goal has its description already"
+    );
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "session",
+            "adopt",
+            "codex-outside-1",
+            "--agent",
+            "codex-acp",
+            "--goal",
+            "01GOAL",
+        ])
+        .is_err(),
+        "nobody writes the task without an author"
+    );
+}
+
 #[test]
 fn discover_all_and_cursor_are_exclusive() {
     assert!(

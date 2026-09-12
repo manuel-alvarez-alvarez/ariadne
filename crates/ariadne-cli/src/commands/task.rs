@@ -1,6 +1,6 @@
 //! `ariadne task ...`
 
-mod edit;
+pub(super) mod edit;
 
 use anyhow::Result;
 use clap::Subcommand;

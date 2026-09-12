@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-daemon/tests/acp_session_adoption.rs
   - crates/ariadne-daemon/tests/outside_sessions.rs
   - crates/ariadne-cli/src/commands/session.rs
+  - crates/ariadne-cli/src/cli/tests.rs
 ---
 
 # Session adoption
@@ -89,8 +90,15 @@ that Ariadne started itself (007, 021), and the desktop screen over this
 8. `ariadne session discover` filters and pages the outside sessions, prints
    the shown and total counts with a reusable next-page command, or follows
    every page with `--all`; below the table it names why each unavailable
-   registry agent cannot list sessions. `ariadne session adopt <session-id> <task-id>
-   --agent <agent-id>` adopts one and prints its author session.
+   registry agent cannot list sessions. `ariadne session adopt <session-id>
+   --agent <agent-id>` creates the task for one of them over `POST
+   /v1/outside-sessions/adopt`: in a new goal with `--new-goal <title>`,
+   `--goal-description` and a repeatable `--repo`, or in an active one with
+   `--goal`, exactly one of the two. It takes the task flags of `task create`
+   — an optional `--title`, `-d`, one required `--author`, the `--reviewer`
+   slots in review order, `--no-reviewer`, `--landing` and
+   `--permission-mode` — and prints a status line each for the goal, the task
+   and the session, or the task id alone with `-q` (014).
 
 ## Acceptance criteria
 
@@ -172,6 +180,21 @@ that Ariadne started itself (007, 021), and the desktop screen over this
   `::discover_all_and_cursor_are_exclusive`). It names each agent that cannot
   list sessions with its reason
   (`commands/session.rs::an_agent_without_the_capability_is_named_with_its_reason`).
+- `session adopt` sends the goal it was given — one by id, or a new one with
+  its title, description and repositories — and no repository ids where the
+  line named none
+  (`commands/session.rs::a_goal_id_adopts_the_session_into_that_goal`,
+  `::a_new_goal_carries_its_title_description_and_repositories`,
+  `::no_repository_named_sends_no_repository_ids`). The author leads the agents
+  and the reviewers follow in review order
+  (`::the_author_leads_the_agents_and_the_reviewers_follow_in_review_order`),
+  an omitted title is no title (`::an_omitted_title_sends_no_title`), and the
+  output names the goal, the task and the session
+  (`::the_adoption_output_names_the_goal_the_task_and_the_session`). Every flag
+  lands in its field, and a line that names both goals, neither, or no author
+  is refused
+  (`cli/tests.rs::adopt_takes_the_session_the_new_goal_and_the_task_flags`,
+  `::adopt_takes_a_goal_or_a_new_goal_and_exactly_one`).
 - The new endpoint and its request, response and goal orchestration flag are
   in OpenAPI
   (`acp_session_adoption.rs::the_goal_and_task_adoption_endpoint_is_in_the_openapi_document`).

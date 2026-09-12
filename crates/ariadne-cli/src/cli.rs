@@ -100,7 +100,12 @@ Examples:
   ariadne session discover                 # sessions started outside Ariadne
   ariadne session discover --agent codex-acp --since 2026-09-01 --limit 25
   ariadne session discover --cursor <token>
-  ariadne session adopt <session-id> <task-id> --agent codex-acp
+  # adopt one into a new goal, or into a goal already under way
+  ariadne session adopt <session-id> --agent codex-acp \\
+      --new-goal \"Finish the rate limiter\" --repo ~/projects/api \\
+      --author coding=codex-acp:gpt-5.6-sol
+  ariadne session adopt <session-id> --agent codex-acp --goal <goal-id> \\
+      --author coding=codex-acp:gpt-5.6-sol
   ariadne session logs <session-id>        # its transcript so far
   ariadne session resume <session-id>      # new agent process, same conversation
   ariadne session kill <session-id>
