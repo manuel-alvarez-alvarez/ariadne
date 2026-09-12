@@ -8,7 +8,6 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use ariadne_api::sessions::OutsideSessionPageDto;
-use ariadne_core::TaskStatus;
 use ariadne_store::AgentPin;
 
 use common::acp::{StubAcpAgent, script, stub_acp_agent};
@@ -285,19 +284,23 @@ async fn a_session_adopted_after_the_snapshot_is_absent_without_a_refresh() {
         model: "test-agent:old-model".into(),
         effort: None,
     };
-    let goal = h.goal_on(&repo, pin.clone()).await;
-    let task = h.task_on(&goal, &repo, "adopted task", 1, pin).await;
-    h.advance(&task, TaskStatus::Ready).await;
+    let goal = h.goal_on(&repo, pin).await;
+    let goal = h.activate(&goal).await;
 
     let before = listing(&h, "").await;
     assert!(ids(&before).contains(&"s3"));
 
     h.json::<Value>(
         post_json(
-            &format!("/v1/tasks/{}/author-session", task.id),
-            json!({"agent_id": "test-agent", "internal_session_id": "s3"}),
+            "/v1/outside-sessions/adopt",
+            json!({
+                "agent_id": "test-agent",
+                "internal_session_id": "s3",
+                "goal": {"id": goal.id},
+                "agents": [{"seat": "author", "model": "test-agent:old-model"}],
+            }),
         ),
-        StatusCode::OK,
+        StatusCode::CREATED,
     )
     .await;
     stub.clear_messages();

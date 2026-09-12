@@ -102,15 +102,6 @@ pub struct OutsideSessionPageDto {
     pub snapshot_at: String,
 }
 
-/// The stored ACP session to assign to an existing ready task.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AssignOutsideSessionRequest {
-    /// Which registry agent the session belongs to.
-    pub agent_id: String,
-    pub internal_session_id: String,
-}
-
 /// Adopt one outside session into a new task and goal, or an active goal.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

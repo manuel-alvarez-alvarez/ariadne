@@ -2022,54 +2022,6 @@
         }
       }
     },
-    "/v1/tasks/{id}/author-session": {
-      "post": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Make a stored ACP session the author of a ready task.",
-        "operationId": "adopt_author_session",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AssignOutsideSessionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
     "/v1/tasks/{id}/cancel": {
       "post": {
         "tags": [
@@ -2846,24 +2798,6 @@
             "$ref": "#/components/schemas/TokenUsageDto"
           }
         }
-      },
-      "AssignOutsideSessionRequest": {
-        "type": "object",
-        "description": "The stored ACP session to assign to an existing ready task.",
-        "required": [
-          "agent_id",
-          "internal_session_id"
-        ],
-        "properties": {
-          "agent_id": {
-            "type": "string",
-            "description": "Which registry agent the session belongs to."
-          },
-          "internal_session_id": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
       },
       "AttentionReason": {
         "type": "string",

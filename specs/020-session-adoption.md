@@ -69,9 +69,8 @@ that Ariadne started itself (007, 021), and the desktop screen over this
    optional description and optional repositories, or an existing goal id;
    and the new task's optional title, description, optional repository,
    agents, landing and permission mode. The reply carries the goal, task and
-   adopted author session. The older task-first endpoint remains until its
-   callers move. Adoption looks in the daemon snapshot first. A miss takes
-   one fresh snapshot but refuses that call with 404.
+   adopted author session. Adoption looks in the daemon snapshot first. A
+   miss takes one fresh snapshot but refuses that call with 404.
 6. An existing goal must be active. Where it has several repositories, the
    request's `repo_id` selects one, or the session working directory selects
    the repository that contains it. A new goal with no repository ids takes
@@ -135,13 +134,10 @@ that Ariadne started itself (007, 021), and the desktop screen over this
   (`outside_sessions.rs::an_unreadable_cursor_is_refused`).
 - The endpoint's query parameters and page DTO are in the OpenAPI document
   (`outside_sessions.rs::the_query_and_the_page_are_in_the_openapi_document`).
-- Adopting a listed session binds it to the author seat, resumes it through
-  `session/load` rather than `session/resume`, and a later console prompt
-  reaches the same agent
-  (`acp_session_adoption.rs::an_adopted_session_binds_the_seat_and_a_follow_up_prompt_reaches_it`).
 - Adoption into a new goal returns an active, unorchestrated goal, an
-  in-progress task and the loaded author session. A scheduler pass leaves
-  exactly that author and no orchestrator
+  in-progress task and the loaded author session, bound to that task's
+  author seat and resumed through `session/load` rather than `session/new`.
+  A scheduler pass leaves exactly that author and no orchestrator
   (`acp_session_adoption.rs::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`).
 - The new goal takes the registered repository containing the working
   directory; no matching repository is refused by directory
@@ -160,12 +156,7 @@ that Ariadne started itself (007, 021), and the desktop screen over this
   console instruction
   (`acp_session_adoption.rs::a_message_to_an_unorchestrated_goals_orchestrator_is_refused`).
 - An adopted session is not listed as outside again
-  (`acp_session_adoption.rs::an_adopted_acp_session_no_longer_appears_in_the_listing`,
-  `::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`).
-- Adoption is refused across agents
-  (`acp_session_adoption.rs::adoption_is_refused_across_acp_agents`), and an
-  agent session cannot adopt into another task
-  (`::an_agent_cannot_adopt_a_session_for_another_task`).
+  (`acp_session_adoption.rs::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`).
 - `session discover` sends every filter and page flag with UTC date bounds,
   follows all pages without repeating a session, prints the count and the
   reusable next-page command only when one exists, and refuses `--all` with
@@ -196,7 +187,7 @@ that Ariadne started itself (007, 021), and the desktop screen over this
   (`cli/tests.rs::adopt_takes_the_session_the_new_goal_and_the_task_flags`,
   `::adopt_takes_a_goal_or_a_new_goal_and_exactly_one`).
 - The new endpoint and its request, response and goal orchestration flag are
-  in OpenAPI
+  in OpenAPI, and the retired task-first endpoint is not
   (`acp_session_adoption.rs::the_goal_and_task_adoption_endpoint_is_in_the_openapi_document`).
 - An empty task title is refused
   (`acp_session_adoption.rs::adoption_with_an_empty_task_title_is_refused`),
@@ -205,8 +196,9 @@ that Ariadne started itself (007, 021), and the desktop screen over this
 
 ## Known gap
 
-No test uses the legacy endpoint to adopt into a task that is not `ready`.
-That refusal is in `Launcher::adopt_author`.
+No test sends a follow-up console prompt to a session adopted through
+`POST /v1/outside-sessions/adopt`; the follow-up path is exercised only for
+a session bound directly (008), not one bound through adoption.
 
 ## Sources
 

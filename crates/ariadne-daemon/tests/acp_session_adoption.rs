@@ -7,9 +7,7 @@ mod common;
 use serde_json::json;
 
 use ariadne_api::error::ErrorBody;
-use ariadne_api::sessions::{
-    AdoptOutsideSessionResponse, AssignOutsideSessionRequest, OutsideSessionPageDto,
-};
+use ariadne_api::sessions::{AdoptOutsideSessionResponse, OutsideSessionPageDto};
 use ariadne_core::{Actor, GoalStatus, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{AgentPin, NewGoal, SessionFilter};
 
@@ -82,20 +80,6 @@ async fn harness_with_agent(id: &str, bin: &str) -> Harness {
     h
 }
 
-/// A ready task whose author is pinned to `<agent_id>:old-model`, the model
-/// the stub reports.
-async fn ready_task(h: &Harness, agent_id: &str) -> ariadne_store::Task {
-    let repo = h.repository(&h.git_repo("author-repo")).await;
-    let pin = AgentPin {
-        model: format!("{agent_id}:old-model"),
-        effort: None,
-    };
-    let goal = h.goal_on(&repo, pin.clone()).await;
-    let task = h.task_on(&goal, &repo, "adopted acp task", 1, pin).await;
-    h.advance(&task, TaskStatus::Ready).await;
-    task
-}
-
 /// The stub agent's stored sessions appear in `GET /v1/outside-sessions`,
 /// named by the registry agent they belong to.
 #[tokio::test]
@@ -150,164 +134,6 @@ async fn an_agent_without_the_capability_lists_nothing_and_shows_the_reason() {
             .any(|gap| gap == "no_adoption"),
         "{agent}"
     );
-}
-
-/// Adopting a listed session binds it to the task's author seat, resumes it
-/// through `session/load` (never `session/resume`, which this agent does not
-/// advertise), and a follow-up console prompt reaches the same agent.
-#[tokio::test]
-async fn an_adopted_session_binds_the_seat_and_a_follow_up_prompt_reaches_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(dir.path(), adoptable_script());
-    let h = harness_with_agent("test-agent", &stub.bin).await;
-    let task = ready_task(&h, "test-agent").await;
-
-    let session: ariadne_api::sessions::SessionDto = h
-        .json(
-            post_json(
-                &format!("/v1/tasks/{}/author-session", task.id),
-                serde_json::to_value(AssignOutsideSessionRequest {
-                    agent_id: "test-agent".into(),
-                    internal_session_id: "outside-1".into(),
-                })
-                .unwrap(),
-            ),
-            axum::http::StatusCode::OK,
-        )
-        .await;
-
-    assert_eq!(session.task_id.as_deref(), Some(task.id.as_str()));
-    assert_eq!(session.internal_session_id.as_deref(), Some("outside-1"));
-    assert_eq!(session.model, "test-agent:old-model");
-
-    eventually(TIMEOUT, "the adoption's briefing turn to end", || async {
-        h.store.get_session(&session.id).await.unwrap().status() == SessionStatus::Idle
-    })
-    .await;
-
-    // Continued through session/load, since this agent advertises no resume
-    // capability at all.
-    assert!(stub.methods().contains(&"session/load".to_string()));
-    assert!(!stub.methods().contains(&"session/resume".to_string()));
-    assert_eq!(stub.calls_of("session/load")[0]["sessionId"], "outside-1");
-
-    // A follow-up prompt sent through the console reaches the same agent.
-    let (status, _) = h
-        .send(post_json(
-            &format!("/v1/sessions/{}/console/input", session.id),
-            serde_json::json!({"text": "keep going"}),
-        ))
-        .await;
-    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
-
-    // Discovery's own probe (`discover_agents`) shares this stub's log, so the
-    // console prompt is found by its content rather than by position.
-    eventually(
-        TIMEOUT,
-        "the follow-up prompt to reach the agent",
-        || async {
-            stub.calls_of("session/prompt").iter().any(|call| {
-                call["prompt"][0]["text"]
-                    .as_str()
-                    .is_some_and(|text| text.contains("keep going"))
-            })
-        },
-    )
-    .await;
-}
-
-/// A session already bound to an Ariadne row is not listed as outside again.
-#[tokio::test]
-async fn an_adopted_acp_session_no_longer_appears_in_the_listing() {
-    let dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(dir.path(), adoptable_script());
-    let h = harness_with_agent("test-agent", &stub.bin).await;
-    let task = ready_task(&h, "test-agent").await;
-
-    h.json::<ariadne_api::sessions::SessionDto>(
-        post_json(
-            &format!("/v1/tasks/{}/author-session", task.id),
-            serde_json::to_value(AssignOutsideSessionRequest {
-                agent_id: "test-agent".into(),
-                internal_session_id: "outside-1".into(),
-            })
-            .unwrap(),
-        ),
-        axum::http::StatusCode::OK,
-    )
-    .await;
-
-    let page: OutsideSessionPageDto = h.get("/v1/outside-sessions").await;
-    assert!(
-        page.sessions
-            .iter()
-            .all(|session| session.internal_session_id != "outside-1"),
-        "{:#?}",
-        page.sessions
-    );
-}
-
-/// Adoption is refused for a session belonging to a different ACP agent than
-/// the one the task's author is pinned to.
-#[tokio::test]
-async fn adoption_is_refused_across_acp_agents() {
-    let dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(dir.path(), adoptable_script());
-    let h = harness_with_agent("test-agent", &stub.bin).await;
-    let task = ready_task(&h, "other-agent").await;
-
-    let (status, _) = h
-        .send(post_json(
-            &format!("/v1/tasks/{}/author-session", task.id),
-            serde_json::json!({
-                "agent_id": "test-agent",
-                "internal_session_id": "outside-1",
-            }),
-        ))
-        .await;
-
-    assert_eq!(status, axum::http::StatusCode::CONFLICT);
-}
-
-/// An agent adopts only into its own task: a session of another task naming
-/// this one is refused as out of its scope.
-#[tokio::test]
-async fn an_agent_cannot_adopt_a_session_for_another_task() {
-    let dir = tempfile::tempdir().unwrap();
-    let stub = stub_acp_agent(dir.path(), adoptable_script());
-    let h = harness_with_agent("test-agent", &stub.bin).await;
-    let target = ready_task(&h, "test-agent").await;
-    let goal = h.store.get_goal(&target.goal_id).await.unwrap();
-    let repo = h.store.get_repository(&target.repo_id).await.unwrap();
-    let other = h
-        .task_on(
-            &goal,
-            &repo,
-            "other task",
-            1,
-            AgentPin {
-                model: "test-agent:old-model".into(),
-                effort: None,
-            },
-        )
-        .await;
-    let other_author = h.store.task_author(&other.id).await.unwrap();
-    let other_session = h
-        .session(&goal, Some(&other), Seat::Author, &other_author.id)
-        .await;
-
-    let (status, _) = h
-        .send(as_session(
-            &format!("/v1/tasks/{}/author-session", target.id),
-            &other_session.id,
-            serde_json::json!({
-                "agent_id": "test-agent",
-                "internal_session_id": "outside-1",
-            }),
-        ))
-        .await;
-
-    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
 }
 
 /// Only the user can use the goal-and-task adoption endpoint.
@@ -632,7 +458,8 @@ async fn a_message_to_an_unorchestrated_goals_orchestrator_is_refused() {
     );
 }
 
-/// The new adoption endpoint and its request and response are in OpenAPI.
+/// The new adoption endpoint and its request and response are in OpenAPI,
+/// and the retired task-first endpoint is gone from it.
 #[tokio::test]
 async fn the_goal_and_task_adoption_endpoint_is_in_the_openapi_document() {
     let h = harness().await;
@@ -652,6 +479,7 @@ async fn the_goal_and_task_adoption_endpoint_is_in_the_openapi_document() {
         document["components"]["schemas"]["GoalDto"]["properties"]["orchestrated"]["type"],
         "boolean"
     );
+    assert!(document["paths"]["/v1/tasks/{id}/author-session"].is_null());
 }
 
 /// Adoption refuses an empty task title instead of creating an unnamed task.

@@ -822,23 +822,6 @@ export interface paths {
         patch: operations["tasks_update"];
         trace?: never;
     };
-    "/v1/tasks/{id}/author-session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Make a stored ACP session the author of a ready task. */
-        post: operations["tasks_adopt_author_session"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/tasks/{id}/cancel": {
         parameters: {
             query?: never;
@@ -1177,12 +1160,6 @@ export interface components {
             /** @description The skills the agent loads; empty only if the agent is gone. */
             skills: string[];
             usage: components["schemas"]["TokenUsageDto"];
-        };
-        /** @description The stored ACP session to assign to an existing ready task. */
-        AssignOutsideSessionRequest: {
-            /** @description Which registry agent the session belongs to. */
-            agent_id: string;
-            internal_session_id: string;
         };
         /**
          * @description Why a live agent session needs the user's attention.
@@ -3647,44 +3624,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskDto"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    tasks_adopt_author_session: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description task id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AssignOutsideSessionRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionDto"];
                 };
             };
             404: {

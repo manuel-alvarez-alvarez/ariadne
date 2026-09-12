@@ -122,7 +122,7 @@ impl AppState {
 
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
-        tasks::create, tasks::list, tasks::get, tasks::update, tasks::adopt_author_session,
+        tasks::create, tasks::list, tasks::get, tasks::update,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         landing::list_task_messages, landing::post_task_message,
         goals::list_goal_messages, goals::post_goal_message, landing::diff,
@@ -222,10 +222,6 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/tasks/{id}/cancel", post(tasks::cancel))
         .route("/v1/tasks/{id}/retry", post(tasks::retry))
-        .route(
-            "/v1/tasks/{id}/author-session",
-            post(tasks::adopt_author_session),
-        )
         .route(
             "/v1/tasks/{id}/messages",
             get(landing::list_task_messages).post(landing::post_task_message),

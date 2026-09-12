@@ -4,7 +4,6 @@
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
-use ariadne_api::sessions::{AssignOutsideSessionRequest, SessionDto};
 use ariadne_api::tasks::{
     AgentAssignment, CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto,
     TransitionRequest, UpdateTaskRequest,
@@ -14,7 +13,7 @@ use ariadne_store::{NewTask, NewTaskAgent, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
 use super::caller::{CallCtx, call_ctx, ensure_task_scope};
-use super::convert::{session_dto_of, task_dto_of, transition_dto};
+use super::convert::{task_dto_of, transition_dto};
 use super::error::{ApiError, ApiResult, Json};
 use super::landing;
 use super::pins::{self, Repin, Standing};
@@ -61,55 +60,6 @@ async fn resolve_seat(
         )));
     }
     resolve_agents(state, assignments).await
-}
-
-/// Make a stored ACP session the author of a ready task.
-#[utoipa::path(post, path = "/v1/tasks/{id}/author-session", tag = "tasks",
-    request_body = AssignOutsideSessionRequest,
-    params(("id" = String, Path, description = "task id")),
-    responses((status = 200, body = SessionDto), (status = 404), (status = 409)))]
-pub async fn adopt_author_session(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<AssignOutsideSessionRequest>,
-) -> ApiResult<Json<SessionDto>> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    ensure_task_scope(&ctx, &id)?;
-    let internal_error = |error: anyhow::Error| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            error.to_string(),
-        )
-    };
-    let snapshot = state
-        .outside_sessions
-        .snapshot(&state.agent_registry, false)
-        .await;
-    if snapshot
-        .find(&state.store, &req.agent_id, &req.internal_session_id)
-        .await
-        .map_err(internal_error)?
-        .is_none()
-    {
-        state
-            .outside_sessions
-            .snapshot(&state.agent_registry, true)
-            .await;
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            format!("outside session not found: {}", req.internal_session_id),
-        ));
-    }
-    let session = state
-        .launcher
-        .adopt_author(&id, &req.agent_id, &req.internal_session_id)
-        .await
-        .map_err(|error| ApiError::conflict(error.to_string()))?;
-    state.notify_scheduler(&id);
-    Ok(Json(session_dto_of(&state.store, session).await?))
 }
 
 /// Create a task in a goal (orchestrator via MCP, or the user).
