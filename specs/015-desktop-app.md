@@ -123,7 +123,11 @@ Out: the daemon endpoints themselves (012).
     history. What the input box, Escape, the permission picker and the
     line-editing keys do is the console's own, the same for the CLI and
     for the pane. Every open resets the emulator first, since each
-    connection draws the console whole.
+    connection draws the console whole. An Expand control opens the console
+    in a near-fullscreen modal, and its Collapse control restores it to the
+    panel. Each move closes the old socket before it opens a fresh socket,
+    refits the emulator, and sends the new size before input. Focused Escape
+    remains console input; Escape outside the terminal closes the modal.
 21. Every key press is sent as a `key` message, the DOM key mapped one to
     one onto crossterm's code and modifiers — a printable character as
     itself, the named keys by name, F1 to F12 by number, Shift+Tab as
@@ -273,6 +277,16 @@ Out: the daemon endpoints themselves (012).
 - The terminal pane sends its size before anything else, and nothing typed
   before the socket is open
   (`ui/src/features/sessions/session-terminal.test.tsx::sends its size before anything else`).
+- The terminal opens in a near-fullscreen modal, closes its previous socket
+  before its modal socket opens and resizes, restores a fresh panel socket on
+  collapse, and gives terminal Escape priority only in the modal while outside
+  Escape dismisses the modal and focused panel Escape closes its panel
+  (`ui/src/features/sessions/session-terminal.test.tsx::expands the console into a near-fullscreen modal`,
+  `::closes the panel socket before opening and resizing the modal console`,
+  `::collapses the modal console into the panel on a fresh socket`,
+  `::keeps the modal open when focused Escape belongs to the console`,
+  `::closes the modal when Escape occurs outside the console`,
+  `ui/src/features/sessions/session-panel.test.tsx::closes the panel when focused Escape reaches its console`).
 - The bytes of a binary frame appear in the terminal
   (`ui/src/features/sessions/session-terminal.test.tsx::writes the bytes of a binary frame into the terminal`).
 - A key press is sent as a `key` message with its code and modifiers — a

@@ -26,12 +26,13 @@ import "@xterm/xterm/css/xterm.css"
 
 import { FitAddon } from "@xterm/addon-fit"
 import { Terminal } from "@xterm/xterm"
-import { Loader2Icon, PlugZapIcon } from "lucide-react"
+import { Loader2Icon, Maximize2Icon, Minimize2Icon, PlugZapIcon } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useEffect, useRef, useState } from "react"
 
 import type { SessionStatus } from "@/api"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/format"
 import { useBaseUrl } from "@/stores/settings"
 
@@ -54,6 +55,54 @@ export function SessionTerminal({
   /** Hand the terminal the keyboard as soon as it is on screen. */
   autoFocus?: boolean
   className?: string
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  if (expanded) {
+    return (
+      <Dialog open onOpenChange={(open) => open || setExpanded(false)}>
+        <DialogContent
+          showCloseButton={false}
+          className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] p-0 sm:max-w-[calc(100vw-2rem)]"
+        >
+          <DialogTitle className="sr-only">Session console</DialogTitle>
+          <TerminalPane
+            sessionId={sessionId}
+            status={status}
+            autoFocus
+            className="h-full"
+            onCollapse={() => setExpanded(false)}
+          />
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  return (
+    <TerminalPane
+      sessionId={sessionId}
+      status={status}
+      autoFocus={autoFocus}
+      className={className}
+      onExpand={() => setExpanded(true)}
+    />
+  )
+}
+
+function TerminalPane({
+  sessionId,
+  status,
+  autoFocus,
+  className,
+  onExpand,
+  onCollapse,
+}: {
+  sessionId: string
+  status: SessionStatus
+  autoFocus?: boolean
+  className?: string
+  onExpand?: () => void
+  onCollapse?: () => void
 }) {
   const baseUrl = useBaseUrl()
   const { resolvedTheme } = useTheme()
@@ -119,6 +168,9 @@ export function SessionTerminal({
         const message = terminalKeyMessage(event)
         if (message === null) return false
         event.preventDefault()
+        // A focused terminal owns Escape only in the modal. A panel keeps its
+        // usual Escape dismissal behavior.
+        if (onCollapse && event.key === "Escape") event.stopPropagation()
         link.send(message)
         return false
       })
@@ -184,6 +236,21 @@ export function SessionTerminal({
         {socketStatus === "closed" ? (
           <Button size="xs" variant="outline" onClick={reopen} className="font-mono">
             Reopen
+          </Button>
+        ) : null}
+        {onExpand ? (
+          <Button size="icon-xs" variant="ghost" onClick={onExpand} aria-label="Expand the console">
+            <Maximize2Icon />
+          </Button>
+        ) : null}
+        {onCollapse ? (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            onClick={onCollapse}
+            aria-label="Collapse the console back into the panel"
+          >
+            <Minimize2Icon />
           </Button>
         ) : null}
       </div>

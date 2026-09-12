@@ -134,3 +134,84 @@ it("ends the console on a close the daemon meant, and a button opens another", a
 
   expect(FakeWebSocket.instances).toHaveLength(2)
 })
+
+it("expands the console into a near-fullscreen modal", async () => {
+  const user = userEvent.setup()
+  await renderPane()
+
+  await user.click(screen.getByRole("button", { name: "Expand the console" }))
+
+  const dialog = await screen.findByRole("dialog", { name: "Session console" })
+  expect(dialog.className).toContain("h-[calc(100dvh-2rem)]")
+  expect(
+    screen.getByRole("button", { name: "Collapse the console back into the panel" }),
+  ).not.toBeNull()
+})
+
+it("closes the panel socket before opening and resizing the modal console", async () => {
+  const user = userEvent.setup()
+  const panelSocket = await renderPane()
+  panelSocket.succeed()
+
+  await user.click(screen.getByRole("button", { name: "Expand the console" }))
+
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2))
+  const modalSocket = latestSocket()
+  expect(panelSocket.readyState).toBe(FakeWebSocket.CLOSED)
+
+  fireEvent.keyDown(keyboard(), { key: "a", code: "KeyA" })
+  expect(modalSocket.messages).toHaveLength(0)
+
+  modalSocket.succeed()
+  fireEvent.keyDown(keyboard(), { key: "a", code: "KeyA" })
+
+  expect(modalSocket.messages).toEqual([
+    { type: "resize", cols: 80, rows: 24 },
+    { type: "key", code: { char: "a" }, modifiers: [] },
+  ])
+})
+
+it("collapses the modal console into the panel on a fresh socket", async () => {
+  const user = userEvent.setup()
+  const panelSocket = await renderPane()
+  panelSocket.succeed()
+  await user.click(screen.getByRole("button", { name: "Expand the console" }))
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2))
+  const modalSocket = latestSocket()
+  modalSocket.succeed()
+
+  await user.click(screen.getByRole("button", { name: "Collapse the console back into the panel" }))
+
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(3))
+  expect(modalSocket.readyState).toBe(FakeWebSocket.CLOSED)
+  expect(screen.queryByRole("dialog", { name: "Session console" })).toBeNull()
+  expect(screen.getByRole("button", { name: "Expand the console" })).not.toBeNull()
+})
+
+it("keeps the modal open when focused Escape belongs to the console", async () => {
+  const user = userEvent.setup()
+  await renderPane()
+  await user.click(screen.getByRole("button", { name: "Expand the console" }))
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2))
+  const modalSocket = latestSocket()
+  modalSocket.succeed()
+
+  fireEvent.keyDown(keyboard(), { key: "Escape", code: "Escape" })
+
+  expect(modalSocket.messages.at(-1)).toEqual({ type: "key", code: "esc", modifiers: [] })
+  expect(screen.getByRole("dialog", { name: "Session console" })).not.toBeNull()
+})
+
+it("closes the modal when Escape occurs outside the console", async () => {
+  const user = userEvent.setup()
+  await renderPane()
+  await user.click(screen.getByRole("button", { name: "Expand the console" }))
+  await screen.findByRole("dialog", { name: "Session console" })
+
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Session console" }), {
+    key: "Escape",
+    code: "Escape",
+  })
+
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Session console" })).toBeNull())
+})
