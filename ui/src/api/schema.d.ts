@@ -687,6 +687,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/console/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A session's console as a terminal.
+         * @description Upgrades to a WebSocket. The client sends JSON text frames — a `resize`
+         *     with the terminal's columns and rows first and on every change, a `key`
+         *     per key press and a `paste` per pasted text (`TerminalClientMessage`) —
+         *     and reads binary frames of terminal bytes that draw the console, plus a
+         *     text frame carrying the session's status as the socket opens and as it
+         *     ends (`TerminalServerMessage`). Closing the socket ends the console and
+         *     leaves the session running; the session ending, Ctrl-C twice or Ctrl-D
+         *     close the socket.
+         */
+        get: operations["sessions_console_terminal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/kill": {
         parameters: {
             query?: never;
@@ -3304,6 +3331,33 @@ export interface operations {
                 content: {
                     "text/event-stream": components["schemas"]["AgentEventDto"];
                 };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_console_terminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebSocket. Client to server: JSON text frames, one `TerminalClientMessage` each — `resize` first, then `key` and `paste`. Server to client: binary frames of the terminal bytes that draw the console, and JSON text frames of `TerminalServerMessage`. */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             404: {
                 headers: {

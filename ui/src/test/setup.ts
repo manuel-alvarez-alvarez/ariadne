@@ -52,6 +52,11 @@ if (typeof window !== "undefined") {
     disconnect() {}
   }
   Element.prototype.scrollIntoView = vi.fn()
+  // Nor a canvas: xterm.js asks one for a drawing context as it parses a
+  // colour, and takes "none" for an answer — where jsdom would print that it
+  // has no such thing, once per terminal, in the middle of the test output.
+  HTMLCanvasElement.prototype.getContext = (() =>
+    null) as typeof HTMLCanvasElement.prototype.getContext
 
   // Nor a media-query engine, which anything that adapts to a preference asks
   // for on mount — sonner reads `prefers-reduced-motion` as it renders. It

@@ -8,8 +8,8 @@
  * nobody has to find, above the console it is talking about.
  *
  * The console holds the answer itself: a permission question comes with the
- * options the agent offered, answered inline (see `console-view.tsx`), so
- * this line only points at it.
+ * options the agent offered, drawn as a picker in the terminal pane (see
+ * `session-terminal.tsx`), so this line only points at it.
  */
 
 import { TriangleAlertIcon } from "lucide-react"

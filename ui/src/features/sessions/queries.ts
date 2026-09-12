@@ -28,7 +28,6 @@ import {
   type AdoptOutsideSessionRequest,
   api,
   type CacheSnapshot,
-  type ConsoleInputRequest,
   cacheRow,
   optimisticStatus,
   qk,
@@ -188,28 +187,6 @@ export function useResumeSession() {
       unwrap(api().POST("/v1/sessions/{id}/resume", { params: { path: { id } } })),
     onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
   })
-}
-
-/**
- * Post text into a session's console. Each call is a whole prompt of its own,
- * sent at once or queued behind a running turn.
- */
-export function sendConsoleInput(id: string, text: string): Promise<void> {
-  return unwrap(
-    api().POST("/v1/sessions/{id}/console/input", {
-      params: { path: { id } },
-      body: { text } satisfies ConsoleInputRequest,
-    }),
-  )
-}
-
-/**
- * Cancel the turn a session is running. The turn then ends as any other, with
- * a `stop` whose reason is `cancelled` on the console; between turns the
- * daemon answers `409`, there being nothing to cancel.
- */
-export function cancelTurn(id: string): Promise<void> {
-  return unwrap(api().POST("/v1/sessions/{id}/console/cancel", { params: { path: { id } } }))
 }
 
 /** Index a list response by id, for turning the ids on a session into names. */

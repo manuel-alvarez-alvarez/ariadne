@@ -1,8 +1,8 @@
 /**
  * `EventSource` wrapper for `GET /v1/logs/stream` — the daemon's own log.
  *
- * Like a session's console stream (`features/sessions/console-stream.ts`), this
- * is a per-view connection rather than part of the shared domain stream: the
+ * Like a session's terminal socket (`features/sessions/terminal-socket.ts`),
+ * this is a per-view connection rather than part of the shared domain stream: the
  * daemon's log only matters while the logs drawer is open, so the drawer
  * connects on open and disconnects on close.
  *

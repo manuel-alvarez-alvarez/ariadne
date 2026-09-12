@@ -65,7 +65,6 @@ export type LogLineDto = Schemas["LogLineDto"]
 export type AgentEventDto = Schemas["AgentEventDto"]
 export type ResyncDto = Schemas["ResyncDto"]
 export type HeartbeatDto = Schemas["HeartbeatDto"]
-export type ConsoleInputRequest = Schemas["ConsoleInputRequest"]
 
 /** Every domain event carried by `GET /v1/events/stream`, as a tagged union. */
 export type DomainEvent = Schemas["DomainEvent"]

@@ -46,9 +46,9 @@ For `ask` and a new `learn` request, `ariadne attention` marks the session as
 waiting. Open it with `ariadne attach <session-id>`. The console shows the
 choices as a picker: move with ↑ and ↓ or press a number key, and Enter
 answers. With stdin or stdout redirected the choices are a numbered list
-instead, and the number typed on a line answers it. The desktop console
-displays the same choices inline: select one, or press its number key while
-the input is empty. All of them send the selected answer to the same session.
+instead, and the number typed on a line answers it. The desktop app draws the
+same console in a terminal pane, so the same picker and the same keys answer
+it there. All of them send the selected answer to the same session.
 
 `auto` chooses an allowing option when one exists. If the request offers no
 options, it is cancelled. In `learn`, Ariadne remembers only an allowing

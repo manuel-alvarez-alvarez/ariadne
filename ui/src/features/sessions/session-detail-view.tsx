@@ -11,11 +11,11 @@
  * the bottom of. The console is the tab that is open by default, since it is
  * why one opens a session at all.
  *
- * Switching tabs unmounts the console, which drops its stream. That is the
+ * Switching tabs unmounts the console, which closes its socket. That is the
  * same trade `task-sessions.tsx` already takes for the selection itself:
- * every connection replays the whole transcript from a snapshot, so coming
- * back costs a reconnect and shows the same thing, where keeping it mounted
- * would hold a stream open for a console nobody is looking at.
+ * every connection draws the whole transcript afresh, so coming back costs a
+ * reconnect and shows the same thing, where keeping it mounted would hold a
+ * console open for nobody.
  *
  * The tab lives in the URL (`?tab=`), the way the goal and task panels keep
  * theirs: a reload stays on the tab the user was reading, and a link can point
@@ -26,8 +26,8 @@
  *
  * The metadata comes from the query cache, which the event dispatcher keeps
  * current — a session going idle or being killed elsewhere updates this view
- * without a refetch. The console is the exception: it is a feed, not
- * cacheable state, and owns its own connection (see `console-stream.ts`).
+ * without a refetch. The console is the exception: it is a terminal, not
+ * cacheable state, and owns its own connection (see `session-terminal.tsx`).
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -50,11 +50,11 @@ import { sessionCopyEntries } from "@/lib/clipboard"
 import { SEAT_LABELS } from "@/lib/format"
 import { paths, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
-import { AcpConsole } from "./acp-console"
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
 import { SessionBlockedBanner } from "./session-blocked-banner"
 import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
+import { SessionTerminal } from "./session-terminal"
 
 /**
  * The two halves of what a session is doing; the console is what is opened
@@ -201,7 +201,12 @@ export function SessionDetailView({
           <TabsTrigger value="activity">Agent activity</TabsTrigger>
         </TabsList>
         <TabsContent value="terminal" className="pt-3">
-          <AcpConsole sessionId={session.id} status={session.status} autoFocus={focusTerminal} />
+          <SessionTerminal
+            sessionId={session.id}
+            status={session.status}
+            autoFocus={focusTerminal}
+            className="h-[min(36rem,70vh)]"
+          />
         </TabsContent>
         <TabsContent value="activity" className="pt-3">
           <SessionActivity sessionId={session.id} />

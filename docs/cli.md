@@ -136,19 +136,17 @@ with the arrow keys or its number key. See
     2. Reject
 ```
 
-The desktop app has the same console in a session's detail view, drawn as a
-terminal pane. The agent's text streams in as it is written and renders as
-markdown. A thought is dimmed and folded; open it with its toggle. A tool call
-is one row with its status, its name and its input; open it to read the
-output, and a file change opens to a diff. A plan is a checklist that updates
-in place. Type in the input line at the bottom: Enter sends, Shift+Enter
-starts a new line, and the line shows as `> text` until the daemon confirms it.
-While a turn runs, the Stop button beside the input, or Escape in the input,
-cancels it; the transcript then reads "Stopped". A permission request lists
-its options inline; select one, or, with the input empty, press its number
-key (1 to 9). The pane follows new output until you scroll up, and "Jump to
-latest" takes you back. The agent receives the same input whichever console
-you use.
+The desktop app shows the same console in a session's detail view, in a
+terminal emulator. The daemon draws the pane above into it, so everything on
+this page works there the same way: the input box and its keys, Escape to
+cancel a turn, the picker for a permission request. Ctrl-C twice or Ctrl-D
+closes that console and leaves the session running; the Reopen button opens
+it again. ⌘V on macOS, or Ctrl+Shift+V, pastes into the input box, and ⌘C or
+Ctrl+Shift+C copies what is selected in the pane. The pane takes the app's
+colours and font in both themes, redraws at the new size when its panel is
+resized, and keeps the transcript in its scrollback. If the daemon goes away
+mid-session the pane says it is reconnecting, and draws the console afresh
+once it is back. The agent receives the same input whichever console you use.
 
 ## Work with tasks
 

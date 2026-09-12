@@ -7,7 +7,7 @@
  * Three things are worth pinning down here. The tabs are the layout the whole
  * view now hangs off, and the console is the one that must be open without
  * being asked for — a session is opened to watch its agent. Leaving that tab
- * unmounts the console, so coming back has to attach a *new* stream rather
+ * unmounts the console, so coming back has to open a *new* socket rather
  * than leave the view holding a dead one; that is the trade the tabs take, and
  * it is only correct as long as the reconnect actually happens.
  *
@@ -25,11 +25,12 @@
 import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useLocation } from "react-router-dom"
-import { beforeEach, expect, it, vi } from "vitest"
+import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { aGoal, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { FakeWebSocket, stubWebSocket } from "@/test/web-socket"
 import { SessionDetailView } from "./session-detail-view"
 
 const GOAL: GoalDto = aGoal()
@@ -51,34 +52,7 @@ const SESSION: SessionDto = aSession({
   task_agent_id: "01JAGENT0000000000000AUTH",
 })
 
-/** One console-stream connection, and whether it is still open. */
-interface Connection {
-  url: string
-  closed: boolean
-}
-
-let connections: Connection[]
-
-/** Enough of `EventSource` for the console's stream to open and be closed. */
-class StubEventSource {
-  onopen: ((event: Event) => void) | null = null
-  onerror: ((event: Event) => void) | null = null
-  readonly #connection: Connection
-
-  constructor(url: string) {
-    this.#connection = { url, closed: false }
-    connections.push(this.#connection)
-  }
-
-  addEventListener(): void {}
-
-  close(): void {
-    this.#connection.closed = true
-  }
-}
-
 beforeEach(() => {
-  connections = []
   // Whatever the view reads to turn its ids into names — the goal, the task,
   // the profiles — plus the empty activity feed. Nothing here is about a
   // request failing.
@@ -93,7 +67,7 @@ beforeEach(() => {
         : []
     return Promise.resolve(jsonResponse(body))
   })
-  vi.stubGlobal("EventSource", StubEventSource)
+  stubWebSocket()
 })
 
 function renderView(session: SessionDto = SESSION, entry = "/goals?goal=g1") {
@@ -123,28 +97,33 @@ function detail(label: string): string {
   return value.textContent ?? ""
 }
 
+/** The terminal sockets opened so far, in order. */
+function sockets(): FakeWebSocket[] {
+  return FakeWebSocket.instances
+}
+
 it("opens on the console, with the activity feed a tab away", async () => {
   const user = userEvent.setup()
   renderView()
 
   expect(screen.getByRole("tab", { name: "Console" }).getAttribute("data-active")).not.toBeNull()
-  // The console is live: one stream, opened by the console that is mounted.
-  expect(connections).toHaveLength(1)
-  expect(connections[0]?.closed).toBe(false)
+  // The console is live: one socket, opened by the terminal that is mounted.
+  await waitFor(() => expect(sockets()).toHaveLength(1))
+  expect(sockets()[0]?.readyState).not.toBe(FakeWebSocket.CLOSED)
 
   await user.click(screen.getByRole("tab", { name: "Agent activity" }))
 
-  // The console is gone rather than hidden, and its stream went with it —
+  // The console is gone rather than hidden, and its socket went with it —
   // which is the whole reason the two halves can share the space.
-  expect(connections[0]?.closed).toBe(true)
+  expect(sockets()[0]?.readyState).toBe(FakeWebSocket.CLOSED)
   await screen.findByText("No agent events yet")
 
   await user.click(screen.getByRole("tab", { name: "Console" }))
 
-  // Back on a connection of its own: every one replays the transcript from a
-  // snapshot, so the console is as functional as it was before the detour.
-  expect(connections).toHaveLength(2)
-  expect(connections[1]?.closed).toBe(false)
+  // Back on a socket of its own: every one draws the transcript afresh, so
+  // the console is as functional as it was before the detour.
+  await waitFor(() => expect(sockets()).toHaveLength(2))
+  expect(sockets()[1]?.readyState).not.toBe(FakeWebSocket.CLOSED)
 })
 
 it("takes its tab from the URL, and puts a switch back into it", async () => {
@@ -153,12 +132,12 @@ it("takes its tab from the URL, and puts a switch back into it", async () => {
 
   // The link opened on the feed, so the console was never mounted at all.
   await screen.findByText("No agent events yet")
-  expect(connections).toHaveLength(0)
+  expect(sockets()).toHaveLength(0)
 
   await user.click(screen.getByRole("tab", { name: "Console" }))
 
   await waitFor(() => expect(currentSearch().get("tab")).toBe("terminal"))
-  expect(connections).toHaveLength(1)
+  await waitFor(() => expect(sockets()).toHaveLength(1))
 })
 
 it("falls back to the console for a tab that is not one of its own", () => {

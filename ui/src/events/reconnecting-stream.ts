@@ -1,11 +1,13 @@
 /**
  * An `EventSource` that reconnects on its own terms.
  *
- * Three streams in this app need one — the domain events, a session's console, the
- * daemon's log — and all three had written the same machinery for themselves:
- * open, close the old source first, retry with capped exponential backoff and
- * jitter, cancel the pending retry on stop. Written three times they drifted in
- * the details that only show up when a daemon restarts.
+ * Two streams in this app need one — the domain events and the daemon's log —
+ * and both had written the same machinery for themselves: open, close the old
+ * source first, retry with capped exponential backoff and jitter, cancel the
+ * pending retry on stop. Written twice they drifted in the details that only
+ * show up when a daemon restarts. A session's console is a WebSocket rather
+ * than an `EventSource` (`features/sessions/terminal-socket.ts`), and it
+ * retries on the same backoff.
  *
  * The browser's own reconnect is deliberately not used by any of them. It
  * cannot be told apart from a clean end, it gives the consumer no way to know a
@@ -15,7 +17,7 @@
  * listens for, and the words it reports its state in.
  */
 
-const INITIAL_BACKOFF_MS = 500
+export const INITIAL_BACKOFF_MS = 500
 
 /** The three states a connection is in, in whatever words the consumer uses. */
 interface StreamStates<S extends string> {

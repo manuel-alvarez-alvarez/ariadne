@@ -1611,6 +1611,35 @@
         }
       }
     },
+    "/v1/sessions/{id}/console/terminal": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "A session's console as a terminal.",
+        "description": "Upgrades to a WebSocket. The client sends JSON text frames — a `resize`\nwith the terminal's columns and rows first and on every change, a `key`\nper key press and a `paste` per pasted text (`TerminalClientMessage`) —\nand reads binary frames of terminal bytes that draw the console, plus a\ntext frame carrying the session's status as the socket opens and as it\nends (`TerminalServerMessage`). Closing the socket ends the console and\nleaves the session running; the session ending, Ctrl-C twice or Ctrl-D\nclose the socket.",
+        "operationId": "console_terminal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket. Client to server: JSON text frames, one `TerminalClientMessage` each — `resize` first, then `key` and `paste`. Server to client: binary frames of the terminal bytes that draw the console, and JSON text frames of `TerminalServerMessage`."
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/sessions/{id}/kill": {
       "post": {
         "tags": [
