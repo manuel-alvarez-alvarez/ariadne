@@ -69,6 +69,8 @@ ulid = { version = "3", features = ["serde"] }
 # and tested on that backend, and its header says what it watches and why.
 notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
 chrono = { version = "0.4", features = ["serde"] }
+# The opaque page cursor of `GET /v1/outside-sessions`.
+base64 = "0.22"
 dirs = "6"
 # Sleep inhibition: keepawake wraps the macOS and Windows power APIs, zbus
 # talks to systemd-logind on Linux.

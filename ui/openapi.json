@@ -844,21 +844,120 @@
         "tags": [
           "sessions"
         ],
-        "summary": "List sessions Ariadne did not start: the stored sessions of every ACP\nagent that can list them, newest first.",
+        "summary": "List sessions Ariadne did not start: one filtered page of the daemon's\nsnapshot of every ACP agent's stored sessions, newest first.",
         "operationId": "list_outside",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "description": "Only sessions of this registry agent (`GET /v1/acp-agents`).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "dir",
+            "in": "query",
+            "description": "Only sessions whose working directory is this absolute path, or a\npath under it.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only sessions last active at or after this moment, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Only sessions last active at or before this moment, RFC 3339.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Only sessions whose first prompt contains this text, case-insensitive.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max sessions in the page (default 50, cap 200).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The `next_cursor` of the page before this one; opaque.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "description": "Ask every agent again before answering, whatever the snapshot's age.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/OutsideSessionDto"
-                  }
+                  "$ref": "#/components/schemas/OutsideSessionPageDto"
                 }
               }
             }
+          },
+          "400": {
+            "description": ""
           }
         }
       }
@@ -3640,6 +3739,39 @@
           },
           "working_directory": {
             "type": "string"
+          }
+        }
+      },
+      "OutsideSessionPageDto": {
+        "type": "object",
+        "description": "One page of `GET /v1/outside-sessions`, newest activity first.",
+        "required": [
+          "sessions",
+          "total",
+          "snapshot_at"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `cursor` that continues after this page; null on the last one."
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutsideSessionDto"
+            }
+          },
+          "snapshot_at": {
+            "type": "string",
+            "description": "When the snapshot this page was cut from was taken, RFC 3339."
+          },
+          "total": {
+            "type": "integer",
+            "description": "How many sessions the filters leave, over every page.",
+            "minimum": 0
           }
         }
       },

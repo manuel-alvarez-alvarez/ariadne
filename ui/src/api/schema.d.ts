@@ -428,8 +428,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List sessions Ariadne did not start: the stored sessions of every ACP
-         *     agent that can list them, newest first.
+         * List sessions Ariadne did not start: one filtered page of the daemon's
+         *     snapshot of every ACP agent's stored sessions, newest first.
          */
         get: operations["sessions_list_outside"];
         put?: never;
@@ -1591,6 +1591,16 @@ export interface components {
             last_activity_at: string;
             working_directory: string;
         };
+        /** @description One page of `GET /v1/outside-sessions`, newest activity first. */
+        OutsideSessionPageDto: {
+            /** @description The `cursor` that continues after this page; null on the last one. */
+            next_cursor?: string | null;
+            sessions: components["schemas"]["OutsideSessionDto"][];
+            /** @description When the snapshot this page was cut from was taken, RFC 3339. */
+            snapshot_at: string;
+            /** @description How many sessions the filters leave, over every page. */
+            total: number;
+        };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
             exists: boolean;
@@ -2658,7 +2668,27 @@ export interface operations {
     };
     sessions_list_outside: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only sessions of this registry agent (`GET /v1/acp-agents`). */
+                agent?: string | null;
+                /**
+                 * @description Only sessions whose working directory is this absolute path, or a
+                 *     path under it.
+                 */
+                dir?: string | null;
+                /** @description Only sessions last active at or after this moment, RFC 3339. */
+                since?: string | null;
+                /** @description Only sessions last active at or before this moment, RFC 3339. */
+                until?: string | null;
+                /** @description Only sessions whose first prompt contains this text, case-insensitive. */
+                q?: string | null;
+                /** @description Max sessions in the page (default 50, cap 200). */
+                limit?: number | null;
+                /** @description The `next_cursor` of the page before this one; opaque. */
+                cursor?: string | null;
+                /** @description Ask every agent again before answering, whatever the snapshot's age. */
+                refresh?: boolean | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2670,8 +2700,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OutsideSessionDto"][];
+                    "application/json": components["schemas"]["OutsideSessionPageDto"];
                 };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

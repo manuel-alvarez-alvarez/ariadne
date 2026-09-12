@@ -5,7 +5,10 @@
 //! the capabilities it declares, the configuration options it offers, the
 //! reply to each prompt — updates, a permission request, the stop reason, an
 //! exit mid-turn, or a pause (`wait_for`) a test holds the turn open on — and
-//! the stored sessions a load or resume finds. The harness registers it as
+//! the stored sessions a load or resume finds, which `session/list` answers
+//! whole, or `session_page_size` at a time behind a `nextCursor` — and never
+//! answers a page from `session_list_stall_from` on. The harness
+//! registers it as
 //! the registry agent `stub` ([`registry_home`] for a script of the test's
 //! own), the daemon spawns it as the agent, and the test reads everything the
 //! daemon sent back out of its log — each message tagged with the Ariadne
@@ -20,6 +23,7 @@ use serde_json::{Value, json};
 pub struct StubAcpAgent {
     /// The wrapper script the daemon spawns.
     pub bin: String,
+    script_file: PathBuf,
     log: PathBuf,
     launches: PathBuf,
     pid_file: PathBuf,
@@ -94,6 +98,20 @@ impl StubAcpAgent {
     /// after the discovery probe has already driven the stub once.
     pub fn clear_messages(&self) {
         let _ = std::fs::remove_file(&self.log);
+    }
+
+    /// Change what the stub answers from now on. Each agent process reads
+    /// the script as it starts, so the next one the daemon spawns follows
+    /// this one: how a test moves the world under a daemon between two
+    /// requests.
+    pub fn reprogram(&self, script: Value) {
+        write_script_file(
+            &self.script_file,
+            script,
+            &self.log,
+            &self.launches,
+            &self.pid_file,
+        );
     }
 
     /// The agent process's pid, once it has written it down.
@@ -198,15 +216,12 @@ pub fn script() -> Value {
 
 /// Write the stub into `dir` and answer with the handle the test drives it
 /// by. The script is `script()` with whatever the test changed.
-pub fn stub_acp_agent(dir: &Path, mut script: Value) -> StubAcpAgent {
+pub fn stub_acp_agent(dir: &Path, script: Value) -> StubAcpAgent {
     let log = dir.join("acp-messages.jsonl");
     let launches = dir.join("acp-launches.jsonl");
     let pid_file = dir.join("acp-agent.pid");
-    script["log"] = json!(log.display().to_string());
-    script["launches"] = json!(launches.display().to_string());
-    script["pid_file"] = json!(pid_file.display().to_string());
     let script_file = dir.join("acp-script.json");
-    std::fs::write(&script_file, serde_json::to_string_pretty(&script).unwrap()).unwrap();
+    write_script_file(&script_file, script, &log, &launches, &pid_file);
 
     let program = dir.join("acp-stub.py");
     std::fs::write(&program, STUB).unwrap();
@@ -221,10 +236,25 @@ pub fn stub_acp_agent(dir: &Path, mut script: Value) -> StubAcpAgent {
     );
     StubAcpAgent {
         bin: bin.display().to_string(),
+        script_file,
         log,
         launches,
         pid_file,
     }
+}
+
+/// The script as the stub reads it: the test's, plus where to report.
+fn write_script_file(
+    script_file: &Path,
+    mut script: Value,
+    log: &Path,
+    launches: &Path,
+    pid_file: &Path,
+) {
+    script["log"] = json!(log.display().to_string());
+    script["launches"] = json!(launches.display().to_string());
+    script["pid_file"] = json!(pid_file.display().to_string());
+    std::fs::write(script_file, serde_json::to_string_pretty(&script).unwrap()).unwrap();
 }
 
 /// The stub itself: single-threaded, line-oriented, and honest about order —
@@ -293,7 +323,24 @@ def respond(request):
     if method == "session/close":
         return {}
     if method == "session/list":
-        return {"sessions": script.get("session_list", [])}
+        sessions = script.get("session_list", [])
+        size = script.get("session_page_size")
+        if not size:
+            return {"sessions": sessions}
+        # A paging agent: `size` sessions per page, and a cursor that names
+        # where the next page starts, until nothing remains.
+        cursor = request.get("params", {}).get("cursor")
+        start = int(cursor) if cursor else 0
+        stall_from = script.get("session_list_stall_from")
+        if stall_from is not None and start >= stall_from:
+            # An agent that never answers this page: the client's budget
+            # is what ends the listing.
+            while True:
+                time.sleep(0.1)
+        listed = {"sessions": sessions[start:start + size]}
+        if start + size < len(sessions):
+            listed["nextCursor"] = str(start + size)
+        return listed
     if method == "session/set_config_option":
         params = request["params"]
         for option in options:

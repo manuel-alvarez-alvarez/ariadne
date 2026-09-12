@@ -294,18 +294,24 @@ impl AgentRegistry {
         let calls = capable.into_iter().map(|agent| {
             let cwd = cwd.clone();
             async move {
-                match tokio::time::timeout(PROBE_TIMEOUT, list_stored_sessions(&agent, &cwd)).await
+                // One budget over every page of the agent, and the pages that
+                // arrived inside it are kept whatever ended the listing.
+                let mut sessions = Vec::new();
+                match tokio::time::timeout(
+                    PROBE_TIMEOUT,
+                    list_stored_sessions(&agent, &cwd, &mut sessions),
+                )
+                .await
                 {
-                    Ok(Ok(sessions)) => sessions,
+                    Ok(Ok(())) => {}
                     Ok(Err(error)) => {
                         tracing::warn!(agent = %agent.id, error = %format!("{error:#}"), "listing an ACP agent's stored sessions failed");
-                        Vec::new()
                     }
                     Err(_) => {
                         tracing::warn!(agent = %agent.id, "listing an ACP agent's stored sessions timed out");
-                        Vec::new()
                     }
                 }
+                sessions
             }
         });
         join_all(calls).await.into_iter().flatten().collect()
@@ -592,10 +598,15 @@ async fn read_catalog(
     })
 }
 
-/// Ask one agent for its stored sessions: spawn it, `initialize`, `session/list`,
-/// then kill it — the same one-shot shape as [`probe`], for a call that has
-/// no session to keep open.
-async fn list_stored_sessions(agent: &AcpAgentDto, cwd: &Path) -> Result<Vec<OutsideSessionDto>> {
+/// Ask one agent for its stored sessions: spawn it, `initialize`, `session/list`
+/// page after page, then kill it — the same one-shot shape as [`probe`], for a
+/// call that has no session to keep open. Each page lands in `sessions` as it
+/// arrives, so a caller that gives up on the rest still holds what came.
+async fn list_stored_sessions(
+    agent: &AcpAgentDto,
+    cwd: &Path,
+    sessions: &mut Vec<OutsideSessionDto>,
+) -> Result<()> {
     let Some((program, args)) = agent.command.split_first() else {
         bail!("command is empty");
     };
@@ -613,17 +624,20 @@ async fn list_stored_sessions(agent: &AcpAgentDto, cwd: &Path) -> Result<Vec<Out
     };
     let mut rpc = RpcTransport::new(stdout, stdin);
     let mut incoming = ProbeIncoming;
-    let result = sessions_over_rpc(agent, &mut rpc, &mut incoming).await;
+    let result = sessions_over_rpc(agent, &mut rpc, &mut incoming, sessions).await;
     let _ = child.start_kill();
     let _ = child.wait().await;
     result
 }
 
+/// `initialize`, then `session/list` with each `nextCursor` the agent answers
+/// with, until a reply carries none.
 async fn sessions_over_rpc(
     agent: &AcpAgentDto,
     rpc: &mut RpcTransport,
     incoming: &mut ProbeIncoming,
-) -> Result<Vec<OutsideSessionDto>> {
+    sessions: &mut Vec<OutsideSessionDto>,
+) -> Result<()> {
     rpc.request(
         "initialize",
         json!({
@@ -640,17 +654,32 @@ async fn sessions_over_rpc(
     )
     .await
     .context("initialize failed")?;
-    let listed = rpc
-        .request("session/list", json!({}), incoming)
-        .await
-        .context("session/list failed")?;
-    Ok(listed
-        .get("sessions")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|session| stored_session(agent, session))
-        .collect())
+    let mut cursor: Option<String> = None;
+    loop {
+        let params = match &cursor {
+            Some(cursor) => json!({"cursor": cursor}),
+            None => json!({}),
+        };
+        let listed = rpc
+            .request("session/list", params, incoming)
+            .await
+            .context("session/list failed")?;
+        sessions.extend(
+            listed
+                .get("sessions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|session| stored_session(agent, session)),
+        );
+        cursor = listed
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if cursor.is_none() {
+            return Ok(());
+        }
+    }
 }
 
 /// One `session/list` entry as an outside session, or `None` where it names

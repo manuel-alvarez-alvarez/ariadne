@@ -6,7 +6,7 @@ mod common;
 
 use serde_json::json;
 
-use ariadne_api::sessions::{AdoptOutsideSessionRequest, OutsideSessionDto};
+use ariadne_api::sessions::{AdoptOutsideSessionRequest, OutsideSessionPageDto};
 use ariadne_core::{Seat, SessionStatus, TaskStatus};
 use ariadne_store::AgentPin;
 
@@ -71,8 +71,9 @@ async fn an_acp_agents_stored_sessions_appear_in_the_listing() {
     let stub = stub_acp_agent(dir.path(), adoptable_script());
     let h = harness_with_agent("test-agent", &stub.bin).await;
 
-    let sessions: Vec<OutsideSessionDto> = h.get("/v1/outside-sessions").await;
+    let page: OutsideSessionPageDto = h.get("/v1/outside-sessions").await;
 
+    let sessions = page.sessions;
     let found = sessions
         .iter()
         .find(|session| session.internal_session_id == "outside-1")
@@ -95,9 +96,9 @@ async fn an_agent_without_the_capability_lists_nothing_and_shows_the_reason() {
     let stub = stub_acp_agent(dir.path(), setup);
     let h = harness_with_agent("no-listing", &stub.bin).await;
 
-    let sessions: Vec<OutsideSessionDto> = h.get("/v1/outside-sessions").await;
+    let page: OutsideSessionPageDto = h.get("/v1/outside-sessions").await;
     assert!(
-        sessions
+        page.sessions
             .iter()
             .all(|session| session.agent_id != "no-listing")
     );
@@ -203,12 +204,13 @@ async fn an_adopted_acp_session_no_longer_appears_in_the_listing() {
     )
     .await;
 
-    let sessions: Vec<OutsideSessionDto> = h.get("/v1/outside-sessions").await;
+    let page: OutsideSessionPageDto = h.get("/v1/outside-sessions").await;
     assert!(
-        sessions
+        page.sessions
             .iter()
             .all(|session| session.internal_session_id != "outside-1"),
-        "{sessions:#?}"
+        "{:#?}",
+        page.sessions
     );
 }
 

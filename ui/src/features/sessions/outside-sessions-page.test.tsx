@@ -84,7 +84,16 @@ function stubDaemon({
   daemonFetch.mockImplementation((input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const url = new URL(request.url)
-    if (url.pathname === "/v1/outside-sessions") return Promise.resolve(jsonResponse(outside))
+    if (url.pathname === "/v1/outside-sessions") {
+      return Promise.resolve(
+        jsonResponse({
+          sessions: outside,
+          next_cursor: null,
+          total: outside.length,
+          snapshot_at: "2026-09-10T09:30:00Z",
+        }),
+      )
+    }
     if (url.pathname === "/v1/acp-agents") return Promise.resolve(jsonResponse(acpAgents))
     if (url.pathname === "/v1/tasks") return Promise.resolve(jsonResponse(tasks))
     for (const task of tasks) {

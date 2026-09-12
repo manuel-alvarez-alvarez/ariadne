@@ -54,6 +54,50 @@ pub struct OutsideSessionDto {
     pub first_prompt: String,
 }
 
+/// Query of `GET /v1/outside-sessions`: what the daemon's snapshot of the
+/// outside sessions is narrowed to, and which page of it is wanted.
+///
+/// The snapshot is taken on the first request, again on `refresh=true`, and
+/// again when it is older than a minute; nothing here asks an agent otherwise.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+pub struct OutsideSessionListQuery {
+    /// Only sessions of this registry agent (`GET /v1/acp-agents`).
+    pub agent: Option<String>,
+    /// Only sessions whose working directory is this absolute path, or a
+    /// path under it.
+    pub dir: Option<String>,
+    /// Only sessions last active at or after this moment, RFC 3339.
+    pub since: Option<String>,
+    /// Only sessions last active at or before this moment, RFC 3339.
+    pub until: Option<String>,
+    /// Only sessions whose first prompt contains this text, case-insensitive.
+    pub q: Option<String>,
+    /// Max sessions in the page (default 50, cap 200).
+    pub limit: Option<usize>,
+    /// The `next_cursor` of the page before this one; opaque.
+    pub cursor: Option<String>,
+    /// Ask every agent again before answering, whatever the snapshot's age.
+    pub refresh: Option<bool>,
+}
+
+impl OutsideSessionListQuery {
+    pub fn limit(&self) -> usize {
+        self.limit.unwrap_or(50).clamp(1, 200)
+    }
+}
+
+/// One page of `GET /v1/outside-sessions`, newest activity first.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct OutsideSessionPageDto {
+    pub sessions: Vec<OutsideSessionDto>,
+    /// The `cursor` that continues after this page; null on the last one.
+    pub next_cursor: Option<String>,
+    /// How many sessions the filters leave, over every page.
+    pub total: usize,
+    /// When the snapshot this page was cut from was taken, RFC 3339.
+    pub snapshot_at: String,
+}
+
 /// The stored ACP session to adopt as a task author.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

@@ -1,11 +1,12 @@
 ---
 id: session-adoption
 status: current
-updated: 2026-09-11
+updated: 2026-09-12
 areas: [api, daemon, cli]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/acp_session_adoption.rs
+  - crates/ariadne-daemon/tests/outside_sessions.rs
   - crates/ariadne-cli/src/commands/session.rs
 ---
 
@@ -28,19 +29,40 @@ that Ariadne started itself (007, 021), and the desktop screen over this
 
 1. Discovery asks every registry agent that the last discovery run (007)
    found ready and advertising `session_list`, over `session/list`. Each is
-   one short-lived process, the same shape as a probe. An agent without the
+   one short-lived process, the same shape as a probe. An agent that pages
+   its list is asked again with each `nextCursor` it answers, until a reply
+   carries none; one 5 s budget covers all its pages, and the pages that
+   arrived inside it are kept when it runs out. An agent without the
    capability — rejected outright, or ready but lacking it — contributes no
    sessions, and `GET /v1/acp-agents` says why, in `rejection_reason` or the
    `no_adoption` degradation. An agent that fails to answer contributes
    nothing rather than failing the listing.
 2. Each listed session is an `OutsideSessionDto`: the registry `agent_id` it
    belongs to, its `internal_session_id`, its `working_directory`, its
-   `last_activity_at`, and its title as `first_prompt`.
+   `last_activity_at`, and its title as `first_prompt`. The daemon keeps one
+   in-memory snapshot of every agent's stored sessions and the moment it was
+   taken, adopted ones included; nothing of it is written to disk. The
+   snapshot is taken on the first listing request, again when a request
+   carries `refresh=true`, and again when it is older than 60 seconds at
+   request time. A request inside that minute asks no agent.
 3. A session whose agent and internal id already occur on an Ariadne session
    row is not an outside session and is never listed. A row's agent is read
-   off its `model` column, which always holds `<agent>:<model>`.
-4. `GET /v1/outside-sessions` lists every outside session. It asks the
-   agents when called and persists nothing of what they say.
+   off its `model` column, which always holds `<agent>:<model>`. The rows
+   are read at query time, so a session adopted after the snapshot was
+   taken is gone from the next page without a refresh.
+4. `GET /v1/outside-sessions` answers one page of the snapshot, as an
+   `OutsideSessionPageDto`: `sessions`, `next_cursor` (null on the last
+   page), `total` (the count after filters) and `snapshot_at`. Its
+   `OutsideSessionListQuery` narrows the snapshot — `agent` (a registry
+   agent id), `dir` (an absolute path; a session matches when its working
+   directory is that path or a path under it), `since` and `until` (RFC
+   3339, inclusive bounds on last activity), `q` (a case-insensitive
+   substring of the first prompt) — and picks the page: `limit` (default
+   50, cap 200), `cursor` and `refresh`. The sessions are ordered by last
+   activity, newest first, ties broken by agent id, then internal session
+   id. The cursor is an opaque keyset over the sort key of the page's last
+   row, so a page cut after a refresh continues from that key. A cursor the
+   daemon cannot read is refused with a 400 envelope, code `invalid_cursor`.
 5. `POST /v1/tasks/{id}/author-session` takes `{agent_id,
    internal_session_id}`. It refuses a session discovery no longer lists.
 6. Adoption is valid only for a `ready` task whose author is pinned to the
@@ -52,10 +74,10 @@ that Ariadne started itself (007, 021), and the desktop screen over this
    `session/resume`. The task then follows its normal author and review
    lifecycle, and the author is reached afterwards the way any session is:
    `POST /v1/sessions/{id}/console/input` (008).
-8. `ariadne session discover` lists the outside sessions, and below the
-   table one line per registry agent that cannot list its sessions, naming
-   why. `ariadne session adopt <session-id> <task-id> --agent <agent-id>`
-   adopts one and prints its author session.
+8. `ariadne session discover` lists the first page of the outside sessions,
+   and below the table one line per registry agent that cannot list its
+   sessions, naming why. `ariadne session adopt <session-id> <task-id>
+   --agent <agent-id>` adopts one and prints its author session.
 
 ## Acceptance criteria
 
@@ -64,6 +86,34 @@ that Ariadne started itself (007, 021), and the desktop screen over this
   (`acp_session_adoption.rs::an_acp_agents_stored_sessions_appear_in_the_listing`).
 - An agent without `session_list` lists no sessions, and the catalog says why
   (`acp_session_adoption.rs::an_agent_without_the_capability_lists_nothing_and_shows_the_reason`).
+- An agent that pages its list in three pages has every session in the
+  listing
+  (`outside_sessions.rs::a_paging_agents_every_session_is_in_the_listing`).
+- An agent whose budget ends mid-list is listed with the pages that arrived
+  (`outside_sessions.rs::the_pages_that_arrived_are_kept_when_an_agents_budget_ends`).
+- A cursor continues from the same row after a refresh
+  (`outside_sessions.rs::a_cursor_continues_from_the_same_row_after_a_refresh`).
+- A listing of 5 sessions with `limit=2` is three pages through
+  `next_cursor`, newest first, with `total=5` on each and a null cursor on
+  the last
+  (`outside_sessions.rs::five_sessions_at_limit_two_are_three_pages_newest_first`).
+- `agent`, `dir`, `since`, `until` and `q` each narrow the listing, and
+  `dir` matches a directory under the given path
+  (`outside_sessions.rs::agent_narrows_the_listing_to_one_agents_sessions`,
+  `::dir_narrows_the_listing_to_a_path_and_what_is_under_it`,
+  `::since_narrows_the_listing_to_activity_at_or_after_it`,
+  `::until_narrows_the_listing_to_activity_at_or_before_it`,
+  `::q_narrows_the_listing_by_first_prompt_case_insensitively`).
+- A second request within 60 seconds asks no agent again, and a request with
+  `refresh=true` does
+  (`outside_sessions.rs::a_second_request_asks_no_agent_again_but_a_refresh_does`).
+- A session adopted after the snapshot was taken is absent from the next
+  page without a refresh
+  (`outside_sessions.rs::a_session_adopted_after_the_snapshot_is_absent_without_a_refresh`).
+- A cursor the daemon cannot read is refused with `invalid_cursor`
+  (`outside_sessions.rs::an_unreadable_cursor_is_refused`).
+- The endpoint's query parameters and page DTO are in the OpenAPI document
+  (`outside_sessions.rs::the_query_and_the_page_are_in_the_openapi_document`).
 - Adopting a listed session binds it to the author seat, resumes it through
   `session/load` rather than `session/resume`, and a later console prompt
   reaches the same agent
@@ -86,7 +136,10 @@ no longer lists. Both refusals are in `Launcher::adopt_author` and
 
 ## Sources
 
-`crates/ariadne-daemon/src/acp_sessions.rs` (the outside listing),
+`crates/ariadne-api/src/sessions.rs` (`OutsideSessionListQuery`,
+`OutsideSessionPageDto`),
+`crates/ariadne-daemon/src/acp_sessions.rs` (the snapshot, the filtered
+pages, and the listing adoption checks against),
 `crates/ariadne-daemon/src/acp_discovery.rs` (`AgentRegistry::stored_sessions`),
 `crates/ariadne-daemon/src/http/sessions.rs`,
 `crates/ariadne-daemon/src/http/tasks.rs`,

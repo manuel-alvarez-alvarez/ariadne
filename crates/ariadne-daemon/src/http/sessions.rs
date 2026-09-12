@@ -3,32 +3,47 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
-use ariadne_api::sessions::{OutsideSessionDto, SessionDto, SessionListQuery};
+use ariadne_api::sessions::{
+    OutsideSessionListQuery, OutsideSessionPageDto, SessionDto, SessionListQuery,
+};
 use ariadne_store::SessionFilter;
 
 use super::AppState;
 use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
+use crate::acp_sessions::{Filter, QueryError};
 
-/// List sessions Ariadne did not start: the stored sessions of every ACP
-/// agent that can list them, newest first.
+/// List sessions Ariadne did not start: one filtered page of the daemon's
+/// snapshot of every ACP agent's stored sessions, newest first.
 #[utoipa::path(get, path = "/v1/outside-sessions", tag = "sessions",
-    responses((status = 200, body = [OutsideSessionDto])))]
+    params(OutsideSessionListQuery),
+    responses((status = 200, body = OutsideSessionPageDto), (status = 400)))]
 pub async fn list_outside(
     State(state): State<AppState>,
-) -> ApiResult<Json<Vec<OutsideSessionDto>>> {
-    let internal_error = |error: anyhow::Error| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            error.to_string(),
-        )
-    };
-    let mut sessions = crate::acp_sessions::discover(&state.agent_registry, &state.store)
+    Query(q): Query<OutsideSessionListQuery>,
+) -> ApiResult<Json<OutsideSessionPageDto>> {
+    // Read the query before any agent is asked for a snapshot it would
+    // not answer from.
+    let filter = Filter::parse(&q).map_err(|error| match error {
+        QueryError::InvalidCursor => {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_cursor", error.to_string())
+        }
+        QueryError::InvalidFilter(_) => ApiError::bad_request(error.to_string()),
+    })?;
+    let snapshot = state
+        .outside_sessions
+        .snapshot(&state.agent_registry, q.refresh.unwrap_or(false))
+        .await;
+    let page = crate::acp_sessions::page(&snapshot, &state.store, &filter)
         .await
-        .map_err(internal_error)?;
-    sessions.sort_by(|left, right| right.last_activity_at.cmp(&left.last_activity_at));
-    Ok(Json(sessions))
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                error.to_string(),
+            )
+        })?;
+    Ok(Json(page))
 }
 
 /// List agent sessions.

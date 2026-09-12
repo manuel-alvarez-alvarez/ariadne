@@ -18,6 +18,7 @@ ariadne-store = { workspace = true }
 ariadne-client = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
+base64 = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 futures-util = { workspace = true }

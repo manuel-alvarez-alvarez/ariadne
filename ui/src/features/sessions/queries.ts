@@ -85,11 +85,15 @@ export function sessionQueryOptions(id: string) {
   })
 }
 
-/** CLI conversations Ariadne did not start, ready for the user to adopt. */
+/**
+ * CLI conversations Ariadne did not start, ready for the user to adopt: the
+ * first page the daemon cuts from its snapshot, read down to its rows.
+ */
 export function outsideSessionsQueryOptions() {
   return queryOptions({
     queryKey: qk.outsideSessions.list(),
     queryFn: () => unwrap(api().GET("/v1/outside-sessions")),
+    select: (page) => page.sessions,
   })
 }
 

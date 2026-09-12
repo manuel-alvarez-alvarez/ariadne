@@ -8,7 +8,7 @@ use clap::Subcommand;
 use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus};
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{
-    AdoptOutsideSessionRequest, ConsoleInputRequest, OutsideSessionDto, SessionDto,
+    AdoptOutsideSessionRequest, ConsoleInputRequest, OutsideSessionPageDto, SessionDto,
     SessionListQuery,
 };
 use ariadne_api::stream::EventStreamQuery;
@@ -290,12 +290,12 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
 }
 
 /// `session discover`: the stored sessions of every ACP agent that can list
-/// them, minus the ones the daemon already owns.
+/// them, minus the ones the daemon already owns — the first page of them.
 async fn discover(client: &Client, format: Format) -> Result<()> {
-    let sessions: Vec<OutsideSessionDto> = client.get_json("/v1/outside-sessions").await?;
+    let page: OutsideSessionPageDto = client.get_json("/v1/outside-sessions").await?;
     print_list(
         format,
-        &sessions,
+        &page.sessions,
         DISCOVER,
         |session| {
             vec![

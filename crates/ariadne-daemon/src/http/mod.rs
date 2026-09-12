@@ -39,6 +39,7 @@ use ariadne_api::{HealthResponse, VersionResponse};
 use ariadne_store::Store;
 
 use crate::acp_discovery::AgentRegistry;
+use crate::acp_sessions::OutsideSessions;
 use catalog::{acp_agents, agents, models};
 
 use crate::bus::EventBus;
@@ -64,6 +65,9 @@ pub struct AppState {
     pub logs: LogBuffer,
     /// ACP commands and their cached discovery snapshot.
     pub agent_registry: AgentRegistry,
+    /// The snapshot of every agent's stored sessions that
+    /// `/v1/outside-sessions` pages.
+    pub outside_sessions: OutsideSessions,
 }
 
 impl AppState {
