@@ -25,11 +25,11 @@ import {
 } from "@tanstack/react-query"
 
 import {
+  type AdoptOutsideSessionRequest,
   api,
   type CacheSnapshot,
   type ConsoleInputRequest,
   cacheRow,
-  type OutsideSessionDto,
   optimisticStatus,
   qk,
   restoreCache,
@@ -137,26 +137,17 @@ export function outsideSessionsQueryOptions(
   })
 }
 
-/** Make an outside agent conversation the author of a ready task. */
+/** Adopt an outside conversation as the author of a new task. */
 export function useAdoptOutsideSession() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ taskId, ...body }: { taskId: string } & OutsideSessionDto) =>
-      unwrap(
-        api().POST("/v1/tasks/{id}/author-session", {
-          params: { path: { id: taskId } },
-          body: {
-            agent_id: body.agent_id,
-            internal_session_id: body.internal_session_id,
-          },
-        }),
-      ),
-    onSuccess: async (session) => {
+    mutationFn: (body: AdoptOutsideSessionRequest) =>
+      unwrap(api().POST("/v1/outside-sessions/adopt", { body })),
+    onSuccess: ({ goal, task, session }) => {
+      cacheRow(queryClient, qk.goals, goal)
+      cacheRow(queryClient, qk.tasks, task)
       cacheRow(queryClient, qk.sessions, session)
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() }),
-        queryClient.invalidateQueries({ queryKey: qk.tasks.all() }),
-      ])
+      void queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() })
     },
   })
 }

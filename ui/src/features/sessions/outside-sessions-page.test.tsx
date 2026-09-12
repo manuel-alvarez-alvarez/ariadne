@@ -4,8 +4,16 @@ import { fireEvent, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
-import type { AcpAgentDto, components, SessionDto, TaskDto } from "@/api"
-import { aSession, aTask } from "@/test/fixtures"
+import type {
+  AcpAgentDto,
+  components,
+  GoalDto,
+  ModelDto,
+  RepositoryDto,
+  SessionDto,
+  TaskDto,
+} from "@/api"
+import { aGoal, aModel, aRepository, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { OutsideSessionsPage } from "./outside-sessions-page"
 
@@ -19,10 +27,43 @@ const OUTSIDE: OutsideSessionDto = {
   first_prompt: "Fix the flaky test.",
 }
 
-/** A ready task whose author runs the session's agent. */
-const READY: TaskDto = aTask({
+const ACTIVE_GOAL: GoalDto = aGoal({
+  id: "01JGOAL00000000000000ACTIVE",
+  title: "Active adoption goal",
+  status: "active",
+})
+
+const COMPLETED_GOAL: GoalDto = aGoal({
+  id: "01JGOAL000000000000COMPLETE",
+  title: "Finished goal",
+  status: "completed",
+})
+
+const CONTAINING_REPOSITORY: RepositoryDto = aRepository({
+  id: "01JREPO000000000000CONTAIN",
+  path: "/Users/me/dev",
+})
+
+const OTHER_REPOSITORY: RepositoryDto = aRepository({
+  id: "01JREPO000000000000000OTHER",
+  path: "/Users/me/elsewhere",
+})
+
+const AUTHOR_MODEL: ModelDto = aModel({
+  id: "claude-agent-acp:sonnet-5",
+  agent_id: "claude-agent-acp",
+})
+
+const REVIEWER_MODEL: ModelDto = aModel({
+  id: "codex-acp:gpt-5",
+  agent_id: "codex-acp",
+})
+
+/** The task returned after adoption. */
+const ADOPTED_TASK: TaskDto = aTask({
   id: "01JTASK000000000000000READY",
-  status: "ready",
+  goal_id: ACTIVE_GOAL.id,
+  status: "in_progress",
   title: "Adopt an agent session",
   agents: [
     {
@@ -30,21 +71,6 @@ const READY: TaskDto = aTask({
       seat: "author",
       skills: ["coding"],
       model: "claude-agent-acp:sonnet-5",
-    },
-  ],
-})
-
-/** A ready task whose author runs another agent. */
-const ELSEWHERE: TaskDto = aTask({
-  id: "01JTASK0000000000000ELSEWH",
-  status: "ready",
-  title: "Run on another agent",
-  agents: [
-    {
-      id: "01JAGENT0000000000000ELSE",
-      seat: "author",
-      skills: ["coding"],
-      model: "codex-acp:gpt-5",
     },
   ],
 })
@@ -99,14 +125,18 @@ function stubDaemon({
   adopted,
   outside = [OUTSIDE],
   page,
-  tasks = [READY],
+  goals = [ACTIVE_GOAL],
+  repositories = [CONTAINING_REPOSITORY, OTHER_REPOSITORY],
+  models = [AUTHOR_MODEL, REVIEWER_MODEL],
   acpAgents = [],
 }: {
   adopted?: SessionDto
   outside?: OutsideSessionDto[]
   /** What each listing request is answered with, by the query it carries. */
   page?: (query: URLSearchParams) => OutsideSessionPageDto
-  tasks?: TaskDto[]
+  goals?: GoalDto[]
+  repositories?: RepositoryDto[]
+  models?: ModelDto[]
   acpAgents?: AcpAgentDto[]
 } = {}) {
   daemonFetch.mockImplementation((input: Request | string | URL, init?: RequestInit) => {
@@ -116,11 +146,18 @@ function stubDaemon({
       return Promise.resolve(jsonResponse(page ? page(url.searchParams) : aPage(outside)))
     }
     if (url.pathname === "/v1/acp-agents") return Promise.resolve(jsonResponse(acpAgents))
-    if (url.pathname === "/v1/tasks") return Promise.resolve(jsonResponse(tasks))
-    for (const task of tasks) {
-      if (url.pathname === `/v1/tasks/${task.id}/author-session` && request.method === "POST") {
-        return Promise.resolve(jsonResponse(adopted ?? aSession({ task_id: task.id })))
-      }
+    if (url.pathname === "/v1/goals") return Promise.resolve(jsonResponse(goals))
+    if (url.pathname === "/v1/repositories") return Promise.resolve(jsonResponse(repositories))
+    if (url.pathname === "/v1/models") return Promise.resolve(jsonResponse(models))
+    if (url.pathname === "/v1/skills") return Promise.resolve(jsonResponse([]))
+    if (url.pathname === "/v1/outside-sessions/adopt" && request.method === "POST") {
+      return Promise.resolve(
+        jsonResponse({
+          goal: ACTIVE_GOAL,
+          task: ADOPTED_TASK,
+          session: adopted ?? aSession({ task_id: ADOPTED_TASK.id }),
+        }),
+      )
     }
     return Promise.resolve(jsonResponse([]))
   })
@@ -155,19 +192,68 @@ it("lists each outside session with its agent, directory, activity, and first pr
   expect(document.querySelector(`time[datetime="${OUTSIDE.last_activity_at}"]`)).not.toBeNull()
 })
 
-it("adopts a stored session, sending the registry agent id along with it", async () => {
+async function openAdoption() {
   const user = userEvent.setup()
-  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
-
   await user.click(await screen.findByRole("button", { name: `Adopt ${OUTSIDE.agent_id} session` }))
-  await user.click(await screen.findByRole("button", { name: `Use ${READY.title}` }))
+  return user
+}
+
+async function pickModel(user: ReturnType<typeof userEvent.setup>, label: string, model: string) {
+  await user.click(screen.getByRole("button", { name: label }))
+  await user.click(await screen.findByRole("option", { name: model }))
+}
+
+it("offers only active goals", async () => {
+  stubDaemon({ goals: [ACTIVE_GOAL, COMPLETED_GOAL] })
+  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
+  const user = await openAdoption()
+
+  await user.click(await screen.findByRole("combobox", { name: "Active goal" }))
+
+  expect(await screen.findByRole("option", { name: ACTIVE_GOAL.title })).toBeTruthy()
+  expect(screen.queryByRole("option", { name: COMPLETED_GOAL.title })).toBeNull()
+})
+
+it("prefills a new goal with the repository containing the working directory", async () => {
+  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
+  const user = await openAdoption()
+
+  await user.click(screen.getByRole("tab", { name: "New goal" }))
+
+  expect(
+    await screen.findByRole("button", { name: `Remove ${CONTAINING_REPOSITORY.path}` }),
+  ).toBeTruthy()
+  expect(screen.queryByRole("button", { name: `Remove ${OTHER_REPOSITORY.path}` })).toBeNull()
+})
+
+it("offers only models from the outside session's agent", async () => {
+  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
+  const user = await openAdoption()
+
+  await user.click(await screen.findByRole("button", { name: "Author runs on" }))
+
+  expect(await screen.findByRole("option", { name: AUTHOR_MODEL.id })).toBeTruthy()
+  expect(screen.queryByRole("option", { name: REVIEWER_MODEL.id })).toBeNull()
+  expect(screen.queryByRole("option", { name: /Other/ })).toBeNull()
+})
+
+it("sends the outside session, existing goal, and author before reviewers", async () => {
+  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
+  const user = await openAdoption()
+
+  await user.click(await screen.findByRole("combobox", { name: "Active goal" }))
+  await user.click(await screen.findByRole("option", { name: ACTIVE_GOAL.title }))
+  await pickModel(user, "Author runs on", AUTHOR_MODEL.id)
+  await pickModel(user, "Reviewer 1 runs on", REVIEWER_MODEL.id)
+  await user.click(screen.getByRole("combobox", { name: "Permission mode" }))
+  await user.click(await screen.findByRole("option", { name: "Ask every time" }))
   await user.click(screen.getByRole("button", { name: "Adopt session" }))
 
   let request: Request | undefined
   await waitFor(() => {
     request = daemonFetch.mock.calls
       .map(([input, init]) => (input instanceof Request ? input : new Request(input, init)))
-      .find(({ url }) => new URL(url).pathname === `/v1/tasks/${READY.id}/author-session`)
+      .find(({ url }) => new URL(url).pathname === "/v1/outside-sessions/adopt")
     expect(request).toBeDefined()
   })
   if (!request) throw new Error("no adoption request")
@@ -175,18 +261,59 @@ it("adopts a stored session, sending the registry agent id along with it", async
   expect(JSON.parse(await request.text())).toEqual({
     agent_id: OUTSIDE.agent_id,
     internal_session_id: OUTSIDE.internal_session_id,
+    goal: { id: ACTIVE_GOAL.id },
+    title: OUTSIDE.first_prompt,
+    description: "",
+    agents: [
+      { seat: "author", skills: ["coding"], model: AUTHOR_MODEL.id },
+      { seat: "reviewer", skills: ["code-review"], model: REVIEWER_MODEL.id },
+    ],
+    landing: "merge",
+    permission_mode: "ask",
   })
 })
 
-it("offers only the ready tasks whose author runs the session's agent", async () => {
-  stubDaemon({ tasks: [READY, ELSEWHERE] })
-  const user = userEvent.setup()
+it("sends a new goal with its description and repositories", async () => {
   renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
+  const user = await openAdoption()
 
-  await user.click(await screen.findByRole("button", { name: `Adopt ${OUTSIDE.agent_id} session` }))
+  await user.click(screen.getByRole("tab", { name: "New goal" }))
+  await user.type(screen.getByLabelText("Goal title"), "Continue the outside work")
+  await user.type(screen.getByLabelText("Goal description"), "Keep its original context.")
+  await pickModel(user, "Author runs on", AUTHOR_MODEL.id)
+  await user.click(screen.getByRole("button", { name: "Remove reviewer 1" }))
+  await user.click(screen.getByRole("button", { name: "Adopt session" }))
 
-  expect(await screen.findByRole("button", { name: `Use ${READY.title}` })).toBeTruthy()
-  expect(screen.queryByRole("button", { name: `Use ${ELSEWHERE.title}` })).toBeNull()
+  const request = await waitFor(() => {
+    const found = daemonFetch.mock.calls
+      .map(([input, init]) => (input instanceof Request ? input : new Request(input, init)))
+      .find(({ url }) => new URL(url).pathname === "/v1/outside-sessions/adopt")
+    expect(found).toBeDefined()
+    return found
+  })
+  if (!request) throw new Error("no adoption request")
+  expect(JSON.parse(await request.text())).toMatchObject({
+    goal: {
+      title: "Continue the outside work",
+      description: "Keep its original context.",
+      repository_ids: [CONTAINING_REPOSITORY.id],
+    },
+  })
+})
+
+it("opens the adopted task's panel after success", async () => {
+  const { location } = renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside?q=flaky" })
+  const user = await openAdoption()
+
+  await user.click(await screen.findByRole("combobox", { name: "Active goal" }))
+  await user.click(await screen.findByRole("option", { name: ACTIVE_GOAL.title }))
+  await pickModel(user, "Author runs on", AUTHOR_MODEL.id)
+  await user.click(screen.getByRole("button", { name: "Remove reviewer 1" }))
+  await user.click(screen.getByRole("button", { name: "Adopt session" }))
+
+  await waitFor(() =>
+    expect(location.url).toBe(`/sessions/outside?q=flaky&task=${ADOPTED_TASK.id}`),
+  )
 })
 
 it("sends each filter to the daemon under the name that filter has", async () => {

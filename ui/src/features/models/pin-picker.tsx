@@ -78,6 +78,7 @@ export function PinPicker({
   invalid,
   id,
   className,
+  allowCustom = true,
 }: {
   /** The chosen model, or the empty string until one is chosen. */
   model: string
@@ -92,6 +93,8 @@ export function PinPicker({
   /** The trigger's id, for a field label's `for`. */
   id?: string
   className?: string
+  /** Whether a model outside the supplied catalog can be entered. */
+  allowCustom?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
@@ -179,7 +182,7 @@ export function PinPicker({
         // Every open starts from the whole catalog, on whatever is pinned.
         if (next) {
           setSearch("")
-          setHighlight(pinned.length > 0 ? pinned : OTHER_ROW)
+          setHighlight(pinned.length > 0 ? pinned : allowCustom ? OTHER_ROW : "")
         }
       }}
       modal={false}
@@ -213,7 +216,7 @@ export function PinPicker({
                 ref={searchRef}
                 value={search}
                 onValueChange={setSearch}
-                placeholder="Search models, or type an id…"
+                placeholder={allowCustom ? "Search models, or type an id…" : "Search models…"}
               />
               <CommandList
                 label="Models"
@@ -247,42 +250,44 @@ export function PinPicker({
                     ))}
                   </CommandGroup>
                 ))}
-                <CommandGroup>
-                  {/* The daemon takes models the catalog does not list, so
-                      whatever was typed has to be an answer of its own. */}
-                  <CommandItem
-                    forceMount
-                    value={OTHER_ROW}
-                    disabled={typed.length === 0}
-                    data-checked={
-                      pinned.length > 0 && !(models ?? []).some((entry) => entry.id === pinned)
-                        ? "true"
-                        : "false"
-                    }
-                    onSelect={() => pick(search)}
-                  >
-                    <span className="flex min-w-0 flex-col">
-                      <span className="truncate">
-                        {typed.length > 0 ? (
-                          <>
-                            Other — run <span className="font-mono">{typed}</span>
-                          </>
-                        ) : (
-                          "Other… — type an id above"
-                        )}
+                {allowCustom ? (
+                  <CommandGroup>
+                    {/* The daemon takes models the catalog does not list, so
+                        whatever was typed has to be an answer of its own. */}
+                    <CommandItem
+                      forceMount
+                      value={OTHER_ROW}
+                      disabled={typed.length === 0}
+                      data-checked={
+                        pinned.length > 0 && !(models ?? []).some((entry) => entry.id === pinned)
+                          ? "true"
+                          : "false"
+                      }
+                      onSelect={() => pick(search)}
+                    >
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate">
+                          {typed.length > 0 ? (
+                            <>
+                              Other — run <span className="font-mono">{typed}</span>
+                            </>
+                          ) : (
+                            "Other… — type an id above"
+                          )}
+                        </span>
+                        <span
+                          className={cn(
+                            "line-clamp-2 text-xs leading-snug",
+                            typedError ? "text-destructive" : "text-muted-foreground",
+                          )}
+                        >
+                          {typedError ??
+                            "The agent and, after a “:”, the model of it, handed over as typed."}
+                        </span>
                       </span>
-                      <span
-                        className={cn(
-                          "line-clamp-2 text-xs leading-snug",
-                          typedError ? "text-destructive" : "text-muted-foreground",
-                        )}
-                      >
-                        {typedError ??
-                          "The agent and, after a “:”, the model of it, handed over as typed."}
-                      </span>
-                    </span>
-                  </CommandItem>
-                </CommandGroup>
+                    </CommandItem>
+                  </CommandGroup>
+                ) : null}
               </CommandList>
             </Command>
             <EffortStrip

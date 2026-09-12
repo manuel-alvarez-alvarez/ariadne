@@ -96,11 +96,18 @@ Out: the daemon endpoints themselves (012).
     Load more asks for the `next_cursor` the last page carried and appends
     what comes back, and one count line reads `<shown> of <total>`. Refresh
     refetches from the first page with `refresh=true`, which is what asks
-    every agent again. The view offers only the ready tasks whose
-    author's pin names the same agent, and adopts the session as that task's
-    author through `POST /v1/tasks/{id}/author-session`, sending the agent id
-    and the session id. Below the table it names every ACP agent from
-    `GET /v1/acp-agents` that cannot list its sessions, with why.
+    every agent again. Adopt opens one form that creates a task in an active
+    goal or creates a new, unorchestrated goal for it. Only active goals are
+    offered. A new goal takes its title, description and registered
+    repositories there; the repository whose path contains the session's
+    working directory starts selected. The task starts with the session's
+    first prompt as its title and takes its description, author skills, model
+    and effort, reviewers, landing, repository and permission mode. Its author
+    stays on the session's agent, so that model picker offers only that agent's
+    catalog. Submit calls `POST /v1/outside-sessions/adopt` once, with the
+    author first, then opens the returned task's panel. The goal panel says
+    `No orchestrator` for the new goal. Below the table the view names every
+    ACP agent from `GET /v1/acp-agents` that cannot list its sessions, with why.
 19. On a task staffed with several authors (004) the task panel shows every
     one of them — its skills, its model, its own branch, and its status in the
     pick: the votes it has so far, or "Picked" once it is the one that won —
@@ -244,13 +251,22 @@ Out: the daemon endpoints themselves (012).
   raw payload under its row
   (`ui/src/features/sessions/session-activity.test.tsx`).
 - The outside-sessions view lists each stored session named by its registry
-  agent id, offers only the ready tasks on the same agent, adopts one with
-  the agent id sent along, and shows why an ACP agent without the
-  session-listing capability offers none
+  agent id and shows why an ACP agent without the session-listing capability
+  offers none
   (`ui/src/features/sessions/outside-sessions-page.test.tsx::lists each outside session with its agent, directory, activity, and first prompt`,
-  `::offers only the ready tasks whose author runs the session's agent`,
-  `::adopts a stored session, sending the registry agent id along with it`,
   `::shows why an ACP agent without the session-listing capability offers no adoption`).
+- Its adoption form offers only active goals, prefills a new goal with the
+  containing repository, and restricts the author model to the session's agent
+  (`ui/src/features/sessions/outside-sessions-page.test.tsx::offers only active goals`,
+  `::prefills a new goal with the repository containing the working directory`,
+  `::offers only models from the outside session's agent`).
+- Adoption sends the outside identifiers, an existing or new goal, and the
+  author before its reviewers, then opens the returned task's panel
+  (`ui/src/features/sessions/outside-sessions-page.test.tsx::sends the outside session, existing goal, and author before reviewers`,
+  `::sends a new goal with its description and repositories`,
+  `::opens the adopted task's panel after success`).
+- An unorchestrated goal names no orchestrator in its panel
+  (`ui/src/features/goals/goal-panel.test.tsx::says an unorchestrated goal has no orchestrator`).
 - The outside-sessions view sends every filter under the daemon's own name for
   it, opens on the filters its URL carries, grows by the page the cursor names,
   asks every agent again on Refresh, and counts what is on screen out of the

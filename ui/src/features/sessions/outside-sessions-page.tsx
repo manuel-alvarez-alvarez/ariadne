@@ -1,8 +1,8 @@
 /**
  * The stored sessions of every ACP agent that can list them, none of them
- * started by Ariadne. The user can make one the author of a ready task here, which is
- * the desktop equivalent of `ariadne session discover` and `ariadne session
- * adopt`.
+ * started by Ariadne. The user can adopt one into a new task and either a new
+ * or active goal, which is the desktop equivalent of `ariadne session
+ * discover` and `ariadne session adopt`.
  *
  * The daemon answers one filtered page of its own snapshot, so the screen is a
  * filter bar over an infinite query: every filter is a URL param and a query
@@ -15,12 +15,8 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { ChevronDownIcon, RefreshCwIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { toast } from "sonner"
-
-import type { OutsideSessionDto, TaskDto } from "@/api"
-import { ConfirmDialog } from "@/components/confirm-dialog"
+import type { OutsideSessionDto } from "@/api"
 import { DataTable } from "@/components/data-table"
-import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import {
@@ -35,14 +31,10 @@ import { Input } from "@/components/ui/input"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
 import { acpAgentsQueryOptions } from "@/features/agents/queries"
-import { parseModelRef } from "@/features/models/model-ref"
-import { taskAuthor } from "@/features/tasks/agents"
-import { taskListQueryOptions } from "@/features/tasks/queries"
-import { cn } from "@/lib/format"
-
+import { AdoptOutsideSessionDialog } from "./adopt-outside-session-dialog"
 import { ALL } from "./filters"
 import { type OutsideFilterParam, useOutsideSessionFilters } from "./outside-filters"
-import { outsideSessionsQueryOptions, useAdoptOutsideSession } from "./queries"
+import { outsideSessionsQueryOptions } from "./queries"
 
 /**
  * How long a typed filter waits for the next keystroke before the daemon is
@@ -319,95 +311,4 @@ function UnavailableAcpAgents() {
       </ul>
     </div>
   )
-}
-
-function AdoptOutsideSessionDialog({
-  session,
-  onClose,
-}: {
-  session: OutsideSessionDto | null
-  onClose: () => void
-}) {
-  const tasks = useQuery({
-    ...taskListQueryOptions({ status: "ready" }),
-    enabled: session !== null,
-  })
-  const adopt = useAdoptOutsideSession()
-  const [taskId, setTaskId] = useState<string | null>(null)
-  const readyTasks = useMemo(
-    () => (session ? (tasks.data ?? []).filter((task) => taskUsesAgent(task, session)) : []),
-    [session, tasks.data],
-  )
-
-  function close() {
-    setTaskId(null)
-    adopt.reset()
-    onClose()
-  }
-
-  if (!session) return null
-  const selectedTask = readyTasks.find((task) => task.id === taskId)
-  const label = sessionAgentLabel(session)
-
-  return (
-    <ConfirmDialog
-      open
-      onClose={close}
-      title="Adopt this session?"
-      description={`Ariadne will continue this ${label} conversation as the task author.`}
-      confirmLabel="Adopt session"
-      confirmDisabled={!selectedTask}
-      pending={adopt.isPending}
-      error={adopt.error}
-      errorTitle="Could not adopt session"
-      onConfirm={() => {
-        if (!selectedTask) return
-        adopt.mutate(
-          { taskId: selectedTask.id, ...session },
-          {
-            onSuccess: () => {
-              toast.success("Session adopted", { description: selectedTask.title })
-              close()
-            },
-          },
-        )
-      }}
-    >
-      {tasks.isError ? (
-        <ErrorState
-          title="Could not load ready tasks"
-          error={tasks.error}
-          onRetry={() => void tasks.refetch()}
-        />
-      ) : tasks.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading ready tasks…</p>
-      ) : readyTasks.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No ready task uses {label} as its author.</p>
-      ) : (
-        <div className="grid gap-2">
-          <p className="text-sm font-medium">Choose a ready task</p>
-          {readyTasks.map((task) => (
-            <Button
-              key={task.id}
-              type="button"
-              variant="outline"
-              aria-pressed={task.id === taskId}
-              className={cn("justify-start", task.id === taskId && "border-primary")}
-              onClick={() => setTaskId(task.id)}
-            >
-              Use {task.title}
-            </Button>
-          ))}
-        </div>
-      )}
-    </ConfirmDialog>
-  )
-}
-
-/**
- * Whether a ready task's author runs the same agent this session belongs to:
- * the registry id before the first `:` of its pin.
- */
-function taskUsesAgent(task: TaskDto, session: OutsideSessionDto): boolean {
-  return parseModelRef(taskAuthor(task)?.model ?? "")?.agent === session.agent_id
 }

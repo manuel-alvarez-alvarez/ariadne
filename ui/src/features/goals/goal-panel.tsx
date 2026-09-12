@@ -298,7 +298,9 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
       <Fact label="Orchestrator">
         {/* The goal's pin: what its orchestrator runs on, frozen when the goal
             was created. */}
-        <span className="text-xs">{pinLabel(goal.model, goal.effort)}</span>
+        <span className="text-xs">
+          {goal.orchestrated ? pinLabel(goal.model, goal.effort) : "No orchestrator"}
+        </span>
       </Fact>
       <Fact label="Created">
         <When at={goal.created_at} label="created" />

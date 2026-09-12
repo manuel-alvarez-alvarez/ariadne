@@ -151,6 +151,12 @@ it("shows the effort that model is run at, beside it", () => {
   expect(detail("Orchestrator").textContent).toContain("codex-acp:gpt-5.3-codex @ high")
 })
 
+it("says an unorchestrated goal has no orchestrator", () => {
+  mount(aGoal({ orchestrated: false }))
+
+  expect(detail("Orchestrator").textContent).toBe("No orchestrator")
+})
+
 describe("which tab the panel opens on", () => {
   it("opens a goal still being planned on its tasks, the list still growing", () => {
     mount(aGoal({ status: "planning" }))
