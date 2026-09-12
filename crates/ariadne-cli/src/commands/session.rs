@@ -22,13 +22,13 @@ use super::attention::reason_label;
 use super::follow;
 use super::resolve::{self, Kind};
 use super::task::edit::{parse_author, parse_reviewer};
-use super::transcript::{Filters, Since};
 use super::{Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, View, age, at, col, dash, empty_state, moment, note, ok_id_line,
     print, print_kv, print_list, short_id, status_line, usage_block, usage_cell, view,
 };
+use ariadne_console::transcript::{Filters, Since};
 
 /// Columns of `session ls`. `title` is the one written by a human, so it is
 /// capped the way `task ls` caps its titles. `attention` is next to `status`

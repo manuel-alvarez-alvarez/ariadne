@@ -1,0 +1,38 @@
+[package]
+name = "ariadne-console"
+description = "The console of an Ariadne agent session: its transcript, its inline pane and the loop that drives them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ariadne-api = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+# The three the inline console is made of: the key events it reads, the
+# widgets drawn in its viewport, and the parser that turns an agent's
+# markdown into styled lines.
+crossterm = { workspace = true }
+# `StreamExt::next`, for awaiting the key stream beside the frame stream in
+# one `select!`.
+futures-util = { workspace = true }
+pulldown-cmark = { workspace = true }
+ratatui = { workspace = true }
+serde_json = { workspace = true }
+# The hunks of a tool call's file change, where the agent sent the old and the
+# new text of the file rather than a patch.
+similar = { workspace = true }
+tokio = { workspace = true }
+# The display width the console wraps and cuts text by, so a wide character
+# or an emoji takes the two columns it draws on, and the grapheme clusters
+# it cuts between, so an emoji of several characters is never cut in two.
+unicode-segmentation = { workspace = true }
+unicode-width = { workspace = true }
+
+[dev-dependencies]
+# `start_paused`: the console's turn clock is asserted at a minute without
+# waiting one out.
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

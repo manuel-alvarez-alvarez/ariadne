@@ -9,7 +9,6 @@
 //! harness — gets the plain line protocol of [`run_with_io`], one
 //! `kind · summary` per event, which is what a script reads.
 
-mod markdown;
 mod tui;
 
 use anyhow::Result;
@@ -20,7 +19,9 @@ use ariadne_api::sessions::ConsoleInputRequest;
 use ariadne_client::{Client, SseEvent};
 
 use super::follow::{self, Ending, Next};
-use super::transcript::{self, Filters};
+use ariadne_console::transcript::{Filters, fold};
+
+use super::transcript;
 use crate::output::{Format, note, pager, print_json, view};
 
 /// Open a session's ACP console.
@@ -54,7 +55,7 @@ pub async fn logs(
         return match format {
             Format::Json => print_json(&filters.apply_events(&events)),
             Format::Table => {
-                let items = filters.apply(transcript::fold(&events));
+                let items = filters.apply(fold(&events));
                 pager::page(&transcript::render::transcript(
                     &items,
                     view().width,
@@ -423,7 +424,7 @@ mod tests {
         let (client, server, _) = api(vec![event.clone()], false).await;
 
         let events = snapshot(&client, "session").await.unwrap();
-        let output = transcript::render::transcript(&transcript::fold(&events), None, false);
+        let output = transcript::render::transcript(&fold(&events), None, false);
         assert!(output.contains("turn stopped"), "{output}");
         assert_eq!(
             serde_json::to_value(Filters::default().apply_events(&events)).unwrap(),
@@ -462,7 +463,7 @@ mod tests {
             tail: Some(2),
             ..Filters::default()
         }
-        .apply(transcript::fold(&events));
+        .apply(fold(&events));
         assert_eq!(tail.len(), 2);
         let tail = transcript::render::transcript(&tail, None, false);
         assert!(!tail.contains("old message"), "{tail}");
@@ -475,7 +476,7 @@ mod tests {
             since: Some("2026-09-11T10:30:00Z".parse().unwrap()),
             ..Filters::default()
         }
-        .apply(transcript::fold(&events));
+        .apply(fold(&events));
         assert_eq!(since.len(), 2);
         let since = transcript::render::transcript(&since, None, false);
         assert!(!since.contains("old message"), "{since}");
@@ -484,7 +485,7 @@ mod tests {
             kinds: vec!["agent_message".into()],
             ..Filters::default()
         }
-        .apply(transcript::fold(&events));
+        .apply(fold(&events));
         assert_eq!(messages.len(), 2);
         let messages = transcript::render::transcript(&messages, None, false);
         assert!(!messages.contains("new prompt"), "{messages}");

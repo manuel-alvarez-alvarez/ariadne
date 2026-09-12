@@ -12,8 +12,10 @@ tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/console.rs
   - crates/ariadne-cli/src/commands/console/tui.rs
-  - crates/ariadne-cli/src/commands/console/markdown.rs
   - crates/ariadne-cli/src/commands/transcript.rs
+  - crates/ariadne-console/src/markdown.rs
+  - crates/ariadne-console/src/transcript.rs
+  - crates/ariadne-console/src/tui.rs
 ---
 
 # Sessions and the console
@@ -249,12 +251,12 @@ goal id to a seat (014).
 - The inline pane renders the prompt, the agent's markdown, a tool result
   folded to its last lines with its trailing blank lines trimmed, and the
   status line
-  (`console/tui.rs::a_transcript_renders_the_prompt_the_markdown_the_tool_call_and_the_status_line`),
+  (`ariadne-console/tui.rs::a_transcript_renders_the_prompt_the_markdown_the_tool_call_and_the_status_line`),
   and markdown keeps a heading, a code block and a list apart
-  (`console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
+  (`ariadne-console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
 - The status line counts the running turn and stops between turns
-  (`console/tui.rs::the_status_line_counts_the_running_turn_and_stops_between_turns`),
+  (`ariadne-console/tui.rs::the_status_line_counts_the_running_turn_and_stops_between_turns`),
   a turn already running at attach counts from its prompt
   (`::an_attach_during_a_turn_counts_from_the_prompt_that_began_it`), a
   reconnect's replay keeps the clock of the turn still running
@@ -265,36 +267,36 @@ goal id to a seat (014).
   redraws the pane at the new size
   (`::a_resize_redraws_the_viewport_at_the_new_size`).
 - A line of wide characters wraps at the display width, in a block
-  (`console/tui.rs::a_line_of_wide_characters_wraps_at_the_display_width`)
+  (`ariadne-console/tui.rs::a_line_of_wide_characters_wraps_at_the_display_width`)
   and in markdown
-  (`console/markdown.rs::a_paragraph_of_wide_characters_wraps_at_the_display_width`);
+  (`ariadne-console/markdown.rs::a_paragraph_of_wide_characters_wraps_at_the_display_width`);
   the cursor sits after the columns a wide character draws on
-  (`console/tui.rs::the_cursor_sits_after_the_columns_a_wide_character_draws_on`),
+  (`ariadne-console/tui.rs::the_cursor_sits_after_the_columns_a_wide_character_draws_on`),
   an emoji sequence measured as it is drawn
   (`::the_cursor_sits_after_an_emoji_sequence_as_it_is_drawn`); and a cut
   keeps an emoji sequence whole, in a call's head
   (`::a_head_is_cut_between_whole_emoji_sequences`) and in a code line
-  (`console/markdown.rs::a_code_line_is_cut_between_whole_emoji_sequences`).
+  (`ariadne-console/markdown.rs::a_code_line_is_cut_between_whole_emoji_sequences`).
 - A tool call's head is a glyph per kind and what the call is about — the
   command, the path and line, the pattern and path, the URL — never raw JSON
-  (`console/tui.rs::each_kind_of_call_draws_its_glyph_and_what_it_is_about`);
+  (`ariadne-console/tui.rs::each_kind_of_call_draws_its_glyph_and_what_it_is_about`);
   a completed call draws its duration
   (`::a_completed_call_draws_its_duration`); and updates of one call draw one
   block (`::updates_of_one_call_draw_one_block`), because they fold into the
   open call and the last dates its end
-  (`transcript.rs::updates_of_one_call_fold_into_it_and_the_last_dates_its_end`).
+  (`ariadne-console/transcript.rs::updates_of_one_call_fold_into_it_and_the_last_dates_its_end`).
 - A diff draws a file header, coloured lines and a fold count past the limit
-  (`console/tui.rs::a_diff_draws_its_file_header_its_lines_coloured_and_a_fold_count`),
+  (`ariadne-console/tui.rs::a_diff_draws_its_file_header_its_lines_coloured_and_a_fold_count`),
   and an old text and a new text fold to hunks with context rather than every
   old line and then every new one
-  (`transcript.rs::an_old_and_a_new_text_fold_to_hunks_with_context`). A
+  (`ariadne-console/transcript.rs::an_old_and_a_new_text_fold_to_hunks_with_context`). A
   patch without file headers takes them from the entry's `path`
-  (`transcript.rs::a_patch_without_file_headers_takes_them_from_the_entry_path`).
+  (`ariadne-console/transcript.rs::a_patch_without_file_headers_takes_them_from_the_entry_path`).
 - A permission question draws the call's head and its command or its diff
   above the options
-  (`console/tui.rs::a_permission_question_draws_the_call_above_its_options`).
+  (`ariadne-console/tui.rs::a_permission_question_draws_the_call_above_its_options`).
 - A prompt draws its text alone, never the system prompt
-  (`console/tui.rs::a_prompt_draws_its_text_alone_and_never_the_system_prompt`);
+  (`ariadne-console/tui.rs::a_prompt_draws_its_text_alone_and_never_the_system_prompt`);
   an event carrying only the whole prompt draws none of it
   (`::a_prompt_carrying_only_the_whole_prompt_draws_no_system_prompt`); a
   confirmation without `text` keeps what was typed
@@ -305,19 +307,19 @@ goal id to a seat (014).
   (`::a_daemon_sourced_prompt_draws_under_its_own_marker`).
 - Where the cursor position cannot be read, the pane opens from the bottom
   row
-  (`console/tui.rs::the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read`)
+  (`ariadne-console/tui.rs::the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read`)
   and a finished block still reaches the scrollback
   (`::a_finished_block_reaches_the_scrollback_when_the_cursor_position_cannot_be_read`).
 - Streamed chunks append to the block already open
-  (`console/tui.rs::streamed_chunks_append_to_the_agent_block_that_is_already_open`),
+  (`ariadne-console/tui.rs::streamed_chunks_append_to_the_agent_block_that_is_already_open`),
   and text after a tool call is a block of its own that the stored whole does
   not repeat (`::agent_text_after_a_tool_call_is_a_block_of_its_own`).
 - A permission question is a picker the arrows move
-  (`console/tui.rs::a_permission_question_renders_as_a_picker_the_arrows_move`),
+  (`ariadne-console/tui.rs::a_permission_question_renders_as_a_picker_the_arrows_move`),
   and Enter posts the option it is on
   (`::enter_posts_the_permission_option_the_picker_is_on`).
 - A typed line is posted and its pending prompt shows at once
-  (`console/tui.rs::a_pending_prompt_is_on_the_screen_before_the_daemon_confirms_it`)
+  (`ariadne-console/tui.rs::a_pending_prompt_is_on_the_screen_before_the_daemon_confirms_it`)
   and is replaced by the confirmed one
   (`::a_typed_line_is_posted_and_its_pending_prompt_is_replaced_by_the_confirmed_one`);
   Shift+Enter and Alt+Enter add a line instead
@@ -330,29 +332,40 @@ goal id to a seat (014).
   (`::a_refused_prompt_is_said_on_the_transcript_and_does_not_close_the_console`).
 - A pasted text with two line breaks is one prompt with two line breaks, and
   sends nothing until Enter
-  (`console/tui.rs::a_pasted_text_is_one_prompt_with_its_line_breaks_and_sends_nothing_until_enter`);
+  (`ariadne-console/tui.rs::a_pasted_text_is_one_prompt_with_its_line_breaks_and_sends_nothing_until_enter`);
   it goes in at the cursor, a carriage return being a line break
   (`::a_paste_goes_in_at_the_cursor_and_a_carriage_return_is_a_line_break`).
 - The line-editing keys do what the shell's do: Ctrl-A
-  (`console/tui.rs::ctrl_a_moves_to_the_line_start`), Ctrl-E
+  (`ariadne-console/tui.rs::ctrl_a_moves_to_the_line_start`), Ctrl-E
   (`::ctrl_e_moves_to_the_line_end`), Ctrl-U
   (`::ctrl_u_deletes_to_the_line_start`), Ctrl-K
   (`::ctrl_k_deletes_to_the_line_end`), Ctrl-W
   (`::ctrl_w_deletes_the_word_before_the_cursor`) and the Alt arrows
   (`::alt_left_and_alt_right_move_by_word`).
 - Escape cancels the running turn
-  (`console/tui.rs::escape_during_a_running_turn_cancels_it`), one Ctrl-C
-  keeps the console and the second leaves it
-  (`::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`), and the
-  terminal is given back on every way out, the pane opened from the bottom
-  row included
-  (`::the_terminal_is_given_back_on_the_normal_path_on_an_error_and_on_ctrl_c`),
+  (`ariadne-console/tui.rs::escape_during_a_running_turn_cancels_it`), one
+  Ctrl-C keeps the console and the second leaves it
+  (`::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`), and the pane
+  opened from the bottom row runs the loop and closes like the inline one
+  (`::the_console_runs_and_closes_on_the_fallback_viewport`). The terminal is
+  given back on every way out
+  (`console/tui.rs::the_terminal_is_given_back_on_the_normal_path_on_an_error_and_on_ctrl_c`),
   with bracketed paste off
   (`::the_terminal_is_given_back_with_bracketed_paste_off`).
 - A dropped stream says so
-  (`console/tui.rs::a_dropped_stream_says_reconnecting_on_the_status_line`) and
-  its fresh snapshot is not printed twice
+  (`ariadne-console/tui.rs::a_dropped_stream_says_reconnecting_on_the_status_line`),
+  until the next snapshot says it is back
+  (`::a_dropped_frame_says_reconnecting_until_the_next_snapshot`), and its
+  fresh snapshot is not printed twice
   (`::a_reconnect_redraws_the_fresh_snapshot_without_repeating_the_scrollback`).
+  The loop reads any source and writes any sink: every pane test above
+  drives it from an in-memory one, with no server. The CLI's source reads
+  the daemon's stream as frames and dials it again when it drops
+  (`console/tui.rs::the_stream_is_read_as_frames_and_dialled_again_when_it_drops`),
+  ends with the error when the first dial is refused
+  (`::a_first_dial_the_daemon_refuses_ends_the_stream_with_the_error`), and
+  its sink posts input and cancel and says a refusal
+  (`::the_sink_posts_input_and_cancel_and_says_a_refusal`).
 - A readable transcript folds tool and permission pairs, keeps full text and
   renders plain output without colour
   (`transcript.rs::a_transcript_renders_one_full_block_per_item`,
@@ -381,5 +394,7 @@ goal id to a seat (014).
 `crates/ariadne-cli/src/commands/attach.rs`,
 `crates/ariadne-cli/src/commands/console.rs`,
 `crates/ariadne-cli/src/commands/console/tui.rs`,
-`crates/ariadne-cli/src/commands/console/markdown.rs`,
-`crates/ariadne-cli/src/commands/transcript.rs`.
+`crates/ariadne-cli/src/commands/transcript.rs`,
+`crates/ariadne-console/src/markdown.rs`,
+`crates/ariadne-console/src/transcript.rs`,
+`crates/ariadne-console/src/tui.rs`.

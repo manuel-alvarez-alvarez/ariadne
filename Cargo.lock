@@ -124,6 +124,7 @@ dependencies = [
  "anyhow",
  "ariadne-api",
  "ariadne-client",
+ "ariadne-console",
  "ariadne-core",
  "ariadne-store",
  "axum",
@@ -134,7 +135,6 @@ dependencies = [
  "dirs",
  "futures-util",
  "http",
- "pulldown-cmark",
  "ratatui",
  "rmcp",
  "rustix",
@@ -142,14 +142,11 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sigpipe",
- "similar",
  "sqlx",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "toml",
- "unicode-segmentation",
- "unicode-width",
 ]
 
 [[package]]
@@ -171,6 +168,24 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "ariadne-console"
+version = "0.6.0"
+dependencies = [
+ "anyhow",
+ "ariadne-api",
+ "chrono",
+ "crossterm",
+ "futures-util",
+ "pulldown-cmark",
+ "ratatui",
+ "serde_json",
+ "similar",
+ "tokio",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

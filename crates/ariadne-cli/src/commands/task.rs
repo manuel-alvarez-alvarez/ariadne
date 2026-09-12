@@ -17,7 +17,6 @@ use ariadne_core::{Actor, Landing, PermissionMode, Seat, TaskStatus};
 
 use super::follow;
 use super::resolve::{self, Kind};
-use super::transcript::{Filters, Since};
 use super::{
     Subject, agent_label, agent_pin_label, confirm, one_of, parse_effort_or_default, parse_model,
     query_path,
@@ -28,6 +27,7 @@ use crate::output::{
     ok_id_line, pager, print, print_json, print_kv, print_list, status_line, usage_block,
     usage_cell, view, yes_no,
 };
+use ariadne_console::transcript::{Filters, Since};
 use edit::{Edits, parse_author, parse_reviewer, resolve_repo, update_request};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose

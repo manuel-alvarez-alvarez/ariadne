@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 ariadne-api = { workspace = true }
 ariadne-client = { workspace = true }
+ariadne-console = { workspace = true }
 ariadne-core = { workspace = true, features = ["clap"] }
 # For one question only: whether the database `ariadned` refuses to open is one
 # from before the schema was squashed. `ariadne doctor` is what is left running
@@ -22,16 +23,15 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
-# The three the inline console of `ariadne attach` is made of: the raw mode
-# and the key stream under it, the widgets drawn in its viewport, and the
-# parser that turns an agent's markdown into styled lines.
+# The two the inline console of `ariadne attach` owns here: the raw mode and
+# the key stream under it, and the terminal backend the pane is drawn on. The
+# pane itself is ariadne-console's.
 crossterm = { workspace = true }
 dirs = { workspace = true }
 # `StreamExt::next`, for awaiting the console's key stream beside the daemon's
 # event stream in one `select!`.
 futures-util = { workspace = true }
 http = { workspace = true }
-pulldown-cmark = { workspace = true }
 ratatui = { workspace = true }
 rmcp = { version = "3", features = ["server", "transport-io", "macros"] }
 # For two questions std does not answer: the uid whose launchd domain the
@@ -47,17 +47,9 @@ serde_urlencoded = { workspace = true }
 # macro. The workspace forbids `unsafe_code`, so the `signal(2)` call has to
 # live in a dependency.
 sigpipe = "0.1.3"
-# The hunks of a tool call's file change, where the agent sent the old and the
-# new text of the file rather than a patch.
-similar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
-# The display width the console wraps and cuts text by, so a wide character
-# or an emoji takes the two columns it draws on, and the grapheme clusters
-# it cuts between, so an emoji of several characters is never cut in two.
-unicode-segmentation = { workspace = true }
-unicode-width = { workspace = true }
 
 [dev-dependencies]
 # The console tests run a small API server for the CLI client.
