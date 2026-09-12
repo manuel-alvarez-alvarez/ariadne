@@ -8,8 +8,8 @@ use clap::Subcommand;
 use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus};
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{
-    AdoptOutsideSessionRequest, ConsoleInputRequest, OutsideSessionPageDto, SessionDto,
-    SessionListQuery,
+    AdoptOutsideSessionRequest, ConsoleInputRequest, OutsideSessionListQuery,
+    OutsideSessionPageDto, SessionDto, SessionListQuery,
 };
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::TaskDto;
@@ -110,7 +110,35 @@ pub enum SessionCommand {
         watch: bool,
     },
     /// List agent sessions Ariadne did not start
-    Discover,
+    Discover {
+        /// Filter by registry agent id
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
+        agent: Option<String>,
+        /// Filter by absolute working directory and its descendants
+        #[arg(long, value_name = "PATH")]
+        dir: Option<String>,
+        /// Filter by activity at or after an RFC 3339 time or date
+        #[arg(long, value_name = "TIME", value_parser = parse_since)]
+        since: Option<String>,
+        /// Filter by activity at or before an RFC 3339 time or date
+        #[arg(long, value_name = "TIME", value_parser = parse_until)]
+        until: Option<String>,
+        /// Filter by text in the first prompt
+        #[arg(long, value_name = "TEXT")]
+        search: Option<String>,
+        /// Maximum sessions in one page (default 50, maximum 200)
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+        /// Continue from a previous page
+        #[arg(long, value_name = "TOKEN")]
+        cursor: Option<String>,
+        /// Refresh the daemon's session snapshot before listing
+        #[arg(long)]
+        refresh: bool,
+        /// Fetch every page
+        #[arg(long, conflicts_with = "cursor")]
+        all: bool,
+    },
     /// Resume an outside session as the author of a ready task
     Adopt {
         /// Internal session id from `ariadne session discover`
@@ -183,7 +211,34 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             )
             .await?
         }
-        SessionCommand::Discover => discover(client, format).await?,
+        SessionCommand::Discover {
+            agent,
+            dir,
+            since,
+            until,
+            search,
+            limit,
+            cursor,
+            refresh,
+            all,
+        } => {
+            discover(
+                client,
+                DiscoverOptions {
+                    agent,
+                    dir,
+                    since,
+                    until,
+                    search,
+                    limit,
+                    cursor,
+                    refresh,
+                    all,
+                },
+                format,
+            )
+            .await?
+        }
         SessionCommand::Adopt {
             session_id,
             task_id,
@@ -289,10 +344,132 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
     Ok(())
 }
 
+#[derive(Debug)]
+struct DiscoverOptions {
+    agent: Option<String>,
+    dir: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    search: Option<String>,
+    limit: Option<usize>,
+    cursor: Option<String>,
+    refresh: bool,
+    all: bool,
+}
+
+fn parse_since(value: &str) -> Result<String, String> {
+    parse_discovery_time(value, false)
+}
+
+fn parse_until(value: &str) -> Result<String, String> {
+    parse_discovery_time(value, true)
+}
+
+fn parse_discovery_time(value: &str, end_of_day: bool) -> Result<String, String> {
+    if chrono::DateTime::parse_from_rfc3339(value).is_ok() {
+        return Ok(value.to_string());
+    }
+    let date = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| "must be RFC 3339 or YYYY-MM-DD".to_string())?;
+    let time = match end_of_day {
+        true => date.and_hms_nano_opt(23, 59, 59, 999_999_999),
+        false => date.and_hms_opt(0, 0, 0),
+    }
+    .expect("a calendar day has these times")
+    .and_utc();
+    Ok(time.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
+}
+
+fn outside_sessions_path(options: &DiscoverOptions, cursor: Option<&str>) -> Result<String> {
+    let follows_all_page = cursor.is_some() && options.cursor.is_none();
+    query_path(
+        "/v1/outside-sessions",
+        &OutsideSessionListQuery {
+            agent: options.agent.clone(),
+            dir: options.dir.clone(),
+            since: options.since.clone(),
+            until: options.until.clone(),
+            q: options.search.clone(),
+            limit: options.limit,
+            cursor: cursor
+                .map(str::to_string)
+                .or_else(|| options.cursor.clone()),
+            // Refresh once before an --all traversal. Following pages read
+            // that fresh snapshot instead of replacing it each time.
+            refresh: (options.refresh && !follows_all_page).then_some(true),
+        },
+    )
+}
+
+async fn fetch_outside_sessions(
+    client: &Client,
+    options: &DiscoverOptions,
+) -> Result<OutsideSessionPageDto> {
+    let mut page: OutsideSessionPageDto = client
+        .get_json(&outside_sessions_path(options, None)?)
+        .await?;
+    if !options.all {
+        return Ok(page);
+    }
+    while let Some(cursor) = page.next_cursor.clone() {
+        let next: OutsideSessionPageDto = client
+            .get_json(&outside_sessions_path(options, Some(&cursor))?)
+            .await?;
+        page.sessions.extend(next.sessions);
+        page.next_cursor = next.next_cursor;
+    }
+    Ok(page)
+}
+
+fn discovery_count(page: &OutsideSessionPageDto) -> String {
+    format!("{} of {} sessions", page.sessions.len(), page.total)
+}
+
+fn next_discovery_note(page: &OutsideSessionPageDto, options: &DiscoverOptions) -> Option<String> {
+    page.next_cursor
+        .as_deref()
+        .map(|cursor| format!("Next: {}", next_discovery_command(options, cursor)))
+}
+
+fn next_discovery_command(options: &DiscoverOptions, cursor: &str) -> String {
+    let mut args = vec!["ariadne".to_string(), "session".into(), "discover".into()];
+    push_discovery_option(&mut args, "--agent", options.agent.as_deref());
+    push_discovery_option(&mut args, "--dir", options.dir.as_deref());
+    push_discovery_option(&mut args, "--since", options.since.as_deref());
+    push_discovery_option(&mut args, "--until", options.until.as_deref());
+    push_discovery_option(&mut args, "--search", options.search.as_deref());
+    if let Some(limit) = options.limit {
+        push_discovery_option(&mut args, "--limit", Some(&limit.to_string()));
+    }
+    push_discovery_option(&mut args, "--cursor", Some(cursor));
+    args.join(" ")
+}
+
+fn push_discovery_option(args: &mut Vec<String>, flag: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        args.push(flag.to_string());
+        args.push(shell_arg(value));
+    }
+}
+
+fn shell_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-._/:@+".contains(c))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
 /// `session discover`: the stored sessions of every ACP agent that can list
-/// them, minus the ones the daemon already owns — the first page of them.
-async fn discover(client: &Client, format: Format) -> Result<()> {
-    let page: OutsideSessionPageDto = client.get_json("/v1/outside-sessions").await?;
+/// them, minus the ones the daemon already owns.
+async fn discover(client: &Client, options: DiscoverOptions, format: Format) -> Result<()> {
+    let page = fetch_outside_sessions(client, &options).await?;
+    if format == Format::Json {
+        return crate::output::print_json(&page);
+    }
     print_list(
         format,
         &page.sessions,
@@ -311,11 +488,15 @@ async fn discover(client: &Client, format: Format) -> Result<()> {
             Some("start an ACP agent that can list its sessions in a project"),
         ),
     )?;
-    if format == Format::Table {
-        let agents: Vec<AcpAgentDto> = client.get_json("/v1/acp-agents").await?;
-        for line in unavailable_acp_agents(&agents) {
+    if !view().quiet {
+        println!("{}", discovery_count(&page));
+        if let Some(line) = next_discovery_note(&page, &options) {
             note(&line);
         }
+    }
+    let agents: Vec<AcpAgentDto> = client.get_json("/v1/acp-agents").await?;
+    for line in unavailable_acp_agents(&agents) {
+        note(&line);
     }
     Ok(())
 }
@@ -613,6 +794,189 @@ mod tests {
 
     use crate::commands::fixtures::session;
     use crate::output::{View, kv_block, style};
+
+    fn discover_options() -> DiscoverOptions {
+        DiscoverOptions {
+            agent: None,
+            dir: None,
+            since: None,
+            until: None,
+            search: None,
+            limit: None,
+            cursor: None,
+            refresh: false,
+            all: false,
+        }
+    }
+
+    #[test]
+    fn every_discover_flag_reaches_its_query_parameter() {
+        let options = DiscoverOptions {
+            agent: Some("codex-acp".into()),
+            dir: Some("/work/api".into()),
+            since: Some("2026-09-01T00:00:00Z".into()),
+            until: Some("2026-09-12T12:30:00+02:00".into()),
+            search: Some("rate limit".into()),
+            limit: Some(25),
+            cursor: Some("next/page".into()),
+            refresh: true,
+            all: false,
+        };
+
+        assert_eq!(
+            outside_sessions_path(&options, None).unwrap(),
+            "/v1/outside-sessions?agent=codex-acp&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
+        );
+    }
+
+    #[test]
+    fn a_date_is_the_utc_day_boundary_for_discovery() {
+        assert_eq!(parse_since("2026-09-12").unwrap(), "2026-09-12T00:00:00Z");
+        assert_eq!(
+            parse_until("2026-09-12").unwrap(),
+            "2026-09-12T23:59:59.999999999Z"
+        );
+        assert_eq!(
+            parse_since("2026-09-12T09:30:00+02:00").unwrap(),
+            "2026-09-12T09:30:00+02:00"
+        );
+        assert!(parse_until("12/09/2026").is_err());
+    }
+
+    fn outside_session(id: &str) -> ariadne_api::sessions::OutsideSessionDto {
+        ariadne_api::sessions::OutsideSessionDto {
+            agent_id: "codex-acp".into(),
+            internal_session_id: id.into(),
+            working_directory: "/work/api".into(),
+            last_activity_at: "2026-09-12T12:00:00Z".into(),
+            first_prompt: format!("Prompt for {id}"),
+        }
+    }
+
+    fn outside_page(
+        ids: &[&str],
+        next_cursor: Option<&str>,
+        total: usize,
+    ) -> OutsideSessionPageDto {
+        OutsideSessionPageDto {
+            sessions: ids.iter().map(|id| outside_session(id)).collect(),
+            next_cursor: next_cursor.map(str::to_string),
+            total,
+            snapshot_at: "2026-09-12T12:00:00Z".into(),
+        }
+    }
+
+    async fn outside_api(
+        pages: Vec<OutsideSessionPageDto>,
+    ) -> (
+        Client,
+        tokio::task::JoinHandle<()>,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        use axum::Router;
+        use axum::extract::{RawQuery, State};
+        use axum::routing::get;
+
+        #[derive(Clone)]
+        struct Api {
+            pages:
+                std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<OutsideSessionPageDto>>>,
+            queries: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        }
+
+        async fn list(
+            State(api): State<Api>,
+            RawQuery(query): RawQuery,
+        ) -> axum::Json<OutsideSessionPageDto> {
+            api.queries.lock().unwrap().push(query.unwrap_or_default());
+            axum::Json(api.pages.lock().unwrap().pop_front().expect("page"))
+        }
+
+        let queries = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let api = Api {
+            pages: std::sync::Arc::new(std::sync::Mutex::new(pages.into())),
+            queries: queries.clone(),
+        };
+        let app = Router::new()
+            .route("/v1/outside-sessions", get(list))
+            .with_state(api);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (Client::tcp(format!("http://{address}")), server, queries)
+    }
+
+    #[tokio::test]
+    async fn all_fetches_every_page_and_keeps_each_session_once() {
+        let (client, server, queries) = outside_api(vec![
+            outside_page(&["one", "two"], Some("after-two"), 3),
+            outside_page(&["three"], None, 3),
+        ])
+        .await;
+        let options = DiscoverOptions {
+            agent: Some("codex-acp".into()),
+            limit: Some(2),
+            refresh: true,
+            all: true,
+            ..discover_options()
+        };
+
+        let page = fetch_outside_sessions(&client, &options).await.unwrap();
+        server.abort();
+
+        assert_eq!(
+            page.sessions
+                .iter()
+                .map(|session| session.internal_session_id.as_str())
+                .collect::<Vec<_>>(),
+            ["one", "two", "three"]
+        );
+        assert_eq!(page.next_cursor, None);
+        assert_eq!(page.total, 3);
+        assert_eq!(
+            *queries.lock().unwrap(),
+            [
+                "agent=codex-acp&limit=2&refresh=true",
+                "agent=codex-acp&limit=2&cursor=after-two",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_next_cursor_prints_the_command_for_the_next_page() {
+        let options = DiscoverOptions {
+            agent: Some("codex-acp".into()),
+            dir: Some("/work/api service".into()),
+            search: Some("rate limit".into()),
+            limit: Some(25),
+            refresh: true,
+            ..discover_options()
+        };
+        let page = outside_page(&["one"], Some("after-one"), 8);
+
+        assert_eq!(
+            next_discovery_note(&page, &options).as_deref(),
+            Some(
+                "Next: ariadne session discover --agent codex-acp --dir '/work/api service' --search 'rate limit' --limit 25 --cursor after-one"
+            )
+        );
+    }
+
+    #[test]
+    fn the_last_page_prints_no_next_command() {
+        assert_eq!(
+            next_discovery_note(&outside_page(&["one"], None, 1), &discover_options()),
+            None
+        );
+    }
+
+    #[test]
+    fn the_discovery_count_is_shown_over_the_total() {
+        assert_eq!(
+            discovery_count(&outside_page(&["one", "two"], Some("more"), 17)),
+            "2 of 17 sessions"
+        );
+    }
 
     fn context() -> SessionContext {
         SessionContext {

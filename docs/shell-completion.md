@@ -6,7 +6,8 @@ right now — task, goal and session ids with their status and title beside
 them, skill names with the line each one says about itself, and the models an
 agent can be pinned to. They are verb-aware, too: `task retry` offers the failed tasks,
 `session kill` the live sessions, `session resume` the ended ones, `goal rm`
-the goals it will actually delete.
+the goals it will actually delete, and `session discover --agent` the registry
+agents.
 
 [`scripts/install.sh`](../scripts/install.sh) wires this up for bash and zsh —
 see [Installing Ariadne](install.md). To do it yourself, or for a shell it

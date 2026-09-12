@@ -134,8 +134,16 @@ same binary also serves (013).
     is launched with, keyed by its registry id. `update` takes a flag list, a
     clear, or a reset, and only one of them, and a flag value that reads like
     a flag of the CLI's own is taken as it is.
-26. `ariadne session discover` lists the stored sessions of every ACP agent
-    that can list them, and names each agent that cannot with its reason.
+26. `ariadne session discover` lists filtered pages of the stored sessions of
+    every ACP agent that can list them, and names each agent that cannot with
+    its reason. It sends `--agent`, `--dir`, `--since`, `--until`, `--search`,
+    `--limit`, `--cursor` and `--refresh` to the daemon; `--search` becomes
+    `q`, and `--agent` completes registry agent ids. A date activity bound is
+    the start of its UTC day for `--since` and the end for `--until`.
+    The table ends with `<shown> of <total> sessions` and a reusable next-page
+    command when the daemon returns a cursor. `--all` follows every cursor
+    into one table and cannot be combined with `--cursor`. JSON preserves the
+    page object, while quiet output prints its session ids.
     `ariadne session adopt` assigns one to a ready task through the same REST
     surface (020).
 27. `ariadne memory ls|search|delete` reads and removes active repository
@@ -253,8 +261,19 @@ same binary also serves (013).
   `::an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is`), and its
   listing keeps the `agent` column name
   (`agent.rs::the_agent_keeps_the_agent_column_name`).
-- `session discover` names each agent that cannot list sessions with its
-  reason
+- `session discover` sends every filter and page flag with UTC date bounds,
+  follows all pages without repeating a session, prints the count and the
+  reusable next-page command only when one exists, and refuses `--all` with
+  `--cursor`
+  (`session.rs::every_discover_flag_reaches_its_query_parameter`,
+  `::a_date_is_the_utc_day_boundary_for_discovery`,
+  `::all_fetches_every_page_and_keeps_each_session_once`,
+  `::a_next_cursor_prints_the_command_for_the_next_page`,
+  `::the_last_page_prints_no_next_command`,
+  `::the_discovery_count_is_shown_over_the_total`,
+  `cli/tests.rs::discover_takes_filters_pages_refresh_and_all`,
+  `::discover_all_and_cursor_are_exclusive`). It names each agent that cannot
+  list sessions with its reason
   (`session.rs::an_agent_without_the_capability_is_named_with_its_reason`).
 - The memory commands are classified like other lists and mutations
   (`cli/tests.rs::every_command_in_the_tree_is_classified`), and delete takes

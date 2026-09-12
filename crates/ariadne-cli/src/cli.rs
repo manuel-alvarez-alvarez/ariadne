@@ -98,6 +98,8 @@ Examples:
   ariadne session ls                       # every live session
   ariadne session ls --all --goal <goal-id>
   ariadne session discover                 # sessions started outside Ariadne
+  ariadne session discover --agent codex-acp --since 2026-09-01 --limit 25
+  ariadne session discover --cursor <token>
   ariadne session adopt <session-id> <task-id> --agent codex-acp
   ariadne session logs <session-id>        # its transcript so far
   ariadne session resume <session-id>      # new agent process, same conversation

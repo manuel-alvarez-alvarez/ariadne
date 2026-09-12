@@ -304,6 +304,71 @@ fn quiet_parses_after_a_mutation() {
 }
 
 #[test]
+fn discover_takes_filters_pages_refresh_and_all() {
+    let Command::Session {
+        command:
+            SessionCommand::Discover {
+                agent,
+                dir,
+                since,
+                until,
+                search,
+                limit,
+                cursor,
+                refresh,
+                all,
+            },
+    } = parse(&[
+        "ariadne",
+        "session",
+        "discover",
+        "--agent",
+        "codex-acp",
+        "--dir",
+        "/work/api",
+        "--since",
+        "2026-09-01",
+        "--until",
+        "2026-09-12T12:30:00+02:00",
+        "--search",
+        "rate limit",
+        "--limit",
+        "25",
+        "--refresh",
+        "--all",
+    ])
+    .command
+    else {
+        panic!("session discover");
+    };
+
+    assert_eq!(agent.as_deref(), Some("codex-acp"));
+    assert_eq!(dir.as_deref(), Some("/work/api"));
+    assert_eq!(since.as_deref(), Some("2026-09-01T00:00:00Z"));
+    assert_eq!(until.as_deref(), Some("2026-09-12T12:30:00+02:00"));
+    assert_eq!(search.as_deref(), Some("rate limit"));
+    assert_eq!(limit, Some(25));
+    assert_eq!(cursor, None);
+    assert!(refresh);
+    assert!(all);
+}
+
+#[test]
+fn discover_all_and_cursor_are_exclusive() {
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "session",
+            "discover",
+            "--all",
+            "--cursor",
+            "next-page",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
 fn memory_delete_takes_the_entry_and_its_repository() {
     let Command::Memory {
         command: MemoryCommand::Delete { id, repo, yes },

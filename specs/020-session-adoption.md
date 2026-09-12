@@ -74,9 +74,10 @@ that Ariadne started itself (007, 021), and the desktop screen over this
    `session/resume`. The task then follows its normal author and review
    lifecycle, and the author is reached afterwards the way any session is:
    `POST /v1/sessions/{id}/console/input` (008).
-8. `ariadne session discover` lists the first page of the outside sessions,
-   and below the table one line per registry agent that cannot list its
-   sessions, naming why. `ariadne session adopt <session-id> <task-id>
+8. `ariadne session discover` filters and pages the outside sessions, prints
+   the shown and total counts with a reusable next-page command, or follows
+   every page with `--all`; below the table it names why each unavailable
+   registry agent cannot list sessions. `ariadne session adopt <session-id> <task-id>
    --agent <agent-id>` adopts one and prints its author session.
 
 ## Acceptance criteria
@@ -124,8 +125,19 @@ that Ariadne started itself (007, 021), and the desktop screen over this
   (`acp_session_adoption.rs::adoption_is_refused_across_acp_agents`), and an
   agent session cannot adopt into another task
   (`::an_agent_cannot_adopt_a_session_for_another_task`).
-- `session discover` names each agent that cannot list its sessions, with its
-  reason
+- `session discover` sends every filter and page flag with UTC date bounds,
+  follows all pages without repeating a session, prints the count and the
+  reusable next-page command only when one exists, and refuses `--all` with
+  `--cursor`
+  (`commands/session.rs::every_discover_flag_reaches_its_query_parameter`,
+  `::a_date_is_the_utc_day_boundary_for_discovery`,
+  `::all_fetches_every_page_and_keeps_each_session_once`,
+  `::a_next_cursor_prints_the_command_for_the_next_page`,
+  `::the_last_page_prints_no_next_command`,
+  `::the_discovery_count_is_shown_over_the_total`,
+  `cli/tests.rs::discover_takes_filters_pages_refresh_and_all`,
+  `::discover_all_and_cursor_are_exclusive`). It names each agent that cannot
+  list sessions with its reason
   (`commands/session.rs::an_agent_without_the_capability_is_named_with_its_reason`).
 
 ## Known gap
