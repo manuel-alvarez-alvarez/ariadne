@@ -77,11 +77,16 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["goals",        "list", filters]   ["goals",    "detail", id]
 ["tasks",        "list", filters]   ["tasks",    "detail", id]
 ["sessions",     "list", filters]   ["sessions", "detail", id]
+["outside-sessions", "list", filters]
 ["skills",       "list", {}]        ["skills",   "detail", name]
 ["repositories", "list", filters]   ["repositories", "detail", id]
 ["agents",       "list", {}]        ["models",   "list", {}]
 ["agent-events", "list", filters]   ["memories", "list", filters]
 ```
+
+The outside-sessions list is the one key with no detail beside it, and the one
+list the daemon pages: its cursor stays out of the key, because the pages of
+one filter are the pages of one infinite query.
 
 Sub-resources hang off their detail key: `["tasks", "detail", id, "reviews"]`,
 `… "transitions"`, `… "diff"`. Two consequences the event dispatcher

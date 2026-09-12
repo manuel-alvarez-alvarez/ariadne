@@ -17,7 +17,12 @@
  * the original.
  */
 
-import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
+import {
+  infiniteQueryOptions,
+  queryOptions,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query"
 
 import {
   api,
@@ -85,15 +90,50 @@ export function sessionQueryOptions(id: string) {
   })
 }
 
+/** What the outside-sessions list can be narrowed by, as the daemon takes it. */
+export interface OutsideSessionListFilters {
+  agent?: string
+  dir?: string
+  /** RFC 3339, not a day: see `outside-filters.ts`. */
+  since?: string
+  until?: string
+  q?: string
+}
+
 /**
  * CLI conversations Ariadne did not start, ready for the user to adopt: the
- * first page the daemon cuts from its snapshot, read down to its rows.
+ * pages the daemon cuts from its snapshot, under one filter.
+ *
+ * `next_cursor` is the next page's parameter and a null one is the last page,
+ * so the cursor never reaches the key — the pages of one filter are one cache
+ * entry, which is what lets the table grow by a page rather than reload.
+ *
+ * `takeRefresh` is read at request time rather than keyed on: asking every
+ * agent again is what the Refresh button does, not what the list is narrowed
+ * by, and its answer belongs in the entry the filters already name. It is
+ * taken, not read — the flag it answers from is spent on the first request of
+ * a refetch, which is the first page.
  */
-export function outsideSessionsQueryOptions() {
-  return queryOptions({
-    queryKey: qk.outsideSessions.list(),
-    queryFn: () => unwrap(api().GET("/v1/outside-sessions")),
-    select: (page) => page.sessions,
+export function outsideSessionsQueryOptions(
+  filters: OutsideSessionListFilters = {},
+  takeRefresh: () => boolean = () => false,
+) {
+  return infiniteQueryOptions({
+    queryKey: qk.outsideSessions.list(filters),
+    queryFn: ({ pageParam }) =>
+      unwrap(
+        api().GET("/v1/outside-sessions", {
+          params: {
+            query: {
+              ...filters,
+              cursor: pageParam ?? undefined,
+              refresh: takeRefresh() || undefined,
+            },
+          },
+        }),
+      ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.next_cursor ?? null,
   })
 }
 

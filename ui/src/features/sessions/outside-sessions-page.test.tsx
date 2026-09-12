@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { screen, waitFor } from "@testing-library/react"
+import { fireEvent, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
@@ -70,14 +70,42 @@ function anAcpAgent(overrides: Partial<AcpAgentDto> = {}): AcpAgentDto {
   }
 }
 
+/** Another agent's session, for the pages the cursor walks. */
+const LATER: OutsideSessionDto = {
+  agent_id: "codex-acp",
+  internal_session_id: "acp-session-2",
+  working_directory: "/Users/me/dev/ariadne",
+  last_activity_at: "2026-09-09T08:00:00Z",
+  first_prompt: "Rename the store module.",
+}
+
+type OutsideSessionPageDto = components["schemas"]["OutsideSessionPageDto"]
+
+/** One page of the daemon's answer, last by default. */
+function aPage(
+  sessions: OutsideSessionDto[],
+  page: Partial<OutsideSessionPageDto> = {},
+): OutsideSessionPageDto {
+  return {
+    sessions,
+    next_cursor: null,
+    total: sessions.length,
+    snapshot_at: "2026-09-10T09:30:00Z",
+    ...page,
+  }
+}
+
 function stubDaemon({
   adopted,
   outside = [OUTSIDE],
+  page,
   tasks = [READY],
   acpAgents = [],
 }: {
   adopted?: SessionDto
   outside?: OutsideSessionDto[]
+  /** What each listing request is answered with, by the query it carries. */
+  page?: (query: URLSearchParams) => OutsideSessionPageDto
   tasks?: TaskDto[]
   acpAgents?: AcpAgentDto[]
 } = {}) {
@@ -85,14 +113,7 @@ function stubDaemon({
     const request = input instanceof Request ? input : new Request(input, init)
     const url = new URL(request.url)
     if (url.pathname === "/v1/outside-sessions") {
-      return Promise.resolve(
-        jsonResponse({
-          sessions: outside,
-          next_cursor: null,
-          total: outside.length,
-          snapshot_at: "2026-09-10T09:30:00Z",
-        }),
-      )
+      return Promise.resolve(jsonResponse(page ? page(url.searchParams) : aPage(outside)))
     }
     if (url.pathname === "/v1/acp-agents") return Promise.resolve(jsonResponse(acpAgents))
     if (url.pathname === "/v1/tasks") return Promise.resolve(jsonResponse(tasks))
@@ -103,6 +124,19 @@ function stubDaemon({
     }
     return Promise.resolve(jsonResponse([]))
   })
+}
+
+/** The query of every listing request the screen has made, oldest first. */
+function listingQueries(): URLSearchParams[] {
+  return daemonFetch.mock.calls
+    .map(([input, init]) => (input instanceof Request ? input : new Request(input, init)))
+    .map(({ url }) => new URL(url))
+    .filter(({ pathname }) => pathname === "/v1/outside-sessions")
+    .map(({ searchParams }) => searchParams)
+}
+
+function field(label: string): HTMLInputElement {
+  return screen.getByLabelText(label) as HTMLInputElement
 }
 
 beforeEach(() => stubDaemon())
@@ -153,6 +187,104 @@ it("offers only the ready tasks whose author runs the session's agent", async ()
 
   expect(await screen.findByRole("button", { name: `Use ${READY.title}` })).toBeTruthy()
   expect(screen.queryByRole("button", { name: `Use ${ELSEWHERE.title}` })).toBeNull()
+})
+
+it("sends each filter to the daemon under the name that filter has", async () => {
+  stubDaemon({ acpAgents: [anAcpAgent()] })
+  const user = userEvent.setup()
+  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
+  await screen.findByText(OUTSIDE.first_prompt)
+
+  await user.click(screen.getByRole("button", { name: "Filter by agent" }))
+  await user.click(await screen.findByRole("menuitemradio", { name: OUTSIDE.agent_id }))
+  await user.type(field("Working directory"), "/Users/me/dev")
+  await user.type(field("Search first prompts"), "flaky")
+  // Five keystrokes are in and the typing has not settled, so no request
+  // carries a search yet. A field that asked per letter would have sent five
+  // by now — `q=f`, `q=fl`, and so on.
+  expect(listingQueries().filter((query) => query.get("q") !== null)).toHaveLength(0)
+  // A date picker commits a whole day at once, which is what the daemon is
+  // asked for: the first instant of the day as `since`, its last as `until`.
+  fireEvent.change(field("Active since"), { target: { value: "2026-09-01" } })
+  fireEvent.change(field("Active until"), { target: { value: "2026-09-10" } })
+
+  await waitFor(
+    () => {
+      const query = listingQueries().at(-1)
+      expect(query?.get("agent")).toBe(OUTSIDE.agent_id)
+      expect(query?.get("dir")).toBe("/Users/me/dev")
+      expect(query?.get("q")).toBe("flaky")
+      expect(query?.get("since")).toBe("2026-09-01T00:00:00Z")
+      expect(query?.get("until")).toBe("2026-09-10T23:59:59.999999999Z")
+    },
+    { timeout: 3000 },
+  )
+})
+
+it("opens on the filters its URL carries, and asks the daemon for them", async () => {
+  renderScreen(<OutsideSessionsPage />, {
+    route:
+      "/sessions/outside?agent=claude-agent-acp&dir=%2FUsers%2Fme%2Fdev&since=2026-09-01&until=2026-09-10&q=flaky",
+  })
+
+  await screen.findByText(OUTSIDE.first_prompt)
+  expect(screen.getByRole("button", { name: "Filter by agent" }).textContent).toContain(
+    "claude-agent-acp",
+  )
+  expect(field("Working directory").value).toBe("/Users/me/dev")
+  expect(field("Active since").value).toBe("2026-09-01")
+  expect(field("Active until").value).toBe("2026-09-10")
+  expect(field("Search first prompts").value).toBe("flaky")
+
+  const query = listingQueries().at(-1)
+  expect(query?.get("agent")).toBe("claude-agent-acp")
+  expect(query?.get("dir")).toBe("/Users/me/dev")
+  expect(query?.get("since")).toBe("2026-09-01T00:00:00Z")
+  expect(query?.get("until")).toBe("2026-09-10T23:59:59.999999999Z")
+  expect(query?.get("q")).toBe("flaky")
+})
+
+it("loads the page after the cursor the daemon gave, keeping the rows above it", async () => {
+  stubDaemon({
+    page: (query) =>
+      query.get("cursor") === "cursor-1"
+        ? aPage([LATER], { total: 2 })
+        : aPage([OUTSIDE], { next_cursor: "cursor-1", total: 2 }),
+  })
+  const user = userEvent.setup()
+  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
+  await screen.findByText(OUTSIDE.first_prompt)
+
+  await user.click(screen.getByRole("button", { name: "Load more" }))
+
+  expect(await screen.findByText(LATER.first_prompt)).toBeTruthy()
+  expect(screen.getByText(OUTSIDE.first_prompt)).toBeTruthy()
+  expect(listingQueries().at(-1)?.get("cursor")).toBe("cursor-1")
+})
+
+it("asks every agent again when Refresh is pressed", async () => {
+  const user = userEvent.setup()
+  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
+  // Closed while the first page is in flight: a refetch over a running request
+  // is that request, which carries no `refresh` of its own.
+  expect((screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement).disabled).toBe(true)
+
+  await screen.findByText(OUTSIDE.first_prompt)
+  expect(listingQueries().at(-1)?.get("refresh")).toBeNull()
+
+  await user.click(screen.getByRole("button", { name: "Refresh" }))
+
+  await waitFor(() => expect(listingQueries().at(-1)?.get("refresh")).toBe("true"))
+  // Spent on that request alone: the page after it is cut from the snapshot
+  // that answer took.
+  expect(listingQueries().filter((query) => query.get("refresh") === "true")).toHaveLength(1)
+})
+
+it("counts the sessions on screen out of every one the filters leave", async () => {
+  stubDaemon({ page: () => aPage([OUTSIDE], { next_cursor: "cursor-1", total: 3 }) })
+  renderScreen(<OutsideSessionsPage />, { route: "/sessions/outside" })
+
+  expect(await screen.findByText("1 of 3")).toBeTruthy()
 })
 
 it("shows why an ACP agent without the session-listing capability offers no adoption", async () => {

@@ -3,10 +3,18 @@
  * started by Ariadne. The user can make one the author of a ready task here, which is
  * the desktop equivalent of `ariadne session discover` and `ariadne session
  * adopt`.
+ *
+ * The daemon answers one filtered page of its own snapshot, so the screen is a
+ * filter bar over an infinite query: every filter is a URL param and a query
+ * parameter (`outside-filters.ts`), the table grows by a page under Load more,
+ * and the count line says how much of the total is on screen. Refresh is the
+ * one control that is not a filter — it asks every agent again before the
+ * daemon answers.
  */
 
-import { useQuery } from "@tanstack/react-query"
-import { useMemo, useState } from "react"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import { ChevronDownIcon, RefreshCwIcon } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import type { OutsideSessionDto, TaskDto } from "@/api"
@@ -15,6 +23,15 @@ import { DataTable } from "@/components/data-table"
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
 import { acpAgentsQueryOptions } from "@/features/agents/queries"
@@ -23,7 +40,16 @@ import { taskAuthor } from "@/features/tasks/agents"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { cn } from "@/lib/format"
 
+import { ALL } from "./filters"
+import { type OutsideFilterParam, useOutsideSessionFilters } from "./outside-filters"
 import { outsideSessionsQueryOptions, useAdoptOutsideSession } from "./queries"
+
+/**
+ * How long a typed filter waits for the next keystroke before the daemon is
+ * asked. Both text fields wait: a path is typed as slowly as a search, and
+ * neither is worth a request per character.
+ */
+const TYPING_SETTLES_MS = 250
 
 /**
  * The agent cell and the dialog's wording name the agent by its registry id,
@@ -34,8 +60,25 @@ function sessionAgentLabel(session: OutsideSessionDto): string {
 }
 
 export function OutsideSessionsPage() {
-  const sessions = useQuery(outsideSessionsQueryOptions())
+  const { values, filters, filterBy } = useOutsideSessionFilters()
+  // Spent on the next request the query makes, which on a refetch is the first
+  // page: Refresh asks the agents again, and the pages behind it follow from
+  // the snapshot that answer took.
+  const refreshWanted = useRef(false)
+  const sessions = useInfiniteQuery(
+    outsideSessionsQueryOptions(filters, () => {
+      const wanted = refreshWanted.current
+      refreshWanted.current = false
+      return wanted
+    }),
+  )
   const [selected, setSelected] = useState<OutsideSessionDto | null>(null)
+
+  const pages = sessions.data?.pages
+  const rows = useMemo(() => (pages ?? []).flatMap((page) => page.sessions), [pages])
+  // From the page that answered last, which is the freshest count of what the
+  // filters leave.
+  const total = pages?.at(-1)?.total ?? rows.length
 
   return (
     <div className="flex flex-col gap-4">
@@ -43,8 +86,69 @@ export function OutsideSessionsPage() {
         title="Outside sessions"
         description="Conversations stored by an ACP agent that Ariadne can continue as a task author."
       />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <AgentFilter value={values.agent} onSelect={(agent) => filterBy("agent", agent)} />
+        <TypedFilter
+          label="Working directory"
+          placeholder="/Users/me/dev"
+          value={values.dir}
+          onSettle={filterBy}
+          param="dir"
+          className="w-56 font-mono text-xs"
+        />
+        <Input
+          type="date"
+          aria-label="Active since"
+          className="w-40"
+          value={values.since}
+          onChange={(event) => filterBy("since", event.target.value)}
+        />
+        <Input
+          type="date"
+          aria-label="Active until"
+          className="w-40"
+          value={values.until}
+          onChange={(event) => filterBy("until", event.target.value)}
+        />
+        <TypedFilter
+          label="Search first prompts"
+          placeholder="Search first prompts"
+          value={values.q}
+          onSettle={filterBy}
+          param="q"
+          className="w-64"
+        />
+        <Button
+          variant="outline"
+          // Busy while the first page is in flight, its own refetch included:
+          // a refetch asked for over a request that is already running is the
+          // running one, which carries no `refresh`, and the flag this button
+          // set would then be spent on whatever asked next. A page loading
+          // underneath is Load more's spinner rather than this one's.
+          pending={sessions.isFetching && !sessions.isFetchingNextPage}
+          onClick={() => {
+            refreshWanted.current = true
+            void sessions.refetch()
+          }}
+        >
+          <RefreshCwIcon />
+          Refresh
+        </Button>
+      </div>
+
+      {pages ? (
+        <p className="text-sm text-muted-foreground">{`${rows.length} of ${total}`}</p>
+      ) : null}
+
       <DataTable
-        query={sessions}
+        query={{
+          data: pages ? rows : undefined,
+          isPending: sessions.isPending,
+          isError: sessions.isError,
+          error: sessions.error,
+          refetch: () => void sessions.refetch(),
+        }}
         errorTitle="Could not load outside sessions"
         columns={[
           { header: "Agent" },
@@ -87,9 +191,107 @@ export function OutsideSessionsPage() {
           </TableRow>
         )}
       />
+      {sessions.hasNextPage ? (
+        <Button
+          variant="outline"
+          className="self-center"
+          pending={sessions.isFetchingNextPage}
+          onClick={() => void sessions.fetchNextPage()}
+        >
+          Load more
+        </Button>
+      ) : null}
       <UnavailableAcpAgents />
       <AdoptOutsideSessionDialog session={selected} onClose={() => setSelected(null)} />
     </div>
+  )
+}
+
+/**
+ * Which ACP agent's stored sessions to show, out of the registry the table
+ * below already reads (`GET /v1/acp-agents`), so the menu costs no request of
+ * its own. An agent id is the whole of the choice: it is what tells one ACP
+ * agent from another everywhere else on this screen.
+ */
+function AgentFilter({ value, onSelect }: { value: string; onSelect: (value: string) => void }) {
+  const agents = useQuery(acpAgentsQueryOptions())
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="outline"
+            aria-label="Filter by agent"
+            className="w-48 justify-between font-normal"
+          />
+        }
+      >
+        {value || "All agents"}
+        <ChevronDownIcon className="text-muted-foreground" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-48">
+        <DropdownMenuRadioGroup value={value || ALL} onValueChange={onSelect}>
+          <DropdownMenuRadioItem value={ALL}>All agents</DropdownMenuRadioItem>
+          <DropdownMenuSeparator />
+          {(agents.data ?? []).map((agent) => (
+            <DropdownMenuRadioItem key={agent.id} value={agent.id}>
+              {agent.id}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
+ * A filter that is typed: the field shows every keystroke, and the daemon is
+ * asked once the typing has settled (see {@link TYPING_SETTLES_MS}).
+ *
+ * The URL is written on the same beat, so a narrowed screen is still the link
+ * it says it is — one entry per settled word rather than one per character.
+ */
+function TypedFilter({
+  label,
+  placeholder,
+  value,
+  param,
+  onSettle,
+  className,
+}: {
+  label: string
+  placeholder: string
+  /** What the URL carries, which is what the field opens on. */
+  value: string
+  param: OutsideFilterParam
+  onSettle: (param: OutsideFilterParam, value: string) => void
+  className?: string
+}) {
+  const [text, setText] = useState(value)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The handler of the beat it fires on rather than the one the keystroke saw:
+  // it applies its filter over the params as they are then, and the field
+  // beside this one may have settled in between.
+  const settle = useRef(onSettle)
+  settle.current = onSettle
+
+  useEffect(() => () => clearTimeout(timer.current ?? undefined), [])
+
+  return (
+    <Input
+      value={text}
+      aria-label={label}
+      placeholder={placeholder}
+      autoComplete="off"
+      className={className}
+      onChange={(event) => {
+        const next = event.target.value
+        setText(next)
+        clearTimeout(timer.current ?? undefined)
+        timer.current = setTimeout(() => settle.current(param, next), TYPING_SETTLES_MS)
+      }}
+    />
   )
 }
 

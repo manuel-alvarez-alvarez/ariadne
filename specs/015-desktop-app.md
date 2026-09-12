@@ -82,7 +82,21 @@ Out: the daemon endpoints themselves (012).
     daemon; its raw payload stays available under the row.
 18. The outside-sessions view lists each stored session of an ACP agent from
     `GET /v1/outside-sessions`: its registry agent id, working directory,
-    last activity and first prompt. It offers only the ready tasks whose
+    last activity and first prompt. A filter bar above the table narrows it by
+    agent — the registry of `GET /v1/acp-agents` — working directory, a since
+    day, an until day, and a search over the first prompts. Each filter is a
+    URL search param under the daemon's own name for it (`?agent=`, `?dir=`,
+    `?since=`, `?until=`, `?q=`), so a narrowed screen is what its URL says
+    and opens again with those filters set; a typed one reaches the daemon
+    once the typing has settled rather than on every keystroke, and a day
+    reaches it as the moment that bounds it — the first instant of the day as
+    `since`, its finest last moment as `until` (`23:59:59.999999999Z`), in UTC,
+    so a day holds every session active on it whatever precision the agent
+    reported. The table takes one page at a time:
+    Load more asks for the `next_cursor` the last page carried and appends
+    what comes back, and one count line reads `<shown> of <total>`. Refresh
+    refetches from the first page with `refresh=true`, which is what asks
+    every agent again. The view offers only the ready tasks whose
     author's pin names the same agent, and adopts the session as that task's
     author through `POST /v1/tasks/{id}/author-session`, sending the agent id
     and the session id. Below the table it names every ACP agent from
@@ -209,6 +223,15 @@ Out: the daemon endpoints themselves (012).
   `::offers only the ready tasks whose author runs the session's agent`,
   `::adopts a stored session, sending the registry agent id along with it`,
   `::shows why an ACP agent without the session-listing capability offers no adoption`).
+- The outside-sessions view sends every filter under the daemon's own name for
+  it, opens on the filters its URL carries, grows by the page the cursor names,
+  asks every agent again on Refresh, and counts what is on screen out of the
+  total
+  (`ui/src/features/sessions/outside-sessions-page.test.tsx::sends each filter to the daemon under the name that filter has`,
+  `::opens on the filters its URL carries, and asks the daemon for them`,
+  `::loads the page after the cursor the daemon gave, keeping the rows above it`,
+  `::asks every agent again when Refresh is pressed`,
+  `::counts the sessions on screen out of every one the filters leave`).
 - A session's console renders a transcript from its stream, sends typed text
   to its input endpoint and shows it pending until confirmed, takes no
   message once the session has ended, and answers an inline permission
