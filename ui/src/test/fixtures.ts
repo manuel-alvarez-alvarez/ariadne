@@ -127,6 +127,62 @@ export function anAgentEvent(overrides: Partial<AgentEventDto> = {}): AgentEvent
   }
 }
 
+/**
+ * The console's own event kinds (008, 021), each as the runtime reports it.
+ * The live-only three — a message chunk, a thought chunk, a tool call's
+ * progress — reach a console stream and nothing else; the rest are stored.
+ */
+export function aMessageChunk(text: string, id: string): AgentEventDto {
+  return anAgentEvent({ id, kind: "agent_message_chunk", summary: text, payload: { text } })
+}
+
+export function aThoughtChunk(text: string, id: string): AgentEventDto {
+  return anAgentEvent({ id, kind: "agent_thought_chunk", summary: text, payload: { text } })
+}
+
+/** A tool call as `pre_tool_use`, `tool_call_update` and `post_tool_use` carry it. */
+export function aToolCall(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    toolCallId: "call-1",
+    title: "Bash",
+    kind: "execute",
+    status: "pending",
+    rawInput: { command: "ls" },
+    ...overrides,
+  }
+}
+
+export function aToolEvent(
+  kind: "pre_tool_use" | "tool_call_update" | "post_tool_use",
+  call: Record<string, unknown>,
+  id: string,
+): AgentEventDto {
+  return anAgentEvent({
+    id,
+    kind,
+    summary: String(call.title ?? call.toolCallId),
+    payload: {
+      tool_name: call.title,
+      tool_input: call.rawInput,
+      tool_call_id: call.toolCallId,
+      acp: call,
+    },
+  })
+}
+
+export function aPlan(entries: Record<string, unknown>[], id: string): AgentEventDto {
+  return anAgentEvent({ id, kind: "plan", summary: "Plan updated.", payload: { entries } })
+}
+
+export function aStop(stopReason: string, id: string): AgentEventDto {
+  return anAgentEvent({
+    id,
+    kind: "stop",
+    summary: `Turn ended: ${stopReason}.`,
+    payload: { stop_reason: stopReason },
+  })
+}
+
 export function aSkill(overrides: Partial<SkillDto> = {}): SkillDto {
   return {
     name: "coding",

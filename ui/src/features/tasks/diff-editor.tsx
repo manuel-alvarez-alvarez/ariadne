@@ -56,7 +56,8 @@ const LANGUAGES: Record<string, () => Extension> = {
   tsx: () => javascript({ typescript: true, jsx: true }),
 }
 
-function languageFor(path: string): Extension[] {
+/** The syntax of a file, by its extension; nothing where it is not one of ours. */
+export function languageFor(path: string): Extension[] {
   const extension = path.split(".").pop()?.toLowerCase() ?? ""
   const language = LANGUAGES[extension]
   return language ? [language()] : []
@@ -262,9 +263,10 @@ function numberGutters(docs: DiffDocuments): Extension {
  * The whole viewer's styling. Both themes share it: every colour is a token
  * that already resolves to the right value for the mode the app is in, so the
  * only thing left for the theme to say is which mode that is — `darkTheme`
- * below, which is what CodeMirror's own defaults key off.
+ * below, which is what CodeMirror's own defaults key off. The session console's
+ * diff view (`features/sessions/console-diff.tsx`) is drawn in the same theme.
  */
-const baseTheme = EditorView.theme({
+export const diffTheme = EditorView.theme({
   "&": {
     backgroundColor: "transparent",
     color: "var(--foreground)",
@@ -345,7 +347,7 @@ export function DiffEditor({ file, wrap }: { file: DiffFile; wrap: boolean }) {
           ...(wrap ? [EditorView.lineWrapping] : []),
           numberGutters(docs),
           EditorView.decorations.of(hunkHeaderDecorations(docs)),
-          baseTheme,
+          diffTheme,
           EditorView.darkTheme.of(dark),
           syntaxHighlighting(dark ? oneDarkHighlightStyle : defaultHighlightStyle),
           ...languageFor(path),

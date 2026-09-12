@@ -212,6 +212,15 @@ export function sendConsoleInput(id: string, text: string): Promise<void> {
   )
 }
 
+/**
+ * Cancel the turn a session is running. The turn then ends as any other, with
+ * a `stop` whose reason is `cancelled` on the console; between turns the
+ * daemon answers `409`, there being nothing to cancel.
+ */
+export function cancelTurn(id: string): Promise<void> {
+  return unwrap(api().POST("/v1/sessions/{id}/console/cancel", { params: { path: { id } } }))
+}
+
 /** Index a list response by id, for turning the ids on a session into names. */
 export function byId<T extends { id: string }>(items: T[] | undefined): Map<string, T> {
   return new Map((items ?? []).map((item) => [item.id, item]))

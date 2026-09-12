@@ -45,7 +45,8 @@ The accepted values are `auto`, `ask`, and `learn`. A task with no
 For `ask` and a new `learn` request, `ariadne attention` marks the session as
 waiting. Open it with `ariadne attach <session-id>`. The console displays the
 choices; enter its number, id, or name. The desktop console displays the same
-choices and sends the selected answer to the same session.
+choices inline: select one, or press its number key while the input is empty.
+Either sends the selected answer to the same session.
 
 `auto` chooses an allowing option when one exists. If the request offers no
 options, it is cancelled. In `learn`, Ariadne remembers only an allowing

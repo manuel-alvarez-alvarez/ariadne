@@ -3,14 +3,16 @@
  * user speaks to it.
  *
  * An agent speaks ACP, so there is no grid and no escape sequence to show:
- * the console is the transcript (`console-transcript.tsx`), an input line,
- * and permission questions answered inline. `console-stream.ts` is the wire
- * underneath.
+ * the console is a terminal-style pane — the transcript
+ * (`console-transcript.tsx`) folded from the stream (`console-items.ts`), an
+ * input line pinned under it, and permission questions answered inline.
+ * `console-stream.ts` is the wire underneath.
  *
  * The console can be lifted out of the panel into a dialog, and only the
  * frame changes, so expanding costs no new connection and drops nothing
- * already on screen. A plain input line does not want Escape, so the dialog
- * closes on it like any other.
+ * already on screen. Escape in the input cancels a running turn and goes no
+ * further; between turns the input does not want it, so the dialog closes on
+ * it like any other.
  */
 
 import { Minimize2Icon } from "lucide-react"

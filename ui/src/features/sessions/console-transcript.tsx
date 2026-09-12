@@ -1,209 +1,343 @@
 /**
- * An `acp` session's console, read the way its events actually happened: a
- * chat rather than a log.
+ * A session's console, drawn the way a terminal draws a session: one column,
+ * in the pane's monospace face, each item a row of its own kind.
  *
- * The console carries no fixed list of event kinds (`console.rs`), so this
- * gives a handful of them — the ones the runtime reports today — a shape a
- * reader recognizes at a glance, and folds `permission.replied` into the
- * `permission_request` it answers rather than showing it as a line of its
- * own. Anything else, present or future — a message chunk, a thought, a
- * plan — falls back to the same one-line-plus-payload row `SessionActivity`
- * already gives every event, so nothing the runtime starts reporting next
- * goes unrepresented.
+ * The rows are the items `console-items.ts` folds the stream into. A prompt
+ * is a `>` line. Agent text is markdown. A thought is dimmed and folded to
+ * two lines until it is opened. A tool call is one row — a status glyph, the
+ * name, the input — that opens to what the tool showed, a diff included. A
+ * plan is a checklist. A permission question lists its options inline, each
+ * with the number key that picks it. Anything the fold did not recognize
+ * keeps the one-line-summary-plus-payload row of the agent activity feed.
  */
 
-import { ChevronRightIcon, OctagonXIcon, SquareIcon, WrenchIcon } from "lucide-react"
-import { useState } from "react"
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  CircleIcon,
+  Loader2Icon,
+  OctagonXIcon,
+  SquareIcon,
+  XIcon,
+} from "lucide-react"
+import { type ReactNode, useState } from "react"
 
 import type { AgentEventDto } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Markdown } from "@/components/markdown"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { When } from "@/components/when"
 import { cn } from "@/lib/format"
 
-/**
- * How a still-open `permission_request` is answered, and what the console
- * already knows about one that is not open any more.
- *
- * `resolvedPromptText` is the other half of the same idea for
- * `user_prompt_submit`: the text the console itself posted, kept by the
- * container across the FIFO match to the event that confirms it (see
- * `acp-console.tsx`) — the payload's own `prompt` field carries the agent's
- * whole system prompt in front of it, which is not what a reader typed.
- */
+import { ConsoleDiff } from "./console-diff"
+import type { ConsoleItem, PlanEntry, ToolCall, ToolState } from "./console-items"
+
+/** How a still-open permission question is answered from a row. */
 export interface ConsoleContext {
-  resolvedPromptText: ReadonlyMap<string, string>
-  /** `option_id` the request was answered with, or `null` for "cancelled". */
-  resolvedPermissions: ReadonlyMap<string, string | null>
-  /** The `permission_request` event a submitted answer is still in flight for. */
+  /** The permission item a submitted answer is still in flight for. */
   answeringId: string | null
-  onAnswerPermission: (event: AgentEventDto, optionId: string, label: string) => void
+  /** An answer this console gave, shown until the daemon's own reply confirms it. */
+  localAnswers: ReadonlyMap<string, string>
+  onAnswerPermission: (itemId: string, optionId: string, label: string) => void
 }
 
-/** One permission option, as the runtime reports it. */
-interface PermissionOption {
-  optionId: string
-  name: string
-}
+type PermissionItem = Extract<ConsoleItem, { kind: "permission" }>
 
 export function ConsoleTranscript({
-  events,
+  items,
   context,
 }: {
-  events: AgentEventDto[]
+  items: ConsoleItem[]
   context: ConsoleContext
 }) {
-  // permission.replied carries no id back to the request it answers — the
-  // FIFO pairing that resolves one is the container's, and by the time it
-  // has run every reply is already folded into its request's own row.
-  const visible = events.filter((event) => event.kind !== "permission.replied")
   return (
-    <ol className="flex flex-col gap-2">
-      {visible.map((event) => (
-        <li key={event.id}>
-          <ConsoleEventRow event={event} context={context} />
+    <ol className="flex flex-col gap-1.5">
+      {items.map((item) => (
+        <li key={item.id}>
+          <ConsoleRow item={item} context={context} />
         </li>
       ))}
     </ol>
   )
 }
 
-function ConsoleEventRow({ event, context }: { event: AgentEventDto; context: ConsoleContext }) {
-  switch (event.kind) {
-    case "user_prompt_submit":
-      return <TextBubble who="you" text={context.resolvedPromptText.get(event.id)} event={event} />
-    case "agent_message":
-      return <TextBubble who="agent" text={nonEmptyString(event.payload, "text")} event={event} />
-    case "stop":
-      return <SystemNote>Turn ended</SystemNote>
-    case "pre_tool_use":
-      return <ToolRow event={event} state="running" />
-    case "post_tool_use":
-      return (
-        <ToolRow
-          event={event}
-          state={nonEmptyString(readAcp(event.payload), "status") === "failed" ? "failed" : "done"}
-        />
+function ConsoleRow({ item, context }: { item: ConsoleItem; context: ConsoleContext }) {
+  switch (item.kind) {
+    case "prompt":
+      return item.source === "daemon" ? (
+        <PromptLine dimmed>
+          <FoldedText label="Prompt from Ariadne">{item.text}</FoldedText>
+        </PromptLine>
+      ) : (
+        <PromptLine>{item.text}</PromptLine>
       )
-    case "permission_request":
-      return <PermissionCard event={event} context={context} />
-    case "session_start":
-      return <SystemNote>Session started</SystemNote>
-    case "session_end":
-      return <SystemNote>Session ended</SystemNote>
-    case "compaction_update":
-      return <SystemNote>Conversation compacted</SystemNote>
-    case "session.error":
+    case "message":
       return (
-        <Alert variant="destructive">
-          <OctagonXIcon />
-          <AlertTitle>The agent reported an error</AlertTitle>
-          <AlertDescription>{event.summary}</AlertDescription>
-        </Alert>
+        <Markdown className="font-mono text-xs [&_h1]:font-mono [&_h2]:font-mono [&_h3]:font-mono">
+          {item.text}
+        </Markdown>
       )
-    default:
-      return <RawEventRow event={event} />
+    case "thought":
+      return (
+        <div className="text-muted-foreground">
+          <FoldedText label="Thought">{item.text}</FoldedText>
+        </div>
+      )
+    case "tool":
+      return <ToolRow call={item.call} state={item.state} />
+    case "plan":
+      return <PlanList entries={item.entries} />
+    case "permission":
+      return <PermissionRow item={item} context={context} />
+    case "note":
+      return (
+        <p
+          className={cn(
+            "flex items-center gap-1.5 py-0.5",
+            item.tone === "stopped" ? "text-status-warn-fg" : "text-muted-foreground",
+          )}
+        >
+          <SquareIcon className="size-2 shrink-0" aria-hidden />
+          {item.text}
+        </p>
+      )
+    case "error":
+      return (
+        <p className="flex items-center gap-1.5 py-0.5 text-status-danger-fg">
+          <OctagonXIcon className="size-3 shrink-0" aria-hidden />
+          The agent reported an error: {item.text}
+        </p>
+      )
+    case "raw":
+      return <RawEventRow event={item.event} />
   }
 }
 
-/** A user or agent turn: the text it ended on, plain, in a chat bubble. */
-function TextBubble({
-  who,
-  text,
-  event,
+/**
+ * A prompt as a terminal echoes one: the `>` in the margin, the text after
+ * it. Pending — sent, not yet confirmed by its `user_prompt_submit` — while
+ * the console waits for the daemon.
+ */
+export function PromptLine({
+  children,
+  dimmed,
+  pending,
 }: {
-  who: "you" | "agent"
-  text: string | undefined
-  event: AgentEventDto
+  children: ReactNode
+  dimmed?: boolean
+  pending?: boolean
 }) {
-  if (!text) {
-    // A turn with nothing to show for it — no text typed, or the agent
-    // stopped without saying anything — is still worth marking on the line.
-    return who === "you" ? <RawEventRow event={event} /> : <SystemNote>Turn ended</SystemNote>
-  }
   return (
-    <div className={cn("flex", who === "you" && "justify-end")}>
-      <div
-        className={cn(
-          "max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap",
-          who === "you" ? "bg-primary text-primary-foreground" : "bg-card border",
-        )}
-      >
-        <p className="mb-1 text-xs font-medium opacity-70">{who === "you" ? "You" : "Agent"}</p>
-        {text}
-      </div>
-    </div>
-  )
-}
-
-function ToolRow({ event, state }: { event: AgentEventDto; state: "running" | "done" | "failed" }) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-sm">
-      <WrenchIcon
-        className={cn(
-          "size-3.5 shrink-0",
-          state === "running" && "animate-pulse text-muted-foreground",
-          state === "failed" && "text-destructive",
-        )}
-      />
-      <span className="min-w-0 flex-1 truncate font-mono text-xs">{event.summary}</span>
-      {state === "running" ? (
-        <Badge variant="secondary" className="shrink-0">
-          Running
-        </Badge>
-      ) : state === "failed" ? (
-        <Badge variant="destructive" className="shrink-0">
-          Failed
-        </Badge>
+    <div
+      aria-busy={pending ? "true" : undefined}
+      className={cn(
+        "flex gap-2 whitespace-pre-wrap",
+        (dimmed || pending) && "text-muted-foreground",
+      )}
+    >
+      <span className="shrink-0 select-none text-primary" aria-hidden>
+        &gt;
+      </span>
+      <div className="min-w-0 flex-1 break-words">{children}</div>
+      {pending ? (
+        <span className="flex shrink-0 items-center">
+          <Loader2Icon className="size-3 animate-spin" aria-hidden />
+          <span className="sr-only">Sending…</span>
+        </span>
       ) : null}
     </div>
   )
 }
 
-function PermissionCard({ event, context }: { event: AgentEventDto; context: ConsoleContext }) {
-  const options = permissionOptions(event.payload)
-  const resolved = context.resolvedPermissions.get(event.id)
-  const toolName = nonEmptyString(event.payload, "tool_name") ?? event.summary
-  const answering = context.answeringId === event.id
-
+/** Text folded to two lines, with a toggle that opens the whole of it. */
+function FoldedText({ label, children }: { label: string; children: string }) {
+  const [open, setOpen] = useState(false)
   return (
-    <div className="rounded-lg border bg-card px-3 py-2 text-sm">
-      <p className="mb-2 font-medium">
-        Permission requested: <span className="font-mono text-xs">{toolName}</span>
+    <div>
+      <button
+        type="button"
+        className="flex items-center gap-1 text-left opacity-80 hover:opacity-100"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <ChevronRightIcon
+          className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")}
+          aria-hidden
+        />
+        {label}
+      </button>
+      <div className={cn("whitespace-pre-wrap break-words", !open && "line-clamp-2")}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+const TOOL_STATE_LABEL: Record<ToolState, string> = {
+  running: "Running",
+  done: "Done",
+  failed: "Failed",
+}
+
+function ToolRow({ call, state }: { call: ToolCall; state: ToolState }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 text-left"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <ChevronRightIcon
+          className={cn(
+            "size-3 shrink-0 text-muted-foreground transition-transform",
+            open && "rotate-90",
+          )}
+          aria-hidden
+        />
+        <StatusGlyph state={state} />
+        <span className="shrink-0 font-medium">{call.title}</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+          {inputSummary(call.rawInput)}
+        </span>
+      </button>
+      {open ? (
+        <div className="mt-1 ml-5 flex flex-col gap-2">
+          <ToolOutput call={call} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function StatusGlyph({ state }: { state: ToolState }) {
+  const Icon = state === "running" ? Loader2Icon : state === "done" ? CheckIcon : XIcon
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center",
+        state === "running" && "text-muted-foreground",
+        state === "done" && "text-status-done-fg",
+        state === "failed" && "text-status-danger-fg",
+      )}
+    >
+      <Icon className={cn("size-3", state === "running" && "animate-spin")} aria-hidden />
+      <span className="sr-only">{TOOL_STATE_LABEL[state]}</span>
+    </span>
+  )
+}
+
+/** What the tool showed: its content entries, or its raw output where it gave none. */
+function ToolOutput({ call }: { call: ToolCall }) {
+  if (call.content.length > 0) {
+    return call.content.map((entry, index) => {
+      const key = `${call.toolCallId}-${index}`
+      if (entry.type === "diff") {
+        return (
+          <ConsoleDiff
+            key={key}
+            path={entry.path}
+            oldText={entry.oldText}
+            newText={entry.newText}
+          />
+        )
+      }
+      return <Output key={key}>{entry.type === "text" ? entry.text : stringify(entry.raw)}</Output>
+    })
+  }
+  if (call.rawOutput !== undefined) return <Output>{stringify(call.rawOutput)}</Output>
+  return <p className="text-muted-foreground">No output yet.</p>
+}
+
+function Output({ children }: { children: string }) {
+  return (
+    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2">
+      {children}
+    </pre>
+  )
+}
+
+const PLAN_STATUS_LABEL: Record<PlanEntry["status"], string> = {
+  pending: "Pending",
+  in_progress: "In progress",
+  completed: "Done",
+}
+
+function PlanList({ entries }: { entries: PlanEntry[] }) {
+  return (
+    <ol aria-label="Plan" className="flex flex-col gap-0.5">
+      {entries.map((entry, index) => {
+        const Icon =
+          entry.status === "completed"
+            ? CheckIcon
+            : entry.status === "in_progress"
+              ? Loader2Icon
+              : CircleIcon
+        return (
+          // Entries carry no id and a plan update replaces the whole list, so
+          // an index key relabels rows rather than mispairing them.
+          // biome-ignore lint/suspicious/noArrayIndexKey: plan entries carry no id
+          <li key={index} className="flex items-center gap-2">
+            <Icon
+              className={cn(
+                "size-3 shrink-0",
+                entry.status === "completed" && "text-status-done-fg",
+                entry.status === "in_progress" && "animate-spin",
+                entry.status === "pending" && "text-muted-foreground",
+              )}
+              aria-hidden
+            />
+            <span className="sr-only">{PLAN_STATUS_LABEL[entry.status]}</span>
+            <span className={cn(entry.status === "completed" && "text-muted-foreground")}>
+              {entry.content}
+            </span>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+function PermissionRow({ item, context }: { item: PermissionItem; context: ConsoleContext }) {
+  // The daemon's own answer wins where both exist: it is the one that reached
+  // the agent.
+  const answer = item.answer !== undefined ? item.answer : context.localAnswers.get(item.id)
+  const answering = context.answeringId === item.id
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p>
+        Permission requested: <span className="font-medium">{item.toolName}</span>
       </p>
-      {resolved !== undefined ? (
-        <p className="text-xs text-muted-foreground">
-          {resolved === null
+      {answer !== undefined ? (
+        <p className="text-muted-foreground">
+          {answer === null
             ? "Cancelled — nothing to select."
-            : `Answered: ${options.find((option) => option.optionId === resolved)?.name ?? resolved}`}
+            : `Answered: ${item.options.find((option) => option.optionId === answer)?.name ?? answer}`}
         </p>
       ) : (
         <div className="flex flex-wrap gap-2">
-          {options.map((option) => (
+          {item.options.map((option, index) => (
             <Button
               key={option.optionId}
               size="xs"
               variant="outline"
+              className="font-mono"
               pending={answering}
               disabled={answering}
-              onClick={() => context.onAnswerPermission(event, option.optionId, option.name)}
+              onClick={() => context.onAnswerPermission(item.id, option.optionId, option.name)}
             >
+              {index < 9 ? (
+                <kbd className="rounded bg-muted px-1 text-muted-foreground" aria-hidden>
+                  {index + 1}
+                </kbd>
+              ) : null}
               {option.name}
             </Button>
           ))}
         </div>
       )}
     </div>
-  )
-}
-
-function SystemNote({ children }: { children: string }) {
-  return (
-    <p className="flex items-center gap-1.5 py-1 text-center text-xs text-muted-foreground">
-      <SquareIcon className="size-2.5" />
-      {children}
-    </p>
   )
 }
 
@@ -214,7 +348,7 @@ function RawEventRow({ event }: { event: AgentEventDto }) {
     <div className="py-0.5">
       <button
         type="button"
-        className="flex w-full items-baseline gap-2 text-left text-sm"
+        className="flex w-full items-baseline gap-2 text-left"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
@@ -223,18 +357,17 @@ function RawEventRow({ event }: { event: AgentEventDto }) {
             "size-3 shrink-0 translate-y-0.5 text-muted-foreground transition-transform",
             open && "rotate-90",
           )}
+          aria-hidden
         />
         <Badge variant="secondary" className="shrink-0 font-mono">
           {event.kind}
         </Badge>
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-          {event.summary}
-        </span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{event.summary}</span>
         <When
           at={event.created_at}
           format="age"
           label="reported"
-          className="shrink-0 text-xs text-muted-foreground tabular-nums"
+          className="shrink-0 text-muted-foreground tabular-nums"
         />
       </button>
       {open ? (
@@ -242,37 +375,30 @@ function RawEventRow({ event }: { event: AgentEventDto }) {
           aria-label={`${event.kind} payload`}
           // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container has to take focus to be scrollable by keyboard
           tabIndex={0}
-          className="mt-1 max-h-64 overflow-auto rounded-md bg-muted p-2 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+          className="mt-1 max-h-64 overflow-auto rounded-md bg-muted/40 p-2 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
         >
-          <pre className="font-mono text-xs">{stringify(event.payload)}</pre>
+          <pre>{stringify(event.payload)}</pre>
         </section>
       ) : null}
     </div>
   )
 }
 
-function nonEmptyString(payload: unknown, field: string): string | undefined {
-  if (typeof payload !== "object" || payload === null) return undefined
-  const value = (payload as Record<string, unknown>)[field]
-  return typeof value === "string" && value.length > 0 ? value : undefined
-}
-
-function readAcp(payload: unknown): unknown {
-  if (typeof payload !== "object" || payload === null) return undefined
-  return (payload as Record<string, unknown>).acp
-}
-
-function permissionOptions(payload: unknown): PermissionOption[] {
-  if (typeof payload !== "object" || payload === null) return []
-  const options = (payload as Record<string, unknown>).options
-  if (!Array.isArray(options)) return []
-  return options.flatMap((option) => {
-    if (typeof option !== "object" || option === null) return []
-    const optionId = (option as Record<string, unknown>).optionId
-    const name = (option as Record<string, unknown>).name
-    if (typeof optionId !== "string") return []
-    return [{ optionId, name: typeof name === "string" && name.length > 0 ? name : optionId }]
-  })
+/** A tool's input on one line: a string as it is, anything else as compact JSON. */
+function inputSummary(input: unknown): string {
+  if (input === undefined || input === null) return ""
+  if (typeof input === "string") return input
+  if (typeof input === "object") {
+    const values = Object.values(input as Record<string, unknown>)
+    // The common case — `{command: "ls"}`, `{file_path: "…"}` — reads better
+    // as the one value than as its JSON.
+    if (values.length === 1 && typeof values[0] === "string") return values[0]
+  }
+  try {
+    return JSON.stringify(input) ?? String(input)
+  } catch {
+    return String(input)
+  }
 }
 
 function stringify(payload: unknown): string {

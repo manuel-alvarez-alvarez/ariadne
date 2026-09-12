@@ -41,9 +41,19 @@ when a script or a one-line response is enough. When a session is waiting on a
 permission request, the console lists numbered choices; enter that number (or
 the option id or name) to answer it. See [Permission modes](permissions.md).
 
-The desktop app has the same console in a session's detail view: read the
-events, type a reply, and select a shown permission option. The agent receives
-the same input whichever console you use.
+The desktop app has the same console in a session's detail view, drawn as a
+terminal pane. The agent's text streams in as it is written and renders as
+markdown. A thought is dimmed and folded; open it with its toggle. A tool call
+is one row with its status, its name and its input; open it to read the
+output, and a file change opens to a diff. A plan is a checklist that updates
+in place. Type in the input line at the bottom: Enter sends, Shift+Enter
+starts a new line, and the line shows as `> text` until the daemon confirms it.
+While a turn runs, the Stop button beside the input, or Escape in the input,
+cancels it; the transcript then reads "Stopped". A permission request lists
+its options inline; select one, or, with the input empty, press its number
+key (1 to 9). The pane follows new output until you scroll up, and "Jump to
+latest" takes you back. The agent receives the same input whichever console
+you use.
 
 ## Work with tasks
 

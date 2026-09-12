@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-11
+updated: 2026-09-12
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -106,35 +106,63 @@ Out: the daemon endpoints themselves (012).
     pick: the votes it has so far, or "Picked" once it is the one that won —
     and the reviewer pick itself: which author each reviewer chose. A task
     with one author shows the singular Author fact and no pick, unchanged.
-20. Every session is shown in its console. The console is the transcript
-    from `GET /console` and `.../console/stream` (008), an input line posting
-    to `.../console/input`, and permission questions answered inline. A
-    message chunk, a thought, a tool call, a plan or anything else the
-    runtime reports gets a readable row of its own where the console
-    recognizes the kind, and the one-line-summary-plus-payload row of the
-    agent activity feed otherwise. A message just sent is shown at once,
-    pending, until the event that confirms it arrives. A session that has
-    ended takes no new message.
-21. A session's view has two tabs over one space: the console, open by
+20. Every session is shown in its console: a terminal-style pane, monospace,
+    one dark surface in both themes, one column, full height when expanded.
+    The console is the transcript from `GET /console` and
+    `.../console/stream` (008) folded into items, an input line pinned at
+    the bottom posting to `.../console/input`, and permission questions
+    answered inline. `agent_message_chunk`s accumulate into one in-progress
+    item that the stored `agent_message` replaces, and thought chunks do the
+    same; agent text renders as markdown, and a thought renders dimmed and
+    folded to two lines with a toggle. A tool call is one row — a status
+    glyph (running, done, failed), its name and its input — into which each
+    `tool_call_update` and the `post_tool_use` fold; it opens to the tool's
+    output, and a `content` entry of type `diff` opens to a diff view. A
+    `plan` renders as a checklist with one status per entry and updates in
+    place. A `user_prompt_submit` is a `> text` line; a prompt whose
+    `source` is `daemon` is dimmed and folded. A `stop` whose reason is
+    `cancelled` reads "Stopped". Anything else the runtime reports gets the
+    one-line-summary-plus-payload row of the agent activity feed. A message
+    just sent is shown at once as a pending `> text` line, until the
+    `user_prompt_submit` that confirms it arrives; a prompt from a console
+    confirms the oldest pending line with its text, and a prompt from the
+    daemon confirms none. The input takes nothing before the console's
+    first snapshot, so every prompt of the history is on record before a
+    line can be pending, and a reconnect's snapshot confirms only with the
+    prompts it adds. Enter sends and Shift+Enter inserts a newline. A
+    session that has ended takes no new message.
+21. While a turn runs — between a `user_prompt_submit` and its `stop` — a
+    Stop button beside the input, and Escape while the input has focus,
+    post to `.../console/cancel` (008). Between turns neither is offered.
+22. The pane follows new output: it stays at the bottom while output
+    arrives, releases when the user scrolls up and shows a "Jump to latest"
+    chip, and re-arms on a scroll back down or on the chip. The logic is
+    the daemon-logs drawer's.
+23. While the pane has focus and its input is empty, the number keys 1 to 9
+    pick the option of that number on the oldest open permission question,
+    posted as the option's label the same way a click is. The number keys
+    and Escape are handled inside the pane and reach no chord of the
+    shell's.
+24. A session's view has two tabs over one space: the console, open by
     default, and the agent activity feed. The tab is in the URL (`?tab=`);
     the console's tab is `terminal` on the wire, so an older link still
     opens it. A tab value that is not one of the two opens the console.
     Leaving the console's tab closes its stream, and coming back opens a new
     one.
-22. A session's Agent fact and the sessions list show the pin the session
+25. A session's Agent fact and the sessions list show the pin the session
     was launched on, whole (`<agent>:<model>`), with the effort after an `@`
     where one is pinned.
-23. A row of the attention strip for an agent blocked on a permission or an
+26. A row of the attention strip for an agent blocked on a permission or an
     input prompt opens that session's console with `?focus=`, so the console
     takes the keyboard on arrival.
-24. Above the console, a session blocked on a permission or an input prompt
+27. Above the console, a session blocked on a permission or an input prompt
     shows a banner that says where to answer: the options in the console for
     a permission, the console's input for a question. A session that has
     ended while blocked is told to resume first. No other attention reason
     shows the banner.
-25. The typed keyboard chords (`n`, `g` then a letter, `?`, `[`) are ignored
+28. The typed keyboard chords (`n`, `g` then a letter, `?`, `[`) are ignored
     while a field, an editor or a session's console input has the keyboard.
-26. The agents screen has one tab per registry agent from `GET /v1/agents`,
+29. The agents screen has one tab per registry agent from `GET /v1/agents`,
     in the daemon's order, named by its agent id. Each tab holds that agent's
     extra flags and the models of the catalog whose `agent_id` is that agent.
     A flag edit replaces the list whole through `PUT /v1/agents/{id}`.
@@ -233,13 +261,42 @@ Out: the daemon endpoints themselves (012).
   `::asks every agent again when Refresh is pressed`,
   `::counts the sessions on screen out of every one the filters leave`).
 - A session's console renders a transcript from its stream, sends typed text
-  to its input endpoint and shows it pending until confirmed, takes no
+  to its input endpoint and shows it pending as a `> text` line until the
+  confirming prompt replaces it, inserts a newline on Shift+Enter, takes no
   message once the session has ended, and answers an inline permission
   question
   (`ui/src/features/sessions/acp-console.test.tsx::renders the transcript the stream delivers: a snapshot, then a delta`,
   `::sends typed text to the console's input endpoint, and shows it pending until confirmed`,
+  `::clears a pending line whose confirming prompt arrived while the stream was down`,
+  `::takes no input before the first snapshot, so a history ending on the same text confirms nothing`,
+  `::inserts a newline on Shift+Enter instead of sending`,
   `::does not queue a message once the session has ended`,
-  `::answers an inline permission question`).
+  `::answers an inline permission question`,
+  `::shows a permission request the daemon already answered as resolved`).
+- Message chunks stream into one agent item that the stored message replaces,
+  rendered as markdown with its heading and code block; a thought streams the
+  same way, dimmed and folded, and its toggle opens it
+  (`ui/src/features/sessions/acp-console.test.tsx::streams message chunks into one item, which the stored message then replaces`,
+  `::renders a thought dimmed and folded, and the toggle opens it`).
+- A tool call is one row with its status, which its updates fold into and
+  which opens to its output; a failed call says so; a diff content entry
+  opens to a diff view
+  (`ui/src/features/sessions/acp-console.test.tsx::shows a tool call as one row with its status, and opens it to the output`,
+  `::marks a failed tool call as failed`,
+  `::opens a diff content entry to a diff view`).
+- A plan is a checklist that updates in place
+  (`ui/src/features/sessions/acp-console.test.tsx::renders a plan as a checklist and updates it in place`).
+- The 1 key answers a pending permission with its first option and stays
+  inside the pane, and a digit is typed once the input holds text
+  (`ui/src/features/sessions/acp-console.test.tsx::answers a pending permission with its first option on the 1 key, and keeps the key in the pane`,
+  `::types a digit into the input once there is text in it`).
+- The Stop button and Escape post to the cancel endpoint and the resulting
+  stop reads "Stopped"; between turns there is no Stop
+  (`ui/src/features/sessions/acp-console.test.tsx::stops a running turn from the Stop button and from Escape in the input, and shows the stop`,
+  `::offers no Stop between turns`).
+- The pane follows new output, stops after the user scrolls up, and the chip
+  returns it to the bottom
+  (`ui/src/features/sessions/acp-console.test.tsx::follows new output until the reader scrolls up, and the chip brings it back`).
 - A session's view opens on the console, keeps its tab in the URL, falls back
   to the console for a foreign tab value, and opens a new stream on each
   return to the console
