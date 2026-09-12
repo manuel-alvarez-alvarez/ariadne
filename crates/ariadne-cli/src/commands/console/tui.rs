@@ -8,11 +8,13 @@
 //! scrollback after the console is closed — which is why the viewport is
 //! [`Viewport::Inline`] and never the alternate screen.
 //!
-//! Three seams keep it testable without a terminal. [`Console`] is the whole
+//! Four seams keep it testable without a terminal. [`Console`] is the whole
 //! state and holds nothing of the terminal, so a `TestBackend` renders it.
 //! [`drive`] takes the key stream as an argument, so a scripted one drives it
-//! against a stub daemon. And [`Held`] is what takes raw mode and gives it
-//! back, so the giving back can be proven on each way out.
+//! against a stub daemon. [`open`] takes the backend as an argument, so one
+//! that answers no cursor query proves the viewport still opens. And [`Held`]
+//! is what takes raw mode and gives it back, so the giving back can be proven
+//! on each way out.
 
 use std::collections::VecDeque;
 use std::io::{IsTerminal, Write};
@@ -24,8 +26,9 @@ use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use futures_util::{Stream, StreamExt};
-use ratatui::backend::{Backend, CrosstermBackend};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::backend::{Backend, ClearType, CrosstermBackend, WindowSize};
+use ratatui::buffer::Cell;
+use ratatui::layout::{Constraint, Layout, Position, Size};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph, Widget};
@@ -95,13 +98,10 @@ pub async fn attach(client: &Client, id: &str) -> Result<()> {
         .ok();
     let mut console = Console::new(Header::of(session.as_ref()));
 
+    // The terminal is held before the viewport is opened, so a terminal that
+    // cannot be opened at all is still given back: raw mode off, cursor shown.
     let held = Held::take(Raw::default())?;
-    let mut terminal = Terminal::with_options(
-        CrosstermBackend::new(std::io::stdout()),
-        TerminalOptions {
-            viewport: Viewport::Inline(VIEWPORT),
-        },
-    )?;
+    let mut terminal = open(|| CrosstermBackend::new(std::io::stdout()))?;
     let outcome = drive(client, id, &mut terminal, EventStream::new(), &mut console).await;
     // Whatever ended it, the transcript belongs in the scrollback and the
     // viewport does not: both happen before the terminal is handed back.
@@ -1172,6 +1172,126 @@ impl<T: Terminals> Drop for Held<T> {
     }
 }
 
+/// Open the inline viewport, from the cursor where the terminal says where
+/// that is, and from the bottom row where it does not.
+///
+/// [`Viewport::Inline`] asks the terminal for the cursor position, and a
+/// terminal that never answers — a pseudo-terminal with nothing behind it,
+/// for one — costs crossterm's timeout and the error "The cursor position
+/// could not be read within a normal duration". The console opens all the
+/// same: the cursor is moved to the bottom row, which needs no answer, and
+/// the viewport is opened from there on a backend that answers every later
+/// query itself. It is the one inline viewport on both paths, never the
+/// alternate screen, so the scrollback keeps the transcript either way.
+///
+/// `fresh` makes a backend, and makes another for the second attempt: the
+/// one the failed attempt took cannot be had back.
+pub fn open<B: Screen>(fresh: impl Fn() -> B) -> Result<Terminal<Anchored<B>>> {
+    let inline = |backend| {
+        Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(VIEWPORT),
+            },
+        )
+    };
+    if let Ok(terminal) = inline(Anchored::asking(fresh())) {
+        return Ok(terminal);
+    }
+    let mut backend = fresh();
+    let bottom = Position {
+        x: 0,
+        y: backend.size()?.height.saturating_sub(1),
+    };
+    backend.set_cursor_position(bottom)?;
+    Ok(inline(Anchored::at(backend, bottom))?)
+}
+
+/// A backend whose cursor position can be known without asking the terminal.
+///
+/// ratatui asks where the cursor is when it opens an inline viewport, when it
+/// clears one and when the terminal is resized. Anchored to a position, every
+/// one of those is answered from here — where the last
+/// [`Backend::set_cursor_position`] put it, which is where ratatui's own
+/// drawing leaves it — rather than sent to a terminal that has already failed
+/// to answer once. Asking, it is the backend it wraps and nothing more.
+pub struct Anchored<B> {
+    inner: B,
+    known: Option<Position>,
+}
+
+impl<B> Anchored<B> {
+    fn asking(inner: B) -> Self {
+        Self { inner, known: None }
+    }
+
+    fn at(inner: B, at: Position) -> Self {
+        Self {
+            inner,
+            known: Some(at),
+        }
+    }
+}
+
+impl<B: Backend> Backend for Anchored<B> {
+    type Error = B::Error;
+
+    fn draw<'a, I>(&mut self, content: I) -> Result<(), B::Error>
+    where
+        I: Iterator<Item = (u16, u16, &'a Cell)>,
+    {
+        self.inner.draw(content)
+    }
+
+    fn append_lines(&mut self, n: u16) -> Result<(), B::Error> {
+        self.inner.append_lines(n)
+    }
+
+    fn hide_cursor(&mut self) -> Result<(), B::Error> {
+        self.inner.hide_cursor()
+    }
+
+    fn show_cursor(&mut self) -> Result<(), B::Error> {
+        self.inner.show_cursor()
+    }
+
+    fn get_cursor_position(&mut self) -> Result<Position, B::Error> {
+        match self.known {
+            Some(at) => Ok(at),
+            None => self.inner.get_cursor_position(),
+        }
+    }
+
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), B::Error> {
+        let at = position.into();
+        self.inner.set_cursor_position(at)?;
+        if self.known.is_some() {
+            self.known = Some(at);
+        }
+        Ok(())
+    }
+
+    fn clear(&mut self) -> Result<(), B::Error> {
+        self.inner.clear()
+    }
+
+    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), B::Error> {
+        self.inner.clear_region(clear_type)
+    }
+
+    fn size(&self) -> Result<Size, B::Error> {
+        self.inner.size()
+    }
+
+    fn window_size(&mut self) -> Result<WindowSize, B::Error> {
+        self.inner.window_size()
+    }
+
+    fn flush(&mut self) -> Result<(), B::Error> {
+        self.inner.flush()
+    }
+}
+
 /// Whether this process is attached to a terminal on both ends.
 pub fn on_a_terminal() -> bool {
     interactive(
@@ -1193,6 +1313,7 @@ mod tests {
     use axum::{Json, Router};
     use futures_util::stream;
     use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use serde_json::json;
     use tokio::sync::broadcast;
 
@@ -1323,7 +1444,10 @@ mod tests {
     /// Everything the terminal shows: the scrollback above the viewport and
     /// the viewport itself, as one block of text.
     fn screen(terminal: &Terminal<TestBackend>) -> String {
-        let buffer = terminal.backend().buffer();
+        rows(terminal.backend().buffer())
+    }
+
+    fn rows(buffer: &Buffer) -> String {
         (0..buffer.area.height)
             .map(|y| {
                 (0..buffer.area.width)
@@ -1786,6 +1910,125 @@ mod tests {
         );
     }
 
+    /// A screen that never says where its cursor is: the terminal that
+    /// answers no query, as ratatui sees it.
+    struct Mute(TestBackend);
+
+    impl Mute {
+        fn new() -> Self {
+            Self(TestBackend::new(72, 40))
+        }
+    }
+
+    /// What the test backend cannot fail at, as the error the mute one can.
+    fn sure<T>(result: Result<T, Infallible>) -> std::io::Result<T> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(never) => match never {},
+        }
+    }
+
+    impl Backend for Mute {
+        type Error = std::io::Error;
+
+        fn draw<'a, I>(&mut self, content: I) -> std::io::Result<()>
+        where
+            I: Iterator<Item = (u16, u16, &'a Cell)>,
+        {
+            sure(self.0.draw(content))
+        }
+
+        fn append_lines(&mut self, n: u16) -> std::io::Result<()> {
+            sure(self.0.append_lines(n))
+        }
+
+        fn hide_cursor(&mut self) -> std::io::Result<()> {
+            sure(self.0.hide_cursor())
+        }
+
+        fn show_cursor(&mut self) -> std::io::Result<()> {
+            sure(self.0.show_cursor())
+        }
+
+        fn get_cursor_position(&mut self) -> std::io::Result<Position> {
+            Err(std::io::Error::other(
+                "The cursor position could not be read within a normal duration",
+            ))
+        }
+
+        fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> std::io::Result<()> {
+            sure(self.0.set_cursor_position(position))
+        }
+
+        fn clear(&mut self) -> std::io::Result<()> {
+            sure(self.0.clear())
+        }
+
+        fn clear_region(&mut self, clear_type: ClearType) -> std::io::Result<()> {
+            sure(self.0.clear_region(clear_type))
+        }
+
+        fn size(&self) -> std::io::Result<Size> {
+            sure(self.0.size())
+        }
+
+        fn window_size(&mut self) -> std::io::Result<WindowSize> {
+            sure(self.0.window_size())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            sure(self.0.flush())
+        }
+    }
+
+    /// The row a line of text is on, in a screen `rows` read.
+    fn row_of(shown: &str, text: &str) -> Option<usize> {
+        shown.lines().position(|line| line.contains(text))
+    }
+
+    #[test]
+    fn the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read() {
+        let mut terminal = super::open(Mute::new).unwrap();
+        let mut console = Console::new(header());
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        let shown = rows(terminal.backend().inner.0.buffer());
+        assert_eq!(
+            row_of(&shown, "author claude:opus · running"),
+            Some(40 - usize::from(PINNED)),
+            "the status line is drawn, with the pane on the bottom rows: {shown}"
+        );
+        assert!(
+            console.close(&mut terminal).is_ok(),
+            "and closing, which asks where the cursor is again, still works"
+        );
+    }
+
+    #[test]
+    fn a_finished_block_reaches_the_scrollback_when_the_cursor_position_cannot_be_read() {
+        let mut terminal = super::open(Mute::new).unwrap();
+        let mut console = Console::new(header());
+        console.snapshot(&[
+            event(
+                "user_prompt_submit",
+                "first",
+                json!({"text": "first", "source": "console"}),
+            ),
+            event("agent_message", "second", json!({"text": "second"})),
+        ]);
+
+        console.commit(&mut terminal).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        let shown = rows(terminal.backend().inner.0.buffer());
+        let prompt = row_of(&shown, "> first").expect(&shown);
+        assert!(
+            prompt < 40 - usize::from(VIEWPORT),
+            "the finished prompt is above the pane, in the scrollback: {shown}"
+        );
+    }
+
     /// A terminal that only records what was done to it, so that giving it
     /// back can be proven without taking the real one.
     #[derive(Clone, Default)]
@@ -1825,7 +2068,8 @@ mod tests {
             let _held = Held::take(interrupted.clone()).unwrap();
             let mut terminal = terminal();
             let mut console = Console::new(header());
-            let keys = stream::iter(vec![Ok(ctrl_c.clone()), Ok(ctrl_c)]).chain(stream::pending());
+            let keys =
+                stream::iter(vec![Ok(ctrl_c.clone()), Ok(ctrl_c.clone())]).chain(stream::pending());
             drive(
                 &client,
                 "session",
@@ -1836,8 +2080,29 @@ mod tests {
             .await
             .unwrap();
         }
-        server.abort();
         assert_eq!(interrupted.0.load(Ordering::SeqCst), 1, "Ctrl-C");
+
+        // The fallback viewport — the terminal that answers no cursor query —
+        // is held and given back the same way as the inline one.
+        let mute = Recorder::default();
+        {
+            let _held = Held::take(mute.clone()).unwrap();
+            let mut terminal = super::open(Mute::new).unwrap();
+            let mut console = Console::new(header());
+            let keys = stream::iter(vec![Ok(ctrl_c.clone()), Ok(ctrl_c)]).chain(stream::pending());
+            drive(
+                &client,
+                "session",
+                &mut terminal,
+                Box::pin(keys),
+                &mut console,
+            )
+            .await
+            .unwrap();
+            let _ = console.close(&mut terminal);
+        }
+        server.abort();
+        assert_eq!(mute.0.load(Ordering::SeqCst), 1, "the fallback viewport");
     }
 
     #[test]

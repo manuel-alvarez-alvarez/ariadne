@@ -41,6 +41,13 @@ leave; a status line and the input box stay pinned under it. The status line
 names the seat, the model and the session's status, and a spinner says
 "thinking" or "running &lt;tool&gt;" while a turn runs.
 
+The pane opens where the cursor is, which the console asks the terminal for.
+A terminal that does not answer — a pseudo-terminal with nothing behind it,
+as `script` gives a process with no terminal of its own — keeps the console
+waiting a few seconds, and then the same pane opens from the bottom row of
+the screen. Nothing else changes: the transcript still scrolls into your
+scrollback, and the console never switches to the alternate screen.
+
 The agent's text streams in as it is written and renders as markdown:
 headings, bold, code spans, fenced code and lists. A thought is dimmed and
 folded to a few lines. A tool call is one line with its status, its name and

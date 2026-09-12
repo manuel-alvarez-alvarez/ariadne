@@ -106,7 +106,11 @@ goal id to a seat (014).
     pane, so it stays in the scrollback; the pane holds the block still being
     written, a status line and the input box. The status line names the seat,
     the model and the session's status, and turns a spinner with "thinking" or
-    "running &lt;tool&gt;" while a turn runs.
+    "running &lt;tool&gt;" while a turn runs. The pane opens from the cursor,
+    which the terminal is asked for; a terminal that does not answer within
+    crossterm's timeout gets the same pane opened from the bottom row instead,
+    on a backend that answers every later cursor query itself. There is no
+    alternate-screen fallback.
 23. The pane renders each block as it arrives: a prompt as `> text`, agent
     text as markdown chunk by chunk under one marker, a thought dimmed and
     folded, a tool call as one line with a status glyph, its name and its
@@ -197,6 +201,11 @@ goal id to a seat (014).
   and markdown keeps a heading, a code block and a list apart
   (`console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
+- Where the cursor position cannot be read, the pane opens from the bottom
+  row
+  (`console/tui.rs::the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read`)
+  and a finished block still reaches the scrollback
+  (`::a_finished_block_reaches_the_scrollback_when_the_cursor_position_cannot_be_read`).
 - Streamed chunks append to the block already open
   (`console/tui.rs::streamed_chunks_append_to_the_agent_block_that_is_already_open`),
   and text after a tool call is a block of its own that the stored whole does
@@ -221,7 +230,8 @@ goal id to a seat (014).
   (`console/tui.rs::escape_during_a_running_turn_cancels_it`), one Ctrl-C
   keeps the console and the second leaves it
   (`::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`), and the
-  terminal is given back on every way out
+  terminal is given back on every way out, the pane opened from the bottom
+  row included
   (`::the_terminal_is_given_back_on_the_normal_path_on_an_error_and_on_ctrl_c`).
 - A dropped stream says so
   (`console/tui.rs::a_dropped_stream_says_reconnecting_on_the_status_line`) and
