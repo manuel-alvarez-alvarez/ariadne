@@ -414,6 +414,45 @@ impl Launcher {
             .map_err(Into::into)
     }
 
+    /// Resume the goal's orchestrator in place — the same row, on the
+    /// conversation it left behind — or spawn a first one where there is
+    /// nothing to resume.
+    ///
+    /// One orchestrator per goal, for the whole goal: it holds the plan and
+    /// what the user agreed with it. An agent process that went away — a
+    /// daemon restart takes every one down — is that same orchestrator put
+    /// back on its feet, not a stranger starting from the briefing.
+    pub async fn resume_orchestrator(
+        &self,
+        goal_id: &str,
+        instruction: &str,
+    ) -> Result<AgentSession> {
+        let repos = self.store.list_goal_repositories(goal_id).await?;
+        let repo = repos.first().context("goal has no repos")?;
+        let previous = self
+            .store
+            .list_sessions(SessionFilter {
+                goal_id: Some(goal_id.to_string()),
+                ..Default::default()
+            })
+            .await?
+            .into_iter()
+            .rev()
+            .find(|s| s.seat() == Seat::Orchestrator && s.internal_session_id.is_some());
+        let Some(previous) = previous else {
+            return self.spawn_orchestrator(goal_id).await;
+        };
+        self.assert_no_live_session(goal_id, None, Seat::Orchestrator, None)
+            .await?;
+        let internal = previous
+            .internal_session_id
+            .clone()
+            .expect("filtered above");
+        let session = self.store.restart_session(&previous.id, None).await?;
+        self.launch_resumed(&session, PathBuf::from(&repo.path), &internal, instruction)
+            .await
+    }
+
     /// Spawn the author for a task: worktree + branch + session. On a task
     /// staffed with several authors this is the picked winner where the pick
     /// has settled, and the first author otherwise —

@@ -600,6 +600,44 @@ async fn a_superseded_session_drops_its_attention_when_the_replacement_starts() 
     .await;
 }
 
+/// A daemon restart takes every agent down, and the orchestrator it takes
+/// down is the one that holds the plan. So a goal whose orchestrator left a
+/// conversation behind gets that orchestrator back — the same row, resumed on
+/// that conversation — rather than a new one started from the briefing, and
+/// a new row beside it on every restart.
+#[tokio::test]
+async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+    std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
+    let session = h.orchestrator_session(&goal).await;
+    h.store
+        .set_session_internal_id(&session.id, "uuid-1234")
+        .await
+        .unwrap();
+    h.set_status(&session, SessionStatus::Exited).await;
+    h.raise(&session, AttentionReason::Disconnected).await;
+
+    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    sched.goal(&goal);
+    eventually(
+        TIMEOUT,
+        "the orchestrator to be running again",
+        async || h.session_status(&session).await.is_live(),
+    )
+    .await;
+
+    let rows = orchestrators(&h, &goal).await;
+    assert_eq!(rows.len(), 1, "one goal, one orchestrator: {rows:?}");
+    let launch = h.launch_file(&session.id).expect("a launch file");
+    assert_eq!(
+        launch.resume_session_id.as_deref(),
+        Some("uuid-1234"),
+        "on the conversation it left behind"
+    );
+    assert_eq!(h.attention(&session).await, None, "and the alarm is down");
+}
+
 /// Resuming an agent is the recovery: whatever it needed the user for goes
 /// with the relaunch, so a session that came back drops off the attention
 /// list.

@@ -78,9 +78,16 @@ impl GitManager {
 
     /// Move a (reviewer) worktree to a new detached position, e.g. the task
     /// branch tip at the next review round.
+    ///
+    /// Whatever the reviewer left in the tree is thrown away first. The tree
+    /// is read-only by contract, but a reviewer that proves a test fails by
+    /// breaking the code leaves edits behind, and a plain checkout refuses to
+    /// overwrite them: the tree then never moves again, and the reviewer is
+    /// never started for the next review. Ignored files — build caches — stay.
     pub async fn checkout_detached(&self, worktree: &Path, reference: &str) -> Result<()> {
-        self.git(worktree, &["checkout", "--detach", reference])
+        self.git(worktree, &["checkout", "--force", "--detach", reference])
             .await?;
+        self.git(worktree, &["clean", "-fd"]).await?;
         Ok(())
     }
 

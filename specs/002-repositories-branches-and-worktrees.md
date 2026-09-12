@@ -1,7 +1,7 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-09-10
+updated: 2026-09-13
 areas: [store, daemon]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
@@ -56,7 +56,9 @@ agent is briefed with in its worktree (006).
    git 2.42, which is the floor `ariadne doctor` warns below (014).
 8. A reviewer gets a **detached, read-only** worktree pinned to the branch
    under review, and it is refreshed between reviews so each review reads the
-   commits it was asked about. A branch with no commits on it has nothing to
+   commits it was asked about. The refresh discards whatever the reviewer
+   left in the tree, tracked edits and untracked files alike, and keeps
+   ignored files; a leftover edit never stops the tree from moving. A branch with no commits on it has nothing to
    pin at, and spawning a reviewer there says so.
 9. An orchestrator works in the repository's primary checkout, not a worktree
    of its own: it is the first repository of its goal.
@@ -88,7 +90,8 @@ agent is briefed with in its worktree (006).
 - A branch is named after the task's title
   (`store.rs::task_branch_is_named_after_the_title`).
 - Worktrees are created, verified and removed, and a reviewer's is refreshed
-  between reviews (`managers.rs::git_worktree_lifecycle_and_merge_verification`,
+  between reviews, over whatever the reviewer left in it
+  (`managers.rs::git_worktree_lifecycle_and_merge_verification`,
   `::reviewer_worktree_refresh_between_rounds`); a base branch with no commits
   gives an orphan worktree that has nothing to review until it commits, and
   then diffs, lands, and diffs again as a landed task

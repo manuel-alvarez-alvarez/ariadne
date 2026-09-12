@@ -136,6 +136,22 @@ async fn reviewer_worktree_refresh_between_rounds() {
             .trim(),
         "r2"
     );
+
+    // Round 3: the reviewer broke the code to prove a test, and left the edit
+    // and a scratch file behind. The refresh still moves the tree, and what
+    // the reviewer left is gone.
+    sh(&wt, "echo r3 > file.txt && git add . && git commit -qm r3");
+    sh(&wt_rev, "echo broken > file.txt && echo scratch > red.txt");
+    git.checkout_detached(&wt_rev, "fix-the-widget-aaa111")
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(wt_rev.join("file.txt"))
+            .unwrap()
+            .trim(),
+        "r3"
+    );
+    assert!(!wt_rev.join("red.txt").exists());
 }
 
 /// A repository nobody has committed to yet: the base branch is unborn, so the

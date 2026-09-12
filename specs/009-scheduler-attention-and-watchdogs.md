@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-11
+updated: 2026-09-13
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -35,7 +35,11 @@ the ACP runtime that takes a prompt (021).
    act — so a pass that arrives late does what the state says now, never a
    replay of what it missed.
 3. A goal wants one live orchestrator for its whole life, `planning` and
-   `active` alike. Finalizing the plan is a hand-off, not an ending.
+   `active` alike. Finalizing the plan is a hand-off, not an ending. An
+   orchestrator whose agent went away — a daemon restart takes every agent
+   down — is resumed in its own row, on the conversation it left behind. A
+   fresh one is spawned only where there is no conversation to resume, or
+   where the last launch died on arrival (rule 27).
 4. The orchestrator is the agent the daemon tells when a task needs a
    decision: a task that failed, or a goal with nothing left running. It is
    told once per situation. Running work is what it delegated, and it is not
@@ -185,6 +189,9 @@ the ACP runtime that takes a prompt (021).
   (`::a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it`).
 - A session outliving its completed goal is killed
   (`::a_session_that_outlived_its_completed_goal_is_killed`).
+- An orchestrator whose agent went away is resumed in its own row, on its
+  conversation, with no new row beside it
+  (`::an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row`).
 
 ## Known gap
 

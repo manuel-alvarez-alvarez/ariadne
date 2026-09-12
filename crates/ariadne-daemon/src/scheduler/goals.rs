@@ -10,7 +10,7 @@ use ariadne_store::{AgentSession, Goal, SessionFilter, Task, TaskFilter};
 
 use crate::agents::prompts;
 
-use super::SPAWN_RETRY_BUDGET;
+use super::{SPAWN_RETRY_BUDGET, died_on_arrival};
 
 impl super::Scheduler {
     pub(super) async fn reconcile_goal(&mut self, goal_id: &str) -> anyhow::Result<()> {
@@ -225,8 +225,11 @@ impl super::Scheduler {
             self.spent_on_a_dead_launch(&goal.id, &goal.id, orchestrator);
             return Ok(());
         }
-        if let Some(orchestrators) = self.orchestrator_sessions(&goal.id).await
-            && let Some(last) = orchestrators.last()
+        let last = self
+            .orchestrator_sessions(&goal.id)
+            .await
+            .and_then(|orchestrators| orchestrators.last().cloned());
+        if let Some(last) = &last
             && self.spent_on_a_dead_launch(&goal.id, &goal.id, last)
         {
             warn!(goal = %goal.id, session = %last.id, "the orchestrator came up and was never heard from");
@@ -235,8 +238,28 @@ impl super::Scheduler {
         if !self.orchestrator_wanted(goal).await {
             return Ok(());
         }
-        info!(goal = %goal.id, "spawning orchestrator");
-        if let Err(e) = self.launcher.spawn_orchestrator(&goal.id).await {
+        // The orchestrator that went away is put back on its feet, on the
+        // conversation that holds the plan: a daemon restart takes every agent
+        // down, and a fresh one would start the goal over from its briefing.
+        // Not where the last launch died on arrival, though — a conversation
+        // the agent will not reopen is no better the next time, so a fresh
+        // orchestrator takes over from it.
+        let resumable = last
+            .as_ref()
+            .is_some_and(|last| last.internal_session_id.is_some() && !died_on_arrival(last));
+        let started = match resumable {
+            true => {
+                info!(goal = %goal.id, "resuming orchestrator");
+                let template = prompts::template_for(PromptKind::OrchestratorResume);
+                let text = prompts::orchestrator_resume_briefing(template, goal);
+                self.launcher.resume_orchestrator(&goal.id, &text).await
+            }
+            false => {
+                info!(goal = %goal.id, "spawning orchestrator");
+                self.launcher.spawn_orchestrator(&goal.id).await
+            }
+        };
+        if let Err(e) = started {
             self.orchestrator_could_not_start(goal).await;
             return Err(e);
         }
