@@ -2,7 +2,7 @@
 # Ariadne installer: installs the binaries, registers the daemon as a user
 # service (launchd on macOS, systemd --user on Linux), installs bash/zsh
 # completions, installs the "Ariadne Desktop" app - registering it with
-# GNOME on Linux - and has the user trust Ariadne's Codex hooks.
+# GNOME on Linux.
 #
 # The binaries and the app come from a GitHub release by default, and from a
 # local build with --build-from-source. Release assets are unsigned; what they
@@ -39,7 +39,6 @@ Usage: scripts/install.sh [options]
   --prefix DIR       install binaries into DIR (default: ~/.local/bin)
   --no-service       skip daemon service registration (launchd / systemd --user)
   --no-completions   skip shell completion installation
-  --no-codex-hooks   skip the Codex hook trust prompt
   --no-ui            skip installing the "Ariadne Desktop" app
   --verbose          stream subcommand output instead of capturing it
   --quiet            print errors and the final summary only
@@ -60,7 +59,6 @@ BUILD_FROM_SOURCE=0
 RELEASE_TAG=""
 WITH_SERVICE=1
 WITH_COMPLETIONS=1
-WITH_CODEX_HOOKS=1
 WITH_UI=1
 while [ $# -gt 0 ]; do
     if ui_common_flag "$1"; then shift; continue; fi
@@ -70,7 +68,6 @@ while [ $# -gt 0 ]; do
         --prefix) PREFIX="$2"; shift 2 ;;
         --no-service) WITH_SERVICE=0; shift ;;
         --no-completions) WITH_COMPLETIONS=0; shift ;;
-        --no-codex-hooks) WITH_CODEX_HOOKS=0; shift ;;
         --no-ui) WITH_UI=0; shift ;;
         --help|-h) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; echo >&2; usage >&2; exit 2 ;;
@@ -323,7 +320,6 @@ if [ "$WITH_SERVICE" = 1 ]; then
     plan_add "Registering the daemon service ($SERVICE_DESC)"
     plan_add "Waiting for the daemon"
 fi
-[ "$WITH_CODEX_HOOKS" = 1 ] && plan_add "Trusting Ariadne's Codex hooks"
 plan_add "Writing the install manifest $UI_ARROW $(ui_tilde "$ARIADNE_MANIFEST")"
 plan_add "Checking the installation (ariadne doctor)"
 ui_start
@@ -651,23 +647,6 @@ EOF
     fi
 fi
 
-# --- codex hooks -----------------------------------------------------------------------
-# Codex carries its hooks per session, but only runs them once the user has
-# trusted them — and it asks at the start of a session. The last step of the
-# install therefore opens one, with the very flags the daemon will spawn with,
-# so the user can answer. Nothing is written to ~/.codex by us.
-CODEX_STATE="skipped"
-if [ "$WITH_CODEX_HOOKS" = 1 ]; then
-    step_begin
-    if [ "$UI_YES" = 1 ]; then
-        step_skip "--yes: run 'ariadne setup codex-hooks' when convenient"
-    else
-        run_interactive "$PREFIX/ariadne" setup codex-hooks --cli-bin "$PREFIX/ariadne" || true
-        CODEX_STATE="prompted"
-        step_ok
-    fi
-fi
-
 # --- manifest (read by uninstall.sh) ---------------------------------------------------
 step_begin
 mkdir -p "$ARIADNE_HOME"
@@ -731,7 +710,6 @@ else
 fi
 ui_field "desktop app" "$APP_STATE"
 [ -n "$GNOME_STATE" ] && ui_field "gnome entry" "$GNOME_STATE"
-[ "$WITH_CODEX_HOOKS" = 1 ] && ui_field "codex hooks" "$CODEX_STATE"
 ui_field "checkup" "ariadne doctor - $DOCTOR_STATE"
 ui_field "manifest" "$(ui_tilde "$ARIADNE_MANIFEST")"
 ui_field "log" "$(ui_tilde "$LOG_FILE")"

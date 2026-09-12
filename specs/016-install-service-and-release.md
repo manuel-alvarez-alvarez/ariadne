@@ -28,8 +28,7 @@ Out: what the daemon does once running (009, 012).
 
 1. `scripts/install.sh` installs the binaries, registers the daemon as a user
    service (launchd on macOS, `systemd --user` on Linux), installs bash and zsh
-   completions, installs the Ariadne Desktop app, and has the user trust
-   Ariadne's Codex hooks. On Linux it also registers the app with GNOME: a
+   completions, and installs the Ariadne Desktop app. On Linux it also registers the app with GNOME: a
    `~/.local/share/applications/dev.ariadne.ui.desktop` entry and an icon
    under `~/.local/share/icons/hicolor`, taken from the AppImage
    (`--appimage-extract`, which needs no FUSE) or, for a source build, from
