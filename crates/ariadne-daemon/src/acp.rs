@@ -22,9 +22,9 @@ use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use ariadne_api::events::{AgentEventDto, IngestEventRequest};
-use ariadne_core::PermissionMode;
 use ariadne_core::acp::LaunchConfig;
 use ariadne_core::id::new_id;
+use ariadne_core::{PermissionMode, TokenUsage};
 use ariadne_store::Store;
 
 use crate::acp_rpc::{Incoming, Outbound, RpcTransport};
@@ -1087,16 +1087,49 @@ async fn prompt_once(
                 .await;
         }
     }
-    rpc.sink
-        .emit(
-            "stop",
-            json!({
-                "session_id": session_id,
-                "stop_reason": response.get("stopReason"),
-            }),
-        )
-        .await;
+    let mut stop = json!({
+        "session_id": session_id,
+        "stop_reason": response.get("stopReason"),
+    });
+    if let Some(usage) = usage_for_prompt_response(&response) {
+        stop["ariadne_usage"] = json!({
+            "source": rpc.sink.launch_id,
+            "input_tokens": usage.input_tokens,
+            "cached_input_tokens": usage.cached_input_tokens,
+            "output_tokens": usage.output_tokens,
+        });
+    }
+    rpc.sink.emit("stop", stop).await;
     Ok(())
+}
+
+/// The cumulative token totals an ACP prompt response reports. Adapter quota
+/// totals include subagents, so use them where their shape is complete.
+fn usage_for_prompt_response(response: &Value) -> Option<TokenUsage> {
+    response
+        .pointer("/_meta/quota/token_count")
+        .and_then(|usage| adapter_usage(usage, &["cachedInputTokens", "cachedWriteTokens"]))
+        .or_else(|| {
+            response
+                .get("usage")
+                .and_then(|usage| adapter_usage(usage, &["cachedReadTokens", "cachedWriteTokens"]))
+        })
+}
+
+/// Map one ACP usage object into Ariadne's cache-inclusive counters.
+fn adapter_usage(usage: &Value, cached_fields: &[&str]) -> Option<TokenUsage> {
+    let input_tokens = usage.get("inputTokens").and_then(Value::as_u64)?;
+    let output_tokens = usage.get("outputTokens").and_then(Value::as_u64)?;
+    let mut cached_input_tokens = 0_u64;
+    for field in cached_fields {
+        cached_input_tokens = cached_input_tokens
+            .checked_add(usage.get(*field).and_then(Value::as_u64).unwrap_or(0))?;
+    }
+    Some(TokenUsage {
+        input_tokens: input_tokens.checked_add(cached_input_tokens)?,
+        cached_input_tokens,
+        output_tokens,
+    })
 }
 
 /// A tool call update's id, and the update as a record of the call: what it
@@ -1230,8 +1263,9 @@ fn allowing_option(params: &Value, option_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::approved_option;
+    use super::{approved_option, usage_for_prompt_response};
 
+    use ariadne_core::TokenUsage;
     use serde_json::json;
 
     /// Every permission request is approved: the allowing option wins
@@ -1252,5 +1286,57 @@ mod tests {
 
         assert_eq!(approved_option(&json!({"options": []})), None);
         assert_eq!(approved_option(&json!({})), None);
+    }
+
+    /// The standard and quota shapes name cached input differently, and the
+    /// quota figure wins because it includes the adapter's subagents.
+    #[test]
+    fn prompt_usage_maps_each_adapter_shape_and_prefers_quota() {
+        let standard = json!({"usage": {
+            "inputTokens": 10,
+            "cachedReadTokens": 20,
+            "cachedWriteTokens": 30,
+            "outputTokens": 40,
+        }});
+        assert_eq!(
+            usage_for_prompt_response(&standard),
+            Some(TokenUsage {
+                input_tokens: 60,
+                cached_input_tokens: 50,
+                output_tokens: 40,
+            })
+        );
+
+        let quota = json!({
+            "usage": {"inputTokens": 100, "outputTokens": 200},
+            "_meta": {"quota": {"token_count": {
+                "inputTokens": 4,
+                "cachedInputTokens": 5,
+                "cachedWriteTokens": 6,
+                "outputTokens": 7,
+            }}},
+        });
+        assert_eq!(
+            usage_for_prompt_response(&quota),
+            Some(TokenUsage {
+                input_tokens: 15,
+                cached_input_tokens: 11,
+                output_tokens: 7,
+            })
+        );
+
+        let malformed_quota = json!({
+            "usage": {"inputTokens": 8, "outputTokens": 9},
+            "_meta": {"quota": {"token_count": {"inputTokens": "bad"}}},
+        });
+        assert_eq!(
+            usage_for_prompt_response(&malformed_quota),
+            Some(TokenUsage {
+                input_tokens: 8,
+                cached_input_tokens: 0,
+                output_tokens: 9,
+            })
+        );
+        assert_eq!(usage_for_prompt_response(&json!({})), None);
     }
 }

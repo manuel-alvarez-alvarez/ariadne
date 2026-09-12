@@ -65,6 +65,8 @@ gone (009).
    `permission.replied`, `session.error`, and `session_end`. Every event
    carries the launch id (007), and the agent's session id is recorded on
    the row.
+   The `stop` event carries `ariadne_usage` from a well-formed prompt response:
+   quota totals before standard usage, with the launch id as its source.
 6. A turn's text is stored once, whole, when the turn ends: `agent_thought`
    `{session_id, text}` where thought chunks arrived, then `agent_message`
    `{session_id, text}` where message chunks arrived, then `stop`. While the
@@ -160,6 +162,12 @@ gone (009).
 - A cancel ends the running turn as `cancelled`
   (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), and is
   refused between turns (`::cancel_with_no_turn_running_is_refused`).
+- Prompt usage maps cache-inclusive input totals, prefers quota, replaces one
+  launch, adds a resumed launch, and leaves an absent report at zero
+  (`acp_console.rs::standard_prompt_usage_replaces_launch_totals_and_rolls_up`,
+  `::quota_prompt_usage_takes_precedence_over_standard_usage`,
+  `::a_prompt_without_usage_keeps_zero_totals_and_records_stop`,
+  `::resumed_prompt_usage_adds_a_new_launch_total`).
 - An option is found by its category, or by its id or name where no option
   has the category — the lookup the runtime shares with discovery
   (`acp_discovery.rs::model_and_effort_name_fallbacks_enter_the_discovered_catalog`).

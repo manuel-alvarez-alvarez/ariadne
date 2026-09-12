@@ -389,7 +389,12 @@ def respond(request):
                 time.sleep(0.01)
         if "exit" in turn:
             sys.exit(int(turn["exit"]))
-        return {"stopReason": turn.get("stop_reason", "end_turn")}
+        response = {"stopReason": turn.get("stop_reason", "end_turn")}
+        if "usage" in turn:
+            response["usage"] = turn["usage"]
+        if "quota" in turn:
+            response["_meta"] = {"quota": {"token_count": turn["quota"]}}
+        return response
     raise Failure(-32601, "method not supported: %s" % method)
 
 

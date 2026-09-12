@@ -106,19 +106,24 @@ and the ACP runtime that reports the agent events (021).
     the goal; every session of one reviewer groups together; a session that
     has reported nothing reads as zeros; and usage goes when its session
     does.
-16. `GET /v1/agents` lists every registry agent's flags, in registry order,
+16. The ACP runtime reads a prompt response's well-formed
+    `_meta.quota.token_count`, or its `usage` where quota is absent or
+    malformed. It adds cached reads and writes to input, records their sum as
+    cached input, names the running launch as the source, and attaches the
+    totals only to the turn's `stop` event.
+17. `GET /v1/agents` lists every registry agent's flags, in registry order,
     as `AgentConfigDto{agent_id, extra_flags, default_flags}`. `PUT
     /v1/agents/{id}` replaces one agent's list whole, an empty one included,
     and refuses an agent the registry does not hold by name. A launch passes
     the flags after the agent's registry command.
-17. The daemon's own log is served both as a snapshot (with a tail limit) and
+18. The daemon's own log is served both as a snapshot (with a tail limit) and
     as a stream that opens with a snapshot and follows with deltas, from a
     ring buffer that evicts its oldest lines.
-18. `doctor` reports the environment the daemon actually runs in: its own
+19. `doctor` reports the environment the daemon actually runs in: its own
     paths, every registry agent with what discovery made of it, the tools a
     session and a published task need (`git`, `gh`, `glab`), and a worktree
     root it cannot write.
-19. `GET /v1/acp-agents` serves the cached ACP registry. `POST
+20. `GET /v1/acp-agents` serves the cached ACP registry. `POST
     /v1/acp-agents/refresh` probes every entry and replaces that cache. Both
     responses include status, measured capabilities, degradation flags, and
     a rejection reason when discovery failed.
@@ -190,6 +195,13 @@ and the ACP runtime that reports the agent events (021).
   (`events.rs::a_session_that_has_reported_nothing_reads_as_zeros`), and
   usage goes with its session
   (`store.rs::usage_goes_when_the_session_it_belonged_to_does`).
+- The ACP runtime maps standard and quota prompt usage, replaces one launch's
+  totals, adds a resumed launch, leaves a silent response at zero, and rolls
+  totals up (`acp_console.rs::standard_prompt_usage_replaces_launch_totals_and_rolls_up`,
+  `::quota_prompt_usage_takes_precedence_over_standard_usage`,
+  `::a_prompt_without_usage_keeps_zero_totals_and_records_stop`,
+  `::resumed_prompt_usage_adds_a_new_launch_total`,
+  `acp.rs::prompt_usage_maps_each_adapter_shape_and_prefers_quota`).
 - Every registry agent is listed with its flags
   (`agents.rs::every_registry_agent_is_listed_with_its_flags_and_its_defaults`),
   flags are replaced whole
@@ -220,10 +232,9 @@ and the ACP runtime that reports the agent events (021).
 
 ## Known gap
 
-No ACP agent reports token usage yet. The runtime emits no `ariadne_usage`,
-so session, task and goal usage stay at zero for real agents. The rollup
-rules above hold for any report that does arrive, and the tests drive them
-through the same ingestion path the runtime takes.
+ACP prompt responses now report token usage through the runtime's normal
+ingestion path. An adapter that reports neither supported usage shape leaves
+its session, task and goal usage at zero.
 
 ## Sources
 

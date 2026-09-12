@@ -12,6 +12,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::json;
 
+use ariadne_api::events::AgentEventDto;
+use ariadne_api::goals::GoalDto;
+use ariadne_api::sessions::SessionDto;
+use ariadne_api::tasks::TaskDto;
+use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{Actor, AttentionReason, PermissionMode, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{AgentPin, NewTask, NewTaskAgent, Store};
 
@@ -107,6 +112,131 @@ async fn ready(h: &Harness, task_id: &str) {
         .transition_task(task_id, TaskStatus::Ready, Actor::Daemon, None, None)
         .await
         .unwrap();
+}
+
+fn tokens(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsageDto {
+    TokenUsageDto {
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+    }
+}
+
+/// ACP's standard usage is cumulative for a launch, so the latest response
+/// replaces the earlier one and its cached tokens remain part of input.
+#[tokio::test]
+async fn standard_prompt_usage_replaces_launch_totals_and_rolls_up() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    scripted["prompts"] = json!([
+        {"updates": [], "usage": {"totalTokens": 100, "inputTokens": 10,
+          "cachedReadTokens": 20, "cachedWriteTokens": 30, "outputTokens": 40}},
+        {"updates": [], "usage": {"totalTokens": 600, "inputTokens": 100,
+          "cachedReadTokens": 200, "cachedWriteTokens": 300, "outputTokens": 400}},
+    ]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+
+    let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert_eq!(session_usage.usage, tokens(60, 50, 40));
+
+    let (status, _) = h
+        .send(post_console_input(&session.id, "report later totals"))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the second prompt to end", || async {
+        stub.calls_of("session/prompt").len() == 2
+            && h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert_eq!(session_usage.usage, tokens(600, 500, 400));
+    let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
+    assert_eq!(task.usage.total, tokens(600, 500, 400));
+    let goal: GoalDto = h.get(&format!("/v1/goals/{}", cast.goal.id)).await;
+    assert_eq!(goal.usage.total, tokens(600, 500, 400));
+}
+
+/// The adapters' quota report includes subagent use, so it takes precedence
+/// over the standard response where the two disagree.
+#[tokio::test]
+async fn quota_prompt_usage_takes_precedence_over_standard_usage() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "updates": [],
+        "usage": {"inputTokens": 100, "cachedReadTokens": 200,
+                  "cachedWriteTokens": 300, "outputTokens": 400},
+        "quota": {"inputTokens": 4, "cachedInputTokens": 5,
+                  "cachedWriteTokens": 6, "outputTokens": 7},
+    }]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert_eq!(session.usage, tokens(15, 11, 7));
+}
+
+/// A response without either usage shape keeps usage at zero, but the turn
+/// still ends with its terminal event.
+#[tokio::test]
+async fn a_prompt_without_usage_keeps_zero_totals_and_records_stop() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), script());
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+
+    let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert_eq!(session_usage.usage, tokens(0, 0, 0));
+    let events: Vec<AgentEventDto> = h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+    assert!(events.iter().any(|event| event.kind == "stop"));
+}
+
+/// A resumed adapter starts its counters again, so its launch source adds to
+/// the completed launch instead of replacing it.
+#[tokio::test]
+async fn resumed_prompt_usage_adds_a_new_launch_total() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut first = script();
+    first["prompts"] = json!([{
+        "updates": [],
+        "usage": {"inputTokens": 10, "cachedReadTokens": 20,
+                  "cachedWriteTokens": 30, "outputTokens": 40},
+    }]);
+    let stub = stub_acp_agent(agent_dir.path(), first);
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+
+    h.launcher.kill_session(&session.id).await.unwrap();
+    let mut resumed_script = script();
+    resumed_script["stored_sessions"] = json!(["stub-session"]);
+    resumed_script["prompts"] = json!([{
+        "updates": [],
+        "usage": {"inputTokens": 1, "cachedReadTokens": 2,
+                  "cachedWriteTokens": 3, "outputTokens": 4},
+    }]);
+    stub.reprogram(resumed_script);
+    let resumed = h
+        .launcher
+        .resume_author(&cast.task.id, "continue this conversation")
+        .await
+        .unwrap();
+    assert_eq!(resumed.id, session.id);
+    eventually(TIMEOUT, "the resumed prompt to end", || async {
+        stub.calls_of("session/prompt").len() == 2
+            && h.session_status(&resumed).await == SessionStatus::Idle
+    })
+    .await;
+
+    let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", resumed.id)).await;
+    assert_eq!(session_usage.usage, tokens(66, 55, 44));
 }
 
 /// The console stream opens with a snapshot of everything the session has
