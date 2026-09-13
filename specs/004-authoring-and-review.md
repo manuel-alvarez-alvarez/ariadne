@@ -41,10 +41,14 @@ Out: the transition table itself (001), the landing that follows approval
    files, and writes no authorship or tool trailer in its commits. Its checks
    are the checks of what it changed — the tests and the lint of the crates
    and packages the change touches — and it never runs the whole suite on its
-   task branch. No run of the whole suite is the author's to repeat at every
-   commit: a reviewer runs it once before each verdict it gives (behavior 7),
-   and the landing runs it once after the rebase (005). So a branch takes one
-   run per verdict, plus the landing's.
+   task branch. No run of the whole suite is the author's: a reviewer runs it
+   once before each verdict it gives (behavior 7), and the landing runs it
+   once after the rebase (005). So a branch takes one run per verdict, plus
+   the landing's. The commits are counted the same way. The task is one
+   commit, built whole and proven before it is made. Each answer to a review
+   is one more commit on the same branch. Nothing is amended, since a reviewer
+   judges a SHA (behavior 7). The landing squashes the branch into the one
+   commit the base branch grows (005).
 4. A task the author cannot do as written ends with its own `fail_task` and
    the reason on the task.
 5. `request_review` moves the task to `under_review` and carries one short
@@ -136,6 +140,9 @@ Out: the transition table itself (001), the landing that follows approval
   (`defaults.rs::the_author_scopes_its_checks_and_names_who_runs_the_whole_suite`),
   and every skill that ends a step on a check scopes it the same way
   (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`).
+- The seat text and the skills make the task one commit and each review answer
+  one more
+  (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).
 - A verdict belongs to the review that was asked for, and asking again
   supersedes what came before it
   (`store.rs::a_verdict_belongs_to_the_review_that_was_asked_for`); a second

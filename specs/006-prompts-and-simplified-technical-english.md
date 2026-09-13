@@ -63,6 +63,11 @@ they describe (003, 004, 005) — and what a skill is (017).
    skill scopes the step it owns to what the change touched and names neither
    run, so eighteen documents cannot disagree about who runs what. The landing
    briefing carries its own run, as a step of the procedure it belongs to.
+   The same text states how the branch is committed: one commit for the task,
+   one more commit for each review answer, and no amend (004). A skill carries
+   only the commit of the step it owns: `coding` commits the task it built,
+   and `refactoring` the moves it made. It repeats neither the review answer
+   nor the amend. No skill divides a task into slices or small commits.
 4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. The
@@ -117,6 +122,9 @@ they describe (003, 004, 005) — and what a skill is (017).
   (`::the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward`),
   and no shipped skill sends an author to the whole suite
   (`::a_skill_scopes_its_own_checks_to_what_the_task_changed`).
+- The seat text and the two skills that name a commit make the task one commit
+  and each review answer one more. No skill repeats the review answer or the
+  amend (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).
 - Every default names only placeholders its kind can fill in
   (`defaults.rs::every_default_names_only_placeholders_its_kind_can_fill_in`),
   and every allowed placeholder is one a builder actually passes

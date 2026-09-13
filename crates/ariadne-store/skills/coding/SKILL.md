@@ -5,8 +5,7 @@ description: Implement a task from its specification, with the tests that prove 
 
 # Coding
 
-Implement the task you were given, and nothing else. Build it in thin
-vertical slices.
+Implement the task you were given, and nothing else. The task is one commit.
 
 ## Steps
 
@@ -21,12 +20,12 @@ vertical slices.
 5. On confusion or a contradiction, stop and ask the orchestrator over
    `send_message`. Name the two readings and the one you would pick.
    Done when the answer settles the reading.
-6. Cut the work into thin vertical slices. Each slice is the smallest
-   complete piece that runs end to end.
-7. Build one slice at a time, with the tests its acceptance criteria call
-   for. Prove each slice before the next: run the tests and the lint of what
-   you changed. Commit the slice with an imperative subject.
-   Done when the slice is proven and committed.
+6. Build the whole task, with the tests its acceptance criteria call for.
+   Done when every criterion has the code and the test that prove it.
+7. Prove the work: run the tests and the lint of what you changed.
+   Done when both are green.
+8. Commit the work once, with an imperative subject.
+   Done when the task is one commit on your branch.
 
 ## Rules
 
@@ -36,13 +35,12 @@ vertical slices.
   premature abstraction.
 - Commit no generated file and no secret.
 - Write no authorship trailer and no tool trailer.
-- Keep the tests of what you changed green at every commit.
 - Where the task cannot be done as written, stop and report the reason.
 
 ## Do not tell yourself
 
-- "I will test it all at the end." -> A defect in slice one makes every
-  later slice wrong. Prove each slice.
+- "I will commit this part now and finish it later." -> A partial commit
+  leaves work on the branch that no test proves. Commit the task whole.
 - "It is obvious what they meant." -> A silent assumption is the commonest
   failure. State it, or ask.
 - "This cleanup is small enough to include." -> A mixed diff hides both
@@ -51,5 +49,5 @@ vertical slices.
 ## Done
 
 The acceptance criteria pass. The tests and the lint of what you changed are
-green. Each slice was proven on its own. The diff holds nothing the task did
-not ask for.
+green. The task is one commit on your branch. The diff holds nothing the task
+did not ask for.

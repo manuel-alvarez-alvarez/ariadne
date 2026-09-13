@@ -225,16 +225,21 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan one Ariadne goal into tasks
 ///
 /// It is also the one place the division of the checks is stated. An author
 /// runs the tests and the lint of what it changed, and no run of the whole
-/// suite is its own to repeat at every commit: a reviewer runs it once
-/// before each verdict it gives (`REVIEWER_SYSTEM_PROMPT`), and the landing
-/// runs it once after the rebase ([`LANDING_DIRECT`]). How many runs a
-/// branch takes is how many verdicts it takes, plus that one. A skill scopes
-/// the step it owns and names neither run, so the division cannot go stale
-/// in eighteen documents.
+/// suite is its own: a reviewer runs it once before each verdict it gives
+/// (`REVIEWER_SYSTEM_PROMPT`), and the landing runs it once after the rebase
+/// ([`LANDING_DIRECT`]). How many runs a branch takes is how many verdicts it
+/// takes, plus that one. A skill scopes the step it owns and names neither
+/// run, so the division cannot go stale in eighteen documents.
+///
+/// The commits are counted the same way, and here too. A task is one
+/// responsibility, cut as one tracer by the orchestrator and squashed by the
+/// landing, so it is one commit; a review answer is one more commit on top.
+/// An amend rewrites a commit a reviewer already judged by its SHA, so
+/// nothing amends.
 const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to the end. Work only in your worktree, on your task branch. Commit nothing generated or unrelated.
 
 1. Read the task and its acceptance criteria. Where you cannot do it as written, call `fail_task` with the reason in STE.
-2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Make small commits, their text in STE. Add the tests the task asks for. Run the tests and the lint of the crates and packages you changed. Never run the whole suite on your branch: the reviewer runs it before each verdict, and the landing runs it once.
+2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Commit the task once, in STE. Add one commit per review answer. Never amend. Add the tests the task asks for. Run the tests and the lint of the crates and packages you changed. Never run the whole suite on your branch: the reviewer runs it before each verdict, and the landing runs it once.
 3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
 4. Call `request_review` with one short summary in STE: what changed, why, how you verified it. Apply every verdict on the same branch and call it again. Where you disagree, say why in that summary.
 5. `send_message` to ask a reviewer or the orchestrator what the task does not answer, and to answer what they ask you. Where the task is wrong, call `fail_task` and say why.
@@ -357,8 +362,9 @@ Answer every point. Where you disagree, say why the code stays."#;
 /// The whole suite runs here, and this is the one run of it the author owes:
 /// after the rebase, so it proves the tree the base branch is about to grow,
 /// and before the fast-forward, so a failure is still a thing to fix rather
-/// than a thing to revert. Every commit before it was proven by the checks
-/// of what it changed alone ([`AUTHOR_SYSTEM_PROMPT`]).
+/// than a thing to revert. The commits before it — the task's one, and one
+/// per review answer — were proven by the checks of what they changed alone
+/// ([`AUTHOR_SYSTEM_PROMPT`]).
 const LANDING_DIRECT: &str = r#"# Land task: {task_title}
 
 Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what `git -C {repo_path} remote -v` names, if anything.
@@ -1081,8 +1087,8 @@ mod tests {
     /// author's.
     ///
     /// An author told to keep the tests and the linters green reads that as
-    /// the whole suite, and runs it at every slice and every commit — tens of
-    /// runs a task, each one minutes the task does not spend on the work. So
+    /// the whole suite, and runs it at every step of the work — tens of runs
+    /// a task, each one minutes the task does not spend on the work. So
     /// the seat text scopes the run and names the two seats that do run the
     /// whole thing, because a scope with nobody behind it reads as a change
     /// that nothing proves.
@@ -1170,6 +1176,67 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A task is one commit, and every text that tells an author when to
+    /// commit says the same thing.
+    ///
+    /// A task is one responsibility: the orchestrator cuts it as one tracer,
+    /// and the landing squashes the branch onto the base. So a branch divided
+    /// into parts buys nothing and costs the review a diff of half-built
+    /// commits. No skill sends an author to a slice or to a small commit, the
+    /// two skills that name the commit name one, and the seat text adds the
+    /// one commit each review answer takes.
+    ///
+    /// That last rule is the seat text's alone, and this is what holds it
+    /// there. A skill names the commit of the step it owns; what a review
+    /// answer costs and what an amend would break hold for every author
+    /// whatever it is doing, so a skill that repeated them would be a second
+    /// owner of a rule, free to go stale against the first.
+    #[test]
+    fn a_task_is_one_commit_and_a_review_answer_is_one_more() {
+        for (name, document) in all_skills() {
+            let document = unwrapped(document).to_lowercase();
+            for divided in ["slice", "small commit"] {
+                assert!(
+                    !document.contains(divided),
+                    "the {name} divides a task into a {divided}"
+                );
+            }
+            for lifecycle in ["commit per review answer", "amend"] {
+                assert!(
+                    !document.contains(lifecycle),
+                    "the {name} repeats the seat text's rule about \"{lifecycle}\""
+                );
+            }
+        }
+
+        for (name, step) in [
+            ("coding", "Done when the task is one commit on your branch."),
+            (
+                "refactoring",
+                "Commit the whole refactor once, after every move is green.",
+            ),
+        ] {
+            let document = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                document.contains(step),
+                "the {name} skill does not say \"{step}\""
+            );
+        }
+
+        let author = default_system_prompt(Seat::Author);
+        for rule in [
+            "Commit the task once, in STE.",
+            "Add one commit per review answer. Never amend.",
+        ] {
+            assert!(author.contains(rule), "the author seat text and \"{rule}\"");
+        }
+        // And the rule it replaced is gone, rather than sitting beside it.
+        assert!(
+            !author.contains("Make small commits"),
+            "the author seat text still asks for small commits"
+        );
     }
 
     /// Each landing briefing is the procedure of one merge strategy, whole,

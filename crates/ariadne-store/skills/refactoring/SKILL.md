@@ -22,7 +22,8 @@ the proof.
 4. Make one kind of change at a time. Rename, then extract, then move.
 5. Run the tests after each move.
    Done when each move ends green.
-6. Keep each commit reversible on its own.
+6. Commit the whole refactor once, after every move is green.
+   Done when one commit holds every move.
 
 ## Rules
 
@@ -45,5 +46,4 @@ the proof.
 ## Done
 
 The tests pass unchanged. The diff is structure only. Every removal names
-the reason the fence could go. A reviewer can read it as a sequence of
-small, safe moves.
+the reason the fence could go. One commit holds every move.

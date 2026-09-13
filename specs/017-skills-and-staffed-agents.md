@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-09-11
+updated: 2026-09-13
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -80,7 +80,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
    agent's skills are (006, 007) — so an edit or a reset of it reaches the
    next launch.
 10. A skill document obeys the STE rules and the size caps of spec 006, the
-    same as every other default text.
+    same as every other default text. It also obeys the rules the seat texts
+    state. No skill divides a task into slices or small commits. `coding`
+    builds the whole task and commits it once, and `refactoring` holds every
+    move in one commit (004).
 11. The orchestrator staffs each task: it names the skills of each agent and
     the model each runs on (011), may size the effort beside it, and may add
     a brief that the task itself does not carry. How the task ends is agreed
@@ -125,6 +128,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - Every shipped skill is named once and describes itself
   (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`), and
   every document is within its cap (`defaults.rs::skill_size_caps_hold`).
+- No shipped skill divides a task, and `coding` and `refactoring` each name
+  one commit
+  (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).
 - An agent is written on the pin it was given, whole
   (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`), and no
   table names an agent by anything but the registry id at the head of its
