@@ -19,7 +19,7 @@ A conflict is two intents that meet in one file. Resolve it by intent.
 4. Where two intents clash, keep the one the landing goal wants. Write the
    trade-off in the commit body.
    Done when the commit body names each intent you dropped.
-5. Run the repository's own checks: the build, the tests and the linters.
+5. Run the tests and the lint of the files you resolved.
    Done when each check passes.
 6. Finish the operation. Stage the files, then continue the rebase or commit
    the merge.

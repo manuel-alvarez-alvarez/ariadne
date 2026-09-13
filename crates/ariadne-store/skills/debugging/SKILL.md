@@ -31,8 +31,8 @@ and the rest is mechanical.
    Done when the loop's verdict confirms or kills the hypothesis.
 6. Fix the cause, not the symptom. Turn the minimized repro into a
    regression test.
-   Done when the test fails without the fix, passes with it, and the whole
-   suite is green.
+   Done when the test fails without the fix, passes with it, and the tests
+   of the crate you changed are green.
 7. Clean up. Grep the debug prefix away and delete the throwaway harness.
    Name the confirmed cause in the commit body.
    Done when the grep finds nothing.
@@ -57,5 +57,6 @@ and the rest is mechanical.
 
 ## Done
 
-The regression test fails without the fix and passes with it. The suite is
-green. The debug prefix greps to nothing. The commit body names the cause.
+The regression test fails without the fix and passes with it. The tests of
+the crate you changed are green. The debug prefix greps to nothing. The
+commit body names the cause.

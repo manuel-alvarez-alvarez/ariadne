@@ -222,10 +222,19 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan one Ariadne goal into tasks
 /// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
 /// procedure belongs to the briefing that knows which repository this is.
+///
+/// It is also the one place the division of the checks is stated. An author
+/// runs the tests and the lint of what it changed, and no run of the whole
+/// suite is its own to repeat at every commit: a reviewer runs it once
+/// before each verdict it gives (`REVIEWER_SYSTEM_PROMPT`), and the landing
+/// runs it once after the rebase ([`LANDING_DIRECT`]). How many runs a
+/// branch takes is how many verdicts it takes, plus that one. A skill scopes
+/// the step it owns and names neither run, so the division cannot go stale
+/// in eighteen documents.
 const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to the end. Work only in your worktree, on your task branch. Commit nothing generated or unrelated.
 
 1. Read the task and its acceptance criteria. Where you cannot do it as written, call `fail_task` with the reason in STE.
-2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Make small commits, their text in STE. Keep tests and linters green. Add the tests the task asks for.
+2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Make small commits, their text in STE. Add the tests the task asks for. Run the tests and the lint of the crates and packages you changed. Never run the whole suite on your branch: the reviewer runs it before each verdict, and the landing runs it once.
 3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
 4. Call `request_review` with one short summary in STE: what changed, why, how you verified it. Apply every verdict on the same branch and call it again. Where you disagree, say why in that summary.
 5. `send_message` to ask a reviewer or the orchestrator what the task does not answer, and to answer what they ask you. Where the task is wrong, call `fail_task` and say why.
@@ -344,16 +353,23 @@ Answer every point. Where you disagree, say why the code stays."#;
 ///
 /// The push comes before `finish_task` because that call ends the task, and
 /// the cleanup behind it takes the worktree the push would have run from.
+///
+/// The whole suite runs here, and this is the one run of it the author owes:
+/// after the rebase, so it proves the tree the base branch is about to grow,
+/// and before the fast-forward, so a failure is still a thing to fix rather
+/// than a thing to revert. Every commit before it was proven by the checks
+/// of what it changed alone ([`AUTHOR_SYSTEM_PROMPT`]).
 const LANDING_DIRECT: &str = r#"# Land task: {task_title}
 
 Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what `git -C {repo_path} remote -v` names, if anything.
 
 1. `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` there, if it is on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
 2. `git rebase {base_branch}` in your worktree. Conflicts are yours.
-3. `git reset --soft {base_branch} && git commit`. One commit lands. Give it a Conventional Commits subject and a body: what changed and why.
-4. `git -C {repo_path} merge --ff-only {branch}`. Refused because the base moved: back to step 1.
-5. `git -C {repo_path} push <remote> {base_branch}`. Push first: `finish_task` ends the task and the cleanup takes your worktree.
-6. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`."#;
+3. Run the whole suite, the build and the linters once. A check that fails: fix it on {branch}, then back to step 2.
+4. `git reset --soft {base_branch} && git commit`. One commit lands. Give it a Conventional Commits subject and a body: what changed and why.
+5. `git -C {repo_path} merge --ff-only {branch}`. Refused because the base moved: back to step 1.
+6. `git -C {repo_path} push <remote> {base_branch}`. Push first: `finish_task` ends the task and the cleanup takes your worktree.
+7. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`."#;
 
 /// What the author of an approved task in a `pull_request` repository is
 /// briefed with, unless the repository was given one of its own: publish it,
@@ -544,6 +560,13 @@ mod tests {
         format!("{} landing briefing", landing.as_str())
     }
 
+    /// `text` with its line wrapping taken out, so a test reads a marker as
+    /// the sentence a skill states rather than as the fragment a wrap left on
+    /// one line.
+    fn unwrapped(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
     /// The size a prompt may grow back to, per kind, and in total.
     ///
     /// Every text here is sent to a real agent on a real turn, so what is
@@ -642,6 +665,19 @@ mod tests {
     /// fallback, so its cap rises from 200 to 630. The kind total rises from
     /// 1750 to 2020, and the grand total rises from 6500 to 7050, to hold those
     /// additions.
+    ///
+    /// The other half of that division is the author's. An author used to be
+    /// told to keep the tests and the linters green, which every layer under it
+    /// read as the whole suite at every commit; it runs the checks of what it
+    /// changed now, and it names the two seats that do run the whole thing. The
+    /// division is three clauses of the author's seat text and a step of the
+    /// direct landing, and it is stated nowhere else, so it is paid for once:
+    /// the author's cap rises from 1060 to 1250, and the direct landing's from
+    /// 880 to 1000 for the run it gained after the rebase. The landings' total
+    /// rises from 2570 to 2700 with it. The grand total rises from 7050 to
+    /// 7350: the texts already stood at 7039 of the 7050, so the author's 151
+    /// characters and the landing's 117 need the room, and 7350 leaves the same
+    /// slack the old number did.
     #[test]
     fn size_caps_hold() {
         // Raised from 1500 for the reviewer's pick briefing: a kind that did
@@ -651,8 +687,8 @@ mod tests {
         // counted apart, because a repository could rewrite the other two and
         // never that one. Nothing rewrites any of them now, so they are one
         // set, and the total is the two plus the third at its own cap.
-        const LANDING_TOTAL: usize = 2570;
-        const GRAND_TOTAL: usize = 7050;
+        const LANDING_TOTAL: usize = 2700;
+        const GRAND_TOTAL: usize = 7350;
 
         // A cap per seat, not one for the three. The orchestrator's carried
         // its playbook up to 1750; the playbook is the `orchestration` skill
@@ -661,10 +697,11 @@ mod tests {
         // The author's and the reviewer's went to 1010 for the channel the
         // agents talk on: one step each about asking and answering, which is
         // a thing neither could do before rather than a rewording of a thing
-        // it could.
+        // it could. Then the author's alone went to 1250 for the division of
+        // the checks, which is its text to state and no other seat's.
         let system_cap = |seat: Seat| match seat {
             Seat::Orchestrator => 200,
-            Seat::Author => 1060,
+            Seat::Author => 1250,
             Seat::Reviewer => 1400,
         };
         let cap = |kind: PromptKind| match kind {
@@ -673,7 +710,7 @@ mod tests {
             _ => 300,
         };
         let landing_cap = |landing: Landing| match landing {
-            Landing::Merge => 880,
+            Landing::Merge => 1000,
             Landing::PullRequest => 1300,
             Landing::None => 420,
         };
@@ -1038,6 +1075,103 @@ mod tests {
         );
     }
 
+    /// The author's checks are the checks of what it changed, and the seat
+    /// text says so with the reason: the whole suite is run by a reviewer
+    /// before each verdict and by the landing once, and neither run is the
+    /// author's.
+    ///
+    /// An author told to keep the tests and the linters green reads that as
+    /// the whole suite, and runs it at every slice and every commit — tens of
+    /// runs a task, each one minutes the task does not spend on the work. So
+    /// the seat text scopes the run and names the two seats that do run the
+    /// whole thing, because a scope with nobody behind it reads as a change
+    /// that nothing proves.
+    #[test]
+    fn the_author_scopes_its_checks_and_names_who_runs_the_whole_suite() {
+        let author = default_system_prompt(Seat::Author);
+        for rule in [
+            "Run the tests and the lint of the crates and packages you changed.",
+            "Never run the whole suite on your branch",
+            "the reviewer runs it before each verdict, and the landing runs it once",
+        ] {
+            assert!(author.contains(rule), "the author seat text and \"{rule}\"");
+        }
+        // And the rule it replaced is gone, rather than sitting beside it.
+        assert!(
+            !author.contains("Keep tests and linters green"),
+            "the author seat text still asks for every linter at every commit"
+        );
+    }
+
+    /// The whole suite's one run on a task branch is the landing's, and it
+    /// stands between the rebase and the fast-forward.
+    ///
+    /// Before the rebase it proves a tree the base branch never grows, and a
+    /// base that moved under it is exactly what the run is for. After the
+    /// fast-forward it is too late: the base branch already carries the
+    /// commit, and a failure is a revert rather than a fix. So the run sits
+    /// between the two, and a check that fails goes back to the rebase.
+    #[test]
+    fn the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward() {
+        let direct = default_landing_prompt(Landing::Merge);
+        let rebase = direct
+            .find("`git rebase {base_branch}`")
+            .expect("the direct landing never rebases");
+        let suite = direct
+            .find("Run the whole suite, the build and the linters once.")
+            .expect("the direct landing never runs the whole suite");
+        let forward = direct
+            .find("merge --ff-only {branch}")
+            .expect("the direct landing never fast-forwards the base branch");
+        assert!(
+            rebase < suite && suite < forward,
+            "the whole suite does not run between the rebase and the fast-forward: {direct}"
+        );
+
+        // Once, and a failure is fixed on the branch and rebased again.
+        assert_eq!(direct.matches("Run the whole suite").count(), 1, "{direct}");
+        assert!(
+            direct.contains("fix it on {branch}, then back to step 2"),
+            "the direct landing does not say where a failed check is fixed: {direct}"
+        );
+    }
+
+    /// A skill scopes the step it owns to what the task changed, and names
+    /// none of the whole-suite runs: those belong to the author's seat text,
+    /// which is the one place the division is stated.
+    ///
+    /// The five here are the skills that used to end a step on the suite. The
+    /// two that are left out run nowhere near a task branch: `code-review` is
+    /// the reviewer's, and `release` runs on the base branch.
+    #[test]
+    fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
+        for (name, step) in [
+            ("coding", "run the tests and the lint of what you changed"),
+            ("debugging", "the tests of the crate you changed are green"),
+            ("testing", "Run the one test, never the suite around it."),
+            (
+                "conflict-resolution",
+                "Run the tests and the lint of the files you resolved.",
+            ),
+            (
+                "dependency-upgrade",
+                "Run the tests, the lint and the build of the packages that use the dependency.",
+            ),
+        ] {
+            let document = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                document.contains(step),
+                "the {name} skill does not say \"{step}\""
+            );
+            for suite in ["whole suite", "full suite", "the suite is green"] {
+                assert!(
+                    !document.contains(suite),
+                    "the {name} skill sends an author to the {suite}"
+                );
+            }
+        }
+    }
+
     /// Each landing briefing is the procedure of one merge strategy, whole,
     /// and carries nothing of the other: the repository is on one strategy, so
     /// the author has neither a section to skip nor a choice to make.
@@ -1122,6 +1256,10 @@ mod tests {
         // engineering work, and what each of the three calls that move a task
         // along is *for* — named elsewhere, explained here. The last one
         // lives in the orchestration skill now, with the playbook it ends.
+        //
+        // The last two are the division of the checks: which agent runs the
+        // whole suite is the author's seat text to say, and the run itself is
+        // a step of the landing that owns it.
         for marker in [
             "git merge --no-edit",
             "push plainly",
@@ -1129,6 +1267,8 @@ mod tests {
             "Call `request_review` with one short summary",
             "Call `submit_verdict` once per review you are asked for",
             "It starts every task and ends planning",
+            "the reviewer runs it before each verdict, and the landing runs it once",
+            "Run the whole suite, the build and the linters once.",
         ] {
             let places = all_defaults()
                 .into_iter()

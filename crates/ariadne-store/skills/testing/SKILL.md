@@ -19,7 +19,8 @@ A test states one claim at a seam and fails when that claim breaks.
 4. Arrange, act, assert. Keep the three steps visible.
 5. Take every expected value from an independent source: a known-good
    literal, a worked example, the spec.
-6. Run each new test against the unfixed code, and watch it fail.
+6. Run each new test on its own against the unfixed code, and watch it fail.
+   Run the one test, never the suite around it.
    Done when each test has failed once, for the right reason.
 
 ## Rules
@@ -53,4 +54,4 @@ Two tests that lie. Hunt both in your own suite:
 ## Done
 
 Every acceptance criterion names a test at a seam. Each test failed without
-its change and passes with it. The suite is green and repeatable.
+its change and passes with it. Each test is green and repeatable.

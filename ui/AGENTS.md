@@ -4,8 +4,16 @@ Conventions for changing the desktop app under `ui/`. Read this before editing
 anything here; commit-message and history rules live in the root
 [`AGENTS.md`](../AGENTS.md).
 
-Before committing, run `npm test`, `npm run typecheck`, `npm run lint` and
-`npm run check:unused`.
+On a task branch, run the checks of what you changed, and only those:
+
+```sh
+npx vitest run <path>          # the test files of the change
+npx biome check <paths>        # the files of the change
+npm run typecheck              # the project's types, always whole
+```
+
+Before a commit on `main`, run the whole suite: `npm test`, `npm run
+typecheck`, `npm run lint` and `npm run check:unused`.
 
 The suite needs no daemon and no agent. The daemon is a stubbed `fetch`, a
 stubbed `EventSource` and a stubbed `WebSocket` (`src/test/`), and a session's

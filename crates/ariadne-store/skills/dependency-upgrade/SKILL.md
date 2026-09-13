@@ -17,7 +17,8 @@ The upgrade changelog is the work. The upgrade version bump is one line.
    Done when each upgrade change names its call sites.
 4. Raise the dependency and fix its affected call sites together.
    Done when the manifest and lockfile hold the target version.
-5. Run the full suite, linters and build.
+5. Run the tests, the lint and the build of the packages that use the
+   dependency.
    Done when every upgrade check passes.
 6. Exercise the system path that uses the dependency most.
    Done when that path shows the expected upgrade behavior.

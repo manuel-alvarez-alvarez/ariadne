@@ -1,7 +1,7 @@
 ---
 id: how-a-task-ends
 status: current
-updated: 2026-09-10
+updated: 2026-09-13
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
@@ -46,11 +46,16 @@ state machine around `approved` and `finished` (001).
    it already holds. There is no separate integrator seat. On a task staffed
    with several authors that author is the picked winner (004), and its
    branch is the one every landing command and check reads.
-5. `merge`: rebase the task branch onto the base, squash it into one commit
-   with a Conventional Commits subject, fast-forward the base branch in the
-   primary checkout, push where there is a remote, then `finish_task` with the
-   base branch's sha. The push comes before `finish_task`, because that call
-   ends the task and the cleanup behind it takes the worktree.
+5. `merge`: rebase the task branch onto the base, run the whole suite, the
+   build and the linters once, squash the branch into one commit with a
+   Conventional Commits subject, fast-forward the base branch in the primary
+   checkout, push where there is a remote, then `finish_task` with the base
+   branch's sha. The suite runs after the rebase and before the fast-forward,
+   and it is the one run of it the author owes (004): before the rebase it
+   proves a tree the base branch never grows, and after the fast-forward a
+   failure is a revert rather than a fix. A check that fails is fixed on the
+   task branch and rebased again. The push comes before `finish_task`, because
+   that call ends the task and the cleanup behind it takes the worktree.
 6. `pull_request`: rebase once — the only rebase — push the branch, and open
    the request with `gh` (github.com) or `glab` (GitLab), whichever the
    `origin` remote calls for, following the repository's own templates. The
@@ -95,6 +100,9 @@ state machine around `approved` and `finished` (001).
   (`defaults.rs::each_landing_briefing_is_one_strategy_and_nothing_of_the_other`),
   and nothing the author still has to run comes after `finish_task`
   (`defaults.rs::nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task`).
+- The `merge` briefing runs the whole suite once, between the rebase and the
+  fast-forward
+  (`defaults.rs::the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward`).
 - How a task ends travels as the three endings there are
   (`edit.rs::how_the_task_ends_travels_as_the_three_endings_there_are`).
 

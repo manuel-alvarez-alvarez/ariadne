@@ -24,8 +24,8 @@ vertical slices.
 6. Cut the work into thin vertical slices. Each slice is the smallest
    complete piece that runs end to end.
 7. Build one slice at a time, with the tests its acceptance criteria call
-   for. Prove each slice before the next: run the tests, the build and the
-   linters. Commit the slice with an imperative subject.
+   for. Prove each slice before the next: run the tests and the lint of what
+   you changed. Commit the slice with an imperative subject.
    Done when the slice is proven and committed.
 
 ## Rules
@@ -36,7 +36,7 @@ vertical slices.
   premature abstraction.
 - Commit no generated file and no secret.
 - Write no authorship trailer and no tool trailer.
-- Keep the tests green at every commit.
+- Keep the tests of what you changed green at every commit.
 - Where the task cannot be done as written, stop and report the reason.
 
 ## Do not tell yourself
@@ -50,6 +50,6 @@ vertical slices.
 
 ## Done
 
-The acceptance criteria pass. The tests and the linters are green. Each
-slice was proven on its own. The diff holds nothing the task did not ask
-for.
+The acceptance criteria pass. The tests and the lint of what you changed are
+green. Each slice was proven on its own. The diff holds nothing the task did
+not ask for.

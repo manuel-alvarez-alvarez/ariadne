@@ -55,35 +55,43 @@ they describe (003, 004, 005) — and what a skill is (017).
    by reading them. Its resume starts the checks again and reads only commits
    after the last verdict's SHA. With no known SHA or unrelated HEAD, it uses
    `get_diff`.
-3. The skill index is one line per skill — its name, the summary its
+3. The division of the checks is one of those rules, and the author's seat
+   text is the one place it is stated: the author runs the tests and the lint
+   of the crates and packages it changed, and no run of the whole suite is its
+   own — a reviewer runs it once before each verdict it gives (004), and the
+   landing runs it once after the rebase and before the fast-forward (005). A
+   skill scopes the step it owns to what the change touched and names neither
+   run, so eighteen documents cannot disagree about who runs what. The landing
+   briefing carries its own run, as a step of the procedure it belongs to.
+4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. The
    document itself stays on disk, so a broad set of skills costs an agent a
    few lines rather than a few pages. How each CLI is pointed at those files
    is 007.
-4. The lifecycle briefings are Ariadne's own constants, read from the code on
+5. The lifecycle briefings are Ariadne's own constants, read from the code on
    every launch and every resume. No route reads or writes one, and no row
    holds one. Because nothing is copied into the database, rewording a default
    reaches every session started after it.
-5. A briefing is rendered by substituting `{name}` tokens. Rendering is
+6. A briefing is rendered by substituting `{name}` tokens. Rendering is
    lenient by construction: an unknown token, an unclosed brace and an empty
    template all render to something, and none of them fails a spawn.
-6. Each kind declares the placeholders its builder fills in, and a default
+7. Each kind declares the placeholders its builder fills in, and a default
    naming one outside its list fails the suite. Nothing hand-written reaches
    an agent any more — every text is the code's — so the check runs over the
    defaults rather than at a save.
-7. Every agent-facing text is ASD-STE100 Simplified Technical English: one
+8. Every agent-facing text is ASD-STE100 Simplified Technical English: one
    instruction to a sentence, the imperative for an instruction, the active
    voice, at most 25 words a sentence, one meaning per word, a list for a
    sequence of steps.
-8. Two of those rules are read off the text by test: sentence length, and a
+9. Two of those rules are read off the text by test: sentence length, and a
    list of banned words (`utilise`, `prior to`, `in order to`, `ensure`,
    `should`, `may`).
-9. STE binds what the agents write too — turn text and visible reasoning, task
-   titles and descriptions, review summaries, verdicts, failure reasons, commit
-   subjects and bodies, and pull request text — and that rule lives in the
-   session rules, where no edit of a skill can remove it.
-10. Every default text is capped in size, per text and in total, and the caps
+10. STE binds what the agents write too — turn text and visible reasoning,
+    task titles and descriptions, review summaries, verdicts, failure reasons,
+    commit subjects and bodies, and pull request text — and that rule lives in
+    the session rules, where no edit of a skill can remove it.
+11. Every default text is capped in size, per text and in total, and the caps
     come down to what a rewrite fits in. Moving a cap is a decision argued in
     the test's own documentation, never a way round a failing assertion. The
     shipped skill documents are capped on their own scale, since a skill is
@@ -103,6 +111,12 @@ they describe (003, 004, 005) — and what a skill is (017).
   MCP session rules state whether a seat works alone or waits on the user,
   and when it may ask anyway
   (`mcp.rs::only_the_orchestrator_is_told_to_ask`).
+- The author's seat text states the division of the checks
+  (`defaults.rs::the_author_scopes_its_checks_and_names_who_runs_the_whole_suite`),
+  the `merge` landing carries the one run of the whole suite
+  (`::the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward`),
+  and no shipped skill sends an author to the whole suite
+  (`::a_skill_scopes_its_own_checks_to_what_the_task_changed`).
 - Every default names only placeholders its kind can fill in
   (`defaults.rs::every_default_names_only_placeholders_its_kind_can_fill_in`),
   and every allowed placeholder is one a builder actually passes

@@ -24,9 +24,21 @@ The desktop app under `ui/` is not part of this workspace; it has its own
 The test runner is [cargo-nextest](https://nexte.st), which is what CI runs:
 `cargo install cargo-nextest --locked`, or `cargo binstall cargo-nextest`.
 
+On a task branch, run the checks of the crates you changed, and only those:
+
+```sh
+cargo nextest run -p <crate>              # the crate
+cargo nextest run -p <crate> --test <file> # one test binary of it
+cargo clippy -p <crate> --all-targets
+cargo fmt
+```
+
+Before a commit on `main`, run the whole workspace:
+
 ```sh
 cargo nextest run
 cargo clippy --all-targets
+cargo fmt --all -- --check
 ```
 
 Nothing is `#[ignore]`d: the suite drives real `git` worktrees, which Ariadne
@@ -34,8 +46,6 @@ requires anyway, and a stub ACP agent that `tests/common/acp.rs` writes in
 `python3` and registers as the agent `stub`. Every seat a test starts runs on
 that stub, so the suite needs no coding-agent CLI installed. A machine missing
 `git` or `python3` gets failures rather than a quiet pass.
-
-Run `cargo nextest run` and `cargo clippy --all-targets` before you commit.
 
 `cargo test` still works and does not need nextest installed, but it runs the test
 binaries one at a time where nextest pools tests across all of them, so a full

@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/landing_lifecycle.rs
   - crates/ariadne-daemon/tests/multi_author_tasks.rs
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-store/src/defaults.rs
 ---
 
 # Authoring and review
@@ -37,8 +38,13 @@ Out: the transition table itself (001), the landing that follows approval
 2. The task never leaves its authors: the same sessions and worktrees carry
    it from the first commit through every review to the merge.
 3. The author implements only its task, obeys the repository's conventions
-   files, keeps tests and linters green, and writes no authorship or tool
-   trailer in its commits.
+   files, and writes no authorship or tool trailer in its commits. Its checks
+   are the checks of what it changed — the tests and the lint of the crates
+   and packages the change touches — and it never runs the whole suite on its
+   task branch. No run of the whole suite is the author's to repeat at every
+   commit: a reviewer runs it once before each verdict it gives (behavior 7),
+   and the landing runs it once after the rebase (005). So a branch takes one
+   run per verdict, plus the landing's.
 4. A task the author cannot do as written ends with its own `fail_task` and
    the reason on the task.
 5. `request_review` moves the task to `under_review` and carries one short
@@ -125,6 +131,11 @@ Out: the transition table itself (001), the landing that follows approval
   and so does each reviewer (`::a_reviewer_reuses_its_session_across_reviews`);
   a reviewer with no agent id is spawned afresh
   (`::a_reviewer_without_an_agent_id_is_spawned_afresh`).
+- The author's seat text scopes its checks to what it changed and names who
+  runs the whole suite
+  (`defaults.rs::the_author_scopes_its_checks_and_names_who_runs_the_whole_suite`),
+  and every skill that ends a step on a check scopes it the same way
+  (`defaults.rs::a_skill_scopes_its_own_checks_to_what_the_task_changed`).
 - A verdict belongs to the review that was asked for, and asking again
   supersedes what came before it
   (`store.rs::a_verdict_belongs_to_the_review_that_was_asked_for`); a second
