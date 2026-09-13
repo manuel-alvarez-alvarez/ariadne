@@ -15,9 +15,10 @@ each task author works in its own git worktree.
 3. After you agree the plan, the daemon starts the task authors and reviewers
    from their ACP registry commands. It sends prompts, receives events, and
    keeps each conversation alive between turns.
-4. Each author owns its task through implementation, review, and landing. A
-   reviewer approves or requests changes. For multiple authors, reviewers
-   choose the result to land.
+4. Each author owns its task through implementation, review, and landing. Each
+   task has a reviewer unless nothing can be tested whole, such as a release
+   or a report. A reviewer approves or requests changes. For multiple authors,
+   reviewers choose the result to land.
 5. The configured landing mode either fast-forwards a squash merge, opens and
    completes a pull request, or records work that does not land code. The
    daemon removes completed worktrees according to its configuration.

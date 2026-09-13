@@ -43,12 +43,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
 3. There are three seats. `orchestrator` belongs to a goal; `author` and
    `reviewer` belong to a task. A task takes one author or more: most staff
    one, and one staffed with several runs them side by side, each on its own
-   model, until the reviewers pick the change that lands (004). Reviewers
-   are not required on a one-author task: the orchestrator agrees the review
-   with the user task by task (003), and a task with nothing to review — a
-   release, a dependency bump the suite already judged — is staffed with
-   none and approved as soon as its author asks (001). A task with several
-   authors needs at least one, to pick the winner.
+   model, until the reviewers pick the change that lands (004). Every task
+   has one reviewer by default. The orchestrator asks the user which tasks
+   to leave unreviewed and what each review is for (003). It leaves a task
+   unreviewed only when nothing can be tested whole, such as a release or a
+   report. That task is approved as soon as its author asks (001). A task
+   with several authors needs at least one reviewer, to pick the winner.
 4. Ariadne ships a catalog of eighteen skills, in four scopes:
    - **orchestrate** — `orchestration`, the orchestrator's own playbook;
    - **produce** — `spec-writing`, `coding`, `debugging`, `refactoring`,
@@ -117,6 +117,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`),
   and an edit of it reaches the next launch
   (`skill_documents.rs::an_edited_orchestration_skill_reaches_the_next_launch`).
+- Every task has a reviewer by default. A task is left unreviewed only when
+  nothing can be tested whole, such as a release or a report
+  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`).
 - A task staffed with no reviewer is approved as soon as its author asks
   (`unreviewed_tasks.rs::a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks`).
 - Every shipped skill is named once and describes itself

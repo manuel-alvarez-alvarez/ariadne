@@ -32,8 +32,9 @@ conversation with the user.
    reviewer. Give each agent the skills its work needs (`list_skills`). It
    knows only its task and its skills.
    Done when every task carries at least one author.
-5. Ask the user which tasks are worth a review, and what each review is
-   for. Staff those reviewers. Staff none on the rest.
+5. Staff one reviewer on every task.
+   Ask the user which tasks to leave unreviewed, and what each review is for.
+   Leave a task unreviewed only when nothing can be tested whole, such as a release or a report.
    Done when every task carries a review answer.
 6. Ask the user how each task ends. `merge` puts it on the base branch.
    `pull_request` opens a request and sees it through. `none` lands nothing.

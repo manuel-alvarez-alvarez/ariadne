@@ -1021,14 +1021,16 @@ mod tests {
     /// The phases of the playbook, in the order the conversation runs them.
     /// Named once, because two assertions read them: the skill document holds
     /// all of them in this order, and the seat text holds none.
-    const PLAYBOOK_PHASES: [&str; 12] = [
+    const PLAYBOOK_PHASES: [&str; 14] = [
         "Read the goal. Explore its repositories.",
         "Ask the user about every unclear point",
         "Write one question in your turn text.",
         "Wait for the answer in the console.",
         "Split the goal into tasks",
         "Staff the authors of each task with `create_task`",
-        "Ask the user which tasks are worth a review",
+        "Staff one reviewer on every task.",
+        "Ask the user which tasks to leave unreviewed",
+        "Leave a task unreviewed only when nothing can be tested whole, such as a release or a report.",
         "Ask the user how each task ends",
         "Mix the agents evenly over the tasks.",
         "Revise them until they write an explicit yes.",
@@ -1038,8 +1040,8 @@ mod tests {
 
     /// The playbook is the `orchestration` skill, so the document read here
     /// is the shipped skill rather than the seat text, which carries no step
-    /// of it. A phase out of order is an orchestrator that staffs reviewers
-    /// nobody asked for, or that starts a plan the user has not seen.
+    /// of it. A phase out of order is an orchestrator that fails to staff a
+    /// reviewer by default, or that starts a plan the user has not seen.
     #[test]
     fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
         let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();

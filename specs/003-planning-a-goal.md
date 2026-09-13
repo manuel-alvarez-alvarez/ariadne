@@ -54,8 +54,9 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 7. Four things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
-   - which tasks are worth a review, and what each review is for — a task
-     with nothing to review is staffed with no reviewer (017);
+   - which tasks to leave unreviewed, and what each review is for — every
+     task has one reviewer by default, and a task is left unreviewed only
+     when nothing can be tested whole, such as a release or a report (017);
    - how each task ends: `merge`, `pull_request` or `none` (005);
    - what each agent runs on. The orchestrator sizes every one of them from
      the catalog (011) and shows the user what it chose; the model the user
@@ -95,8 +96,8 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
 
 ## Acceptance criteria
 
-- The playbook asks before it plans and plans before it starts
-  (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
+- The playbook asks before it plans and plans before it starts, and staffs a
+  reviewer by default (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
   and it staffs a plan on a mix of agents rather than on one
   (`defaults.rs::the_orchestrator_staffs_a_plan_on_a_mix_of_agents`).
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
