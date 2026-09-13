@@ -32,8 +32,8 @@ they describe (003, 004, 005) — and what a skill is (017).
    one of them:
    - the **MCP session rules**, which every session receives before its first
      prompt, whatever its seat: that Ariadne is reached only through its
-     tools, whether anyone answers a question, how few turns to take, and the
-     English to write in (013);
+     tools, whether a session works alone or waits on the user, when it may
+     ask anyway, how few turns to take, and the English to write in (013);
    - the **system prompt**, which states what a seat owes from its first read
      to the call that ends its turn, and then indexes the skills this agent
      was staffed with (017) — for the orchestrator, the one skill its seat
@@ -93,7 +93,10 @@ they describe (003, 004, 005) — and what a skill is (017).
   (`defaults.rs::each_rule_is_stated_in_exactly_one_briefing`,
   `::a_seat_rule_is_stated_in_its_own_prompt_alone`), and no default repeats
   what the MCP server already tells every session
-  (`::no_default_repeats_what_every_session_is_told_by_the_mcp_server`).
+  (`::no_default_repeats_what_every_session_is_told_by_the_mcp_server`). The
+  MCP session rules state whether a seat works alone or waits on the user,
+  and when it may ask anyway
+  (`mcp.rs::only_the_orchestrator_is_told_to_ask`).
 - Every default names only placeholders its kind can fill in
   (`defaults.rs::every_default_names_only_placeholders_its_kind_can_fill_in`),
   and every allowed placeholder is one a builder actually passes

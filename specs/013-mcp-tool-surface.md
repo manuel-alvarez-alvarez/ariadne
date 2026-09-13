@@ -35,7 +35,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    every seat alike (006).
 3. Whether anyone answers a question is the one rule picked by seat: the
    orchestrator's user answers in the console, one question at a time, and the
-   orchestrator then waits; an author or reviewer works alone and does not ask.
+   orchestrator then waits; an author or reviewer works alone, and asks only
+   where the task cannot go on without the answer. The rule names no channel —
+   the seat's own playbook already says how to ask.
 4. Tools are filtered by seat both in the listing and on the call, so a tool a
    seat may not use is one it never sees:
    - **orchestrator**: `get_task`, `create_task` (staffing the authors as a
@@ -89,9 +91,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`::every_allowed_tool_is_one_the_router_serves`).
 - Every session is told how Ariadne is reached
   (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the
-  orchestrator is told to ask (`::only_the_orchestrator_is_told_to_ask`), and
-  no session is told of a conversation
-  (`::no_session_is_told_of_a_conversation`).
+  orchestrator is told to ask, and an author or reviewer is told to work
+  alone and ask only where the task cannot go on without the answer
+  (`::only_the_orchestrator_is_told_to_ask`), and no session is told of a
+  conversation (`::no_session_is_told_of_a_conversation`).
 - The shared rules stay small (`mcp.rs::the_shared_rules_stay_small`).
 - Every text the server hands an agent — instructions and tool descriptions —
   is Simplified Technical English

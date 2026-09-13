@@ -181,13 +181,12 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 
 /// Whether a session gets an answer to a question: the orchestrator writes a
 /// spec with the user, who is there in the console to ask; an author or
-/// reviewer works its task alone, with nobody there to answer one.
+/// reviewer works its task alone, and asks only where the task cannot go on
+/// without the answer.
 ///
-/// The orchestrator's line replaced "work alone" whole, sentence for
-/// sentence: the user answering stands in place of nobody being there, asking
-/// in turn text stands in place of not asking, and waiting stands in place of
-/// a human attaching whenever it likes — the orchestrator now waits for that
-/// human by design.
+/// An author or reviewer that does ask reaches the other agents through
+/// `send_message` — the seat's own playbook says so, so this rule names no
+/// channel and only says when to reach for one.
 fn ask_rule(seat: &McpSeat) -> &'static str {
     match seat {
         McpSeat::Orchestrator => {
@@ -195,8 +194,8 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
              question at a time. Then wait."
         }
         McpSeat::Author | McpSeat::Reviewer => {
-            "Work alone. Nobody answers a question, so do not ask. A human \
-             can attach at any time."
+            "Work alone. Ask only where the task cannot go on without an \
+             answer."
         }
     }
 }
@@ -483,8 +482,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// The orchestrator is told the user answers in the console and to ask; an
-    /// author or reviewer is told the opposite, word for word as before.
+    /// The orchestrator is told the user answers in the console and to ask;
+    /// an author or reviewer is told to work alone and ask only where the
+    /// task cannot go on without the answer. No seat is told nobody answers.
     #[test]
     fn only_the_orchestrator_is_told_to_ask() {
         let orchestrator = server_at(
@@ -495,7 +495,18 @@ pub(crate) mod tests {
         assert!(instructions.contains("The user answers in your console"));
         assert!(instructions.contains("Ask in plain turn text, one question at a time"));
         assert!(instructions.contains("Then wait"));
-        assert!(!instructions.contains("Nobody answers a question, so do not ask"));
+
+        for seat in SEATS {
+            let mcp = server_at(
+                seat.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
+            let instructions = mcp.get_info().instructions.expect("instructions");
+            assert!(
+                !instructions.contains("Nobody answers a question, so do not ask"),
+                "{seat:?}: {instructions}"
+            );
+        }
 
         for seat in [McpSeat::Author, McpSeat::Reviewer] {
             let mcp = server_at(
@@ -505,8 +516,8 @@ pub(crate) mod tests {
             let instructions = mcp.get_info().instructions.expect("instructions");
             assert!(
                 instructions.contains(
-                    "Work alone. Nobody answers a question, so do not ask. \
-                     A human can attach at any time."
+                    "Work alone. Ask only where the task cannot go on \
+                     without an answer."
                 ),
                 "{seat:?}: {instructions}"
             );
