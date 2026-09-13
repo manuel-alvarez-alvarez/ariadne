@@ -218,15 +218,16 @@ async fn resuming_an_acp_author_replaces_the_agent_and_keeps_the_session() {
     let text = prompt["prompt"][0]["text"].as_str().unwrap();
     assert!(text.contains("fix it"), "{text}");
 
-    // The predecessor's end is on the record, and it took nothing with it:
-    // the second agent holds the seat and the row stays live.
-    eventually(TIMEOUT, "the predecessor's end to be recorded", || async {
-        event_kinds(&h, &session.id)
+    // The predecessor's end took nothing with it: it is not the session's end,
+    // so it is not on the record, the second agent holds the seat and the
+    // row stays live.
+    assert!(
+        !event_kinds(&h, &session.id)
             .await
             .iter()
-            .any(|k| k == "session_end")
-    })
-    .await;
+            .any(|k| k == "session_end"),
+        "the replaced agent's end is not recorded"
+    );
     let second_pid = stub.pid().expect("the second agent wrote its pid");
     assert_ne!(second_pid, first_pid);
     assert!(pid_is_alive(second_pid));

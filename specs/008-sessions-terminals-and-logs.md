@@ -61,7 +61,9 @@ goal id to a seat (014).
    handed to the agent's MCP server as `ARIADNE_LAUNCH_ID`.
 8. A report from a launch the row has moved past changes nothing (012). A
    relaunch has two processes under one session id for as long as the old
-   one takes to exit, and only the launch id tells their reports apart.
+   one takes to exit, and only the launch id tells their reports apart. The
+   old process's `session_end` is not recorded: the session has not ended,
+   and every console closes on a `session_end`.
 9. A relaunch announces the session as updated on the event stream.
 10. Killing a session kills its agent process and marks a live session
     `exited`. The conversation stays with the agent, so the session can be
@@ -154,7 +156,10 @@ goal id to a seat (014).
     it ends the console and frees the session's receivers, and the session
     stays alive; the session ending sends the last bytes, the final status
     and closes the socket, and a socket opened after the session ended
-    draws the transcript and closes on it the same way; Ctrl-C twice and
+    draws the transcript and closes on it the same way. A session has ended
+    where its last `session_end` has no `session_start` after it: a relaunch
+    is not an end, so a socket open over one stays open, and so does a
+    socket opened on a session revived after it ended; Ctrl-C twice and
     Ctrl-D over the socket close it too, and the session stays alive.
 22. The CLI reaches a session through its console. `ariadne attach` renders
     the transcript, follows the stream and posts what is typed as input.
@@ -308,7 +313,8 @@ goal id to a seat (014).
   dated (`::every_launch_of_a_session_is_dated`).
 - Every launch reports under an id of its own, carried by the agent's MCP
   server (`resume.rs::every_launch_of_a_session_reports_under_a_new_id`), and
-  a report from a launch the row has moved past changes nothing
+  a report from a launch the row has moved past changes nothing, and its
+  `session_end` is not recorded
   (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`).
 - A relaunch announces the session as updated
   (`resume.rs::a_relaunch_announces_the_session_as_updated`).
@@ -388,6 +394,10 @@ goal id to a seat (014).
   (`::a_socket_opened_after_the_session_ended_gets_the_transcript_and_closes`;
   the loop leaves on such a snapshot:
   `ariadne-console/tui.rs::a_snapshot_that_holds_the_session_end_leaves_the_console`),
+  a relaunch keeps an open socket open, and a later socket too
+  (`::a_relaunch_keeps_the_socket_open_and_a_later_socket_too`; a snapshot
+  whose session started again after its end keeps the console:
+  `ariadne-console/tui.rs::a_snapshot_whose_session_started_again_after_its_end_keeps_the_console`),
   Ctrl-C twice and Ctrl-D close it with the session alive
   (`::ctrl_c_twice_or_ctrl_d_closes_the_socket_and_the_session_stays_alive`),
   a resize redraws at the new size (`::a_resize_redraws_at_the_new_size`),

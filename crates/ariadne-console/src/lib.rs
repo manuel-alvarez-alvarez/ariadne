@@ -19,4 +19,4 @@ pub mod transcript;
 pub mod tui;
 
 pub use ansi::{AnsiBackend, Window};
-pub use tui::{Action, Anchored, Console, Frame, Header, Screen, Sink, drive, open};
+pub use tui::{Action, Anchored, Console, Frame, Header, Screen, Sink, drive, open, session_ended};

@@ -103,7 +103,10 @@ async fn follow_logs(
         &format!("/v1/sessions/{id}/console/stream"),
         |frame| {
             let events = events(&frame)?;
-            let session_ended = events.iter().any(|event| event.kind == "session_end");
+            let session_ended = match frame.event.as_str() {
+                "snapshot" => ariadne_console::session_ended(&events),
+                _ => events.iter().any(|event| event.kind == "session_end"),
+            };
             match (format, frame.event.as_str()) {
                 (Format::Json, "snapshot") => {
                     for event in filters.apply_events(&events) {

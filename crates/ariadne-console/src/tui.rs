@@ -394,7 +394,7 @@ impl Console {
             Frame::Snapshot(events) => {
                 self.live();
                 self.snapshot(&events);
-                events.iter().any(|event| event.kind == "session_end")
+                session_ended(&events)
             }
             Frame::Event(event) => {
                 self.apply(&event);
@@ -669,6 +669,18 @@ impl Console {
     fn spinner(&self) -> &'static str {
         SPINNER[self.tick % SPINNER.len()]
     }
+}
+
+/// Whether a session's events so far end with the session's end: a
+/// `session_end` that no `session_start` came after. A session killed and
+/// revived later holds the end of the launch before this one, followed by
+/// this launch's start, and is not over.
+pub fn session_ended(events: &[AgentEventDto]) -> bool {
+    events
+        .iter()
+        .rev()
+        .find(|event| matches!(event.kind.as_str(), "session_start" | "session_end"))
+        .is_some_and(|event| event.kind == "session_end")
 }
 
 /// The session status an event moves the row to, as the daemon maps it
@@ -3792,5 +3804,25 @@ mod tests {
             "{}",
             screen(&terminal)
         );
+    }
+
+    /// A session killed and revived holds the end of the launch before, and
+    /// this launch's start after it. The session is running again, and a
+    /// console opened on it stays open; one whose last launch ended does not.
+    #[test]
+    fn a_snapshot_whose_session_started_again_after_its_end_keeps_the_console() {
+        let started = || event("session_start", "session started", json!({}));
+        let revived = vec![
+            started(),
+            ended(),
+            started(),
+            event("agent_message", "back", json!({"text": "back"})),
+        ];
+
+        assert!(!Console::new(header()).frame(Frame::Snapshot(revived.clone())));
+        assert!(!session_ended(&revived));
+        assert!(session_ended(&[started(), ended()]));
+        assert!(session_ended(&[ended()]));
+        assert!(!session_ended(&[]));
     }
 }

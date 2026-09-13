@@ -44,15 +44,6 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
     // The session must exist; its task link is copied onto the event.
     let session = store.get_session(&req.session_id).await?;
 
-    store
-        .create_event(NewAgentEvent {
-            session_id: Some(session.id.clone()),
-            task_id: session.task_id.clone(),
-            kind: req.kind.clone(),
-            payload: req.payload.clone(),
-        })
-        .await?;
-
     // A report from a process the session has moved past changes nothing.
     //
     // A relaunch puts a new agent under the same row, and the agent it
@@ -65,14 +56,37 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
     // The launch each of them carries is what tells them apart. Only a
     // mismatch is refused: a report that names no launch, and a row that has
     // not been launched under this daemon, have none to compare — neither is
-    // a dead process talking, and both are believed. The event itself is
-    // kept either way; what it says about the agent is simply no longer
-    // news.
-    if let (Some(reported), Some(current)) = (&req.launch, &session.launch_id)
-        && reported != current
-    {
+    // a dead process talking, and both are believed.
+    let superseded = matches!(
+        (&req.launch, &session.launch_id),
+        (Some(reported), Some(current)) if reported != current
+    );
+
+    // The event itself is kept, what it says about the agent simply no longer
+    // news — all but its end. A `session_end` in a session's events is what
+    // every console closes on, and the session it would announce has not
+    // ended: its next agent is already running. Stored, it would close a
+    // console open over the relaunch, and every console opened after it.
+    if superseded && req.kind == "session_end" {
         tracing::debug!(
-            session = %session.id, kind = %req.kind, launch = %reported,
+            session = %session.id, launch = ?req.launch,
+            "dropping the end of a launch this session has moved past"
+        );
+        return Ok(());
+    }
+
+    store
+        .create_event(NewAgentEvent {
+            session_id: Some(session.id.clone()),
+            task_id: session.task_id.clone(),
+            kind: req.kind.clone(),
+            payload: req.payload.clone(),
+        })
+        .await?;
+
+    if superseded {
+        tracing::debug!(
+            session = %session.id, kind = %req.kind, launch = ?req.launch,
             "ignoring an event from a launch this session has moved past"
         );
         return Ok(());

@@ -11,7 +11,7 @@
 mod common;
 
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
 use futures_util::{SinkExt, StreamExt};
@@ -235,7 +235,12 @@ impl Client {
     /// Read frames until the daemon closes the socket. `true` when it did
     /// within the patience of a test, `false` when it kept the socket open.
     async fn closed_by_the_daemon(&mut self) -> bool {
-        let deadline = Instant::now() + TIMEOUT;
+        self.closed_by_the_daemon_within(TIMEOUT).await
+    }
+
+    /// Read frames until the daemon closes the socket or `patience` runs out.
+    async fn closed_by_the_daemon_within(&mut self, patience: Duration) -> bool {
+        let deadline = Instant::now() + patience;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             match tokio::time::timeout(left, self.socket.next()).await {
@@ -422,6 +427,58 @@ async fn closing_the_socket_leaves_the_session_alive_and_the_session_ending_clos
         Some(&SessionStatus::Exited),
         "{:?}",
         client.statuses
+    );
+}
+
+/// Resuming an author with review feedback relaunches its agent under the
+/// same session, and the agent it replaced ends on the way. The session did
+/// not end: a socket open over the relaunch stays open and draws what the new
+/// agent is told, and a socket opened after it stays open too.
+#[tokio::test]
+async fn a_relaunch_keeps_the_socket_open_and_a_later_socket_too() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), script());
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+    let address = serve(&h).await;
+    let mut client = Client::open(address, &session.id, 100, 30).await;
+    client
+        .read_until("the console to be idle", |screen| screen.contains("idle"))
+        .await;
+
+    let mut resumed_script = script();
+    resumed_script["stored_sessions"] = json!(["stub-session"]);
+    stub.reprogram(resumed_script);
+    let resumed = h
+        .launcher
+        .resume_author(&cast.task.id, "address the review")
+        .await
+        .unwrap();
+    assert_eq!(resumed.id, session.id);
+    eventually(TIMEOUT, "the resumed prompt to end", || async {
+        stub.calls_of("session/prompt").len() == 2
+            && h.session_status(&resumed).await == SessionStatus::Idle
+    })
+    .await;
+
+    client
+        .read_until("the resumed prompt on the open socket", |screen| {
+            screen.contains("address the review")
+        })
+        .await;
+    let mut later = Client::open(address, &session.id, 100, 30).await;
+    later
+        .read_until("the resumed prompt on a later socket", |screen| {
+            screen.contains("address the review") && screen.contains("idle")
+        })
+        .await;
+    assert!(
+        !later
+            .closed_by_the_daemon_within(Duration::from_millis(500))
+            .await,
+        "the relaunched session is live; the screen:\n{}",
+        later.screen()
     );
 }
 

@@ -411,8 +411,9 @@ async fn launcher_session_writes_emit_session_events() {
 ///
 /// So the dead one's word moves nothing. Believed, its `session_end` retires
 /// a session whose agent is working — and the goal then spends its spawn
-/// budget replacing an agent it already has. The event is recorded all the
-/// same: it is what happened, it is simply no longer news about the agent.
+/// budget replacing an agent it already has. Its events are recorded all the
+/// same, it is simply no longer news about the agent — all but its end, which
+/// every console closes on while the session has not ended.
 #[tokio::test]
 async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
     let h = harness().await;
@@ -446,9 +447,14 @@ async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
     .await;
     assert_eq!(h.session_status(&session).await, SessionStatus::Running);
     assert_eq!(
-        recorded(&h, &session, "session_end").await,
+        recorded(&h, &session, "permission_request").await,
         1,
         "the event still landed"
+    );
+    assert_eq!(
+        recorded(&h, &session, "session_end").await,
+        0,
+        "the end of a replaced agent is not the session's"
     );
 
     // The agent that is actually running, saying the same words.
@@ -460,7 +466,7 @@ async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
     )
     .await;
     assert_eq!(h.session_status(&session).await, SessionStatus::Exited);
-    assert_eq!(recorded(&h, &session, "session_end").await, 2);
+    assert_eq!(recorded(&h, &session, "session_end").await, 1);
 }
 
 /// The summary the daemon builds from a payload is never stored — it is

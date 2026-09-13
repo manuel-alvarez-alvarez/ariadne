@@ -86,7 +86,9 @@ and the ACP runtime that reports the agent events (021).
     on (008): a relaunched agent shares its session id — and, on a resumed
     conversation, its internal id — with the process it replaced, whose exit
     is still to report. A report from the launch before is recorded and
-    changes nothing. An event that names no launch is believed.
+    changes nothing, except its `session_end`, which is not recorded: the
+    session did not end, and a console closes on a `session_end` (008). An
+    event that names no launch is believed.
 13. Every agent event's DTO carries a `summary`: one line built from its
     payload when the DTO is built, never stored. A tool call reads as its
     action and its subject — `Bash: cargo nextest run` — off `tool_name` and
@@ -170,7 +172,7 @@ and the ACP runtime that reports the agent events (021).
   nobody waits on (`::a_reviewer_that_already_voted_raises_no_attention`,
   `::an_orchestrator_of_a_finished_goal_raises_no_attention`).
 - An event from a launch the session has moved past is recorded and changes
-  nothing
+  nothing, all but its `session_end`, which is not recorded
   (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`).
 - The live-only console events reach neither the events listing nor the
   domain stream
