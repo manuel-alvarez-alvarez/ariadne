@@ -1,7 +1,7 @@
 ---
 id: authoring-and-review
 status: current
-updated: 2026-09-10
+updated: 2026-09-13
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -47,17 +47,24 @@ Out: the transition table itself (001), the landing that follows approval
 6. Each reviewer the task staffs (017) gets one session for the whole task, in
    a detached read-only worktree (002). Which review it is on is not part of a
    reviewer's identity, only of the briefing it is woken with.
-7. A reviewer verifies the change in its own worktree — installing what it
-   needs, building, testing and linting there — and gives exactly one verdict
-   through `submit_verdict` on each review it is asked for. Nothing else
-   counts as a verdict. Anything it cannot judge from the change it asks the
-   author about instead (018); a question is not a verdict, and asking one
-   settles nothing.
+7. A reviewer moves its detached worktree to the branch tip named by its
+   briefing. It then starts the whole test suite, build and linters in that
+   worktree, once for each verdict, and reads while they run. It judges tests
+   by reading them and never changes code to see a test fail. It gives exactly
+   one verdict through `submit_verdict` on each review it is asked for, and
+   every verdict carries the SHA from `git rev-parse HEAD` that it judged.
+   Nothing else counts as a verdict. Anything it cannot judge from the change
+   it asks the author about instead (018); a question is not a verdict, and
+   asking one settles nothing.
 8. There are no numbered rounds. A review is bounded by the request that
    opened it: the verdicts that count are the ones sent since the author last
    asked, and asking again supersedes everything said about the change before
-   it. That boundary is a row of the channel (018) rather than a counter, so
-   nothing has to be reset.
+   it. On a second review, the reviewer refreshes its detached worktree and
+   starts the checks again. It reads only `git log` and `git diff` from the SHA
+   in its last verdict, which it gets through `read_messages`. It uses
+   `get_diff` when no SHA is known or HEAD does not follow that SHA. That
+   boundary is a row of the channel (018) rather than a counter, so nothing
+   has to be reset.
 9. Verdicts settle a review before anything else is done with it: any request
    for changes moves the task to `changes_requested`, whatever else the review
    holds. Otherwise the approvals are counted and the task is `approved` once
@@ -125,6 +132,19 @@ Out: the transition table itself (001), the landing that follows approval
   (`agent_messages.rs::only_one_verdict_per_reviewer_per_review_is_taken`).
 - The review summary is the reason of the latest review request
   (`store.rs::the_review_summary_is_the_reason_of_the_latest_review_request`).
+- The reviewer and its code-review skill start every full check before reading,
+  once per verdict
+  (`defaults.rs::reviewer_checks_start_before_the_read_once_per_verdict`).
+- Every verdict carries the SHA it judged
+  (`defaults.rs::every_reviewer_verdict_carries_the_sha_it_judged`), and a
+  resumed reviewer reads only commits after that SHA
+  (`::a_reviewer_resume_reads_only_commits_since_its_last_verdict_sha`).
+- A reviewer judges a test by reading it and never changes the code to test it
+  (`defaults.rs::a_reviewer_judges_a_test_by_reading_it_without_changing_code`).
+- A resumed reviewer refreshes the named branch before the checks
+  (`defaults.rs::reviewer_texts_refresh_the_named_branch_before_checks`)
+  and uses the whole diff when HEAD does not follow its last SHA
+  (`::a_reviewer_uses_the_whole_diff_when_head_does_not_follow_the_last_sha`).
 - A reviewer that already voted raises no attention
   (`events.rs::a_reviewer_that_already_voted_raises_no_attention`).
 - A revision of a published request goes back to the reviewers

@@ -9,23 +9,34 @@ Judge two axes apart. One axis covers repository conventions. The other axis cov
 
 ## Steps
 
-1. Pin the review scope. Name the base revision and the changed files.
-   Done when the base resolves and the diff is not empty.
-2. Read the task and the repository instructions. List the sources for each
+1. Install required tools. For a branch review, run
+   `git checkout --detach <branch>` in the review worktree.
+   Start the whole test suite, build and linters once for this verdict.
+   Run them in parallel there. Read while they run.
+   Done when every required check is running.
+2. Pin the review scope. For a second review, read the last verdict SHA with
+   `read_messages`. Run `git merge-base --is-ancestor <sha> HEAD`.
+   If HEAD is not after that SHA, use `get_diff`.
+   Otherwise, run `git log <sha>..HEAD` and `git diff <sha>..HEAD`.
+   Read only those new commits. With no SHA, use `get_diff` and name the base
+   revision and changed files.
+   Done when the revisions resolve and the diff is not empty.
+3. Read the task and the repository instructions. List the sources for each
    axis.
    Done when each axis has an authoritative source or a recorded absence.
-3. Read the whole diff and the surrounding code. Map each changed hunk to its
-   purpose.
+4. Read the scoped diff and the surrounding code. Map each changed hunk to
+   its purpose.
    Done when every hunk has a stated purpose.
-4. Run the repository checks. Record each build, test and lint result.
+5. Record each build, test and lint result. Do not run a check again before
+   this verdict.
    Done when every required check has a result.
-5. Judge the repository axis. Check the change against documented style,
+6. Judge the repository axis. Check the change against documented style,
    naming, structure and established code patterns.
    Done when every breach cites its rule and location.
-6. Judge the acceptance axis. Check every criterion, its tests and all added
+7. Judge the acceptance axis. Check every criterion, its tests and all added
    behavior.
    Done when every criterion has a status and all scope creep is listed.
-7. Report both axes under separate headings. Give each axis its own verdict.
+8. Report both axes under separate headings. Give each axis its own verdict.
    Done when the report has separate headings and verdicts for both axes.
 
 ## Repository conventions axis
@@ -39,7 +50,9 @@ Judge two axes apart. One axis covers repository conventions. The other axis cov
 - Correctness: Find wrong results, unhandled errors, races and boundary cases.
 - Missing: Find each criterion with no complete implementation.
 - Wrong: Find behavior that appears complete but fails the stated criterion.
-- Tests: Find each missing proof and each test that cannot fail.
+- Tests: Find each missing proof.
+- Test quality: Judge each test by reading its setup, action and assertions.
+  Never change code to see whether a test fails.
 - Scope creep: Find behavior the task did not ask for.
 
 ## Rules

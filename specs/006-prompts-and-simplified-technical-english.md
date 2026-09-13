@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-09-08
+updated: 2026-09-13
 areas: [prompts, store, core, mcp]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -49,6 +49,12 @@ they describe (003, 004, 005) — and what a skill is (017).
    skill (017), and its seat text keeps only what no skill edit may take
    away: the plan is made with the user, no code is written, a blocked point
    goes to the user.
+   The reviewer text refreshes its detached worktree, then starts the whole
+   suite, build and linters before the read, once per verdict. It keeps the
+   worktree read-only, puts the judged SHA in every verdict and judges tests
+   by reading them. Its resume starts the checks again and reads only commits
+   after the last verdict's SHA. With no known SHA or unrelated HEAD, it uses
+   `get_diff`.
 3. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. The
@@ -106,6 +112,19 @@ they describe (003, 004, 005) — and what a skill is (017).
   `::an_unknown_placeholder_travels_verbatim`).
 - A seat's prompt carries what the seat owes and nothing of a skill
   (`skill_documents.rs::a_seat_prompt_carries_only_what_the_seat_owes`).
+- The reviewer prompt and code-review skill start the full checks before the
+  read, once per verdict
+  (`defaults.rs::reviewer_checks_start_before_the_read_once_per_verdict`).
+- Every reviewer verdict carries the judged SHA
+  (`defaults.rs::every_reviewer_verdict_carries_the_sha_it_judged`), and its
+  resume reads only commits after that SHA
+  (`::a_reviewer_resume_reads_only_commits_since_its_last_verdict_sha`).
+- The reviewer prompt and skill require a read-only judgment of each test
+  (`defaults.rs::a_reviewer_judges_a_test_by_reading_it_without_changing_code`).
+- The reviewer resume refreshes the branch before checks
+  (`defaults.rs::reviewer_texts_refresh_the_named_branch_before_checks`)
+  and falls back to the whole diff when HEAD does not follow its last SHA
+  (`::a_reviewer_uses_the_whole_diff_when_head_does_not_follow_the_last_sha`).
 - The orchestrator system prompt holds no playbook step; the phases and their
   order are the `orchestration` skill's
   (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`,

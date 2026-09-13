@@ -235,11 +235,12 @@ const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first c
 /// stated: one per review asked for, through `submit_verdict`.
 const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval gates the merge: approve only what you would merge yourself. Your detached worktree holds the branch, read-only: do not edit, commit, amend or branch.
 
-1. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
-2. Verify the change here. Install what it needs. Build, test and lint in this worktree, never another.
-3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and name it.
-4. `send_message` to ask the author what the change does not answer, and to answer what it asks you. A question is not a verdict.
-5. Call `submit_verdict` once per review you are asked for. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
+1. Install required tools. Move this worktree to the branch named in the briefing with `git checkout --detach <branch>`. Start the whole test suite, build and linters once for this verdict. Run them in parallel in this worktree. Read while they run. Record `git rev-parse HEAD` as the SHA you judge.
+2. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
+3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests and clarity. Judge each test by reading its setup, action and assertions. Never change code to see whether a test fails.
+4. Wait for every check. Use each result in your verdict. Where something blocks the review, request changes and name it.
+5. `send_message` to ask the author what the change does not answer, and to answer what it asks you. A question is not a verdict.
+6. Call `submit_verdict` once per review you are asked for. Put that SHA in every verdict. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: list files and functions, with each item must-fix or optional. Write the verdict in STE."#;
 
 /// Initial briefing of an orchestrator session: the goal, and the
 /// repositories it works in.
@@ -416,7 +417,9 @@ const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title}
 /// there are: an author that revised the change under its worktree, and a
 /// review it has simply gone quiet in. Either way the diff it last read may
 /// be stale and the verdict is still outstanding.
-const REVIEWER_RESUME: &str = r#""{task_title}" needs your verdict. {branch} can carry new commits: read it again with `get_diff`.
+const REVIEWER_RESUME: &str = r#""{task_title}" needs your verdict. Move this worktree to the current branch tip with `git checkout --detach {branch}`. Start the whole test suite, build and linters once again for this verdict. Run them in parallel in this worktree.
+
+Read the SHA from your last verdict with `read_messages`. Confirm it with `git merge-base --is-ancestor <sha> HEAD`. If HEAD is not after that SHA, use `get_diff`. If no SHA is known, use `get_diff`. Otherwise, run `git log <sha>..HEAD` and `git diff <sha>..HEAD` here. Read only those new commits while the checks run. Use every check result before your verdict.
 
 Summary: {summary}"#;
 
@@ -628,17 +631,28 @@ mod tests {
     /// take away. So the orchestrator's cap fell from 1750 to 200 — under
     /// the other two seats' for the first time — and the grand total came
     /// down from 8000 to 6500 with it.
+    ///
+    /// The reviewer now starts the whole suite, build and linters before the
+    /// read, binds one run to each verdict and records the judged SHA. Its cap
+    /// first rose from 1060 to 1300 because those are new review rules, not
+    /// longer forms of existing rules. Review then found that a live
+    /// reviewer's detached worktree can still point at its last verdict. The
+    /// checkout that refreshes it raises the system cap to 1400. The resume
+    /// carries that checkout, the commands for the new commits and an ancestry
+    /// fallback, so its cap rises from 200 to 630. The kind total rises from
+    /// 1750 to 2020, and the grand total rises from 6500 to 7050, to hold those
+    /// additions.
     #[test]
     fn size_caps_hold() {
         // Raised from 1500 for the reviewer's pick briefing: a kind that did
         // not exist before several authors could share a task.
-        const KIND_TOTAL: usize = 1750;
+        const KIND_TOTAL: usize = 2020;
         // Three now rather than two: the ending that lands nothing used to be
         // counted apart, because a repository could rewrite the other two and
         // never that one. Nothing rewrites any of them now, so they are one
         // set, and the total is the two plus the third at its own cap.
         const LANDING_TOTAL: usize = 2570;
-        const GRAND_TOTAL: usize = 6500;
+        const GRAND_TOTAL: usize = 7050;
 
         // A cap per seat, not one for the three. The orchestrator's carried
         // its playbook up to 1750; the playbook is the `orchestration` skill
@@ -650,12 +664,12 @@ mod tests {
         // it could.
         let system_cap = |seat: Seat| match seat {
             Seat::Orchestrator => 200,
-            Seat::Author | Seat::Reviewer => 1060,
+            Seat::Author => 1060,
+            Seat::Reviewer => 1400,
         };
         let cap = |kind: PromptKind| match kind {
-            PromptKind::OrchestratorResume
-            | PromptKind::AuthorResume
-            | PromptKind::ReviewerResume => 200,
+            PromptKind::OrchestratorResume | PromptKind::AuthorResume => 200,
+            PromptKind::ReviewerResume => 630,
             _ => 300,
         };
         let landing_cap = |landing: Landing| match landing {
@@ -814,6 +828,156 @@ mod tests {
                     "the {} prompt and \"{rule}\"",
                     seat.as_str()
                 );
+            }
+        }
+    }
+
+    /// A reviewer starts every expensive check before reading, so the checks
+    /// run while the review proceeds. Both texts say one run belongs to one
+    /// verdict, which prevents a second run before that verdict.
+    #[test]
+    fn reviewer_checks_start_before_the_read_once_per_verdict() {
+        for (name, text) in [
+            (
+                "reviewer system prompt",
+                default_system_prompt(Seat::Reviewer),
+            ),
+            (
+                "code-review skill",
+                default_skill_document("code-review").unwrap(),
+            ),
+        ] {
+            let checks = text
+                .find("Start the whole test suite, build and linters once for this verdict")
+                .unwrap_or_else(|| panic!("the {name} does not start every check once"));
+            let read = text
+                .find("Read the task")
+                .unwrap_or_else(|| panic!("the {name} does not read the task"));
+            assert!(
+                checks < read,
+                "the {name} reads before it starts the checks"
+            );
+            assert_eq!(
+                text.matches("once for this verdict").count(),
+                1,
+                "the {name} does not bind one check run to one verdict"
+            );
+        }
+    }
+
+    /// A verdict identifies the exact work it judged, so the next review can
+    /// start after it. The reviewer reads HEAD in its own worktree and puts
+    /// that SHA in every verdict.
+    #[test]
+    fn every_reviewer_verdict_carries_the_sha_it_judged() {
+        let prompt = default_system_prompt(Seat::Reviewer);
+        for rule in ["`git rev-parse HEAD`", "Put that SHA in every verdict"] {
+            assert!(prompt.contains(rule), "the reviewer prompt and {rule}");
+        }
+    }
+
+    /// Test quality is visible in the test's setup, action and assertions.
+    /// The reviewer reads those parts and never changes the author's code to
+    /// manufacture a failure in a read-only worktree.
+    #[test]
+    fn a_reviewer_judges_a_test_by_reading_it_without_changing_code() {
+        for (name, text) in [
+            (
+                "reviewer system prompt",
+                default_system_prompt(Seat::Reviewer),
+            ),
+            (
+                "code-review skill",
+                default_skill_document("code-review").unwrap(),
+            ),
+        ] {
+            for rule in [
+                "Judge each test by reading its setup, action and assertions",
+                "Never change code to see whether a test fails",
+            ] {
+                assert!(text.contains(rule), "the {name} and {rule}");
+            }
+        }
+    }
+
+    /// A resumed reviewer reads only work added after its last verdict. The
+    /// last verdict's SHA bounds both the commit list and the diff; only a
+    /// missing SHA falls back to the whole change.
+    #[test]
+    fn a_reviewer_resume_reads_only_commits_since_its_last_verdict_sha() {
+        let resume = default_prompt_text(PromptKind::ReviewerResume);
+        let checks = resume
+            .find("Start the whole test suite")
+            .expect("the reviewer resume does not start the checks");
+        let read = resume
+            .find("Read the SHA from your last verdict")
+            .expect("the reviewer resume does not read the last verdict SHA");
+        assert!(checks < read, "the reviewer resume reads before its checks");
+        for rule in [
+            "Read the SHA from your last verdict",
+            "`read_messages`",
+            "`git log <sha>..HEAD`",
+            "`git diff <sha>..HEAD`",
+            "Read only those new commits",
+            "If no SHA is known, use `get_diff`",
+            "once again for this verdict",
+        ] {
+            assert!(resume.contains(rule), "the reviewer resume and {rule}");
+        }
+    }
+
+    /// A live reviewer's detached worktree can still point at the last
+    /// verdict. The resume moves it to the branch named by the briefing before
+    /// it starts checks, so every result covers the new branch tip.
+    #[test]
+    fn reviewer_texts_refresh_the_named_branch_before_checks() {
+        for (name, text, command) in [
+            (
+                "reviewer system prompt",
+                default_system_prompt(Seat::Reviewer),
+                "`git checkout --detach <branch>`",
+            ),
+            (
+                "reviewer resume",
+                default_prompt_text(PromptKind::ReviewerResume),
+                "`git checkout --detach {branch}`",
+            ),
+            (
+                "code-review skill",
+                default_skill_document("code-review").unwrap(),
+                "`git checkout --detach <branch>`",
+            ),
+        ] {
+            let refresh = text
+                .find(command)
+                .unwrap_or_else(|| panic!("the {name} does not refresh its named branch"));
+            let checks = text
+                .find("Start the whole test suite")
+                .unwrap_or_else(|| panic!("the {name} does not start the checks"));
+            assert!(refresh < checks, "the {name} checks a stale worktree");
+        }
+    }
+
+    /// A last verdict can name a SHA outside the current history. Both review
+    /// texts test that relationship and fall back to the whole change instead
+    /// of treating an empty range as no change.
+    #[test]
+    fn a_reviewer_uses_the_whole_diff_when_head_does_not_follow_the_last_sha() {
+        for (name, text) in [
+            (
+                "reviewer resume",
+                default_prompt_text(PromptKind::ReviewerResume),
+            ),
+            (
+                "code-review skill",
+                default_skill_document("code-review").unwrap(),
+            ),
+        ] {
+            for rule in [
+                "`git merge-base --is-ancestor <sha> HEAD`",
+                "If HEAD is not after that SHA, use `get_diff`",
+            ] {
+                assert!(text.contains(rule), "the {name} and {rule}");
             }
         }
     }
@@ -1259,6 +1423,11 @@ mod tests {
     /// with room for its rules. The total of 50000 is the eighteen at their
     /// tiers with slack left over, so a skill that grows costs a decision here
     /// rather than a quiet raid on another skill's share.
+    ///
+    /// `code-review` rises from 3000 to 3500 for the new review mechanics. It
+    /// starts every check before reading, refreshes a detached worktree and
+    /// scopes another review from the last verdict SHA. These rules add
+    /// commands and ordering that the old procedure did not hold.
     #[test]
     fn skill_size_caps_hold() {
         const TOTAL: usize = 50_000;
@@ -1267,7 +1436,8 @@ mod tests {
             // for most tasks, several where the reviewers pick a winner.
             ORCHESTRATION_SKILL => 3600,
             "debugging" => 3200,
-            "coding" | "testing" | "code-review" => 3000,
+            "code-review" => 3500,
+            "coding" | "testing" => 3000,
             _ => 2400,
         };
 
