@@ -39,7 +39,8 @@ gone (009).
 1. The agent is a direct child of the daemon. It runs the registry command
    the launch names (007), with the launch's environment, in the seat's
    working directory, on piped stdio. A launch for a session that already
-   has an agent here kills that agent first: one seat, one agent.
+   has an agent here kills that agent first (rule 11), and starts once it is
+   reaped: one seat, one agent.
 2. The runtime speaks ACP version 1. It sends `initialize` and refuses an
    agent that negotiates any other version (see Known gap). It then opens
    the session with `session/new` — or, for a resume, `session/resume` where
@@ -66,7 +67,8 @@ gone (009).
    carries the launch id (007), and the agent's session id is recorded on
    the row.
    The `stop` event carries `ariadne_usage` from a well-formed prompt response:
-   quota totals before standard usage, with the launch id as its source.
+   quota totals before standard usage, read as what that turn spent and added
+   to the launch's earlier turns, with the launch id as its source.
 6. A turn's text is stored run by run, where the agent wrote it. A run is
    the chunks of one kind in a row, and of one message where the chunks
    carry an ACP `messageId`; it ends at a chunk of the other kind, a chunk
@@ -112,6 +114,11 @@ gone (009).
 11. The child is reaped whenever it ends. Its own exit ends the session on
    the record: `session.error` first if the protocol failed, then
    `session_end`. Killing the session kills the child and retires the row.
+   A kill that finds a turn running first sends `session/cancel`, starts no
+   queued prompt, and waits up to five seconds for the turn's response, whose
+   `stop` records what the turn spent; a turn waiting on a permission answer
+   is not cancelled, and an agent that does not answer is killed when the
+   wait runs out.
 12. A resume starts a fresh agent process on the stored conversation. The
    predecessor is reaped, and its exit takes neither the seat nor the row
    down.
@@ -132,6 +139,13 @@ gone (009).
   (`acp_runtime.rs::a_reviewer_runs_on_the_registry_agent`).
 - Killing the session kills the agent process and retires the row
   (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`).
+- A kill mid-turn cancels the turn and keeps what it spent
+  (`acp_console.rs::a_turn_killed_mid_way_is_cancelled_and_keeps_what_it_spent`),
+  a relaunch over a running turn starts once the old agent is reaped and
+  keeps what the old launch spent
+  (`::a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent`), and
+  an agent that ignores the cancel is killed when the wait runs out
+  (`::an_agent_that_ignores_the_cancel_is_killed_when_the_grace_runs_out`).
 - An agent that dies mid-turn is reaped, and its session ends on the record
   (`acp_runtime.rs::a_dead_acp_agent_is_reaped_and_its_session_retired`).
 - A resume loads the stored conversation on a fresh process, the instruction
@@ -174,9 +188,9 @@ gone (009).
 - A cancel ends the running turn as `cancelled`
   (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), and is
   refused between turns (`::cancel_with_no_turn_running_is_refused`).
-- Prompt usage maps cache-inclusive input totals, prefers quota, replaces one
-  launch, adds a resumed launch, and leaves an absent report at zero
-  (`acp_console.rs::standard_prompt_usage_replaces_launch_totals_and_rolls_up`,
+- Prompt usage maps cache-inclusive input totals, prefers quota, adds up one
+  launch's turns, adds a resumed launch, and leaves an absent report at zero
+  (`acp_console.rs::standard_prompt_usage_adds_up_a_launchs_turns_and_rolls_up`,
   `::quota_prompt_usage_takes_precedence_over_standard_usage`,
   `::a_prompt_without_usage_keeps_zero_totals_and_records_stop`,
   `::resumed_prompt_usage_adds_a_new_launch_total`).

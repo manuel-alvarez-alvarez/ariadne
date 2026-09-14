@@ -84,6 +84,18 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
         })
         .await?;
 
+    // What the agent has spent, where the event says so. Cumulative totals
+    // per source, so this is a replace and not an addition — see
+    // `Store::upsert_session_usage` — and it rides on any event kind. It is
+    // news even from a launch the session has moved past: the turn a
+    // relaunch cancelled reports what it spent only after the relaunch, and
+    // its source is its own launch, which nothing later replaces.
+    if let Some((source, usage)) = usage_for_event(&req.payload) {
+        store
+            .upsert_session_usage(&session.id, &source, usage)
+            .await?;
+    }
+
     if superseded {
         tracing::debug!(
             session = %session.id, kind = %req.kind, launch = ?req.launch,
@@ -99,15 +111,6 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
         tracing::info!(session = %session.id, internal, "captured internal session id");
         store
             .set_session_internal_id(&session.id, &internal)
-            .await?;
-    }
-
-    // What the agent has spent, where the event says so. Cumulative totals
-    // per transcript, so this is a replace and not an addition — see
-    // `Store::upsert_session_usage` — and it rides on any event kind.
-    if let Some((source, usage)) = usage_for_event(&req.payload) {
-        store
-            .upsert_session_usage(&session.id, &source, usage)
             .await?;
     }
 

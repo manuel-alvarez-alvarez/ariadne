@@ -86,9 +86,11 @@ and the ACP runtime that reports the agent events (021).
     on (008): a relaunched agent shares its session id — and, on a resumed
     conversation, its internal id — with the process it replaced, whose exit
     is still to report. A report from the launch before is recorded and
-    changes nothing, except its `session_end`, which is not recorded: the
-    session did not end, and a console closes on a `session_end` (008). An
-    event that names no launch is believed.
+    changes nothing but the usage it carries (rule 15) — the turn a relaunch
+    cancelled reports what it spent only then (021) — except its
+    `session_end`, which is not recorded: the session did not end, and a
+    console closes on a `session_end` (008). An event that names no launch
+    is believed.
 13. Every agent event's DTO carries a `summary`: one line built from its
     payload when the DTO is built, never stored. A tool call reads as its
     action and its subject — `Bash: cargo nextest run` — off `tool_name` and
@@ -116,9 +118,10 @@ and the ACP runtime that reports the agent events (021).
     does.
 16. The ACP runtime reads a prompt response's well-formed
     `_meta.quota.token_count`, or its `usage` where quota is absent or
-    malformed. It adds cached reads and writes to input, records their sum as
-    cached input, names the running launch as the source, and attaches the
-    totals only to the turn's `stop` event.
+    malformed, as what that one turn spent (ACP). It adds cached reads and
+    writes to input, records their sum as cached input, adds the turn to the
+    launch's earlier turns, names the running launch as the source, and
+    attaches the launch's totals only to the turn's `stop` event.
 17. `GET /v1/agents` lists every registry agent's flags, in registry order,
     as `AgentConfigDto{agent_id, extra_flags, default_flags}`. `PUT
     /v1/agents/{id}` replaces one agent's list whole, an empty one included,
@@ -173,7 +176,9 @@ and the ACP runtime that reports the agent events (021).
   `::an_orchestrator_of_a_finished_goal_raises_no_attention`).
 - An event from a launch the session has moved past is recorded and changes
   nothing, all but its `session_end`, which is not recorded
-  (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`).
+  (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`),
+  and the usage it carries is kept
+  (`acp_console.rs::a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent`).
 - The live-only console events reach neither the events listing nor the
   domain stream
   (`acp_console.rs::the_events_listing_and_the_domain_stream_carry_no_chunk`).
@@ -203,9 +208,9 @@ and the ACP runtime that reports the agent events (021).
   (`events.rs::a_session_that_has_reported_nothing_reads_as_zeros`), and
   usage goes with its session
   (`store.rs::usage_goes_when_the_session_it_belonged_to_does`).
-- The ACP runtime maps standard and quota prompt usage, replaces one launch's
-  totals, adds a resumed launch, leaves a silent response at zero, and rolls
-  totals up (`acp_console.rs::standard_prompt_usage_replaces_launch_totals_and_rolls_up`,
+- The ACP runtime maps standard and quota prompt usage, adds up one launch's
+  turns, adds a resumed launch, leaves a silent response at zero, and rolls
+  totals up (`acp_console.rs::standard_prompt_usage_adds_up_a_launchs_turns_and_rolls_up`,
   `::quota_prompt_usage_takes_precedence_over_standard_usage`,
   `::a_prompt_without_usage_keeps_zero_totals_and_records_stop`,
   `::resumed_prompt_usage_adds_a_new_launch_total`,
@@ -244,6 +249,12 @@ and the ACP runtime that reports the agent events (021).
 ACP prompt responses now report token usage through the runtime's normal
 ingestion path. An adapter that reports neither supported usage shape leaves
 its session, task and goal usage at zero.
+
+An adapter's report is only as whole as the adapter makes it. codex-acp 1.11.0
+answers a prompt with the usage of the turn's last model request, not of the
+turn, in both `usage` and `_meta.quota.token_count`: a Codex session reads as
+the sum of each turn's last request, far below what it spent. Its running
+totals are not on the protocol, and nothing here reads a transcript.
 
 ## Sources
 

@@ -7,7 +7,8 @@
 //! plan, tool calls and as many updates of each as the test lists), a
 //! permission request, the stop reason, an exit mid-turn, or a pause
 //! (`wait_for`) a test holds the turn open on after its updates went out,
-//! during which a `session/cancel` ends the turn as `cancelled` — and the
+//! during which a `session/cancel` ends the turn as `cancelled`, with the
+//! turn's usage, unless `ignore_cancel` says otherwise — and the
 //! stored sessions a load or resume finds, which `session/list` answers
 //! whole, or `session_page_size` at a time behind a `nextCursor` — and never
 //! answers a page from `session_list_stall_from` on. The harness
@@ -376,20 +377,24 @@ def respond(request):
         for update in turn.get("updates", []):
             send({"jsonrpc": "2.0", "method": "session/update",
                   "params": {"sessionId": sid, "update": update}})
+        stop_reason = turn.get("stop_reason", "end_turn")
         wait_for = turn.get("wait_for")
         if wait_for:
             # Everything the turn has to say is out; now sit on it until the
             # test lets go — the window a "while a turn runs" test needs —
-            # or until the client cancels the turn.
+            # or until the client cancels the turn, unless the script has
+            # this agent ignore the cancel.
             with open(wait_for + ".reached", "w") as f:
                 f.write("1")
             while not os.path.exists(wait_for):
-                if cancelled_meanwhile():
-                    return {"stopReason": "cancelled"}
+                if cancelled_meanwhile() and not turn.get("ignore_cancel"):
+                    stop_reason = "cancelled"
+                    break
                 time.sleep(0.01)
         if "exit" in turn:
             sys.exit(int(turn["exit"]))
-        response = {"stopReason": turn.get("stop_reason", "end_turn")}
+        # A cancelled turn reports what it spent too, as ACP has it.
+        response = {"stopReason": stop_reason}
         if "usage" in turn:
             response["usage"] = turn["usage"]
         if "quota" in turn:

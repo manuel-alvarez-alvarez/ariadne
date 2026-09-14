@@ -122,10 +122,10 @@ fn tokens(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> To
     }
 }
 
-/// ACP's standard usage is cumulative for a launch, so the latest response
-/// replaces the earlier one and its cached tokens remain part of input.
+/// ACP's prompt usage is what one turn spent, so a launch's turns add up, and
+/// cached tokens remain part of input.
 #[tokio::test]
-async fn standard_prompt_usage_replaces_launch_totals_and_rolls_up() {
+async fn standard_prompt_usage_adds_up_a_launchs_turns_and_rolls_up() {
     let agent_dir = tempfile::tempdir().unwrap();
     let mut scripted = script();
     scripted["prompts"] = json!([
@@ -143,7 +143,7 @@ async fn standard_prompt_usage_replaces_launch_totals_and_rolls_up() {
     assert_eq!(session_usage.usage, tokens(60, 50, 40));
 
     let (status, _) = h
-        .send(post_console_input(&session.id, "report later totals"))
+        .send(post_console_input(&session.id, "report a second turn"))
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     eventually(TIMEOUT, "the second prompt to end", || async {
@@ -153,11 +153,141 @@ async fn standard_prompt_usage_replaces_launch_totals_and_rolls_up() {
     .await;
 
     let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
-    assert_eq!(session_usage.usage, tokens(600, 500, 400));
+    assert_eq!(session_usage.usage, tokens(660, 550, 440));
     let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
-    assert_eq!(task.usage.total, tokens(600, 500, 400));
+    assert_eq!(task.usage.total, tokens(660, 550, 440));
     let goal: GoalDto = h.get(&format!("/v1/goals/{}", cast.goal.id)).await;
-    assert_eq!(goal.usage.total, tokens(600, 500, 400));
+    assert_eq!(goal.usage.total, tokens(660, 550, 440));
+}
+
+/// A script whose first turn spends `usage` and then holds the turn open on
+/// `release`, a file the test never writes.
+fn held_turn_script(release: &std::path::Path, usage: serde_json::Value) -> serde_json::Value {
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "updates": [],
+        "usage": usage,
+        "wait_for": release.display().to_string(),
+    }]);
+    scripted
+}
+
+/// Spawn the task's author and wait until its first turn is being held open.
+async fn spawned_mid_turn(
+    h: &Harness,
+    cast: &Cast,
+    release: &std::path::Path,
+) -> ariadne_store::AgentSession {
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    let reached = release.with_extension("reached");
+    eventually(TIMEOUT, "the turn to be held open", || async {
+        reached.exists()
+    })
+    .await;
+    session
+}
+
+/// Killing an agent mid-turn cancels the turn first, and what the cancelled
+/// turn spent is kept.
+#[tokio::test]
+async fn a_turn_killed_mid_way_is_cancelled_and_keeps_what_it_spent() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let stub = stub_acp_agent(
+        agent_dir.path(),
+        held_turn_script(
+            &release,
+            json!({"inputTokens": 10, "cachedReadTokens": 20, "outputTokens": 40}),
+        ),
+    );
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_mid_turn(&h, &cast, &release).await;
+    let pid = stub.pid().unwrap();
+
+    h.launcher.kill_session(&session.id).await.unwrap();
+    eventually(TIMEOUT, "the killed agent to be reaped", || async {
+        !common::acp::pid_is_alive(pid)
+    })
+    .await;
+
+    assert_eq!(stub.calls_of("session/cancel").len(), 1);
+    let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert_eq!(session_usage.usage, tokens(30, 20, 40));
+}
+
+/// A relaunch over a running turn cancels it, waits for the old agent to go
+/// before starting the new one, and keeps what the old launch spent beside
+/// what the new one spends.
+#[tokio::test]
+async fn a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let mut first = held_turn_script(
+        &release,
+        json!({"inputTokens": 10, "cachedReadTokens": 20, "outputTokens": 40}),
+    );
+    first["stored_sessions"] = json!(["stub-session"]);
+    let stub = stub_acp_agent(agent_dir.path(), first);
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_mid_turn(&h, &cast, &release).await;
+    let old_pid = stub.pid().unwrap();
+
+    let mut resumed_script = script();
+    resumed_script["stored_sessions"] = json!(["stub-session"]);
+    resumed_script["prompts"] = json!([{
+        "updates": [],
+        "usage": {"inputTokens": 1, "cachedReadTokens": 2, "outputTokens": 4},
+    }]);
+    stub.reprogram(resumed_script);
+    let resumed = h
+        .launcher
+        .resume_author(&cast.task.id, "here is your review")
+        .await
+        .unwrap();
+    assert_eq!(resumed.id, session.id);
+    assert!(
+        !common::acp::pid_is_alive(old_pid),
+        "the old agent is gone before the relaunch returns"
+    );
+    eventually(TIMEOUT, "the resumed prompt to end", || async {
+        h.session_status(&resumed).await == SessionStatus::Idle
+    })
+    .await;
+
+    assert_eq!(stub.calls_of("session/cancel").len(), 1);
+    let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", resumed.id)).await;
+    assert_eq!(session_usage.usage, tokens(33, 22, 44));
+}
+
+/// An agent that ignores the cancel is still killed, once the grace runs out.
+#[tokio::test]
+async fn an_agent_that_ignores_the_cancel_is_killed_when_the_grace_runs_out() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let mut scripted = held_turn_script(
+        &release,
+        json!({"inputTokens": 10, "cachedReadTokens": 20, "outputTokens": 40}),
+    );
+    scripted["prompts"][0]["ignore_cancel"] = json!(true);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_mid_turn(&h, &cast, &release).await;
+    let pid = stub.pid().unwrap();
+
+    h.launcher.kill_session(&session.id).await.unwrap();
+    eventually(
+        std::time::Duration::from_secs(15),
+        "the agent to be killed after the grace",
+        || async { !common::acp::pid_is_alive(pid) },
+    )
+    .await;
+
+    assert_eq!(stub.calls_of("session/cancel").len(), 1);
+    let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert_eq!(session_usage.usage, tokens(0, 0, 0));
 }
 
 /// The adapters' quota report includes subagent use, so it takes precedence

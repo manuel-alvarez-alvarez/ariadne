@@ -12,14 +12,17 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 
 use ariadne_api::events::{AgentEventDto, IngestEventRequest};
 use ariadne_core::acp::LaunchConfig;
@@ -34,6 +37,15 @@ use crate::scheduler::SchedEvent;
 
 /// Live console events buffered per subscriber before it is told to resync.
 const CONSOLE_CAPACITY: usize = 1024;
+
+/// How long a killed agent's running turn has to end once it is cancelled.
+///
+/// The prompt response a cancel draws is the only report of what that turn
+/// spent: an agent killed mid-turn — a relaunch that hands an author its
+/// review, a cleanup after `finish_task` — otherwise takes the turn's tokens
+/// with it. An adapter that honours `session/cancel` answers within a second;
+/// one that does not is killed when this runs out, as it was before.
+const TURN_CANCEL_GRACE: Duration = Duration::from_secs(5);
 
 /// Everything one launch of an ACP agent is made of. The launcher builds it
 /// from the adapter's spawn plan: the registry command with the planned
@@ -196,6 +208,9 @@ struct RunningAgent {
     task_id: Option<String>,
     /// The notification path into the agent, for `session/cancel`.
     outbound: Outbound,
+    /// Closes once the driver has killed and reaped the child: what a
+    /// relaunch waits on, so that two agents never serve one conversation.
+    ended: oneshot::Receiver<()>,
 }
 
 /// The transport, the permission reply slot and the turn a driver owns for
@@ -369,9 +384,12 @@ impl AcpRuntime {
     }
 
     /// Spawn the agent and drive it until it exits or is killed. A driver
-    /// still holding this session is stopped first: one seat, one agent.
+    /// still holding this session is stopped first, and its child is gone
+    /// before this one starts: one seat, one agent.
     pub async fn launch(&self, launch: AcpLaunch) -> Result<()> {
-        self.kill(&launch.session_id);
+        if let Some(ended) = self.take_down(&launch.session_id) {
+            let _ = ended.await;
+        }
         let mut child = Command::new(&launch.program)
             .args(&launch.args)
             .envs(launch.env.iter().cloned())
@@ -407,6 +425,7 @@ impl AcpRuntime {
         }
 
         let (stop, stopped) = oneshot::channel();
+        let (reaped, ended) = oneshot::channel();
         let (prompts, queued) = mpsc::unbounded_channel();
         let permission = Arc::new(Mutex::new(None));
         let turn = Arc::new(tokio::sync::Mutex::new(Turn::default()));
@@ -432,6 +451,7 @@ impl AcpRuntime {
                     turn: turn.clone(),
                     task_id: task_id.clone(),
                     outbound: transport.outbound(),
+                    ended,
                 },
             );
         let runtime = self.clone();
@@ -449,25 +469,31 @@ impl AcpRuntime {
                     stopped,
                     queued,
                 )
-                .await
+                .await;
+            drop(reaped);
         });
         Ok(())
     }
 
     /// Take a session's agent down. The entry goes at once — a spawn guard
-    /// asking right after is told the seat is free — and the driver kills and
-    /// reaps the child behind it. A session with no agent here is a no-op.
+    /// asking right after is told the seat is free — and the driver cancels
+    /// the turn it is running, then kills and reaps the child behind it. A
+    /// session with no agent here is a no-op.
     pub fn kill(&self, session_id: &str) {
+        self.take_down(session_id);
+    }
+
+    /// [`Self::kill`], and what closes once the child is reaped.
+    fn take_down(&self, session_id: &str) -> Option<oneshot::Receiver<()>> {
         let agent = self
             .inner
             .running
             .lock()
             .expect("acp registry lock")
-            .remove(session_id);
-        if let Some(agent) = agent {
-            tracing::info!(session = %session_id, "killing the ACP agent");
-            let _ = agent.stop.send(());
-        }
+            .remove(session_id)?;
+        tracing::info!(session = %session_id, "killing the ACP agent");
+        let _ = agent.stop.send(());
+        Some(agent.ended)
     }
 
     /// Drop a driver's own entry, and only its own: by the time a replaced
@@ -493,7 +519,8 @@ impl AcpRuntime {
     }
 
     /// One agent's whole life: the protocol until it ends, is killed, or
-    /// fails; then the kill and the reap; then the session's last words.
+    /// fails; on a kill, the running turn's cancel; then the kill and the
+    /// reap; then the session's last words.
     async fn drive(
         self,
         launch: AcpLaunch,
@@ -510,11 +537,29 @@ impl AcpRuntime {
             agent_session: Arc::new(OnceLock::new()),
             console: self.console_of(&launch.session_id),
         };
+        let outbound = io.transport.outbound();
+        let (turn, permission) = (io.turn.clone(), io.permission.clone());
         let mut rpc = Rpc::new(io.transport, sink.clone(), io.permission, io.turn, &launch);
-        let outcome = tokio::select! {
-            result = run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts) => Some(result),
+        let (closing, turn_ended) = (rpc.closing.clone(), rpc.turn_ended.clone());
+        let mut protocol = Box::pin(run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts));
+        let mut outcome = tokio::select! {
+            result = &mut protocol => Some(result),
             _ = stopped => None,
         };
+        if outcome.is_none() {
+            let ending = TurnEnding {
+                turn: &turn,
+                permission: &permission,
+                outbound: &outbound,
+                closing: &closing,
+                turn_ended: &turn_ended,
+            };
+            outcome = ending.settle(protocol.as_mut()).await;
+        }
+        // Whatever the protocol was in the middle of goes now, and every lock
+        // it held with it — the store's event order among them, which the
+        // session's last words below take again.
+        drop(protocol);
         // Reap on exit, kill on a kill: the signal is a no-op on a child
         // already gone, and the wait is what collects it either way.
         let _ = child.start_kill();
@@ -536,6 +581,67 @@ impl AcpRuntime {
         )
         .await;
         self.deregister(&launch.session_id, &launch.launch_id);
+    }
+}
+
+/// What a killed driver needs to let its running turn end the ACP way.
+struct TurnEnding<'a> {
+    turn: &'a tokio::sync::Mutex<Turn>,
+    permission: &'a Mutex<Option<oneshot::Sender<String>>>,
+    outbound: &'a Outbound,
+    closing: &'a AtomicBool,
+    turn_ended: &'a Notify,
+}
+
+impl TurnEnding<'_> {
+    /// Cancel the running turn and serve the agent until its response is in
+    /// — the `stop` that carries what the turn spent — or the protocol ends,
+    /// or [`TURN_CANCEL_GRACE`] runs out. The protocol's outcome where it
+    /// ended here, `None` otherwise.
+    ///
+    /// No queued prompt starts meanwhile, and a turn waiting on a permission
+    /// answer is not asked: nobody is left to answer it, and ACP has the
+    /// client answer that request before the turn can end.
+    async fn settle(
+        &self,
+        mut protocol: Pin<&mut impl Future<Output = Result<()>>>,
+    ) -> Option<Result<()>> {
+        self.closing.store(true, Ordering::SeqCst);
+        if self
+            .permission
+            .lock()
+            .expect("ACP permission lock")
+            .is_some()
+        {
+            return None;
+        }
+        let ended = self.turn_ended.notified();
+        tokio::pin!(ended);
+        ended.as_mut().enable();
+        let cancelled = async {
+            let mut pipe = self.outbound.lock().await;
+            let agent_session = {
+                let turn = self.turn.lock().await;
+                turn.running.then(|| turn.agent_session.clone()).flatten()
+            };
+            match agent_session {
+                Some(agent_session) => pipe
+                    .notify("session/cancel", json!({"sessionId": agent_session}))
+                    .await
+                    .is_ok(),
+                None => false,
+            }
+        };
+        let answered = async {
+            if cancelled.await {
+                ended.await;
+            }
+        };
+        tokio::select! {
+            result = &mut protocol => Some(result),
+            _ = answered => None,
+            _ = tokio::time::sleep(TURN_CANCEL_GRACE) => None,
+        }
     }
 }
 
@@ -629,6 +735,13 @@ struct Rpc {
     repository_id: String,
     permission_mode: PermissionMode,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+    /// What this launch's turns have spent so far: each prompt response
+    /// reports one turn (ACP), and the `stop` carries their running sum.
+    launch_usage: TokenUsage,
+    /// Set once the agent is being killed: no queued prompt starts after it.
+    closing: Arc<AtomicBool>,
+    /// Told each time a turn's `stop` has been recorded.
+    turn_ended: Arc<Notify>,
 }
 
 impl Rpc {
@@ -646,6 +759,9 @@ impl Rpc {
             repository_id: launch.repository_id.clone(),
             permission_mode: launch.permission_mode,
             pending_permission,
+            launch_usage: TokenUsage::default(),
+            closing: Arc::new(AtomicBool::new(false)),
+            turn_ended: Arc::new(Notify::new()),
         }
     }
 
@@ -987,11 +1103,13 @@ async fn serve_with_input(
 ) -> Result<()> {
     // Once the console side is gone there is nothing left to queue, but the
     // agent may still have plenty to say — the branch is dropped rather than
-    // polled into a busy loop of immediate `None`s.
+    // polled into a busy loop of immediate `None`s. An agent being killed
+    // starts nothing more either.
     let mut console_open = true;
+    let closing = rpc.closing.clone();
     loop {
         tokio::select! {
-            prompt = prompts.recv(), if console_open => {
+            prompt = prompts.recv(), if console_open && !closing.load(Ordering::SeqCst) => {
                 match prompt {
                     Some(prompt) => prompt_once(rpc, session_id, system_prompt, &prompt).await?,
                     None => console_open = false,
@@ -1158,19 +1276,22 @@ async fn prompt_once(
         "stop_reason": response.get("stopReason"),
     });
     if let Some(usage) = usage_for_prompt_response(&response) {
+        rpc.launch_usage += usage;
         stop["ariadne_usage"] = json!({
             "source": rpc.sink.launch_id,
-            "input_tokens": usage.input_tokens,
-            "cached_input_tokens": usage.cached_input_tokens,
-            "output_tokens": usage.output_tokens,
+            "input_tokens": rpc.launch_usage.input_tokens,
+            "cached_input_tokens": rpc.launch_usage.cached_input_tokens,
+            "output_tokens": rpc.launch_usage.output_tokens,
         });
     }
     rpc.sink.emit("stop", stop).await;
+    rpc.turn_ended.notify_waiters();
     Ok(())
 }
 
-/// The cumulative token totals an ACP prompt response reports. Adapter quota
-/// totals include subagents, so use them where their shape is complete.
+/// What one turn spent, as its ACP prompt response reports it — a cancelled
+/// turn's included. Adapter quota totals include subagents, so use them where
+/// their shape is complete.
 fn usage_for_prompt_response(response: &Value) -> Option<TokenUsage> {
     response
         .pointer("/_meta/quota/token_count")
