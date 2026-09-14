@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-12
+updated: 2026-09-15
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -138,6 +138,18 @@ and the ACP runtime that reports the agent events (021).
     /v1/acp-agents/refresh` probes every entry and replaces that cache. Both
     responses include status, measured capabilities, degradation flags, and
     a rejection reason when discovery failed.
+21. `GET /v1/events` answers one page of the recorded events. `order=asc` is
+    the default and answers the oldest of them, oldest first, which is what a
+    client sweeping forward reads. `order=desc` answers the newest, newest
+    first: a database that has recorded for months holds far more than one
+    page, and the ascending page of it never moves.
+22. Two cursors walk that listing: `after` takes the events above an id, and
+    `before` the events below one. A descending page goes on from the id of
+    its own last row.
+23. The listing narrows by `session`, by `task` and by `goal`. A goal reaches
+    an event through the goal of the session that reported it, or through the
+    goal of the task it was on — an event outlives its session, whose id is
+    then null, and is still its goal's.
 
 ## Acceptance criteria
 
@@ -243,6 +255,17 @@ and the ACP runtime that reports the agent events (021).
 - ACP registry endpoints expose the cached result and refresh it on demand
   (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`,
   `::discovery_refreshes_on_demand`).
+- A descending page is the events recorded last, newest first
+  (`events.rs::the_newest_page_is_the_events_recorded_last`,
+  `store.rs::a_descending_page_answers_the_newest_events_newest_first`), and a
+  page that asks for no order is still the oldest, oldest first
+  (`events.rs::a_page_with_no_order_is_the_oldest_events_oldest_first`).
+- `before` walks a descending page further back
+  (`events.rs::a_before_page_walks_back_from_the_newest_page`,
+  `store.rs::a_before_cursor_pages_back_past_the_newest_page`).
+- A goal's events are the ones its sessions and its tasks reported, an event
+  with no session included
+  (`events.rs::a_goals_events_are_what_its_sessions_and_its_tasks_reported`).
 
 ## Known gap
 

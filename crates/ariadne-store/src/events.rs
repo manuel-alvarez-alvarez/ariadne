@@ -2,7 +2,6 @@
 
 use ariadne_core::id::new_id;
 
-use crate::query::Filtered;
 use crate::{AgentEvent, Change, Result, Store, now};
 
 #[derive(Debug, Clone)]
@@ -13,11 +12,29 @@ pub struct NewAgentEvent {
     pub payload: serde_json::Value,
 }
 
+/// Which end of the recorded events a page is taken from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EventOrder {
+    /// Forward from the oldest, which is what a sweep with `after` walks.
+    #[default]
+    Asc,
+    /// Back from the newest, which is what a snapshot of the recent past
+    /// wants.
+    Desc,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct EventFilter {
     pub session_id: Option<String>,
     pub task_id: Option<String>,
+    /// The goal an event belongs to, through its session or through its task.
+    pub goal_id: Option<String>,
+    /// Only events with an id above this one.
     pub after: Option<String>,
+    /// Only events with an id below this one, which is how a descending page
+    /// walks further back.
+    pub before: Option<String>,
+    pub order: EventOrder,
     pub limit: i64,
 }
 
@@ -77,16 +94,59 @@ impl Store {
         .await?)
     }
 
+    /// A page of recorded events, narrowed by whichever filters were set.
+    ///
+    /// The query is assembled here rather than by `Filtered`, which builds one
+    /// `SELECT * FROM <table>` and binds each clause once: the goal reaches an
+    /// event through two other tables and binds its id twice. Every fragment
+    /// below is a literal and every value is bound, which is what makes the
+    /// assembled string safe to assert.
     pub async fn list_events(&self, filter: EventFilter) -> Result<Vec<AgentEvent>> {
         let limit = match filter.limit {
             n if n <= 0 => 50,
             n => n.min(200),
         };
-        Filtered::new("agent_events")
-            .maybe(" AND id > ?", Some(filter.after.unwrap_or_default()))
-            .maybe(" AND session_id = ?", filter.session_id)
-            .maybe(" AND task_id = ?", filter.task_id)
-            .fetch(self, " ORDER BY id LIMIT ?", &[limit])
-            .await
+        let mut sql = String::from("SELECT * FROM agent_events WHERE 1=1");
+        let mut binds: Vec<String> = Vec::new();
+        // A cursor is bound only where it is set: `id < ''` matches no row,
+        // so an unset `before` written as an empty string would answer
+        // nothing at all.
+        if let Some(after) = filter.after {
+            sql.push_str(" AND id > ?");
+            binds.push(after);
+        }
+        if let Some(before) = filter.before {
+            sql.push_str(" AND id < ?");
+            binds.push(before);
+        }
+        if let Some(session_id) = filter.session_id {
+            sql.push_str(" AND session_id = ?");
+            binds.push(session_id);
+        }
+        if let Some(task_id) = filter.task_id {
+            sql.push_str(" AND task_id = ?");
+            binds.push(task_id);
+        }
+        // `agent_events` holds no goal of its own: an event belongs to the
+        // goal of the session that reported it, or of the task it was on.
+        // Both are read, because `agent_events.session_id` is `ON DELETE SET
+        // NULL` and an event can carry a task and no session.
+        if let Some(goal_id) = filter.goal_id {
+            sql.push_str(
+                " AND (session_id IN (SELECT id FROM agent_sessions WHERE goal_id = ?)
+                    OR task_id IN (SELECT id FROM tasks WHERE goal_id = ?))",
+            );
+            binds.push(goal_id.clone());
+            binds.push(goal_id);
+        }
+        sql.push_str(match filter.order {
+            EventOrder::Asc => " ORDER BY id LIMIT ?",
+            EventOrder::Desc => " ORDER BY id DESC LIMIT ?",
+        });
+        let mut q = sqlx::query_as::<_, AgentEvent>(sqlx::AssertSqlSafe(sql));
+        for bind in binds {
+            q = q.bind(bind);
+        }
+        Ok(q.bind(limit).fetch_all(self.r()).await?)
     }
 }

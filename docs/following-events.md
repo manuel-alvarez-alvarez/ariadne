@@ -4,7 +4,7 @@ Nothing here polls: the daemon streams, and every follow mode below reads that
 stream. Ctrl-C ends any of them and leaves the terminal as it found it.
 
 ```sh
-ariadne events                         # what the daemon has done, one line each
+ariadne events                         # the 200 most recent events, oldest first
 ariadne events -f                      # ...and keep printing as it happens
 ariadne events -f --goal <goal-id>     # one goal's; also --task, --session, --kind
 ariadne events -f --format json        # one JSON object per line, for a pipe
@@ -20,6 +20,10 @@ ariadne task ls --watch --goal <id>    # redrawn whenever a task moves
 ariadne goal ls --watch                # redrawn whenever a goal moves
 ariadne session ls --watch --seat reviewer  # redrawn whenever a session moves
 ```
+
+`ariadne events` opens on the most recent recorded events — the last 200 of
+them, printed oldest first — so `-f` goes on from where that snapshot ends.
+Every filter narrows the snapshot too, `--goal` included.
 
 Session and task logs print full transcript blocks. Agent message and thought
 chunks stream as the agent writes them, under one header per item. `--tail`

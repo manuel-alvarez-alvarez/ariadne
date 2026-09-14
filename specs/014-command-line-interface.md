@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-12
+updated: 2026-09-15
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -83,7 +83,11 @@ same binary also serves (013).
     `to` painted with the same status glyphs every other status cell carries.
 12. `ariadne events` prints one line per event, `time · kind · subject ·
     detail`. An agent event's detail is the `summary` the daemon builds onto
-    its DTO (012), and a recorded event reads the same as a live one.
+    its DTO (012), and a recorded event reads the same as a live one. The
+    snapshot it opens with is the 200 most recent recorded events, asked for
+    newest first and printed oldest first, so `-f` goes on in the same
+    direction. `--goal` narrows that snapshot at the daemon (012), like
+    `--task` and `--session`.
 13. A failure prints `error: <sentence>` and nothing else: no `Caused by:`
    block, no transport detail, no repeated envelope. Attach failures keep
    recovery commands in the rendered hint on that same line. `--format json`
@@ -211,7 +215,9 @@ same binary also serves (013).
   `::a_permission_question_renders_and_delivers_the_selected_answer`).
 - `ariadne events` prints the daemon's summary in an agent event's detail
   (`commands/events.rs::an_event_reads_as_time_kind_subject_and_detail`,
-  `::an_agent_event_reads_the_same_recorded_as_it_does_live`).
+  `::an_agent_event_reads_the_same_recorded_as_it_does_live`), and its
+  snapshot is the newest page of the listing, printed oldest first
+  (`::the_snapshot_asks_for_the_newest_page_and_prints_it_oldest_first`).
 - `task history` paints `from` and `to`, and a row carries a dash for a
   transition with no reason
   (`commands/task.rs::history_paints_the_from_and_to_statuses`,

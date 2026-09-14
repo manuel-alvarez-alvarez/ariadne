@@ -1043,6 +1043,92 @@ async fn sessions_and_events_round_trip() {
     assert_eq!(events[0].kind, "post_tool_use");
 }
 
+/// Record `count` events on `session`, and answer their ids in the order they
+/// were recorded — which, ids being monotonic, is the order of the ids
+/// themselves.
+async fn record_events(w: &World, session: &AgentSession, count: usize) -> Vec<String> {
+    let mut ids = Vec::with_capacity(count);
+    for _ in 0..count {
+        let event = w
+            .store
+            .create_event(NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: Some(w.task.id.clone()),
+                kind: "stop".into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        ids.push(event.id);
+    }
+    ids
+}
+
+/// A descending page answers the events recorded last, newest first. It is
+/// what a reader of a long-running database wants: the ascending page it
+/// would otherwise get holds the oldest rows ever recorded, and never moves.
+#[tokio::test]
+async fn a_descending_page_answers_the_newest_events_newest_first() {
+    let w = World::new().await;
+    let session = w.author_session().await;
+    let recorded = record_events(&w, &session, 201).await;
+
+    let newest = w
+        .store
+        .list_events(EventFilter {
+            order: EventOrder::Desc,
+            limit: 200,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let expected: Vec<String> = recorded.iter().rev().take(200).cloned().collect();
+    assert_eq!(
+        newest.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        newest.last().map(|e| e.id.as_str()),
+        Some(recorded[1].as_str()),
+        "the 201st event back is the oldest one a page of 200 reaches"
+    );
+}
+
+/// `before` is where a descending page goes on from: the id under the last
+/// row it answered takes the reader one page further back.
+#[tokio::test]
+async fn a_before_cursor_pages_back_past_the_newest_page() {
+    let w = World::new().await;
+    let session = w.author_session().await;
+    let recorded = record_events(&w, &session, 201).await;
+
+    let newest = w
+        .store
+        .list_events(EventFilter {
+            order: EventOrder::Desc,
+            limit: 200,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let older = w
+        .store
+        .list_events(EventFilter {
+            before: Some(newest.last().unwrap().id.clone()),
+            order: EventOrder::Desc,
+            limit: 200,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        older.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        [recorded[0].clone()],
+        "one event was recorded before the page of 200"
+    );
+}
+
 /// What a launch is dated for: the one clock a watchdog reads when a session
 /// has reported nothing at all. A relaunch moves the date, which is what makes
 /// the silence it measures this run's rather than the row's.

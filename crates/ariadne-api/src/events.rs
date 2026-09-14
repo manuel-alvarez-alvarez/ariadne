@@ -36,10 +36,30 @@ pub struct IngestEventRequest {
     pub payload: serde_json::Value,
 }
 
+/// Which end of the recorded events a page of `GET /v1/events` is taken from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum EventOrder {
+    /// Oldest first, which is what a sweep forward with `after` walks.
+    #[default]
+    Asc,
+    /// Newest first, which is what a snapshot of the recent past asks for.
+    Desc,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 pub struct EventListQuery {
     /// Filter by session id.
     pub session: Option<String>,
     /// Filter by task id.
     pub task: Option<String>,
+    /// Filter by goal id: every event whose session, or whose task, belongs
+    /// to that goal.
+    pub goal: Option<String>,
+    /// Return events with an id less than this one, which is how a descending
+    /// page walks further back.
+    pub before: Option<String>,
+    /// Which end of the recorded events the page is taken from (default
+    /// `asc`).
+    pub order: Option<EventOrder>,
 }

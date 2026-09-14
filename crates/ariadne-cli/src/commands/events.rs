@@ -1,12 +1,13 @@
 //! `ariadne events` — everything the daemon does, one line at a time.
 //!
 //! Two sources behind one vocabulary. The recorded half is `GET /v1/events`:
-//! the agent events the runtime recorded, which is the only history there is. The
+//! the agent events the runtime recorded, which is the only history there is —
+//! the most recent [`SNAPSHOT`] of them, printed oldest first. The
 //! live half is `GET /v1/events/stream`, the daemon's domain events — every
 //! goal, task, session and review as it changes, with the agent
-//! events among them. So `ariadne events` prints what has happened and
-//! `ariadne events -f` goes on printing what happens next, in the same shape:
-//! `time · kind · subject · detail`.
+//! events among them. So `ariadne events` prints what has just happened and
+//! `ariadne events -f` goes on printing what happens next, in the same shape
+//! and the same direction: `time · kind · subject · detail`.
 //!
 //! An agent event is spelled by its own kind (`stop`, `post_tool_use`) whether
 //! it arrives from the history or from the stream, so `--kind stop` means one
@@ -16,7 +17,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use ariadne_api::Page;
-use ariadne_api::events::{AgentEventDto, EventListQuery};
+use ariadne_api::events::{AgentEventDto, EventListQuery, EventOrder};
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::stream::{
     DeletedDto, DomainEvent, EventStreamQuery, TaskBranchDto, TaskUpdatedDto,
@@ -30,8 +31,10 @@ use super::follow::{self, Next};
 use super::query_path;
 use crate::output::{Format, empty_state, local_time, note, style, view};
 
-/// How many recorded events the snapshot asks for. The daemon caps a page at
-/// 200, and a tail wants the recent past rather than all of it.
+/// How many recorded events the snapshot asks for, newest first. The daemon
+/// caps a page at 200, and a tail wants the recent past rather than all of
+/// it — the oldest page of a database months old holds nothing a reader is
+/// looking for.
 const SNAPSHOT: i64 = 200;
 
 /// How much of a message body or a title one line carries. A line of a stream
@@ -59,9 +62,8 @@ impl Filters {
 
     /// Whether a line passes the filters this command applies itself.
     ///
-    /// `goal` and `task` are the stream's own parameters and are left to the
-    /// daemon; the snapshot has no goal filter, so [`snapshot`] resolves that
-    /// one into ids before it gets here.
+    /// `goal` and `task` are parameters of both halves and are left to the
+    /// daemon, which narrows each of them at its source.
     fn keeps(&self, line: &Line) -> bool {
         let kind = self.kinds.is_empty() || self.kinds.contains(&line.kind);
         let session = self
@@ -231,62 +233,44 @@ struct SnapshotQuery {
     page: Page,
 }
 
-/// The recorded events, filtered as asked.
-async fn snapshot(client: &Client, filters: &Filters) -> Result<Vec<Line>> {
-    let path = query_path(
+/// The one page the snapshot reads: the newest [`SNAPSHOT`] recorded events,
+/// narrowed by the daemon — the goal among them, which it reaches through an
+/// event's session or its task.
+fn snapshot_path(filters: &Filters) -> Result<String> {
+    query_path(
         "/v1/events",
         &SnapshotQuery {
             filters: EventListQuery {
                 session: filters.session.clone(),
                 task: filters.task.clone(),
+                goal: filters.goal.clone(),
+                before: None,
+                order: Some(EventOrder::Desc),
             },
             page: Page {
                 after: None,
                 limit: Some(SNAPSHOT),
             },
         },
-    )?;
-    let events: Vec<AgentEventDto> = client.get_json(&path).await?;
-    // `GET /v1/events` takes no goal, so a goal filter is resolved into the
-    // ids that belong to it and applied here. Only the snapshot needs this:
-    // the stream filters by goal itself.
-    let scope = match &filters.goal {
-        Some(goal) => Some(GoalScope::fetch(client, goal).await?),
-        None => None,
-    };
-    Ok(events
+    )
+}
+
+/// A descending page as the lines it is printed as: turned back into the
+/// order time runs in, since the tail that follows it runs that way too and
+/// the two halves are one list.
+fn snapshot_lines(events: &[AgentEventDto], filters: &Filters) -> Vec<Line> {
+    events
         .iter()
+        .rev()
         .map(agent_line)
-        .filter(|line| scope.as_ref().is_none_or(|s| s.holds(line)))
         .filter(|line| filters.keeps(line))
-        .collect())
+        .collect()
 }
 
-/// The tasks and sessions of one goal: what makes a recorded agent event that
-/// goal's, since an agent event names only its session and its task.
-struct GoalScope {
-    tasks: Vec<String>,
-    sessions: Vec<String>,
-}
-
-impl GoalScope {
-    async fn fetch(client: &Client, goal: &str) -> Result<Self> {
-        let tasks: Vec<TaskDto> = client.get_json(&format!("/v1/tasks?goal={goal}")).await?;
-        let sessions: Vec<SessionDto> = client
-            .get_json(&format!("/v1/sessions?goal={goal}"))
-            .await?;
-        Ok(Self {
-            tasks: tasks.into_iter().map(|t| t.id).collect(),
-            sessions: sessions.into_iter().map(|s| s.id).collect(),
-        })
-    }
-
-    fn holds(&self, line: &Line) -> bool {
-        let session = line.session.as_ref();
-        self.tasks.contains(&line.subject)
-            || session.is_some_and(|s| self.sessions.contains(s))
-            || self.sessions.contains(&line.subject)
-    }
+/// The recorded events, filtered as asked.
+async fn snapshot(client: &Client, filters: &Filters) -> Result<Vec<Line>> {
+    let events: Vec<AgentEventDto> = client.get_json(&snapshot_path(filters)?).await?;
+    Ok(snapshot_lines(&events, filters))
 }
 
 /// The lines one stream frame is worth: one for a domain event, none for the
@@ -779,6 +763,49 @@ mod tests {
         assert!(session.keeps(&line("stop", Some("01SESS"))));
         assert!(!session.keeps(&line("stop", Some("01OTHER"))));
         assert!(!session.keeps(&line("goal_created", None)));
+    }
+
+    /// One recorded event, dated as the daemon dates it.
+    fn recorded(id: &str, at: &str) -> AgentEventDto {
+        AgentEventDto {
+            id: id.into(),
+            session_id: Some("01SESS".into()),
+            task_id: Some("01TASK".into()),
+            kind: "stop".into(),
+            payload: serde_json::json!({}),
+            summary: "ran cargo nextest run".into(),
+            created_at: at.into(),
+        }
+    }
+
+    /// The snapshot is one page read from the end of the listing: the newest
+    /// 200 events, with the goal narrowed by the daemon rather than here. The
+    /// page arrives newest first and is printed oldest first, which is the
+    /// direction `-f` goes on in.
+    #[test]
+    fn the_snapshot_asks_for_the_newest_page_and_prints_it_oldest_first() {
+        let filters = Filters {
+            goal: Some("01GOAL".into()),
+            task: None,
+            session: None,
+            kinds: vec![],
+        };
+        assert_eq!(
+            snapshot_path(&filters).unwrap(),
+            "/v1/events?goal=01GOAL&order=desc&limit=200"
+        );
+
+        let page = [
+            recorded("01EV2", "2026-08-18T11:00:02Z"),
+            recorded("01EV1", "2026-08-18T11:00:01Z"),
+        ];
+        assert_eq!(
+            snapshot_lines(&page, &filters)
+                .iter()
+                .map(|line| line.at.clone())
+                .collect::<Vec<_>>(),
+            ["2026-08-18T11:00:01Z", "2026-08-18T11:00:02Z"]
+        );
     }
 
     /// An empty answer means one thing when nothing was asked for and another

@@ -27,7 +27,7 @@ mod usage;
 
 pub use change::Change;
 pub use entities::*;
-pub use events::{EventFilter, NewAgentEvent};
+pub use events::{EventFilter, EventOrder, NewAgentEvent};
 pub use goals::NewGoal;
 pub use memories::NewMemory;
 pub use messages::{MessageFilter, NewMessage};

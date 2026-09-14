@@ -4,8 +4,10 @@
 use axum::extract::{Query, State};
 
 use ariadne_api::Page;
-use ariadne_api::events::{AgentEventDto, EventListQuery, IngestEventRequest};
-use ariadne_store::{EventFilter, NewAgentEvent, Store, StoreError};
+use ariadne_api::events::{
+    AgentEventDto, EventListQuery, EventOrder as ApiEventOrder, IngestEventRequest,
+};
+use ariadne_store::{EventFilter, EventOrder, NewAgentEvent, Store, StoreError};
 
 use super::AppState;
 use super::classify::{
@@ -14,7 +16,8 @@ use super::classify::{
 use super::convert::event_dto;
 use super::error::{ApiResult, Json};
 
-/// List agent events (poll with `after` for tailing).
+/// List agent events (poll with `after` for tailing, or read the newest with
+/// `order=desc` and walk back with `before`).
 #[utoipa::path(get, path = "/v1/events", tag = "events",
     params(EventListQuery, Page),
     responses((status = 200, body = [AgentEventDto])))]
@@ -28,8 +31,14 @@ pub async fn list(
         .list_events(EventFilter {
             session_id: q.session,
             task_id: q.task,
+            goal_id: q.goal,
             limit: page.limit(),
             after: page.after,
+            before: q.before,
+            order: match q.order.unwrap_or_default() {
+                ApiEventOrder::Asc => EventOrder::Asc,
+                ApiEventOrder::Desc => EventOrder::Desc,
+            },
         })
         .await?;
     Ok(Json(events.into_iter().map(event_dto).collect()))

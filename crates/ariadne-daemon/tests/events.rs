@@ -20,7 +20,7 @@ use ariadne_core::{
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{EventFilter, Task};
+use ariadne_store::{EventFilter, NewAgentEvent, Task};
 
 use common::{Harness, TIMEOUT, expect_sse, get, harness, next_event, next_sse_message, post_json};
 
@@ -57,9 +57,8 @@ async fn recorded(h: &Harness, session: &ariadne_store::AgentSession, kind: &str
     h.store
         .list_events(EventFilter {
             session_id: Some(session.id.clone()),
-            task_id: None,
             limit: 50,
-            after: None,
+            ..Default::default()
         })
         .await
         .unwrap()
@@ -73,9 +72,8 @@ async fn permission_requests_recorded(h: &Harness, session_id: &str) -> usize {
     h.store
         .list_events(EventFilter {
             session_id: Some(session_id.to_string()),
-            task_id: None,
             limit: 50,
-            after: None,
+            ..Default::default()
         })
         .await
         .unwrap()
@@ -514,6 +512,111 @@ async fn an_events_summary_reaches_the_snapshot_and_the_stream_alike() {
 
     let live = expect_sse(&mut body, "agent_event").await;
     assert_eq!(live["summary"], "Bash: cargo nextest run");
+}
+
+/// One recorded event, and its id. Written straight to the store, which is
+/// where the runtime's ingestion puts one, so a test that only reads the
+/// listing needs no agent behind it.
+async fn record(h: &Harness, session_id: Option<&str>, task_id: Option<&str>) -> String {
+    h.store
+        .create_event(NewAgentEvent {
+            session_id: session_id.map(str::to_string),
+            task_id: task_id.map(str::to_string),
+            kind: "stop".into(),
+            payload: serde_json::json!({}),
+        })
+        .await
+        .unwrap()
+        .id
+}
+
+/// `count` events of one session, and their ids in the order they were
+/// recorded.
+async fn record_many(h: &Harness, session_id: &str, count: usize) -> Vec<String> {
+    let mut ids = Vec::with_capacity(count);
+    for _ in 0..count {
+        ids.push(record(h, Some(session_id), None).await);
+    }
+    ids
+}
+
+/// The ids of a page, in the order it answered them.
+fn ids(events: &[AgentEventDto]) -> Vec<String> {
+    events.iter().map(|e| e.id.clone()).collect()
+}
+
+/// `order=desc` answers the events recorded last, newest first. A database
+/// that has been recording for months holds far more than one page, and the
+/// only page worth opening on is the one at its end.
+#[tokio::test]
+async fn the_newest_page_is_the_events_recorded_last() {
+    let h = harness().await;
+    let session = h.lone_session("newest").await;
+    let recorded = record_many(&h, &session.id, 201).await;
+
+    let page: Vec<AgentEventDto> = h.get("/v1/events?order=desc&limit=200").await;
+
+    let expected: Vec<String> = recorded.iter().rev().take(200).cloned().collect();
+    assert_eq!(ids(&page), expected);
+}
+
+/// A page that asks for no order is the oldest events, oldest first. The
+/// desktop app sweeps the listing forward with `after` from the beginning, so
+/// the ascending page is what it depends on and what the new order must not
+/// move.
+#[tokio::test]
+async fn a_page_with_no_order_is_the_oldest_events_oldest_first() {
+    let h = harness().await;
+    let session = h.lone_session("oldest").await;
+    let recorded = record_many(&h, &session.id, 201).await;
+
+    let page: Vec<AgentEventDto> = h.get("/v1/events?limit=200").await;
+
+    let expected: Vec<String> = recorded.iter().take(200).cloned().collect();
+    assert_eq!(ids(&page), expected);
+}
+
+/// `before` is where a descending page goes on from: the id under the last
+/// row answered takes the reader one page further back.
+#[tokio::test]
+async fn a_before_page_walks_back_from_the_newest_page() {
+    let h = harness().await;
+    let session = h.lone_session("before").await;
+    let recorded = record_many(&h, &session.id, 5).await;
+
+    let newest: Vec<AgentEventDto> = h.get("/v1/events?order=desc&limit=2").await;
+    assert_eq!(ids(&newest), [recorded[4].clone(), recorded[3].clone()]);
+
+    let older: Vec<AgentEventDto> = h
+        .get(&format!(
+            "/v1/events?order=desc&limit=2&before={}",
+            recorded[3]
+        ))
+        .await;
+    assert_eq!(ids(&older), [recorded[2].clone(), recorded[1].clone()]);
+}
+
+/// An event carries no goal of its own, so `goal` reaches it through the
+/// session that reported it or through the task it was on — either alone is
+/// enough, since `agent_events.session_id` is `ON DELETE SET NULL` and an
+/// event outlives the session that made it.
+#[tokio::test]
+async fn a_goals_events_are_what_its_sessions_and_its_tasks_reported() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let session = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+
+    let by_session = record(&h, Some(&session.id), None).await;
+    let by_task = record(&h, None, Some(&cast.task.id)).await;
+    // Another goal's, which this goal's page must not carry.
+    let elsewhere = h.lone_session("elsewhere").await;
+    record(&h, Some(&elsewhere.id), None).await;
+
+    let page: Vec<AgentEventDto> = h.get(&format!("/v1/events?goal={}", cast.goal.id)).await;
+
+    assert_eq!(ids(&page), [by_session, by_task]);
 }
 
 /// Attention rides the same ingestion path as liveness: an agent that reports
@@ -957,9 +1060,8 @@ async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
         .store
         .list_events(EventFilter {
             session_id: Some(author.id.clone()),
-            task_id: None,
             limit: 50,
-            after: None,
+            ..Default::default()
         })
         .await
         .unwrap();
