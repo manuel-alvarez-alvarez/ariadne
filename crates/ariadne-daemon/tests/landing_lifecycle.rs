@@ -27,7 +27,7 @@ use ariadne_api::tasks::TaskDto;
 use ariadne_core::{Actor, AttentionReason, Landing, MessageKind, Seat, TaskStatus};
 use ariadne_store::{AgentSession, NewTaskAgent, Repository, Task};
 
-use common::{Cast, Harness, as_session, eventually, get, harness, sh, test_pin};
+use common::{Cast, Harness, as_session, get, harness, sh, test_pin};
 
 /// How long a test waits for the scheduler to reach a state.
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -70,7 +70,6 @@ async fn approve(h: &Harness, task: &Task, reviewer: &str) {
         .unwrap();
     h.verdict(&task, reviewer, MessageKind::Approve, "looks right")
         .await;
-    h.notify(&task.id);
 }
 
 /// Walk a fresh task to the author landing it: the author commits
@@ -91,8 +90,7 @@ async fn walk_to_landing(
     reviewer: &str,
     briefed: &str,
 ) -> (PathBuf, AgentSession) {
-    h.notify(&task.id);
-    eventually(TIMEOUT, "the author to be spawned", async || {
+    h.reconcile_task_until(&task.id, TIMEOUT, "the author to be spawned", async || {
         h.status(&task.id).await == TaskStatus::InProgress
             && h.running_session(&task.id, Seat::Author).await.is_some()
     })
@@ -117,12 +115,17 @@ async fn walk_to_landing(
     );
     approve(h, task, reviewer).await;
 
-    eventually(TIMEOUT, "the author to be briefed to land it", async || {
-        h.status(&task.id).await == TaskStatus::Approved
-            && h.running_session(&task.id, Seat::Author)
-                .await
-                .is_some_and(|s| h.told(&s.id).contains(briefed))
-    })
+    h.reconcile_task_until(
+        &task.id,
+        TIMEOUT,
+        "the author to be briefed to land it",
+        async || {
+            h.status(&task.id).await == TaskStatus::Approved
+                && h.running_session(&task.id, Seat::Author)
+                    .await
+                    .is_some_and(|s| h.told(&s.id).contains(briefed))
+        },
+    )
     .await;
     let landing = h
         .running_session(&task.id, Seat::Author)
@@ -223,13 +226,18 @@ async fn an_approved_task_is_landed_by_its_own_author() {
 
     // Cleanup takes the worktree with it, and the task that was waiting on
     // this one starts.
-    eventually(TIMEOUT, "the cleanup and the dependent task", async || {
-        !worktree.exists()
-            && matches!(
-                h.status(&dependent.id).await,
-                TaskStatus::Ready | TaskStatus::InProgress
-            )
-    })
+    h.reconcile_task_until(
+        &task.id,
+        TIMEOUT,
+        "the cleanup and the dependent task",
+        async || {
+            !worktree.exists()
+                && matches!(
+                    h.status(&dependent.id).await,
+                    TaskStatus::Ready | TaskStatus::InProgress
+                )
+        },
+    )
     .await;
 }
 
@@ -330,10 +338,12 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
         "the answers read right",
     )
     .await;
-    h.notify(&task.id);
-    eventually(TIMEOUT, "the task to come back to its author", async || {
-        h.status(&task.id).await == TaskStatus::Approved
-    })
+    h.reconcile_task_until(
+        &task.id,
+        TIMEOUT,
+        "the task to come back to its author",
+        async || h.status(&task.id).await == TaskStatus::Approved,
+    )
     .await;
 
     // One channel carries both rounds, and every verdict in it is this

@@ -910,6 +910,25 @@ impl Harness {
         self.wake(SchedEvent::TaskChanged(task_id.to_string()));
     }
 
+    /// Reconcile a task on every pass while waiting for its expected state.
+    ///
+    /// A single notification can be handled before an asynchronous agent
+    /// change completes. Keep notifying so the next reconciliation never
+    /// waits for the scheduler's periodic sweep.
+    pub async fn reconcile_task_until(
+        &self,
+        task_id: &str,
+        patience: Duration,
+        what: &str,
+        mut check: impl AsyncFnMut() -> bool,
+    ) {
+        eventually(patience, what, async || {
+            self.notify(task_id);
+            check().await
+        })
+        .await;
+    }
+
     /// The same about a goal: what a status change sends.
     pub fn notify_goal(&self, goal_id: &str) {
         self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
