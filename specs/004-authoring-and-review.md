@@ -54,9 +54,20 @@ Out: the transition table itself (001), the landing that follows approval
 4. A task the author cannot do as written ends with its own `fail_task` and
    the reason on the task.
 5. `request_review` moves the task to `under_review` and carries one short
-   summary — what changed, why, and how it was verified. The author ends its
-   turn after `request_review` and does not poll. Ariadne wakes it with the
-   verdict or a message. That summary is what the reviewers read first.
+   summary — what changed, why, and how it was verified. That summary is what
+   the reviewers read first. The author ends its turn after `request_review`
+   and does not poll; Ariadne wakes it with the verdict or a message. The
+   daemon ends that turn itself, once the author reports the call ended —
+   the runtime's turn report of the launch that made the call (021), which
+   an agent sends only when it holds the answer, and which no earlier launch
+   of the session can supply — with ACP `session/cancel` to the session that
+   made the call (021), once per request, and never to a session whose turn
+   ended meanwhile, that is gone, or that was relaunched since; an agent that
+   never reports the call is never cancelled. So an author that cannot idle
+   inside a turn does not poll until its next briefing. The session stays up
+   and idle; a message, a verdict or the landing briefing wakes it as a new
+   turn (009), and the cancelled turn's tokens are counted as any other's
+   (012).
 6. Each reviewer the task staffs (017) gets one session for the whole task, in
    a detached read-only worktree (002). Which review it is on is not part of a
    reviewer's identity, only of the briefing it is woken with.
@@ -153,6 +164,15 @@ Out: the transition table itself (001), the landing that follows approval
   (`agent_messages.rs::only_one_verdict_per_reviewer_per_review_is_taken`).
 - The review summary is the reason of the latest review request
   (`store.rs::the_review_summary_is_the_reason_of_the_latest_review_request`).
+- An author's review request ends its turn with one cancel once the agent
+  reports the call ended and not before, the agent stays up, and the verdict
+  that follows reaches the same session as a prompt
+  (`acp_console.rs::an_authors_review_request_ends_its_turn_and_the_verdict_still_reaches_it`);
+  a late report of the launch before does not end the new launch's turn
+  (`::a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn`),
+  and a burst of other tool calls ending before the review call's report
+  does not lose it
+  (`::a_burst_of_reports_before_the_review_calls_loses_none_and_the_cancel_follows`).
 - The reviewer and its code-review skill start every full check before reading,
   once per verdict
   (`defaults.rs::reviewer_checks_start_before_the_read_once_per_verdict`).

@@ -26,7 +26,7 @@ use ariadne_api::sessions::{
 use ariadne_core::{Actor, AttentionReason, PermissionMode, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{AgentPin, NewTask, NewTaskAgent};
 
-use common::acp::{StubAcpAgent, registry_home, script, stub_acp_agent};
+use common::acp::{StubAcpAgent, discovery_settled, registry_home, script, stub_acp_agent};
 use common::{Cast, Harness, TIMEOUT, eventually, harness, post, post_json};
 
 /// A task whose author runs on the registry agent `stub`, in a real repo —
@@ -439,6 +439,7 @@ async fn a_relaunch_keeps_the_socket_open_and_a_later_socket_too() {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), script());
     let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
     let cast = acp_cast(&h).await;
     let session = spawned_idle(&h, &cast).await;
     let address = serve(&h).await;

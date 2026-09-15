@@ -17,6 +17,7 @@ use super::convert::{task_dto_of, transition_dto};
 use super::error::{ApiError, ApiResult, Json};
 use super::landing;
 use super::pins::{self, Repin, Standing};
+use crate::acp::TurnReport;
 
 /// The agents an assignment list asks for, in the order it names them.
 ///
@@ -262,6 +263,7 @@ pub(crate) async fn apply_transition(
             && state.store.list_task_authors(task_id).await?.len() > 1
         {
             announce_review(state, ctx, &task, req.reason.as_deref()).await;
+            end_authors_turn(state, ctx);
             state.notify_scheduler(task_id);
             return Ok(task);
         }
@@ -282,6 +284,9 @@ pub(crate) async fn apply_transition(
     // yet" answerable at all.
     if req.to == TaskStatus::UnderReview {
         announce_review(state, ctx, &task, req.reason.as_deref()).await;
+        if ctx.actor == Actor::Author {
+            end_authors_turn(state, ctx);
+        }
     }
     // A task going back to `ready` is a task starting over, and the only way
     // there is a retry of a failed one. Whatever it was published as is not
@@ -371,6 +376,64 @@ pub async fn list_transitions(
     state.store.get_task(&id).await?;
     let rows = state.store.list_task_transitions(&id).await?;
     Ok(Json(rows.into_iter().map(transition_dto).collect()))
+}
+
+/// What the tool an author asks for its review with is called, as the
+/// agent's own tool call reports name it: `mcp__ariadne__request_review` on
+/// one adapter, `mcp.ariadne.request_review` on another, and always this
+/// inside.
+const REVIEW_TOOL: &str = "request_review";
+
+/// End the turn an author asked for its review in. The agent reports the
+/// tool call ended once it holds the answer — the runtime's word of the
+/// launch that made the call, and of no launch before it (021) — and only
+/// then does ACP `session/cancel` go to the session that made the call, so
+/// the author sees its own call succeed. From there it sits idle until the
+/// daemon has something to say — a message, a verdict, the landing briefing
+/// — each of which starts a new turn.
+///
+/// Once, and never on a guess: a turn that ends before the report is over
+/// already, a session that is gone or has been relaunched since is left
+/// alone, and an agent that never reports the call is never cancelled and
+/// runs on as before. The cancelled turn's response records what it spent as
+/// any other does (021).
+fn end_authors_turn(state: &AppState, ctx: &CallCtx) {
+    let Some(session) = ctx.session.as_ref() else {
+        return;
+    };
+    let Some(launch_id) = session.launch_id.clone() else {
+        return;
+    };
+    // Followed before the answer goes out, so the report cannot pass by
+    // unseen; the launch that made the call, so no other launch's report is
+    // taken for it.
+    let acp = state.launcher.acp.clone();
+    let mut reports = match acp.turn_reports(&session.id, &launch_id) {
+        Ok(reports) => reports,
+        Err(e) => {
+            tracing::debug!(session = %session.id, error = %e, "the author's turn was not ended");
+            return;
+        }
+    };
+    let session_id = session.id.clone();
+    tokio::spawn(async move {
+        loop {
+            match reports.recv().await {
+                Some(TurnReport::ToolEnded(tool)) if tool.contains(REVIEW_TOOL) => break,
+                Some(TurnReport::ToolEnded(_)) => {}
+                // The turn is over on its own, or the agent with it.
+                Some(TurnReport::TurnEnded) | None => return,
+            }
+        }
+        match acp.cancel_launch(&session_id, &launch_id).await {
+            Ok(()) => {
+                tracing::info!(session = %session_id, "review requested: ending the author's turn")
+            }
+            Err(e) => {
+                tracing::debug!(session = %session_id, error = %e, "the author's turn was not ended")
+            }
+        }
+    });
 }
 
 /// Tell every reviewer of `task` that there is a round to look at, carrying

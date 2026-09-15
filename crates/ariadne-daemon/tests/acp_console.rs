@@ -17,17 +17,20 @@ use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_api::usage::TokenUsageDto;
-use ariadne_core::{Actor, AttentionReason, PermissionMode, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{
+    Actor, AttentionReason, MessageKind, PermissionMode, Seat, SessionStatus, TaskStatus,
+};
 use ariadne_store::{AgentPin, NewTask, NewTaskAgent, Store};
 
 use ariadne_api::stream::{DeletedDto, DomainEvent};
+use ariadne_daemon::acp::TurnReport;
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::http::{self, AppState};
 
-use common::acp::{StubAcpAgent, registry_home, script, stub_acp_agent};
+use common::acp::{StubAcpAgent, discovery_settled, registry_home, script, stub_acp_agent};
 use common::{
-    Cast, Harness, TIMEOUT, eventually, expect_sse, get, harness, next_sse_message, parse_sse,
-    post, post_json, sse_is_closed,
+    Cast, Harness, TIMEOUT, as_session, eventually, expect_sse, get, harness, next_sse_message,
+    parse_sse, post, post_json, sse_is_closed,
 };
 
 /// A task whose author runs on the registry agent `stub`, in a real repo,
@@ -230,6 +233,7 @@ async fn a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent() {
     first["stored_sessions"] = json!(["stub-session"]);
     let stub = stub_acp_agent(agent_dir.path(), first);
     let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
     let cast = acp_cast(&h).await;
     let session = spawned_mid_turn(&h, &cast, &release).await;
     let old_pid = stub.pid().unwrap();
@@ -290,6 +294,297 @@ async fn an_agent_that_ignores_the_cancel_is_killed_when_the_grace_runs_out() {
     assert_eq!(session_usage.usage, tokens(0, 0, 0));
 }
 
+/// An author that asks for a review has its turn ended for it: one
+/// `session/cancel` once the agent itself reports the review call ended —
+/// not before, however long that takes — what the turn spent kept, the
+/// agent left up and idle, and the verdict that follows reaching the same
+/// session as a prompt.
+#[tokio::test]
+async fn an_authors_review_request_ends_its_turn_and_the_verdict_still_reaches_it() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let answered = agent_dir.path().join("answered");
+    let mut scripted = held_turn_script(
+        &release,
+        json!({"inputTokens": 10, "cachedReadTokens": 20, "outputTokens": 40}),
+    );
+    scripted["stored_sessions"] = json!(["stub-session"]);
+    // The held turn reports its review call — open, then completed, the way
+    // an agent does once it holds the answer — only when the test says so.
+    scripted["prompts"][0]["updates_when"] = json!({
+        "file": answered.display().to_string(),
+        "updates": [
+            {"sessionUpdate": "tool_call", "toolCallId": "call-review",
+             "title": "mcp.ariadne.request_review", "kind": "execute"},
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-review",
+             "status": "completed"},
+        ],
+    });
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness()
+        .scheduler()
+        .home(registry_home(&stub))
+        .discover_agents()
+        .await;
+    discovery_settled(&h, &stub).await;
+    let cast = acp_cast(&h).await;
+    h.activate(&cast.goal).await;
+    h.notify(&cast.task.id);
+    // The stub holds its turn before the daemon has the session on record
+    // as running, so both are waited for.
+    let reached = release.with_extension("reached");
+    eventually(TIMEOUT, "the author's turn to be held open", || async {
+        reached.exists()
+            && h.running_session(&cast.task.id, Seat::Author)
+                .await
+                .is_some()
+    })
+    .await;
+    let session = h
+        .running_session(&cast.task.id, Seat::Author)
+        .await
+        .expect("a live author session");
+    let pid = stub.pid().unwrap();
+
+    let (status, _) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/transitions", cast.task.id),
+            &session.id,
+            json!({"to": "under_review", "reason": "the change, and the test that proves it"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    // The answer is out, and the agent has not said it holds it: no cancel,
+    // for as long as that takes.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert!(
+        stub.calls_of("session/cancel").is_empty(),
+        "the turn is not ended before the agent reports the call answered"
+    );
+    assert_eq!(h.session_status(&session).await, SessionStatus::Running);
+
+    std::fs::write(&answered, "1").unwrap();
+    eventually(TIMEOUT, "the author's turn to be cancelled", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(stub.calls_of("session/cancel").len(), 1);
+    assert!(
+        common::acp::pid_is_alive(pid),
+        "the author stays up between turns"
+    );
+    assert_eq!(h.status(&cast.task.id).await, TaskStatus::UnderReview);
+    let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert_eq!(session_usage.usage, tokens(30, 20, 40));
+
+    // The verdict wakes the same session with the feedback as its prompt.
+    let mut resumed_script = script();
+    resumed_script["stored_sessions"] = json!(["stub-session"]);
+    stub.reprogram(resumed_script);
+    h.verdict(
+        &cast.task,
+        &cast.reviewer.id,
+        MessageKind::RequestChanges,
+        "rename the flag",
+    )
+    .await;
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the verdict to reach the author", || async {
+        stub.prompts_for(&session.id)
+            .iter()
+            .any(|prompt| prompt.contains("rename the flag"))
+    })
+    .await;
+    assert_eq!(
+        stub.calls_of("session/cancel").len(),
+        1,
+        "one cancel per review request"
+    );
+}
+
+/// A burst of tool calls ending before the review call's report is delivered
+/// whole: a follower that reads only afterwards still reads every report in
+/// order, and the daemon's own follower still ends the turn on the review
+/// call's.
+#[tokio::test]
+async fn a_burst_of_reports_before_the_review_calls_loses_none_and_the_cancel_follows() {
+    const BURST: usize = 100;
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let answered = agent_dir.path().join("answered");
+    let mut scripted = held_turn_script(&release, json!({}));
+    let mut updates = Vec::new();
+    for i in 0..BURST {
+        updates.push(
+            json!({"sessionUpdate": "tool_call", "toolCallId": format!("call-{i}"),
+                            "title": format!("Read file-{i}"), "kind": "read"}),
+        );
+        updates.push(json!({"sessionUpdate": "tool_call_update",
+                            "toolCallId": format!("call-{i}"), "status": "completed"}));
+    }
+    updates.push(
+        json!({"sessionUpdate": "tool_call", "toolCallId": "call-review",
+                        "title": "mcp.ariadne.request_review", "kind": "execute"}),
+    );
+    updates.push(
+        json!({"sessionUpdate": "tool_call_update", "toolCallId": "call-review",
+                        "status": "completed"}),
+    );
+    scripted["prompts"][0]["updates_when"] = json!({
+        "file": answered.display().to_string(),
+        "updates": updates,
+    });
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let session = spawned_mid_turn(&h, &cast, &release).await;
+    let launch = h.launch_id(&session).await.unwrap();
+    // A follower that reads nothing until the burst is over.
+    let mut late_reader = h.launcher.acp.turn_reports(&session.id, &launch).unwrap();
+
+    let (status, _) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/transitions", cast.task.id),
+            &session.id,
+            json!({"to": "under_review", "reason": "the change"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    std::fs::write(&answered, "1").unwrap();
+    eventually(TIMEOUT, "the author's turn to be cancelled", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(stub.calls_of("session/cancel").len(), 1);
+
+    let mut reports = Vec::new();
+    while let Ok(report) = late_reader.try_recv() {
+        reports.push(report);
+    }
+    let expected: Vec<TurnReport> = (0..BURST)
+        .map(|i| TurnReport::ToolEnded(format!("Read file-{i}")))
+        .chain([
+            TurnReport::ToolEnded("mcp.ariadne.request_review".into()),
+            TurnReport::TurnEnded,
+        ])
+        .collect();
+    assert_eq!(reports, expected);
+}
+
+/// A review call reported by the launch before is not the new launch's: an
+/// author relaunched while its review request waits on the report has the
+/// old process's late report go to the old launch alone, and the new
+/// launch's turn runs on uncancelled.
+#[tokio::test]
+async fn a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let answered = agent_dir.path().join("answered");
+    let mut first = held_turn_script(
+        &release,
+        json!({"inputTokens": 10, "cachedReadTokens": 20, "outputTokens": 40}),
+    );
+    first["stored_sessions"] = json!(["stub-session"]);
+    // The old process ignores the cancel a relaunch sends, so it is still
+    // being served — for the grace — when it reports the review call ended.
+    first["prompts"][0]["ignore_cancel"] = json!(true);
+    first["prompts"][0]["updates_when"] = json!({
+        "file": answered.display().to_string(),
+        "updates": [
+            {"sessionUpdate": "tool_call", "toolCallId": "call-review",
+             "title": "mcp.ariadne.request_review", "kind": "execute"},
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-review",
+             "status": "completed"},
+        ],
+    });
+    let stub = stub_acp_agent(agent_dir.path(), first);
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
+    let cast = acp_cast(&h).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let session = spawned_mid_turn(&h, &cast, &release).await;
+    let old_launch = h.launch_id(&session).await.unwrap();
+
+    let (status, _) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/transitions", cast.task.id),
+            &session.id,
+            json!({"to": "under_review", "reason": "the change"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The relaunch: the new process holds its turn too, and reports nothing.
+    let release_again = agent_dir.path().join("release-again");
+    let mut resumed_script = held_turn_script(&release_again, json!({}));
+    resumed_script["stored_sessions"] = json!(["stub-session"]);
+    stub.reprogram(resumed_script);
+    let relaunch = tokio::spawn({
+        let launcher = h.launcher.clone();
+        let task_id = cast.task.id.clone();
+        async move {
+            launcher
+                .resume_author(&task_id, "here is your review")
+                .await
+        }
+    });
+    eventually(TIMEOUT, "the relaunch to cancel the old turn", || async {
+        stub.calls_of("session/cancel").len() == 1
+    })
+    .await;
+    // The old process's late report, while the relaunch still waits on it.
+    std::fs::write(&answered, "1").unwrap();
+    let resumed = relaunch.await.unwrap().unwrap();
+    assert_eq!(resumed.id, session.id);
+    let new_launch = h.launch_id(&session).await.unwrap();
+    assert_ne!(new_launch, old_launch);
+    let reached_again = release_again.with_extension("reached");
+    eventually(TIMEOUT, "the new launch's turn to be held open", || async {
+        reached_again.exists()
+    })
+    .await;
+
+    // The old process did report the call ended, on the record.
+    let reported = h
+        .store
+        .list_events(ariadne_store::EventFilter {
+            session_id: Some(session.id.clone()),
+            limit: 200,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        reported.iter().any(|event| {
+            event.kind == "post_tool_use" && event.payload.contains("mcp.ariadne.request_review")
+        }),
+        "the old launch's late report is recorded"
+    );
+
+    // But it went to the old launch alone: the new one has reported nothing,
+    // and its turn is not cancelled.
+    assert!(
+        h.launcher
+            .acp
+            .turn_reports(&session.id, &old_launch)
+            .is_err()
+    );
+    let mut reports = h
+        .launcher
+        .acp
+        .turn_reports(&session.id, &new_launch)
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert!(matches!(
+        reports.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+    assert_eq!(stub.calls_of("session/cancel").len(), 1);
+    assert_eq!(h.session_status(&session).await, SessionStatus::Running);
+    std::fs::write(&release_again, "1").unwrap();
+}
+
 /// The adapters' quota report includes subagent use, so it takes precedence
 /// over the standard response where the two disagree.
 #[tokio::test]
@@ -341,6 +636,7 @@ async fn resumed_prompt_usage_adds_a_new_launch_total() {
     }]);
     let stub = stub_acp_agent(agent_dir.path(), first);
     let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
     let cast = acp_cast(&h).await;
     let session = spawned_idle(&h, &cast).await;
 

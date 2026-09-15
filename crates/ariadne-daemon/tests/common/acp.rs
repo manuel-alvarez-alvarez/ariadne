@@ -8,7 +8,8 @@
 //! permission request, the stop reason, an exit mid-turn, or a pause
 //! (`wait_for`) a test holds the turn open on after its updates went out,
 //! during which a `session/cancel` ends the turn as `cancelled`, with the
-//! turn's usage, unless `ignore_cancel` says otherwise — and the
+//! turn's usage, unless `ignore_cancel` says otherwise, and during which
+//! `updates_when` sends more updates once a file exists — and the
 //! stored sessions a load or resume finds, which `session/list` answers
 //! whole, or `session_page_size` at a time behind a `nextCursor` — and never
 //! answers a page from `session_list_stall_from` on. The harness
@@ -184,9 +185,14 @@ pub fn registry_home(stub: &StubAcpAgent) -> PathBuf {
 /// A probe under full-suite load can run out its timeout: probe again until
 /// the stub is accepted, so no test reads a timed-out snapshot.
 pub async fn discovery_settled(h: &super::Harness, stub: &StubAcpAgent) {
+    discovery_accepted(h, stub, "stub").await;
+}
+
+/// The same, for a stub registered under `agent_id`.
+pub async fn discovery_accepted(h: &super::Harness, stub: &StubAcpAgent, agent_id: &str) {
     let accepted = || async {
         h.launcher.registry.agents().await.iter().any(|agent| {
-            agent.id == "stub" && agent.status == ariadne_api::agents::AcpAgentStatus::Ready
+            agent.id == agent_id && agent.status == ariadne_api::agents::AcpAgentStatus::Ready
         })
     };
     super::eventually(super::TIMEOUT, "discovery to accept the stub", || async {
@@ -405,7 +411,16 @@ def respond(request):
             # this agent ignore the cancel.
             with open(wait_for + ".reached", "w") as f:
                 f.write("1")
+            # What the held turn still has to say, once the test says so:
+            # `updates_when` names a file and the updates to send once it
+            # exists, the way an agent reports a tool call ending mid-turn.
+            late = turn.get("updates_when")
             while not os.path.exists(wait_for):
+                if late and os.path.exists(late["file"]):
+                    for update in late.get("updates", []):
+                        send({"jsonrpc": "2.0", "method": "session/update",
+                              "params": {"sessionId": sid, "update": update}})
+                    late = None
                 if cancelled_meanwhile() and not turn.get("ignore_cancel"):
                     stop_reason = "cancelled"
                     break

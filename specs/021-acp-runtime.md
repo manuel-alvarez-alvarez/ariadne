@@ -96,7 +96,16 @@ gone (009).
    `session/prompt` it interrupts is still in flight. The response then ends
    the turn as any other: the text so far stored, and `stop` with
    `stop_reason: cancelled`. Between turns there is nothing to cancel, and
-   the runtime refuses.
+   the runtime refuses. A cancel may name the launch it was decided on, and
+   is then refused too where the session has been relaunched since. Each
+   launch also reports its turns as they go — a tool call ended, by the name
+   its `post_tool_use` carries, and the turn ended — to followers of its own,
+   each on an unbounded channel so that no report is ever dropped, followed
+   by session and launch and refused for a launch that is not the one
+   running, so a report of the process before never passes for the current
+   one. The turn an author asked for its review in is ended that way
+   (004): its own launch's report of the review call ended, then the cancel,
+   which never lands on the next launch's briefing.
 9. ACP permission mode defaults to `auto` from daemon configuration, and a
    task may override it with `auto`, `ask` or `learn`. `auto` selects the
    first allowing option, then the first option, and cancels only an empty
@@ -187,7 +196,17 @@ gone (009).
   (`acp_console.rs::console_input_is_reported_as_its_text_from_the_console`).
 - A cancel ends the running turn as `cancelled`
   (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), and is
-  refused between turns (`::cancel_with_no_turn_running_is_refused`).
+  refused between turns (`::cancel_with_no_turn_running_is_refused`); an
+  author's review request draws one such cancel once the agent reports the
+  call ended, keeps what the turn spent, and leaves the agent up for the
+  verdict's prompt
+  (`::an_authors_review_request_ends_its_turn_and_the_verdict_still_reaches_it`),
+  and a launch's turn reports are its own: the process before reports to
+  nobody but itself
+  (`::a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn`);
+  a burst of reports before the review call's loses none of them, and the
+  cancel still follows
+  (`::a_burst_of_reports_before_the_review_calls_loses_none_and_the_cancel_follows`).
 - Prompt usage maps cache-inclusive input totals, prefers quota, adds up one
   launch's turns, adds a resumed launch, and leaves an absent report at zero
   (`acp_console.rs::standard_prompt_usage_adds_up_a_launchs_turns_and_rolls_up`,

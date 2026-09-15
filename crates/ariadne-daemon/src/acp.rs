@@ -38,6 +38,33 @@ use crate::scheduler::SchedEvent;
 /// Live console events buffered per subscriber before it is told to resync.
 const CONSOLE_CAPACITY: usize = 1024;
 
+/// What one launch reports of its turns as they go, to whoever waits on the
+/// agent's own word — the daemon ending the turn an author asked for its
+/// review in (004), once the agent says it holds the answer. Each launch
+/// reports on channels of its own: a report never comes from the process
+/// before, and none is ever dropped on the way — a follower's channel is
+/// unbounded, and a follower lives only until it has what it waited for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TurnReport {
+    /// A tool call ended, by the name the agent gave it — its title, else
+    /// its id — as `post_tool_use` names it.
+    ToolEnded(String),
+    /// The turn ended, its `stop` recorded.
+    TurnEnded,
+}
+
+/// Whoever follows one launch's turn reports, each on an unbounded channel
+/// of their own; a follower that has gone is dropped at the next report.
+type Followers = Arc<Mutex<Vec<mpsc::UnboundedSender<TurnReport>>>>;
+
+/// Hand a report to every follower still listening.
+fn report(followers: &Followers, report: TurnReport) {
+    followers
+        .lock()
+        .expect("turn report followers lock")
+        .retain(|follower| follower.send(report.clone()).is_ok());
+}
+
 /// How long a killed agent's running turn has to end once it is cancelled.
 ///
 /// The prompt response a cancel draws is the only report of what that turn
@@ -219,18 +246,21 @@ struct RunningAgent {
     task_id: Option<String>,
     /// The notification path into the agent, for `session/cancel`.
     outbound: Outbound,
+    /// This launch's turn reports, for [`AcpRuntime::turn_reports`].
+    reports: Followers,
     /// Closes once the driver has killed and reaped the child: what a
     /// relaunch waits on, so that two agents never serve one conversation.
     ended: oneshot::Receiver<()>,
 }
 
-/// The transport, the permission reply slot and the turn a driver owns for
-/// one child.
+/// The transport, the permission reply slot, the turn and the report channel
+/// a driver owns for one child.
 struct DriverIo {
     transport: RpcTransport,
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     turn: Arc<tokio::sync::Mutex<Turn>>,
     task_id: Option<String>,
+    reports: Followers,
 }
 
 impl AcpRuntime {
@@ -321,11 +351,53 @@ impl AcpRuntime {
     /// child that stops reading its stdin stalls this call and not the
     /// driver.
     pub async fn cancel(&self, session_id: &str) -> Result<()> {
+        self.cancel_turn(session_id, None).await
+    }
+
+    /// [`Self::cancel`], but only while the session still runs under
+    /// `launch_id`: a cancel decided on one launch never lands on the turn a
+    /// relaunch since started.
+    pub async fn cancel_launch(&self, session_id: &str, launch_id: &str) -> Result<()> {
+        self.cancel_turn(session_id, Some(launch_id)).await
+    }
+
+    /// Follow the turn reports of the session's agent, as long as it still
+    /// runs under `launch_id`: the reports of that launch and no other, from
+    /// this moment on, every one of them — the channel is unbounded, so a
+    /// follower that reads late reads them all.
+    ///
+    /// Errs where there is nothing to follow: no agent runs for this
+    /// session, or the one that does is a relaunch.
+    pub fn turn_reports(
+        &self,
+        session_id: &str,
+        launch_id: &str,
+    ) -> Result<mpsc::UnboundedReceiver<TurnReport>> {
+        let running = self.inner.running.lock().expect("acp registry lock");
+        let agent = running
+            .get(session_id)
+            .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
+        if agent.launch_id != launch_id {
+            bail!("the ACP agent for session {session_id} has been relaunched since");
+        }
+        let (follower, reports) = mpsc::unbounded_channel();
+        agent
+            .reports
+            .lock()
+            .expect("turn report followers lock")
+            .push(follower);
+        Ok(reports)
+    }
+
+    async fn cancel_turn(&self, session_id: &str, of_launch: Option<&str>) -> Result<()> {
         let (turn, outbound) = {
             let running = self.inner.running.lock().expect("acp registry lock");
             let agent = running
                 .get(session_id)
                 .ok_or_else(|| anyhow!("no ACP agent is running for session {session_id}"))?;
+            if of_launch.is_some_and(|launch| launch != agent.launch_id) {
+                bail!("the ACP agent for session {session_id} has been relaunched since");
+            }
             (agent.turn.clone(), agent.outbound.clone())
         };
         let mut pipe = outbound.lock().await;
@@ -439,6 +511,7 @@ impl AcpRuntime {
         let (stop, stopped) = oneshot::channel();
         let (reaped, ended) = oneshot::channel();
         let (prompts, queued) = mpsc::unbounded_channel();
+        let reports: Followers = Arc::default();
         let permission = Arc::new(Mutex::new(None));
         let turn = Arc::new(tokio::sync::Mutex::new(Turn::default()));
         let task_id = self
@@ -463,6 +536,7 @@ impl AcpRuntime {
                     turn: turn.clone(),
                     task_id: task_id.clone(),
                     outbound: transport.outbound(),
+                    reports: reports.clone(),
                     ended,
                 },
             );
@@ -477,6 +551,7 @@ impl AcpRuntime {
                         permission,
                         turn,
                         task_id,
+                        reports,
                     },
                     stopped,
                     queued,
@@ -551,7 +626,14 @@ impl AcpRuntime {
         };
         let outbound = io.transport.outbound();
         let (turn, permission) = (io.turn.clone(), io.permission.clone());
-        let mut rpc = Rpc::new(io.transport, sink.clone(), io.permission, io.turn, &launch);
+        let mut rpc = Rpc::new(
+            io.transport,
+            sink.clone(),
+            io.permission,
+            io.turn,
+            io.reports,
+            &launch,
+        );
         let (closing, turn_ended) = (rpc.closing.clone(), rpc.turn_ended.clone());
         let mut protocol = Box::pin(run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts));
         let mut outcome = tokio::select! {
@@ -754,6 +836,8 @@ struct Rpc {
     closing: Arc<AtomicBool>,
     /// Told each time a turn's `stop` has been recorded.
     turn_ended: Arc<Notify>,
+    /// This launch's turn reports; nobody listening costs nothing.
+    reports: Followers,
 }
 
 impl Rpc {
@@ -762,6 +846,7 @@ impl Rpc {
         sink: EventSink,
         pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
         turn: Arc<tokio::sync::Mutex<Turn>>,
+        reports: Followers,
         launch: &AcpLaunch,
     ) -> Self {
         Self {
@@ -774,6 +859,7 @@ impl Rpc {
             launch_usage: TokenUsage::default(),
             closing: Arc::new(AtomicBool::new(false)),
             turn_ended: Arc::new(Notify::new()),
+            reports,
         }
     }
 
@@ -784,6 +870,7 @@ impl Rpc {
             repository_id: &self.repository_id,
             permission_mode: self.permission_mode,
             pending_permission: &self.pending_permission,
+            reports: &self.reports,
         };
         self.transport.request(method, params, &mut incoming).await
     }
@@ -795,6 +882,7 @@ impl Rpc {
             repository_id: &self.repository_id,
             permission_mode: self.permission_mode,
             pending_permission: &self.pending_permission,
+            reports: &self.reports,
         };
         self.transport.receive(&mut incoming).await
     }
@@ -806,6 +894,7 @@ struct RuntimeIncoming<'a> {
     repository_id: &'a str,
     permission_mode: PermissionMode,
     pending_permission: &'a Arc<Mutex<Option<oneshot::Sender<String>>>>,
+    reports: &'a Followers,
 }
 
 impl Incoming for RuntimeIncoming<'_> {
@@ -901,9 +990,13 @@ impl RuntimeIncoming<'_> {
                     }
                 };
                 if terminal {
-                    self.sink
-                        .emit("post_tool_use", tool_payload(session_id, &merged))
-                        .await;
+                    let payload = tool_payload(session_id, &merged);
+                    let name = payload["tool_name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    self.sink.emit("post_tool_use", payload).await;
+                    report(self.reports, TurnReport::ToolEnded(name));
                 } else {
                     self.sink
                         .emit_live(
@@ -1298,6 +1391,7 @@ async fn prompt_once(
     }
     rpc.sink.emit("stop", stop).await;
     rpc.turn_ended.notify_waiters();
+    report(&rpc.reports, TurnReport::TurnEnded);
     Ok(())
 }
 

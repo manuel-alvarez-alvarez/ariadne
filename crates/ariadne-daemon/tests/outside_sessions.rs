@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use ariadne_api::sessions::OutsideSessionPageDto;
 use ariadne_store::AgentPin;
 
-use common::acp::{StubAcpAgent, script, stub_acp_agent};
+use common::acp::{StubAcpAgent, discovery_accepted, script, stub_acp_agent};
 use common::{Harness, get, harness, post_json};
 
 /// A home whose `config.toml` registers one ACP agent per `(id, bin)`.
@@ -67,10 +67,14 @@ fn listing_script(sessions: Value, page_size: Option<usize>) -> Value {
 }
 
 async fn harness_with(stub: &StubAcpAgent) -> Harness {
-    harness()
+    let h = harness()
         .home(home_with_agents(&[("test-agent", &stub.bin)]))
         .discover_agents()
-        .await
+        .await;
+    // A probe that times out under load leaves the agent unlisted, and the
+    // snapshot asks only the agents discovery accepted.
+    discovery_accepted(&h, stub, "test-agent").await;
+    h
 }
 
 /// One listing request, `query` being what follows the `?`.
@@ -193,6 +197,8 @@ async fn agent_narrows_the_listing_to_one_agents_sessions() {
         ]))
         .discover_agents()
         .await;
+    discovery_accepted(&h, &one, "test-agent").await;
+    discovery_accepted(&h, &other, "other-agent").await;
 
     let all = listing(&h, "").await;
     assert_eq!(all.total, 6);
