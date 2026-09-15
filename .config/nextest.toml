@@ -8,6 +8,10 @@
 daemon-integration = { max-threads = 2 }
 
 [profile.ci]
+# A run that stops at the first failure hides every other failure behind it,
+# so the report step sees one flaky test where twenty may have failed.
+fail-fast = false
+
 [[profile.ci.overrides]]
 filter = 'package(ariadne-daemon) & kind(test)'
 test-group = 'daemon-integration'
