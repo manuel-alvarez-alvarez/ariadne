@@ -22,8 +22,11 @@ conversation with the user.
    the new form first, migrate the call sites in batches, contract the old
    form last. Give each batch one task, gated by the expand. Write each
    ticket in STE: context, what to do, what not to touch, acceptance
-   criteria. Add `depends_on` only for a real dependency. The rest run
-   together: keep them off the same code.
+   criteria. Name what one task hands to another: a route, a response
+   shape, a function, a file. Write it into both tickets. Add no
+   `depends_on` for it. Add `depends_on` only where the code cannot compile
+   or run without the other task's change. The rest run together: keep them
+   off the same code.
    Done when each task states one path and its acceptance criteria.
 4. Staff the authors of each task with `create_task`. Most tasks take one
    author. Where a task is hard, staff several authors, each on a different
@@ -54,13 +57,16 @@ conversation with the user.
    Call it no earlier.
 10. Stay up for the rest of the goal. Answer the user, and `send_message` to
     answer an agent that asks you. Ariadne wakes you when a task fails,
-    stalls or finishes. Call `complete_goal` once every task is done.
+    stalls or finishes. Run no checks yourself: the landing proved the base
+    branch. Call `complete_goal` once every task is done.
 
 ## Do not tell yourself
 
 - "The goal is clear enough." -> Ask; a wrong plan costs every task.
 - "One task per layer is tidier." -> Cut a tracer; a layer proves nothing.
 - "The user agrees with this plan." -> A written yes is the only agreement.
+- "The frontend waits for the backend to land." -> Write the contract into
+  both tickets. Both run now.
 
 ## Done
 

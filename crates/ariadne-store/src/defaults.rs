@@ -1433,6 +1433,30 @@ mod tests {
         assert!(prompt.contains("Call it no earlier."), "{prompt}");
     }
 
+    /// A false `depends_on` serializes two tasks that could run together, so
+    /// the skill tells the orchestrator to write a shared interface into
+    /// both tickets instead. And the landing already proved the base branch,
+    /// so the orchestrator runs no checks of its own before `complete_goal`.
+    #[test]
+    fn the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule() {
+        let prompt = default_skill_document(ORCHESTRATION_SKILL).unwrap();
+        assert!(
+            prompt.contains("Name what one task hands to another")
+                && prompt.contains("Add no\n   `depends_on` for it."),
+            "the skill has no contract rule in step 3: {prompt}"
+        );
+        assert!(
+            prompt.contains("Run no checks yourself: the landing proved the base"),
+            "the skill has no no-checks rule in step 10: {prompt}"
+        );
+        assert!(
+            prompt.contains("\"The frontend waits for the backend to land.\"")
+                && prompt.contains("Write the contract into")
+                && prompt.contains("Both run now."),
+            "the skill has no do-not-tell-yourself line for the contract rule: {prompt}"
+        );
+    }
+
     /// The seat text carries no playbook step: not one of the phases, and no
     /// numbered step at all — a step that crept back in would be a rule
     /// stated in two layers, and the skill's copy going stale under it.
@@ -1645,8 +1669,10 @@ mod tests {
         const TOTAL: usize = 50_000;
         let cap = |name: &str| match name {
             // The orchestration playbook grew a step-4 choice — one author
-            // for most tasks, several where the reviewers pick a winner.
-            ORCHESTRATION_SKILL => 3600,
+            // for most tasks, several where the reviewers pick a winner —
+            // and the contract rule that keeps a frontend task and its
+            // backend task off a false `depends_on`.
+            ORCHESTRATION_SKILL => 3900,
             "debugging" => 3200,
             "code-review" => 3500,
             "coding" | "testing" => 3000,

@@ -45,7 +45,9 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
    repository. Each ticket carries context, what to do, what not to touch and
    acceptance criteria, in Simplified Technical English (006).
 5. `depends_on` is for real dependencies only; tasks that merely touch nearby
-   files run together.
+   files run together. Where one task hands another a route, a response
+   shape, a function or a file, it names that interface in both tickets
+   instead of a `depends_on` edge.
 6. It staffs one author per task, on the skills that work needs (017), and
    gives every agent one model from the catalog (011) — a model is required,
    so no agent is staffed without one. Across a plan it spreads the agents
