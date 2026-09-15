@@ -1275,8 +1275,10 @@ async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries() {
         sessions.push(session);
     }
 
-    // The scheduler's opening reconciliation is the pass: it sees all three.
-    let _sched = w.scheduler();
+    let sched = w.scheduler();
+    for task in [&w.task, &second, &third] {
+        sched.task(task);
+    }
     eventually(TIMEOUT, "all three agents to be nudged", async || {
         sessions.iter().all(|s| !w.prompts_to(s).is_empty())
     })
@@ -1525,7 +1527,8 @@ async fn an_idle_orchestrator_stays_up_for_the_whole_goal() {
         .unwrap();
     w.set_status(&orchestrator, SessionStatus::Idle).await;
 
-    let _sched = w.scheduler();
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
     // Whatever the passes and the sweep beside them had to say would have
     // been said by now.
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -1636,7 +1639,8 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
     // One pass does all of it: the sweep retires the vanished agent and raises
     // the disconnect, and the task's own reconciliation puts an author back
     // on it.
-    let _sched = w.scheduler();
+    let sched = w.scheduler();
+    sched.task(&w.task);
     eventually(
         TIMEOUT,
         "the author to be put back on the task",
@@ -1649,6 +1653,7 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
         },
     )
     .await;
+    sched.task(&w.task);
     eventually(
         TIMEOUT,
         "the request to still be the user's to merge",
@@ -1672,6 +1677,10 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
     let w = World::active().await;
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
+    // Start while no task needs attention. The immediate opening sweep must
+    // not race the explicit notification and record this failure as told
+    // before the stub has received its prompt.
+    let sched = w.scheduler();
     w.set_status(&orchestrator, SessionStatus::Idle).await;
     w.advance(&w.task, TaskStatus::InProgress).await;
     w.store
@@ -1685,9 +1694,8 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
         .await
         .unwrap();
 
-    let sched = w.scheduler();
-    sched.goal(&w.goal);
     eventually(TIMEOUT, "the orchestrator to be woken", async || {
+        sched.goal(&w.goal);
         w.prompted(&orchestrator).contains("failed")
     })
     .await;

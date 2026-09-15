@@ -910,23 +910,20 @@ impl Harness {
         self.wake(SchedEvent::TaskChanged(task_id.to_string()));
     }
 
-    /// Reconcile a task on every pass while waiting for its expected state.
+    /// Reconcile a task directly, then wait for its expected state.
     ///
-    /// A single notification can be handled before an asynchronous agent
-    /// change completes. Keep notifying so the next reconciliation never
-    /// waits for the scheduler's periodic sweep.
+    /// One notification is one complete reconciliation. Sending another on
+    /// every poll can build a queue behind a slow agent launch, leaving the
+    /// later state change waiting behind stale passes over the same task.
     pub async fn reconcile_task_until(
         &self,
         task_id: &str,
         patience: Duration,
         what: &str,
-        mut check: impl AsyncFnMut() -> bool,
+        check: impl AsyncFnMut() -> bool,
     ) {
-        eventually(patience, what, async || {
-            self.notify(task_id);
-            check().await
-        })
-        .await;
+        self.notify(task_id);
+        eventually(patience, what, check).await;
     }
 
     /// The same about a goal: what a status change sends.

@@ -248,26 +248,33 @@ async fn an_approved_task_is_landed_by_its_own_author() {
 /// That check is what keeps a reported sha worth anything, and it is the same
 /// check on both paths — a squash on the forge leaves no branch on the base
 /// either, so a daemon that trusted the caller would accept both.
+async fn refuse_merge_that_never_happened(strategy: Landing) {
+    let (h, cast) = seeded(strategy).await;
+    let (worktree, author) = walk_to_approved(&h, &cast.task, &cast.reviewer.id).await;
+
+    // The tip of the branch: real, and nowhere near the base branch.
+    let sha = sh(&worktree, "git rev-parse HEAD");
+    let (status, body) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/transitions", cast.task.id),
+            &author.id,
+            serde_json::json!({"to": "finished", "merge_commit": sha}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{strategy:?}");
+    let message = String::from_utf8_lossy(&body);
+    assert!(message.contains("merge not verified"), "{message}");
+    assert_eq!(h.status(&cast.task.id).await, TaskStatus::Approved);
+}
+
 #[tokio::test]
 async fn a_merge_that_never_happened_is_refused() {
-    for strategy in [Landing::Merge, Landing::PullRequest] {
-        let (h, cast) = seeded(strategy).await;
-        let (worktree, author) = walk_to_approved(&h, &cast.task, &cast.reviewer.id).await;
+    refuse_merge_that_never_happened(Landing::Merge).await;
+}
 
-        // The tip of the branch: real, and nowhere near the base branch.
-        let sha = sh(&worktree, "git rev-parse HEAD");
-        let (status, body) = h
-            .send(as_session(
-                &format!("/v1/tasks/{}/transitions", cast.task.id),
-                &author.id,
-                serde_json::json!({"to": "finished", "merge_commit": sha}),
-            ))
-            .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{strategy:?}");
-        let message = String::from_utf8_lossy(&body);
-        assert!(message.contains("merge not verified"), "{message}");
-        assert_eq!(h.status(&cast.task.id).await, TaskStatus::Approved);
-    }
+#[tokio::test]
+async fn a_squash_merge_that_never_happened_is_refused() {
+    refuse_merge_that_never_happened(Landing::PullRequest).await;
 }
 
 /// The other way out of `approved`: the people reading a published request
@@ -342,7 +349,12 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
         &task.id,
         TIMEOUT,
         "the task to come back to its author",
-        async || h.status(&task.id).await == TaskStatus::Approved,
+        async || {
+            h.status(&task.id).await == TaskStatus::Approved
+                && h.running_session(&task.id, Seat::Author)
+                    .await
+                    .is_some_and(|s| h.told(&s.id).contains("# Land task:"))
+        },
     )
     .await;
 
