@@ -37,6 +37,7 @@ use ariadne_api::error::ErrorBody;
 use ariadne_api::events::IngestEventRequest;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::acp::LaunchConfig;
+use ariadne_core::models::agent_of;
 use ariadne_core::{
     Actor, AttentionReason, GoalStatus, MessageKind, PermissionMode, Seat, SessionStatus,
     TaskStatus,
@@ -349,6 +350,12 @@ impl Harness {
     /// start, so what the test writes to the row afterwards is not written
     /// over by the handshake.
     pub async fn agent_runs(&self, session: &AgentSession) {
+        let agent_id = agent_of(&session.model).to_string();
+        self.agent_runs_as(session, &agent_id).await;
+    }
+
+    /// Start the harness's stub as the registry agent named by `agent_id`.
+    pub async fn agent_runs_as(&self, session: &AgentSession, agent_id: &str) {
         let repository_id = match &session.task_id {
             Some(task) => self.store.get_task(task).await.unwrap().repo_id,
             None => {
@@ -372,6 +379,7 @@ impl Harness {
                 session_id: session.id.clone(),
                 launch_id: ariadne_core::id::new_id(),
                 program: self.agent.bin.clone(),
+                agent_id: agent_id.to_string(),
                 args: Vec::new(),
                 env: vec![("ARIADNE_SESSION_ID".into(), session.id.clone())],
                 cwd,

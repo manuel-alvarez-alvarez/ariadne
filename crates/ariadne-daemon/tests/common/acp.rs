@@ -98,6 +98,24 @@ impl StubAcpAgent {
             .collect()
     }
 
+    /// The Codex configuration each process of one Ariadne session received.
+    pub fn codex_configs_for(&self, session_id: &str) -> Vec<Option<String>> {
+        std::fs::read_to_string(&self.launches)
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("a logged launch"))
+            .filter(|launch| {
+                launch.get("ariadne_session").and_then(Value::as_str) == Some(session_id)
+            })
+            .map(|launch| {
+                launch
+                    .get("codex_config")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
     /// Forget every message logged so far: what a test starts asserting from
     /// after the discovery probe has already driven the stub once.
     pub fn clear_messages(&self) {
@@ -275,6 +293,7 @@ with open(script["pid_file"], "w") as f:
     f.write(str(os.getpid()))
 with open(script["launches"], "a") as f:
     f.write(json.dumps({"ariadne_session": os.environ.get("ARIADNE_SESSION_ID"),
+                        "codex_config": os.environ.get("CODEX_CONFIG"),
                         "argv": sys.argv[2:]}) + "\n")
 
 options = script.get("config_options", [])

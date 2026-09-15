@@ -223,6 +223,7 @@ impl Launcher {
                 session_id: session.id.clone(),
                 launch_id: launch_id.to_string(),
                 program,
+                agent_id: agent_id.to_string(),
                 args,
                 env: plan.env,
                 cwd: plan.cwd,

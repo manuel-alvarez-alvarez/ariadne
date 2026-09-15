@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-09-11
+updated: 2026-09-15
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -82,6 +82,9 @@ skill says (017).
    `ARIADNE_SESSION_ID`, `ARIADNE_LAUNCH_ID`, `ARIADNE_GOAL_ID`,
    `ARIADNE_SEAT`, `ARIADNE_SOCKET`, and `ARIADNE_TASK_ID` for a task seat —
    and runs in the seat's worktree, or the repository for the orchestrator.
+   Every `codex-acp` process also carries a `CODEX_CONFIG` session override
+   with `features.guardian_approval` set to false. The override applies to
+   that process only and does not edit the user's Codex configuration.
 10. The launch id is fresh for every process started under a session row,
     and the row is told it before the process starts. That is what tells the
     events of a replaced agent from those of the agent that replaces it.
@@ -153,6 +156,8 @@ skill says (017).
   `::an_orchestrator_respawn_stays_on_the_goals_pin`).
 - Every launch carries the session context, in the agent's environment and
   the MCP server's (`adapters.rs::every_launch_carries_the_session_context`).
+- Every Codex launch disables guardian approval in its process environment
+  (`acp_runtime.rs::a_codex_launch_disables_guardian_approval`).
 - Every launch of a session reports under a new launch id
   (`resume.rs::every_launch_of_a_session_reports_under_a_new_id`).
 - A spawn writes the launch file with the briefing, the pins and the

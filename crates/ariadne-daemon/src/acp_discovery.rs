@@ -19,7 +19,7 @@ use ariadne_api::sessions::OutsideSessionDto;
 use ariadne_client::endpoint::AcpAgentConfig;
 use ariadne_store::Store;
 
-use crate::acp::find_config_option;
+use crate::acp::{apply_agent_launch_environment, find_config_option};
 use crate::acp_rpc::{Incoming, RpcTransport};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -408,14 +408,16 @@ async fn probe(entry: RegistryEntry, cwd: &Path, cached: Option<CachedCatalog>) 
     let Some((program, args)) = entry.command.split_first() else {
         return rejected(&entry, "command is empty".into());
     };
-    let child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn();
+        .kill_on_drop(true);
+    apply_agent_launch_environment(&mut command, &entry.id);
+    let child = command.spawn();
     let mut child = match child {
         Ok(child) => child,
         Err(error) => {
@@ -610,13 +612,16 @@ async fn list_stored_sessions(
     let Some((program, args)) = agent.command.split_first() else {
         bail!("command is empty");
     };
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    apply_agent_launch_environment(&mut command, &agent.id);
+    let mut child = command
         .spawn()
         .with_context(|| format!("starting `{}`", agent.command.join(" ")))?;
     let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {

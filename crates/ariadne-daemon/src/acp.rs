@@ -46,6 +46,15 @@ const CONSOLE_CAPACITY: usize = 1024;
 /// with it. An adapter that honours `session/cancel` answers within a second;
 /// one that does not is killed when this runs out, as it was before.
 const TURN_CANCEL_GRACE: Duration = Duration::from_secs(5);
+const CODEX_AGENT_ID: &str = "codex-acp";
+const CODEX_CONFIG_WITHOUT_GUARDIAN: &str = r#"{"features":{"guardian_approval":false}}"#;
+
+/// Apply the environment Ariadne owns for one registry agent process.
+pub(crate) fn apply_agent_launch_environment(command: &mut Command, agent_id: &str) {
+    if agent_id == CODEX_AGENT_ID {
+        command.env("CODEX_CONFIG", CODEX_CONFIG_WITHOUT_GUARDIAN);
+    }
+}
 
 /// Everything one launch of an ACP agent is made of. The launcher builds it
 /// from the adapter's spawn plan: the registry command with the planned
@@ -58,6 +67,8 @@ pub struct AcpLaunch {
     /// The executable to spawn: the head of the registry command of the
     /// agent the session's pin names.
     pub program: String,
+    /// The registry id of the agent being launched.
+    pub agent_id: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
@@ -390,22 +401,23 @@ impl AcpRuntime {
         if let Some(ended) = self.take_down(&launch.session_id) {
             let _ = ended.await;
         }
-        let mut child = Command::new(&launch.program)
+        let mut command = Command::new(&launch.program);
+        command
             .args(&launch.args)
             .envs(launch.env.iter().cloned())
             .current_dir(&launch.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "starting ACP agent {} in {}",
-                    launch.program,
-                    launch.cwd.display()
-                )
-            })?;
+            .kill_on_drop(true);
+        apply_agent_launch_environment(&mut command, &launch.agent_id);
+        let mut child = command.spawn().with_context(|| {
+            format!(
+                "starting ACP agent {} in {}",
+                launch.program,
+                launch.cwd.display()
+            )
+        })?;
         let stdin = child
             .stdin
             .take()
