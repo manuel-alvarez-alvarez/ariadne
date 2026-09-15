@@ -6,12 +6,26 @@ use std::collections::HashSet;
 use tracing::{info, warn};
 
 use ariadne_core::{Actor, AttentionReason, GoalStatus, MessageKind, PromptKind, Seat, TaskStatus};
-use ariadne_store::{AgentSession, SessionFilter, Task, TaskAgent, TaskFilter, author_branch};
+use ariadne_store::{
+    AgentSession, MessageFilter, SessionFilter, Task, TaskAgent, TaskFilter, author_branch,
+};
 
 use crate::agents::prompts;
 use crate::launcher;
 
 use super::SPAWN_RETRY_BUDGET;
+
+/// What a review request is called before the announcement writes its row: not
+/// a row id, but the author whose review that row will open.
+///
+/// A request id is a ULID, whose alphabet holds no colon, so the two can never
+/// be taken for each other. Named by the author rather than left empty because
+/// a contested task's reviewer owes verdicts on several authors at once: one
+/// marker for all of them would let one author's briefing take over another
+/// author's request row, which leaves that one unbriefed.
+fn unannounced_request(author_id: &str) -> String {
+    format!(":{author_id}")
+}
 
 /// What a task's agent is in, as the watchdog spends its one nudge and its one
 /// flag per situation.
@@ -244,12 +258,19 @@ impl super::Scheduler {
                 }
                 let author = self.store.task_author(&task.id).await?;
                 let summary = self.store.review_summary(&task.id).await?;
-                let request = self
-                    .store
-                    .open_review_request(&task.id)
-                    .await?
-                    .unwrap_or_default();
                 for agent_id in pending {
+                    // What this reviewer was asked for, read as its own row.
+                    // The status is committed before any of them, so a pass
+                    // can read the review open and this row not written yet;
+                    // it briefs on the unannounced id, and the hand-over below
+                    // gives the stamp to the row that lands next.
+                    let request = self
+                        .review_request_to(&task.id, &author.id, &agent_id)
+                        .await?;
+                    self.adopt_briefing_sent_before_the_request(
+                        &task, &author, &agent_id, &request,
+                    )
+                    .await?;
                     let live = self
                         .store
                         .list_sessions(SessionFilter {
@@ -703,12 +724,16 @@ impl super::Scheduler {
     /// and — where its agent survived the last review — handed this one's
     /// briefing the moment it owes it, its worktree moved to the branch the
     /// briefing names first. The quiet clock watches it from there.
+    ///
+    /// `review` names the author's review for the watchdog, which watches one
+    /// author's review as a whole. What this reviewer was briefed for is its
+    /// own request row, read below.
     async fn rouse_reviewer_for(
         &mut self,
         task: &Task,
         reviewer: &TaskAgent,
         author: &TaskAgent,
-        request: &str,
+        review: &str,
     ) -> anyhow::Result<()> {
         let summary = self
             .store
@@ -721,13 +746,21 @@ impl super::Scheduler {
         };
         let template = prompts::template_for(PromptKind::ReviewerResume);
         let resume = prompts::reviewer_resume_briefing(template, &seen, Some(&summary));
-        let situation = format!("under_review:{request}");
-        let briefed = (reviewer.id.clone(), request.to_string());
+        let situation = format!("under_review:{review}");
+        // This author's announcement writes one row per reviewer, so the
+        // newest of them walks forward while it runs. What this reviewer was
+        // asked for is its own row, as on an uncontested task above.
+        let request = self
+            .review_request_to(&task.id, &author.id, &reviewer.id)
+            .await?;
+        self.adopt_briefing_sent_before_the_request(task, author, &reviewer.id, &request)
+            .await?;
+        let briefed = (reviewer.id.clone(), request.clone());
 
         if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
             self.spent_on_a_dead_launch(&session.id, &task.id, &session);
             if self
-                .brief_live_reviewer_for(task, author, &reviewer.id, request, &session, &resume)
+                .brief_live_reviewer_for(task, author, &reviewer.id, &request, &session, &resume)
                 .await?
             {
                 return Ok(());
@@ -763,6 +796,80 @@ impl super::Scheduler {
                 .mark_review_requests_delivered(&task.id, &author.id, &reviewer.id)
                 .await?;
         }
+        Ok(())
+    }
+
+    /// The open review request one author asked one reviewer for, as the id of
+    /// its row, or [`unannounced_request`] while the announcement has not
+    /// written that row.
+    ///
+    /// Read per reviewer rather than per task. A review is one request row per
+    /// reviewer, written one after the other, so the newest row on the task
+    /// walks forward while the announcement runs: a key written against it on
+    /// one pass is missed by the next, and every reviewer is briefed again. A
+    /// reviewer's own row is written once and stands for the whole review.
+    async fn review_request_to(
+        &self,
+        task_id: &str,
+        author_id: &str,
+        reviewer_id: &str,
+    ) -> anyhow::Result<String> {
+        let addressed = self
+            .store
+            .list_messages(MessageFilter {
+                task_id: Some(task_id.to_string()),
+                to_agent_id: Some(reviewer_id.to_string()),
+                ..Default::default()
+            })
+            .await?;
+        // Oldest first, so the last request from this author is the one that
+        // opened the review standing now.
+        Ok(addressed
+            .into_iter()
+            .rev()
+            .find(|m| {
+                m.kind() == Some(MessageKind::ReviewRequest)
+                    && m.from_agent_id.as_deref() == Some(author_id)
+            })
+            .map(|m| m.id)
+            .unwrap_or_else(|| unannounced_request(author_id)))
+    }
+
+    /// Give a briefing sent before this review had a request row to the row
+    /// that has since appeared, and stamp that request delivered.
+    ///
+    /// A review opens in two writes: `transition_task` commits the status, and
+    /// the announcement writes one request row per reviewer. A pass between
+    /// the two finds no row for this reviewer and stamps it under
+    /// [`unannounced_request`]. The row that lands next opens that same review
+    /// — the briefing already carried its summary, which is the transition's
+    /// own reason — so it inherits the stamp. Without the hand-over the stamp
+    /// misses, and the reviewer is briefed a second time for one request.
+    ///
+    /// A no-op for every pass that reads a row, which is all of them but the
+    /// ones in that window.
+    async fn adopt_briefing_sent_before_the_request(
+        &mut self,
+        task: &Task,
+        author: &TaskAgent,
+        reviewer_id: &str,
+        request: &str,
+    ) -> anyhow::Result<()> {
+        if request == unannounced_request(&author.id)
+            || !self
+                .review_briefed
+                .remove(&(reviewer_id.to_string(), unannounced_request(&author.id)))
+        {
+            return Ok(());
+        }
+        info!(task = %task.id, reviewer = %reviewer_id, request, "the briefing already sent is this review request's");
+        self.review_briefed
+            .insert((reviewer_id.to_string(), request.to_string()));
+        // That briefing was the request's delivery, and it went out before
+        // there was a row to stamp.
+        self.store
+            .mark_review_requests_delivered(&task.id, &author.id, reviewer_id)
+            .await?;
         Ok(())
     }
 

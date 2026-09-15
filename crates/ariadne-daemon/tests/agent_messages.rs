@@ -568,6 +568,221 @@ async fn a_live_reviewer_is_briefed_at_once_for_a_second_review() {
     );
 }
 
+/// A reviewer started before the review's request rows were written is not
+/// briefed a second time when they land.
+///
+/// A review opens in two writes: the status, then one request row per
+/// reviewer. A scheduler pass between the two reads the review open and no
+/// request, and the briefing it sends carries the summary all the same — it
+/// is the transition's own reason. So the request that lands next is the one
+/// that briefing carried, and it owes the reviewer nothing more. The two
+/// writes are made apart here, because one pass in that window is what the
+/// daemon hits by chance.
+#[tokio::test]
+async fn a_reviewer_briefed_before_the_request_row_is_not_briefed_again() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the author to start", async || {
+        h.status(&cast.task.id).await == TaskStatus::InProgress
+            && h.running_session(&cast.task.id, Seat::Author)
+                .await
+                .is_some()
+    })
+    .await;
+    let summary = "Renamed the flag and tested it.";
+
+    // The first write on its own: the review is open and its channel rows are
+    // not in yet.
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            Some(summary),
+            None,
+        )
+        .await
+        .unwrap();
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the reviewer to start", async || {
+        h.running_session(&cast.task.id, Seat::Reviewer)
+            .await
+            .is_some()
+    })
+    .await;
+    let reviewer = h
+        .running_session(&cast.task.id, Seat::Reviewer)
+        .await
+        .expect("a live reviewer session");
+    eventually(TIMEOUT, "the reviewer's first turn to end", async || {
+        h.session_status(&reviewer).await == SessionStatus::Idle
+    })
+    .await;
+
+    // And the second write, which is the announcement the briefing went out
+    // ahead of.
+    let request = h
+        .store
+        .send_message(ariadne_store::NewMessage {
+            goal_id: cast.goal.id.clone(),
+            task_id: Some(cast.task.id.clone()),
+            kind: MessageKind::ReviewRequest,
+            from_actor: Actor::Author,
+            from_agent_id: Some(cast.author.id.clone()),
+            from_session: None,
+            to_actor: Actor::Reviewer,
+            to_agent_id: Some(cast.reviewer.id.clone()),
+            body: summary.to_string(),
+        })
+        .await
+        .unwrap();
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the request to be stamped delivered", async || {
+        h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered()
+    })
+    .await;
+    // Several passes over the request, so a briefing owed to it has every
+    // chance to go out.
+    for _ in 0..3 {
+        h.notify(&cast.task.id);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    let prompts = h.prompts_to(&reviewer);
+    assert_eq!(
+        prompts.len(),
+        1,
+        "the reviewer was briefed twice for one request: {prompts:#?}"
+    );
+    assert_eq!(
+        prompts[0].matches(summary).count(),
+        1,
+        "the briefing did not carry the summary once: {}",
+        prompts[0]
+    );
+}
+
+/// Two reviewers whose request rows land one after the other are each briefed
+/// once.
+///
+/// The announcement writes one row per reviewer, so a pass can read one
+/// reviewer's request written and the other's not. What each reviewer was
+/// briefed for is its own row, which is written once and never moves — not
+/// the newest row on the task, which walks forward as the announcement goes
+/// out and would leave both reviewers briefed twice.
+#[tokio::test]
+async fn each_reviewer_is_briefed_once_when_its_request_row_lands_late() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let mut cast = h.cast_reviewed_by(2).await;
+    cast.goal = h.activate(&cast.goal).await;
+    let reviewers = h.store.list_task_reviewers(&cast.task.id).await.unwrap();
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the author to start", async || {
+        h.status(&cast.task.id).await == TaskStatus::InProgress
+            && h.running_session(&cast.task.id, Seat::Author)
+                .await
+                .is_some()
+    })
+    .await;
+    let summary = "Renamed the flag and tested it.";
+
+    // The status on its own, as the announcement is about to run.
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            Some(summary),
+            None,
+        )
+        .await
+        .unwrap();
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "both reviewers to start", async || {
+        reviewer_sessions(&h, &cast, &reviewers).await.len() == 2
+    })
+    .await;
+    let sessions = reviewer_sessions(&h, &cast, &reviewers).await;
+    for session in &sessions {
+        eventually(TIMEOUT, "the reviewer's first turn to end", async || {
+            h.session_status(session).await == SessionStatus::Idle
+        })
+        .await;
+    }
+
+    // And the announcement, one reviewer at a time with a pass in between.
+    for reviewer in &reviewers {
+        let request = h
+            .store
+            .send_message(ariadne_store::NewMessage {
+                goal_id: cast.goal.id.clone(),
+                task_id: Some(cast.task.id.clone()),
+                kind: MessageKind::ReviewRequest,
+                from_actor: Actor::Author,
+                from_agent_id: Some(cast.author.id.clone()),
+                from_session: None,
+                to_actor: Actor::Reviewer,
+                to_agent_id: Some(reviewer.id.clone()),
+                body: summary.to_string(),
+            })
+            .await
+            .unwrap();
+        h.notify(&cast.task.id);
+        eventually(TIMEOUT, "the request to be stamped delivered", async || {
+            h.store
+                .get_message(&request.id)
+                .await
+                .unwrap()
+                .is_delivered()
+        })
+        .await;
+    }
+    // Several passes over both requests, so a briefing owed to either has
+    // every chance to go out.
+    for _ in 0..3 {
+        h.notify(&cast.task.id);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    for session in &sessions {
+        let prompts = h.prompts_to(session);
+        assert_eq!(
+            prompts.len(),
+            1,
+            "reviewer {} was briefed twice for one request: {prompts:#?}",
+            session.task_agent_id.as_deref().unwrap_or_default()
+        );
+    }
+}
+
+/// The live session of each of a task's reviewers, in the order they are
+/// staffed, and only once every one of them has one.
+async fn reviewer_sessions(
+    h: &common::Harness,
+    cast: &Cast,
+    reviewers: &[ariadne_store::TaskAgent],
+) -> Vec<ariadne_store::AgentSession> {
+    let sessions = h.sessions_of(&cast.task.id).await;
+    reviewers
+        .iter()
+        .filter_map(|reviewer| {
+            sessions.iter().find(|s| {
+                s.seat() == Seat::Reviewer
+                    && s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
+                    && s.launched_at.is_some()
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Every agent of a task stays up until the task is over. A reviewer that has
 /// voted is not done with it — the author may have something to ask, and an
 /// agent that was killed can be asked nothing — so the round it closed leaves

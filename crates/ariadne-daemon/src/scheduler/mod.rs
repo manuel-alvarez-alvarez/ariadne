@@ -162,6 +162,12 @@ pub struct Scheduler {
     /// handed the next one's briefing the moment it owes it — once, and in
     /// memory like the sets above: a daemon that restarts over an open review
     /// says it once more.
+    ///
+    /// The request is the row addressed to that reviewer, not the newest on
+    /// the task: an announcement writes one row per reviewer, so the newest
+    /// moves while it runs. A briefing sent before that row was written is
+    /// stamped under the author it is for, and the row that lands next takes
+    /// the stamp over: see `adopt_briefing_sent_before_the_request`.
     review_briefed: HashSet<(String, String)>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.

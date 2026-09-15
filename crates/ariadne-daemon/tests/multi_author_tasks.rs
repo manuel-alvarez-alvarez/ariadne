@@ -40,6 +40,12 @@ struct Contest {
 }
 
 async fn contest(h: &Harness) -> Contest {
+    contest_reviewed_by(h, 1).await
+}
+
+/// The same, with `reviewers` reviewers on it: what a review announced one
+/// reviewer at a time needs, since one reviewer is one row and no sequence.
+async fn contest_reviewed_by(h: &Harness, reviewers: usize) -> Contest {
     h.git_repo("repo");
     let repo = h.repository(&h.at("repo")).await;
     let goal = h.goal_on(&repo, test_pin()).await;
@@ -51,11 +57,13 @@ async fn contest(h: &Harness) -> Contest {
             repo_id: repo.id.clone(),
             title: "Contested work".into(),
             description: "do things".into(),
-            agents: vec![
-                author(),
-                author(),
-                NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
-            ],
+            agents: [author(), author()]
+                .into_iter()
+                .chain(
+                    (0..reviewers)
+                        .map(|_| NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin())),
+                )
+                .collect(),
             depends_on: vec![],
             landing: None,
             permission_mode: None,
@@ -601,6 +609,297 @@ async fn a_restart_finishes_a_settlement_the_daemon_died_in() {
         Some(worktrees[winner.ordinal as usize].display().to_string()).as_deref()
     );
     assert!(worktrees[winner.ordinal as usize].exists());
+}
+
+/// On a contested task too, each reviewer is briefed once for the request it
+/// was sent.
+///
+/// One author's announcement writes one row per reviewer, so the newest of
+/// that author's rows walks forward while it runs. A pass in between must key
+/// each reviewer on its own row, and the reviewer whose row is not written
+/// yet must inherit its briefing when it lands — not ask for a second one.
+#[tokio::test]
+async fn each_contested_reviewer_is_briefed_once_when_its_request_row_lands_late() {
+    let h = harness().scheduler().await;
+    let c = contest_reviewed_by(&h, 2).await;
+    let reviewers = h.store.list_task_reviewers(&c.task.id).await.unwrap();
+    h.notify(&c.task.id);
+    eventually(TIMEOUT, "both authors to be spawned", async || {
+        h.status(&c.task.id).await == TaskStatus::InProgress
+            && live_authors(&h, &c.task.id).await.len() == 2
+    })
+    .await;
+    for (n, session) in live_authors(&h, &c.task.id).await.iter().enumerate() {
+        let worktree = PathBuf::from(session.worktree_path.as_deref().unwrap());
+        sh(
+            &worktree,
+            &format!(
+                "echo attempt-{n} > feature.txt && git add . && \
+                 git -c user.email=t@t -c user.name=t commit -qm 'wip: attempt {n}'"
+            ),
+        );
+    }
+
+    // The first author's review, announced one reviewer at a time with a
+    // scheduler pass in between.
+    h.store
+        .transition_task(
+            &c.task.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    for reviewer in &reviewers {
+        let request = h
+            .store
+            .send_message(NewMessage {
+                goal_id: c.task.goal_id.clone(),
+                task_id: Some(c.task.id.clone()),
+                kind: MessageKind::ReviewRequest,
+                from_actor: Actor::Author,
+                from_agent_id: Some(c.authors[0].id.clone()),
+                from_session: None,
+                to_actor: Actor::Reviewer,
+                to_agent_id: Some(reviewer.id.clone()),
+                body: "the first attempt".to_string(),
+            })
+            .await
+            .unwrap();
+        h.notify(&c.task.id);
+        eventually(TIMEOUT, "the request to be stamped delivered", async || {
+            h.store
+                .get_message(&request.id)
+                .await
+                .unwrap()
+                .is_delivered()
+        })
+        .await;
+    }
+    // Several passes over both requests, so a briefing owed to either has
+    // every chance to go out.
+    for _ in 0..3 {
+        h.notify(&c.task.id);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let sessions = h.sessions_of(&c.task.id).await;
+    for reviewer in &reviewers {
+        let session = sessions
+            .iter()
+            .find(|s| {
+                s.seat() == Seat::Reviewer
+                    && s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
+            })
+            .expect("a session per reviewer");
+        let prompts = h.prompts_to(session);
+        assert_eq!(
+            prompts.len(),
+            1,
+            "reviewer {} was briefed twice for one request: {prompts:#?}",
+            reviewer.id
+        );
+    }
+}
+
+/// A reviewer briefed before its request row exists holds that briefing
+/// against the author it was for, and one author's marker never answers for
+/// another's.
+///
+/// A contested reviewer owes verdicts on several authors at once, so it can
+/// carry a marker for one author's review while a second author's review opens
+/// under it. One marker for every author would let the second review find the
+/// first's and brief nobody, and that review would reach the reviewer never.
+#[tokio::test]
+async fn a_contested_reviewer_keeps_a_briefing_marker_for_each_author() {
+    let h = harness().scheduler().await;
+    let (c, _reviewers, marked) = two_pending_markers(&h).await;
+
+    let prompts = h.prompts_to(&marked);
+    assert_eq!(
+        prompts.len(),
+        2,
+        "one briefing per author's review is owed: {prompts:#?}"
+    );
+    assert!(
+        prompts[1].contains(&format!("Give your verdict to author {}", c.authors[1].id)),
+        "the second briefing is the second author's review: {}",
+        prompts[1]
+    );
+}
+
+/// And the marker of the author whose row lands is the one that row takes
+/// over: it stamps that author's request delivered, asks for no further
+/// briefing, and leaves the other author's marker where it is.
+///
+/// A reviewer carrying a marker for two authors at once is where a hand-over
+/// can reach for the wrong one. The row that lands belongs to one review, so
+/// only that review's marker answers for it.
+#[tokio::test]
+async fn a_contested_reviewer_adopts_the_row_of_the_author_its_marker_names() {
+    let h = harness().scheduler().await;
+    let (c, reviewers, marked) = two_pending_markers(&h).await;
+
+    // The rest of the second author's announcement: the row for the reviewer
+    // that was briefed ahead of it.
+    let request = h
+        .store
+        .send_message(NewMessage {
+            goal_id: c.task.goal_id.clone(),
+            task_id: Some(c.task.id.clone()),
+            kind: MessageKind::ReviewRequest,
+            from_actor: Actor::Author,
+            from_agent_id: Some(c.authors[1].id.clone()),
+            from_session: None,
+            to_actor: Actor::Reviewer,
+            to_agent_id: Some(reviewers[0].id.clone()),
+            body: "the second attempt".to_string(),
+        })
+        .await
+        .unwrap();
+    h.notify(&c.task.id);
+    eventually(TIMEOUT, "that row to be stamped delivered", async || {
+        h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered()
+    })
+    .await;
+    // Several passes over it, so a briefing owed to it has every chance to go
+    // out.
+    for _ in 0..3 {
+        h.notify(&c.task.id);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let prompts = h.prompts_to(&marked);
+    assert_eq!(
+        prompts.len(),
+        2,
+        "the briefing already sent is that row's: {prompts:#?}"
+    );
+}
+
+/// One contested reviewer carrying a marker for each of two authors.
+///
+/// Each author's review opens with a row for the second reviewer and none for
+/// the first, which is the window an announcement passes through. The first
+/// reviewer is roused for each review in turn and marked under its author, its
+/// own row never having been written. Answers the contest, its reviewers in
+/// listing order, and the session of the reviewer that holds both markers.
+async fn two_pending_markers(h: &Harness) -> (Contest, Vec<TaskAgent>, AgentSession) {
+    let c = contest_reviewed_by(h, 2).await;
+    let reviewers = h.store.list_task_reviewers(&c.task.id).await.unwrap();
+    h.notify(&c.task.id);
+    eventually(TIMEOUT, "both authors to be spawned", async || {
+        h.status(&c.task.id).await == TaskStatus::InProgress
+            && live_authors(h, &c.task.id).await.len() == 2
+    })
+    .await;
+    for (n, session) in live_authors(h, &c.task.id).await.iter().enumerate() {
+        let worktree = PathBuf::from(session.worktree_path.as_deref().unwrap());
+        sh(
+            &worktree,
+            &format!(
+                "echo attempt-{n} > feature.txt && git add . && \
+                 git -c user.email=t@t -c user.name=t commit -qm 'wip: attempt {n}'"
+            ),
+        );
+    }
+    h.store
+        .transition_task(
+            &c.task.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    ask_one_reviewer(
+        h,
+        &c.task,
+        &c.authors[0],
+        &reviewers[1],
+        "the first attempt",
+    )
+    .await;
+    h.notify(&c.task.id);
+    let marked = eventually_reviewer_session(h, &c, &reviewers[0]).await;
+    eventually(TIMEOUT, "the first reviewer to be briefed", async || {
+        h.prompts_to(&marked).len() == 1
+    })
+    .await;
+
+    // Both reviewers approve that author, so the next review the first
+    // reviewer owes is the second author's. The marker for the first author
+    // stays behind: its row was never written, so nothing took it over.
+    for reviewer in &reviewers {
+        verdict_on(h, &c.task, reviewer, &c.authors[0], MessageKind::Approve).await;
+    }
+
+    ask_one_reviewer(
+        h,
+        &c.task,
+        &c.authors[1],
+        &reviewers[1],
+        "the second attempt",
+    )
+    .await;
+    // Several passes over the second review, so the briefing it owes has
+    // every chance to go out. What went out is left for the caller to say.
+    for _ in 0..5 {
+        h.notify(&c.task.id);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    (c, reviewers, marked)
+}
+
+/// One author's review request to one reviewer, where the rest of that
+/// author's announcement has not been written.
+async fn ask_one_reviewer(
+    h: &Harness,
+    task: &Task,
+    author: &TaskAgent,
+    reviewer: &TaskAgent,
+    summary: &str,
+) {
+    h.store
+        .send_message(NewMessage {
+            goal_id: task.goal_id.clone(),
+            task_id: Some(task.id.clone()),
+            kind: MessageKind::ReviewRequest,
+            from_actor: Actor::Author,
+            from_agent_id: Some(author.id.clone()),
+            from_session: None,
+            to_actor: Actor::Reviewer,
+            to_agent_id: Some(reviewer.id.clone()),
+            body: summary.to_string(),
+        })
+        .await
+        .unwrap();
+}
+
+/// The session one reviewer was started in, once it has one.
+async fn eventually_reviewer_session(
+    h: &Harness,
+    c: &Contest,
+    reviewer: &TaskAgent,
+) -> AgentSession {
+    let of = async |h: &Harness| {
+        h.sessions_of(&c.task.id).await.into_iter().find(|s| {
+            s.seat() == Seat::Reviewer && s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
+        })
+    };
+    eventually(TIMEOUT, "the reviewer to be started", async || {
+        of(h).await.is_some()
+    })
+    .await;
+    of(h).await.expect("a session for the reviewer")
 }
 
 /// A contested review request never reaches a live reviewer as a bare

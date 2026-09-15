@@ -84,7 +84,19 @@ and the wording of the text a message arrives in (006).
     watches it. On a task staffed with several authors whose pick is still
     open, the briefing carries the summary with the author and its branch
     after the reviewer's worktree has moved there (004).
-13. The MCP surface is two tools every seat has: `send_message` and
+13. A reviewer receives one briefing for each review request, whichever way it
+    was picked up. A review opens in two writes — the task's status, then the
+    request rows — and a scheduler pass between them briefs the reviewer with
+    the summary all the same, because the summary is the status transition's
+    own reason. The request that lands next is the one that briefing carried:
+    it takes the briefing over and is stamped delivered by it, rather than
+    asking for a second one. What a reviewer was briefed for is its own
+    request row, not the newest row on the task: the announcement writes one
+    row per reviewer in turn, so the newest walks forward while it runs. This
+    holds on a contested task too, where the row a briefing waits for is named
+    by the author whose review it opens — a reviewer there owes verdicts on
+    several authors at once.
+14. The MCP surface is two tools every seat has: `send_message` and
     `read_messages` (013).
 
 ## Acceptance criteria
@@ -114,11 +126,25 @@ and the wording of the text a message arrives in (006).
   reviewer receives the briefing for a second review at once, and that request
   is stamped delivered
   (`::a_live_reviewer_is_briefed_at_once_for_a_second_review`).
+- A reviewer briefed before the review's request rows were written is not
+  briefed again when they land: that request takes the briefing over and is
+  stamped delivered by it
+  (`agent_messages.rs::a_reviewer_briefed_before_the_request_row_is_not_briefed_again`).
+  Two reviewers whose rows land one after the other are each briefed once
+  (`::each_reviewer_is_briefed_once_when_its_request_row_lands_late`).
 - A message is delivered once, and the stamp says which have gone
   (`store.rs::a_message_is_delivered_once_and_the_stamp_says_so`).
 - On a contested task, a review request reaches a live reviewer only as its
   briefing
-  (`multi_author_tasks.rs::a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing`).
+  (`multi_author_tasks.rs::a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing`),
+  and each of its reviewers is briefed once when their rows land one after the
+  other
+  (`::each_contested_reviewer_is_briefed_once_when_its_request_row_lands_late`).
+  A reviewer there holds a marker for each author it owes a verdict on, so one
+  author's review never answers for another's
+  (`::a_contested_reviewer_keeps_a_briefing_marker_for_each_author`), and the
+  row that lands is taken over by the marker of its own author
+  (`::a_contested_reviewer_adopts_the_row_of_the_author_its_marker_names`).
 - A reviewer that voted is left where it is
   (`agent_messages.rs::a_reviewer_that_voted_is_left_where_it_is`).
 - A message names the agent it is for
