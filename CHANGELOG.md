@@ -1,5 +1,76 @@
 # Changelog
 
+## [0.7.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.6.0...v0.7.0) (2026-09-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* a pin naming `claude-code-acp` no longer resolves; re-pin it to `claude-agent-acp`. `ModelDto` loses `tier`, `cost`, `speed`, `best_for` and `avoid_for`, and `AcpCapabilitiesDto` loses `session_prompt`. The init migration gained `acp_catalogs`, so a database written by an earlier build is recreated rather than migrated.
+* run every agent over ACP only, without tmux
+
+### Features
+
+* add project memory ([a0d8c2a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a0d8c2a8acd22922b982d485fc0ad74f83317d8a))
+* **cli:** add ACP session console ([ab5429e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ab5429e716699e7881860ceef826be89c92eb1fb))
+* **cli:** adopt an outside session into a new or active goal ([97cfe2e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/97cfe2e2b6e38e6d649b9bbd5ad159237edab094))
+* **cli:** draw a tool call in the console as a coding agent's ([610e5be](https://github.com/manuel-alvarez-alvarez/ariadne/commit/610e5becfecddc3627829b10490f813ac4e5cbf9))
+* **cli:** filter and page outside sessions ([6b8a897](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6b8a8978bdecd964c22f6af5ac6dfe5d5bd34bda))
+* **cli:** make `ariadne attach` an inline TUI console ([5b5b008](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5b5b008004035549c418ad217166eb542fe06bbf))
+* **cli:** paste, line-editing keys, wide characters and a turn clock in the console ([9e8d0db](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9e8d0db329570e330c0dc6d463efc1ec9ebca0bf))
+* **cli:** print readable session transcripts ([271a87b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/271a87b6d4945e5dd7ca560c31b088b21fd92acf))
+* **daemon:** add a console API for acp sessions ([c1e464e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c1e464e51a7986b8eda59278dafd9eb58fb93c82))
+* **daemon:** add ACP agent integration ([#34](https://github.com/manuel-alvarez-alvarez/ariadne/issues/34)) ([6512e60](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6512e60c3e0ddd88dec9c243b71558fbc41eb840))
+* **daemon:** add permission modes ([b8cfd6b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b8cfd6bbcefdd4a71822a775ae64b66e1bdadcb1))
+* **daemon:** adopt an outside session into a new or active goal ([263b92b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/263b92bb475b5694fd4a908e8ed33f1e4d470519))
+* **daemon:** adopt outside agent sessions ([#27](https://github.com/manuel-alvarez-alvarez/ariadne/issues/27)) ([101f291](https://github.com/manuel-alvarez-alvarez/ariadne/commit/101f2918651dccc28d807b81764f757440f0c104))
+* **daemon:** discover ACP agent catalogs ([0f89825](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0f89825d6cc9c62277f9aab7bf508dff2026630c))
+* **daemon:** drive one ACP agent end to end without tmux ([8163676](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8163676d95b3125230a9bab70fc0b5b03bd7739b))
+* **daemon:** end an author's turn when it asks for a review ([eea4ccc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/eea4ccceb2a0bdd0aa26ebc0e336d385004617af))
+* **daemon:** list and adopt an ACP agent's stored sessions ([9a84580](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9a84580ce8bce36dea085de3a1f9cf0b1eec71e4))
+* **daemon:** run every seat over ACP ([e078d73](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e078d730b3c7b6cb03cde84c40d438fb8153e1c5))
+* **daemon:** serve a session's console as a terminal over a WebSocket ([cf17ecd](https://github.com/manuel-alvarez-alvarez/ariadne/commit/cf17ecd38cd5564965f1517a117fafd89188539b))
+* **daemon:** serve outside sessions in filtered pages ([0065e1b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0065e1b62b2d08187994780f2c0952f5f58aa806))
+* **daemon:** stream agent text, thoughts, plans and tool progress on the console, and cancel a turn ([a537951](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a537951c09817c2b6a35a804bb174c0aa17a753d))
+* fix the built-in ACP commands and cut what discovery costs ([18b53f9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/18b53f9833f2b6bc763c6b9ba78fc75620aab3e7))
+* **prompts:** make each task one commit ([d071978](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d071978c5b6a16fa0178d138448c8251039f4286))
+* **prompts:** scope an author's checks to the change it made ([1db1cdf](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1db1cdf4c9ed72c752c6f4505bb4abf38026904c))
+* **prompts:** write the shared contract into both tickets ([6ea4975](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6ea49757e6eeb6c7e966764cb56f3fee97361681))
+* run every agent over ACP only, without tmux ([c47870a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c47870a847a5d4390fb850f5ff7ca420757cfd17))
+* staff several authors on one task and let the reviewers pick ([#33](https://github.com/manuel-alvarez-alvarez/ariadne/issues/33)) ([2f0a956](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2f0a956eb13066068626c78d61685375f4e5e9c8))
+* **store:** staff reviewers by default ([6cf32de](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6cf32de53070c59c377827691d38025f5acf101d))
+* **ui:** add a memory page per repository ([#32](https://github.com/manuel-alvarez-alvarez/ariadne/issues/32)) ([bf03ee6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bf03ee68b2f17dc4a5808a2b3c7805c3f2f1c76e))
+* **ui:** add outside session adoption ([#31](https://github.com/manuel-alvarez-alvarez/ariadne/issues/31)) ([31a3c91](https://github.com/manuel-alvarez-alvarez/ariadne/commit/31a3c91105c894ca50bb9c88c3188c0910e20834))
+* **ui:** adopt an outside session into a new or active goal ([7855f60](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7855f6082779e8697c918abedec4c2fe7f446249))
+* **ui:** filter and page outside sessions ([4bd8de5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4bd8de579a8e7329fec1cf50108ff47df693e3cb))
+* **ui:** give acp sessions their own console instead of a terminal ([ac747de](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ac747dee4a53ff47ffab19501b66155bd11462a5))
+* **ui:** make the session console a live terminal-style pane ([71ad5e3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/71ad5e31ce1d2c0aeb57e728510f866cc507415d))
+* **ui:** restore fullscreen session consoles ([8aa77d4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8aa77d4814ddb451b3ba5ea249338e78c4127f0a))
+* **ui:** show a session's console in xterm.js on the daemon's terminal socket ([b405a76](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b405a76f8bcda7cd4805ed9686e856d7b1ffc7b9))
+* **ui:** show every author of a task, and the reviewer pick ([#35](https://github.com/manuel-alvarez-alvarez/ariadne/issues/35)) ([75493f9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/75493f97e722c7694a2e63ba58080694278c57c6))
+
+
+### Bug Fixes
+
+* **api:** return the newest recorded events first ([3fc35ea](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3fc35eab9188d742a7a47ffa2e3a94257a3520eb))
+* **cli:** draw a real agent session right in the console, and serve it in id order ([c9277b7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c9277b7408455c166437a1771caf3be1698f7d6d))
+* **cli:** open the attach console when the cursor position cannot be read ([2cdb719](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2cdb719ca482c1b214566004d96b45bb95c7d42c))
+* **cli:** show the typed prompt alone and mark a daemon-sourced prompt ([dc39874](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dc398747999da1f0b715888289ff0fff65a7d8a5))
+* **codex:** disable guardian approval for every launch ([5c9f579](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5c9f5794870af601fb29df20f30d514f2a8951fd))
+* **daemon:** brief a reviewer once for each review request ([c7d963d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c7d963d9fddaaa534b9de459b7abfb975db7d330))
+* **daemon:** brief live reviewers at once ([b1d0071](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b1d0071b443a8f1583afb3de9371cd68ec896e42))
+* **daemon:** count every turn's tokens, including turns cut short by a kill ([0dc4c8e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0dc4c8eeb11a43c34af1b37bd3511769eb0eb0e2))
+* **daemon:** deliver review requests through reviewer briefings ([31e9ab6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/31e9ab65594418f822f0b3a37c27eaa17870240e))
+* **daemon:** fail a task whose agent can never be started again instead of retrying it forever ([0af49c6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0af49c6a2e01458eb58f46c2d56623af546f54cb))
+* **daemon:** keep a session's console open when its agent is relaunched ([0ebded6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0ebded67515ddc21edfdf0a07b4124422258e536))
+* **daemon:** keep each run of agent text in its place in the console ([5363552](https://github.com/manuel-alvarez-alvarez/ariadne/commit/536355279658bc612d51f73b7194ce0de2cc6af9))
+* **daemon:** leave a planning orchestrator alone while it waits ([881f9c1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/881f9c16a80f627c329011d840272e14ab7e6f00))
+* **daemon:** read ACP prompt token usage ([742ede4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/742ede403577e0d6d5aceeb890e0b4ead1babbf8))
+* **daemon:** resume the orchestrator after a restart and refresh reviewer worktrees over leftover edits ([d58c8b7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d58c8b7593fac6d568cf432b7c7084cd5a127a90))
+* **install:** stop running the removed setup codex-hooks step ([b5e9101](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b5e9101011e36fe9bcbb635a6c1de228f078c101))
+* **mcp:** tell an author or reviewer to ask only where blocked ([987c5e5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/987c5e5ec7a88ffb5a5e8640c3ce7d9192fac19d))
+* **prompts:** make each author gate once ([86f075d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/86f075d4cca5463e620c9a2b23bb2bc546ea920c))
+* **prompts:** start reviewer checks before reading ([aa74de0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/aa74de0f38ab43afe5ce61419228f4ef22bccdc1))
+
 ## [0.6.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.5.0...v0.6.0) (2026-09-09)
 
 
