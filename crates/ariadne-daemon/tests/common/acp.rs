@@ -99,8 +99,8 @@ impl StubAcpAgent {
             .collect()
     }
 
-    /// The Codex configuration each process of one Ariadne session received.
-    pub fn codex_configs_for(&self, session_id: &str) -> Vec<Option<String>> {
+    /// The codex-acp initial mode each process of one Ariadne session received.
+    pub fn codex_modes_for(&self, session_id: &str) -> Vec<Option<String>> {
         std::fs::read_to_string(&self.launches)
             .unwrap_or_default()
             .lines()
@@ -110,7 +110,7 @@ impl StubAcpAgent {
             })
             .map(|launch| {
                 launch
-                    .get("codex_config")
+                    .get("codex_mode")
                     .and_then(Value::as_str)
                     .map(str::to_string)
             })
@@ -299,7 +299,7 @@ with open(script["pid_file"], "w") as f:
     f.write(str(os.getpid()))
 with open(script["launches"], "a") as f:
     f.write(json.dumps({"ariadne_session": os.environ.get("ARIADNE_SESSION_ID"),
-                        "codex_config": os.environ.get("CODEX_CONFIG"),
+                        "codex_mode": os.environ.get("INITIAL_AGENT_MODE"),
                         "argv": sys.argv[2:]}) + "\n")
 
 options = script.get("config_options", [])

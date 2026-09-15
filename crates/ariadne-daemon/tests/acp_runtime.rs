@@ -66,8 +66,9 @@ async fn registry_cast(h: &Harness) -> Cast {
     h.cast_pinned("stub:test-model", 1).await
 }
 
-/// Every Codex process gets a session configuration that turns its guardian
-/// approval feature off without changing the user's configuration file.
+/// Every Codex process starts its sessions in codex-acp's full-access mode,
+/// the one whose approvals never go to the guardian sub-agent, without
+/// changing the user's configuration file.
 #[tokio::test]
 async fn a_codex_launch_disables_guardian_approval() {
     let h = harness().await;
@@ -75,10 +76,8 @@ async fn a_codex_launch_disables_guardian_approval() {
 
     h.agent_runs_as(&session, "codex-acp").await;
 
-    let configs = h.agent.codex_configs_for(&session.id);
-    assert_eq!(configs.len(), 1);
-    let config: Value = serde_json::from_str(configs[0].as_deref().expect("CODEX_CONFIG")).unwrap();
-    assert_eq!(config, json!({"features": {"guardian_approval": false}}));
+    let modes = h.agent.codex_modes_for(&session.id);
+    assert_eq!(modes, vec![Some("agent-full-access".to_string())]);
 }
 
 /// The kinds of every event this session put in the store, in order.

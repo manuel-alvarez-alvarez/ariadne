@@ -74,12 +74,16 @@ fn report(followers: &Followers, report: TurnReport) {
 /// one that does not is killed when this runs out, as it was before.
 const TURN_CANCEL_GRACE: Duration = Duration::from_secs(5);
 const CODEX_AGENT_ID: &str = "codex-acp";
-const CODEX_CONFIG_WITHOUT_GUARDIAN: &str = r#"{"features":{"guardian_approval":false}}"#;
+/// The codex-acp mode every session starts in. Its default mode, `agent`,
+/// hands each approval to Codex's guardian sub-agent, a model call that
+/// judges the action; `agent-full-access` never asks for approval at all.
+/// The mode, not `features.guardian_approval`, is what picks the reviewer.
+const CODEX_INITIAL_AGENT_MODE: &str = "agent-full-access";
 
 /// Apply the environment Ariadne owns for one registry agent process.
 pub(crate) fn apply_agent_launch_environment(command: &mut Command, agent_id: &str) {
     if agent_id == CODEX_AGENT_ID {
-        command.env("CODEX_CONFIG", CODEX_CONFIG_WITHOUT_GUARDIAN);
+        command.env("INITIAL_AGENT_MODE", CODEX_INITIAL_AGENT_MODE);
     }
 }
 
