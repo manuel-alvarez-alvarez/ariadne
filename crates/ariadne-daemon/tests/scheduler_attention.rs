@@ -1097,8 +1097,11 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
     // Every death is flagged by the sweep and cleared by the launch that
     // replaces it, so the flag alone says nothing: what is waited for is the
     // budget out — as many launches as it is worth, every one of them over,
-    // and the last of them still carrying its alarm.
+    // and the last of them still carrying its alarm. Woken on every poll
+    // rather than left to the tick: a death this session's own agent already
+    // reported is a goal event away, not a sweep away.
     eventually(TIMEOUT, "the deaths to run the budget out", async || {
+        sched.goal(&goal);
         let rows = orchestrators(&h, &goal).await;
         rows.len() >= SPAWN_RETRY_BUDGET
             && rows.iter().all(|s| !s.status().is_live())
@@ -1117,12 +1120,13 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
         "one goal, one row that says anything: {rows:?}"
     );
 
-    // And a tick later nothing has been started again: given up on, rather
-    // than between two launches.
+    // And nothing has been started again: given up on, rather than between
+    // two launches. Three more passes over the same goal is what "a tick
+    // later" needs proving, not five more seconds of wall time.
     for _ in 0..3 {
         sched.goal(&goal);
     }
-    tokio::time::sleep(Duration::from_secs(scheduler::TICK_SECS + 2)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     let after = orchestrators(&h, &goal).await;
     assert_eq!(
         after.len(),
