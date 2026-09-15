@@ -25,11 +25,19 @@ impl super::Scheduler {
                 self.deliver_goal_messages(goal_id).await;
                 // An orchestrator has no task to flag: its session carries the
                 // stall, which is the only place a goal still in planning has
-                // to say that nothing is happening.
+                // to say that nothing is happening. But idle is the
+                // orchestrator between turns, waiting on the user's answer to
+                // whatever it last asked — that is not silence, so it is
+                // never nudged and never flagged for it. A turn that never
+                // ends is the one silence a planning orchestrator can have,
+                // and that is still watched.
                 for orchestrator in self
                     .live_sessions(goal_id, None, Seat::Orchestrator)
                     .await?
                 {
+                    if orchestrator.status() != SessionStatus::Running {
+                        continue;
+                    }
                     let template = prompts::template_for(PromptKind::OrchestratorResume);
                     let nudge = prompts::orchestrator_resume_briefing(template, &goal);
                     self.check_session_quiet(&orchestrator, goal.status.clone(), &nudge)

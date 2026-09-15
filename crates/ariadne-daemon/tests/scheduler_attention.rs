@@ -182,29 +182,44 @@ const RESUME: &str = r#"Continue "task" on"#;
 
 // -- the timeline -----------------------------------------------------------
 
-/// An orchestrator has no task to flag, so its own session is where a goal that
-/// stopped being planned says so.
+/// An orchestrator between turns, in planning, is waiting on the user's
+/// answer to whatever it last asked — that is not silence, so it is never
+/// nudged and never flagged for it, however long it sits idle. A turn that
+/// never ends is the one silence a planning orchestrator can have, and that
+/// is still watched.
 #[tokio::test]
-async fn an_orchestrator_idle_past_the_threshold_is_raised_on_its_session() {
+async fn an_idle_planning_orchestrator_is_never_nudged_or_flagged() {
     let h = harness().await;
     let goal = h.planning_goal().await;
     let session = h.orchestrator_session(&goal).await;
     h.agent_runs(&session).await;
-    h.idle_for(&session, NUDGE_SECS + 60).await;
+    h.idle_for(&session, FLAG_SECS + 60).await;
 
-    // One pass per threshold: the nudge, and then the escalation behind it.
+    // A second orchestrator, stuck mid-turn for exactly as long: its flag is
+    // what says the pass over this goal ran to completion.
+    let control = h.orchestrator_session(&goal).await;
+    h.agent_runs(&control).await;
+    h.launched_ago(&control, FLAG_SECS + 60).await;
+
     let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     sched.goal(&goal);
-    eventually(TIMEOUT, "the orchestrator to be nudged", async || {
-        !h.prompts_to(&session).is_empty()
-    })
+    eventually(
+        TIMEOUT,
+        "the mid-turn orchestrator to be raised",
+        async || h.attention(&control).await == Some(AttentionReason::Stalled),
+    )
     .await;
-    h.idle_for(&session, FLAG_SECS + 60).await;
-    sched.goal(&goal);
-    eventually(TIMEOUT, "the orchestrator to be raised", async || {
-        h.attention(&session).await == Some(AttentionReason::Stalled)
-    })
-    .await;
+
+    assert_eq!(
+        h.prompts_to(&session).len(),
+        0,
+        "an orchestrator between turns is waiting on the user, not silent"
+    );
+    assert_eq!(
+        h.attention(&session).await,
+        None,
+        "and it is not flagged stalled while it waits"
+    );
 }
 
 /// A reviewer the round is still waiting on is watched the same way.

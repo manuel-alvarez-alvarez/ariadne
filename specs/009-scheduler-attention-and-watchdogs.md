@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-13
+updated: 2026-09-15
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -118,6 +118,11 @@ the ACP runtime that takes a prompt (021).
 30. A goal whose tasks have all landed wakes its orchestrator, which decides
     whether the goal is met. A session that outlived its completed goal is
     killed on every pass.
+31. An orchestrator in planning, idle between turns, is waiting on the
+    user's answer to whatever it last asked, not silent: it is never nudged
+    and never flagged stalled for sitting idle. A turn that never ends is the
+    one silence a planning orchestrator can have, and that is still flagged
+    and relaunched as any other agent's is.
 
 ## Acceptance criteria
 
@@ -132,11 +137,12 @@ the ACP runtime that takes a prompt (021).
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
 - A pass with three agents to nudge hands all three their prompt at once
   (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries`).
-- An idle orchestrator, reviewer or author past the threshold is raised on
-  its session
-  (`scheduler_attention.rs::an_orchestrator_idle_past_the_threshold_is_raised_on_its_session`,
-  `::a_reviewer_idle_past_the_threshold_is_raised_on_its_session`,
+- An idle reviewer or author past the threshold is raised on its session
+  (`scheduler_attention.rs::a_reviewer_idle_past_the_threshold_is_raised_on_its_session`,
   `::an_author_stall_flags_the_task_and_its_session`).
+- An idle orchestrator in planning is waiting on the user, not silent, so it
+  is never nudged or flagged stalled, however long it sits idle
+  (`scheduler_attention.rs::an_idle_planning_orchestrator_is_never_nudged_or_flagged`).
 - An idle agent is nudged once for the situation it went quiet in
   (`::an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in`), and
   an agent mid-turn is not nudged
