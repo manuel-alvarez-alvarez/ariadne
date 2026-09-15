@@ -6,6 +6,7 @@ areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
   - crates/ariadne-daemon/tests/scheduler_attention.rs
+  - crates/ariadne-daemon/tests/agent_messages.rs
   - crates/ariadne-daemon/tests/events.rs
   - crates/ariadne-daemon/tests/acp_runtime.rs
   - crates/ariadne-daemon/src/scheduler/mod.rs
@@ -49,7 +50,9 @@ the ACP runtime that takes a prompt (021).
 6. Everything the scheduler says to an agent — a nudge, a review briefing, an
    agent message — is handed to the session's ACP agent as a
    `session/prompt` (021). The runtime sends it at once to an agent between
-   turns and queues it behind a running turn.
+   turns and queues it behind a running turn. A live reviewer that owes a
+   verdict on a new review request is handed that briefing at once, after its
+   worktree moves to the branch it is asked to review.
 7. A pass never waits on a delivery: the runtime queues each prompt, so a
    pass with several agents to nudge hands them all their prompt at once.
 8. A prompt the runtime refuses, because no agent runs for the session, gives
@@ -65,7 +68,8 @@ the ACP runtime that takes a prompt (021).
     thresholds behind the nudge, since a nudge would only queue behind the
     turn it is in.
 12. An agent is nudged once for the situation it went quiet in, not once per
-    pass. A new task status or a new review is a new situation.
+    pass. A new task status or a new review is a new situation. The new
+    review's briefing is delivered before this quiet clock watches it.
 13. The agent that comes back from a relaunch is the one the row belongs to
     from then on: the exit the killed one still has to report changes
     nothing (008, 012).
@@ -137,6 +141,9 @@ the ACP runtime that takes a prompt (021).
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
 - A pass with three agents to nudge hands all three their prompt at once
   (`scheduler_attention.rs::a_pass_with_three_agents_to_nudge_does_not_wait_on_the_deliveries`).
+- A live reviewer receives a second review briefing at once, and its request
+  is stamped delivered
+  (`agent_messages.rs::a_live_reviewer_is_briefed_at_once_for_a_second_review`).
 - An idle reviewer or author past the threshold is raised on its session
   (`scheduler_attention.rs::a_reviewer_idle_past_the_threshold_is_raised_on_its_session`,
   `::an_author_stall_flags_the_task_and_its_session`).

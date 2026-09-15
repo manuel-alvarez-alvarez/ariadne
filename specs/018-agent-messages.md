@@ -79,9 +79,11 @@ and the wording of the text a message arrives in (006).
     summary the author asked with, so the channel holds the whole of the
     review rather than the half of it that happened to be said. That row is
     not handed to the reviewer as a bare message: the reviewer's full briefing
-    carries it and stamps it delivered. On a task staffed with several authors
-    whose pick is still open, the briefing carries the summary with the author
-    and its branch after the reviewer's worktree has moved there (004).
+    carries it and stamps it delivered. A live reviewer that owes a verdict on
+    a new request receives that briefing at once, before the quiet clock
+    watches it. On a task staffed with several authors whose pick is still
+    open, the briefing carries the summary with the author and its branch
+    after the reviewer's worktree has moved there (004).
 13. The MCP surface is two tools every seat has: `send_message` and
     `read_messages` (013).
 
@@ -108,7 +110,10 @@ and the wording of the text a message arrives in (006).
 - A review request reaches every reviewer with the author's summary
   (`agent_messages.rs::a_review_request_reaches_every_reviewer_as_a_message`),
   and reaches a reviewer once as its briefing
-  (`::a_review_request_reaches_a_reviewer_once_as_its_briefing`).
+  (`::a_review_request_reaches_a_reviewer_once_as_its_briefing`). A live
+  reviewer receives the briefing for a second review at once, and that request
+  is stamped delivered
+  (`::a_live_reviewer_is_briefed_at_once_for_a_second_review`).
 - A message is delivered once, and the stamp says which have gone
   (`store.rs::a_message_is_delivered_once_and_the_stamp_says_so`).
 - On a contested task, a review request reaches a live reviewer only as its

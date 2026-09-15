@@ -244,6 +244,11 @@ impl super::Scheduler {
                 }
                 let author = self.store.task_author(&task.id).await?;
                 let summary = self.store.review_summary(&task.id).await?;
+                let request = self
+                    .store
+                    .open_review_request(&task.id)
+                    .await?
+                    .unwrap_or_default();
                 for agent_id in pending {
                     let live = self
                         .store
@@ -283,6 +288,14 @@ impl super::Scheduler {
                         // this reviewer spent of the task's budget comes back
                         // here rather than at the launch that started it.
                         self.spent_on_a_dead_launch(&reviewer.id, &task.id, &reviewer);
+                        if self
+                            .brief_live_reviewer_for(
+                                &task, &author, &agent_id, &request, &reviewer, &resume,
+                            )
+                            .await?
+                        {
+                            continue;
+                        }
                         self.check_session_quiet(&reviewer, situation.clone(), &resume)
                             .await?;
                         if self
@@ -322,6 +335,8 @@ impl super::Scheduler {
                         info!(task = %task.id, reviewer = %agent_id, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
                         // one, spawns a first for it otherwise.
+                        self.review_briefed
+                            .insert((agent_id.clone(), request.clone()));
                         self.launcher
                             .resume_reviewer(&task.id, &agent_id, &resume)
                             .await?;
@@ -711,31 +726,10 @@ impl super::Scheduler {
 
         if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
             self.spent_on_a_dead_launch(&session.id, &task.id, &session);
-            if !self.review_briefed.contains(&briefed) {
-                // A live agent is briefed the way a resumed one is, and at the
-                // same moment: when the verdict becomes owed, not when the
-                // quiet clock notices. Its detached worktree moves first, so
-                // the briefing lands in a tree already on the branch it
-                // names. A tree that cannot move yet — a branch with nothing
-                // on it — leaves the reviewer to the quiet clock and the
-                // next pass.
-                if let Err(e) = self
-                    .launcher
-                    .refresh_reviewer_worktree(&task.id, &reviewer.id, Some(&author.id))
-                    .await
-                {
-                    warn!(task = %task.id, reviewer = %reviewer.id, error = %format!("{e:#}"), "moving the reviewer's worktree failed");
-                    return self.check_session_quiet(&session, situation, &resume).await;
-                }
-                info!(task = %task.id, reviewer = %reviewer.id, author = %author.id, "briefing the live reviewer for this author's review");
-                self.review_briefed.insert(briefed);
-                self.hand_prompt(&session, resume.clone());
-                // The briefing is this review request's delivery: generic
-                // delivery leaves a contested request alone, so the channel's
-                // stamp is written here, as the briefing goes out.
-                self.store
-                    .mark_review_requests_delivered(&task.id, &author.id, &reviewer.id)
-                    .await?;
+            if self
+                .brief_live_reviewer_for(task, author, &reviewer.id, request, &session, &resume)
+                .await?
+            {
                 return Ok(());
             }
             self.check_session_quiet(&session, situation, &resume)
@@ -770,6 +764,47 @@ impl super::Scheduler {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Brief a live reviewer once for the review request it owes a verdict on.
+    /// The worktree moves before the prompt that names its branch, and the
+    /// prompt stamps that request delivered. A move that cannot happen yet
+    /// leaves the caller to the quiet clock and the next pass.
+    async fn brief_live_reviewer_for(
+        &mut self,
+        task: &Task,
+        author: &TaskAgent,
+        reviewer_id: &str,
+        request: &str,
+        session: &AgentSession,
+        resume: &str,
+    ) -> anyhow::Result<bool> {
+        let briefed = (reviewer_id.to_string(), request.to_string());
+        if self.review_briefed.contains(&briefed) {
+            return Ok(false);
+        }
+        // A live agent is briefed the way a resumed one is, and at the same
+        // moment: when the verdict becomes owed, not when the quiet clock
+        // notices. Its detached worktree moves first, so the briefing lands
+        // in a tree already on the branch it names.
+        if let Err(e) = self
+            .launcher
+            .refresh_reviewer_worktree(&task.id, reviewer_id, Some(&author.id))
+            .await
+        {
+            warn!(task = %task.id, reviewer = %reviewer_id, error = %format!("{e:#}"), "moving the reviewer's worktree failed");
+            return Ok(false);
+        }
+        info!(task = %task.id, reviewer = %reviewer_id, author = %author.id, "briefing the live reviewer for this author's review");
+        self.review_briefed.insert(briefed);
+        self.hand_prompt(session, resume.to_string());
+        // The briefing is this review request's delivery: generic delivery
+        // leaves it alone, so the channel's stamp is written here as the
+        // briefing goes out.
+        self.store
+            .mark_review_requests_delivered(&task.id, &author.id, reviewer_id)
+            .await?;
+        Ok(true)
     }
 
     /// Count an attempt at giving this task an agent that came to nothing, and

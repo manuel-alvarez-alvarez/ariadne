@@ -158,10 +158,10 @@ pub struct Scheduler {
     /// a daemon that restarts over an open pick asks once more.
     pick_briefed: HashSet<(String, String)>,
     /// Reviews a live reviewer has already been briefed on, by (reviewer,
-    /// review request). A contested task opens one review per author, and a
-    /// reviewer whose agent survived the last one is handed the next one's
-    /// briefing the moment it owes it — once, and in memory like the sets
-    /// above: a daemon that restarts over an open review says it once more.
+    /// review request). A reviewer whose agent survived the last one is
+    /// handed the next one's briefing the moment it owes it — once, and in
+    /// memory like the sets above: a daemon that restarts over an open review
+    /// says it once more.
     review_briefed: HashSet<(String, String)>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.

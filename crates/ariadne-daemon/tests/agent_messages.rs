@@ -459,6 +459,115 @@ async fn a_review_request_reaches_a_reviewer_once_as_its_briefing() {
     );
 }
 
+/// A reviewer that sent a task back stays live for the next review, so the
+/// second request reaches it as soon as the author asks rather than waiting
+/// for the quiet clock to notice it again.
+#[tokio::test]
+async fn a_live_reviewer_is_briefed_at_once_for_a_second_review() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the author to start", async || {
+        h.status(&cast.task.id).await == TaskStatus::InProgress
+            && h.running_session(&cast.task.id, Seat::Author)
+                .await
+                .is_some()
+    })
+    .await;
+    let author = h
+        .running_session(&cast.task.id, Seat::Author)
+        .await
+        .expect("a live author session");
+
+    h.json::<serde_json::Value>(
+        as_session(
+            &format!("/v1/tasks/{}/transitions", cast.task.id),
+            &author.id,
+            serde_json::json!({"to": "under_review", "reason": "the first review"}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+    eventually(TIMEOUT, "the reviewer to start", async || {
+        h.running_session(&cast.task.id, Seat::Reviewer)
+            .await
+            .is_some()
+    })
+    .await;
+    let reviewer = h
+        .running_session(&cast.task.id, Seat::Reviewer)
+        .await
+        .expect("a live reviewer session");
+    eventually(
+        TIMEOUT,
+        "the reviewer to finish its first turn",
+        async || h.session_status(&reviewer).await == SessionStatus::Idle,
+    )
+    .await;
+
+    h.json::<MessageDto>(
+        as_session(
+            &messages_uri(&cast),
+            &reviewer.id,
+            serde_json::json!({
+                "kind": "request_changes",
+                "to_actor": "author",
+                "to_agent_id": cast.author.id,
+                "body": "take another look at the bounds",
+            }),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the author to resume after the changes",
+        async || h.status(&cast.task.id).await == TaskStatus::InProgress,
+    )
+    .await;
+
+    let summary = "the revised review";
+    h.json::<serde_json::Value>(
+        as_session(
+            &format!("/v1/tasks/{}/transitions", cast.task.id),
+            &author.id,
+            serde_json::json!({"to": "under_review", "reason": summary}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+    let request = h
+        .store
+        .list_messages(ariadne_store::MessageFilter {
+            task_id: Some(cast.task.id.clone()),
+            to_agent_id: Some(cast.reviewer.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|message| {
+            message.kind() == Some(MessageKind::ReviewRequest) && message.body == summary
+        })
+        .expect("the second review request");
+
+    eventually(
+        TIMEOUT,
+        "the live reviewer to receive the new briefing",
+        async || h.prompted(&reviewer).contains(summary),
+    )
+    .await;
+    assert!(
+        h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered(),
+        "the second briefing stamps its request delivered"
+    );
+}
+
 /// Every agent of a task stays up until the task is over. A reviewer that has
 /// voted is not done with it — the author may have something to ask, and an
 /// agent that was killed can be asked nothing — so the round it closed leaves
