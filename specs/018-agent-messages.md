@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-09-12
+updated: 2026-09-15
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -77,11 +77,11 @@ and the wording of the text a message arrives in (006).
     something it needs from it, and an agent that is gone can be told nothing.
 12. `request_review` writes one `review_request` per reviewer, carrying the
     summary the author asked with, so the channel holds the whole of the
-    review rather than the half of it that happened to be said. On a task
-    staffed with several authors whose pick is still open, that row is not
-    handed to the reviewer as a bare message: the reviewer's full
-    briefing carries it — the summary with the author and its branch, after
-    its worktree has moved there (004) — and stamps it delivered.
+    review rather than the half of it that happened to be said. That row is
+    not handed to the reviewer as a bare message: the reviewer's full briefing
+    carries it and stamps it delivered. On a task staffed with several authors
+    whose pick is still open, the briefing carries the summary with the author
+    and its branch after the reviewer's worktree has moved there (004).
 13. The MCP surface is two tools every seat has: `send_message` and
     `read_messages` (013).
 
@@ -106,7 +106,9 @@ and the wording of the text a message arrives in (006).
   (`store.rs::a_verdict_belongs_to_the_review_that_was_asked_for`), and a
   question in between is not a second one (same test).
 - A review request reaches every reviewer with the author's summary
-  (`agent_messages.rs::a_review_request_reaches_every_reviewer_as_a_message`).
+  (`agent_messages.rs::a_review_request_reaches_every_reviewer_as_a_message`),
+  and reaches a reviewer once as its briefing
+  (`::a_review_request_reaches_a_reviewer_once_as_its_briefing`).
 - A message is delivered once, and the stamp says which have gone
   (`store.rs::a_message_is_delivered_once_and_the_stamp_says_so`).
 - On a contested task, a review request reaches a live reviewer only as its

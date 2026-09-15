@@ -376,6 +376,89 @@ async fn a_review_request_reaches_every_reviewer_as_a_message() {
     );
 }
 
+/// A review request reaches its reviewer in the review briefing. That
+/// briefing carries the author's summary and stamps the channel row, so no
+/// bare message follows the reviewer's first turn.
+#[tokio::test]
+async fn a_review_request_reaches_a_reviewer_once_as_its_briefing() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the author to start", async || {
+        h.status(&cast.task.id).await == TaskStatus::InProgress
+            && h.running_session(&cast.task.id, Seat::Author)
+                .await
+                .is_some()
+    })
+    .await;
+    let author = h
+        .running_session(&cast.task.id, Seat::Author)
+        .await
+        .expect("a live author session");
+    let summary = "Renamed the flag and tested it.";
+
+    h.json::<serde_json::Value>(
+        as_session(
+            &format!("/v1/tasks/{}/transitions", cast.task.id),
+            &author.id,
+            serde_json::json!({"to": "under_review", "reason": summary}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+
+    eventually(TIMEOUT, "the reviewer to start", async || {
+        h.running_session(&cast.task.id, Seat::Reviewer)
+            .await
+            .is_some()
+    })
+    .await;
+    let reviewer = h
+        .running_session(&cast.task.id, Seat::Reviewer)
+        .await
+        .expect("a live reviewer session");
+    let request = h
+        .store
+        .list_messages(ariadne_store::MessageFilter {
+            task_id: Some(cast.task.id.clone()),
+            to_agent_id: Some(cast.reviewer.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|message| message.kind() == Some(MessageKind::ReviewRequest))
+        .expect("the review request");
+    eventually(TIMEOUT, "the briefing to stamp the request", async || {
+        h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered()
+    })
+    .await;
+    eventually(TIMEOUT, "the reviewer's first turn to end", async || {
+        h.session_status(&reviewer).await == SessionStatus::Idle
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let prompts = h.prompts_to(&reviewer);
+    assert_eq!(prompts.len(), 1, "a bare message followed: {prompts:#?}");
+    assert_eq!(
+        prompts[0].matches(summary).count(),
+        1,
+        "the briefing did not carry the summary once: {}",
+        prompts[0]
+    );
+    assert!(
+        !prompts[0].contains("Message from your author"),
+        "the review request arrived as a bare message: {}",
+        prompts[0]
+    );
+}
+
 /// Every agent of a task stays up until the task is over. A reviewer that has
 /// voted is not done with it — the author may have something to ask, and an
 /// agent that was killed can be asked nothing — so the round it closed leaves

@@ -242,6 +242,7 @@ impl super::Scheduler {
                 if pending.is_empty() {
                     return Ok(());
                 }
+                let author = self.store.task_author(&task.id).await?;
                 let summary = self.store.review_summary(&task.id).await?;
                 for agent_id in pending {
                     let live = self
@@ -284,6 +285,17 @@ impl super::Scheduler {
                         self.spent_on_a_dead_launch(&reviewer.id, &task.id, &reviewer);
                         self.check_session_quiet(&reviewer, situation.clone(), &resume)
                             .await?;
+                        if self
+                            .quiet
+                            .get(&reviewer.id)
+                            .is_some_and(|quiet| quiet.situation == situation && quiet.nudged)
+                        {
+                            // The nudge carries this review's briefing, so it
+                            // delivers the request recorded on the channel.
+                            self.store
+                                .mark_review_requests_delivered(&task.id, &author.id, &reviewer.id)
+                                .await?;
+                        }
                     } else {
                         // A reviewer that came up and was never heard from
                         // spends an attempt of the task's, like its author
@@ -312,6 +324,11 @@ impl super::Scheduler {
                         // one, spawns a first for it otherwise.
                         self.launcher
                             .resume_reviewer(&task.id, &agent_id, &resume)
+                            .await?;
+                        // The launch briefing delivers the review request
+                        // recorded on the channel.
+                        self.store
+                            .mark_review_requests_delivered(&task.id, &author.id, &agent_id)
                             .await?;
                     }
                 }
