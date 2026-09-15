@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-09-13
+updated: 2026-09-15
 areas: [prompts, store, core, mcp]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -57,7 +57,9 @@ they describe (003, 004, 005) — and what a skill is (017).
    `get_diff`.
 3. The division of the checks is one of those rules, and the author's seat
    text is the one place it is stated: the author runs the tests and the lint
-   of the crates and packages it changed, and no run of the whole suite is its
+   of the crates and packages it changed once, before the commit. After the
+   commit, it leaves `git status` empty and the repository's generate step
+   unchanged. No run of the whole suite is its
    own — a reviewer runs it once before each verdict it gives (004), and the
    landing runs it once after the rebase and before the fast-forward (005). A
    skill scopes the step it owns to what the change touched and names neither

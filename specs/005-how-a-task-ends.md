@@ -1,7 +1,7 @@
 ---
 id: how-a-task-ends
 status: current
-updated: 2026-09-13
+updated: 2026-09-15
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
@@ -46,8 +46,10 @@ state machine around `approved` and `finished` (001).
    it already holds. There is no separate integrator seat. On a task staffed
    with several authors that author is the picked winner (004), and its
    branch is the one every landing command and check reads.
-5. `merge`: rebase the task branch onto the base, run the whole suite, the
-   build and the linters once, squash the branch into one commit with a
+5. `merge`: rebase the task branch onto the base. When the rebase changes
+   nothing and HEAD already equals the reviewer's approved SHA, skip the
+   checks. Otherwise, run the whole suite, the build and the linters once.
+   Then squash the branch into one commit with a
    Conventional Commits subject, fast-forward the base branch in the primary
    checkout, push where there is a remote, then `finish_task` with the base
    branch's sha. The suite runs after the rebase and before the fast-forward,

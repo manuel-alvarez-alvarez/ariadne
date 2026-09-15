@@ -1,7 +1,7 @@
 ---
 id: authoring-and-review
 status: current
-updated: 2026-09-13
+updated: 2026-09-15
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -40,7 +40,9 @@ Out: the transition table itself (001), the landing that follows approval
 3. The author implements only its task, obeys the repository's conventions
    files, and writes no authorship or tool trailer in its commits. Its checks
    are the checks of what it changed — the tests and the lint of the crates
-   and packages the change touches — and it never runs the whole suite on its
+   and packages the change touches once, before the commit. After the commit,
+   it leaves `git status` empty and the repository's generate step unchanged.
+   It never runs the whole suite on its
    task branch. No run of the whole suite is the author's: a reviewer runs it
    once before each verdict it gives (behavior 7), and the landing runs it
    once after the rebase (005). So a branch takes one run per verdict, plus
@@ -52,8 +54,9 @@ Out: the transition table itself (001), the landing that follows approval
 4. A task the author cannot do as written ends with its own `fail_task` and
    the reason on the task.
 5. `request_review` moves the task to `under_review` and carries one short
-   summary — what changed, why, and how it was verified. That summary is what
-   the reviewers read first.
+   summary — what changed, why, and how it was verified. The author ends its
+   turn after `request_review` and does not poll. Ariadne wakes it with the
+   verdict or a message. That summary is what the reviewers read first.
 6. Each reviewer the task staffs (017) gets one session for the whole task, in
    a detached read-only worktree (002). Which review it is on is not part of a
    reviewer's identity, only of the briefing it is woken with.

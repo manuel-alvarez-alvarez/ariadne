@@ -238,11 +238,11 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan one Ariadne goal into tasks
 /// nothing amends.
 const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to the end. Work only in your worktree, on your task branch. Commit nothing generated or unrelated.
 
-1. Read the task and its acceptance criteria. Where you cannot do it as written, call `fail_task` with the reason in STE.
-2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Commit the task once, in STE. Add one commit per review answer. Never amend. Add the tests the task asks for. Run the tests and the lint of the crates and packages you changed. Never run the whole suite on your branch: the reviewer runs it before each verdict, and the landing runs it once.
+1. Read task and criteria. If stuck, call `fail_task` with the reason in STE.
+2. Implement only that task. Refactor nothing. Obey `AGENTS.md`, `CLAUDE.md` and `CONTRIBUTING.md`. Commit once in STE. Add a commit per review answer. Never amend. Add requested tests. Run changed tests and lint once before the commit. After the commit, run `git status`; leave nothing shown. Run the repository's generate step; leave no changes. Never run the whole suite: the reviewer runs it before each verdict; the landing runs it once.
 3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
-4. Call `request_review` with one short summary in STE: what changed, why, how you verified it. Apply every verdict on the same branch and call it again. Where you disagree, say why in that summary.
-5. `send_message` to ask a reviewer or the orchestrator what the task does not answer, and to answer what they ask you. Where the task is wrong, call `fail_task` and say why.
+4. Call `request_review` with a short STE summary: change, reason, verification. End your turn after it. Do not poll. Ariadne wakes you with a verdict or message. Apply every verdict on the same branch and call again. Explain disagreements in that summary.
+5. Ask reviewers or the orchestrator unanswered questions with `send_message`. Answer their questions. If the task is wrong, call `fail_task` and explain.
 6. Every reviewer approves, and Ariadne briefs you to end the task."#;
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
@@ -359,21 +359,20 @@ Answer every point. Where you disagree, say why the code stays."#;
 /// The push comes before `finish_task` because that call ends the task, and
 /// the cleanup behind it takes the worktree the push would have run from.
 ///
-/// The whole suite runs here, and this is the one run of it the author owes:
-/// after the rebase, so it proves the tree the base branch is about to grow,
-/// and before the fast-forward, so a failure is still a thing to fix rather
-/// than a thing to revert. The commits before it — the task's one, and one
-/// per review answer — were proven by the checks of what they changed alone
-/// ([`AUTHOR_SYSTEM_PROMPT`]).
+/// When the rebase changes nothing, HEAD keeps the reviewer's approved SHA and
+/// the whole-suite checks skip. Otherwise, the author runs them after the
+/// rebase, before the fast-forward, while failures remain fixable. The commits
+/// before them — the task's one, and one per review answer — were proven by the
+/// checks of what they changed alone ([`AUTHOR_SYSTEM_PROMPT`]).
 const LANDING_DIRECT: &str = r#"# Land task: {task_title}
 
 Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what `git -C {repo_path} remote -v` names, if anything.
 
-1. `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` there, if it is on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
+1. `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` if on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
 2. `git rebase {base_branch}` in your worktree. Conflicts are yours.
-3. Run the whole suite, the build and the linters once. A check that fails: fix it on {branch}, then back to step 2.
-4. `git reset --soft {base_branch} && git commit`. One commit lands. Give it a Conventional Commits subject and a body: what changed and why.
-5. `git -C {repo_path} merge --ff-only {branch}`. Refused because the base moved: back to step 1.
+3. If the rebase changed nothing, keep the reviewer-approved SHA in HEAD. Skip checks. Otherwise, run the whole suite, build and linters once. Fix failures on {branch}; return to step 2.
+4. `git reset --soft {base_branch} && git commit`. Land one commit. Use a Conventional Commits subject and explain what changed and why.
+5. `git -C {repo_path} merge --ff-only {branch}`. If base moved, go to step 1.
 6. `git -C {repo_path} push <remote> {base_branch}`. Push first: `finish_task` ends the task and the cleanup takes your worktree.
 7. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`."#;
 
@@ -681,9 +680,7 @@ mod tests {
     /// the author's cap rises from 1060 to 1250, and the direct landing's from
     /// 880 to 1000 for the run it gained after the rebase. The landings' total
     /// rises from 2570 to 2700 with it. The grand total rises from 7050 to
-    /// 7350: the texts already stood at 7039 of the 7050, so the author's 151
-    /// characters and the landing's 117 need the room, and 7350 leaves the same
-    /// slack the old number did.
+    /// 7380 for the added author and landing rules.
     #[test]
     fn size_caps_hold() {
         // Raised from 1500 for the reviewer's pick briefing: a kind that did
@@ -694,7 +691,7 @@ mod tests {
         // never that one. Nothing rewrites any of them now, so they are one
         // set, and the total is the two plus the third at its own cap.
         const LANDING_TOTAL: usize = 2700;
-        const GRAND_TOTAL: usize = 7350;
+        const GRAND_TOTAL: usize = 7380;
 
         // A cap per seat, not one for the three. The orchestrator's carried
         // its playbook up to 1750; the playbook is the `orchestration` skill
@@ -1096,9 +1093,13 @@ mod tests {
     fn the_author_scopes_its_checks_and_names_who_runs_the_whole_suite() {
         let author = default_system_prompt(Seat::Author);
         for rule in [
-            "Run the tests and the lint of the crates and packages you changed.",
-            "Never run the whole suite on your branch",
-            "the reviewer runs it before each verdict, and the landing runs it once",
+            "Run changed tests and lint once before the commit.",
+            "After the commit, run `git status`; leave nothing shown.",
+            "Run the repository's generate step; leave no changes.",
+            "Never run the whole suite",
+            "the reviewer runs it before each verdict; the landing runs it once",
+            "End your turn after it. Do not poll.",
+            "Ariadne wakes you with a verdict or message.",
         ] {
             assert!(author.contains(rule), "the author seat text and \"{rule}\"");
         }
@@ -1124,7 +1125,7 @@ mod tests {
             .find("`git rebase {base_branch}`")
             .expect("the direct landing never rebases");
         let suite = direct
-            .find("Run the whole suite, the build and the linters once.")
+            .find("Otherwise, run the whole suite, build and linters once.")
             .expect("the direct landing never runs the whole suite");
         let forward = direct
             .find("merge --ff-only {branch}")
@@ -1135,10 +1136,14 @@ mod tests {
         );
 
         // Once, and a failure is fixed on the branch and rebased again.
-        assert_eq!(direct.matches("Run the whole suite").count(), 1, "{direct}");
+        assert_eq!(direct.matches("whole suite").count(), 1, "{direct}");
         assert!(
-            direct.contains("fix it on {branch}, then back to step 2"),
+            direct.contains("Fix failures on {branch}; return to step 2"),
             "the direct landing does not say where a failed check is fixed: {direct}"
+        );
+        assert!(
+            direct.contains("If the rebase changed nothing, keep the reviewer-approved SHA in HEAD. Skip checks."),
+            "the direct landing does not skip checks after an unchanged rebase: {direct}"
         );
     }
 
@@ -1227,8 +1232,8 @@ mod tests {
 
         let author = default_system_prompt(Seat::Author);
         for rule in [
-            "Commit the task once, in STE.",
-            "Add one commit per review answer. Never amend.",
+            "Commit once in STE.",
+            "Add a commit per review answer. Never amend.",
         ] {
             assert!(author.contains(rule), "the author seat text and \"{rule}\"");
         }
@@ -1331,11 +1336,11 @@ mod tests {
             "git merge --no-edit",
             "push plainly",
             "--ff-only",
-            "Call `request_review` with one short summary",
+            "Call `request_review` with a short STE summary",
             "Call `submit_verdict` once per review you are asked for",
             "It starts every task and ends planning",
-            "the reviewer runs it before each verdict, and the landing runs it once",
-            "Run the whole suite, the build and the linters once.",
+            "the reviewer runs it before each verdict; the landing runs it once",
+            "Otherwise, run the whole suite, build and linters once.",
         ] {
             let places = all_defaults()
                 .into_iter()
