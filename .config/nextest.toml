@@ -2,5 +2,15 @@
 # reads, so a failed test's name shows up in the run summary instead of
 # buried in the log. One profile: the whole suite, tmux and git tests
 # included, runs as a single invocation.
+[test-groups]
+# Daemon integration tests start Python stubs and real git worktrees, so cap
+# them at two to keep tick-driven assertions from starving on four-core CI.
+daemon-integration = { max-threads = 2 }
+
+[profile.ci]
+[[profile.ci.overrides]]
+filter = 'package(ariadne-daemon) & kind(test)'
+test-group = 'daemon-integration'
+
 [profile.ci.junit]
 path = "junit.xml"
