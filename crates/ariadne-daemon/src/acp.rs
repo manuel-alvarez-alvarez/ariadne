@@ -19,6 +19,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use futures_util::FutureExt;
+use futures_util::future::Shared;
+use rustix::process::{Pid, Signal, kill_process_group};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -125,6 +128,12 @@ struct Inner {
     store: Store,
     /// Live agents by Ariadne session id.
     running: Mutex<HashMap<String, RunningAgent>>,
+    /// Agents taken down whose driver has not reaped them yet, by Ariadne
+    /// session id, each beside its launch id. A launch waits on these as
+    /// well as on the agent it takes down itself: a kill followed by a
+    /// relaunch finds no running entry left to take down, and the old agent
+    /// still holds the conversation the relaunch resumes.
+    ending: Mutex<HashMap<String, Vec<(String, Reaped)>>>,
     /// Wakes the scheduler after an event lands, the way the HTTP ingestion
     /// does — present once a scheduler is running.
     scheduler: OnceLock<mpsc::UnboundedSender<SchedEvent>>,
@@ -135,6 +144,10 @@ struct Inner {
     /// kept for as long as an agent runs for it or somebody listens.
     consoles: Mutex<HashMap<String, broadcast::Sender<AgentEventDto>>>,
 }
+
+/// Resolves once a driver has killed and reaped its child. Shared, so that
+/// every launch of the session waits on the same reap.
+type Reaped = Shared<oneshot::Receiver<()>>;
 
 /// Where a prompt came from, as `user_prompt_submit` reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,7 +267,7 @@ struct RunningAgent {
     reports: Followers,
     /// Closes once the driver has killed and reaped the child: what a
     /// relaunch waits on, so that two agents never serve one conversation.
-    ended: oneshot::Receiver<()>,
+    ended: Reaped,
 }
 
 /// The transport, the permission reply slot, the turn and the report channel
@@ -273,6 +286,7 @@ impl AcpRuntime {
             inner: Arc::new(Inner {
                 store,
                 running: Mutex::new(HashMap::new()),
+                ending: Mutex::new(HashMap::new()),
                 scheduler: OnceLock::new(),
                 consoles: Mutex::new(HashMap::new()),
             }),
@@ -472,10 +486,15 @@ impl AcpRuntime {
 
     /// Spawn the agent and drive it until it exits or is killed. A driver
     /// still holding this session is stopped first, and its child is gone
-    /// before this one starts: one seat, one agent.
+    /// before this one starts — whether this launch took it down or a kill
+    /// before it did: one seat, one agent.
+    ///
+    /// The agent leads a process group of its own, which the kill takes
+    /// whole (see [`Self::drive`]).
     pub async fn launch(&self, launch: AcpLaunch) -> Result<()> {
-        if let Some(ended) = self.take_down(&launch.session_id) {
-            let _ = ended.await;
+        self.take_down(&launch.session_id);
+        for reaped in self.ending_for(&launch.session_id) {
+            let _ = reaped.await;
         }
         let mut command = Command::new(&launch.program);
         command
@@ -485,6 +504,7 @@ impl AcpRuntime {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .process_group(0)
             .kill_on_drop(true);
         apply_agent_launch_environment(&mut command, &launch.agent_id);
         let mut child = command.spawn().with_context(|| {
@@ -541,7 +561,7 @@ impl AcpRuntime {
                     task_id: task_id.clone(),
                     outbound: transport.outbound(),
                     reports: reports.clone(),
-                    ended,
+                    ended: ended.shared(),
                 },
             );
         let runtime = self.clone();
@@ -570,21 +590,46 @@ impl AcpRuntime {
     /// asking right after is told the seat is free — and the driver cancels
     /// the turn it is running, then kills and reaps the child behind it. A
     /// session with no agent here is a no-op.
+    ///
+    /// The kill does not wait for the reap; the next launch of the session
+    /// does.
     pub fn kill(&self, session_id: &str) {
         self.take_down(session_id);
     }
 
-    /// [`Self::kill`], and what closes once the child is reaped.
-    fn take_down(&self, session_id: &str) -> Option<oneshot::Receiver<()>> {
-        let agent = self
+    /// [`Self::kill`]: the agent moves from the running to the ending.
+    fn take_down(&self, session_id: &str) {
+        let Some(agent) = self
             .inner
             .running
             .lock()
             .expect("acp registry lock")
-            .remove(session_id)?;
+            .remove(session_id)
+        else {
+            return;
+        };
         tracing::info!(session = %session_id, "killing the ACP agent");
         let _ = agent.stop.send(());
-        Some(agent.ended)
+        self.inner
+            .ending
+            .lock()
+            .expect("acp ending lock")
+            .entry(session_id.to_string())
+            .or_default()
+            .push((agent.launch_id, agent.ended));
+    }
+
+    /// What resolves once every agent taken down for this session is reaped.
+    fn ending_for(&self, session_id: &str) -> Vec<Reaped> {
+        self.inner
+            .ending
+            .lock()
+            .expect("acp ending lock")
+            .get(session_id)
+            .into_iter()
+            .flatten()
+            .map(|(_, reaped)| reaped.clone())
+            .collect()
     }
 
     /// Drop a driver's own entry, and only its own: by the time a replaced
@@ -597,6 +642,17 @@ impl AcpRuntime {
             .is_some_and(|agent| agent.launch_id == launch_id)
         {
             running.remove(session_id);
+        }
+        // The driver has reaped its child by now: a launch that comes later
+        // has nothing of this one's to wait on.
+        {
+            let mut ending = self.inner.ending.lock().expect("acp ending lock");
+            if let Some(launches) = ending.get_mut(session_id) {
+                launches.retain(|(ending_launch, _)| ending_launch != launch_id);
+                if launches.is_empty() {
+                    ending.remove(session_id);
+                }
+            }
         }
         // The console channel goes with the last agent, once nobody listens;
         // a console still open keeps it for the agent that comes next.
@@ -659,7 +715,15 @@ impl AcpRuntime {
         // session's last words below take again.
         drop(protocol);
         // Reap on exit, kill on a kill: the signal is a no-op on a child
-        // already gone, and the wait is what collects it either way.
+        // already gone, and the wait is what collects it either way. The
+        // signal goes to the agent's whole process group: an adapter that
+        // runs the agent in a process of its own — codex-acp's `codex
+        // app-server` — otherwise leaves that process up past the reap, still
+        // the writer of the conversation a relaunch is about to resume. The
+        // child is not reaped yet, so its pid still names its group.
+        if let Some(group) = child.id().and_then(|pid| Pid::from_raw(pid.cast_signed())) {
+            let _ = kill_process_group(group, Signal::KILL);
+        }
         let _ = child.start_kill();
         let _ = child.wait().await;
         if let Some(Err(error)) = &outcome {

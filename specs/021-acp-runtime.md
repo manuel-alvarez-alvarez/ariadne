@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-09-12
+updated: 2026-09-17
 areas: [daemon]
 commits: []
 tests:
@@ -38,9 +38,11 @@ gone (009).
 
 1. The agent is a direct child of the daemon. It runs the registry command
    the launch names (007), with the launch's environment, in the seat's
-   working directory, on piped stdio. A launch for a session that already
-   has an agent here kills that agent first (rule 11), and starts once it is
-   reaped: one seat, one agent.
+   working directory, on piped stdio, as the leader of a process group of
+   its own. A launch for a session that already has an agent here kills that
+   agent first (rule 11), and starts once it is reaped: one seat, one agent.
+   A launch after a kill of the session's agent that has not been reaped yet
+   waits for that reap the same way.
 2. The runtime speaks ACP version 1. It sends `initialize` and refuses an
    agent that negotiates any other version (see Known gap). It then opens
    the session with `session/new` — or, for a resume, `session/resume` where
@@ -122,7 +124,11 @@ gone (009).
    the answer (rule 9): only a person's input ever answers a permission.
 11. The child is reaped whenever it ends. Its own exit ends the session on
    the record: `session.error` first if the protocol failed, then
-   `session_end`. Killing the session kills the child and retires the row.
+   `session_end`. Killing the session kills the child and retires the row;
+   the kill does not wait for the reap. Killing the child, and reaping it,
+   sends the kill to its whole process group: an adapter that runs the agent
+   in a process of its own — codex-acp's `codex app-server` — leaves no
+   process behind that still writes the conversation.
    A kill that finds a turn running first sends `session/cancel`, starts no
    queued prompt, and waits up to five seconds for the turn's response, whose
    `stop` records what the turn spent; a turn waiting on a permission answer
@@ -147,12 +153,16 @@ gone (009).
 - A reviewer seat runs the same way, in its detached worktree
   (`acp_runtime.rs::a_reviewer_runs_on_the_registry_agent`).
 - Killing the session kills the agent process and retires the row
-  (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`).
+  (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`), and
+  kills the processes the agent started
+  (`acp_runtime.rs::killing_an_acp_session_kills_the_processes_its_agent_started`).
 - A kill mid-turn cancels the turn and keeps what it spent
   (`acp_console.rs::a_turn_killed_mid_way_is_cancelled_and_keeps_what_it_spent`),
   a relaunch over a running turn starts once the old agent is reaped and
   keeps what the old launch spent
-  (`::a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent`), and
+  (`::a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent`), a
+  relaunch after a kill resumes once the killed agent and its writer are gone
+  (`::a_relaunch_after_a_kill_resumes_once_the_killed_agent_is_gone`), and
   an agent that ignores the cancel is killed when the wait runs out
   (`::an_agent_that_ignores_the_cancel_is_killed_when_the_grace_runs_out`).
 - An agent that dies mid-turn is reaped, and its session ends on the record

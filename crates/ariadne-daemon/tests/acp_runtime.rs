@@ -191,6 +191,33 @@ async fn killing_an_acp_session_kills_its_agent_process() {
     .await;
 }
 
+/// The kill takes the agent's whole process group: an adapter that runs the
+/// agent in a child process of its own — codex-acp's `codex app-server` —
+/// leaves nothing behind to hold the conversation.
+#[tokio::test]
+async fn killing_an_acp_session_kills_the_processes_its_agent_started() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    scripted["writer_child"] = json!(true);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+    let writer = stub.writer_pid().expect("the agent started its writer");
+    assert!(pid_is_alive(writer));
+
+    h.launcher.kill_session(&session.id).await.unwrap();
+
+    // Well within the time the writer lingers on by itself once its agent
+    // is gone: only the kill ends it this soon.
+    eventually(
+        std::time::Duration::from_secs(common::acp::WRITER_LINGER_SECS / 3),
+        "the agent's writer to be killed with it",
+        || async { !pid_is_alive(writer) },
+    )
+    .await;
+}
+
 /// A resumed acp author keeps its conversation: a fresh agent process loads
 /// the stored session, hears the instruction on a new prompt, and takes the
 /// seat — and the predecessor's exit takes neither the seat nor the row down.

@@ -12,7 +12,11 @@
 //! `updates_when` sends more updates once a file exists — and the
 //! stored sessions a load or resume finds, which `session/list` answers
 //! whole, or `session_page_size` at a time behind a `nextCursor` — and never
-//! answers a page from `session_list_stall_from` on. The harness
+//! answers a page from `session_list_stall_from` on. With `writer_child` it
+//! is codex-acp's shape: the conversation is written by a child process the
+//! agent starts, which outlives the agent by [`WRITER_LINGER_SECS`] unless
+//! it is killed too, and a stored session resumed while another agent's
+//! child still writes it is refused as having an active writer. The harness
 //! registers it as
 //! the registry agent `stub` ([`registry_home`] for a script of the test's
 //! own), the daemon spawns it as the agent, and the test reads everything the
@@ -22,6 +26,11 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
+
+/// How long a `writer_child` agent's writer lives on once the agent is gone,
+/// the way `codex app-server` finishes up after its client closes: longer
+/// than any wait a test gives a kill.
+pub const WRITER_LINGER_SECS: u64 = 30;
 
 /// One stub agent on disk: the executable the registry runs, and the files it
 /// reports through.
@@ -135,6 +144,16 @@ impl StubAcpAgent {
             &self.launches,
             &self.pid_file,
         );
+    }
+
+    /// The pid of the child a `writer_child` agent process started, once it
+    /// has written it down — the last process's, like [`Self::pid`].
+    pub fn writer_pid(&self) -> Option<u32> {
+        std::fs::read_to_string(format!("{}.writer", self.pid_file.display()))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
     }
 
     /// The agent process's pid, once it has written it down.
@@ -282,6 +301,7 @@ fn write_script_file(
     script["log"] = json!(log.display().to_string());
     script["launches"] = json!(launches.display().to_string());
     script["pid_file"] = json!(pid_file.display().to_string());
+    script["writer_linger_secs"] = json!(WRITER_LINGER_SECS);
     std::fs::write(script_file, serde_json::to_string_pretty(&script).unwrap()).unwrap();
 }
 
@@ -289,7 +309,7 @@ fn write_script_file(
 /// it answers exactly what the script says, logs every incoming message, and
 /// exits on stdin closing, the way an ACP agent ends with its client.
 const STUB: &str = r#"#!/usr/bin/env python3
-import json, os, select, sys, time
+import json, os, select, subprocess, sys, time
 
 script = json.load(open(sys.argv[1]))
 # Unbuffered, so a poll on the descriptor is the truth about what is left to
@@ -301,6 +321,45 @@ with open(script["launches"], "a") as f:
     f.write(json.dumps({"ariadne_session": os.environ.get("ARIADNE_SESSION_ID"),
                         "codex_mode": os.environ.get("INITIAL_AGENT_MODE"),
                         "argv": sys.argv[2:]}) + "\n")
+
+# The process that writes the conversation, as codex-acp's `codex
+# app-server` does: a child of the agent that ends once the agent is gone —
+# its stdin closes — but only after a while, unless it is killed with the
+# agent's process group. Only an agent launched for a session starts one, so
+# a discovery probe leaves nothing behind.
+writer = None
+if script.get("writer_child") and os.environ.get("ARIADNE_SESSION_ID"):
+    writer = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys, time; sys.stdin.buffer.read(); time.sleep(%d)"
+         % script["writer_linger_secs"]],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    with open(script["pid_file"] + ".writer", "w") as f:
+        f.write(str(writer.pid))
+
+
+def alive(pid):
+    """Whether `pid` runs: a zombie has let go of everything it held."""
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                           capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
+def claim_writer(session, resumed):
+    """Make this agent's child the conversation's writer — refused, for a
+    resume, while another agent's child still is."""
+    if writer is None:
+        return
+    lock = os.path.join(os.path.dirname(script["pid_file"]), "writer-%s" % session)
+    try:
+        holder = int(open(lock).read())
+    except (OSError, ValueError):
+        holder = None
+    if resumed and holder is not None and holder != writer.pid and alive(holder):
+        raise Failure(-32603, "thread %s already has an active writer" % session)
+    with open(lock, "w") as f:
+        f.write(str(writer.pid))
+
 
 options = script.get("config_options", [])
 prompts = list(script.get("prompts", []))
@@ -356,10 +415,12 @@ def respond(request):
             initialized["agentInfo"] = script["agent_info"]
         return initialized
     if method == "session/new":
+        claim_writer(sid, resumed=False)
         return {"sessionId": sid, "configOptions": options}
     if method in ("session/load", "session/resume"):
         wanted = request.get("params", {}).get("sessionId")
         if wanted in script.get("stored_sessions", []):
+            claim_writer(wanted, resumed=True)
             return {"configOptions": options}
         raise Failure(-32001, "unknown session %s" % wanted)
     if method == "session/close":

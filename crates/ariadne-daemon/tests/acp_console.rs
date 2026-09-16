@@ -265,6 +265,70 @@ async fn a_relaunch_over_a_running_turn_keeps_what_the_old_launch_spent() {
     assert_eq!(session_usage.usage, tokens(33, 22, 44));
 }
 
+/// A kill and a relaunch after it — the quiet watchdog's, a reviewer's
+/// restart — resumes only once the killed agent is reaped, and every process
+/// it started with it. The kill does not wait, and the killed agent here sits
+/// out the whole cancel grace; codex-acp refuses a resume while the old agent
+/// still writes the conversation.
+#[tokio::test]
+async fn a_relaunch_after_a_kill_resumes_once_the_killed_agent_is_gone() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let mut first = held_turn_script(
+        &release,
+        json!({"inputTokens": 10, "cachedReadTokens": 20, "outputTokens": 40}),
+    );
+    first["prompts"][0]["ignore_cancel"] = json!(true);
+    first["stored_sessions"] = json!(["stub-session"]);
+    first["writer_child"] = json!(true);
+    let stub = stub_acp_agent(agent_dir.path(), first);
+    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    discovery_settled(&h, &stub).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_mid_turn(&h, &cast, &release).await;
+    let old_pid = stub.pid().unwrap();
+    let old_writer = stub.writer_pid().unwrap();
+
+    let mut resumed_script = script();
+    resumed_script["stored_sessions"] = json!(["stub-session"]);
+    resumed_script["writer_child"] = json!(true);
+    stub.reprogram(resumed_script);
+    h.launcher.kill_session(&session.id).await.unwrap();
+    let revived = h
+        .launcher
+        .revive_session(&session.id, Some("carry on"))
+        .await
+        .unwrap();
+    assert_eq!(revived.id, session.id);
+    assert!(
+        !common::acp::pid_is_alive(old_pid),
+        "the killed agent is gone before the relaunch returns"
+    );
+    eventually(TIMEOUT, "the resumed turn to end", || async {
+        stub.prompts_for(&session.id).len() == 2
+            && h.session_status(&revived).await == SessionStatus::Idle
+    })
+    .await;
+
+    assert!(!common::acp::pid_is_alive(old_writer));
+    assert_eq!(stub.calls_of("session/resume").len(), 1);
+    let kinds: Vec<String> = h
+        .store
+        .list_events(ariadne_store::EventFilter {
+            session_id: Some(session.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|event| event.kind)
+        .collect();
+    assert!(
+        !kinds.iter().any(|kind| kind == "session.error"),
+        "{kinds:?}"
+    );
+}
+
 /// An agent that ignores the cancel is still killed, once the grace runs out.
 #[tokio::test]
 async fn an_agent_that_ignores_the_cancel_is_killed_when_the_grace_runs_out() {
