@@ -307,11 +307,17 @@ impl super::Scheduler {
             // finds it idle says it then.
             return Ok(());
         };
-        info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");
-        self.goal_told.insert(goal.id.clone(), situation.clone());
         let template = prompts::template_for(PromptKind::GoalAttention);
         let text = prompts::goal_attention_briefing(template, goal, &situation);
-        self.hand_prompt(orchestrator, text);
+        // Counted as told only once the prompt has actually gone out: the
+        // orchestrator's runtime entry can be gone in the moment between the
+        // liveness check above and this hand-off. Marked at the attempt
+        // regardless, this situation would never be said again.
+        if !self.hand_prompt(orchestrator, text) {
+            return Ok(());
+        }
+        info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");
+        self.goal_told.insert(goal.id.clone(), situation.clone());
         Ok(())
     }
 

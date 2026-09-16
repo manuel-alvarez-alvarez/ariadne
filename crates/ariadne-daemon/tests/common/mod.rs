@@ -346,15 +346,55 @@ impl Harness {
 
     /// Start the harness's stub agent under a session the test seeded, the
     /// way a launch would have: a live agent process the runtime owns, with
-    /// no briefing to answer. Returns once the agent has reported its session
-    /// start, so what the test writes to the row afterwards is not written
-    /// over by the handshake.
+    /// no briefing to answer. Returns once the agent's session start has
+    /// landed all the way through — not merely recorded as an event row, but
+    /// read back with the status `ingest_event` writes last — so what the
+    /// test writes to the row afterwards is not written over by the rest of
+    /// the handshake still draining behind it.
     pub async fn agent_runs(&self, session: &AgentSession) {
         let agent_id = agent_of(&session.model).to_string();
         self.agent_runs_as(session, &agent_id).await;
     }
 
-    /// Start the harness's stub as the registry agent named by `agent_id`.
+    /// Start the harness's stub as the registry agent named by `agent_id`,
+    /// and wait for its `session_start` to land.
+    ///
+    /// `session_start`'s ingestion (`ingest_event`) makes up to six writes,
+    /// in this order:
+    ///
+    /// 1. `create_event` — publishes `AgentEventCreated`. A different
+    ///    variant; a `SessionUpdated` waiter never sees it.
+    /// 2. `upsert_session_usage`, only where the payload carries
+    ///    `ariadne_usage` — publishes `SessionUpdated`, but the row exactly
+    ///    as it stood before this event: neither the clock (5) nor the
+    ///    status (6) below have run yet.
+    /// 3. `set_session_internal_id`, only the first time this session
+    ///    reports an agent-internal id — same: published ahead of (5)
+    ///    and (6).
+    /// 4. `set_session_attention` / `clear_agent_attention` /
+    ///    `clear_attention_after_idle`, only where this event's kind
+    ///    raises or clears a reason — same again.
+    /// 5. `touch_session` — moves the clock, and publishes with it; the
+    ///    status has not written yet, so this still carries whatever the
+    ///    row's status already was, live or not.
+    /// 6. `set_session_status_if_live` — the status goes last; for
+    ///    `session_start` that is always `Running` (`status_for_event`).
+    ///    This is the first publish carrying both the clock (5) moved and
+    ///    the status (6) decided.
+    ///
+    /// Waiting on `status == Running && last_activity_at != before` rejects
+    /// every publish through (5): (1) is a different event kind outright,
+    /// and (2)-(4) all still carry the clock unmoved, since `before` is
+    /// read immediately ahead of anything this launch writes — including
+    /// `set_session_launch` below, whose own publish is stamped `before`
+    /// for the same reason. (5) does carry the moved clock, but only reads
+    /// `Running` if the row already said so ahead of this launch, which is
+    /// exactly what the assert below forecloses: without it, a session
+    /// left `Running` from an earlier call would make (5) indistinguishable
+    /// from (6), because (6) would then match no row (already `Running`)
+    /// and never publish at all. Every caller already either starts a
+    /// session fresh or calls `set_status(.., Idle)` before reusing one;
+    /// this only turns that into something enforced rather than assumed.
     pub async fn agent_runs_as(&self, session: &AgentSession, agent_id: &str) {
         let repository_id = match &session.task_id {
             Some(task) => self.store.get_task(task).await.unwrap().repo_id,
@@ -373,11 +413,31 @@ impl Harness {
             .map(PathBuf::from)
             .filter(|path| path.is_dir())
             .unwrap_or_else(|| self.dir.path().to_path_buf());
+        let row = self.store.get_session(&session.id).await.unwrap();
+        assert_ne!(
+            row.status(),
+            SessionStatus::Running,
+            "agent_runs_as waits for session_start's own status write; \
+             called on a session already Running, touch_session's publish \
+             would carry that same status and be indistinguishable from it"
+        );
+        let before = row.last_activity_at;
+        let mut rx = self.bus.subscribe();
+        // Stamped on the row before the process starts, the way a real
+        // launch stamps it (`Launcher::launch`): a session run a second time
+        // this way is a relaunch in every way that matters, launch id
+        // included, not just a fresh process under an id the row never
+        // heard of.
+        let launch_id = ariadne_core::id::new_id();
+        self.store
+            .set_session_launch(&session.id, &launch_id)
+            .await
+            .unwrap();
         self.launcher
             .acp
             .launch(AcpLaunch {
                 session_id: session.id.clone(),
-                launch_id: ariadne_core::id::new_id(),
+                launch_id,
                 program: self.agent.bin.clone(),
                 agent_id: agent_id.to_string(),
                 args: Vec::new(),
@@ -397,13 +457,18 @@ impl Harness {
             })
             .await
             .unwrap();
-        eventually(TIMEOUT, "the stub agent to start", || async {
-            self.store
-                .list_session_events(&session.id)
-                .await
-                .unwrap()
-                .iter()
-                .any(|event| event.kind == "session_start")
+        // Waited for on the stream rather than polled off the row: a session
+        // that runs its whole scripted turn before this is ever polled is
+        // not missed the way it would be by a poll of the row, since every
+        // publish in between is queued for this subscription regardless of
+        // how fast the next one follows. See the doc comment above for why
+        // this predicate specifically, and not a looser one, is what it
+        // waits for.
+        next_event(&mut rx, |e| {
+            matches!(&e.event, DomainEvent::SessionUpdated(s)
+                if s.id == session.id
+                    && s.status == SessionStatus::Running
+                    && s.last_activity_at != before)
         })
         .await;
     }
@@ -417,6 +482,16 @@ impl Harness {
     /// order, as the agent read it.
     pub fn prompts_to(&self, session: &AgentSession) -> Vec<String> {
         self.agent.prompts_for(&session.id)
+    }
+
+    /// Whether this session's agent has been nudged, and has already turned
+    /// that nudge's own turn over: the prompt recorded is only what the stub
+    /// was handed, and a test that writes over the session right after can
+    /// still be caught by that turn's own later reports landing — the same
+    /// gap `agent_runs` closes for the first turn a session ever runs.
+    pub async fn nudged(&self, session: &AgentSession) -> bool {
+        !self.prompts_to(session).is_empty()
+            && self.session_status(session).await == SessionStatus::Idle
     }
 
     /// Every prompt this session's agent was handed since its launch, as one
@@ -931,6 +1006,19 @@ impl Harness {
         self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
     }
 
+    /// Block until every event sent to the scheduler before this call has
+    /// been reconciled to completion. A test that forces one pass to fail —
+    /// a closed prompt channel, a branch that does not exist yet — sends
+    /// this right after, so it knows the failing pass actually ran before it
+    /// heals the failure and looks for the retry: a fixed sleep only bets
+    /// that the pass was fast enough, and loses that bet under load.
+    pub async fn flush_scheduler(&self) {
+        ariadne_daemon::scheduler::flush_for_test(
+            self.sched.as_ref().expect("this harness has no scheduler"),
+        )
+        .await;
+    }
+
     fn wake(&self, event: SchedEvent) {
         self.sched
             .as_ref()
@@ -978,6 +1066,28 @@ impl Harness {
                 && matches!(s.status(), SessionStatus::Running | SessionStatus::Idle)
                 && s.launched_at.is_some()
         })
+    }
+
+    /// Whether this session has been heard from, and settled idle, since
+    /// `before` — a launch stamp read earlier, or `None` for one never
+    /// launched.
+    ///
+    /// `launched_at` alone is not enough: `Launcher::launch` writes it, and
+    /// then writes `running` itself the moment the process spawns, before the
+    /// agent has said a word — a read taken on either alone can catch a
+    /// relaunch on its way up rather than the agent actually reporting.
+    /// Idle is not enough either until `heard_from` too: a resume carries a
+    /// briefing, so the agent's own turn on it — `session_start`, the
+    /// prompt, whatever it does with it, `stop` — keeps landing writes for a
+    /// while after the launch, and a test that moved the clock before that
+    /// turn settled would have it landed over. Idle, heard from, is the turn
+    /// over and every write it made done: what a test can safely write over.
+    pub async fn relaunched(&self, session: &AgentSession, before: &Option<String>) -> bool {
+        let row = self.store.get_session(&session.id).await.unwrap();
+        row.launched_at.is_some()
+            && &row.launched_at != before
+            && heard_from(&row)
+            && row.status() == SessionStatus::Idle
     }
 
     // -- the clock ----------------------------------------------------------
@@ -1162,6 +1272,18 @@ pub fn as_session(uri: &str, session_id: &str, body: serde_json::Value) -> Reque
         .header(SESSION_HEADER, session_id)
         .body(Body::from(body.to_string()))
         .unwrap()
+}
+
+/// Whether this session's agent has reported since its own launch: the clock
+/// a report stamps (`touch_session`) is later than the one the launch
+/// stamped (`mark_session_launched`). The launch's own stamp is written
+/// before the agent is up, so it alone says nothing about whether the agent
+/// has said anything since.
+pub fn heard_from(session: &AgentSession) -> bool {
+    match (&session.last_activity_at, &session.launched_at) {
+        (Some(heard), Some(launched)) => heard > launched,
+        _ => false,
+    }
 }
 
 // -- waiting ----------------------------------------------------------------

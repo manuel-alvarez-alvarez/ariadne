@@ -34,7 +34,6 @@ use crate::sleep::SleepInhibitor;
 use quiet::Quiet;
 
 /// Events that wake the scheduler for a scoped reconciliation.
-#[derive(Debug, Clone)]
 pub enum SchedEvent {
     /// A task's status, reviews or deps changed.
     TaskChanged(String),
@@ -42,6 +41,22 @@ pub enum SchedEvent {
     GoalChanged(String),
     /// An agent session reported activity.
     SessionEvent(String),
+    /// Test support: answered the moment this event is dequeued, which is
+    /// only once every event sent before it has been reconciled to
+    /// completion — the loop below awaits each one fully before it asks the
+    /// channel for the next. A test racing a fixed sleep against the
+    /// scheduler's own pace can wait on this instead: sent right after the
+    /// event under test, its answer proves that one already ran.
+    Flush(tokio::sync::oneshot::Sender<()>),
+}
+
+/// Test support: block until every event sent on `tx` before this call has
+/// been fully reconciled — see [`SchedEvent::Flush`].
+pub async fn flush_for_test(tx: &mpsc::UnboundedSender<SchedEvent>) {
+    let (done, wait) = tokio::sync::oneshot::channel();
+    tx.send(SchedEvent::Flush(done))
+        .expect("the scheduler is still running");
+    wait.await.expect("the scheduler answered the flush");
 }
 
 /// How often the full reconciliation tick runs.
@@ -209,6 +224,9 @@ pub fn start(
                     Some(SchedEvent::TaskChanged(id)) => scheduler.reconcile(Target::Task(&id)).await,
                     Some(SchedEvent::GoalChanged(id)) => scheduler.reconcile(Target::Goal(&id)).await,
                     Some(SchedEvent::SessionEvent(id)) => scheduler.reconcile_session(&id).await,
+                    Some(SchedEvent::Flush(done)) => {
+                        let _ = done.send(());
+                    }
                     None => break, // daemon shutting down
                 },
                 _ = tick.tick() => scheduler.reconcile_all().await,

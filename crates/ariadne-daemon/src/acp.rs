@@ -331,6 +331,29 @@ impl AcpRuntime {
             .map_err(|_| anyhow!("the ACP agent for session {session_id} is no longer listening"))
     }
 
+    /// Test support: leave this session's registry entry exactly as it is —
+    /// `is_running` still answers true — but replace its prompt channel with
+    /// one whose receiving half is already dropped, so the next
+    /// [`Self::send_prompt`] fails the way it does in the real window
+    /// between a driver's own receiver dropping (its connection to the
+    /// agent ending) and `deregister` removing the entry a few awaits
+    /// later. A caller of `send_prompt` has no way to tell the two apart,
+    /// which is the point: this reproduces the failure without needing the
+    /// real window's timing.
+    pub fn close_prompt_channel_for_test(&self, session_id: &str) {
+        let (closed, unread) = mpsc::unbounded_channel();
+        drop(unread);
+        if let Some(agent) = self
+            .inner
+            .running
+            .lock()
+            .expect("acp registry lock")
+            .get_mut(session_id)
+        {
+            agent.prompts = closed;
+        }
+    }
+
     /// Hand the running agent console input. A pending permission consumes it
     /// as an option answer; otherwise it becomes a prompt as before.
     ///

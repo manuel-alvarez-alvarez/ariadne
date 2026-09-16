@@ -67,7 +67,9 @@ goal id to a seat (014).
 9. A relaunch announces the session as updated on the event stream.
 10. Killing a session kills its agent process and marks a live session
     `exited`. The conversation stays with the agent, so the session can be
-    resumed.
+    resumed. A status an event decided before the kill cannot land after it:
+    the write is guarded against the row it touches, not the one its caller
+    read (012).
 11. Resuming a session revives it in place: the same row, the same id, the
     same model, on the conversation its agent id names.
 12. A session with no agent id to resume from is not revived. A session whose
@@ -316,13 +318,21 @@ goal id to a seat (014).
   a report from a launch the row has moved past changes nothing, and its
   `session_end` is not recorded
   (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`).
+- A session put back to `starting` for a relaunch has moved past the launch
+  it had, in that same write, so the old agent's own reports move nothing
+  while the relaunch is on its way
+  (`events.rs::a_session_put_back_to_starting_has_moved_past_its_last_launch`).
 - A relaunch announces the session as updated
   (`resume.rs::a_relaunch_announces_the_session_as_updated`).
 - The author and the reviewer reuse one session across reviews
   (`resume.rs::resuming_the_author_reuses_its_session_across_reviews`,
   `::a_reviewer_reuses_its_session_across_reviews`).
 - Killing a session kills its agent process
-  (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`).
+  (`acp_runtime.rs::killing_an_acp_session_kills_its_agent_process`), and a
+  status decided before the kill is never written after it, race included
+  (`store.rs::a_status_is_only_ever_written_while_the_session_is_still_live`),
+  and neither is one decided under a launch the row has since moved past
+  (`store.rs::a_status_is_only_written_for_the_launch_it_was_decided_for`).
 - Reviving a session revives it in place
   (`resume.rs::reviving_a_session_revives_it_in_place`); a session without an
   agent id is not revived (`::a_session_without_an_agent_id_is_not_revived`),

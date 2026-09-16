@@ -12,16 +12,16 @@
 //! `updates_when` sends more updates once a file exists — and the
 //! stored sessions a load or resume finds, which `session/list` answers
 //! whole, or `session_page_size` at a time behind a `nextCursor` — and never
-//! answers a page from `session_list_stall_from` on. With `writer_child` it
-//! is codex-acp's shape: the conversation is written by a child process the
-//! agent starts, which outlives the agent by [`WRITER_LINGER_SECS`] unless
-//! it is killed too, and a stored session resumed while another agent's
-//! child still writes it is refused as having an active writer. The harness
-//! registers it as
-//! the registry agent `stub` ([`registry_home`] for a script of the test's
-//! own), the daemon spawns it as the agent, and the test reads everything the
-//! daemon sent back out of its log — each message tagged with the Ariadne
-//! session the agent process ran under.
+//! answers a page from `session_list_stall_from` on, and how long the agent
+//! takes to come up at all (`start_delay`, in seconds). With `writer_child`
+//! it is codex-acp's shape: the conversation is written by a child process
+//! the agent starts, which outlives the agent by [`WRITER_LINGER_SECS`]
+//! unless it is killed too, and a stored session resumed while another
+//! agent's child still writes it is refused as having an active writer. The
+//! harness registers it as the registry agent `stub` ([`registry_home`] for
+//! a script of the test's own), the daemon spawns it as the agent, and the
+//! test reads everything the daemon sent back out of its log — each message
+//! tagged with the Ariadne session the agent process ran under.
 
 use std::path::{Path, PathBuf};
 
@@ -312,6 +312,10 @@ const STUB: &str = r#"#!/usr/bin/env python3
 import json, os, select, subprocess, sys, time
 
 script = json.load(open(sys.argv[1]))
+# An agent slow to come up: nothing is said, and nothing read, until
+# `start_delay` seconds have passed — the window in which the daemon has
+# launched a session and heard nothing from it yet.
+time.sleep(float(script.get("start_delay", 0)))
 # Unbuffered, so a poll on the descriptor is the truth about what is left to
 # read: a buffered reader could hold a line the poll can no longer see.
 stdin = os.fdopen(0, "rb", buffering=0)

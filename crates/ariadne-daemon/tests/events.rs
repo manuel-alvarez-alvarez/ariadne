@@ -467,6 +467,86 @@ async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
     assert_eq!(recorded(&h, &session, "session_end").await, 1);
 }
 
+/// A session put back to `starting` for a relaunch has moved past the launch
+/// it had, in that same write. The agent of that launch can still report —
+/// one still up until the relaunch takes it down, or one killed a moment ago
+/// and going through its exit — and a report believed in the window before
+/// the new launch names itself would move a row that is starting again:
+/// `exited` under an agent about to be replaced, and the relaunch that put it
+/// back on its feet then finds a row no longer starting to put `running`.
+#[tokio::test]
+async fn a_session_put_back_to_starting_has_moved_past_its_last_launch() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    hand_to_author(&h, &cast.task).await;
+    let session = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.store
+        .set_session_launch(&session.id, "01launchonexxxxxxxxxxxxxxx")
+        .await
+        .unwrap();
+    h.set_status(&session, SessionStatus::Running).await;
+
+    let restarted = h.store.restart_session(&session.id, None).await.unwrap();
+    assert_eq!(restarted.status(), SessionStatus::Starting);
+
+    // The old agent's exit, still on its way: neither is the row's any more.
+    h.ingest_from(
+        &session,
+        "01launchonexxxxxxxxxxxxxxx",
+        "session_end",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(h.session_status(&session).await, SessionStatus::Starting);
+    assert_eq!(recorded(&h, &session, "session_end").await, 0);
+}
+
+/// What an event moves lands in one order, with the status last: a row a
+/// concurrent reader sees at the new status already carries everything that
+/// status implies. A row read as `idle` already carries the clock the turn
+/// that just ended stamped, so the watchdog measures the silence from the
+/// agent's own report rather than from the one before it.
+#[tokio::test]
+async fn an_events_status_is_the_last_thing_it_moves() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let session = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.set_status(&session, SessionStatus::Running).await;
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .last_activity_at,
+        None,
+        "nothing has stamped the clock yet"
+    );
+    let mut rx = h.bus.subscribe();
+
+    h.ingest(
+        &session,
+        "stop",
+        serde_json::json!({"stop_reason": "end_turn"}),
+    )
+    .await;
+
+    let event = next_event(&mut rx, |e| {
+        matches!(&e.event, DomainEvent::SessionUpdated(s) if s.id == session.id && s.status == SessionStatus::Idle)
+    })
+    .await;
+    let DomainEvent::SessionUpdated(idle) = event.event else {
+        unreachable!("matched above");
+    };
+    assert!(
+        idle.last_activity_at.is_some(),
+        "the row went idle before the event stamped its clock"
+    );
+}
+
 /// The summary the daemon builds from a payload is never stored — it is
 /// built when the DTO is built — so both surfaces that hand one out have to
 /// agree: the recorded snapshot `GET /v1/events` answers, and the live event

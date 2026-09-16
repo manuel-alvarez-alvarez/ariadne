@@ -129,16 +129,11 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
     let compacted = crate::agents::compaction_done(&req.kind, &req.payload);
 
     // Track liveness from lifecycle events (never resurrect ended sessions).
+    // Read here, written last: see the end of this function.
     let status = match compacted {
         true => Some(ariadne_core::SessionStatus::Idle),
         false => status_for_event(&req.kind),
     };
-    if session.status().is_live()
-        && let Some(status) = status
-        && status != session.status()
-    {
-        store.set_session_status(&session.id, status).await?;
-    }
 
     // Attention follows the event too: an agent that reported an error or
     // asked for a permission needs the user, and one that is working again
@@ -188,6 +183,25 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
     // hide, and a goal would start that agent again every tick.
     if !matches!(req.kind.as_str(), "session_end" | "session.error") {
         store.touch_session(&session.id).await?;
+    }
+
+    // The status goes last. Everything else the event moves — the agent's
+    // id, the flag, the clock — is in place before the row says what the
+    // agent is doing, so a row a concurrent reader sees at some new status
+    // already carries everything that status implies: idle already carries
+    // the clock the turn that just ended stamped, and the watchdog measures
+    // the silence from there rather than from the report before it.
+    //
+    // Guarded against the row this write touches, not the one read at the
+    // top of this function: a kill, or a relaunch, landing while this event
+    // is still being ingested must not have its retirement — or its new
+    // launch's `starting` — undone by a status this event decided before
+    // either. The superseded check above is itself a moment old by the time
+    // this write runs, so it rides along too, on the same terms.
+    if let Some(status) = status {
+        store
+            .set_session_status_if_live(&session.id, status, req.launch.as_deref())
+            .await?;
     }
     Ok(())
 }

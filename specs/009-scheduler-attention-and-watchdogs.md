@@ -121,7 +121,11 @@ the ACP runtime that takes a prompt (021).
     reviewer does fails, saying its agent stopped as soon as it started.
 30. A goal whose tasks have all landed wakes its orchestrator, which decides
     whether the goal is met. A session that outlived its completed goal is
-    killed on every pass.
+    killed on every pass. A situation is counted as told only once the
+    prompt has actually gone out: the orchestrator's runtime entry can be
+    gone in the moment between the liveness check and the hand-off, and
+    told at the attempt regardless, that situation would never be said
+    again.
 31. An orchestrator in planning, idle between turns, is waiting on the
     user's answer to whatever it last asked, not silent: it is never nudged
     and never flagged stalled for sitting idle. A turn that never ends is the
@@ -136,7 +140,10 @@ the ACP runtime that takes a prompt (021).
   (`::a_failed_task_wakes_the_orchestrator_once`) and for a goal with nothing
   left running (`::a_goal_whose_tasks_all_landed_wakes_its_orchestrator`),
   and is left alone while its tasks run
-  (`::a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone`).
+  (`::a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone`). A
+  situation a failed hand-off could not deliver is told on the next pass
+  that can hear it, not lost with the attempt that failed
+  (`::a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass`).
 - A nudge to an idle agent arrives as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
 - A pass with three agents to nudge hands all three their prompt at once
@@ -144,6 +151,12 @@ the ACP runtime that takes a prompt (021).
 - A live reviewer receives a second review briefing at once, and its request
   is stamped delivered
   (`agent_messages.rs::a_live_reviewer_is_briefed_at_once_for_a_second_review`).
+  A request a failed hand-off could not deliver is not stamped delivered,
+  and reaches the reviewer once the hand-off can succeed
+  (`::a_review_request_survives_a_failed_hand_off_to_a_live_reviewer`), and
+  the same for a request a failed resume could not spawn its first reviewer
+  for
+  (`::a_review_request_survives_a_failed_resume_of_its_first_reviewer`).
 - An idle reviewer or author past the threshold is raised on its session
   (`scheduler_attention.rs::a_reviewer_idle_past_the_threshold_is_raised_on_its_session`,
   `::an_author_stall_flags_the_task_and_its_session`).

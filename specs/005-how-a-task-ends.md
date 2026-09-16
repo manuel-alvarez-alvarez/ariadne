@@ -45,7 +45,10 @@ state machine around `approved` and `finished` (001).
 4. An approved task is landed by its own author, in the session and worktree
    it already holds. There is no separate integrator seat. On a task staffed
    with several authors that author is the picked winner (004), and its
-   branch is the one every landing command and check reads.
+   branch is the one every landing command and check reads. The landing
+   briefing is counted as sent only once it has gone out: an approval that
+   lands while the author's agent is still coming up — launched, and heard
+   from not yet — is briefed once a later pass can reach it.
 5. `merge`: rebase the task branch onto the base. When the rebase changes
    nothing and HEAD already equals the reviewer's approved SHA, skip the
    checks. Otherwise, run the whole suite, the build and the linters once.
@@ -86,6 +89,9 @@ state machine around `approved` and `finished` (001).
 
 ## Acceptance criteria
 
+- An approval that lands while the author's agent is still coming up still
+  briefs it to land, once a later pass can reach it
+  (`landing_lifecycle.rs::an_approval_during_the_authors_start_still_briefs_it_to_land`).
 - An approved task is landed by its own author
   (`landing_lifecycle.rs::an_approved_task_is_landed_by_its_own_author`), with
   the procedure of the ending it carries

@@ -83,7 +83,11 @@ and the wording of the text a message arrives in (006).
     a new request receives that briefing at once, before the quiet clock
     watches it. On a task staffed with several authors whose pick is still
     open, the briefing carries the summary with the author and its branch
-    after the reviewer's worktree has moved there (004).
+    after the reviewer's worktree has moved there (004). That briefing is
+    counted as sent only once the prompt has actually gone out: a live
+    agent's runtime entry can be gone in the moment between the worktree
+    move and the hand-off, and a briefing marked at the attempt regardless
+    would never be sent again.
 13. A reviewer receives one briefing for each review request, whichever way it
     was picked up. A review opens in two writes — the task's status, then the
     request rows — and a scheduler pass between them briefs the reviewer with
@@ -125,7 +129,14 @@ and the wording of the text a message arrives in (006).
   (`::a_review_request_reaches_a_reviewer_once_as_its_briefing`). A live
   reviewer receives the briefing for a second review at once, and that request
   is stamped delivered
-  (`::a_live_reviewer_is_briefed_at_once_for_a_second_review`).
+  (`::a_live_reviewer_is_briefed_at_once_for_a_second_review`). A request a
+  failed hand-off could not deliver is not stamped delivered, and reaches
+  the reviewer once the hand-off can succeed
+  (`::a_review_request_survives_a_failed_hand_off_to_a_live_reviewer`). A
+  request a failed resume could not spawn its first reviewer for is not
+  stamped delivered either, and reaches the reviewer once the resume can
+  succeed
+  (`::a_review_request_survives_a_failed_resume_of_its_first_reviewer`).
 - A reviewer briefed before the review's request rows were written is not
   briefed again when they land: that request takes the briefing over and is
   stamped delivered by it

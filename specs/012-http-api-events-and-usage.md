@@ -74,7 +74,16 @@ and the ACP runtime that reports the agent events (021).
    console events (021) — `agent_message_chunk`, `agent_thought_chunk`,
    `tool_call_update` — are never ingested: they reach the session's
    console stream alone, and neither `GET /v1/events` nor
-   `/v1/events/stream` carries one.
+   `/v1/events/stream` carries one. What an event moves lands in one order,
+   with the status last: the agent's id, the attention and the activity clock
+   are on the row before it says what the agent is doing, so a row a
+   concurrent reader sees at some new status already carries everything that
+   status implies. The status write itself is guarded against the row it
+   touches, not the one this ingestion started on: a kill landing while it
+   is still running must not have its retirement undone by a status this
+   event decided before the kill (008), and a relaunch landing the same way
+   must not have the new launch's `starting` moved by a status the old
+   launch's own report decided before it (008).
 10. An idle report clears the stall and the error and nothing else, so a
     permission request survives it. A permission reply hands control back to
     the agent and takes the wait down.
@@ -194,6 +203,12 @@ and the ACP runtime that reports the agent events (021).
 - The live-only console events reach neither the events listing nor the
   domain stream
   (`acp_console.rs::the_events_listing_and_the_domain_stream_carry_no_chunk`).
+- What an event moves lands with the status last
+  (`events.rs::an_events_status_is_the_last_thing_it_moves`), and the status
+  write is guarded against a retirement racing it
+  (`store.rs::a_status_is_only_ever_written_while_the_session_is_still_live`)
+  and against a relaunch racing it
+  (`store.rs::a_status_is_only_written_for_the_launch_it_was_decided_for`).
 - An agent event's `summary` reads a tool call as its action and its subject,
   the agent's own words where the payload carries any, a path relative to the
   cwd and never the cwd itself, one flattened line cut at 200 characters, and

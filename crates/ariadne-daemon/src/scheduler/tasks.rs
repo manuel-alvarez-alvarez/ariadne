@@ -356,11 +356,15 @@ impl super::Scheduler {
                         info!(task = %task.id, reviewer = %agent_id, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
                         // one, spawns a first for it otherwise.
-                        self.review_briefed
-                            .insert((agent_id.clone(), request.clone()));
                         self.launcher
                             .resume_reviewer(&task.id, &agent_id, &resume)
                             .await?;
+                        // Marked only once the resume above actually
+                        // succeeded: a spawn refused because the seat is
+                        // still a dying session's own would otherwise be
+                        // counted as briefed and never retried.
+                        self.review_briefed
+                            .insert((agent_id.clone(), request.clone()));
                         // The launch briefing delivers the review request
                         // recorded on the channel.
                         self.store
@@ -413,11 +417,21 @@ impl super::Scheduler {
                 // that says the task is approved and how its repository takes
                 // it, so that goes out once — and from there the turn is
                 // watched like any other.
-                if self.landing_briefed.insert(task.id.clone()) {
+                //
+                // Counted as sent only once it has gone out. An approval that
+                // lands while the author's agent is still coming up finds a
+                // session with no conversation to resume yet, and the spawn
+                // that falls back to is refused because the seat is taken:
+                // marked at the attempt, that briefing would never be sent
+                // again, and the task would sit approved until the quiet
+                // clock eventually nudged it. Left unmarked on failure, the
+                // next pass tries again.
+                if self.landing_briefed.contains(&task.id) {
+                    self.check_stall(&task).await?;
+                } else {
                     info!(task = %task.id, "approved: briefing the author to land it");
                     self.start_author(&task).await?;
-                } else {
-                    self.check_stall(&task).await?;
+                    self.landing_briefed.insert(task.id.clone());
                 }
             }
             TaskStatus::Finished => {
@@ -552,14 +566,20 @@ impl super::Scheduler {
             if let Some(session) = self.live_reviewer_session(&task.id, &reviewer.id).await? {
                 self.spent_on_a_dead_launch(&reviewer.id, &task.id, &session);
                 // Asked once, straight to the agent; from there the quiet
-                // clock takes over like any other owed answer.
+                // clock takes over like any other owed answer. Counted as
+                // asked only once the prompt actually goes out: the
+                // reviewer's runtime entry can be gone in the moment between
+                // the liveness check above and this hand-off, and asked at
+                // the attempt regardless, it would never be asked again.
                 let key = (task.id.clone(), reviewer.id.clone());
-                if self.pick_briefed.insert(key) {
-                    info!(task = %task.id, reviewer = %reviewer.id, "asking the reviewer to pick the winner");
-                    self.hand_prompt(&session, briefing.clone());
-                } else {
+                if self.pick_briefed.contains(&key) {
                     self.check_session_quiet(&session, situation, &briefing)
                         .await?;
+                } else {
+                    info!(task = %task.id, reviewer = %reviewer.id, "asking the reviewer to pick the winner");
+                    if self.hand_prompt(&session, briefing.clone()) {
+                        self.pick_briefed.insert(key);
+                    }
                 }
             } else {
                 if let Some(last) = self
@@ -578,11 +598,17 @@ impl super::Scheduler {
                     }
                 }
                 info!(task = %task.id, reviewer = %reviewer.id, "starting a reviewer for the pick");
-                self.pick_briefed
-                    .insert((task.id.clone(), reviewer.id.clone()));
+                // Counted as started only once the resume succeeds: an
+                // approval that lands while the reviewer's agent is still
+                // coming up finds no conversation to resume yet, the same
+                // way a landing briefing can (`scheduler/tasks.rs`'s
+                // `TaskStatus::Approved` arm). Marked at the attempt
+                // regardless, a failed resume would never be retried.
                 self.launcher
                     .resume_reviewer(&task.id, &reviewer.id, &briefing)
                     .await?;
+                self.pick_briefed
+                    .insert((task.id.clone(), reviewer.id.clone()));
             }
         }
         Ok(())
@@ -784,12 +810,16 @@ impl super::Scheduler {
                 }
             }
             info!(task = %task.id, reviewer = %reviewer.id, author = %author.id, "starting reviewer");
-            // The resume carries this briefing itself: the live path above
-            // must not say it again to the session that comes up with it.
-            self.review_briefed.insert(briefed);
             self.launcher
                 .resume_reviewer_for(&task.id, &reviewer.id, Some(&author.id), &resume)
                 .await?;
+            // Marked only once the resume above actually succeeded: a spawn
+            // refused because the seat is still the dying session's own
+            // would otherwise be counted as briefed and never retried. The
+            // resume carries this briefing itself, so once it has landed the
+            // live path above must not say it again to the session that
+            // comes up with it.
+            self.review_briefed.insert(briefed);
             // The launch's briefing is this review request's delivery, the
             // same as the live agent's above.
             self.store
@@ -902,9 +932,18 @@ impl super::Scheduler {
             warn!(task = %task.id, reviewer = %reviewer_id, error = %format!("{e:#}"), "moving the reviewer's worktree failed");
             return Ok(false);
         }
+        // Counted as briefed only once the prompt has actually gone out: a
+        // live agent's runtime entry can be gone in the moment between the
+        // worktree move above and this hand-off — a process just killed, one
+        // still coming up under a relaunch — and `hand_prompt` says so by
+        // failing. Marked at the attempt regardless, that briefing would
+        // never be sent again, and the reviewer would sit unbriefed until
+        // the quiet clock nudged it instead.
+        if !self.hand_prompt(session, resume.to_string()) {
+            return Ok(false);
+        }
         info!(task = %task.id, reviewer = %reviewer_id, author = %author.id, "briefing the live reviewer for this author's review");
         self.review_briefed.insert(briefed);
-        self.hand_prompt(session, resume.to_string());
         // The briefing is this review request's delivery: generic delivery
         // leaves it alone, so the channel's stamp is written here as the
         // briefing goes out.

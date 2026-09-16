@@ -1898,6 +1898,149 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
     }
 }
 
+/// An ingested event's status can land after the session it names has been
+/// killed: the daemon reads the row, decides `running` or `idle` from it,
+/// and the agent may be retired before it gets to write that down. What
+/// keeps the dead row clean is the write itself refusing — the liveness
+/// test, and the "already there" test, ride in the `UPDATE`, not in
+/// whatever the caller last read.
+#[tokio::test]
+async fn a_status_is_only_ever_written_while_the_session_is_still_live() {
+    let w = World::new().await;
+    let store = &w.store;
+
+    // The interleaving spelled out: a caller holding a session it read
+    // while it was live, and the retirement landing before it gets to write
+    // the status its read decided.
+    let session = w.author_session().await;
+    let as_read = store.get_session(&session.id).await.unwrap();
+    assert!(as_read.status().is_live());
+    store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    store
+        .set_session_status_if_live(&as_read.id, SessionStatus::Idle, None)
+        .await
+        .unwrap();
+    let row = store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        row.status(),
+        SessionStatus::Exited,
+        "a session that has ended does not come back for a status decided before it did"
+    );
+
+    // Withholding it is not an error, but an id that names no session still
+    // is.
+    assert!(
+        store
+            .set_session_status_if_live("01ARZ3NDEKTSV4RRFFQ69G5FAV", SessionStatus::Idle, None)
+            .await
+            .is_err()
+    );
+
+    // And with the two writes actually racing, either order is fine: the
+    // status write loses, or it wins and the retirement takes it down after
+    // it.
+    for _ in 0..5 {
+        let racing = w.author_session().await;
+        let (retired, written) = tokio::join!(
+            store.set_session_status(&racing.id, SessionStatus::Exited),
+            store.set_session_status_if_live(&racing.id, SessionStatus::Idle, None),
+        );
+        retired.unwrap();
+        written.unwrap();
+        assert_eq!(
+            store.get_session(&racing.id).await.unwrap().status(),
+            SessionStatus::Exited,
+            "an ended session never comes out of the race running again"
+        );
+    }
+}
+
+/// A status decided from one launch can land after the session has moved
+/// past it: an event believes the launch it read, and by the time it writes
+/// the status that belief decided, a relaunch may have moved the row on to
+/// the next one. What keeps the new launch's `starting` row clean is the
+/// write itself refusing — the launch it was decided for rides in the
+/// `UPDATE` too, on the same terms as liveness.
+#[tokio::test]
+async fn a_status_is_only_written_for_the_launch_it_was_decided_for() {
+    let w = World::new().await;
+    let store = &w.store;
+
+    let session = w.author_session().await;
+    store
+        .set_session_launch(&session.id, "01launchonexxxxxxxxxxxxxxx")
+        .await
+        .unwrap();
+
+    // The interleaving spelled out: an event's superseded check passed
+    // against the launch it read, and the relaunch that moves the row past
+    // it lands before the event gets to write the status that check decided.
+    store.restart_session(&session.id, None).await.unwrap();
+    store
+        .set_session_status_if_live(
+            &session.id,
+            SessionStatus::Idle,
+            Some("01launchonexxxxxxxxxxxxxxx"),
+        )
+        .await
+        .unwrap();
+    let restarted = store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        restarted.status(),
+        SessionStatus::Starting,
+        "the new launch's starting row is not moved by the one it replaced"
+    );
+
+    // The launch that follows believes the row, since it is now its own.
+    let current = restarted.launch_id.clone();
+    store
+        .set_session_status_if_live(&session.id, SessionStatus::Running, current.as_deref())
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Running
+    );
+
+    // An event that names no launch, or a row never launched, have neither
+    // to compare, and both are believed — matching `ingest_event`'s own
+    // superseded check.
+    let never_launched = w.author_session().await;
+    store
+        .set_session_status_if_live(
+            &never_launched.id,
+            SessionStatus::Running,
+            Some("01somelaunchxxxxxxxxxxxxxx"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_session(&never_launched.id)
+            .await
+            .unwrap()
+            .status(),
+        SessionStatus::Running,
+        "a row never launched has no launch to compare against"
+    );
+    store
+        .set_session_status_if_live(&never_launched.id, SessionStatus::Idle, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_session(&never_launched.id)
+            .await
+            .unwrap()
+            .status(),
+        SessionStatus::Idle,
+        "an event that names no launch is believed regardless"
+    );
+}
+
 /// Every status a goal can be in survives the round trip through SQLite,
 /// whose `CHECK` on the column is a second copy of the enum: a status the
 /// constraint has not been told about is not a wrong answer but a write that

@@ -281,6 +281,109 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
     );
 }
 
+/// `Harness::agent_runs` waits for the launch it just started to settle on
+/// `running`, not for any earlier publish that happens to carry a fresh
+/// clock or a status the row already had. Two publishes come before that
+/// settling one: `set_session_launch`'s own, off the row exactly as it
+/// stood before this launch, and `session_start`'s own first publish
+/// (`touch_session`, moving the clock alone, before that event's own
+/// ingestion writes the status last) — which, for a session idle from an
+/// earlier run of this same helper, still carries that same idle status. A
+/// second run over the same session, idle from the first, only returns once
+/// both are true at once: the clock past what the first run left there, and
+/// the status this launch's own report decided.
+#[tokio::test]
+async fn agent_runs_on_a_reused_idle_session_waits_for_its_own_report() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let session = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.agent_runs(&session).await;
+    h.set_status(&session, SessionStatus::Idle).await;
+    let before = h
+        .store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .last_activity_at;
+
+    h.agent_runs(&session).await;
+
+    let row = h.store.get_session(&session.id).await.unwrap();
+    assert_ne!(
+        row.last_activity_at, before,
+        "the second run's own report moved the clock; a wait satisfied by \
+         the row's already-idle status would not have"
+    );
+    assert_eq!(
+        row.status(),
+        SessionStatus::Running,
+        "the second run's own status write landed too; a wait satisfied by \
+         its own earlier, clock-only publish (`touch_session`, before that \
+         event's ingestion writes the status last) would still read idle here"
+    );
+}
+
+/// The two writes `ingest_event` makes for one report — the clock alone
+/// (`touch_session`), then the status last — are not one write, and
+/// `agent_runs` must not settle on the first of them. Proven by driving
+/// those same two store calls by hand, with a deliberate gap between them
+/// this test controls rather than races, while a real `agent_runs` waits on
+/// the very session they name: the fresh agent itself is held back from
+/// reporting for real, so only this test's own two writes move anything.
+#[tokio::test]
+async fn agent_runs_stays_open_through_the_clock_alone_and_settles_on_the_status_write() {
+    let h = std::sync::Arc::new(harness().await);
+    let cast = h.active_cast().await;
+    let session = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.agent_runs(&session).await;
+    h.set_status(&session, SessionStatus::Idle).await;
+    let launched_before = h.launch_id(&session).await;
+
+    // Slow enough that the fresh agent's own real session_start cannot land
+    // before this test has driven its own two writes by hand.
+    let mut slow = common::acp::script();
+    slow["start_delay"] = serde_json::json!(30.0);
+    h.agent.reprogram(slow);
+
+    let waiting = tokio::spawn({
+        let h = h.clone();
+        let session = session.clone();
+        async move { h.agent_runs(&session).await }
+    });
+
+    eventually(TIMEOUT, "the second launch to be named", async || {
+        h.launch_id(&session).await != launched_before
+    })
+    .await;
+    let launch_id = h.launch_id(&session).await.unwrap();
+
+    // The clock alone, exactly as `touch_session` would report it.
+    h.store.touch_session(&session.id).await.unwrap();
+    assert!(
+        !waiting.is_finished(),
+        "the clock alone is not what the wait settles on"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        !waiting.is_finished(),
+        "still nothing to settle the wait on without the status write"
+    );
+
+    // The status, exactly as that same report's ingestion writes it last.
+    h.store
+        .set_session_status_if_live(&session.id, SessionStatus::Running, Some(&launch_id))
+        .await
+        .unwrap();
+    tokio::time::timeout(TIMEOUT, waiting)
+        .await
+        .expect("the wait settles once the status write lands")
+        .unwrap();
+}
+
 /// The changes-requested bounce, twice over: the task panel's Sessions tab
 /// must still list one author, live again, on the same conversation.
 #[tokio::test]

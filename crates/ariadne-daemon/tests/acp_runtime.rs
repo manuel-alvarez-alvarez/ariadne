@@ -341,7 +341,13 @@ async fn a_dead_acp_agent_is_reaped_and_its_session_retired() {
         !stub.process_is_alive()
     })
     .await;
-    assert!(!h.launcher.acp.is_running(&session.id));
+    // Deregistering the runtime's own map is the driver's last step, after
+    // the row is retired: a read taken right on the row's own heels can
+    // still catch the map on its way to empty.
+    eventually(TIMEOUT, "the runtime to drop the dead agent", || async {
+        !h.launcher.acp.is_running(&session.id)
+    })
+    .await;
     let kinds = event_kinds(&h, &session.id).await;
     for kind in ["session.error", "session_end"] {
         assert!(kinds.iter().any(|k| k == kind), "{kind} missing: {kinds:?}");

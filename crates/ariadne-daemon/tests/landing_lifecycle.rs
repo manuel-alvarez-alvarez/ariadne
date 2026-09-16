@@ -470,3 +470,46 @@ async fn a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to() {
     assert_eq!(landed.status, TaskStatus::Finished);
     assert_eq!(landed.merge_commit.as_deref(), Some(sha.as_str()));
 }
+
+/// An approval that lands while the author's agent is still coming up is not
+/// lost. The agent is launched — the row says so — before it has said its
+/// own session start, and a resume in that window finds no conversation to
+/// go back to; the spawn it falls back to is then refused, since the seat is
+/// still the starting session's. The briefing must still go out once the
+/// agent is heard from, rather than being counted as sent by the attempt
+/// that could not send it.
+#[tokio::test]
+async fn an_approval_during_the_authors_start_still_briefs_it_to_land() {
+    let (h, cast) = seeded(Landing::Merge).await;
+    let task = cast.task.clone();
+    // An agent a few seconds slow to come up, from the next launch on:
+    // discovery has already accepted the stub, and every session the daemon
+    // starts from here reads this script.
+    let mut slow = common::acp::script();
+    slow["start_delay"] = serde_json::json!(3.0);
+    h.agent.reprogram(slow);
+
+    // Launched, on the launcher's own word alone: nothing heard from it yet.
+    h.reconcile_task_until(&task.id, TIMEOUT, "the author to be launched", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.sessions_of(&task.id)
+                .await
+                .iter()
+                .any(|s| s.seat() == Seat::Author && s.launched_at.is_some())
+    })
+    .await;
+    approve(&h, &task, &cast.reviewer.id).await;
+
+    h.reconcile_task_until(
+        &task.id,
+        TIMEOUT,
+        "the author to be briefed to land it",
+        async || {
+            h.status(&task.id).await == TaskStatus::Approved
+                && h.running_session(&task.id, Seat::Author)
+                    .await
+                    .is_some_and(|s| h.told(&s.id).contains("# Land task:"))
+        },
+    )
+    .await;
+}

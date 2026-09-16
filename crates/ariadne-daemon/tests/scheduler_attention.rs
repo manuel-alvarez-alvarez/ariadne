@@ -174,6 +174,12 @@ impl Sched {
             .send(SchedEvent::GoalChanged(goal.id.clone()))
             .unwrap();
     }
+
+    /// Block until every event sent so far has been reconciled to
+    /// completion — see [`ariadne_daemon::scheduler::flush_for_test`].
+    async fn flush(&self) {
+        ariadne_daemon::scheduler::flush_for_test(&self.0).await;
+    }
 }
 
 /// The author's resume template, as its profile has it: the words the daemon
@@ -236,7 +242,7 @@ async fn a_reviewer_idle_past_the_threshold_is_raised_on_its_session() {
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(TIMEOUT, "the reviewer to be nudged", async || {
-        !w.prompts_to(&session).is_empty()
+        w.nudged(&session).await
     })
     .await;
     w.idle_for(&session, FLAG_SECS + 60).await;
@@ -257,7 +263,7 @@ async fn an_author_stall_flags_the_task_and_its_session() {
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(TIMEOUT, "the author to be nudged", async || {
-        !w.prompts_to(&session).is_empty()
+        w.nudged(&session).await
     })
     .await;
     w.idle_for(&session, FLAG_SECS + 60).await;
@@ -285,11 +291,9 @@ async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(TIMEOUT, "the author to be nudged", async || {
-        !w.prompts_to(&session).is_empty()
+        w.nudged(&session).await
     })
     .await;
-    // Whatever else that pass had to say would have been said by now.
-    tokio::time::sleep(Duration::from_millis(500)).await;
     let nudged = w.prompts_to(&session).len();
 
     // A second task's agent, quiet in the same way from now on: its nudge is
@@ -1320,13 +1324,11 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
     w.launched_ago(&session, RELAUNCH_SECS + 60).await;
     let launched = w.launched_at(&session).await;
     sched.task(&w.task);
-    // Waited for through the status rather than the stamp: the row is put
+    // Waited for through the agent rather than the stamp: the row is put
     // back into `starting` and stamped before its agent is up, so a read
     // taken on the stamp alone can catch it on its way up.
     eventually(TIMEOUT, "the wedged agent to be relaunched", async || {
-        w.launched_at(&session).await != launched
-            && w.session_status(&session).await.is_live()
-            && w.session_status(&session).await != SessionStatus::Starting
+        w.relaunched(&session, &launched).await
     })
     .await;
     let back = w.store.get_session(&session.id).await.unwrap();
@@ -1462,12 +1464,17 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
 
     let sched = w.scheduler();
     // Two relaunches out of the budget of three, each one wedging again.
+    // Each is waited out to the agent actually reporting, not merely to the
+    // stamp changing: a next pass's own `launched_ago` would otherwise land
+    // while the previous relaunch's report is still draining, and that
+    // report's own later writes would clobber it back to silence nobody
+    // measures.
     for relaunch in 1..=2 {
         w.launched_ago(&session, RELAUNCH_SECS + 60).await;
         let launched = w.launched_at(&session).await;
         sched.task(&w.task);
         eventually(TIMEOUT, &format!("relaunch {relaunch}"), async || {
-            w.launched_at(&session).await != launched
+            w.relaunched(&session, &launched).await
         })
         .await;
     }
@@ -1588,7 +1595,7 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
     let launched = w.launched_at(&session).await;
     sched.task(&w.task);
     eventually(TIMEOUT, "the wedged agent to be relaunched", async || {
-        w.launched_at(&session).await != launched
+        w.relaunched(&session, &launched).await
     })
     .await;
     eventually(
@@ -1645,11 +1652,10 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_author_is_
         TIMEOUT,
         "the author to be put back on the task",
         async || {
-            // Launched at all, and up now: the row it comes back in is the
-            // one that went down, since the conversation was there to resume.
-            w.launched_at(&session).await.is_some()
-                && w.session_status(&session).await.is_live()
-                && w.session_status(&session).await != SessionStatus::Starting
+            // Launched, heard from, and settled: the row it comes back in is
+            // the one that went down, since the conversation was there to
+            // resume.
+            w.relaunched(&session, &None).await
         },
     )
     .await;
@@ -1713,6 +1719,65 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
         w.prompted(&orchestrator).matches("`list_tasks`").count(),
         said,
         "the orchestrator was woken again for the same situation"
+    );
+}
+
+/// A situation is not told once and forgotten if the telling failed. The
+/// orchestrator's runtime entry can close its prompt channel in the moment
+/// between the liveness check and the hand-off — the same state its own
+/// connection ending leaves behind for a few awaits before it is
+/// deregistered — and `hand_prompt` says so by failing. Marked told at that
+/// failed attempt regardless, the situation would never be said again.
+#[tokio::test]
+async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Failed,
+            Actor::Author,
+            Some("the crate the task names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Live per the registry, but its prompt channel is already closed.
+    w.launcher
+        .acp
+        .close_prompt_channel_for_test(&orchestrator.id);
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    // Waited out rather than slept past: the flush answers only once the
+    // goal reconciliation just sent has been reconciled to completion, which
+    // is the failed hand-off actually having been attempted.
+    sched.flush().await;
+    assert!(
+        w.prompts_to(&orchestrator).is_empty(),
+        "the closed channel could not have delivered anything"
+    );
+
+    // The agent comes back — a fresh, working registration under the same
+    // session — and the situation is still owed.
+    w.agent_runs(&orchestrator).await;
+    w.set_status(&orchestrator, SessionStatus::Idle).await;
+    eventually(
+        TIMEOUT,
+        "the orchestrator to be told now that it can hear it",
+        async || {
+            sched.goal(&w.goal);
+            w.prompted(&orchestrator).contains("failed")
+        },
+    )
+    .await;
+    assert_eq!(
+        w.prompted(&orchestrator).matches("failed").count(),
+        1,
+        "exactly one delivery, once the channel could carry it"
     );
 }
 

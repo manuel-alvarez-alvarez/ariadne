@@ -18,7 +18,7 @@ use std::time::Duration;
 use axum::http::StatusCode;
 
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{Actor, MessageKind, Seat, TaskStatus};
+use ariadne_core::{Actor, MessageKind, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
     AgentSession, Goal, NewMessage, NewTask, NewTaskAgent, Repository, SessionFilter, Task,
     TaskAgent, author_branch,
@@ -428,6 +428,296 @@ async fn exactly_one_branch_lands_and_the_losers_are_gone() {
             ) == "0"
     })
     .await;
+}
+
+/// Asking a reviewer to pick is not delivered and forgotten if the hand-off
+/// to the live reviewer failed. Its runtime entry can close its prompt
+/// channel in the moment between the liveness check and the hand-off — the
+/// same state its own connection ending leaves behind for a few awaits
+/// before it is deregistered — and `hand_prompt` says so by failing. Marked
+/// asked at that failed attempt regardless, the reviewer would never be
+/// asked again.
+#[tokio::test]
+async fn a_pick_ask_survives_a_failed_hand_off_to_a_live_reviewer() {
+    let h = harness().scheduler().await;
+    let c = contest(&h).await;
+    h.notify(&c.task.id);
+    eventually(TIMEOUT, "both authors to be spawned", async || {
+        h.status(&c.task.id).await == TaskStatus::InProgress
+            && live_authors(&h, &c.task.id).await.len() == 2
+    })
+    .await;
+
+    h.store
+        .transition_task(
+            &c.task.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    ask_for_review(&h, &c.task, &c.authors[0], "the first attempt").await;
+    h.notify(&c.task.id);
+    eventually(TIMEOUT, "the reviewer to be spawned", async || {
+        h.running_session(&c.task.id, Seat::Reviewer)
+            .await
+            .is_some()
+    })
+    .await;
+    let reviewer_session = h
+        .running_session(&c.task.id, Seat::Reviewer)
+        .await
+        .expect("a live reviewer session");
+    ask_for_review(&h, &c.task, &c.authors[1], "the second attempt").await;
+    verdict_on(
+        &h,
+        &c.task,
+        &c.reviewer,
+        &c.authors[0],
+        MessageKind::Approve,
+    )
+    .await;
+
+    // Live per the registry, but its prompt channel is already closed —
+    // closed before the second approval, so the pick-ask that follows it is
+    // the hand-off that fails.
+    h.launcher
+        .acp
+        .close_prompt_channel_for_test(&reviewer_session.id);
+    verdict_on(
+        &h,
+        &c.task,
+        &c.reviewer,
+        &c.authors[1],
+        MessageKind::Approve,
+    )
+    .await;
+    h.notify(&c.task.id);
+    // Waited out rather than slept past: the flush answers only once the
+    // notify above's own reconciliation is done, which is the failed
+    // hand-off actually having been attempted.
+    h.flush_scheduler().await;
+    assert!(
+        !h.prompted(&reviewer_session)
+            .contains("Pick the one change that lands"),
+        "the closed channel could not have delivered a pick ask"
+    );
+
+    // The agent comes back — a fresh, working registration under the same
+    // session, still live throughout rather than killed and relaunched, so
+    // this is the same live hand-off retrying rather than the fallback path
+    // taking over — and the pick is still owed.
+    h.agent_runs(&reviewer_session).await;
+    h.notify(&c.task.id);
+    eventually(
+        TIMEOUT,
+        "the reviewer to be asked to pick now that it can hear it",
+        async || {
+            h.prompted(&reviewer_session)
+                .contains("Pick the one change that lands")
+        },
+    )
+    .await;
+    assert_eq!(
+        h.prompted(&reviewer_session)
+            .matches("Pick the one change that lands")
+            .count(),
+        1,
+        "exactly one ask, once the channel could carry it"
+    );
+}
+
+/// A contested review request is not skipped and forgotten if the resume
+/// that would spawn its first reviewer fails. `resume_reviewer_for`'s
+/// worktree setup refuses a branch that does not exist — the same refusal
+/// an author that has not pushed anything would hit. As in the uncontested
+/// case, a plain retry of the resume would not show whether the marker
+/// moved: with no live session the resume runs fresh every pass regardless.
+/// What proves it is the reviewer's own live path, later: a session already
+/// seeded starting, resumed by its own agent rather than by another call
+/// the scheduler drives, comes up live and is briefed only if the failed
+/// attempt left the marker clear.
+#[tokio::test]
+async fn a_contested_review_survives_a_failed_resume_of_its_first_reviewer() {
+    let h = harness().scheduler().await;
+    let c = contest(&h).await;
+    // No branch for either author yet: neither has ever spawned to create
+    // one. `rouse_reviewer_for`'s worktree setup has nothing to check out.
+    h.advance(&c.task, TaskStatus::UnderReview).await;
+    const SUMMARY: &str = "the seeded contested summary";
+    ask_for_review(&h, &c.task, &c.authors[0], SUMMARY).await;
+
+    // A reviewer session already starting, as if an earlier round had once
+    // reported from it: the resume below finds this row resumable — the
+    // same one that later comes up on its own — rather than falling back to
+    // a fresh spawn.
+    let seeded = h
+        .session(&c.goal, Some(&c.task), Seat::Reviewer, &c.reviewer.id)
+        .await;
+    h.store
+        .set_session_internal_id(&seeded.id, "seeded-reviewer-session")
+        .await
+        .unwrap();
+
+    h.notify(&c.task.id);
+    // Waited out rather than slept past: the flush answers only once the
+    // notify above's own reconciliation is done, which is the failed resume
+    // actually having been attempted.
+    h.flush_scheduler().await;
+    assert_eq!(
+        h.session_status(&seeded).await,
+        SessionStatus::Starting,
+        "the worktree refusal lands before restart_session ever touches the row"
+    );
+    let request = h
+        .store
+        .list_messages(ariadne_store::MessageFilter {
+            task_id: Some(c.task.id.clone()),
+            to_agent_id: Some(c.reviewer.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|message| message.kind() == Some(MessageKind::ReviewRequest))
+        .expect("the review request");
+    assert!(
+        !h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered(),
+        "a failed resume does not stamp the request delivered"
+    );
+
+    // The first author's branch exists now — what a pushed change looks
+    // like. The same seeded session comes up on its own, the way an agent
+    // already mid-launch would — not through another resume the scheduler
+    // drives — so whether it is briefed depends only on what the failed
+    // attempt above left on `review_briefed`.
+    sh(
+        &PathBuf::from(&c.repo.path),
+        &format!(
+            "git branch {}",
+            author_branch(&c.task.branch, c.authors[0].ordinal)
+        ),
+    );
+    h.agent_runs(&seeded).await;
+    h.notify(&c.task.id);
+    eventually(
+        TIMEOUT,
+        "the live reviewer to receive the briefing now that it can hear it",
+        async || h.prompted(&seeded).contains(SUMMARY),
+    )
+    .await;
+    assert_eq!(
+        h.prompted(&seeded).matches(SUMMARY).count(),
+        1,
+        "exactly one delivery, once the failed attempt left the marker clear"
+    );
+    assert!(
+        h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered(),
+        "the live briefing stamps its request delivered"
+    );
+}
+
+/// A pick ask is not skipped and forgotten if `run_the_pick`'s fallback
+/// resume, for a reviewer with nothing live yet, fails. Its worktree setup
+/// refuses a branch that does not exist, the same as either review-resume
+/// path above, and the same shape of proof applies: a session already
+/// seeded starting, brought up by its own agent rather than by another
+/// resume the scheduler drives, is asked to pick only if the failed attempt
+/// left `pick_briefed` clear.
+#[tokio::test]
+async fn a_pick_ask_survives_a_failed_resume_of_its_reviewer() {
+    let h = harness().scheduler().await;
+    let c = contest(&h).await;
+    // No branch for either author: neither ever spawns to create one, and
+    // the pick's fallback resume reads the task's own branch — the first
+    // author's own name for it — which is what its worktree setup refuses.
+    h.advance(&c.task, TaskStatus::UnderReview).await;
+    ask_for_review(&h, &c.task, &c.authors[0], "the first attempt").await;
+    ask_for_review(&h, &c.task, &c.authors[1], "the second attempt").await;
+    verdict_on(
+        &h,
+        &c.task,
+        &c.reviewer,
+        &c.authors[0],
+        MessageKind::Approve,
+    )
+    .await;
+    verdict_on(
+        &h,
+        &c.task,
+        &c.reviewer,
+        &c.authors[1],
+        MessageKind::Approve,
+    )
+    .await;
+
+    // A reviewer session already starting, as if an earlier round had once
+    // reported from it: the fallback resume below finds this row resumable
+    // — the same one that later comes up on its own — rather than falling
+    // back to a fresh spawn.
+    let seeded = h
+        .session(&c.goal, Some(&c.task), Seat::Reviewer, &c.reviewer.id)
+        .await;
+    h.store
+        .set_session_internal_id(&seeded.id, "seeded-reviewer-session")
+        .await
+        .unwrap();
+
+    h.notify(&c.task.id);
+    // Waited out rather than slept past: the flush answers only once the
+    // notify above's own reconciliation is done, which is the failed resume
+    // actually having been attempted.
+    h.flush_scheduler().await;
+    assert_eq!(
+        h.session_status(&seeded).await,
+        SessionStatus::Starting,
+        "the worktree refusal lands before restart_session ever touches the row"
+    );
+    assert!(
+        h.prompted(&seeded).is_empty(),
+        "a failed resume could not have asked the reviewer to pick"
+    );
+
+    // The first author's branch exists now — what a pushed change looks
+    // like. The same seeded session comes up on its own, the way an agent
+    // already mid-launch would — not through another resume the scheduler
+    // drives — so whether it is asked to pick depends only on what the
+    // failed attempt above left on `pick_briefed`.
+    sh(
+        &PathBuf::from(&c.repo.path),
+        &format!(
+            "git branch {}",
+            author_branch(&c.task.branch, c.authors[0].ordinal)
+        ),
+    );
+    h.agent_runs(&seeded).await;
+    h.notify(&c.task.id);
+    eventually(
+        TIMEOUT,
+        "the live reviewer to be asked to pick now that it can hear it",
+        async || {
+            h.prompted(&seeded)
+                .contains("Pick the one change that lands")
+        },
+    )
+    .await;
+    assert_eq!(
+        h.prompted(&seeded)
+            .matches("Pick the one change that lands")
+            .count(),
+        1,
+        "exactly one ask, once the failed attempt left the marker clear"
+    );
 }
 
 /// A reviewer whose agent survived the first review is handed the next

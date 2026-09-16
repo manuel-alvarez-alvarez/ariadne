@@ -87,7 +87,64 @@ impl Store {
             .await
     }
 
-    /// Move a session to a new lifecycle status.
+    /// Move a session to `status`, but only while it is still live, only
+    /// while it is not already there, and only while `launch` — the one the
+    /// caller decided `status` from — is still the row's own. All three read
+    /// off the row this write touches, not off whatever the caller read
+    /// earlier.
+    ///
+    /// An event can still be ingesting — its own status decided from the row
+    /// it started on — after the session it names has been killed, or
+    /// relaunched out from under it: a superseded check made at the top of
+    /// that ingestion is itself a moment old by the time this write runs, so
+    /// it rides in the `UPDATE` too, the way [`Store::set_session_attention`]'s
+    /// guards do. `launch: None` believes the row regardless, matching
+    /// `ingest_event`'s own superseded check: an event that names no launch,
+    /// or a row never launched, have neither to compare. A write the guard
+    /// withholds is not an error — the session exists, the status just does
+    /// not move.
+    pub async fn set_session_status_if_live(
+        &self,
+        id: &str,
+        status: SessionStatus,
+        launch: Option<&str>,
+    ) -> Result<()> {
+        let ended_at = match status {
+            SessionStatus::Exited | SessionStatus::Failed => Some(now()),
+            _ => None,
+        };
+        let n = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE agent_sessions SET status = ?, ended_at = COALESCE(?, ended_at)
+              WHERE id = ? AND status <> ?{LIVE_STATUSES}
+                    AND (? IS NULL OR launch_id IS NULL OR launch_id = ?)"
+        )))
+        .bind(status.as_str())
+        .bind(ended_at)
+        .bind(id)
+        .bind(status.as_str())
+        .bind(launch)
+        .bind(launch)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n == 0 {
+            // Withheld, or no such session: only the second is an error.
+            return self.get_session(id).await.map(|_| ());
+        }
+        if !status.is_live() {
+            let prompts = [
+                AttentionReason::WaitingPermission.as_str(),
+                AttentionReason::WaitingInput.as_str(),
+            ];
+            self.clear_attention(id, PROMPTS_ONLY, &prompts).await?;
+        }
+        self.publish_session_update(id).await
+    }
+
+    /// Move a session to a new lifecycle status, unconditionally: the caller
+    /// is deciding the session's fate outright (killing it, restarting it),
+    /// not reacting to a report that could have arrived after the row moved
+    /// on. [`Store::set_session_status_if_live`] is for the latter.
     ///
     /// Retiring one takes any prompt-style attention down with it: a session
     /// that has ended has no agent left to answer, and a flag left
@@ -247,6 +304,15 @@ impl Store {
     /// Whatever the session needed the user for is dropped too: a relaunch is
     /// the recovery, so an agent put back on its feet does not carry the
     /// reason its previous run ended into a run that has not gone wrong.
+    ///
+    /// The row moves past the launch it had, in this same write. The agent of
+    /// that launch can still report — one still up under the row until the
+    /// relaunch takes it down, or one killed a moment ago and going through
+    /// its exit — and from here on its reports name a launch the row has
+    /// already moved past, so none of them moves a row that is starting again
+    /// (`ingest_event`'s superseded check). The launch that follows overwrites
+    /// this one with its own, real id; until it does, the id written here
+    /// belongs to no process and matches none of theirs.
     pub async fn restart_session(
         &self,
         id: &str,
@@ -258,11 +324,12 @@ impl Store {
                 "UPDATE agent_sessions
                 SET status = 'starting', ended_at = NULL, last_activity_at = ?,
                     attention_reason = NULL, attention_since = NULL,
-                    worktree_path = COALESCE(?, worktree_path)
+                    worktree_path = COALESCE(?, worktree_path), launch_id = ?
               WHERE id = ?",
             )
             .bind(now())
             .bind(worktree_path)
+            .bind(new_id())
             .bind(id),
         )
         .await?;

@@ -17,7 +17,7 @@ use ariadne_api::messages::MessageDto;
 use ariadne_core::{Actor, MessageKind, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 
-use common::{Cast, TIMEOUT, as_session, eventually, get, harness, test_pin};
+use common::{Cast, TIMEOUT, as_session, eventually, get, harness, sh, test_pin};
 
 fn messages_uri(cast: &Cast) -> String {
     format!("/v1/tasks/{}/messages", cast.task.id)
@@ -565,6 +565,287 @@ async fn a_live_reviewer_is_briefed_at_once_for_a_second_review() {
             .unwrap()
             .is_delivered(),
         "the second briefing stamps its request delivered"
+    );
+}
+
+/// A review request is not delivered and forgotten if the hand-off to the
+/// live reviewer failed. Its runtime entry can close its prompt channel in
+/// the moment between the liveness check and the hand-off — the same state
+/// its own connection ending leaves behind for a few awaits before it is
+/// deregistered — and `hand_prompt` says so by failing. Marked delivered at
+/// that failed attempt regardless, the request would never reach it.
+#[tokio::test]
+async fn a_review_request_survives_a_failed_hand_off_to_a_live_reviewer() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the author to start", async || {
+        h.status(&cast.task.id).await == TaskStatus::InProgress
+            && h.running_session(&cast.task.id, Seat::Author)
+                .await
+                .is_some()
+    })
+    .await;
+    let author = h
+        .running_session(&cast.task.id, Seat::Author)
+        .await
+        .expect("a live author session");
+
+    h.json::<serde_json::Value>(
+        as_session(
+            &format!("/v1/tasks/{}/transitions", cast.task.id),
+            &author.id,
+            serde_json::json!({"to": "under_review", "reason": "the first review"}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+    eventually(TIMEOUT, "the reviewer to start", async || {
+        h.running_session(&cast.task.id, Seat::Reviewer)
+            .await
+            .is_some()
+    })
+    .await;
+    let reviewer = h
+        .running_session(&cast.task.id, Seat::Reviewer)
+        .await
+        .expect("a live reviewer session");
+    eventually(
+        TIMEOUT,
+        "the reviewer to finish its first turn",
+        async || h.session_status(&reviewer).await == SessionStatus::Idle,
+    )
+    .await;
+
+    h.json::<MessageDto>(
+        as_session(
+            &messages_uri(&cast),
+            &reviewer.id,
+            serde_json::json!({
+                "kind": "request_changes",
+                "to_actor": "author",
+                "to_agent_id": cast.author.id,
+                "body": "take another look at the bounds",
+            }),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+    eventually(
+        TIMEOUT,
+        "the author to resume after the changes",
+        async || h.status(&cast.task.id).await == TaskStatus::InProgress,
+    )
+    .await;
+
+    // Live per the registry, but its prompt channel is already closed —
+    // closed before the second round opens, so this is the hand-off that
+    // fails.
+    h.launcher.acp.close_prompt_channel_for_test(&reviewer.id);
+
+    let summary = "the revised review";
+    h.json::<serde_json::Value>(
+        as_session(
+            &format!("/v1/tasks/{}/transitions", cast.task.id),
+            &author.id,
+            serde_json::json!({"to": "under_review", "reason": summary}),
+        ),
+        StatusCode::OK,
+    )
+    .await;
+    // Waited out rather than slept past: the flush answers only once the
+    // transition above's own reconciliation is done, which is the failed
+    // hand-off actually having been attempted.
+    h.flush_scheduler().await;
+    assert!(
+        !h.prompted(&reviewer).contains(summary),
+        "the closed channel could not have delivered anything"
+    );
+    let request = h
+        .store
+        .list_messages(ariadne_store::MessageFilter {
+            task_id: Some(cast.task.id.clone()),
+            to_agent_id: Some(cast.reviewer.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|message| {
+            message.kind() == Some(MessageKind::ReviewRequest) && message.body == summary
+        })
+        .expect("the second review request");
+    assert!(
+        !h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered(),
+        "a failed hand-off does not stamp the request delivered"
+    );
+
+    // The agent comes back — killed and resumed through the daemon's own
+    // relaunch, a fresh registration under the same session — and the
+    // request is still owed.
+    h.launcher.kill_session(&reviewer.id).await.unwrap();
+    h.notify(&cast.task.id);
+    eventually(
+        TIMEOUT,
+        "the live reviewer to be briefed now that it can hear it",
+        async || h.prompted(&reviewer).contains(summary),
+    )
+    .await;
+    assert_eq!(
+        h.prompted(&reviewer).matches(summary).count(),
+        1,
+        "exactly one delivery, once the closed channel could carry it"
+    );
+    assert!(
+        h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered(),
+        "the retried briefing stamps its request delivered"
+    );
+}
+
+/// A review request is not skipped and forgotten if the resume that would
+/// spawn its first reviewer fails. `resume_reviewer`'s worktree setup
+/// refuses a branch that does not exist — the same refusal a task whose
+/// author never pushed anything would hit. Marking the delivery regardless
+/// would not even show on a plain retry of the same resume: with no live
+/// session, that path ignores the marker and tries the resume fresh every
+/// pass. What it does poison is the session's own live path, later, once it
+/// comes up on its own — so that is where this proves the fix landed: a
+/// session already seeded starting, resumed by its own agent rather than by
+/// another call the scheduler drives, comes up live and is briefed only if
+/// the failed attempt left the marker clear.
+#[tokio::test]
+async fn a_review_request_survives_a_failed_resume_of_its_first_reviewer() {
+    let h = harness().scheduler().await;
+    let repo_path = h.git_repo("repo");
+    let mut cast = h.cast_pinned(&test_pin().model, 1).await;
+    cast.goal = h.activate(&cast.goal).await;
+    // No branch for the task yet: the reviewer's worktree setup has nothing
+    // to check out. No author ever spawns to create one either — that is
+    // the point, an announcement with nothing behind it yet. The summary is
+    // this test's own, so the briefing it travels in is unmistakable later.
+    const SUMMARY: &str = "look over the seeded change";
+    h.store
+        .transition_task(&cast.task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::InProgress,
+            Actor::Daemon,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            Some(SUMMARY),
+            None,
+        )
+        .await
+        .unwrap();
+    h.store
+        .send_message(ariadne_store::NewMessage {
+            goal_id: cast.goal.id.clone(),
+            task_id: Some(cast.task.id.clone()),
+            kind: MessageKind::ReviewRequest,
+            from_actor: Actor::Author,
+            from_agent_id: Some(cast.author.id.clone()),
+            from_session: None,
+            to_actor: Actor::Reviewer,
+            to_agent_id: Some(cast.reviewer.id.clone()),
+            body: SUMMARY.to_string(),
+        })
+        .await
+        .unwrap();
+
+    // A reviewer session already starting, as if an earlier round had once
+    // reported from it: the resume below finds this row resumable — the
+    // same one that later comes up on its own — rather than falling back to
+    // a fresh spawn.
+    let seeded = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
+        .await;
+    h.store
+        .set_session_internal_id(&seeded.id, "seeded-reviewer-session")
+        .await
+        .unwrap();
+
+    h.notify(&cast.task.id);
+    // Waited out rather than slept past: the flush answers only once the
+    // notify above's own reconciliation is done, which is the failed resume
+    // actually having been attempted.
+    h.flush_scheduler().await;
+    assert_eq!(
+        h.session_status(&seeded).await,
+        SessionStatus::Starting,
+        "the worktree refusal lands before restart_session ever touches the row"
+    );
+    let request = h
+        .store
+        .list_messages(ariadne_store::MessageFilter {
+            task_id: Some(cast.task.id.clone()),
+            to_agent_id: Some(cast.reviewer.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|message| message.kind() == Some(MessageKind::ReviewRequest))
+        .expect("the review request");
+    assert!(
+        !h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered(),
+        "a failed resume does not stamp the request delivered"
+    );
+
+    // The branch exists now — what a pushed change looks like. The same
+    // seeded session comes up on its own, the way an agent already
+    // mid-launch would — not through another resume the scheduler drives —
+    // so whether it is briefed depends only on what the failed attempt
+    // above left on `review_briefed`.
+    sh(&repo_path, &format!("git branch {}", cast.task.branch));
+    h.agent_runs(&seeded).await;
+    h.notify(&cast.task.id);
+    eventually(
+        TIMEOUT,
+        "the live reviewer to receive the briefing now that it can hear it",
+        async || h.prompted(&seeded).contains(SUMMARY),
+    )
+    .await;
+    assert_eq!(
+        h.prompted(&seeded).matches(SUMMARY).count(),
+        1,
+        "exactly one delivery, once the failed attempt left the marker clear"
+    );
+    assert!(
+        h.store
+            .get_message(&request.id)
+            .await
+            .unwrap()
+            .is_delivered(),
+        "the live briefing stamps its request delivered"
     );
 }
 

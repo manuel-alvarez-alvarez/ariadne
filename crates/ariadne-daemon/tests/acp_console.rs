@@ -522,10 +522,22 @@ async fn a_burst_of_reports_before_the_review_calls_loses_none_and_the_cancel_fo
     .await;
     assert_eq!(stub.calls_of("session/cancel").len(), 1);
 
+    // Read up to the turn's own end. The status read above settles once the
+    // turn's stop is recorded, and the report of that same stop reaches this
+    // channel independently of it — a non-blocking drain taken right after
+    // can be one report short of it.
     let mut reports = Vec::new();
-    while let Ok(report) = late_reader.try_recv() {
-        reports.push(report);
-    }
+    tokio::time::timeout(TIMEOUT, async {
+        while let Some(report) = late_reader.recv().await {
+            let ended = report == TurnReport::TurnEnded;
+            reports.push(report);
+            if ended {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the turn's reports to reach TurnEnded within the timeout");
     let expected: Vec<TurnReport> = (0..BURST)
         .map(|i| TurnReport::ToolEnded(format!("Read file-{i}")))
         .chain([
@@ -1094,7 +1106,11 @@ impl Streaming {
     }
 
     /// Start the streaming turn from the console and wait until the stub has
-    /// sent everything and holds the turn open.
+    /// sent everything and the daemon has read all of it: the stub's marker
+    /// says what it sent, and the last chunk it sent showing in the console
+    /// snapshot says what the daemon has. The two are independent — a test
+    /// that stopped at the marker alone could read a snapshot the daemon was
+    /// still catching up to.
     async fn begin_turn(&self) {
         let (status, _) = self
             .h
@@ -1104,6 +1120,7 @@ impl Streaming {
         let reached = self._agent_dir.path().join("streaming-turn.reached");
         eventually(TIMEOUT, "the streaming turn to be held open", || async {
             reached.exists()
+                && text_of(&self.snapshot().await, "agent_message_chunk") == ["Half done."]
         })
         .await;
     }

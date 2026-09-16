@@ -129,10 +129,15 @@ Out: the transition table itself (001), the landing that follows approval
     wins; a tie goes to the author listed first. The task then moves to
     `approved` with the winner recorded on it, the losing authors' sessions,
     worktrees and branches are removed, and the winner lands the task as a
-    lone author would (005). The winner is written before anything else of
-    the settlement, and the rest is idempotent: a daemon that dies between
-    the two leaves a task `under_review` with a winner on it, which the next
-    pass — a restart's first included — routes straight back through the
+    lone author would (005). Asking a reviewer to pick is counted as sent
+    only once it has gone out — the reviewer's runtime entry can be gone in
+    the moment between finding it live and the hand-off, and its resume can
+    fail while its agent is still coming up (005) — so a failed attempt is
+    retried on the next pass rather than counted as asked. The winner is
+    written before anything else of the settlement, and the rest is
+    idempotent: a daemon that dies between the two leaves a task
+    `under_review` with a winner on it, which the next pass — a restart's
+    first included — routes straight back through the
     settlement.
 
 ## Acceptance criteria
@@ -197,7 +202,15 @@ Out: the transition table itself (001), the landing that follows approval
   a second pick from the same reviewer is refused by name
   (`::a_second_pick_from_the_same_reviewer_is_refused_by_name`), and exactly
   one branch lands with the losers gone after the landing
-  (`::exactly_one_branch_lands_and_the_losers_are_gone`).
+  (`::exactly_one_branch_lands_and_the_losers_are_gone`). Asking a live
+  reviewer to pick that a failed hand-off could not deliver is retried once
+  the hand-off can succeed
+  (`::a_pick_ask_survives_a_failed_hand_off_to_a_live_reviewer`), and the
+  same for a reviewer with nothing live yet, whose fallback resume fails
+  (`::a_pick_ask_survives_a_failed_resume_of_its_reviewer`). A contested
+  review's first reviewer, resumed rather than asked live, is retried the
+  same way when the resume that would spawn it fails
+  (`::a_contested_review_survives_a_failed_resume_of_its_first_reviewer`).
 - A live reviewer is briefed for the next author's review without the quiet
   clock, its worktree moved to that author's branch first
   (`multi_author_tasks.rs::a_live_reviewer_is_briefed_for_the_next_author_without_the_quiet_clock`),
