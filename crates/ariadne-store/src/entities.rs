@@ -371,6 +371,36 @@ pub struct AgentSession {
     pub ended_at: Option<String>,
 }
 
+impl AgentSession {
+    /// Whether this session has said anything since the launch it is in.
+    ///
+    /// `last_activity_at` is stamped by what the agent reports and by the
+    /// restart that puts a row back on its feet, so it is only news where it
+    /// is later than the launch itself: an agent is heard from when it
+    /// reports, and a revival is not the agent.
+    pub fn heard_from(&self) -> bool {
+        let stamped = |at: Option<&str>| {
+            at.and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .map(|at| at.with_timezone(&chrono::Utc))
+        };
+        let Some(launched) = stamped(self.launched_at.as_deref()) else {
+            return false;
+        };
+        stamped(self.last_activity_at.as_deref()).is_some_and(|heard| heard > launched)
+    }
+
+    /// Whether this session came up and died without ever being heard from.
+    ///
+    /// The launch worked and the agent did not: an agent that refuses the
+    /// protocol, a model it will not take, a folder it will not open, a
+    /// conversation it will not reopen. What tells it from a session that
+    /// ended having done its work is that nothing was ever reported under
+    /// this launch, and from one still starting that it is over.
+    pub fn died_on_arrival(&self) -> bool {
+        self.launched_at.is_some() && !self.status().is_live() && !self.heard_from()
+    }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Message {
     pub id: String,

@@ -477,7 +477,8 @@ async fn a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to() {
 /// go back to; the spawn it falls back to is then refused, since the seat is
 /// still the starting session's. The briefing must still go out once the
 /// agent is heard from, rather than being counted as sent by the attempt
-/// that could not send it.
+/// that could not send it — and it has gone out only once the agent has it:
+/// the relaunch that carries it can still fail.
 #[tokio::test]
 async fn an_approval_during_the_authors_start_still_briefs_it_to_land() {
     let (h, cast) = seeded(Landing::Merge).await;
@@ -485,8 +486,11 @@ async fn an_approval_during_the_authors_start_still_briefs_it_to_land() {
     // An agent a few seconds slow to come up, from the next launch on:
     // discovery has already accepted the stub, and every session the daemon
     // starts from here reads this script.
+    // Still the agent that keeps its conversations, as the harness's own
+    // script is: the briefing goes out on a resume of the one it starts.
     let mut slow = common::acp::script();
     slow["start_delay"] = serde_json::json!(3.0);
+    slow["stored_sessions"] = serde_json::json!(["stub-session"]);
     h.agent.reprogram(slow);
 
     // Launched, on the launcher's own word alone: nothing heard from it yet.
@@ -508,8 +512,62 @@ async fn an_approval_during_the_authors_start_still_briefs_it_to_land() {
             h.status(&task.id).await == TaskStatus::Approved
                 && h.running_session(&task.id, Seat::Author)
                     .await
-                    .is_some_and(|s| h.told(&s.id).contains("# Land task:"))
+                    .is_some_and(|s| h.prompted(&s).contains("# Land task:"))
         },
     )
     .await;
+}
+
+/// An approved task whose author cannot go back to its conversation — the
+/// agent never saved it, or has it no longer — is not failed for it. The
+/// resume that would brief it to land is refused and dies on arrival, and
+/// resuming the same conversation again would only be refused again until
+/// the retry budget ran out. A fresh author takes over instead, briefed on
+/// the task and then to land it.
+#[tokio::test]
+async fn an_author_that_cannot_reopen_its_conversation_is_started_afresh_to_land() {
+    let (h, cast) = seeded(Landing::Merge).await;
+    let task = cast.task.clone();
+    h.reconcile_task_until(&task.id, TIMEOUT, "the author to be spawned", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.running_session(&task.id, Seat::Author)
+                .await
+                .is_some_and(|s| s.internal_session_id.is_some())
+    })
+    .await;
+    let first = h
+        .running_session(&task.id, Seat::Author)
+        .await
+        .expect("a live author session");
+    // From the next launch on, the agent keeps no conversation to reopen.
+    h.agent.reprogram(common::acp::script());
+
+    approve(&h, &task, &cast.reviewer.id).await;
+
+    h.reconcile_task_until(
+        &task.id,
+        TIMEOUT,
+        "a fresh author to be briefed to land it",
+        async || {
+            h.status(&task.id).await == TaskStatus::Approved
+                && h.running_session(&task.id, Seat::Author)
+                    .await
+                    .is_some_and(|s| s.id != first.id && h.prompted(&s).contains("# Land task:"))
+        },
+    )
+    .await;
+    let fresh = h
+        .running_session(&task.id, Seat::Author)
+        .await
+        .expect("a live author session");
+    let prompted = h.prompted(&fresh);
+    assert!(
+        prompted.contains(&task.title),
+        "the fresh author is briefed on its task too: {prompted}"
+    );
+    assert_eq!(
+        h.agent.calls_of("session/resume").len(),
+        1,
+        "the refused conversation is not resumed again"
+    );
 }

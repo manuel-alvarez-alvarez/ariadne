@@ -10,7 +10,7 @@ use ariadne_store::{AgentSession, Goal, SessionFilter, Task, TaskFilter};
 
 use crate::agents::prompts;
 
-use super::{SPAWN_RETRY_BUDGET, died_on_arrival};
+use super::SPAWN_RETRY_BUDGET;
 
 impl super::Scheduler {
     pub(super) async fn reconcile_goal(&mut self, goal_id: &str) -> anyhow::Result<()> {
@@ -254,7 +254,7 @@ impl super::Scheduler {
         // orchestrator takes over from it.
         let resumable = last
             .as_ref()
-            .is_some_and(|last| last.internal_session_id.is_some() && !died_on_arrival(last));
+            .is_some_and(|last| last.internal_session_id.is_some() && !last.died_on_arrival());
         let started = match resumable {
             true => {
                 info!(goal = %goal.id, "resuming orchestrator");

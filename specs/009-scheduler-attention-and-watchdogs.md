@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-15
+updated: 2026-09-17
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-daemon/tests/it/agent_messages.rs
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
   - crates/ariadne-daemon/src/scheduler/mod.rs
 ---
 
@@ -95,8 +96,12 @@ the ACP runtime that takes a prompt (021).
     launch that is not coming, and it is swept.
 22. An agent that vanished while its work is still active is flagged
     `disconnected`. One nobody is waiting on is retired and not raised.
-23. The author of an active task with no live session is resumed. When even
-    that cannot start, its session is flagged `disconnected`.
+23. The author of an active task with no live session is resumed. Where its
+    last launch died on arrival (rule 27), a fresh author is spawned instead,
+    briefed on the task and then told what the resume would have said: an
+    agent that would not reopen a conversation will not reopen it the next
+    time either. When even that cannot start, its session is flagged
+    `disconnected`.
 24. Attention is cleared by the thing that answers it: resuming the session,
     input on its console (008), or the work moving on. A superseded session
     drops its attention when its replacement starts.
@@ -198,6 +203,9 @@ the ACP runtime that takes a prompt (021).
   (`::a_vanished_agent_nobody_is_waiting_on_is_not_raised`), and an author
   that cannot be resumed is flagged disconnected
   (`::an_author_that_cannot_be_resumed_is_flagged_disconnected`).
+- An approved task whose author cannot reopen its conversation is not failed:
+  a fresh author is briefed on the task and then to land it
+  (`landing_lifecycle.rs::an_author_that_cannot_reopen_its_conversation_is_started_afresh_to_land`).
 - Resuming clears attention (`::resuming_a_session_clears_its_attention`), a
   superseded session drops it
   (`::a_superseded_session_drops_its_attention_when_the_replacement_starts`),

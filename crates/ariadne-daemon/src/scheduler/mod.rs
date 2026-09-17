@@ -392,33 +392,6 @@ impl Scheduler {
     }
 }
 
-/// Whether this session has said anything since the launch it is in.
-///
-/// `last_activity_at` is stamped by what the agent reports and by the restart
-/// that puts a row back on its feet, so it is only news where it is later than
-/// the launch itself: an agent is heard from when it reports, and a revival is
-/// not the agent.
-pub(super) fn heard_from(session: &AgentSession) -> bool {
-    let stamped = |at: Option<&str>| {
-        at.and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-            .map(|at| at.with_timezone(&chrono::Utc))
-    };
-    let Some(launched) = stamped(session.launched_at.as_deref()) else {
-        return false;
-    };
-    stamped(session.last_activity_at.as_deref()).is_some_and(|heard| heard > launched)
-}
-
-/// Whether this session came up and died without ever being heard from.
-///
-/// The launch worked and the agent did not: an agent that refuses the
-/// protocol, a model it will not take, a folder it will not open. What tells
-/// it from a session that ended having done its work is that nothing was ever
-/// reported under this launch, and from one still starting that it is over.
-pub(super) fn died_on_arrival(session: &AgentSession) -> bool {
-    session.launched_at.is_some() && !session.status().is_live() && !heard_from(session)
-}
-
 impl Scheduler {
     /// Count this seat's last launch if it died on arrival, and say whether
     /// the budget for starting another has run out.
@@ -448,7 +421,7 @@ impl Scheduler {
         // again, and no relaunch of a session would ever spend it once. The
         // same holds for giving it back: a launch heard from refunds once.
         let launch = last.launch_id.clone().unwrap_or_else(|| last.id.clone());
-        if heard_from(last) {
+        if last.heard_from() {
             self.dead_launch.remove(seat);
             if self.refunded_launch.get(seat) != Some(&launch) {
                 self.refunded_launch.insert(seat.to_string(), launch);
@@ -456,7 +429,7 @@ impl Scheduler {
             }
             return false;
         }
-        if !died_on_arrival(last) {
+        if !last.died_on_arrival() {
             return false;
         }
         if self.dead_launch.get(seat) == Some(&launch) {

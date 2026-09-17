@@ -469,6 +469,32 @@ impl Launcher {
 
     /// Spawn one author of a task, by the staffed agent it runs.
     pub async fn spawn_author_agent(&self, task_id: &str, agent_id: &str) -> Result<AgentSession> {
+        self.spawn_author_agent_told(task_id, agent_id, "").await
+    }
+
+    /// Spawn the author of a task afresh — the picked winner where the pick
+    /// has settled, the first author otherwise — briefed on its task and then
+    /// told `then`, as [`Self::spawn_author_agent_told`].
+    pub async fn spawn_author_told(&self, task_id: &str, then: &str) -> Result<AgentSession> {
+        let task = self.store.get_task(task_id).await?;
+        let author = match &task.picked_agent_id {
+            Some(picked) => self.store.get_task_agent(picked).await?,
+            None => self.store.task_author(task_id).await?,
+        };
+        self.spawn_author_agent_told(task_id, &author.id, then)
+            .await
+    }
+
+    /// Spawn one author, briefed on its task and then told `then`: what a
+    /// resume would have told the conversation it has no longer. An author
+    /// that has to start afresh on an approved task is still the one that
+    /// lands it, and one sent back with review feedback still has to read it.
+    pub async fn spawn_author_agent_told(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        then: &str,
+    ) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
         let goal = self.store.get_goal(&task.goal_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
@@ -503,7 +529,11 @@ impl Launcher {
         }
         let template = prompts::template_for(PromptKind::AuthorBriefing);
         let seen = seat.task_as_seen(&task, Some(worktree.display().to_string()));
-        let briefing = prompts::author_briefing(template, &seen, &goal, &repo, &deps);
+        let mut briefing = prompts::author_briefing(template, &seen, &goal, &repo, &deps);
+        if !then.is_empty() {
+            briefing.push_str("\n\n");
+            briefing.push_str(then);
+        }
         self.spawn(&session, worktree, briefing).await?;
         self.store
             .get_session(&session.id)
@@ -889,7 +919,9 @@ impl Launcher {
             .resumable_session(&task.id, Seat::Author, of_agent)
             .await?
         else {
-            return self.spawn_author_agent(task_id, agent_id).await;
+            return self
+                .spawn_author_agent_told(task_id, agent_id, instruction)
+                .await;
         };
         // The tree it was working in, from the task or from the session's own
         // row, and a new one in its place where it is no longer on disk. The

@@ -1,7 +1,7 @@
 ---
 id: how-a-task-ends
 status: current
-updated: 2026-09-15
+updated: 2026-09-17
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
@@ -90,7 +90,8 @@ state machine around `approved` and `finished` (001).
 ## Acceptance criteria
 
 - An approval that lands while the author's agent is still coming up still
-  briefs it to land, once a later pass can reach it
+  briefs it to land, once a later pass can reach it, and the agent receives
+  the briefing
   (`landing_lifecycle.rs::an_approval_during_the_authors_start_still_briefs_it_to_land`).
 - An approved task is landed by its own author
   (`landing_lifecycle.rs::an_approved_task_is_landed_by_its_own_author`), with

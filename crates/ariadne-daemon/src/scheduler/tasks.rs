@@ -674,13 +674,14 @@ impl super::Scheduler {
         let resume = prompts::author_resume_briefing(template, &seen);
 
         let Some(session) = self.live_author_session(&task.id, &author.id).await? else {
-            if let Some(last) = self
+            let last = self
                 .last_session(&task.id, |s| {
                     s.seat() == Seat::Author
                         && s.task_agent_id.as_deref() == Some(author.id.as_str())
                 })
-                .await
-                && self.spent_on_a_dead_launch(&author.id, &task.id, &last)
+                .await;
+            if let Some(last) = &last
+                && self.spent_on_a_dead_launch(&author.id, &task.id, last)
             {
                 warn!(task = %task.id, session = %last.id, "the author came up and was never heard from");
                 if self
@@ -691,9 +692,20 @@ impl super::Scheduler {
                 }
             }
             info!(task = %task.id, author = %author.id, "the task is waiting on an author and has none live, starting one");
-            self.launcher
-                .resume_author_agent(&task.id, &author.id, &resume)
-                .await?;
+            // A fresh conversation where the last launch died on arrival, as
+            // for a lone author (`check_stall`).
+            match last.as_ref().is_some_and(|last| last.died_on_arrival()) {
+                true => {
+                    self.launcher
+                        .spawn_author_agent_told(&task.id, &author.id, &resume)
+                        .await?
+                }
+                false => {
+                    self.launcher
+                        .resume_author_agent(&task.id, &author.id, &resume)
+                        .await?
+                }
+            };
             return Ok(());
         };
         self.spent_on_a_dead_launch(&author.id, &task.id, &session);
@@ -1050,10 +1062,11 @@ impl super::Scheduler {
             // answered, a folder it will not open — is a task that starts an
             // agent every tick for as long as its goal is active, and says so
             // to nobody.
-            if let Some(last) = self
+            let last = self
                 .last_session(&task.id, |s| s.seat() == Seat::Author)
-                .await
-                && self.spent_on_a_dead_launch(&task.id, &task.id, &last)
+                .await;
+            if let Some(last) = &last
+                && self.spent_on_a_dead_launch(&task.id, &task.id, last)
             {
                 warn!(task = %task.id, session = %last.id, "the author came up and was never heard from");
                 if self
@@ -1064,7 +1077,16 @@ impl super::Scheduler {
                 }
             }
             info!(task = %task.id, "the task is waiting on an author and has none live, starting one");
-            if let Err(e) = self.start_author(task).await {
+            let started = match last.as_ref().is_some_and(|last| last.died_on_arrival()) {
+                // Not on the conversation the launch that died on arrival was
+                // given: an agent that would not reopen it — one it never
+                // saved, or no longer has — will not reopen it the next time
+                // either, and every try spends the budget. A fresh author
+                // takes over, told what the resume would have told it.
+                true => self.start_author_afresh(task).await,
+                false => self.start_author(task).await,
+            };
+            if let Err(e) = started {
                 // The task still wants this agent and could not get one: the
                 // ended session is the thing the user has to look at.
                 self.flag_last_disconnected(task).await;
@@ -1094,6 +1116,18 @@ impl super::Scheduler {
     pub(super) async fn start_author(&mut self, task: &Task) -> anyhow::Result<()> {
         let instruction = self.resume_text(task).await?;
         let session = self.launcher.resume_author(&task.id, &instruction).await?;
+        self.keep_waiting_user(&session, None).await
+    }
+
+    /// [`Self::start_author`], on a fresh conversation rather than the one
+    /// the author last had: briefed on its task, then told what the resume
+    /// would have said.
+    async fn start_author_afresh(&mut self, task: &Task) -> anyhow::Result<()> {
+        let instruction = self.resume_text(task).await?;
+        let session = self
+            .launcher
+            .spawn_author_told(&task.id, &instruction)
+            .await?;
         self.keep_waiting_user(&session, None).await
     }
 
