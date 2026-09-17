@@ -508,7 +508,17 @@ async fn a_pick_ask_survives_a_failed_hand_off_to_a_live_reviewer() {
     // The agent comes back — a fresh, working registration under the same
     // session, still live throughout rather than killed and relaunched, so
     // this is the same live hand-off retrying rather than the fallback path
-    // taking over — and the pick is still owed.
+    // taking over — and the pick is still owed. `agent_runs` starts it from a
+    // session no longer `Running`, so the reviewer's briefing turn ends first.
+    eventually(TIMEOUT, "the reviewer's briefing turn to end", async || {
+        h.store
+            .get_session(&reviewer_session.id)
+            .await
+            .unwrap()
+            .status()
+            != SessionStatus::Running
+    })
+    .await;
     h.agent_runs(&reviewer_session).await;
     h.notify(&c.task.id);
     eventually(
