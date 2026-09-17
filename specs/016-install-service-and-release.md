@@ -6,7 +6,7 @@ areas: [install, scripts, store]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, 03f9c8b7]
 tests:
   - crates/ariadne-store/tests/store.rs
-  - crates/ariadne-daemon/tests/agents.rs
+  - crates/ariadne-daemon/tests/it/agents.rs
   - scripts/install.sh
   - .github/workflows/release-please.yml
 ---

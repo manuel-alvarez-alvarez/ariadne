@@ -6,10 +6,10 @@ areas: [core, api, daemon, cli]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
   - crates/ariadne-core/src/models.rs
-  - crates/ariadne-daemon/tests/models.rs
-  - crates/ariadne-daemon/tests/acp_discovery.rs
-  - crates/ariadne-daemon/tests/pins.rs
-  - crates/ariadne-daemon/tests/resume.rs
+  - crates/ariadne-daemon/tests/it/models.rs
+  - crates/ariadne-daemon/tests/it/acp_discovery.rs
+  - crates/ariadne-daemon/tests/it/pins.rs
+  - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - ui/src/features/agents/agents-page.test.tsx

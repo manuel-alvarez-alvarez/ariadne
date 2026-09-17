@@ -5,9 +5,9 @@ updated: 2026-09-17
 areas: [daemon]
 commits: []
 tests:
-  - crates/ariadne-daemon/tests/acp_runtime.rs
-  - crates/ariadne-daemon/tests/acp_console.rs
-  - crates/ariadne-daemon/tests/acp_discovery.rs
+  - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/acp_console.rs
+  - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/acp.rs
 ---
 
@@ -240,4 +240,4 @@ agent (011), so no test launches one.
 `crates/ariadne-daemon/src/acp_rpc.rs` (the JSON-RPC transport),
 `crates/ariadne-daemon/src/launcher.rs` (the launch, liveness and kill),
 `crates/ariadne-daemon/src/scheduler/mod.rs` (the prompt delivery),
-`crates/ariadne-daemon/tests/common/acp.rs` (the scriptable stub agent).
+`crates/ariadne-daemon/tests/it/common/acp.rs` (the scriptable stub agent).

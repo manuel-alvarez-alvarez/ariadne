@@ -7,10 +7,10 @@ commits: [03f9c8b7, 29e6d84e]
 tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
-  - crates/ariadne-daemon/tests/skill_documents.rs
-  - crates/ariadne-daemon/tests/adapters.rs
-  - crates/ariadne-daemon/tests/prompts.rs
-  - crates/ariadne-daemon/tests/unreviewed_tasks.rs
+  - crates/ariadne-daemon/tests/it/skill_documents.rs
+  - crates/ariadne-daemon/tests/it/adapters.rs
+  - crates/ariadne-daemon/tests/it/prompts.rs
+  - crates/ariadne-daemon/tests/it/unreviewed_tasks.rs
 ---
 
 # Skills and staffed agents

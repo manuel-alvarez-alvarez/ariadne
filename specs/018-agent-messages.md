@@ -5,10 +5,10 @@ updated: 2026-09-15
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
-  - crates/ariadne-daemon/tests/agent_messages.rs
+  - crates/ariadne-daemon/tests/it/agent_messages.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
-  - crates/ariadne-daemon/tests/multi_author_tasks.rs
+  - crates/ariadne-daemon/tests/it/multi_author_tasks.rs
 ---
 
 # Agent messages

@@ -5,18 +5,18 @@ updated: 2026-09-15
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
-  - crates/ariadne-daemon/tests/events.rs
-  - crates/ariadne-daemon/tests/unknown_fields.rs
-  - crates/ariadne-daemon/tests/logs.rs
-  - crates/ariadne-daemon/tests/doctor.rs
-  - crates/ariadne-daemon/tests/agents.rs
-  - crates/ariadne-daemon/tests/models.rs
-  - crates/ariadne-daemon/tests/acp_discovery.rs
+  - crates/ariadne-daemon/tests/it/events.rs
+  - crates/ariadne-daemon/tests/it/unknown_fields.rs
+  - crates/ariadne-daemon/tests/it/logs.rs
+  - crates/ariadne-daemon/tests/it/doctor.rs
+  - crates/ariadne-daemon/tests/it/agents.rs
+  - crates/ariadne-daemon/tests/it/models.rs
+  - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-store/tests/store.rs
-  - crates/ariadne-daemon/tests/memories.rs
-  - crates/ariadne-daemon/tests/acp_console.rs
-  - crates/ariadne-daemon/tests/acp_terminal.rs
+  - crates/ariadne-daemon/tests/it/memories.rs
+  - crates/ariadne-daemon/tests/it/acp_console.rs
+  - crates/ariadne-daemon/tests/it/acp_terminal.rs
 ---
 
 # HTTP API, event stream and usage

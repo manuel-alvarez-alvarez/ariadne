@@ -12,7 +12,7 @@ tests:
   - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/src/error.rs
   - crates/ariadne-cli/src/complete.rs
-  - crates/ariadne-daemon/tests/doctor.rs
+  - crates/ariadne-daemon/tests/it/doctor.rs
   - crates/ariadne-cli/src/commands/doctor.rs
   - crates/ariadne-cli/src/commands/doctor/checks.rs
   - crates/ariadne-cli/src/commands/doctor/agents.rs

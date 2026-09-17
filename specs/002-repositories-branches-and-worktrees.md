@@ -5,10 +5,10 @@ updated: 2026-09-13
 areas: [store, daemon]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
-  - crates/ariadne-daemon/tests/repositories.rs
-  - crates/ariadne-daemon/tests/goal_repositories.rs
-  - crates/ariadne-daemon/tests/managers.rs
-  - crates/ariadne-daemon/tests/task_branches.rs
+  - crates/ariadne-daemon/tests/it/repositories.rs
+  - crates/ariadne-daemon/tests/it/goal_repositories.rs
+  - crates/ariadne-daemon/tests/it/managers.rs
+  - crates/ariadne-daemon/tests/it/task_branches.rs
   - crates/ariadne-store/tests/store.rs
 ---
 

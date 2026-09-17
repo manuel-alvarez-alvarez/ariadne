@@ -28,10 +28,16 @@ On a task branch, run the checks of the crates you changed, and only those:
 
 ```sh
 cargo nextest run -p <crate>              # the crate
-cargo nextest run -p <crate> --test <file> # one test binary of it
+cargo nextest run -p <crate> -E 'test(/^<module>::/)' # one test file of it
 cargo clippy -p <crate> --all-targets
 cargo fmt
 ```
+
+The daemon's integration tests are one test binary, `it`: every file under
+`crates/ariadne-daemon/tests/it/` is a module that `tests/it/main.rs`
+declares, and a new file runs only once it is declared there. Keep it one
+binary. A binary per file compiles `common` again and links the whole daemon
+again, and a change to the daemon then rebuilds all of them.
 
 Before a commit on `main`, run the whole workspace:
 
@@ -42,7 +48,7 @@ cargo fmt --all -- --check
 ```
 
 Nothing is `#[ignore]`d: the suite drives real `git` worktrees, which Ariadne
-requires anyway, and a stub ACP agent that `tests/common/acp.rs` writes in
+requires anyway, and a stub ACP agent that `tests/it/common/acp.rs` writes in
 `python3` and registers as the agent `stub`. Every seat a test starts runs on
 that stub, so the suite needs no coding-agent CLI installed. A machine missing
 `git` or `python3` gets failures rather than a quiet pass.

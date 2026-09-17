@@ -5,10 +5,10 @@ updated: 2026-09-15
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
-  - crates/ariadne-daemon/tests/scheduler_attention.rs
-  - crates/ariadne-daemon/tests/agent_messages.rs
-  - crates/ariadne-daemon/tests/events.rs
-  - crates/ariadne-daemon/tests/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/scheduler_attention.rs
+  - crates/ariadne-daemon/tests/it/agent_messages.rs
+  - crates/ariadne-daemon/tests/it/events.rs
+  - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/src/scheduler/mod.rs
 ---
 

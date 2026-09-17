@@ -7,7 +7,7 @@ commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 
 tests:
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
-  - crates/ariadne-daemon/tests/adapters.rs
+  - crates/ariadne-daemon/tests/it/adapters.rs
 ---
 
 # MCP tool surface

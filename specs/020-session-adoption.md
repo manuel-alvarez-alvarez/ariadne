@@ -5,8 +5,8 @@ updated: 2026-09-12
 areas: [api, daemon, cli]
 commits: []
 tests:
-  - crates/ariadne-daemon/tests/acp_session_adoption.rs
-  - crates/ariadne-daemon/tests/outside_sessions.rs
+  - crates/ariadne-daemon/tests/it/acp_session_adoption.rs
+  - crates/ariadne-daemon/tests/it/outside_sessions.rs
   - crates/ariadne-cli/src/commands/session.rs
   - crates/ariadne-cli/src/cli/tests.rs
 ---

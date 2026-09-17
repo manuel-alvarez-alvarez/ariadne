@@ -5,7 +5,7 @@ updated: 2026-09-10
 areas: [store, api, daemon, mcp, cli, ui]
 commits: []
 tests:
-  - crates/ariadne-daemon/tests/memories.rs
+  - crates/ariadne-daemon/tests/it/memories.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/cli/tests.rs

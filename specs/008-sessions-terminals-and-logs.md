@@ -5,11 +5,11 @@ updated: 2026-09-12
 areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
-  - crates/ariadne-daemon/tests/resume.rs
-  - crates/ariadne-daemon/tests/acp_console.rs
-  - crates/ariadne-daemon/tests/acp_terminal.rs
-  - crates/ariadne-daemon/tests/acp_runtime.rs
-  - crates/ariadne-daemon/tests/events.rs
+  - crates/ariadne-daemon/tests/it/resume.rs
+  - crates/ariadne-daemon/tests/it/acp_console.rs
+  - crates/ariadne-daemon/tests/it/acp_terminal.rs
+  - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/console.rs
   - crates/ariadne-cli/src/commands/console/tui.rs

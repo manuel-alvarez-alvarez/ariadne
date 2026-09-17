@@ -7,8 +7,8 @@ commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, 
 tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
-  - crates/ariadne-daemon/tests/prompts.rs
-  - crates/ariadne-daemon/tests/skill_documents.rs
+  - crates/ariadne-daemon/tests/it/prompts.rs
+  - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-core/src/lib.rs
 ---
 

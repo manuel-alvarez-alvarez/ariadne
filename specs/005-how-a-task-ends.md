@@ -5,8 +5,8 @@ updated: 2026-09-15
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
-  - crates/ariadne-daemon/tests/landing_lifecycle.rs
-  - crates/ariadne-daemon/tests/repositories.rs
+  - crates/ariadne-daemon/tests/it/landing_lifecycle.rs
+  - crates/ariadne-daemon/tests/it/repositories.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/defaults.rs
 ---

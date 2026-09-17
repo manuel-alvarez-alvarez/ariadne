@@ -7,8 +7,8 @@ commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 
 tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-daemon/src/agents/prompts.rs
-  - crates/ariadne-daemon/tests/plan_finalize.rs
-  - crates/ariadne-daemon/tests/goal_completion.rs
+  - crates/ariadne-daemon/tests/it/plan_finalize.rs
+  - crates/ariadne-daemon/tests/it/goal_completion.rs
 ---
 
 # Planning a goal

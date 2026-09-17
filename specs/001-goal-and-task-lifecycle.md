@@ -7,10 +7,10 @@ commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 
 tests:
   - crates/ariadne-core/src/state_machine.rs
   - crates/ariadne-store/tests/store.rs
-  - crates/ariadne-daemon/tests/scheduler_dependencies.rs
-  - crates/ariadne-daemon/tests/task_failure.rs
-  - crates/ariadne-daemon/tests/goal_delete.rs
-  - crates/ariadne-daemon/tests/multi_author_tasks.rs
+  - crates/ariadne-daemon/tests/it/scheduler_dependencies.rs
+  - crates/ariadne-daemon/tests/it/task_failure.rs
+  - crates/ariadne-daemon/tests/it/goal_delete.rs
+  - crates/ariadne-daemon/tests/it/multi_author_tasks.rs
 ---
 
 # Goal and task lifecycle

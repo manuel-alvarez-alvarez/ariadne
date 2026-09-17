@@ -5,12 +5,12 @@ updated: 2026-09-15
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
-  - crates/ariadne-daemon/tests/adapters.rs
-  - crates/ariadne-daemon/tests/agents.rs
-  - crates/ariadne-daemon/tests/acp_discovery.rs
-  - crates/ariadne-daemon/tests/acp_runtime.rs
-  - crates/ariadne-daemon/tests/resume.rs
-  - crates/ariadne-daemon/tests/skill_documents.rs
+  - crates/ariadne-daemon/tests/it/adapters.rs
+  - crates/ariadne-daemon/tests/it/agents.rs
+  - crates/ariadne-daemon/tests/it/acp_discovery.rs
+  - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-daemon/tests/it/resume.rs
+  - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/src/agents/acp.rs
 ---
 

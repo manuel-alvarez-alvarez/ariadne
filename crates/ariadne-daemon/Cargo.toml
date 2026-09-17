@@ -4,10 +4,20 @@ description = "Ariadne daemon: REST API, scheduler, ACP agent and git orchestrat
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# The integration tests are the one binary `tests/it/main.rs` declares below,
+# not a binary per file under `tests/`.
+autotests = false
 
 [[bin]]
 name = "ariadned"
 path = "src/main.rs"
+# `main.rs` holds no tests, and a test harness for it is one more binary to
+# compile and link on every change to the daemon.
+test = false
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
 
 [dependencies]
 ariadne-core = { workspace = true }
