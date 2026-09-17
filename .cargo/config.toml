@@ -1,0 +1,13 @@
+# Environment for every process cargo runs: tests (nextest and `cargo test`),
+# build scripts, and `cargo run`.
+[env]
+# No commit or tag signing. A global `commit.gpgsign = true` makes every
+# commit a test makes wait for gpg, and gpg signs one commit at a time: the
+# daemon tests then ran four times slower than they do on a CI runner, which
+# has no global git config. Nothing else in the global config is changed, so
+# `cargo run` still commits as you, only unsigned.
+GIT_CONFIG_COUNT = "2"
+GIT_CONFIG_KEY_0 = "commit.gpgsign"
+GIT_CONFIG_VALUE_0 = "false"
+GIT_CONFIG_KEY_1 = "tag.gpgsign"
+GIT_CONFIG_VALUE_1 = "false"
