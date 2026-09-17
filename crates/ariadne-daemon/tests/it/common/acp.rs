@@ -270,17 +270,13 @@ pub fn stub_acp_agent(dir: &Path, script: Value) -> StubAcpAgent {
     let script_file = dir.join("acp-script.json");
     write_script_file(&script_file, script, &log, &launches, &pid_file);
 
-    let program = dir.join("acp-stub.py");
-    std::fs::write(&program, STUB).unwrap();
+    std::fs::write(dir.join("acp-stub.py"), STUB).unwrap();
+    // The launcher is one shared file (see `shared_script`), linked into
+    // `dir`. It finds the stub and the script of this test next to the link
+    // it was started by. A second stub in the same `dir` replaces the link.
     let bin = dir.join("acp");
-    super::write_script(
-        &bin,
-        &format!(
-            "#!/bin/sh\nexec python3 '{}' '{}' \"$@\"\n",
-            program.display(),
-            script_file.display()
-        ),
-    );
+    let _ = std::fs::remove_file(&bin);
+    std::os::unix::fs::symlink(super::shared_script(LAUNCHER), &bin).unwrap();
     StubAcpAgent {
         bin: bin.display().to_string(),
         script_file,
@@ -304,6 +300,12 @@ fn write_script_file(
     script["writer_linger_secs"] = json!(WRITER_LINGER_SECS);
     std::fs::write(script_file, serde_json::to_string_pretty(&script).unwrap()).unwrap();
 }
+
+/// What the registry launches: the stub and the script next to the link
+/// the launcher was started by. `$0` is that link, not the shared file.
+const LAUNCHER: &str = "#!/bin/sh\n\
+dir=$(dirname \"$0\")\n\
+exec python3 \"$dir/acp-stub.py\" \"$dir/acp-script.json\" \"$@\"\n";
 
 /// The stub itself: single-threaded, line-oriented, and honest about order —
 /// it answers exactly what the script says, logs every incoming message, and

@@ -179,11 +179,7 @@ impl HarnessBuilder {
                 std::fs::create_dir_all(&home).unwrap();
                 let command = match (self.spawns, self.dies) {
                     (false, _) => dir.path().join("no-such-agent").display().to_string(),
-                    (true, true) => {
-                        let exits = dir.path().join("exits-at-once");
-                        write_script(&exits, "#!/bin/sh\nexit 0\n");
-                        exits.display().to_string()
-                    }
+                    (true, true) => shared_script("#!/bin/sh\nexit 0\n").display().to_string(),
                     (true, false) => agent.bin.clone(),
                 };
                 std::fs::write(
@@ -326,11 +322,33 @@ fn raise_open_file_limit() {
     });
 }
 
-fn write_script(path: &Path, script: &str) {
+/// An executable holding `script`, written once for every test that asks for
+/// the same text.
+///
+/// macOS checks a new executable before its first launch, one file at a
+/// time, and each check takes about a quarter of a second. A script written
+/// for each test made every test in a parallel run wait for the check of
+/// every other test. One file for each text is checked once, and a symlink to
+/// it is not checked again.
+fn shared_script(script: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
     use std::os::unix::fs::PermissionsExt;
 
-    std::fs::write(path, script).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    script.hash(&mut hasher);
+    let name = format!("{:016x}", hasher.finish());
+    let dir = std::env::temp_dir().join("ariadne-test-scripts");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(&name);
+    if !path.exists() {
+        // Tests run in processes of their own: write aside and rename, so no
+        // test ever launches a file another test is still writing.
+        let partial = dir.join(format!("{name}.{}", std::process::id()));
+        std::fs::write(&partial, script).unwrap();
+        std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&partial, &path).unwrap();
+    }
+    path
 }
 
 // -- the stub agent, from the test's side -------------------------------------
