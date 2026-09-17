@@ -2,6 +2,10 @@
 
 use crate::common;
 
+use std::time::Duration;
+
+use ariadne_daemon::timeouts::Timeouts;
+
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
@@ -227,7 +231,9 @@ async fn discovery_sends_no_prompt() {
 }
 
 /// A probe that runs out its time is rejected with every capability it had
-/// already shown, not reported as an agent that showed nothing.
+/// already shown, not reported as an agent that showed nothing. The probe's
+/// time is shortened from a daemon's 5 s to what an agent under load still
+/// comes up in; a probe that does not even get that far is simply retried.
 #[tokio::test]
 async fn a_timed_out_probe_keeps_what_it_measured() {
     let dir = tempfile::tempdir().unwrap();
@@ -237,6 +243,10 @@ async fn a_timed_out_probe_keeps_what_it_measured() {
     let h = harness()
         .home(home_with_agent("silent", &agent.bin))
         .discover_agents()
+        .timeouts(Timeouts {
+            probe: Duration::from_secs(1),
+            ..Timeouts::default()
+        })
         .await;
 
     // Under full-suite load even `initialize` can run out the probe's time,

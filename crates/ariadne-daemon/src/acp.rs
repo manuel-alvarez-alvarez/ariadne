@@ -37,6 +37,7 @@ use crate::acp_rpc::{Incoming, Outbound, RpcTransport};
 use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
 use crate::scheduler::SchedEvent;
+use crate::timeouts::Timeouts;
 
 /// Live console events buffered per subscriber before it is told to resync.
 const CONSOLE_CAPACITY: usize = 1024;
@@ -68,14 +69,6 @@ fn report(followers: &Followers, report: TurnReport) {
         .retain(|follower| follower.send(report.clone()).is_ok());
 }
 
-/// How long a killed agent's running turn has to end once it is cancelled.
-///
-/// The prompt response a cancel draws is the only report of what that turn
-/// spent: an agent killed mid-turn — a relaunch that hands an author its
-/// review, a cleanup after `finish_task` — otherwise takes the turn's tokens
-/// with it. An adapter that honours `session/cancel` answers within a second;
-/// one that does not is killed when this runs out, as it was before.
-const TURN_CANCEL_GRACE: Duration = Duration::from_secs(5);
 const CODEX_AGENT_ID: &str = "codex-acp";
 /// The codex-acp mode every session starts in. Its default mode, `agent`,
 /// hands each approval to Codex's guardian sub-agent, a model call that
@@ -126,6 +119,7 @@ pub struct AcpRuntime {
 
 struct Inner {
     store: Store,
+    timeouts: Timeouts,
     /// Live agents by Ariadne session id.
     running: Mutex<HashMap<String, RunningAgent>>,
     /// Agents taken down whose driver has not reaped them yet, by Ariadne
@@ -282,9 +276,15 @@ struct DriverIo {
 
 impl AcpRuntime {
     pub fn new(store: Store) -> Self {
+        Self::with_timeouts(store, Timeouts::default())
+    }
+
+    /// A runtime that waits on its agents as long as `timeouts` says.
+    pub fn with_timeouts(store: Store, timeouts: Timeouts) -> Self {
         Self {
             inner: Arc::new(Inner {
                 store,
+                timeouts,
                 running: Mutex::new(HashMap::new()),
                 ending: Mutex::new(HashMap::new()),
                 scheduler: OnceLock::new(),
@@ -730,6 +730,7 @@ impl AcpRuntime {
                 outbound: &outbound,
                 closing: &closing,
                 turn_ended: &turn_ended,
+                grace: self.inner.timeouts.cancel_grace,
             };
             outcome = ending.settle(protocol.as_mut()).await;
         }
@@ -776,12 +777,13 @@ struct TurnEnding<'a> {
     outbound: &'a Outbound,
     closing: &'a AtomicBool,
     turn_ended: &'a Notify,
+    grace: Duration,
 }
 
 impl TurnEnding<'_> {
     /// Cancel the running turn and serve the agent until its response is in
     /// — the `stop` that carries what the turn spent — or the protocol ends,
-    /// or [`TURN_CANCEL_GRACE`] runs out. The protocol's outcome where it
+    /// or `grace` ([`Timeouts::cancel_grace`]) runs out. The protocol's outcome where it
     /// ended here, `None` otherwise.
     ///
     /// No queued prompt starts meanwhile, and a turn waiting on a permission
@@ -825,7 +827,7 @@ impl TurnEnding<'_> {
         tokio::select! {
             result = &mut protocol => Some(result),
             _ = answered => None,
-            _ = tokio::time::sleep(TURN_CANCEL_GRACE) => None,
+            _ = tokio::time::sleep(self.grace) => None,
         }
     }
 }

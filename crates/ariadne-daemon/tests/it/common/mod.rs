@@ -47,6 +47,7 @@ use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::log::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
+use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{
     AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewMessage, NewRepository, NewSession,
     NewTask, NewTaskAgent, Repository, SessionFilter, Store, Task, TaskAgent,
@@ -59,6 +60,19 @@ use ariadne_store::{
 /// stub agent is a python process the daemon starts and talks to, and every
 /// test in the crate runs beside the others.
 pub const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a test listens for something that must not happen.
+///
+/// Short, because it cannot fail a test that is right: a longer listen only
+/// catches a wrong event that comes later still. Everything it listens for is
+/// the daemon reacting inside its own process, and the branch watch, the
+/// slowest of those, debounces for 50 ms.
+pub const QUIET: Duration = Duration::from_millis(500);
+
+/// A daemon timeout for a test that is about that timeout running out. The
+/// test waits it out, so it is short, and nothing the test needs done in time
+/// runs under it.
+pub const RUNS_OUT: Duration = Duration::from_millis(500);
 
 /// The registry id the harness registers its stub agent under.
 pub const STUB: &str = "stub";
@@ -91,6 +105,7 @@ pub struct HarnessBuilder {
     dies: bool,
     logs: Option<LogBuffer>,
     discover_agents: bool,
+    timeouts: Timeouts,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -113,6 +128,7 @@ pub fn harness() -> HarnessBuilder {
         dies: false,
         logs: None,
         discover_agents: false,
+        timeouts: Timeouts::default(),
     }
 }
 
@@ -163,6 +179,13 @@ impl HarnessBuilder {
         self
     }
 
+    /// Wait on agents as long as `timeouts` says, rather than as long as a
+    /// daemon does: for a test about one of them running out ([`RUNS_OUT`]).
+    pub fn timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -195,7 +218,8 @@ impl HarnessBuilder {
             &config.acp_agents,
             config.root.clone(),
             store.clone(),
-        );
+        )
+        .with_timeouts(self.timeouts);
         // Installed before anything writes, exactly as the daemon does at
         // startup.
         let bus = ariadne_daemon::bus::start(store.clone());
@@ -208,7 +232,7 @@ impl HarnessBuilder {
             cfg: Arc::new(config),
             store: store.clone(),
             git: GitManager,
-            acp: ariadne_daemon::acp::AcpRuntime::new(store.clone()),
+            acp: ariadne_daemon::acp::AcpRuntime::with_timeouts(store.clone(), self.timeouts),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
         });

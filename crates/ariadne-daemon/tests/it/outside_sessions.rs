@@ -4,6 +4,10 @@
 
 use crate::common;
 
+use std::time::Duration;
+
+use ariadne_daemon::timeouts::Timeouts;
+
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
@@ -67,9 +71,15 @@ fn listing_script(sessions: Value, page_size: Option<usize>) -> Value {
 }
 
 async fn harness_with(stub: &StubAcpAgent) -> Harness {
+    harness_waiting(stub, Timeouts::default()).await
+}
+
+/// [`harness_with`], waiting on the agent as long as `timeouts` says.
+async fn harness_waiting(stub: &StubAcpAgent, timeouts: Timeouts) -> Harness {
     let h = harness()
         .home(home_with_agents(&[("test-agent", &stub.bin)]))
         .discover_agents()
+        .timeouts(timeouts)
         .await;
     // A probe that times out under load leaves the agent unlisted, and the
     // snapshot asks only the agents discovery accepted.
@@ -110,15 +120,24 @@ async fn a_paging_agents_every_session_is_in_the_listing() {
 }
 
 /// An agent that answers its first page and never the second is listed with
-/// what arrived: the 5 s budget ends the listing, and the pages inside it
-/// are kept rather than dropped with the timeout.
+/// what arrived: the budget ends the listing, and the pages inside it are
+/// kept rather than dropped with the timeout. The budget is shortened from a
+/// daemon's 5 s, but not to [`common::RUNS_OUT`]: the first page still has to
+/// arrive inside it, from an agent process the listing starts.
 #[tokio::test]
 async fn the_pages_that_arrived_are_kept_when_an_agents_budget_ends() {
     let dir = tempfile::tempdir().unwrap();
     let mut setup = listing_script(five_sessions(), Some(2));
     setup["session_list_stall_from"] = json!(2);
     let stub = stub_acp_agent(dir.path(), setup);
-    let h = harness_with(&stub).await;
+    let h = harness_waiting(
+        &stub,
+        Timeouts {
+            probe: Duration::from_secs(2),
+            ..Timeouts::default()
+        },
+    )
+    .await;
 
     let page = listing(&h, "").await;
 

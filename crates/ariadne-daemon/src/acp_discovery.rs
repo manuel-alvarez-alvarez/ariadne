@@ -21,8 +21,7 @@ use ariadne_store::Store;
 
 use crate::acp::{apply_agent_launch_environment, find_config_option};
 use crate::acp_rpc::{Incoming, RpcTransport};
-
-const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+use crate::timeouts::Timeouts;
 
 /// The ACP commands Ariadne knows without configuration.
 const BUILTINS: [(&str, &[&str]); 3] = [
@@ -38,6 +37,7 @@ pub struct AgentRegistry {
     probe_cwd: Arc<PathBuf>,
     /// Where each agent's catalog is kept across restarts, under its version.
     store: Store,
+    timeouts: Timeouts,
 }
 
 #[derive(Clone)]
@@ -157,7 +157,15 @@ impl AgentRegistry {
             results: Arc::new(RwLock::new(results)),
             probe_cwd: Arc::new(probe_cwd),
             store,
+            timeouts: Timeouts::default(),
         }
+    }
+
+    /// The same registry, probing and listing agents as long as `timeouts`
+    /// says.
+    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 
     /// Discovery as a daemon start runs it: every agent is asked to
@@ -196,7 +204,7 @@ impl AgentRegistry {
                 if !entry.probe {
                     return rejected(&entry, "not probed by the test harness".into());
                 }
-                probe(entry, &cwd, cached).await
+                probe(entry, &cwd, cached, self.timeouts.probe).await
             }
         });
         let discovered = join_all(probes).await;
@@ -298,7 +306,7 @@ impl AgentRegistry {
                 // arrived inside it are kept whatever ended the listing.
                 let mut sessions = Vec::new();
                 match tokio::time::timeout(
-                    PROBE_TIMEOUT,
+                    self.timeouts.probe,
                     list_stored_sessions(&agent, &cwd, &mut sessions),
                 )
                 .await
@@ -404,7 +412,12 @@ fn rejected_with(
 
 /// Probe one agent: `initialize` always, and a `session/new` only where
 /// `cached` holds no catalog for the version the agent reports.
-async fn probe(entry: RegistryEntry, cwd: &Path, cached: Option<CachedCatalog>) -> Discovery {
+async fn probe(
+    entry: RegistryEntry,
+    cwd: &Path,
+    cached: Option<CachedCatalog>,
+    timeout: Duration,
+) -> Discovery {
     let Some((program, args)) = entry.command.split_first() else {
         return rejected(&entry, "command is empty".into());
     };
@@ -437,7 +450,7 @@ async fn probe(entry: RegistryEntry, cwd: &Path, cached: Option<CachedCatalog>) 
     // The timeout sits inside the probe so a slow agent is still reported
     // with every capability it showed before it stopped answering.
     let result = tokio::time::timeout(
-        PROBE_TIMEOUT,
+        timeout,
         probe_protocol(
             &entry,
             &mut rpc,

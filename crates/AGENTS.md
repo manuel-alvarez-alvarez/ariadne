@@ -39,6 +39,22 @@ declares, and a new file runs only once it is declared there. Keep it one
 binary. A binary per file compiles `common` again and links the whole daemon
 again, and a change to the daemon then rebuilds all of them.
 
+A daemon test does not wait on a clock. Wait for the thing itself:
+
+- For something that must happen, poll with `eventually(TIMEOUT, …)`. It
+  returns as soon as the check holds, so the long `TIMEOUT` costs nothing.
+- For something that must not happen, listen for `QUIET`. Where events come
+  in a fixed order, the next expected event proves that nothing came between.
+- For a daemon timeout that the test is about, shorten it with
+  `harness().timeouts(Timeouts { …: RUNS_OUT, ..Timeouts::default() })`.
+  Put every such timeout in `ariadne_daemon::timeouts::Timeouts`, never in a
+  constant.
+- For a stub that must hold still, make it wait for a file that the test
+  writes (`wait_for`, `updates_when`), not for a number of seconds.
+- Do not create a new executable for each test. On macOS each new executable
+  is checked before it first starts, one at a time, so the tests wait for each
+  other. Share one file and link it, as the stub launcher does.
+
 Before a commit on `main`, run the whole workspace:
 
 ```sh

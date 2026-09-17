@@ -18,15 +18,12 @@ use ariadne_daemon::bus::BusEvent;
 use ariadne_store::Task;
 use tokio::sync::broadcast::Receiver;
 
-use common::{Harness, Sse, TIMEOUT, eventually, get, harness, next_sse, parse_sse, sh};
+use common::{Harness, QUIET, Sse, TIMEOUT, eventually, get, harness, next_sse, parse_sse, sh};
 
 /// How long one commit is given to come back over the stream: a filesystem
 /// notification, a debounce and a couple of `git` processes, on a machine
 /// running the rest of the suite beside it.
 const PATIENCE: Duration = Duration::from_secs(20);
-
-/// How long the stream is watched for an event that must not be there.
-const SILENCE: Duration = Duration::from_secs(2);
 
 /// A task whose author has been spawned: a real repository, a worktree
 /// checked out on the task branch, and the daemon following it.
@@ -97,7 +94,7 @@ async fn next_head(body: &mut axum::body::Body, task: &Task) -> String {
 
 /// Assert the stream has nothing to say for a while.
 async fn stays_quiet(body: &mut axum::body::Body, why: &str) {
-    if let Some((kind, _)) = next_event(body, SILENCE).await {
+    if let Some((kind, _)) = next_event(body, QUIET).await {
         panic!("{why}: the stream sent a {kind}");
     }
 }
@@ -214,7 +211,7 @@ async fn a_failed_task_stops_being_followed() {
     );
 
     commit(&worktree, "after-the-failure");
-    tokio::time::sleep(SILENCE).await;
+    tokio::time::sleep(QUIET).await;
     while let Ok(event) = rx.try_recv() {
         assert!(
             !matches!(event.event, DomainEvent::TaskBranchUpdated(_)),

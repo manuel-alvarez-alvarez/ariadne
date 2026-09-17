@@ -8,6 +8,8 @@
 
 use crate::common;
 
+use ariadne_daemon::timeouts::Timeouts;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::json;
@@ -29,8 +31,8 @@ use ariadne_daemon::http::{self, AppState};
 
 use common::acp::{StubAcpAgent, discovery_settled, registry_home, script, stub_acp_agent};
 use common::{
-    Cast, Harness, TIMEOUT, as_session, eventually, expect_sse, get, harness, next_sse_message,
-    parse_sse, post, post_json, sse_is_closed,
+    Cast, Harness, QUIET, RUNS_OUT, TIMEOUT, as_session, eventually, expect_sse, get, harness,
+    next_sse_message, parse_sse, post, post_json, sse_is_closed,
 };
 
 /// A task whose author runs on the registry agent `stub`, in a real repo,
@@ -282,7 +284,14 @@ async fn a_relaunch_after_a_kill_resumes_once_the_killed_agent_is_gone() {
     first["stored_sessions"] = json!(["stub-session"]);
     first["writer_child"] = json!(true);
     let stub = stub_acp_agent(agent_dir.path(), first);
-    let h = harness().home(registry_home(&stub)).discover_agents().await;
+    let h = harness()
+        .home(registry_home(&stub))
+        .discover_agents()
+        .timeouts(Timeouts {
+            cancel_grace: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .await;
     discovery_settled(&h, &stub).await;
     let cast = acp_cast(&h).await;
     let session = spawned_mid_turn(&h, &cast, &release).await;
@@ -340,7 +349,13 @@ async fn an_agent_that_ignores_the_cancel_is_killed_when_the_grace_runs_out() {
     );
     scripted["prompts"][0]["ignore_cancel"] = json!(true);
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness().home(registry_home(&stub)).await;
+    let h = harness()
+        .home(registry_home(&stub))
+        .timeouts(Timeouts {
+            cancel_grace: RUNS_OUT,
+            ..Timeouts::default()
+        })
+        .await;
     let cast = acp_cast(&h).await;
     let session = spawned_mid_turn(&h, &cast, &release).await;
     let pid = stub.pid().unwrap();
@@ -420,7 +435,7 @@ async fn an_authors_review_request_ends_its_turn_and_the_verdict_still_reaches_i
     assert_eq!(status, StatusCode::OK);
     // The answer is out, and the agent has not said it holds it: no cancel,
     // for as long as that takes.
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tokio::time::sleep(QUIET).await;
     assert!(
         stub.calls_of("session/cancel").is_empty(),
         "the turn is not ended before the agent reports the call answered"
@@ -611,6 +626,14 @@ async fn a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn() 
     .await;
     // The old process's late report, while the relaunch still waits on it.
     std::fs::write(&answered, "1").unwrap();
+    eventually(
+        TIMEOUT,
+        "the old launch's late report to be recorded",
+        || async { late_review_report_recorded(&h, &session).await },
+    )
+    .await;
+    // Then the old turn ends, rather than the relaunch sitting out the grace.
+    std::fs::write(&release, "1").unwrap();
     let resumed = relaunch.await.unwrap().unwrap();
     assert_eq!(resumed.id, session.id);
     let new_launch = h.launch_id(&session).await.unwrap();
@@ -621,24 +644,7 @@ async fn a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn() 
     })
     .await;
 
-    // The old process did report the call ended, on the record.
-    let reported = h
-        .store
-        .list_events(ariadne_store::EventFilter {
-            session_id: Some(session.id.clone()),
-            limit: 200,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert!(
-        reported.iter().any(|event| {
-            event.kind == "post_tool_use" && event.payload.contains("mcp.ariadne.request_review")
-        }),
-        "the old launch's late report is recorded"
-    );
-
-    // But it went to the old launch alone: the new one has reported nothing,
+    // The old process's report is on the record (waited for above), but it went to the old launch alone: the new one has reported nothing,
     // and its turn is not cancelled.
     assert!(
         h.launcher
@@ -651,7 +657,7 @@ async fn a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn() 
         .acp
         .turn_reports(&session.id, &new_launch)
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tokio::time::sleep(QUIET).await;
     assert!(matches!(
         reports.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -659,6 +665,23 @@ async fn a_prior_launchs_late_review_report_does_not_end_the_new_launchs_turn() 
     assert_eq!(stub.calls_of("session/cancel").len(), 1);
     assert_eq!(h.session_status(&session).await, SessionStatus::Running);
     std::fs::write(&release_again, "1").unwrap();
+}
+
+/// Whether the session's record holds the review call's end, as the old
+/// process reported it.
+async fn late_review_report_recorded(h: &Harness, session: &ariadne_store::AgentSession) -> bool {
+    h.store
+        .list_events(ariadne_store::EventFilter {
+            session_id: Some(session.id.clone()),
+            limit: 200,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .iter()
+        .any(|event| {
+            event.kind == "post_tool_use" && event.payload.contains("mcp.ariadne.request_review")
+        })
 }
 
 /// The adapters' quota report includes subagent use, so it takes precedence
