@@ -58,6 +58,9 @@ pub struct SpawnCtx {
     /// session, the MCP server, the system prompt, the model and its effort —
     /// travels in the launch file instead.
     pub extra_flags: Vec<String>,
+    /// Whether the daemon serves the knowledge base: off, the session's MCP
+    /// server lists neither `search_code` nor `outline`.
+    pub knowledge_enabled: bool,
 }
 
 /// Write an agent's skills into its run dir, one `SKILL.md` per skill, and
@@ -111,6 +114,10 @@ pub fn base_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
         (
             "ARIADNE_SOCKET".into(),
             ctx.socket_path.display().to_string(),
+        ),
+        (
+            "ARIADNE_KNOWLEDGE_ENABLED".into(),
+            ctx.knowledge_enabled.to_string(),
         ),
     ];
     if let Some(task) = &ctx.task_id {

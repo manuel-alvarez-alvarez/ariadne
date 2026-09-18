@@ -19,6 +19,9 @@ prevent_sleep = true               # hold a system sleep inhibition while any ag
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
 permission_mode = "auto"           # auto, ask, or learn; the default for new tasks
+knowledge_enabled = true           # index every repository into <home>/knowledge.db and
+                                   # serve the search_code and outline tools (default);
+                                   # false indexes nothing and lists neither tool
 
 [[acp_agents]]                     # extend the built-in ACP agent registry
 id = "my-agent"                    # stable model-id prefix
@@ -29,7 +32,8 @@ The built-in registry contains the ids `claude-agent-acp`, `codex-acp`, and
 `opencode-acp`. They launch the commands `claude-agent-acp`, `codex-acp`, and
 `opencode acp`, respectively. The daemon probes every entry at startup. See
 [Installing Ariadne](install.md) to add an agent, and
-[Permission modes](permissions.md) to choose how it handles tool requests.
+[Permission modes](permissions.md) to choose how it handles tool requests, and
+[The knowledge base](knowledge.md) for what `knowledge_enabled` turns on.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

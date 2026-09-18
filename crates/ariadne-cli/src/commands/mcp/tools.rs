@@ -14,6 +14,9 @@ use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
+use ariadne_api::knowledge::{
+    KnowledgeHitDto, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeSearchQuery,
+};
 use ariadne_api::memories::{CreateMemoryRequest, MemoryDto};
 use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
@@ -24,6 +27,12 @@ use ariadne_api::tasks::{
 use ariadne_core::{Actor, Landing, MessageKind, PermissionMode, Seat, TaskStatus};
 
 use super::{AriadneMcp, json_result, to_mcp_err};
+use crate::commands::query_path;
+
+/// How long a knowledge answer may be, in bytes. Codex cuts a tool result
+/// at 10 KiB, so an answer is cut here first, with a last line that says
+/// what was left out.
+pub const ANSWER_CAP: usize = 8 * 1024;
 
 // ---------- tool parameter types ----------
 
@@ -294,7 +303,68 @@ pub struct SearchMemoryReq {
     pub query: String,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct SearchCodeReq {
+    /// The name to find. Words, camelCase parts and snake_case parts match,
+    /// each as a prefix.
+    pub query: String,
+    /// Repository id. Omit it for the repositories of your goal.
+    pub repository: Option<String>,
+    /// Set it to search every registered repository.
+    pub all: Option<bool>,
+    /// The branch to read. Omit it for your own branch.
+    pub git_ref: Option<String>,
+    /// Only this kind: `function`, `method`, `class`, `module`,
+    /// `interface`, `macro`, `constant`, `test` or `heading`.
+    pub kind: Option<String>,
+    /// Only paths that contain this text.
+    pub path: Option<String>,
+    /// How many results at most: 20 by default, 50 at most.
+    pub limit: Option<u32>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct OutlineReq {
+    /// The path of the file, relative to the repository root.
+    pub path: String,
+    /// Repository id. Omit it when this session works in one repository.
+    pub repository: Option<String>,
+    /// The branch to read. Omit it for your own branch.
+    pub git_ref: Option<String>,
+}
+
 // ---------- helpers ----------
+
+/// `lines` as one text under [`ANSWER_CAP`]: what fits, then a last line
+/// that says how many results were left out.
+fn cut_answer(lines: Vec<String>, cap: usize) -> String {
+    // Room kept for the last line, whatever number it carries.
+    const TAIL: usize = 64;
+    let mut answer = String::new();
+    for (at, line) in lines.iter().enumerate() {
+        if answer.len() + line.len() + 1 > cap.saturating_sub(TAIL) {
+            answer.push_str(&format!(
+                "{} results left. Narrow the query.\n",
+                lines.len() - at
+            ));
+            return answer;
+        }
+        answer.push_str(line);
+        answer.push('\n');
+    }
+    answer
+}
+
+fn text_result(text: String) -> Result<CallToolResult, McpError> {
+    Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+}
+
+/// The query string of a knowledge request, as the daemon reads it.
+fn knowledge_path(base: &str, query: &impl serde::Serialize) -> Result<String, McpError> {
+    query_path(base, query).map_err(|e| McpError::invalid_params(e.to_string(), None))
+}
 
 /// One agent an orchestrator staffed, as the API takes it: where it sits,
 /// what it knows, and the pin it runs at.
@@ -489,6 +559,85 @@ impl AriadneMcp {
         let path = format!("/v1/repositories/{repository_id}/memories/search?{query}");
         let memories: Vec<MemoryDto> = self.get(&path).await?;
         json_result(serde_json::to_value(memories).expect("memories serialize"))
+    }
+
+    #[tool(
+        description = "Find a definition by name in the indexed code, on your own branch. Each line is `path:line kind name signature`. Narrow it with `kind`, `path` or `repository`."
+    )]
+    async fn search_code(
+        &self,
+        Parameters(req): Parameters<SearchCodeReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let query = KnowledgeSearchQuery {
+            q: req.query,
+            repository: req.repository,
+            all: req.all.filter(|all| *all),
+            git_ref: req.git_ref,
+            kind: req.kind,
+            path: req.path,
+            limit: req.limit.map(i64::from),
+        };
+        let hits: Vec<KnowledgeHitDto> = self
+            .get(&knowledge_path("/v1/knowledge/search", &query)?)
+            .await?;
+        if hits.is_empty() {
+            return text_result("No results.\n".into());
+        }
+        // Where the answer spans several repositories, each line says which
+        // one its path is in.
+        let several = hits
+            .iter()
+            .any(|hit| hit.repository_id != hits[0].repository_id);
+        let lines = hits
+            .iter()
+            .map(|hit| {
+                let location = format!(
+                    "{}:{} {} {} {}",
+                    hit.path, hit.line, hit.kind, hit.name, hit.signature
+                );
+                match several {
+                    true => format!("{} {location}", hit.repository_id),
+                    false => location,
+                }
+            })
+            .collect();
+        text_result(cut_answer(lines, ANSWER_CAP))
+    }
+
+    #[tool(
+        description = "List the definitions of one file with their line ranges. Each line is `path:start-end kind name signature`. Read a function by its range instead of the whole file."
+    )]
+    async fn outline(
+        &self,
+        Parameters(req): Parameters<OutlineReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let repository = self.memory_repository(req.repository).await?;
+        let query = KnowledgeOutlineQuery {
+            repository,
+            path: req.path.clone(),
+            git_ref: req.git_ref,
+        };
+        let entries: Vec<KnowledgeOutlineEntryDto> = self
+            .get(&knowledge_path("/v1/knowledge/outline", &query)?)
+            .await?;
+        if entries.is_empty() {
+            return text_result("No definitions.\n".into());
+        }
+        let lines = entries
+            .iter()
+            .map(|entry| {
+                format!(
+                    "{}:{}-{} {} {} {}",
+                    req.path,
+                    entry.start_line,
+                    entry.end_line,
+                    entry.kind,
+                    entry.name,
+                    entry.signature
+                )
+            })
+            .collect();
+        text_result(cut_answer(lines, ANSWER_CAP))
     }
 
     // ---- orchestrator ----
@@ -1243,6 +1392,191 @@ mod tests {
         let seen = seen.lock().expect("lock").clone();
         assert_eq!(seen.len(), 1, "{seen:?}");
         assert_eq!(seen[0].path, "/v1/goals/01GOAL");
+    }
+
+    /// `search_code` asks the daemon with every filter it was given, and
+    /// answers one line per hit in the form `path:line kind name signature`.
+    #[tokio::test]
+    async fn search_code_asks_the_daemon_with_its_filters_and_answers_one_line_per_hit() {
+        let (endpoint, seen) = recording_daemon_answering(
+            r#"[
+                {"repository_id":"01REPO","path":"crates/ariadne-daemon/src/gitwt.rs","line":44,"kind":"method","name":"add_worktree","signature":"pub async fn add_worktree(&self, repo: &Path) -> Result<()>"},
+                {"repository_id":"01REPO","path":"crates/ariadne-daemon/src/launcher.rs","line":9,"kind":"function","name":"add_worktree_later","signature":"fn add_worktree_later()"}
+            ]"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .search_code(Parameters(SearchCodeReq {
+                query: "add_worktree".into(),
+                repository: Some("01REPO".into()),
+                all: None,
+                git_ref: Some("main".into()),
+                kind: Some("method".into()),
+                path: Some("gitwt".into()),
+                limit: Some(5),
+            }))
+            .await
+            .expect("search code");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "GET");
+        assert_eq!(
+            seen[0].path,
+            "/v1/knowledge/search?q=add_worktree&repository=01REPO&git_ref=main&kind=method&path=gitwt&limit=5"
+        );
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(
+            text.text,
+            "crates/ariadne-daemon/src/gitwt.rs:44 method add_worktree pub async fn add_worktree(&self, repo: &Path) -> Result<()>\n\
+             crates/ariadne-daemon/src/launcher.rs:9 function add_worktree_later fn add_worktree_later()\n"
+        );
+    }
+
+    /// Nothing but the query travels by default — the daemon knows the
+    /// session's goal and branch — and `all` widens the search on request.
+    #[tokio::test]
+    async fn search_code_defaults_to_the_sessions_own_scope_and_widens_on_request() {
+        let (endpoint, seen) = recording_daemon_answering("[]").await;
+        let mcp = server_at(
+            McpSeat::Reviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let search = |all: Option<bool>| SearchCodeReq {
+            query: "GitManager".into(),
+            repository: None,
+            all,
+            git_ref: None,
+            kind: None,
+            path: None,
+            limit: None,
+        };
+        let answered = mcp
+            .search_code(Parameters(search(None)))
+            .await
+            .expect("search code");
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(text.text, "No results.\n");
+        mcp.search_code(Parameters(search(Some(false))))
+            .await
+            .expect("search code");
+        mcp.search_code(Parameters(search(Some(true))))
+            .await
+            .expect("search code");
+
+        let seen = seen.lock().expect("lock").clone();
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/v1/knowledge/search?q=GitManager",
+                "/v1/knowledge/search?q=GitManager",
+                "/v1/knowledge/search?q=GitManager&all=true",
+            ]
+        );
+    }
+
+    /// An answer over 8 KiB is cut, and its last line names how many results
+    /// were left out and says to narrow the query.
+    #[tokio::test]
+    async fn an_answer_over_8_kib_is_cut_with_the_number_of_results_left() {
+        let hits: Vec<serde_json::Value> = (0..300)
+            .map(|n| {
+                serde_json::json!({
+                    "repository_id": "01REPO",
+                    "path": format!("crates/ariadne-daemon/src/module_{n}.rs"),
+                    "line": n,
+                    "kind": "function",
+                    "name": format!("symbol_{n}"),
+                    "signature": format!("pub fn symbol_{n}(first: &str, second: usize) -> Result<Vec<String>>"),
+                })
+            })
+            .collect();
+        let answer: &'static str =
+            Box::leak(serde_json::to_string(&hits).expect("json").into_boxed_str());
+        let (endpoint, _) = recording_daemon_answering(answer).await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .search_code(Parameters(SearchCodeReq {
+                query: "symbol".into(),
+                repository: None,
+                all: None,
+                git_ref: None,
+                kind: None,
+                path: None,
+                limit: None,
+            }))
+            .await
+            .expect("search code");
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert!(text.text.len() <= ANSWER_CAP, "{} bytes", text.text.len());
+        let lines: Vec<&str> = text.text.lines().collect();
+        let last = lines.last().expect("a last line");
+        let kept = lines.len() - 1;
+        assert_eq!(
+            *last,
+            format!("{} results left. Narrow the query.", 300 - kept)
+        );
+        assert!(kept > 50, "only {kept} lines fit");
+
+        // A short answer is left whole.
+        let short = cut_answer(vec!["a.rs:1 function a fn a()".into()], ANSWER_CAP);
+        assert_eq!(short, "a.rs:1 function a fn a()\n");
+    }
+
+    /// `outline` takes the task's repository by default, like the memory
+    /// tools, and answers one line per definition with its line range.
+    #[tokio::test]
+    async fn outline_defaults_to_the_task_repository_and_lists_line_ranges() {
+        let (endpoint, seen) = recording_daemon_answering_in_order(&[
+            r#"{"repo_id":"01REPO"}"#,
+            r#"[{"kind":"class","name":"GitManager","start_line":17,"end_line":18,"signature":"pub struct GitManager"},
+                {"kind":"method","name":"add_worktree","start_line":44,"end_line":63,"signature":"pub async fn add_worktree(&self)"}]"#,
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .outline(Parameters(OutlineReq {
+                path: "crates/ariadne-daemon/src/gitwt.rs".into(),
+                repository: None,
+                git_ref: None,
+            }))
+            .await
+            .expect("outline");
+
+        let seen = seen.lock().expect("lock").clone();
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/v1/tasks/01TASK",
+                "/v1/knowledge/outline?repository=01REPO&path=crates%2Fariadne-daemon%2Fsrc%2Fgitwt.rs",
+            ]
+        );
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(
+            text.text,
+            "crates/ariadne-daemon/src/gitwt.rs:17-18 class GitManager pub struct GitManager\n\
+             crates/ariadne-daemon/src/gitwt.rs:44-63 method add_worktree pub async fn add_worktree(&self)\n"
+        );
     }
 
     /// A verdict is a message to the author like any other, and what makes it

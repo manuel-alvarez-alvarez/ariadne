@@ -52,6 +52,8 @@ impl McpSeat {
                 "read_messages",
                 "save_memory",
                 "search_memory",
+                "search_code",
+                "outline",
             ],
             McpSeat::Author => &[
                 "get_task",
@@ -63,6 +65,8 @@ impl McpSeat {
                 "read_messages",
                 "save_memory",
                 "search_memory",
+                "search_code",
+                "outline",
             ],
             McpSeat::Reviewer => &[
                 "get_task",
@@ -73,10 +77,16 @@ impl McpSeat {
                 "read_messages",
                 "save_memory",
                 "search_memory",
+                "search_code",
+                "outline",
             ],
         }
     }
 }
+
+/// The tools of the knowledge base (022): every seat has them, and none has
+/// them while the daemon runs with `knowledge_enabled = false`.
+const KNOWLEDGE_TOOLS: &[&str] = &["search_code", "outline"];
 
 #[derive(Clone)]
 pub struct AriadneMcp {
@@ -85,6 +95,9 @@ pub struct AriadneMcp {
     session_id: String,
     goal_id: String,
     task_id: Option<String>,
+    /// What the daemon said at launch: off, the knowledge tools are neither
+    /// listed nor served.
+    knowledge_enabled: bool,
     tool_router: ToolRouter<Self>,
 }
 
@@ -104,8 +117,29 @@ impl AriadneMcp {
             session_id,
             goal_id: std::env::var("ARIADNE_GOAL_ID").context("ARIADNE_GOAL_ID not set")?,
             task_id: std::env::var("ARIADNE_TASK_ID").ok(),
+            // Only an explicit `false` turns them off: a launch that says
+            // nothing is one whose daemon serves them.
+            knowledge_enabled: std::env::var("ARIADNE_KNOWLEDGE_ENABLED")
+                .map(|value| value != "false")
+                .unwrap_or(true),
             tool_router: Self::tool_router(),
         })
+    }
+
+    /// Whether this session may call `name`: its seat lists it, and it is
+    /// not a knowledge tool of a daemon whose knowledge base is off.
+    fn allows(&self, name: &str) -> bool {
+        self.seat.tools().contains(&name)
+            && (self.knowledge_enabled || !KNOWLEDGE_TOOLS.contains(&name))
+    }
+
+    /// The tools this session is listed, which are the ones it may call.
+    fn listed_tools(&self) -> Vec<Tool> {
+        self.tool_router
+            .list_all()
+            .into_iter()
+            .filter(|t| self.allows(t.name.as_ref()))
+            .collect()
     }
 
     /// An endpoint under the task a tool is about: the one it named, else this
@@ -142,7 +176,8 @@ impl AriadneMcp {
         self.client.post_json(path, body).await.map_err(to_mcp_err)
     }
 
-    /// Resolve the repository for a memory tool.
+    /// Resolve the repository for a memory tool, or for an outline: the
+    /// task's, else the goal's only one, else a refusal that says to name it.
     async fn memory_repository(&self, named: Option<String>) -> Result<String, McpError> {
         if let Some(repository_id) = named {
             return Ok(repository_id);
@@ -285,7 +320,6 @@ impl ServerHandler for AriadneMcp {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let allowed = self.seat.tools();
         // SEP-2549 cache hints. Protocol 2026-07-28 requires them on list
         // results, and Claude Code (>= 2.1.x) rejects the whole tool list
         // without them — the tools then silently never load. rmcp fills them
@@ -293,15 +327,9 @@ impl ServerHandler for AriadneMcp {
         // for 0ms (never cached stale) and private to this session, which is
         // also true — the list is seat-filtered. Older clients ignore the
         // extra fields.
-        Ok(ListToolsResult::with_all_items(
-            self.tool_router
-                .list_all()
-                .into_iter()
-                .filter(|t| allowed.contains(&t.name.as_ref()))
-                .collect(),
-        )
-        .with_ttl_ms(0)
-        .with_cache_scope(CacheScope::Private))
+        Ok(ListToolsResult::with_all_items(self.listed_tools())
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private))
     }
 
     async fn call_tool(
@@ -309,7 +337,7 @@ impl ServerHandler for AriadneMcp {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        if !self.seat.tools().contains(&request.name.as_ref()) {
+        if !self.allows(request.name.as_ref()) {
             return Err(McpError::invalid_params(
                 format!("tool {} is not available to your seat", request.name),
                 None,
@@ -345,6 +373,7 @@ pub(crate) mod tests {
             session_id: "01SESSION".into(),
             goal_id: "01GOAL".into(),
             task_id: Some("01TASK".into()),
+            knowledge_enabled: true,
             tool_router: AriadneMcp::tool_router(),
         }
     }
@@ -379,6 +408,8 @@ pub(crate) mod tests {
                     "read_messages",
                     "save_memory",
                     "search_memory",
+                    "search_code",
+                    "outline",
                 ][..],
             ),
             (
@@ -393,6 +424,8 @@ pub(crate) mod tests {
                     "read_messages",
                     "save_memory",
                     "search_memory",
+                    "search_code",
+                    "outline",
                 ][..],
             ),
             (
@@ -406,6 +439,8 @@ pub(crate) mod tests {
                     "read_messages",
                     "save_memory",
                     "search_memory",
+                    "search_code",
+                    "outline",
                 ][..],
             ),
         ] {
@@ -426,12 +461,14 @@ pub(crate) mod tests {
             "list_models",
             "list_skills",
             "list_tasks",
+            "outline",
             "pick_winner",
             "read_messages",
             "record_pull_request",
             "request_review",
             "retry_task",
             "save_memory",
+            "search_code",
             "search_memory",
             "send_message",
             "submit_verdict",
@@ -454,6 +491,42 @@ pub(crate) mod tests {
         tools.sort_unstable();
         tools.dedup();
         tools
+    }
+
+    /// With the knowledge base off, no seat is listed a knowledge tool, and a
+    /// call to one is refused by name; every other tool of the seat stays.
+    #[test]
+    fn the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off() {
+        for seat in SEATS {
+            let mut mcp = server_at(
+                seat.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
+            let listed = |mcp: &AriadneMcp| -> Vec<String> {
+                mcp.listed_tools()
+                    .into_iter()
+                    .map(|t| t.name.to_string())
+                    .collect()
+            };
+            let with: Vec<String> = listed(&mcp);
+            assert!(
+                with.iter().any(|t| t == "search_code"),
+                "{seat:?}: {with:?}"
+            );
+            assert!(with.iter().any(|t| t == "outline"), "{seat:?}: {with:?}");
+
+            mcp.knowledge_enabled = false;
+            let without = listed(&mcp);
+            for tool in KNOWLEDGE_TOOLS {
+                assert!(!without.iter().any(|t| t == tool), "{seat:?}: {without:?}");
+                assert!(!mcp.allows(tool), "{seat:?} may still call {tool}");
+            }
+            let rest: Vec<&String> = with
+                .iter()
+                .filter(|t| !KNOWLEDGE_TOOLS.contains(&t.as_str()))
+                .collect();
+            assert_eq!(without.iter().collect::<Vec<_>>(), rest, "{seat:?}");
+        }
     }
 
     /// Every tool a seat is allowed is a tool the router really has, and every

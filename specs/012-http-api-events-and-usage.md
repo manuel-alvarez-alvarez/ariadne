@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-15
+updated: 2026-09-18
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -17,6 +17,7 @@ tests:
   - crates/ariadne-daemon/tests/it/memories.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
+  - crates/ariadne-daemon/tests/it/knowledge.rs
 ---
 
 # HTTP API, event stream and usage
@@ -159,6 +160,15 @@ and the ACP runtime that reports the agent events (021).
     an event through the goal of the session that reported it, or through the
     goal of the task it was on — an event outlives its session, whose id is
     then null, and is still its goal's.
+24. The knowledge base (022) is served at `GET
+    /v1/repositories/{id}/knowledge`, `POST
+    /v1/repositories/{id}/knowledge/reindex` (202), `GET
+    /v1/knowledge/search` and `GET /v1/knowledge/outline`, and reports
+    every index run on the domain stream as `knowledge_indexed`
+    (`repository_id`, `git_ref`, `commit`, `files`, `symbols`) or
+    `knowledge_failed` (`repository_id`, `error`). Like a branch move, these
+    are published straight onto the bus — nothing in the database changed —
+    and belong to no goal or task, so a `goal` or `task` filter drops them.
 
 ## Acceptance criteria
 
@@ -266,7 +276,12 @@ and the ACP runtime that reports the agent events (021).
   `acp_console.rs::the_cancel_endpoint_is_in_the_openapi_document`,
   `acp_terminal.rs::the_terminal_endpoint_is_in_the_openapi_document`,
   `doctor.rs::endpoint_is_in_the_openapi_document`,
-  `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`).
+  `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`,
+  `knowledge.rs::every_knowledge_endpoint_is_in_the_openapi_document`).
+- An index run reaches the domain stream as `knowledge_indexed`, and a
+  failed one as `knowledge_failed`
+  (`knowledge.rs::registering_a_repository_indexes_its_base_branch`,
+  `::a_repository_git_cannot_read_reads_as_failed`).
 - ACP registry endpoints expose the cached result and refresh it on demand
   (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`,
   `::discovery_refreshes_on_demand`).

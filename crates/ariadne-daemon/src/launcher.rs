@@ -161,6 +161,7 @@ impl Launcher {
             model,
             effort: session.effort.clone(),
             extra_flags,
+            knowledge_enabled: self.cfg.knowledge_enabled,
         })
     }
 

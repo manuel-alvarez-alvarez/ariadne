@@ -395,6 +395,28 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: Some(memory.source_session_id.clone()),
             status: None,
         },
+        DomainEvent::KnowledgeIndexed(k) => Line {
+            at: now(),
+            kind,
+            subject: k.repository_id.clone(),
+            detail: format!(
+                "{} @ {} · {} files · {} symbols",
+                k.git_ref,
+                short(&k.commit),
+                k.files,
+                k.symbols
+            ),
+            session: None,
+            status: None,
+        },
+        DomainEvent::KnowledgeFailed(k) => Line {
+            at: now(),
+            kind,
+            subject: k.repository_id.clone(),
+            detail: k.error.clone(),
+            session: None,
+            status: None,
+        },
         DomainEvent::GoalDeleted(DeletedDto { id })
         | DomainEvent::SkillDeleted(DeletedDto { id })
         | DomainEvent::RepositoryDeleted(DeletedDto { id })

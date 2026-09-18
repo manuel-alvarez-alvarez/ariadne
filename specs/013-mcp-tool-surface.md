@@ -61,7 +61,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      approved)
    - **every seat**: `send_message`, `read_messages` — the channel
      the agents talk to each other on (018); `save_memory`, `search_memory` —
-     the repository facts agents choose to keep and retrieve (019)
+     the repository facts agents choose to keep and retrieve (019);
+     `search_code`, `outline` — the symbol index over the repositories
+     (022), listed and served only while the daemon runs with
+     `knowledge_enabled`, which every launch tells the server in
+     `ARIADNE_KNOWLEDGE_ENABLED`
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
@@ -140,6 +144,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`::memory_search_defaults_to_the_goals_only_repository`), and require a
   repository when the goal has several
   (`::memory_search_needs_a_repository_when_the_goal_has_several`).
+- The knowledge tools are listed to every seat, and to none while the
+  knowledge base is off
+  (`mcp.rs::the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off`);
+  what each one sends and answers is spec 022's
+  (`tools.rs::search_code_asks_the_daemon_with_its_filters_and_answers_one_line_per_hit`,
+  `::outline_defaults_to_the_task_repository_and_lists_line_ranges`).
 
 ## Sources
 

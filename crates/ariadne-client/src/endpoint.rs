@@ -65,6 +65,9 @@ pub struct FileConfig {
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).
     pub prevent_sleep: Option<bool>,
+    /// Index every registered repository into the knowledge base and serve
+    /// the `search_code` and `outline` tools (default true).
+    pub knowledge_enabled: Option<bool>,
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,

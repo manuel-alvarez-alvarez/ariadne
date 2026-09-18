@@ -9,6 +9,7 @@ pub mod values;
 use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
+use crate::commands::knowledge::KnowledgeCommand;
 use crate::commands::memory::MemoryCommand;
 use crate::commands::models::ModelsCommand;
 use crate::commands::repo::RepoCommand;
@@ -75,6 +76,15 @@ Examples:
   ariadne memory ls --repo <repo-id>
   ariadne memory search parser --repo <repo-id>
   ariadne memory delete <memory-id> --repo <repo-id>
+";
+
+const KNOWLEDGE_EXAMPLES: &str = "\
+Examples:
+  ariadne knowledge status ~/projects/api
+  ariadne knowledge search add_worktree --repository ~/projects/api
+  ariadne knowledge search Manager --kind class --path src/
+  ariadne knowledge outline ~/projects/api src/lib.rs
+  ariadne knowledge reindex ~/projects/api
 ";
 
 const GOAL_EXAMPLES: &str = "\
@@ -346,6 +356,17 @@ pub enum Command {
         #[command(subcommand)]
         command: MemoryCommand,
     },
+    /// Search the code index
+    ///
+    /// The daemon indexes every registered repository: its definitions, by
+    /// name, with their line ranges, on the base branch and on every task
+    /// branch. These commands read that index, say where a repository's
+    /// index stands, and ask for it to be built again.
+    #[command(after_help = KNOWLEDGE_EXAMPLES)]
+    Knowledge {
+        #[command(subcommand)]
+        command: KnowledgeCommand,
+    },
     /// Manage goals
     ///
     /// A goal is a whole effort. An orchestrator agent breaks it into tasks
@@ -496,6 +517,8 @@ const LISTINGS: &[&str] = &[
     "agent ls",
     "attention",
     "goal ls",
+    "knowledge outline",
+    "knowledge search",
     "models ls",
     "memory ls",
     "memory search",
@@ -518,6 +541,9 @@ const QUIET_OUTPUT: &[&str] = &[
     "goal create",
     "goal ls",
     "goal rm",
+    "knowledge outline",
+    "knowledge reindex",
+    "knowledge search",
     "models disable",
     "models enable",
     "models ls",

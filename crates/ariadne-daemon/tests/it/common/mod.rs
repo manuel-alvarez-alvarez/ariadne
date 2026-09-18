@@ -44,6 +44,7 @@ use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
+use ariadne_daemon::knowledge::Knowledge;
 use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::log::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
@@ -106,6 +107,7 @@ pub struct HarnessBuilder {
     logs: Option<LogBuffer>,
     discover_agents: bool,
     timeouts: Timeouts,
+    knowledge: bool,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -129,6 +131,7 @@ pub fn harness() -> HarnessBuilder {
         logs: None,
         discover_agents: false,
         timeouts: Timeouts::default(),
+        knowledge: false,
     }
 }
 
@@ -186,6 +189,15 @@ impl HarnessBuilder {
         self
     }
 
+    /// Run the knowledge base, as a daemon with `knowledge_enabled` does:
+    /// every repository registered from here on is indexed. Off by default,
+    /// since most repositories the tests register are not git repositories,
+    /// and each would be one failed index run on the bus.
+    pub fn knowledge(mut self) -> Self {
+        self.knowledge = true;
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -223,6 +235,14 @@ impl HarnessBuilder {
         // Installed before anything writes, exactly as the daemon does at
         // startup.
         let bus = ariadne_daemon::bus::start(store.clone());
+        let knowledge = Knowledge::start(
+            self.knowledge,
+            config.knowledge_db_path(),
+            store.clone(),
+            bus.clone(),
+        )
+        .await
+        .unwrap();
         let settle = own_home && self.spawns && !self.dies;
         let discover = self.discover_agents || settle;
         if discover {
@@ -250,6 +270,7 @@ impl HarnessBuilder {
             logs: logs.clone(),
             agent_registry,
             outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::default(),
+            knowledge,
         };
         // Lazy: most tests never write behind the store's back, and a
         // connection opened for every harness in every binary is a hundred

@@ -18,6 +18,7 @@ ariadne-api = { path = "crates/ariadne-api" }
 ariadne-store = { path = "crates/ariadne-store" }
 ariadne-client = { path = "crates/ariadne-client" }
 ariadne-console = { path = "crates/ariadne-console" }
+ariadne-knowledge = { path = "crates/ariadne-knowledge" }
 
 # async runtime / http
 tokio = { version = "1", features = ["full"] }

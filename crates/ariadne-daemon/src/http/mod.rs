@@ -11,6 +11,7 @@ mod doctor;
 mod error;
 pub(crate) mod events;
 mod goals;
+mod knowledge;
 mod landing;
 mod logs;
 mod memories;
@@ -44,6 +45,7 @@ use crate::acp_sessions::OutsideSessions;
 use catalog::{acp_agents, agents, models};
 
 use crate::bus::EventBus;
+use crate::knowledge::Knowledge;
 use crate::launcher::Launcher;
 use crate::log::LogBuffer;
 use crate::scheduler::SchedEvent;
@@ -69,6 +71,8 @@ pub struct AppState {
     /// The snapshot of every agent's stored sessions that
     /// `/v1/outside-sessions` pages.
     pub outside_sessions: OutsideSessions,
+    /// The symbol index over every registered repository, or a disabled one.
+    pub knowledge: Knowledge,
 }
 
 impl AppState {
@@ -120,6 +124,7 @@ impl AppState {
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
         memories::create, memories::list, memories::search, memories::delete,
+        knowledge::status, knowledge::reindex, knowledge::search, knowledge::outline,
 
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
@@ -150,6 +155,7 @@ impl AppState {
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "memories", description = "Searchable facts learned about one repository"),
+        (name = "knowledge", description = "The symbol index over every registered repository"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions, and the console each one is driven through"),
@@ -204,6 +210,14 @@ pub fn router(state: AppState) -> Router {
             "/v1/repositories/{repository_id}/memories/{id}",
             axum::routing::delete(memories::delete),
         )
+        // knowledge
+        .route("/v1/repositories/{id}/knowledge", get(knowledge::status))
+        .route(
+            "/v1/repositories/{id}/knowledge/reindex",
+            post(knowledge::reindex),
+        )
+        .route("/v1/knowledge/search", get(knowledge::search))
+        .route("/v1/knowledge/outline", get(knowledge::outline))
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))
         .route("/v1/goals/{id}", get(goals::get).delete(goals::delete))

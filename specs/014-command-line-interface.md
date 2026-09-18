@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-15
+updated: 2026-09-18
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -23,6 +23,7 @@ tests:
   - crates/ariadne-cli/src/commands/agent.rs
   - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
+  - crates/ariadne-cli/src/commands/knowledge.rs
 ---
 
 # Command-line interface
@@ -45,8 +46,8 @@ same binary also serves (013).
    desktop app. Project memory is currently CLI-only (019).
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
    `models`, `skill`, `repo`, `goal`, `task`, `session`, `events`,
-   `attention`, `memory`, `attach`, `doctor`, `completions`, plus the one
-   hidden command the agents use (`mcp serve`). Nothing in the tree launches
+   `attention`, `memory`, `knowledge`, `attach`, `doctor`, `completions`,
+   plus the one hidden command the agents use (`mcp serve`). Nothing in the tree launches
    an agent or reports on one's behalf: the daemon's ACP runtime does both
    (021).
 3. The root and every group share one help-screen shape, and no help screen
@@ -174,6 +175,13 @@ same binary also serves (013).
     permission answers. `--tail`, `--since` and repeatable `--kind` narrow the
     snapshot. Their `-f` forms follow the console stream and print agent chunks
     as they arrive, while JSON keeps the daemon's event objects unchanged.
+29. `ariadne knowledge status|reindex|search|outline` read the knowledge
+    base (022). `status` and `reindex` name a repository by id or path;
+    `search <query>` takes `--repository`, `--ref`, `--kind`, `--path` and
+    `--limit`, and `outline <repo> <path>` takes `--ref`. `search` and
+    `outline` are listings like every other, whose subject column is
+    `title`, and whose `-q` prints the location (`path:line`) or the line
+    range; `reindex` is a mutation whose `-q` prints the repository id.
 
 ## Acceptance criteria
 
@@ -322,6 +330,13 @@ same binary also serves (013).
 - The memory commands are classified like other lists and mutations
   (`cli/tests.rs::every_command_in_the_tree_is_classified`), and delete takes
   its entry and repository (`::memory_delete_takes_the_entry_and_its_repository`).
+- The knowledge commands are classified the same way, `search` takes its
+  filters and `outline` its repository and path
+  (`cli/tests.rs::every_command_in_the_tree_is_classified`,
+  `::knowledge_search_takes_its_filters`,
+  `::knowledge_outline_takes_the_repository_and_the_path`), and a search row
+  leads with its location
+  (`commands/knowledge.rs::a_search_row_leads_with_its_location_and_titles_the_symbol`).
 - The console renders a stub-agent transcript and submits typed input, and
   its permission question submits the selected option
   (`commands/console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,

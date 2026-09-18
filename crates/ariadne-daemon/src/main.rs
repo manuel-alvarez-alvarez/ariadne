@@ -43,6 +43,8 @@ unknown key stops the daemon rather than being ignored):
   delete_merged_branches   delete a task branch once it has landed (default: true)
   delete_merged_worktrees  delete a task worktree once it has landed (default: true)
   prevent_sleep            hold off system sleep while a session is live (default: true)
+  knowledge_enabled        index every repository into <home>/knowledge.db and serve
+                           the search_code and outline tools (default: true)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
 
   ariadned --check-config reads that file and exits.\
@@ -122,6 +124,16 @@ async fn main() -> Result<()> {
         warn!(error = %e, "cannot follow the branches of the tasks already in flight");
     }
 
+    // Queues every repository's base branch, and reads them one at a time
+    // off the request path; a disabled knowledge base serves its refusal.
+    let knowledge = ariadne_daemon::knowledge::Knowledge::start(
+        config.knowledge_enabled,
+        config.knowledge_db_path(),
+        store.clone(),
+        events.clone(),
+    )
+    .await?;
+
     let sched_tx =
         ariadne_daemon::scheduler::start(store.clone(), launcher.clone(), config.prevent_sleep);
     let state = AppState {
@@ -134,6 +146,7 @@ async fn main() -> Result<()> {
         logs,
         agent_registry,
         outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::default(),
+        knowledge,
     };
     let app = http::router(state);
 

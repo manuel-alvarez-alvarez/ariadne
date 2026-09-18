@@ -32,7 +32,7 @@ test that proves it.
 | 019 | [Project memory](019-project-memory.md) | searchable repository facts, sources, expiry and agent access |
 | 020 | [Session adoption](020-session-adoption.md) | discover and adopt sessions started outside Ariadne |
 | 021 | [ACP runtime](021-acp-runtime.md) | the daemon-owned ACP agent: child process, protocol, events, kill |
-| 022 | [Knowledge base](022-knowledge-base.md) | repository indexing: status, reindex, search, interactions |
+| 022 | [Knowledge base](022-knowledge-base.md) | the symbol index: languages, the store and its schema, when the daemon indexes, `search_code` and `outline`, the desktop page |
 
 ## Writing one
 

@@ -21,7 +21,15 @@ fn the_command_tree_is_well_formed() {
 /// The command groups: every one of them is a screen someone lands on from
 /// `ariadne --help`, so every one of them has to read the same way.
 const GROUPS: &[&str] = &[
-    "agent", "daemon", "goal", "memory", "repo", "session", "skill", "task",
+    "agent",
+    "daemon",
+    "goal",
+    "knowledge",
+    "memory",
+    "repo",
+    "session",
+    "skill",
+    "task",
 ];
 
 /// The root and every group say what they are for, list the two global flags
@@ -101,6 +109,10 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal inspect", true),
     ("goal ls", true),
     ("goal rm", true),
+    ("knowledge outline", true),
+    ("knowledge reindex", true),
+    ("knowledge search", true),
+    ("knowledge status", true),
     ("mcp serve", false),
     ("memory delete", true),
     ("memory ls", true),
@@ -576,6 +588,88 @@ fn memory_delete_takes_the_entry_and_its_repository() {
     assert_eq!(id, "01MEMORY");
     assert_eq!(repo, "01REPO");
     assert!(yes);
+}
+
+/// Every filter of `knowledge search` lands in its field, `--ref` included,
+/// which is spelled without the keyword it would be in Rust.
+#[test]
+fn knowledge_search_takes_its_filters() {
+    let Command::Knowledge {
+        command:
+            KnowledgeCommand::Search {
+                query,
+                repository,
+                git_ref,
+                kind,
+                path,
+                limit,
+            },
+    } = parse(&[
+        "ariadne",
+        "knowledge",
+        "search",
+        "add_worktree",
+        "--repository",
+        "01REPO",
+        "--ref",
+        "main",
+        "--kind",
+        "function",
+        "--path",
+        "gitwt",
+        "--limit",
+        "5",
+    ])
+    .command
+    else {
+        panic!("knowledge search");
+    };
+    assert_eq!(query, "add_worktree");
+    assert_eq!(repository.as_deref(), Some("01REPO"));
+    assert_eq!(git_ref.as_deref(), Some("main"));
+    assert_eq!(kind.as_deref(), Some("function"));
+    assert_eq!(path.as_deref(), Some("gitwt"));
+    assert_eq!(limit, Some(5));
+}
+
+#[test]
+fn knowledge_outline_takes_the_repository_and_the_path() {
+    let Command::Knowledge {
+        command:
+            KnowledgeCommand::Outline {
+                repo,
+                path,
+                git_ref,
+            },
+    } = parse(&[
+        "ariadne",
+        "knowledge",
+        "outline",
+        "01REPO",
+        "crates/ariadne-daemon/src/gitwt.rs",
+        "--ref",
+        "next",
+    ])
+    .command
+    else {
+        panic!("knowledge outline");
+    };
+    assert_eq!(repo, "01REPO");
+    assert_eq!(path, "crates/ariadne-daemon/src/gitwt.rs");
+    assert_eq!(git_ref.as_deref(), Some("next"));
+
+    for command in ["status", "reindex"] {
+        let parsed = parse(&["ariadne", "knowledge", command, "01REPO"]).command;
+        assert!(
+            matches!(
+                parsed,
+                Command::Knowledge {
+                    command: KnowledgeCommand::Status { .. } | KnowledgeCommand::Reindex { .. }
+                }
+            ),
+            "knowledge {command}"
+        );
+    }
 }
 
 /// Every `ls` that hides finished work behind `--all` takes the same short

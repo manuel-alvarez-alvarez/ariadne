@@ -12,6 +12,7 @@ pub mod events;
 pub mod fixtures;
 pub mod follow;
 pub mod goal;
+pub mod knowledge;
 pub mod mcp;
 pub mod memory;
 pub mod models;
