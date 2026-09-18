@@ -568,6 +568,97 @@ async fn a_live_reviewer_is_briefed_at_once_for_a_second_review() {
     );
 }
 
+/// A review the author has just asked for is not closed by the answers to the
+/// review before it.
+///
+/// A review opens in two writes: `transition_task` commits the status, and the
+/// announcement writes one request row per reviewer. A scheduler pass between
+/// the two reads the task under review while the newest request row is still
+/// the review before this one's, so the verdicts that row bounds are that
+/// review's answers. Read as this review's, the `request_changes` that closed
+/// the round the author has just finished sends the task straight back to its
+/// author, and the review it asked for is never held at all: no reviewer is
+/// ever briefed for it.
+///
+/// The window is seeded rather than raced for. The store writes the status,
+/// and the store announces nothing, so the pass below is exactly the pass that
+/// lands in it.
+#[tokio::test]
+async fn a_review_is_not_closed_by_the_answers_to_the_review_before_it() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    let answer = |kind: MessageKind, from: Actor, body: &str| ariadne_store::NewMessage {
+        goal_id: cast.goal.id.clone(),
+        task_id: Some(cast.task.id.clone()),
+        kind,
+        from_actor: from,
+        from_agent_id: Some(match from {
+            Actor::Author => cast.author.id.clone(),
+            _ => cast.reviewer.id.clone(),
+        }),
+        from_session: None,
+        to_actor: match from {
+            Actor::Author => Actor::Reviewer,
+            _ => Actor::Author,
+        },
+        to_agent_id: Some(match from {
+            Actor::Author => cast.reviewer.id.clone(),
+            _ => cast.author.id.clone(),
+        }),
+        body: body.to_string(),
+    };
+
+    // One review, asked for, announced, and answered with changes: what the
+    // task carries when its author asks for the next one.
+    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    h.store
+        .send_message(answer(
+            MessageKind::ReviewRequest,
+            Actor::Author,
+            "the first review",
+        ))
+        .await
+        .unwrap();
+    h.store
+        .send_message(answer(
+            MessageKind::RequestChanges,
+            Actor::Reviewer,
+            "take another look at the bounds",
+        ))
+        .await
+        .unwrap();
+    for status in [TaskStatus::ChangesRequested, TaskStatus::InProgress] {
+        h.store
+            .transition_task(&cast.task.id, status, Actor::Daemon, None, None)
+            .await
+            .unwrap();
+    }
+
+    // The author asks again, and nothing has announced it yet: the window.
+    h.store
+        .transition_task(
+            &cast.task.id,
+            TaskStatus::UnderReview,
+            Actor::Author,
+            Some("the revised review"),
+            None,
+        )
+        .await
+        .unwrap();
+    // Waited out rather than slept past: the flush answers only once the
+    // notify above's own reconciliation is done, which is the pass in the
+    // window having actually run.
+    h.notify(&cast.task.id);
+    h.flush_scheduler().await;
+
+    assert_eq!(
+        h.status(&cast.task.id).await,
+        TaskStatus::UnderReview,
+        "the review the author just asked for is the review the task is under"
+    );
+}
+
 /// A review request is not delivered and forgotten if the hand-off to the
 /// live reviewer failed. Its runtime entry can close its prompt channel in
 /// the moment between the liveness check and the hand-off — the same state

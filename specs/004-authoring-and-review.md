@@ -88,7 +88,10 @@ Out: the transition table itself (001), the landing that follows approval
    in its last verdict, which it gets through `read_messages`. It uses
    `get_diff` when no SHA is known or HEAD does not follow that SHA. That
    boundary is a row of the channel (018) rather than a counter, so nothing
-   has to be reset.
+   has to be reset. A review opens in two writes — the status, then the
+   request rows — so the transition that opened it bounds the verdicts as
+   well: in between, the answers to the review before it are not this
+   review's (018).
 9. Verdicts settle a review before anything else is done with it: any request
    for changes moves the task to `changes_requested`, whatever else the review
    holds. Otherwise the approvals are counted and the task is `approved` once
@@ -166,7 +169,12 @@ Out: the transition table itself (001), the landing that follows approval
   supersedes what came before it
   (`store.rs::a_verdict_belongs_to_the_review_that_was_asked_for`); a second
   verdict on the open review is refused by name
-  (`agent_messages.rs::only_one_verdict_per_reviewer_per_review_is_taken`).
+  (`agent_messages.rs::only_one_verdict_per_reviewer_per_review_is_taken`). A
+  review whose request rows are not written yet owns none of the verdicts
+  before it
+  (`store.rs::a_review_still_being_announced_owns_none_of_the_verdicts_before_it`),
+  so the task stays under review
+  (`agent_messages.rs::a_review_is_not_closed_by_the_answers_to_the_review_before_it`).
 - The review summary is the reason of the latest review request
   (`store.rs::the_review_summary_is_the_reason_of_the_latest_review_request`).
 - An author's review request ends its turn with one cancel once the agent

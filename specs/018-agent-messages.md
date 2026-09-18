@@ -100,7 +100,17 @@ and the wording of the text a message arrives in (006).
     holds on a contested task too, where the row a briefing waits for is named
     by the author whose review it opens — a reviewer there owes verdicts on
     several authors at once.
-14. The MCP surface is two tools every seat has: `send_message` and
+14. The verdicts that close a review are the ones written since the author
+    asked for it, and those two writes are why the request row alone does not
+    say so. In the window between them the newest request row is the review
+    before this one's, and the answers to that review read as answers to this
+    one: the `request_changes` that closed the round the author has just
+    finished would send the task straight back for the changes it already
+    made, and the review it asked for would never be held at all. The
+    transition that opened the review bounds them too, so a verdict written
+    before the author asked is an answer to what it asked before, whichever
+    of the two bounds says so.
+15. The MCP surface is two tools every seat has: `send_message` and
     `read_messages` (013).
 
 ## Acceptance criteria
@@ -143,6 +153,12 @@ and the wording of the text a message arrives in (006).
   (`agent_messages.rs::a_reviewer_briefed_before_the_request_row_is_not_briefed_again`).
   Two reviewers whose rows land one after the other are each briefed once
   (`::each_reviewer_is_briefed_once_when_its_request_row_lands_late`).
+- A review whose request rows are not written yet owns none of the verdicts
+  of the review before it
+  (`store.rs::a_review_still_being_announced_owns_none_of_the_verdicts_before_it`),
+  so a task the author has just sent for review stays under review rather
+  than going back to its author
+  (`agent_messages.rs::a_review_is_not_closed_by_the_answers_to_the_review_before_it`).
 - A message is delivered once, and the stamp says which have gone
   (`store.rs::a_message_is_delivered_once_and_the_stamp_says_so`).
 - On a contested task, a review request reaches a live reviewer only as its

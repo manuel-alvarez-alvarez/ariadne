@@ -140,6 +140,18 @@ impl Store {
     ///
     /// A task nobody has asked to have reviewed has no request to read from,
     /// and every verdict on it counts: there is nothing before them.
+    ///
+    /// The transition that opened the review bounds them too, because a review
+    /// opens in two writes and a reader can land between them: the status
+    /// commits here, and the daemon writes one request row per reviewer after
+    /// it. In that window the newest request row is the review before this
+    /// one's, and the verdicts it bounds are that review's answers — read as
+    /// this review's, they would close a review the author has only just
+    /// asked for. A verdict written before the author asked answers what it
+    /// asked before, whichever of the two bounds says so. The two ids compare
+    /// because every id in the database is a ULID of the one monotonic
+    /// generator ([`ariadne_core::id::new_id`]), so their order is the order
+    /// they were written in, table to table.
     pub async fn open_verdicts(&self, task_id: &str) -> Result<Vec<Message>> {
         Ok(sqlx::query_as::<_, Message>(
             "SELECT * FROM messages
@@ -147,6 +159,10 @@ impl Store {
                 AND id > COALESCE(
                       (SELECT MAX(id) FROM messages
                         WHERE task_id = ?1 AND kind = 'review_request'), '')
+                AND id > COALESCE(
+                      (SELECT id FROM task_transitions
+                        WHERE task_id = ?1 AND to_status = 'under_review'
+                        ORDER BY id DESC LIMIT 1), '')
               ORDER BY id",
         )
         .bind(task_id)

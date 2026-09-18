@@ -904,6 +904,106 @@ async fn a_verdict_belongs_to_the_review_that_was_asked_for() {
     assert_eq!(open[0].kind(), Some(MessageKind::Approve));
 }
 
+/// A review opens in two writes, and the verdicts of the review before it are
+/// not this one's answers in between.
+///
+/// The status commits first and the request rows are written after it, so a
+/// reader in that window finds the newest request row is the review before
+/// this one's. Bounded by that row alone, the answers to that review read as
+/// answers to this one, and a task the author has only just sent for review
+/// is sent straight back for the changes it already made.
+#[tokio::test]
+async fn a_review_still_being_announced_owns_none_of_the_verdicts_before_it() {
+    let w = World::new().await;
+    let (store, task) = (&w.store, &w.task);
+    let reviewer = store
+        .list_task_reviewers(&task.id)
+        .await
+        .unwrap()
+        .remove(0)
+        .id;
+    let author = store.task_author(&task.id).await.unwrap().id;
+    let message = |kind: MessageKind, from: Actor, body: &str| NewMessage {
+        goal_id: task.goal_id.clone(),
+        task_id: Some(task.id.clone()),
+        kind,
+        from_actor: from,
+        from_agent_id: Some(match from {
+            Actor::Author => author.clone(),
+            _ => reviewer.clone(),
+        }),
+        from_session: None,
+        to_actor: match from {
+            Actor::Author => Actor::Reviewer,
+            _ => Actor::Author,
+        },
+        to_agent_id: Some(match from {
+            Actor::Author => reviewer.clone(),
+            _ => author.clone(),
+        }),
+        body: body.into(),
+    };
+    let to = async |status, actor| {
+        store
+            .transition_task(&task.id, status, actor, None, None)
+            .await
+            .unwrap();
+    };
+
+    // One review, asked for and answered with changes.
+    to(TaskStatus::Ready, Actor::Daemon).await;
+    to(TaskStatus::InProgress, Actor::Daemon).await;
+    to(TaskStatus::UnderReview, Actor::Author).await;
+    store
+        .send_message(message(
+            MessageKind::ReviewRequest,
+            Actor::Author,
+            "have a look",
+        ))
+        .await
+        .unwrap();
+    store
+        .send_message(message(
+            MessageKind::RequestChanges,
+            Actor::Reviewer,
+            "please fix",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(store.open_verdicts(&task.id).await.unwrap().len(), 1);
+
+    // The changes made, and the author asks again. This is the window: the
+    // status is committed and the request row of this review is not written
+    // yet.
+    to(TaskStatus::ChangesRequested, Actor::Daemon).await;
+    to(TaskStatus::InProgress, Actor::Daemon).await;
+    to(TaskStatus::UnderReview, Actor::Author).await;
+    assert!(
+        store.open_verdicts(&task.id).await.unwrap().is_empty(),
+        "the answer to the review before it is not an answer to this one"
+    );
+
+    // And the row that lands next leaves it exactly where it was.
+    store
+        .send_message(message(MessageKind::ReviewRequest, Actor::Author, "fixed"))
+        .await
+        .unwrap();
+    assert!(store.open_verdicts(&task.id).await.unwrap().is_empty());
+
+    // The verdict this review does get is this review's.
+    store
+        .send_message(message(
+            MessageKind::Approve,
+            Actor::Reviewer,
+            "looks right now",
+        ))
+        .await
+        .unwrap();
+    let open = store.open_verdicts(&task.id).await.unwrap();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].kind(), Some(MessageKind::Approve));
+}
+
 /// A message goes to exactly one recipient and is delivered once: the stamp is
 /// what says which of them have reached their agent.
 #[tokio::test]
