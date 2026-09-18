@@ -58,6 +58,8 @@ export const paths = {
   repositories: () => "/repositories",
   /** One repository's saved memory: the list, search and delete screen (019). */
   repositoryMemory: (repositoryId: string) => `/repositories/${repositoryId}/memory`,
+  /** One repository's knowledge base: status, reindex, search and interactions (022). */
+  repositoryKnowledge: (repositoryId: string) => `/repositories/${repositoryId}/knowledge`,
   /**
    * The goals board with this goal's panel open on one of its sessions.
    *

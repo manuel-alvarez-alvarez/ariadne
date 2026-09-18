@@ -5,11 +5,11 @@
  * whatever screen is up and its picks land relative to it — a task stacks its
  * panel on the goal already open, a session opens inside its task's panel.
  *
- * It adds no requests of its own: the four lists it searches are the same
- * cache entries the goals board, the session panels and the skills screen
- * read, so a palette opened after them shows their data instantly and only
- * refreshes it. They are `enabled` on open, so a session that never opens the
- * palette never fetches them either.
+ * It adds no requests of its own: the five lists it searches are the same
+ * cache entries the goals board, the session panels, the skills screen and the
+ * repositories screen read, so a palette opened after them shows their data
+ * instantly and only refreshes it. They are `enabled` on open, so a session
+ * that never opens the palette never fetches them either.
  *
  * With an empty query only what is stuck and the actions are listed. Every
  * goal, task and session of a busy orchestration is a long list to answer a
@@ -63,6 +63,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAttention } from "@/features/goals/attention"
 import { goalsQueryOptions } from "@/features/goals/queries"
 import { isTerminalGoalStatus } from "@/features/goals/status"
+import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { skillsQueryOptions } from "@/features/skills/queries"
 import { taskListQueryOptions } from "@/features/tasks"
@@ -392,6 +393,7 @@ const GROUPS = [
   { key: "tasks", heading: "Tasks", icon: ListChecksIcon },
   { key: "sessions", heading: "Sessions", icon: RadioTowerIcon },
   { key: "skills", heading: "Skills", icon: CpuIcon },
+  { key: "repositories", heading: "Repositories", icon: FolderGit2Icon },
 ] as const satisfies readonly {
   key: keyof PaletteEntries
   heading: string
@@ -525,6 +527,7 @@ function usePaletteEntries(open: boolean): {
   const tasks = useQuery({ ...taskListQueryOptions(), enabled: open })
   const sessions = useQuery({ ...sessionsQueryOptions(), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
+  const repositories = useQuery({ ...repositoriesQueryOptions(), enabled: open })
 
   const entries = useMemo(
     () =>
@@ -533,8 +536,9 @@ function usePaletteEntries(open: boolean): {
         tasks: tasks.data,
         sessions: sessions.data,
         skills: skills.data,
+        repositories: repositories.data,
       }),
-    [goals.data, tasks.data, sessions.data, skills.data],
+    [goals.data, tasks.data, sessions.data, skills.data, repositories.data],
   )
 
   return { entries, goals: goals.data }

@@ -66,7 +66,30 @@ export type AgentEventDto = Schemas["AgentEventDto"]
 export type ResyncDto = Schemas["ResyncDto"]
 export type HeartbeatDto = Schemas["HeartbeatDto"]
 
+/**
+ * The two knowledge-base events (022): a repository finished indexing, or
+ * indexing it failed. The daemon side of 022 lands separately, so the
+ * generated schema does not carry these yet — hand-written here rather than
+ * aliased like everything above. Drop this pair and go back to aliasing
+ * `Schemas["DomainEvent"]` alone once `npm run gen:api` picks them up for
+ * real.
+ */
+interface KnowledgeIndexedEvent {
+  event: "knowledge_indexed"
+  data: {
+    repository_id: string
+    git_ref: string
+    commit: string
+    files: number
+    symbols: number
+  }
+}
+interface KnowledgeFailedEvent {
+  event: "knowledge_failed"
+  data: { repository_id: string; error: string }
+}
+
 /** Every domain event carried by `GET /v1/events/stream`, as a tagged union. */
-export type DomainEvent = Schemas["DomainEvent"]
+export type DomainEvent = Schemas["DomainEvent"] | KnowledgeIndexedEvent | KnowledgeFailedEvent
 /** `"goal_updated" | "task_updated" | ...` */
 export type DomainEventKind = DomainEvent["event"]

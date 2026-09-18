@@ -24,6 +24,7 @@ import { createHashRouter, Navigate, type RouteObject, useParams } from "react-r
 import { AppShell, type PageHandle } from "@/components/app-shell"
 import { AgentsPage } from "@/features/agents/agents-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
+import { KnowledgePage } from "@/features/knowledge/knowledge-page"
 import { MemoryPage } from "@/features/memory/memory-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { OutsideSessionsPage } from "@/features/sessions/outside-sessions-page"
@@ -48,6 +49,11 @@ function MemoryPageRoute() {
   return <MemoryPage repositoryId={repositoryId} />
 }
 
+function KnowledgePageRoute() {
+  const { repositoryId = "" } = useParams<{ repositoryId: string }>()
+  return <KnowledgePage repositoryId={repositoryId} />
+}
+
 const routes: RouteObject[] = [
   { index: true, element: <Navigate to={paths.goals()} replace /> },
   { path: "goals", element: <GoalsListPage />, handle: { title: "Goals" } satisfies PageHandle },
@@ -69,6 +75,11 @@ const routes: RouteObject[] = [
     path: "repositories/:repositoryId/memory",
     element: <MemoryPageRoute />,
     handle: { title: "Memory" },
+  },
+  {
+    path: "repositories/:repositoryId/knowledge",
+    element: <KnowledgePageRoute />,
+    handle: { title: "Knowledge" },
   },
   { path: "*", element: <NotFoundPage /> },
 ]

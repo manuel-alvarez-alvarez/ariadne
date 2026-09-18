@@ -33,7 +33,8 @@ Out: the daemon endpoints themselves (012).
 3. Screens: the goals board (swimlanes plus an attention strip), the task
    panel (facts, diff, messages, history), sessions, each shown in its
    console, outside sessions that a ready task can adopt as its author,
-   skills, repositories, one repository's memory (list, search, delete), the
+   skills, repositories, one repository's memory (list, search, delete), one
+   repository's knowledge base (status, reindex, search, interactions), the
    agents of the daemon's ACP registry with their launch flags and the models
    each may be staffed on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
@@ -189,6 +190,14 @@ Out: the daemon endpoints themselves (012).
   endpoint, and deletes an entry
   (`ui/src/features/memory/memory-page.test.tsx`) — parity with `ariadne
   memory ls|search|delete` (019).
+- One repository's knowledge page shows its status card in every state the
+  daemon can answer with, posts a reindex and shows the indexing state at
+  once, refetches once the daemon says indexing finished or failed, searches
+  with `q`, `kind` and `path`, and groups interactions by kind with both ends
+  and their confidence
+  (`ui/src/features/knowledge/knowledge-page.test.tsx`,
+  `ui/src/events/dispatch.test.ts::knowledge events (022)`) — parity with
+  `ariadne knowledge status|reindex|search|interactions` (022).
 - The task's channel reads as one list, every kind is told apart, and both
   ends of a message are named by the skills they work with
   (`ui/src/features/tasks/task-messages.test.tsx`).

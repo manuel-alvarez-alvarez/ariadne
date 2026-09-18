@@ -57,6 +57,21 @@ interface MemoryFilters {
   q?: string
 }
 
+/** `GET /v1/knowledge/search`, always narrowed to one repository from its page (022). */
+interface KnowledgeSearchFilters {
+  repository: string
+  q?: string
+  git_ref?: string
+  kind?: string
+  path?: string
+}
+
+/** `GET /v1/knowledge/interactions`, narrowed to one repository from its page (022). */
+interface KnowledgeInteractionFilters {
+  repository: string
+  git_ref?: string
+}
+
 export const qk = {
   goals: {
     all: () => ["goals"] as const,
@@ -110,6 +125,27 @@ export const qk = {
     list: (filters?: PageFilters) => ["repositories", "list", filters ?? {}] as const,
     details: () => ["repositories", "detail"] as const,
     detail: (id: string) => ["repositories", "detail", id] as const,
+    /** One repository's knowledge-base status (022): state, refs, counts, languages. */
+    knowledgeStatus: (id: string) => ["repositories", "detail", id, "knowledge"] as const,
+    /** Search over one repository's knowledge base, `q`/`kind`/`path` included. */
+    knowledgeSearch: (id: string, filters?: KnowledgeSearchFilters) =>
+      ["repositories", "detail", id, "knowledge-search", filters ?? { repository: id }] as const,
+    /**
+     * Every filtered interactions list for one repository. Shorter than
+     * {@link knowledgeInteractions}'s own key on purpose — invalidating this
+     * prefix catches a list under any `git_ref` without knowing which one is
+     * open, the way `tasks.lists()` catches every filter of that list.
+     */
+    knowledgeInteractionsAll: (id: string) =>
+      ["repositories", "detail", id, "knowledge-interactions"] as const,
+    knowledgeInteractions: (id: string, filters?: KnowledgeInteractionFilters) =>
+      [
+        "repositories",
+        "detail",
+        id,
+        "knowledge-interactions",
+        filters ?? { repository: id },
+      ] as const,
   },
   /**
    * How each registry agent is launched (`GET /v1/agents`): one unfiltered

@@ -15,9 +15,9 @@ import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it, vi } from "vitest"
 
-import type { GoalDto, SessionDto, TaskDto } from "@/api"
+import type { GoalDto, RepositoryDto, SessionDto, TaskDto } from "@/api"
 import { useStreamStore } from "@/stores/stream"
-import { aGoal, aSession, aSkill, aTask } from "@/test/fixtures"
+import { aGoal, aRepository, aSession, aSkill, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { CommandPalette } from "./command-palette"
 
@@ -31,6 +31,10 @@ const STUCK: TaskDto = aTask({
   status: "failed",
 })
 const SESSION: SessionDto = aSession({ goal_id: GOAL.id, task_id: TASK.id })
+const REPOSITORY: RepositoryDto = aRepository({
+  id: "01JREPO00000000000000PLT",
+  path: "/home/me/dev/ariadne",
+})
 
 function stubDaemon(tasks: TaskDto[] = [TASK, STUCK]) {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
@@ -44,7 +48,9 @@ function stubDaemon(tasks: TaskDto[] = [TASK, STUCK]) {
             ? [SESSION]
             : pathname === "/v1/profiles"
               ? [aSkill()]
-              : []
+              : pathname === "/v1/repositories"
+                ? [REPOSITORY]
+                : []
     return Promise.resolve(jsonResponse(body))
   })
 }
@@ -173,6 +179,17 @@ it("leaves the popup's own height to what is inside it", async () => {
   // `@/components/ui/command`.
   const command = document.querySelector('[data-slot="command"]')
   expect(command?.className).not.toMatch(/(^|\s)(h-full|size-full)(\s|$)/)
+})
+
+it("opens a repository's knowledge page from the palette", async () => {
+  const user = userEvent.setup()
+  const location = renderPalette("/repositories")
+  await screen.findByText("Actions")
+
+  await user.type(screen.getByRole("combobox"), "ariadne")
+  await user.click(await screen.findByText("ariadne"))
+
+  expect(location.url).toBe(`/repositories/${REPOSITORY.id}/knowledge`)
 })
 
 it("asks the daemon nothing until it is opened", async () => {

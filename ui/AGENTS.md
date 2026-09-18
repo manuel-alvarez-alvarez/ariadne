@@ -139,6 +139,7 @@ the query cache and it stays live.
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
 | `memory_created`, `memory_deleted` | invalidate `memories.lists` — a memory carries no id worth a detail key, so, like `agent_event`, this simply refetches |
+| `knowledge_indexed`, `knowledge_failed` | invalidate that repository's `knowledgeStatus` and every `knowledgeInteractions` list under it (022) |
 
 The daemon has **no replay**: anything that happened while the stream was down
 is simply gone. So both a reconnect and the daemon's `resync` control event

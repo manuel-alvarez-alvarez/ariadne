@@ -131,6 +131,94 @@ describe("memory events", () => {
   })
 })
 
+describe("knowledge events (022)", () => {
+  /** A client showing the knowledge page, next to everything else. */
+  function withKnowledge(): QueryClient {
+    const queryClient = seeded()
+    queryClient.setQueryData(qk.repositories.knowledgeStatus(REPOSITORY.id), {
+      repository_id: REPOSITORY.id,
+      state: "indexing",
+      refs: [],
+      files: 0,
+      symbols: 0,
+      languages: [],
+      error: null,
+    })
+    queryClient.setQueryData(
+      qk.repositories.knowledgeInteractions(REPOSITORY.id, { repository: REPOSITORY.id }),
+      [],
+    )
+    return queryClient
+  }
+
+  it("refetches the status and every interactions list once indexing finishes", () => {
+    const queryClient = withKnowledge()
+
+    dispatch(queryClient, {
+      event: "knowledge_indexed",
+      data: {
+        repository_id: REPOSITORY.id,
+        git_ref: "main",
+        commit: "abc1230000000000000000000000000000000000",
+        files: 12,
+        symbols: 34,
+      },
+    })
+
+    expect(stale(queryClient, qk.repositories.knowledgeStatus(REPOSITORY.id))).toBe(true)
+    expect(
+      stale(
+        queryClient,
+        qk.repositories.knowledgeInteractions(REPOSITORY.id, { repository: REPOSITORY.id }),
+      ),
+    ).toBe(true)
+  })
+
+  it("refetches the status and every interactions list when indexing fails", () => {
+    const queryClient = withKnowledge()
+
+    dispatch(queryClient, {
+      event: "knowledge_failed",
+      data: { repository_id: REPOSITORY.id, error: "git clone failed: permission denied" },
+    })
+
+    expect(stale(queryClient, qk.repositories.knowledgeStatus(REPOSITORY.id))).toBe(true)
+    expect(
+      stale(
+        queryClient,
+        qk.repositories.knowledgeInteractions(REPOSITORY.id, { repository: REPOSITORY.id }),
+      ),
+    ).toBe(true)
+  })
+
+  it("leaves another repository's knowledge caches alone", () => {
+    const queryClient = withKnowledge()
+    const other = "01JREPO000000000000OTHER1"
+    queryClient.setQueryData(qk.repositories.knowledgeStatus(other), {
+      repository_id: other,
+      state: "idle",
+      refs: [],
+      files: 0,
+      symbols: 0,
+      languages: [],
+      error: null,
+    })
+
+    dispatch(queryClient, {
+      event: "knowledge_indexed",
+      data: {
+        repository_id: REPOSITORY.id,
+        git_ref: "main",
+        commit: "abc1230000000000000000000000000000000000",
+        files: 12,
+        symbols: 34,
+      },
+    })
+
+    expect(stale(queryClient, qk.repositories.knowledgeStatus(other))).toBe(false)
+  })
+})
+
 describe("goal events", () => {
   it("drops a deleted goal, and refetches everything that hung off it", () => {
     const queryClient = seeded()

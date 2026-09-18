@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
 
-import type { GoalDto, SessionDto, SkillDto, TaskDto } from "@/api"
+import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto } from "@/api"
 import { attentionTarget, collectAttention } from "@/features/goals/attention"
-import { aGoal, aSession, aSkill, aTask } from "@/test/fixtures"
+import { aGoal, aRepository, aSession, aSkill, aTask } from "@/test/fixtures"
 import { attentionEntries, buildPaletteEntries, paletteTargetTo } from "./entries"
 
 const GOAL: GoalDto = aGoal({
@@ -38,11 +38,17 @@ const SKILL: SkillDto = aSkill({
   builtin: true,
 })
 
+const REPOSITORY: RepositoryDto = aRepository({
+  id: "01JREPO00000000000000PLT",
+  path: "/home/me/dev/ariadne",
+})
+
 const SOURCE = {
   goals: [GOAL],
   tasks: [TASK],
   sessions: [SESSION, PLANNER_SESSION],
   skills: [SKILL],
+  repositories: [REPOSITORY],
 }
 
 describe("buildPaletteEntries", () => {
@@ -52,8 +58,9 @@ describe("buildPaletteEntries", () => {
       tasks: undefined,
       sessions: undefined,
       skills: undefined,
+      repositories: undefined,
     })
-    expect(entries).toEqual({ goals: [], tasks: [], sessions: [], skills: [] })
+    expect(entries).toEqual({ goals: [], tasks: [], sessions: [], skills: [], repositories: [] })
   })
 
   it("makes a goal findable by its title and by its id", () => {
@@ -110,6 +117,17 @@ describe("buildPaletteEntries", () => {
     expect(entry?.keywords).toContain("shipped")
     // The pick carries its subject: the screen opens on that skill.
     expect(entry?.target).toEqual({ kind: "page", path: "/skills?skill=security-review" })
+  })
+
+  it("lists a repository by the last segment of its path, opening its knowledge page", () => {
+    const [entry] = buildPaletteEntries(SOURCE).repositories
+    expect(entry?.label).toBe("ariadne")
+    expect(entry?.keywords).toContain(REPOSITORY.id)
+    expect(entry?.keywords).toContain(REPOSITORY.path)
+    expect(entry?.target).toEqual({
+      kind: "page",
+      path: `/repositories/${REPOSITORY.id}/knowledge`,
+    })
   })
 })
 

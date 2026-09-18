@@ -12,11 +12,11 @@
  * the live search params.
  */
 
-import type { GoalDto, SessionDto, SkillDto, TaskDto } from "@/api"
+import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto } from "@/api"
 import { type AttentionItem, attentionSubject, attentionTarget } from "@/features/goals/attention"
 import { SESSION_ATTENTION_META } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
-import { SEAT_LABELS, shortId } from "@/lib/format"
+import { folderName, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, taskPanelFrom, taskSessionPanelFrom } from "@/routes/paths"
 
 /** Where a palette entry goes when it is picked. */
@@ -63,6 +63,7 @@ interface PaletteSource {
   tasks: TaskDto[] | undefined
   sessions: SessionDto[] | undefined
   skills: SkillDto[] | undefined
+  repositories: RepositoryDto[] | undefined
 }
 
 /** One group of rows per entity, in the order the palette lists them. */
@@ -71,6 +72,7 @@ export interface PaletteEntries {
   tasks: PaletteEntry[]
   sessions: PaletteEntry[]
   skills: PaletteEntry[]
+  repositories: PaletteEntry[]
 }
 
 export function buildPaletteEntries({
@@ -78,6 +80,7 @@ export function buildPaletteEntries({
   tasks,
   sessions,
   skills,
+  repositories,
 }: PaletteSource): PaletteEntries {
   const goalTitles = new Map((goals ?? []).map((goal) => [goal.id, goal.title]))
   const taskTitles = new Map((tasks ?? []).map((task) => [task.id, task.title]))
@@ -130,6 +133,17 @@ export function buildPaletteEntries({
       // The one entity with no panel of its own: the screen opens on it,
       // so the pick is carried there rather than dropped at `/skills`.
       target: { kind: "page", path: paths.skill(skill.name) },
+    })),
+
+    // A repository has no panel either, and picking one from the palette
+    // means its knowledge base (022) — the one screen scoped to a single
+    // repository, the way a skill's own screen is a page rather than a panel.
+    repositories: (repositories ?? []).map((repository) => ({
+      value: `${folderName(repository.path)} ${shortId(repository.id)}`,
+      label: folderName(repository.path),
+      detail: shortId(repository.id),
+      keywords: [repository.id, repository.path],
+      target: { kind: "page", path: paths.repositoryKnowledge(repository.id) },
     })),
   }
 }
