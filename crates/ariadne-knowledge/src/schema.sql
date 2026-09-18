@@ -58,6 +58,8 @@ CREATE TABLE symbols (
     is_test        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX symbols_by_blob ON symbols(blob);
+-- Resolution asks for the definitions of one name, over and over.
+CREATE INDEX symbols_by_name ON symbols(name);
 
 -- The identifiers of every symbol, split on camelCase, snake_case and the
 -- segments of the qualified name, for `search_code`. The rowid is the
@@ -65,15 +67,64 @@ CREATE INDEX symbols_by_blob ON symbols(blob);
 -- finds a row by without reading the whole table.
 CREATE VIRTUAL TABLE symbols_fts USING fts5(terms, tokenize = 'unicode61');
 
--- Relations between symbols, within and across repositories. Empty here:
--- the task that reads references fills it.
-CREATE TABLE edges (
-    kind            TEXT NOT NULL,
-    from_symbol     INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
-    to_symbol       INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
-    from_repository TEXT NOT NULL,
-    to_repository   TEXT NOT NULL,
-    confidence      REAL NOT NULL
+-- The names one blob names, as the parser found them: what the resolution
+-- pass turns into edges. Kept per blob, so a blob that did not change is
+-- resolved again without being parsed again.
+CREATE TABLE mentions (
+    blob        TEXT NOT NULL REFERENCES blobs(blob) ON DELETE CASCADE,
+    -- calls | references | implements | extends
+    kind        TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    line        INTEGER NOT NULL,
+    -- The definition the reference sits in. NULL at file scope.
+    from_symbol INTEGER REFERENCES symbols(id) ON DELETE CASCADE
 );
-CREATE INDEX edges_from ON edges(from_symbol);
-CREATE INDEX edges_to ON edges(to_symbol);
+CREATE INDEX mentions_by_blob ON mentions(blob);
+CREATE INDEX mentions_by_name ON mentions(name);
+
+-- The import statements of one blob: `use` in Rust, `import` and `from …
+-- import` in Python, `import` and `require` in TypeScript and JavaScript,
+-- `using` in C#. A named import is an edge of its own; a whole-module import
+-- (`name` NULL) only narrows where the other names of the file resolve.
+CREATE TABLE imports (
+    blob   TEXT NOT NULL REFERENCES blobs(blob) ON DELETE CASCADE,
+    module TEXT NOT NULL,
+    name   TEXT,
+    line   INTEGER NOT NULL
+);
+CREATE INDEX imports_by_blob ON imports(blob);
+CREATE INDEX imports_by_name ON imports(name);
+
+-- Relations between symbols, within and across repositories, as the
+-- resolution pass derived them. Keyed by the referencing blob at one ref of
+-- one repository: re-deriving them is one delete by that key and one insert.
+--
+-- The ref is part of the key because the answer depends on it. Two refs share
+-- the blob of an unchanged file, and each resolves its names against its own
+-- tree: `a.rs` points at the `b` of the branch on the branch, and at the `b`
+-- of the base branch on the base branch. One edge set per blob would hold
+-- whichever ref resolved it last, and the other ref would then answer for a
+-- definition it does not have.
+CREATE TABLE edges (
+    from_repository TEXT NOT NULL,
+    git_ref         TEXT NOT NULL,
+    from_blob       TEXT NOT NULL REFERENCES blobs(blob) ON DELETE CASCADE,
+    kind            TEXT NOT NULL,
+    -- The definition the reference sits in. NULL at file scope, which is
+    -- where a file's own imports sit.
+    from_symbol     INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+    to_symbol       INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    to_repository   TEXT NOT NULL,
+    from_line       INTEGER NOT NULL,
+    -- exact | heuristic
+    confidence      TEXT NOT NULL,
+    -- How many definitions the name matched at the step that resolved it.
+    candidates      INTEGER NOT NULL
+);
+-- Covering, in both directions, under the ref the walk reads: a walk over the
+-- graph reads the index alone.
+CREATE INDEX edges_from ON edges(from_repository, git_ref, kind, from_symbol, to_symbol, confidence);
+CREATE INDEX edges_to ON edges(from_repository, git_ref, kind, to_symbol, from_symbol, confidence);
+-- What deriving one blob's edges again deletes by, and what a dropped ref
+-- deletes by.
+CREATE INDEX edges_by_blob ON edges(from_repository, git_ref, from_blob);

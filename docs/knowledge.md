@@ -66,9 +66,25 @@ JavaScript, `describe`/`it` in Ruby, `test(` in Dart and Scala, `test "…" do`
 in Elixir, a bats `@test` block in Bash). C, C++ and Lua have no common test
 marker.
 
+## The graph over the definitions
+
+Every name a file names is resolved to the definition behind it, and the pair
+becomes an edge: `calls`, `references`, `implements`, `extends` or `imports`.
+The definition is looked for in four places, nearest first: the same file, the
+same directory or module, the modules the file imports (`use` in Rust,
+`import` and `from … import` in Python, `import` and `require` in TypeScript
+and JavaScript, `using` in C#; every other language names none), and then
+anywhere in the repository. One
+definition there is an `exact` edge; several make a `heuristic` edge to each
+of them, and the answer says how many matched. A name that matches more than
+20 definitions says nothing about which one was meant and is left alone.
+
+The tests of a definition are the test definitions at most two calls away, so
+a test that calls a helper that calls the definition is one of its tests.
+
 ## The tools agents get
 
-Every seat has two tools, beside the memory tools:
+Every seat has four tools, beside the memory tools:
 
 - `search_code` finds definitions by name. Words, camelCase parts and
   snake_case parts all match, each as a prefix: `add_worktree`, `addWork` and
@@ -81,11 +97,22 @@ Every seat has two tools, beside the memory tools:
   agent reads a function by its range instead of the whole file. It takes the
   task's repository by default, then the goal's only repository, and asks for
   one where the goal has several.
+- `symbol` reads one definition by name, in the task's repository: where it
+  is, its signature and its doc. `detail=source` adds its text, and `detail=context` adds its callers,
+  its callees, what implements it and the tests that reach it, 20 of each at
+  most.
+- `impact` lists what a change reaches: the callers of a definition, by how
+  many calls away they are. `symbol` names one definition, `diff` as
+  `<base>..<head>` names every definition a diff changed, and a reviewer that
+  passes neither reads the diff of its own task. `depth` walks further, 2 by
+  default and 4 at most. A definition with more than 200 callers is not walked
+  past, and the answer says so.
 
-Both answer plain text, one line per result, in the form `path:line kind name
-signature` (`path:start-end` for an outline). An answer is cut at 8 KiB, and
-its last line then says how many results were left out and to narrow the
-query.
+`search_code` and `outline` answer plain text, one line per result, in the
+form `path:line kind name signature` (`path:start-end` for an outline).
+`symbol` and `impact` group their answer under headings, one per repository
+and one per definition. An answer is cut at 8 KiB, and its last line then
+says how many results were left out and to narrow the query.
 
 Nothing is added to a prompt: an agent calls the tools when it needs them.
 
@@ -97,6 +124,9 @@ ariadne knowledge search add_worktree --repository ~/projects/api
 ariadne knowledge search Manager --kind class --path src/
 ariadne knowledge search parse --ref feat-parser  # a task branch
 ariadne knowledge outline ~/projects/api src/lib.rs
+ariadne knowledge symbol add_worktree --detail context
+ariadne knowledge impact --repository ~/projects/api --symbol add_worktree
+ariadne knowledge impact --repository ~/projects/api --diff main..feat-parser
 ariadne knowledge reindex ~/projects/api          # drop it and build it again
 ```
 
@@ -107,11 +137,16 @@ run. `search` and `outline` are listings like every other: `--format json`
 for the daemon's own objects, `-q` for the first column (`path:line`, or the
 line range of an outline), `-o wide` and `--columns` for the layout.
 `search` reads every repository unless `--repository` names one, at the base
-branch unless `--ref` names another.
+branch unless `--ref` names another. `symbol` prints a block per definition,
+with the lists `--detail context` asked for; `impact` prints one row per
+caller, led by its location, with how far away it is, names every definition
+it stopped at in a note, and answers the daemon's own objects under
+`--format json`.
 
 The same is on the API: `GET /v1/repositories/{id}/knowledge`, `POST
-/v1/repositories/{id}/knowledge/reindex`, `GET /v1/knowledge/search` and
-`GET /v1/knowledge/outline`, and the domain events `knowledge_indexed` and
+/v1/repositories/{id}/knowledge/reindex`, `GET /v1/knowledge/search`, `GET
+/v1/knowledge/outline`, `GET /v1/knowledge/symbol` and `GET
+/v1/knowledge/impact`, and the domain events `knowledge_indexed` and
 `knowledge_failed` on the event stream (`ariadne events` prints them).
 
 ## Turning it off
@@ -120,9 +155,9 @@ The same is on the API: `GET /v1/repositories/{id}/knowledge`, `POST
 knowledge_enabled = false   # in ~/.ariadne/config.toml
 ```
 
-With it off, nothing is indexed, no session is offered `search_code` or
-`outline`, `ariadne knowledge status` says `disabled`, and a search is
-refused with a line that names the key.
+With it off, nothing is indexed, no session is offered a knowledge tool,
+`ariadne knowledge status` says `disabled`, and a search is refused with a
+line that names the key.
 
 ## The store
 

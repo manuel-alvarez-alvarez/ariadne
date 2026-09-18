@@ -13,14 +13,15 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::languages::Language;
-use crate::parser;
 use crate::store::{FileChanges, FileRow, KnowledgeStore, ParsedBlob};
+use crate::{parser, resolve};
 
 /// Files over this size are skipped: generated code and data dumps, not the
 /// definitions an agent is looking for.
@@ -41,6 +42,9 @@ pub struct Indexed {
     pub symbols: i64,
     /// Blobs parsed by this run: the files that changed and were not known.
     pub parsed: usize,
+    /// Blobs whose edges this run derived again: the ones it parsed, and the
+    /// ones that name a definition the run moved.
+    pub resolved: usize,
 }
 
 /// One entry of `git ls-tree`.
@@ -75,6 +79,7 @@ impl KnowledgeStore {
                 files,
                 symbols,
                 parsed: 0,
+                resolved: 0,
             });
         }
 
@@ -137,36 +142,72 @@ impl KnowledgeStore {
             .into_iter()
             .filter(|(blob, _)| !known.contains(blob))
             .collect();
+        // The names the ref held at the paths this run touches, before it
+        // does: a definition that goes takes the edges into it with it.
+        let touched: Vec<String> = changes
+            .upserted
+            .iter()
+            .map(|file| file.path.clone())
+            .chain(changes.removed.iter().cloned())
+            .collect();
+        let mut moved_names = self.names_at(repository_id, git_ref, &touched).await?;
+
         let mut parsed = 0;
         for chunk in to_parse.chunks(BATCH) {
             let ids: Vec<&str> = chunk.iter().map(|(blob, _)| blob.as_str()).collect();
             let contents = cat_file(repo, &ids).await?;
-            let chunk = chunk.to_vec();
-            let batch = tokio::task::spawn_blocking(move || {
-                chunk
-                    .into_iter()
-                    .map(|(blob, language)| {
-                        let symbols = match contents.get(&blob) {
-                            Some(bytes) if !is_binary(bytes) => {
-                                parser::parse(language, &String::from_utf8_lossy(bytes))
+            // A core each: reading every reference of a file costs several
+            // times what reading its definitions alone did, and the files of
+            // one batch are read one from another.
+            let contents = Arc::new(contents);
+            let workers = std::thread::available_parallelism().map_or(4, |cores| cores.get());
+            let mut reading = Vec::new();
+            for piece in chunk.chunks(chunk.len().div_ceil(workers).max(1)) {
+                let piece = piece.to_vec();
+                let contents = Arc::clone(&contents);
+                reading.push(tokio::task::spawn_blocking(move || {
+                    piece
+                        .into_iter()
+                        .map(|(blob, language)| {
+                            let read = match contents.get(&blob) {
+                                Some(bytes) if !is_binary(bytes) => {
+                                    parser::read(language, &String::from_utf8_lossy(bytes))
+                                }
+                                _ => parser::Parsed::default(),
+                            };
+                            ParsedBlob {
+                                blob,
+                                language: language.name(),
+                                symbols: read.symbols,
+                                references: read.references,
+                                imports: read.imports,
                             }
-                            _ => Vec::new(),
-                        };
-                        ParsedBlob {
-                            blob,
-                            language: language.name(),
-                            symbols,
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .await
-            .context("parsing")?;
+                        })
+                        .collect::<Vec<_>>()
+                }));
+            }
+            let mut batch = Vec::with_capacity(chunk.len());
+            for read in reading {
+                batch.extend(read.await.context("parsing")?);
+            }
             parsed += batch.len();
             self.commit_blobs(&batch).await?;
         }
         self.commit_files(repository_id, git_ref, &commit, &changes)
             .await?;
+
+        // Every blob this run parsed, and every blob of the ref that names a
+        // definition the run moved: those are the edges the run invalidated,
+        // and no others. The names the touched paths hold now count too: on
+        // the first read of a branch nothing was parsed, and the blobs that
+        // name what the branch changed still have to point at it.
+        let mut to_resolve: HashSet<String> = to_parse.into_iter().map(|(blob, _)| blob).collect();
+        moved_names.extend(self.names_at(repository_id, git_ref, &touched).await?);
+        let moved: Vec<String> = moved_names.into_iter().collect();
+        to_resolve.extend(self.blobs_naming(repository_id, git_ref, &moved).await?);
+        let to_resolve: Vec<String> = to_resolve.into_iter().collect();
+        self.resolve(repository_id, git_ref, &to_resolve).await?;
+
         let (files, symbols) = self.counts(repository_id, git_ref).await?;
         Ok(Indexed {
             git_ref: git_ref.to_string(),
@@ -174,8 +215,99 @@ impl KnowledgeStore {
             files,
             symbols,
             parsed,
+            resolved: to_resolve.len(),
         })
     }
+
+    /// Derive the edges of `blobs` again, against the definitions this ref
+    /// holds.
+    async fn resolve(&self, repository_id: &str, git_ref: &str, blobs: &[String]) -> Result<()> {
+        if blobs.is_empty() {
+            return Ok(());
+        }
+        let named = self.names_of(repository_id, git_ref, blobs).await?;
+        let mut names: Vec<String> = named
+            .values()
+            .flat_map(|names| {
+                names
+                    .mentions
+                    .iter()
+                    .map(|mention| mention.name.clone())
+                    .chain(names.imports.iter().filter_map(|i| i.name.clone()))
+            })
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        let candidates = self.candidates(repository_id, git_ref, &names).await?;
+        let edges = resolve::edges_of(&named, &candidates);
+        self.commit_edges(repository_id, git_ref, blobs, &edges)
+            .await
+    }
+}
+
+/// The lines a diff changed, per path on its right-hand side: what
+/// `git diff --unified=0 <base>..<head>` reports.
+pub async fn changed_lines(repo: &Path, range: &str) -> Result<Vec<(String, Vec<(u32, u32)>)>> {
+    // A range is two commits and nothing else: a value that could read as a
+    // flag is refused rather than handed to git.
+    if range.starts_with('-') || !range.contains("..") {
+        bail!("a diff is `<base>..<head>`, not {range:?}");
+    }
+    let output = git_output(repo, &["diff", "--unified=0", "--no-color", range]).await?;
+    Ok(parse_hunks(&String::from_utf8_lossy(&output)))
+}
+
+/// The text of one blob, from the repository's object store.
+pub async fn blob_text(repo: &Path, blob: &str) -> Result<String> {
+    let contents = cat_file(repo, &[blob]).await?;
+    let bytes = contents
+        .get(blob)
+        .with_context(|| format!("git has no object {blob} in {}", repo.display()))?;
+    Ok(String::from_utf8_lossy(bytes).to_string())
+}
+
+/// `+++ b/<path>` and `@@ -a,b +c,d @@` of a unified diff, as the lines each
+/// path gained. A hunk that only deletes is the line it deleted at, so the
+/// definition around it is still named.
+fn parse_hunks(diff: &str) -> Vec<(String, Vec<(u32, u32)>)> {
+    let mut changed: Vec<(String, Vec<(u32, u32)>)> = Vec::new();
+    // Which file the hunks now being read belong to. `None` for a file the
+    // diff deletes, whose right-hand side is `/dev/null`: its hunks belong to
+    // no path, and adding them to the file before it would report lines that
+    // file never changed.
+    let mut at: Option<usize> = None;
+    for line in diff.lines() {
+        if let Some(path) = line.strip_prefix("+++ ") {
+            let path = path.strip_prefix("b/").unwrap_or(path).trim();
+            at = match path {
+                "/dev/null" => None,
+                path => {
+                    changed.push((path.to_string(), Vec::new()));
+                    Some(changed.len() - 1)
+                }
+            };
+            continue;
+        }
+        let Some(hunk) = line.strip_prefix("@@ ") else {
+            continue;
+        };
+        let Some(at) = at else {
+            continue;
+        };
+        let Some(after) = hunk.split_whitespace().find(|part| part.starts_with('+')) else {
+            continue;
+        };
+        let mut fields = after[1..].split(',');
+        let Some(start): Option<u32> = fields.next().and_then(|f| f.parse().ok()) else {
+            continue;
+        };
+        let count: u32 = fields.next().and_then(|f| f.parse().ok()).unwrap_or(1);
+        changed[at]
+            .1
+            .push((start.max(1), start.max(1) + count.saturating_sub(1)));
+    }
+    changed.retain(|(_, ranges)| !ranges.is_empty());
+    changed
 }
 
 /// Run `git` in `repo` and answer its trimmed stdout.
@@ -353,6 +485,32 @@ mod tests {
         assert_eq!(contents.get("aaaa").map(Vec::as_slice), Some(&b"hello"[..]));
         assert_eq!(contents.get("cccc").map(Vec::as_slice), Some(&b""[..]));
         assert!(!contents.contains_key("bbbb"));
+    }
+
+    /// A hunk belongs to the file its `+++` named, and a file the diff
+    /// deletes has no right-hand side: its hunks belong to nothing, and never
+    /// to the file before it.
+    #[test]
+    fn the_hunks_of_a_deleted_file_belong_to_no_path() {
+        let diff = "\
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -40,0 +41,2 @@ fn a() {
++    let x = 1;
++    let y = 2;
+diff --git a/src/old.rs b/src/old.rs
+deleted file mode 100644
+--- a/src/old.rs
++++ /dev/null
+@@ -1,10 +0,0 @@
+-fn gone() {}
+";
+        assert_eq!(
+            parse_hunks(diff),
+            [("src/a.rs".to_string(), vec![(41, 42)])],
+            "the deleted file's hunk is not src/a.rs's"
+        );
     }
 
     #[test]

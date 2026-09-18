@@ -12,8 +12,8 @@ use axum::http::{Request, StatusCode};
 
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::knowledge::{
-    KnowledgeHitDto, KnowledgeIndexedDto, KnowledgeOutlineEntryDto, KnowledgeState,
-    KnowledgeStatusDto,
+    KnowledgeHitDto, KnowledgeImpactDto, KnowledgeIndexedDto, KnowledgeOutlineEntryDto,
+    KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
 };
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{Actor, SessionStatus, TaskStatus};
@@ -481,7 +481,161 @@ async fn every_knowledge_endpoint_is_in_the_openapi_document() {
         "/v1/repositories/{id}/knowledge/reindex",
         "/v1/knowledge/search",
         "/v1/knowledge/outline",
+        "/v1/knowledge/symbol",
+        "/v1/knowledge/impact",
     ] {
         assert!(document["paths"].get(path).is_some(), "no {path}");
+    }
+}
+
+/// `symbol` and `impact` read the graph the index derived: the definition
+/// with its callers and its tests, and what a change to it reaches.
+#[tokio::test]
+async fn the_symbol_and_impact_endpoints_answer_from_the_derived_graph() {
+    let h = harness().knowledge().await;
+    let mut rx = h.bus.subscribe();
+    let repo = h.git_repo("graph");
+    for (path, text) in [
+        ("inner/m.rs", "/// Adds.\npub fn b() {}\n"),
+        (
+            "a.rs",
+            "use crate::inner::m::b;\n\npub fn a() {\n    b();\n}\n",
+        ),
+        (
+            "proof.rs",
+            "use crate::a::a;\n\n#[test]\nfn a_proof() {\n    a();\n}\n",
+        ),
+    ] {
+        let file = repo.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    commit(&repo, "graph");
+    let repository = h.repository(&repo).await;
+    indexed(&mut rx, &repository.id, "main", None).await;
+
+    // The outline of a definition, and then its context.
+    let outlined: Vec<KnowledgeSymbolDto> = h
+        .get(&format!(
+            "/v1/knowledge/symbol?name=b&repository={}",
+            repository.id
+        ))
+        .await;
+    assert_eq!(outlined.len(), 1, "{outlined:?}");
+    assert_eq!(outlined[0].path, "inner/m.rs");
+    assert_eq!((outlined[0].start_line, outlined[0].end_line), (2, 2));
+    assert_eq!(outlined[0].signature, "pub fn b()");
+    assert_eq!(outlined[0].doc.as_deref(), Some("Adds."));
+    assert!(outlined[0].source.is_none(), "outline holds no text");
+    assert!(outlined[0].context.is_none());
+
+    let sourced: Vec<KnowledgeSymbolDto> = h
+        .get(&format!(
+            "/v1/knowledge/symbol?name=b&repository={}&detail=source",
+            repository.id
+        ))
+        .await;
+    assert_eq!(sourced[0].source.as_deref(), Some("pub fn b() {}"));
+
+    let context: Vec<KnowledgeSymbolDto> = h
+        .get(&format!(
+            "/v1/knowledge/symbol?name=b&repository={}&detail=context",
+            repository.id
+        ))
+        .await;
+    let context = context[0].context.as_ref().expect("a context");
+    assert_eq!(
+        context
+            .callers
+            .iter()
+            .map(|c| (c.name.as_str(), c.confidence.as_str()))
+            .collect::<Vec<_>>(),
+        [("a", "exact")]
+    );
+    assert_eq!(
+        context
+            .tests
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect::<Vec<_>>(),
+        ["a_proof"],
+        "a test two edges away"
+    );
+
+    let impact: Vec<KnowledgeImpactDto> = h
+        .get(&format!(
+            "/v1/knowledge/impact?repository={}&symbol=b&depth=2",
+            repository.id
+        ))
+        .await;
+    assert_eq!(impact.len(), 1, "{impact:?}");
+    assert_eq!(impact[0].symbol.name, "b");
+    assert_eq!(
+        impact[0]
+            .callers
+            .iter()
+            .map(|c| (c.depth, c.name.as_str()))
+            .collect::<Vec<_>>(),
+        [(1, "a"), (2, "a_proof")]
+    );
+    assert!(impact[0].stopped.is_empty());
+
+    // A diff with no ref is read at its own head: the lines of a hunk are the
+    // head's, so the definitions they touch have to be the head's too. The
+    // branch adds a definition above `b` and moves `b` down, so what the base
+    // branch would answer and what the branch answers differ.
+    sh(
+        &repo,
+        "git checkout -q -b feat-graph && \
+         printf '/// Adds.\\npub fn helper() {}\\n\\n/// Adds.\\npub fn b() {\\n    helper();\\n}\\n' \
+           > inner/m.rs",
+    );
+    commit(&repo, "move-b");
+    sh(&repo, "git checkout -q main");
+    h.state.knowledge.index(&repository.id, "feat-graph");
+    indexed(&mut rx, &repository.id, "feat-graph", None).await;
+
+    let changed: Vec<KnowledgeImpactDto> = h
+        .get(&format!(
+            "/v1/knowledge/impact?repository={}&diff=main..feat-graph",
+            repository.id
+        ))
+        .await;
+    assert_eq!(
+        changed
+            .iter()
+            .map(|impact| (impact.symbol.name.as_str(), impact.symbol.line))
+            .collect::<Vec<_>>(),
+        [("helper", 2), ("b", 5)],
+        "the branch's definitions, at the branch's lines"
+    );
+    let callers = |name: &str| -> Vec<String> {
+        changed
+            .iter()
+            .find(|impact| impact.symbol.name == name)
+            .expect(name)
+            .callers
+            .iter()
+            .map(|caller| format!("{} {}", caller.depth, caller.name))
+            .collect()
+    };
+    assert_eq!(callers("b"), ["1 a", "2 a_proof"]);
+    assert_eq!(callers("helper"), ["1 b", "2 a"]);
+
+    // One of `symbol` and `diff`, never both and never neither.
+    for query in ["", "&symbol=b&diff=main..main"] {
+        let refused = h
+            .error(
+                get(&format!(
+                    "/v1/knowledge/impact?repository={}{query}",
+                    repository.id
+                )),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(
+            refused.error.message.contains("symbol or diff"),
+            "{refused:?}"
+        );
     }
 }

@@ -7,6 +7,7 @@ use clap::FromArgMatches;
 
 use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
 
+use crate::commands::knowledge::Detail;
 use crate::commands::models::ModelsCommand;
 use crate::commands::skill::SkillCommand;
 use crate::output::ColorChoice;
@@ -109,10 +110,12 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal inspect", true),
     ("goal ls", true),
     ("goal rm", true),
+    ("knowledge impact", true),
     ("knowledge outline", true),
     ("knowledge reindex", true),
     ("knowledge search", true),
     ("knowledge status", true),
+    ("knowledge symbol", true),
     ("mcp serve", false),
     ("memory delete", true),
     ("memory ls", true),
@@ -670,6 +673,118 @@ fn knowledge_outline_takes_the_repository_and_the_path() {
             "knowledge {command}"
         );
     }
+}
+
+/// `knowledge symbol` takes the name, the repository, the ref and how much
+/// detail to answer with, whose default is the outline.
+#[test]
+fn knowledge_symbol_takes_its_name_and_detail() {
+    let Command::Knowledge {
+        command:
+            KnowledgeCommand::Symbol {
+                name,
+                repository,
+                git_ref,
+                detail,
+            },
+    } = parse(&[
+        "ariadne",
+        "knowledge",
+        "symbol",
+        "add_worktree",
+        "--repository",
+        "01REPO",
+        "--ref",
+        "main",
+        "--detail",
+        "context",
+    ])
+    .command
+    else {
+        panic!("knowledge symbol");
+    };
+    assert_eq!(name, "add_worktree");
+    assert_eq!(repository.as_deref(), Some("01REPO"));
+    assert_eq!(git_ref.as_deref(), Some("main"));
+    assert_eq!(detail, Detail::Context);
+
+    let Command::Knowledge {
+        command: KnowledgeCommand::Symbol { detail, .. },
+    } = parse(&["ariadne", "knowledge", "symbol", "add_worktree"]).command
+    else {
+        panic!("knowledge symbol");
+    };
+    assert_eq!(detail, Detail::Outline, "the default is the outline");
+}
+
+/// `knowledge impact` takes one of `--symbol` and `--diff`, never both, with
+/// the repository and the depth.
+#[test]
+fn knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth() {
+    let Command::Knowledge {
+        command:
+            KnowledgeCommand::Impact {
+                repository,
+                symbol,
+                diff,
+                git_ref,
+                depth,
+            },
+    } = parse(&[
+        "ariadne",
+        "knowledge",
+        "impact",
+        "--repository",
+        "01REPO",
+        "--symbol",
+        "add_worktree",
+        "--ref",
+        "next",
+        "--depth",
+        "3",
+    ])
+    .command
+    else {
+        panic!("knowledge impact");
+    };
+    assert_eq!(repository, "01REPO");
+    assert_eq!(symbol.as_deref(), Some("add_worktree"));
+    assert_eq!(diff, None);
+    assert_eq!(git_ref.as_deref(), Some("next"));
+    assert_eq!(depth, Some(3));
+
+    let Command::Knowledge {
+        command: KnowledgeCommand::Impact { diff, .. },
+    } = parse(&[
+        "ariadne",
+        "knowledge",
+        "impact",
+        "--repository",
+        "01REPO",
+        "--diff",
+        "main..task",
+    ])
+    .command
+    else {
+        panic!("knowledge impact");
+    };
+    assert_eq!(diff.as_deref(), Some("main..task"));
+
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "knowledge",
+            "impact",
+            "--repository",
+            "01REPO",
+            "--symbol",
+            "b",
+            "--diff",
+            "main..task",
+        ])
+        .is_err(),
+        "a symbol and a diff at once name two questions"
+    );
 }
 
 /// Every `ls` that hides finished work behind `--all` takes the same short

@@ -1,14 +1,17 @@
 //! Knowledge base endpoints: a repository's index status, its reindex, and
-//! the two questions every seat asks the index.
+//! the four questions every seat asks the index.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::knowledge::{
-    KnowledgeHitDto, KnowledgeLanguageDto, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery,
-    KnowledgeRefDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
+    KnowledgeContextDto, KnowledgeDetail, KnowledgeHitDto, KnowledgeImpactCallerDto,
+    KnowledgeImpactDto, KnowledgeImpactQuery, KnowledgeLanguageDto, KnowledgeOutlineEntryDto,
+    KnowledgeOutlineQuery, KnowledgeRefDto, KnowledgeRelatedDto, KnowledgeSearchQuery,
+    KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
-use ariadne_knowledge::{KnowledgeStore, SearchQuery};
+use ariadne_knowledge::store::CONTEXT_LIMIT;
+use ariadne_knowledge::{KnowledgeStore, Related, SearchQuery, index};
 use ariadne_store::Repository;
 
 use super::AppState;
@@ -154,6 +157,236 @@ pub async fn outline(
             })
             .collect(),
     ))
+}
+
+#[utoipa::path(get, path = "/v1/knowledge/symbol", tag = "knowledge",
+    params(KnowledgeSymbolQuery),
+    responses((status = 200, body = [KnowledgeSymbolDto]), (status = 400), (status = 404),
+              (status = 409, description = "the knowledge base is disabled")))]
+pub async fn symbol(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<KnowledgeSymbolQuery>,
+) -> ApiResult<Json<Vec<KnowledgeSymbolDto>>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let knowledge = enabled(&state)?;
+    if query.name.trim().is_empty() {
+        return Err(ApiError::bad_request("name must name a definition"));
+    }
+    let repositories = match &query.repository {
+        Some(id) => vec![state.store.get_repository(id).await?],
+        None => match &ctx.session {
+            Some(session) => state.store.list_goal_repositories(&session.goal_id).await?,
+            None => state.store.list_repositories().await?,
+        },
+    };
+    let mut scopes = Vec::with_capacity(repositories.len());
+    for repository in &repositories {
+        let git_ref = ref_for(
+            &state,
+            knowledge,
+            &ctx,
+            repository,
+            query.git_ref.as_deref(),
+        )
+        .await?;
+        scopes.push((repository.id.clone(), git_ref));
+    }
+    let definitions = knowledge
+        .definitions(query.name.trim(), &scopes)
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    let detail = query.detail.unwrap_or_default();
+    let mut answers = Vec::with_capacity(definitions.len());
+    for definition in definitions {
+        let source = match detail {
+            KnowledgeDetail::Source => {
+                let path = repositories
+                    .iter()
+                    .find(|repository| repository.id == definition.repository_id)
+                    .map(|repository| repository.path.clone());
+                match path {
+                    Some(path) => lines_of(
+                        &index::blob_text(std::path::Path::new(&path), &definition.blob)
+                            .await
+                            .map_err(|e| ApiError::conflict(e.to_string()))?,
+                        definition.start_line,
+                        definition.end_line,
+                    ),
+                    None => None,
+                }
+            }
+            _ => None,
+        };
+        let context = match detail {
+            KnowledgeDetail::Context => Some(
+                knowledge
+                    .context(
+                        definition.id,
+                        &definition.repository_id,
+                        &definition.git_ref,
+                        CONTEXT_LIMIT,
+                    )
+                    .await
+                    .map(|context| KnowledgeContextDto {
+                        callers: related(context.callers),
+                        callees: related(context.callees),
+                        implementations: related(context.implementations),
+                        tests: related(context.tests),
+                    })
+                    .map_err(|e| ApiError::conflict(e.to_string()))?,
+            ),
+            _ => None,
+        };
+        answers.push(KnowledgeSymbolDto {
+            repository_id: definition.repository_id,
+            path: definition.path,
+            start_line: definition.start_line,
+            end_line: definition.end_line,
+            kind: definition.kind,
+            name: definition.name,
+            signature: definition.signature,
+            doc: definition.doc,
+            source,
+            context,
+        });
+    }
+    Ok(Json(answers))
+}
+
+#[utoipa::path(get, path = "/v1/knowledge/impact", tag = "knowledge",
+    params(KnowledgeImpactQuery),
+    responses((status = 200, body = [KnowledgeImpactDto]), (status = 400), (status = 404),
+              (status = 409, description = "the knowledge base is disabled")))]
+pub async fn impact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<KnowledgeImpactQuery>,
+) -> ApiResult<Json<Vec<KnowledgeImpactDto>>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let knowledge = enabled(&state)?;
+    let repository = state.store.get_repository(&query.repository).await?;
+    let symbol = query
+        .symbol
+        .as_deref()
+        .filter(|name| !name.trim().is_empty());
+    let diff = query
+        .diff
+        .as_deref()
+        .filter(|range| !range.trim().is_empty());
+    // A diff names the ref it is about: its lines are the head's, so the
+    // definitions have to be the head's too. Where the head is a ref the
+    // index knows, it is what answers; where it is not, the caller's own ref
+    // is all there is.
+    let head = match (&query.git_ref, diff) {
+        (None, Some(range)) => head_of(range),
+        _ => None,
+    };
+    let named = match &head {
+        Some(head) => knowledge
+            .ref_commit(&repository.id, head)
+            .await
+            .map_err(|e| ApiError::conflict(e.to_string()))?
+            .map(|_| head.as_str()),
+        None => query.git_ref.as_deref(),
+    };
+    let git_ref = ref_for(&state, knowledge, &ctx, &repository, named).await?;
+    // One or the other: a call that named both would get an answer to a
+    // question it did not ask.
+    let changed: Vec<(i64, Related)> = match (symbol, diff) {
+        (Some(name), None) => knowledge
+            .definitions(name.trim(), &[(repository.id.clone(), git_ref.clone())])
+            .await
+            .map_err(|e| ApiError::conflict(e.to_string()))?
+            .into_iter()
+            .map(|definition| {
+                (
+                    definition.id,
+                    Related {
+                        repository_id: definition.repository_id,
+                        path: definition.path,
+                        line: definition.start_line,
+                        name: definition.name,
+                        confidence: "exact".into(),
+                    },
+                )
+            })
+            .collect(),
+        (None, Some(range)) => {
+            let lines = index::changed_lines(std::path::Path::new(&repository.path), range.trim())
+                .await
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            knowledge
+                .symbols_in_lines(&repository.id, &git_ref, &lines)
+                .await
+                .map_err(|e| ApiError::conflict(e.to_string()))?
+        }
+        _ => {
+            return Err(ApiError::bad_request(
+                "pass symbol or diff, and only one of them",
+            ));
+        }
+    };
+    let depth = query.depth();
+    let mut answers = Vec::with_capacity(changed.len());
+    for (id, symbol) in changed {
+        let (callers, stopped) = knowledge
+            .impact(id, &repository.id, &git_ref, depth)
+            .await
+            .map_err(|e| ApiError::conflict(e.to_string()))?;
+        answers.push(KnowledgeImpactDto {
+            symbol: KnowledgeRelatedDto {
+                repository_id: symbol.repository_id,
+                path: symbol.path,
+                line: symbol.line,
+                name: symbol.name,
+                confidence: symbol.confidence,
+            },
+            callers: callers
+                .into_iter()
+                .map(|caller| KnowledgeImpactCallerDto {
+                    depth: caller.depth,
+                    repository_id: caller.repository_id,
+                    path: caller.path,
+                    line: caller.line,
+                    name: caller.name,
+                    confidence: caller.confidence,
+                })
+                .collect(),
+            stopped,
+        });
+    }
+    Ok(Json(answers))
+}
+
+fn related(ends: Vec<Related>) -> Vec<KnowledgeRelatedDto> {
+    ends.into_iter()
+        .map(|end| KnowledgeRelatedDto {
+            repository_id: end.repository_id,
+            path: end.path,
+            line: end.line,
+            name: end.name,
+            confidence: end.confidence,
+        })
+        .collect()
+}
+
+/// The head of a `<base>..<head>` range, where it names one.
+fn head_of(range: &str) -> Option<String> {
+    let head = range.trim().split_once("..")?.1.trim();
+    (!head.is_empty()).then(|| head.to_string())
+}
+
+/// Lines `first` to `last` of a file, 1-based and inclusive.
+fn lines_of(text: &str, first: i64, last: i64) -> Option<String> {
+    let first = first.max(1) as usize;
+    let last = last.max(first as i64) as usize;
+    let taken: Vec<&str> = text
+        .lines()
+        .skip(first - 1)
+        .take(last + 1 - first)
+        .collect();
+    (!taken.is_empty()).then(|| taken.join("\n"))
 }
 
 /// The store, or the refusal a disabled knowledge base answers with.

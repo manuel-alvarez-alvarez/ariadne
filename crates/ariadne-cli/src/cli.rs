@@ -84,6 +84,8 @@ Examples:
   ariadne knowledge search add_worktree --repository ~/projects/api
   ariadne knowledge search Manager --kind class --path src/
   ariadne knowledge outline ~/projects/api src/lib.rs
+  ariadne knowledge symbol add_worktree --detail context
+  ariadne knowledge impact --repository ~/projects/api --symbol add_worktree
   ariadne knowledge reindex ~/projects/api
 ";
 
@@ -517,6 +519,7 @@ const LISTINGS: &[&str] = &[
     "agent ls",
     "attention",
     "goal ls",
+    "knowledge impact",
     "knowledge outline",
     "knowledge search",
     "models ls",
@@ -541,6 +544,7 @@ const QUIET_OUTPUT: &[&str] = &[
     "goal create",
     "goal ls",
     "goal rm",
+    "knowledge impact",
     "knowledge outline",
     "knowledge reindex",
     "knowledge search",

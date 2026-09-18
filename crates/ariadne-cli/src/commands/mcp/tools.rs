@@ -15,7 +15,9 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::knowledge::{
-    KnowledgeHitDto, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeSearchQuery,
+    KnowledgeDetail, KnowledgeHitDto, KnowledgeImpactDto, KnowledgeImpactQuery,
+    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeRelatedDto, KnowledgeSearchQuery,
+    KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_api::memories::{CreateMemoryRequest, MemoryDto};
 use ariadne_api::messages::SendMessageRequest;
@@ -26,7 +28,7 @@ use ariadne_api::tasks::{
 };
 use ariadne_core::{Actor, Landing, MessageKind, PermissionMode, Seat, TaskStatus};
 
-use super::{AriadneMcp, json_result, to_mcp_err};
+use super::{AriadneMcp, McpSeat, json_result, to_mcp_err};
 use crate::commands::query_path;
 
 /// How long a knowledge answer may be, in bytes. Codex cuts a tool result
@@ -335,6 +337,60 @@ pub struct OutlineReq {
     pub git_ref: Option<String>,
 }
 
+/// How much `symbol` answers with. Spelled here because the schema an agent
+/// reads is derived from the parameter types of this file.
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(crate = "rmcp::schemars", rename_all = "snake_case")]
+pub enum DetailReq {
+    /// The definition, its line range and its signature.
+    Outline,
+    /// The text of the definition too.
+    Source,
+    /// Its callers, callees, implementations and tests too.
+    Context,
+}
+
+impl From<DetailReq> for KnowledgeDetail {
+    fn from(req: DetailReq) -> KnowledgeDetail {
+        match req {
+            DetailReq::Outline => KnowledgeDetail::Outline,
+            DetailReq::Source => KnowledgeDetail::Source,
+            DetailReq::Context => KnowledgeDetail::Context,
+        }
+    }
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct SymbolReq {
+    /// The name of the definition, spelled in full.
+    pub name: String,
+    /// Repository id. Omit it when this session works in one repository.
+    pub repository: Option<String>,
+    /// The branch to read. Omit it for your own branch.
+    pub git_ref: Option<String>,
+    /// How much to answer with: `outline` by default.
+    pub detail: Option<DetailReq>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ImpactReq {
+    /// The name of the definition you changed. Pass this or `diff`, never
+    /// both.
+    pub symbol: Option<String>,
+    /// `<base>..<head>`: every definition the diff changed. A reviewer that
+    /// passes neither reads the diff of its own task.
+    pub diff: Option<String>,
+    /// Repository id. Omit it when this session works in one repository.
+    pub repository: Option<String>,
+    /// The branch to read. Omit it for your own branch.
+    pub git_ref: Option<String>,
+    /// How far to walk the callers: 2 by default, 4 at most.
+    pub depth: Option<u32>,
+}
+
 // ---------- helpers ----------
 
 /// `lines` as one text under [`ANSWER_CAP`]: what fits, then a last line
@@ -355,6 +411,11 @@ fn cut_answer(lines: Vec<String>, cap: usize) -> String {
         answer.push('\n');
     }
     answer
+}
+
+/// One end of an edge, as a knowledge answer prints it.
+fn related_line(end: &KnowledgeRelatedDto) -> String {
+    format!("{}:{} {} {}", end.path, end.line, end.name, end.confidence)
 }
 
 fn text_result(text: String) -> Result<CallToolResult, McpError> {
@@ -637,6 +698,134 @@ impl AriadneMcp {
                 )
             })
             .collect();
+        text_result(cut_answer(lines, ANSWER_CAP))
+    }
+
+    #[tool(
+        description = "Read one definition by name, on your own branch: where it is, its signature and its doc. `detail=source` adds its text, and `detail=context` adds its callers, its callees, what implements it and the tests that reach it. Use it instead of grepping for a name and reading the files around it."
+    )]
+    async fn symbol(
+        &self,
+        Parameters(req): Parameters<SymbolReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let repository = self.memory_repository(req.repository).await?;
+        let query = KnowledgeSymbolQuery {
+            name: req.name.clone(),
+            repository: Some(repository),
+            git_ref: req.git_ref,
+            detail: req.detail.map(KnowledgeDetail::from),
+        };
+        let found: Vec<KnowledgeSymbolDto> = self
+            .get(&knowledge_path("/v1/knowledge/symbol", &query)?)
+            .await?;
+        if found.is_empty() {
+            return text_result(format!("No definition of {}.\n", req.name));
+        }
+        let mut lines = Vec::new();
+        let mut repository = String::new();
+        for definition in &found {
+            // One heading per repository: what the answer holds for another
+            // repository is under a heading of its own.
+            if definition.repository_id != repository {
+                repository = definition.repository_id.clone();
+                lines.push(format!("# {repository}"));
+            }
+            lines.push(format!(
+                "## {}:{}-{} {} {}",
+                definition.path,
+                definition.start_line,
+                definition.end_line,
+                definition.kind,
+                definition.name
+            ));
+            lines.push(definition.signature.clone());
+            if let Some(doc) = &definition.doc {
+                lines.extend(doc.lines().map(str::to_string));
+            }
+            if let Some(source) = &definition.source {
+                lines.push("### source".into());
+                lines.extend(source.lines().map(str::to_string));
+            }
+            if let Some(context) = &definition.context {
+                for (heading, ends) in [
+                    ("callers", &context.callers),
+                    ("callees", &context.callees),
+                    ("implementations", &context.implementations),
+                    ("tests", &context.tests),
+                ] {
+                    lines.push(format!("### {heading}"));
+                    match ends.is_empty() {
+                        true => lines.push("(none)".into()),
+                        false => lines.extend(ends.iter().map(related_line)),
+                    }
+                }
+            }
+        }
+        text_result(cut_answer(lines, ANSWER_CAP))
+    }
+
+    #[tool(
+        description = "List what a change reaches: the callers of a definition, by how many calls away they are. Pass `symbol` for one definition, or `diff` as `<base>..<head>` for every definition a diff changed. A reviewer that passes neither reads the diff of its own task. Use it to see what one edit can break."
+    )]
+    async fn impact(
+        &self,
+        Parameters(req): Parameters<ImpactReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let symbol = req.symbol.filter(|name| !name.trim().is_empty());
+        let diff = req.diff.filter(|range| !range.trim().is_empty());
+        // A reviewer that names nothing means the change it is judging.
+        let (repository, diff) = match (&symbol, &diff) {
+            (None, None) if self.seat == McpSeat::Reviewer => {
+                let (repository, range) = self.task_diff().await?;
+                (req.repository.unwrap_or(repository), Some(range))
+            }
+            (None, None) => {
+                return Err(McpError::invalid_params(
+                    "pass symbol, or diff as `<base>..<head>`",
+                    None,
+                ));
+            }
+            _ => (self.memory_repository(req.repository).await?, diff),
+        };
+        let query = KnowledgeImpactQuery {
+            repository,
+            git_ref: req.git_ref,
+            symbol,
+            diff,
+            depth: req.depth.map(i64::from),
+        };
+        let found: Vec<KnowledgeImpactDto> = self
+            .get(&knowledge_path("/v1/knowledge/impact", &query)?)
+            .await?;
+        if found.is_empty() {
+            return text_result("No changed definition.\n".into());
+        }
+        let mut lines = Vec::new();
+        let mut repository = String::new();
+        for impact in &found {
+            if impact.symbol.repository_id != repository {
+                repository = impact.symbol.repository_id.clone();
+                lines.push(format!("# {repository}"));
+            }
+            lines.push(format!(
+                "## {}:{} {} — callers: {}",
+                impact.symbol.path,
+                impact.symbol.line,
+                impact.symbol.name,
+                impact.callers.len()
+            ));
+            for caller in &impact.callers {
+                lines.push(format!(
+                    "{} {}:{} {} {}",
+                    caller.depth, caller.path, caller.line, caller.name, caller.confidence
+                ));
+            }
+            for name in &impact.stopped {
+                lines.push(format!(
+                    "{name} has more than 200 callers: the walk stopped there."
+                ));
+            }
+        }
         text_result(cut_answer(lines, ANSWER_CAP))
     }
 
@@ -1577,6 +1766,170 @@ mod tests {
             "crates/ariadne-daemon/src/gitwt.rs:17-18 class GitManager pub struct GitManager\n\
              crates/ariadne-daemon/src/gitwt.rs:44-63 method add_worktree pub async fn add_worktree(&self)\n"
         );
+    }
+
+    /// `symbol` asks the daemon for the detail it was given, and groups its
+    /// answer under a heading per repository, a heading per definition, and
+    /// one per list of the context.
+    #[tokio::test]
+    async fn symbol_groups_its_answer_under_a_heading_for_each_repository() {
+        let (endpoint, seen) = recording_daemon_answering(
+            r#"[
+                {"repository_id":"01REPO","path":"src/inner/m.rs","start_line":2,"end_line":2,
+                 "kind":"function","name":"b","signature":"pub fn b()","doc":"Adds.",
+                 "source":null,
+                 "context":{"callers":[{"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"}],
+                            "callees":[],
+                            "implementations":[],
+                            "tests":[{"repository_id":"01REPO","path":"src/proof.rs","line":4,"name":"a_proof","confidence":"exact"}]}}
+            ]"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .symbol(Parameters(SymbolReq {
+                name: "b".into(),
+                repository: Some("01REPO".into()),
+                git_ref: Some("main".into()),
+                detail: Some(DetailReq::Context),
+            }))
+            .await
+            .expect("symbol");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(
+            seen[0].path,
+            "/v1/knowledge/symbol?name=b&repository=01REPO&git_ref=main&detail=context"
+        );
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(
+            text.text,
+            "# 01REPO\n\
+             ## src/inner/m.rs:2-2 function b\n\
+             pub fn b()\n\
+             Adds.\n\
+             ### callers\n\
+             src/a.rs:3 a exact\n\
+             ### callees\n\
+             (none)\n\
+             ### implementations\n\
+             (none)\n\
+             ### tests\n\
+             src/proof.rs:4 a_proof exact\n"
+        );
+    }
+
+    /// `symbol` takes the task's repository by default, like `outline` and the
+    /// memory tools.
+    #[tokio::test]
+    async fn symbol_defaults_to_the_task_repository() {
+        let (endpoint, seen) =
+            recording_daemon_answering_in_order(&[r#"{"repo_id":"01REPO"}"#, "[]"]).await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .symbol(Parameters(SymbolReq {
+                name: "b".into(),
+                repository: None,
+                git_ref: None,
+                detail: None,
+            }))
+            .await
+            .expect("symbol");
+
+        let seen = seen.lock().expect("lock").clone();
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/v1/tasks/01TASK",
+                "/v1/knowledge/symbol?name=b&repository=01REPO"
+            ]
+        );
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(text.text, "No definition of b.\n");
+    }
+
+    /// A reviewer that names neither a symbol nor a diff asks about its own
+    /// task: the base branch of the repository to the task branch.
+    #[tokio::test]
+    async fn impact_reads_the_task_diff_for_a_reviewer_that_names_nothing() {
+        let (endpoint, seen) = recording_daemon_answering_in_order(&[
+            r#"{"repo_id":"01REPO","branch":"feat-task-abc"}"#,
+            r#"{"id":"01REPO","base_branch":"main"}"#,
+            r#"[{"symbol":{"repository_id":"01REPO","path":"src/inner/m.rs","line":2,"name":"b","confidence":"exact"},
+                 "callers":[{"depth":1,"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"}],
+                 "stopped":["hot"]}]"#,
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Reviewer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .impact(Parameters(ImpactReq {
+                symbol: None,
+                diff: None,
+                repository: None,
+                git_ref: None,
+                depth: None,
+            }))
+            .await
+            .expect("impact");
+
+        let seen = seen.lock().expect("lock").clone();
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/v1/tasks/01TASK",
+                "/v1/repositories/01REPO",
+                "/v1/knowledge/impact?repository=01REPO&diff=main..feat-task-abc",
+            ]
+        );
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(
+            text.text,
+            "# 01REPO\n\
+             ## src/inner/m.rs:2 b — callers: 1\n\
+             1 src/a.rs:3 a exact\n\
+             hot has more than 200 callers: the walk stopped there.\n"
+        );
+    }
+
+    /// Every other seat has to say what it is asking about.
+    #[tokio::test]
+    async fn impact_needs_a_symbol_or_a_diff_from_a_seat_that_is_no_reviewer() {
+        let (endpoint, seen) = recording_daemon_answering("[]").await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let error = mcp
+            .impact(Parameters(ImpactReq {
+                symbol: None,
+                diff: None,
+                repository: None,
+                git_ref: None,
+                depth: None,
+            }))
+            .await
+            .expect_err("symbol or diff required");
+
+        assert!(error.message.contains("pass symbol, or diff"), "{error:?}");
+        assert!(seen.lock().expect("lock").is_empty(), "nothing was asked");
     }
 
     /// A verdict is a message to the author like any other, and what makes it

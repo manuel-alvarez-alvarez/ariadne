@@ -1,10 +1,15 @@
-//! One file's text to the definitions in it.
+//! One file's text to the definitions in it, and to the names it names.
 //!
 //! A code file is read with its language's tags query: every definition the
 //! query captures becomes a [`Symbol`], qualified by the definitions it sits
 //! inside, with the signature read off its first lines, the doc comment
 //! read by the language's comment syntax where the query captured none, and
 //! the test marker rule applied. A Markdown file is read for its headings.
+//!
+//! Every reference the query captures becomes a [`Reference`], and the
+//! import statements of the file become [`Import`]s. Neither is an edge yet:
+//! a reference names a name, and [`crate::resolve`] is what finds the
+//! definition behind it.
 
 use std::ops::Range;
 
@@ -33,6 +38,80 @@ pub struct Symbol {
     pub is_test: bool,
 }
 
+/// What one symbol is to another. The whole edge vocabulary: a reference the
+/// parser finds is one of these, and so is every row of `edges`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EdgeKind {
+    /// A call, a macro invocation or a method send.
+    Calls,
+    /// Any other mention: a type annotation, a constructed class.
+    References,
+    /// A Rust `impl Trait for Type`.
+    Implements,
+    /// A class or interface that names a base: `class A extends B`,
+    /// `class A : B` in C#, `class A(B)` in Python.
+    Extends,
+    /// A name an import statement brought into the file.
+    Imports,
+}
+
+impl EdgeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EdgeKind::Calls => "calls",
+            EdgeKind::References => "references",
+            EdgeKind::Implements => "implements",
+            EdgeKind::Extends => "extends",
+            EdgeKind::Imports => "imports",
+        }
+    }
+
+    /// The edge a tags capture of this syntax type makes. Every capture the
+    /// index does not name is a plain mention.
+    fn of_capture(name: &str) -> EdgeKind {
+        match name {
+            "call" | "send" => EdgeKind::Calls,
+            "implementation" => EdgeKind::Implements,
+            "extends" => EdgeKind::Extends,
+            _ => EdgeKind::References,
+        }
+    }
+}
+
+/// One name a blob names, before anything is known about where it is
+/// defined.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reference {
+    pub kind: EdgeKind,
+    pub name: String,
+    /// 1-based.
+    pub line: u32,
+    /// The index in [`Parsed::symbols`] of the definition the reference sits
+    /// in. `None` at file scope.
+    pub from: Option<usize>,
+}
+
+/// One import statement of a blob.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Import {
+    /// The module it reads from: `crate::m`, `./m`, `pkg.m`, `System.Text`.
+    pub module: String,
+    /// The name it brought in. `None` where the statement brings in the
+    /// whole module and names nothing.
+    pub name: Option<String>,
+    /// 1-based.
+    pub line: u32,
+}
+
+/// Everything one blob holds: what it defines, what it names, and what it
+/// imports.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Parsed {
+    pub symbols: Vec<Symbol>,
+    pub references: Vec<Reference>,
+    pub imports: Vec<Import>,
+}
+
 /// How long a signature or a doc is allowed to run, in characters. A
 /// signature is what a search answer prints per line, and 200 is a whole
 /// parameter list; a doc is what an outline may show, and it is a summary,
@@ -42,22 +121,36 @@ const DOC_MAX: usize = 1000;
 
 /// The definitions of `source`, read as `language`.
 pub fn parse(language: Language, source: &str) -> Vec<Symbol> {
-    match language {
-        Language::Markdown => return markdown_outline(source),
-        Language::Yaml => return yaml_outline(source),
-        Language::Toml => return toml_outline(source),
-        Language::Json => return json_outline(source),
-        Language::Html => return html_outline(source),
-        Language::Css => return css_outline(source),
-        Language::Sql => return sql_outline(source),
-        _ => {}
+    read(language, source).symbols
+}
+
+/// Everything the index reads off one file: its definitions, its references
+/// and its imports.
+pub fn read(language: Language, source: &str) -> Parsed {
+    // An outline-only language has no tags query, and so no references and no
+    // imports: its symbols are read off its own shape.
+    let outline = match language {
+        Language::Markdown => Some(markdown_outline(source)),
+        Language::Yaml => Some(yaml_outline(source)),
+        Language::Toml => Some(toml_outline(source)),
+        Language::Json => Some(json_outline(source)),
+        Language::Html => Some(html_outline(source)),
+        Language::Css => Some(css_outline(source)),
+        Language::Sql => Some(sql_outline(source)),
+        _ => None,
+    };
+    if let Some(symbols) = outline {
+        return Parsed {
+            symbols,
+            ..Default::default()
+        };
     }
     let Some(configuration) = language.tags() else {
-        return Vec::new();
+        return Parsed::default();
     };
     let mut context = TagsContext::new();
     let Ok((tags, _)) = context.generate_tags(configuration, source.as_bytes(), None) else {
-        return Vec::new();
+        return Parsed::default();
     };
     let lines = Lines::of(source);
     let mut items: Vec<Item> = tags
@@ -85,24 +178,32 @@ pub fn parse(language: Language, source: &str) -> Vec<Symbol> {
     let separator = language.separator();
     let doc_syntax = language.doc_syntax();
     let test_rule = language.test_rule();
-    let mut scopes: Vec<(usize, String)> = Vec::new();
-    let mut symbols = Vec::new();
+    // (where the scope ends, its qualified name, the symbol it is)
+    let mut scopes: Vec<(usize, String, Option<usize>)> = Vec::new();
+    let mut symbols: Vec<Symbol> = Vec::new();
+    let mut references: Vec<Reference> = Vec::new();
+    // The subject of each reference that names its own source rather than
+    // sitting in one: `impl Trait for Type` is an edge from `Type`.
+    let mut subjects: Vec<Option<String>> = Vec::new();
     for item in items {
         while scopes
             .last()
-            .is_some_and(|(end, _)| *end <= item.range.start)
+            .is_some_and(|(end, _, _)| *end <= item.range.start)
         {
             scopes.pop();
         }
-        let parent = scopes.last().map(|(_, qualified)| qualified.as_str());
+        let parent = scopes.last().map(|(_, qualified, _)| qualified.as_str());
         let qualify = |name: &str| match parent {
             Some(parent) => format!("{parent}{separator}{name}"),
             None => name.to_string(),
         };
+        // The definition a reference here sits in: the innermost scope that
+        // is one, past an `impl` block, which is no definition of its own.
+        let enclosing = scopes.iter().rev().find_map(|(_, _, at)| *at);
         if item.is_definition {
             let qualified_name = qualify(&item.name);
             if is_scope(&item.kind) {
-                scopes.push((item.range.end, qualified_name.clone()));
+                scopes.push((item.range.end, qualified_name.clone(), Some(symbols.len())));
             }
             let doc = item
                 .docs
@@ -131,20 +232,32 @@ pub fn parse(language: Language, source: &str) -> Vec<Symbol> {
             });
         } else if item.kind == "implementation" {
             // `impl Type { … }` in Rust: a scope for the methods in it, and
-            // no definition of its own.
-            scopes.push((
-                item.range.end,
-                qualify(&impl_subject(&source[item.range.clone()])),
-            ));
+            // no definition of its own. `impl Trait for Type` is also an
+            // edge from `Type` to `Trait`.
+            let header = &source[item.range.clone()];
+            let subject = impl_subject(header);
+            if let Some(trait_name) = impl_trait(header) {
+                references.push(Reference {
+                    kind: EdgeKind::Implements,
+                    name: trait_name,
+                    line: item.lines.0,
+                    from: None,
+                });
+                subjects.push(Some(subject.clone()));
+            }
+            scopes.push((item.range.end, qualify(&subject), None));
         } else if let TestRule::Call(names) = test_rule
             && item.kind == "call"
             && names.contains(&item.name.as_str())
         {
             let name = first_string_argument(&source[item.range.clone()])
                 .unwrap_or_else(|| item.name.clone());
+            let qualified_name = qualify(&name);
+            // A scope of its own, so what the test body calls is the test's.
+            scopes.push((item.range.end, qualified_name.clone(), Some(symbols.len())));
             symbols.push(Symbol {
                 kind: "test".into(),
-                qualified_name: qualify(&name),
+                qualified_name,
                 name,
                 start_line: item.lines.0,
                 end_line: item.lines.1,
@@ -152,9 +265,34 @@ pub fn parse(language: Language, source: &str) -> Vec<Symbol> {
                 doc: None,
                 is_test: true,
             });
+        } else {
+            references.push(Reference {
+                kind: EdgeKind::of_capture(&item.kind),
+                name: item.name.clone(),
+                line: item.lines.0,
+                from: enclosing,
+            });
+            subjects.push(None);
         }
     }
-    symbols
+    // A reference that names its own source points at the definition of that
+    // name in this same file, where there is one.
+    for (reference, subject) in references.iter_mut().zip(subjects) {
+        if let Some(subject) = subject {
+            reference.from = symbols.iter().position(|symbol| symbol.name == subject);
+        }
+    }
+    // One definition that names another names it once, at the first line it
+    // does: the edge between them is one edge however often it is written.
+    let mut named = std::collections::HashSet::new();
+    references
+        .retain(|reference| named.insert((reference.kind, reference.name.clone(), reference.from)));
+    let imports = imports_of(language, source);
+    Parsed {
+        symbols,
+        references,
+        imports,
+    }
 }
 
 /// One tag, with what the parser reads off it.
@@ -403,16 +541,17 @@ fn annotations_in(line: &str) -> Vec<String> {
         .collect()
 }
 
-/// `text` split on the commas outside parentheses: the items of
-/// `Fact, Trait("a", "b")` are two.
+/// `text` split on the commas outside brackets: the items of
+/// `Fact, Trait("a", "b")` are two, and so are the items of
+/// `a, b::{c, d}`.
 fn split_outside_parentheses(text: &str) -> Vec<&str> {
     let mut items = Vec::new();
     let mut depth = 0;
     let mut start = 0;
     for (at, ch) in text.char_indices() {
         match ch {
-            '(' => depth += 1,
-            ')' => depth -= 1,
+            '(' | '{' | '[' => depth += 1,
+            ')' | '}' | ']' => depth -= 1,
             ',' if depth == 0 => {
                 items.push(&text[start..at]);
                 start = at + 1;
@@ -441,6 +580,26 @@ fn impl_subject(text: &str) -> String {
         .unwrap_or_default()
         .trim_start_matches('&')
         .to_string()
+}
+
+/// The trait an `impl` block is for, by its last path segment:
+/// `impl<T> a::Trait<T> for Type` is `Trait`. `None` for an inherent
+/// `impl Type`.
+fn impl_trait(text: &str) -> Option<String> {
+    let header = text.split('{').next().unwrap_or(text);
+    let header = header.trim_start().strip_prefix("impl")?;
+    let header = header.split(" where ").next().unwrap_or(header);
+    let (before, _) = header.rsplit_once(" for ")?;
+    let path = strip_generics_prefix(before).trim();
+    let name = path
+        .split('<')
+        .next()
+        .unwrap_or(path)
+        .rsplit("::")
+        .next()
+        .unwrap_or_default()
+        .trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// `<T: Bound> Type` without its leading generics.
@@ -473,6 +632,264 @@ fn first_string_argument(text: &str) -> Option<String> {
     let close = inner.find(quote)?;
     let name = inner[..close].trim();
     (!name.is_empty()).then(|| name.to_string())
+}
+
+// -- imports -----------------------------------------------------------------
+
+/// The import statements of a file, read by the syntax of its language:
+/// `use` in Rust, `import` and `from … import` in Python, `import` and
+/// `require` in TypeScript and JavaScript, `using` in C#. Every other
+/// language names none, and its references resolve on the three steps that
+/// are left.
+///
+/// Read off the text rather than off the tree: no tags query captures an
+/// import, and the shapes are few enough to name.
+pub fn imports_of(language: Language, source: &str) -> Vec<Import> {
+    let lines = Lines::of(source);
+    let mut imports = Vec::new();
+    match language {
+        Language::Rust => {
+            for (at, statement) in statements(source, &["use "], ';') {
+                for path in expand_braces(statement, "::") {
+                    push_import(&mut imports, &path, "::", lines.line_of(at));
+                }
+            }
+        }
+        Language::CSharp => {
+            for (at, statement) in statements(source, &["using "], ';') {
+                let statement = statement.trim();
+                let statement = statement.strip_prefix("static ").unwrap_or(statement);
+                // `using var file = File.Open(…)` is a statement, not a
+                // directive: a directive is a dotted path and nothing else.
+                if statement.is_empty()
+                    || !statement
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || "._ =".contains(c))
+                {
+                    continue;
+                }
+                // `using Alias = A.B;` imports `A.B`, whatever it is called
+                // here. A directive names a namespace, never one definition
+                // in it, so it brings in no name of its own.
+                let module = statement.rsplit('=').next().unwrap_or(statement).trim();
+                imports.push(Import {
+                    module: module.to_string(),
+                    name: None,
+                    line: lines.line_of(at),
+                });
+            }
+        }
+        Language::Python => {
+            for (at, statement) in statements(source, &["import ", "from "], '\n') {
+                python_import(&mut imports, statement, lines.line_of(at));
+            }
+        }
+        Language::TypeScript | Language::Tsx | Language::JavaScript | Language::Jsx => {
+            for (at, statement) in statements(source, &["import "], '\n') {
+                javascript_import(&mut imports, statement, lines.line_of(at));
+            }
+            // `require` is a call, not a statement: it sits wherever the
+            // binding that holds its answer does.
+            for (at, _) in source.match_indices("require(") {
+                let rest = &source[at + "require(".len()..];
+                if let Some(module) = quoted(&rest[..statement_end(rest, ')')]) {
+                    imports.push(Import {
+                        module,
+                        name: None,
+                        line: lines.line_of(at),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+    imports
+}
+
+/// Every statement of `source` that opens with one of `keywords` at the
+/// start of a line, each with the byte it opens at and its text past the
+/// keyword, up to `end` — or up to the closing bracket where one is open.
+fn statements<'a>(source: &'a str, keywords: &[&str], end: char) -> Vec<(usize, &'a str)> {
+    let mut found = Vec::new();
+    for keyword in keywords {
+        for (at, _) in source.match_indices(keyword) {
+            let line_start = source[..at].rfind('\n').map_or(0, |nl| nl + 1);
+            // Only a statement of its own, past the visibility it may carry.
+            let before = source[line_start..at].trim();
+            if !before.is_empty() && !before.starts_with("pub") && !before.starts_with("export") {
+                continue;
+            }
+            let rest = &source[at + keyword.len()..];
+            found.push((at, &rest[..statement_end(rest, end)]));
+        }
+    }
+    // Document order, whatever order the keywords were given in.
+    found.sort_by_key(|(at, _)| *at);
+    found
+}
+
+/// Where a statement ends: at the first `end` outside a bracket, so a
+/// `from a import (\n b,\n)` and a `use a::{\n b,\n};` are read whole.
+fn statement_end(rest: &str, end: char) -> usize {
+    let mut depth = 0i32;
+    for (at, ch) in rest.char_indices() {
+        if ch == end && depth <= 0 {
+            return at;
+        }
+        match ch {
+            '(' | '{' | '[' => depth += 1,
+            ')' | '}' | ']' => depth -= 1,
+            _ => {}
+        }
+    }
+    rest.len()
+}
+
+/// `a::b::{c, d::e}` as `a::b::c` and `a::b::d::e`.
+fn expand_braces(path: &str, separator: &str) -> Vec<String> {
+    let path = path.trim();
+    let (Some(open), Some(close)) = (path.find('{'), path.rfind('}')) else {
+        return vec![path.to_string()];
+    };
+    if close < open {
+        return vec![path.to_string()];
+    }
+    let prefix = path[..open].trim().trim_end_matches(separator);
+    let mut paths = Vec::new();
+    for item in split_outside_parentheses(&path[open + 1..close]) {
+        for tail in expand_braces(item, separator) {
+            if tail.is_empty() {
+                continue;
+            }
+            paths.push(match prefix.is_empty() {
+                true => tail,
+                false => format!("{prefix}{separator}{tail}"),
+            });
+        }
+    }
+    paths
+}
+
+/// Record one imported path: everything but its last segment is the module,
+/// and the last segment is the name — unless it is a glob, which names
+/// nothing.
+///
+/// `use a::b as c` keeps `b`: the alias is not what the definition is
+/// called, and the definition is what the edge points at.
+fn push_import(imports: &mut Vec<Import>, path: &str, separator: &str, line: u32) {
+    let path = path.trim();
+    let path = path.split(" as ").next().unwrap_or(path).trim();
+    if path.is_empty() {
+        return;
+    }
+    let (module, name) = match path.rsplit_once(separator) {
+        Some((module, last)) => (module.trim().to_string(), last.trim()),
+        None => (String::new(), path),
+    };
+    let named = !name.is_empty() && name != "*" && name != "self";
+    imports.push(Import {
+        module: match named {
+            true => module,
+            // `use a::b::*` and `using System.Text` name a whole module.
+            false => match module.is_empty() {
+                true => path.to_string(),
+                false => format!("{module}{separator}{name}"),
+            },
+        },
+        name: named.then(|| name.to_string()),
+        line,
+    });
+}
+
+/// `import a.b`, `import a.b as c`, `from a.b import c, d as e`, and
+/// `from . import x`.
+fn python_import(imports: &mut Vec<Import>, statement: &str, line: u32) {
+    match statement.split_once(" import ") {
+        // `from a.b import c, d`: one module, every name in it.
+        Some((module, names)) => {
+            let module = module.trim().to_string();
+            for name in split_outside_parentheses(names.trim().trim_matches(['(', ')'])) {
+                let name = name.trim();
+                let name = name.split(" as ").next().unwrap_or(name).trim();
+                if name.is_empty() || name == "*" {
+                    continue;
+                }
+                imports.push(Import {
+                    module: module.clone(),
+                    name: Some(name.to_string()),
+                    line,
+                });
+            }
+        }
+        // `import a.b, c`: whole modules, naming nothing in them.
+        None => {
+            for module in split_outside_parentheses(statement) {
+                let module = module.trim();
+                let module = module.split(" as ").next().unwrap_or(module).trim();
+                if !module.is_empty() {
+                    imports.push(Import {
+                        module: module.to_string(),
+                        name: None,
+                        line,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// `import { x, y as z } from './m'`, `import d from 'm'`,
+/// `import * as ns from 'm'` and `import 'm'`.
+fn javascript_import(imports: &mut Vec<Import>, statement: &str, line: u32) {
+    let Some(module) = quoted(statement) else {
+        return;
+    };
+    let clause = match statement.rsplit_once(" from ") {
+        Some((clause, _)) => clause.trim(),
+        // `import './m'`: a module and no names.
+        None => "",
+    };
+    let clause = clause.strip_prefix("type ").unwrap_or(clause);
+    // The braces of `d, { x, y }` only group; what matters is the names.
+    let clause = clause.replace(['{', '}'], " ");
+    let mut names: Vec<String> = Vec::new();
+    for part in clause.split(',') {
+        let part = part.trim();
+        let part = part.strip_prefix("type ").unwrap_or(part);
+        // `* as ns` names the module, not a definition in it.
+        if part.is_empty() || part.starts_with('*') {
+            continue;
+        }
+        let name = part.split(" as ").next().unwrap_or(part).trim();
+        if !name.is_empty() {
+            names.push(name.to_string());
+        }
+    }
+    if names.is_empty() {
+        imports.push(Import {
+            module,
+            name: None,
+            line,
+        });
+        return;
+    }
+    for name in names {
+        imports.push(Import {
+            module: module.clone(),
+            name: Some(name),
+            line,
+        });
+    }
+}
+
+/// The first quoted string of a statement: the module a JavaScript import
+/// reads from.
+fn quoted(text: &str) -> Option<String> {
+    let open = text.find(['\'', '"', '`'])?;
+    let quote = text[open..].chars().next()?;
+    let inner = &text[open + quote.len_utf8()..];
+    let close = inner.find(quote)?;
+    Some(inner[..close].to_string())
 }
 
 /// The headings of a Markdown file, each spanning to the next heading of
@@ -1212,6 +1629,156 @@ pub async fn add_worktree(
         );
         assert_eq!(attributes_in("#[cfg(test)]"), ["cfg"]);
         assert!(attributes_in("fn plain() {}").is_empty());
+    }
+
+    /// Every import shape of every language the index reads, as the module
+    /// it reads from and the name it brings in.
+    #[test]
+    fn an_import_is_read_by_the_syntax_of_its_language() {
+        let read = |language, source| {
+            imports_of(language, source)
+                .into_iter()
+                .map(|import| (import.module, import.name.unwrap_or_default()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            read(
+                Language::Rust,
+                "use crate::m::b;\npub use a::{c, d::e};\nuse x::*;\nuse y as z;\n// use n::o;\n",
+            ),
+            [
+                ("crate::m".into(), "b".to_string()),
+                ("a".into(), "c".into()),
+                ("a::d".into(), "e".into()),
+                ("x::*".into(), String::new()),
+                ("".into(), "y".into()),
+            ]
+        );
+        assert_eq!(
+            read(
+                Language::Python,
+                "from pkg.m import x, y as z\nimport os.path\nfrom . import q\nfrom a import (\n    b,\n    c,\n)\n",
+            ),
+            [
+                ("pkg.m".into(), "x".to_string()),
+                // `y as z` keeps `y`: the alias is not what the definition
+                // is called.
+                ("pkg.m".into(), "y".into()),
+                ("os.path".into(), String::new()),
+                (".".into(), "q".into()),
+                ("a".into(), "b".into()),
+                ("a".into(), "c".into()),
+            ]
+        );
+        assert_eq!(
+            read(
+                Language::TypeScript,
+                "import { x, y as z } from './m';\nimport d from 'lib';\nimport * as ns from 'all';\nimport './side';\n",
+            ),
+            [
+                ("./m".into(), "x".to_string()),
+                ("./m".into(), "y".into()),
+                ("lib".into(), "d".into()),
+                ("all".into(), String::new()),
+                ("./side".into(), String::new()),
+            ]
+        );
+        assert_eq!(
+            read(
+                Language::JavaScript,
+                "const { halve } = require('./util');\nconst lib = require('lib');\n",
+            ),
+            [
+                ("./util".into(), String::new()),
+                ("lib".into(), String::new()),
+            ]
+        );
+        assert_eq!(
+            read(
+                Language::CSharp,
+                "using System.Text;\nusing static Lib.Helper;\nusing Alias = Lib.Deep;\nusing var file = File.Open(path);\n",
+            ),
+            [
+                ("System.Text".into(), String::new()),
+                ("Lib.Helper".into(), String::new()),
+                ("Lib.Deep".into(), String::new()),
+            ]
+        );
+    }
+
+    /// A call is an edge from the definition it sits in, a Rust
+    /// `impl Trait for Type` is one from the type to the trait, and a base
+    /// class is an `extends`.
+    #[test]
+    fn a_reference_belongs_to_the_definition_it_sits_in() {
+        let rust = references_of(
+            Language::Rust,
+            "struct Widget;\n\
+             impl std::fmt::Display for Widget {\n    \
+                 fn fmt(&self) {\n        \
+                     helper();\n    \
+                 }\n\
+             }\n",
+        );
+        assert!(
+            rust.contains(&(EdgeKind::Calls, "helper".into(), Some("fmt".into()))),
+            "{rust:?}"
+        );
+        assert!(
+            rust.contains(&(
+                EdgeKind::Implements,
+                "Display".into(),
+                Some("Widget".into())
+            )),
+            "{rust:?}"
+        );
+
+        for (language, source, base) in [
+            (
+                Language::JavaScript,
+                "class Button extends Widget {}\n",
+                "Widget",
+            ),
+            (
+                Language::TypeScript,
+                "class Button extends Widget {}\n",
+                "Widget",
+            ),
+            (
+                Language::Python,
+                "class Button(Widget):\n    pass\n",
+                "Widget",
+            ),
+            (
+                Language::CSharp,
+                "public class Button : Widget {}\n",
+                "Widget",
+            ),
+        ] {
+            let found = references_of(language, source);
+            assert!(
+                found.contains(&(EdgeKind::Extends, base.into(), Some("Button".into()))),
+                "{}: {found:?}",
+                language.name()
+            );
+        }
+    }
+
+    /// Every reference of a source, as `(kind, name, the definition it sits
+    /// in)`.
+    fn references_of(language: Language, source: &str) -> Vec<(EdgeKind, String, Option<String>)> {
+        let parsed = read(language, source);
+        parsed
+            .references
+            .iter()
+            .map(|reference| {
+                (
+                    reference.kind,
+                    reference.name.clone(),
+                    reference.from.map(|at| parsed.symbols[at].name.clone()),
+                )
+            })
+            .collect()
     }
 
     #[test]

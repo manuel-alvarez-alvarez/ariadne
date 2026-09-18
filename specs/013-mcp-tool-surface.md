@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-09-18
+updated: 2026-09-19
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -62,10 +62,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    - **every seat**: `send_message`, `read_messages` — the channel
      the agents talk to each other on (018); `save_memory`, `search_memory` —
      the repository facts agents choose to keep and retrieve (019);
-     `search_code`, `outline` — the symbol index over the repositories
-     (022), listed and served only while the daemon runs with
-     `knowledge_enabled`, which every launch tells the server in
-     `ARIADNE_KNOWLEDGE_ENABLED`
+     `search_code`, `outline`, `symbol`, `impact` — the symbol index over the
+     repositories and the graph over it (022), listed and served only while
+     the daemon runs with `knowledge_enabled`, which every launch tells the
+     server in `ARIADNE_KNOWLEDGE_ENABLED`. `impact` with neither `symbol`
+     nor `diff` is the reviewer's own task diff, base branch to task branch,
+     and a refusal for any other seat
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
@@ -149,7 +151,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off`);
   what each one sends and answers is spec 022's
   (`tools.rs::search_code_asks_the_daemon_with_its_filters_and_answers_one_line_per_hit`,
-  `::outline_defaults_to_the_task_repository_and_lists_line_ranges`).
+  `::outline_defaults_to_the_task_repository_and_lists_line_ranges`,
+  `::symbol_groups_its_answer_under_a_heading_for_each_repository`,
+  `::symbol_defaults_to_the_task_repository`,
+  `::impact_reads_the_task_diff_for_a_reviewer_that_names_nothing`,
+  `::impact_needs_a_symbol_or_a_diff_from_a_seat_that_is_no_reviewer`).
 
 ## Sources
 

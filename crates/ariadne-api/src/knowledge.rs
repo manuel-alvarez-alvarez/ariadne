@@ -119,6 +119,124 @@ pub struct KnowledgeOutlineEntryDto {
     pub signature: String,
 }
 
+/// How much `GET /v1/knowledge/symbol` answers with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeDetail {
+    /// The definition and its signature.
+    #[default]
+    Outline,
+    /// The text of the definition too.
+    Source,
+    /// The callers, callees, implementations and tests too.
+    Context,
+}
+
+/// Query of `GET /v1/knowledge/symbol`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeSymbolQuery {
+    /// The name of the definition, spelled in full.
+    pub name: String,
+    /// One repository id. Omit it for the caller's repositories.
+    pub repository: Option<String>,
+    /// The branch to read. Omit it for the caller's own.
+    pub git_ref: Option<String>,
+    /// `outline` (default), `source` or `context`.
+    pub detail: Option<KnowledgeDetail>,
+}
+
+/// One end of an edge: a caller, a callee, an implementation or a test.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeRelatedDto {
+    pub repository_id: String,
+    pub path: String,
+    /// The line the definition starts on, 1-based.
+    pub line: i64,
+    pub name: String,
+    /// `exact` where one definition matched the name, `heuristic` where
+    /// several did.
+    pub confidence: String,
+}
+
+/// What one definition is joined to, on `detail=context`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeContextDto {
+    /// Up to 20 of each.
+    pub callers: Vec<KnowledgeRelatedDto>,
+    pub callees: Vec<KnowledgeRelatedDto>,
+    pub implementations: Vec<KnowledgeRelatedDto>,
+    /// The tests at most two edges away.
+    pub tests: Vec<KnowledgeRelatedDto>,
+}
+
+/// One definition of a name.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeSymbolDto {
+    pub repository_id: String,
+    pub path: String,
+    /// 1-based, inclusive.
+    pub start_line: i64,
+    pub end_line: i64,
+    pub kind: String,
+    pub name: String,
+    pub signature: String,
+    pub doc: Option<String>,
+    /// The text of the definition, on `detail=source`.
+    pub source: Option<String>,
+    /// On `detail=context`.
+    pub context: Option<KnowledgeContextDto>,
+}
+
+/// Query of `GET /v1/knowledge/impact`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeImpactQuery {
+    /// One repository id.
+    pub repository: String,
+    /// The branch to read. Omit it for the caller's own.
+    pub git_ref: Option<String>,
+    /// The name of the changed definition. Pass this or `diff`, never both.
+    pub symbol: Option<String>,
+    /// `<base>..<head>`: every definition the diff changed.
+    pub diff: Option<String>,
+    /// How far to walk the callers (default 2, max 4).
+    pub depth: Option<i64>,
+}
+
+impl KnowledgeImpactQuery {
+    pub const DEFAULT_DEPTH: i64 = 2;
+    pub const MAX_DEPTH: i64 = 4;
+
+    pub fn depth(&self) -> i64 {
+        self.depth
+            .unwrap_or(Self::DEFAULT_DEPTH)
+            .clamp(1, Self::MAX_DEPTH)
+    }
+}
+
+/// One caller of a changed definition, and how far from it.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeImpactCallerDto {
+    /// 1 is a direct caller.
+    pub depth: i64,
+    pub repository_id: String,
+    pub path: String,
+    pub line: i64,
+    pub name: String,
+    pub confidence: String,
+}
+
+/// What one changed definition reaches.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeImpactDto {
+    pub symbol: KnowledgeRelatedDto,
+    pub callers: Vec<KnowledgeImpactCallerDto>,
+    /// The definitions the walk did not go past, each with more than 200
+    /// callers.
+    pub stopped: Vec<String>,
+}
+
 /// Payload of `knowledge_indexed`: one ref of one repository was read.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct KnowledgeIndexedDto {

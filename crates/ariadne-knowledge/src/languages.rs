@@ -13,6 +13,11 @@ use std::sync::OnceLock;
 
 use tree_sitter_tags::TagsConfiguration;
 
+/// `class A extends B` in the JavaScript grammar, which the TSX and TypeScript
+/// grammars share the node name with.
+const JS_EXTENDS: &str =
+    "(class_declaration (class_heritage (identifier) @name)) @reference.extends";
+
 /// One language the index reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Language {
@@ -244,8 +249,14 @@ impl Language {
     }
 
     /// The tags query that names the language's definitions and references:
-    /// the one its grammar ships. `None` for Markdown, whose outline is its
-    /// headings rather than tags.
+    /// the one its grammar ships, with the patterns this index adds.
+    /// `None` for Markdown, whose outline is its headings rather than tags.
+    ///
+    /// The added patterns all name a base class or interface
+    /// (`@reference.extends`), which no upstream query tells apart from any
+    /// other class reference. Where an upstream pattern matches the same
+    /// node, its tag is the one kept, so the C# base lists are taken out of
+    /// the upstream text before they are put back under the new name.
     pub fn tags_query(self) -> Option<String> {
         Some(match self {
             // The upstream query names an `impl` block only where its trait
@@ -258,23 +269,39 @@ impl Language {
                 tree_sitter_rust::TAGS_QUERY
             ),
             // The TypeScript query holds only what TypeScript adds over
-            // JavaScript, whose node names the two grammars share.
+            // JavaScript, whose node names the two grammars share. A base
+            // class is the exception: it sits in an `extends_clause` here
+            // and in a bare `class_heritage` there.
             Language::TypeScript | Language::Tsx => format!(
-                "{}\n{}",
+                "{}\n{}\n(extends_clause value: (identifier) @name) @reference.extends\n",
                 tree_sitter_javascript::TAGS_QUERY,
                 tree_sitter_typescript::TAGS_QUERY
             ),
-            Language::JavaScript | Language::Jsx => tree_sitter_javascript::TAGS_QUERY.to_string(),
+            Language::JavaScript | Language::Jsx => {
+                format!("{}\n{JS_EXTENDS}\n", tree_sitter_javascript::TAGS_QUERY)
+            }
             // The C# query ends in a bare `@module` capture, which is no
             // tags capture at all and is refused by the tags crate; the
             // `@definition.module` on the line above it is what names a
-            // namespace.
-            Language::CSharp => tree_sitter_c_sharp::TAGS_QUERY
-                .lines()
-                .filter(|line| !line.trim_end().ends_with("@module"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Language::Python => tree_sitter_python::TAGS_QUERY.to_string(),
+            // namespace. Its two base-list patterns come back below as
+            // `@reference.extends`.
+            Language::CSharp => format!(
+                "{}\n(class_declaration (base_list (_) @name)) @reference.extends\n\
+                 (interface_declaration (base_list (_) @name)) @reference.extends\n",
+                tree_sitter_c_sharp::TAGS_QUERY
+                    .lines()
+                    .filter(|line| {
+                        let line = line.trim_end();
+                        !line.ends_with("@module") && !line.contains("(base_list")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            Language::Python => format!(
+                "{}\n(class_definition superclasses: (argument_list (identifier) @name)) \
+                 @reference.extends\n",
+                tree_sitter_python::TAGS_QUERY
+            ),
             Language::Go => tree_sitter_go::TAGS_QUERY.to_string(),
             Language::Java => tree_sitter_java::TAGS_QUERY.to_string(),
             Language::C => tree_sitter_c::TAGS_QUERY.to_string(),
@@ -392,57 +419,21 @@ impl Language {
                     .into_iter()
                     .map(|language| {
                         let query = language.tags_query()?;
-                        let mut configuration = TagsConfiguration::new(
-                            language.grammar(),
-                            &query,
-                            "",
+                        Some(
+                            TagsConfiguration::new(language.grammar(), &query, "").unwrap_or_else(
+                                |e| {
+                                    panic!(
+                                        "the {} tags query does not compile: {e}",
+                                        language.name()
+                                    )
+                                },
+                            ),
                         )
-                        .unwrap_or_else(|e| {
-                            panic!("the {} tags query does not compile: {e}", language.name())
-                        });
-                        language.disable_unread_patterns(&mut configuration);
-                        Some(configuration)
                     })
                     .collect()
             })
             .get(self as usize)
             .and_then(Option::as_ref)
-    }
-
-    /// Turn off the patterns of the tags query whose tags the index never
-    /// reads: every reference but the ones a rule of this language needs.
-    ///
-    /// A reference is most of what a query captures — every call, every
-    /// type mention — and the tags crate computes docs, line and column
-    /// information for each one. Skipping them at the cursor is what keeps
-    /// a whole repository under a few seconds.
-    fn disable_unread_patterns(self, configuration: &mut TagsConfiguration) {
-        let query = &mut configuration.query;
-        let names: Vec<String> = query
-            .capture_names()
-            .iter()
-            .map(|name| name.to_string())
-            .collect();
-        for pattern in 0..query.pattern_count() {
-            let read = query
-                .capture_quantifiers(pattern)
-                .iter()
-                .zip(&names)
-                .filter(|(quantifier, _)| **quantifier != tree_sitter::CaptureQuantifier::Zero)
-                .any(|(_, name)| self.reads_capture(name));
-            if !read {
-                query.disable_pattern(pattern);
-            }
-        }
-    }
-
-    /// Whether the index reads tags of this capture: every definition, the
-    /// `impl` blocks that qualify a Rust method, and the calls a test rule
-    /// looks at.
-    fn reads_capture(self, name: &str) -> bool {
-        name.starts_with("definition.")
-            || (name == "reference.implementation" && self == Language::Rust)
-            || (name == "reference.call" && matches!(self.test_rule(), TestRule::Call(_)))
     }
 }
 

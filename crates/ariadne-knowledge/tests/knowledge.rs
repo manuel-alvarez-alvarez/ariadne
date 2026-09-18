@@ -604,3 +604,572 @@ async fn indexing_this_repository_at_head_finds_add_worktree_in_gitwt() {
         hits[0].signature
     );
 }
+
+// -- the symbol graph --------------------------------------------------------
+
+/// A repository on `main` holding `files`, in one commit.
+fn graph_repo(dir: &Path, files: &[(&str, &str)]) -> PathBuf {
+    let repo = dir.join("graph");
+    std::fs::create_dir_all(&repo).unwrap();
+    sh(&repo, "git init -q -b main");
+    write_files(&repo, files);
+    sh(
+        &repo,
+        "git add . && git -c user.email=t@t -c user.name=t commit -qm graph",
+    );
+    repo
+}
+
+fn write_files(repo: &Path, files: &[(&str, &str)]) {
+    for (path, text) in files {
+        let file = repo.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+}
+
+/// Commit `files` on the branch that is checked out.
+fn commit_files(repo: &Path, message: &str, files: &[(&str, &str)]) {
+    write_files(repo, files);
+    sh(
+        repo,
+        &format!("git add . && git -c user.email=t@t -c user.name=t commit -qm {message}"),
+    );
+}
+
+/// The one definition of `name` at `main`, by which everything else is asked.
+async fn only(store: &KnowledgeStore, name: &str) -> ariadne_knowledge::Definition {
+    let mut found = store
+        .definitions(name, &[("repo".into(), "main".into())])
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1, "one definition of {name}: {found:#?}");
+    found.remove(0)
+}
+
+/// The definition of `name` at `path`, where a decoy of the same name sits
+/// somewhere else.
+async fn definition_at(
+    store: &KnowledgeStore,
+    name: &str,
+    path: &str,
+) -> ariadne_knowledge::Definition {
+    let found = store
+        .definitions(name, &[("repo".into(), "main".into())])
+        .await
+        .unwrap();
+    found
+        .iter()
+        .find(|definition| definition.path == path)
+        .cloned()
+        .unwrap_or_else(|| panic!("no definition of {name} at {path}: {found:#?}"))
+}
+
+/// `path:line name confidence` per end, so an assertion reads as the answer
+/// does.
+fn ends(list: &[ariadne_knowledge::Related]) -> Vec<String> {
+    list.iter()
+        .map(|end| format!("{}:{} {} {}", end.path, end.line, end.name, end.confidence))
+        .collect()
+}
+
+/// A Rust file that calls a definition it brought in with `use` names that
+/// definition exactly, and the caller is listed as one.
+///
+/// A second `b` sits in a directory the file does not import, so the import
+/// is what decides: without it the name would match two definitions and the
+/// edge would be a guess to each.
+#[tokio::test]
+async fn a_call_through_an_import_resolves_to_the_definition_it_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/inner/m.rs", "/// Adds.\npub fn b() {}\n"),
+            ("src/decoy/m.rs", "pub fn b() {}\n"),
+            (
+                "src/a.rs",
+                "use crate::inner::m::b;\n\npub fn a() {\n    b();\n}\n",
+            ),
+        ],
+    );
+    let store = store(dir.path()).await;
+    let indexed = store.index("repo", &repo, "main").await.unwrap();
+    assert_eq!(indexed.resolved, 3, "every blob is resolved: {indexed:?}");
+
+    let b = definition_at(&store, "b", "src/inner/m.rs").await;
+    assert_eq!(b.doc.as_deref(), Some("Adds."));
+    let context = store.context(b.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(ends(&context.callers), ["src/a.rs:3 a exact"]);
+    assert!(context.callees.is_empty(), "{:#?}", context.callees);
+
+    // The `b` the file did not import is called by nobody.
+    let decoy = definition_at(&store, "b", "src/decoy/m.rs").await;
+    let context = store.context(decoy.id, "repo", "main", 20).await.unwrap();
+    assert!(context.callers.is_empty(), "{:#?}", context.callers);
+
+    // And the other way round: what `a` calls is the `b` it imported.
+    let a = only(&store, "a").await;
+    let context = store.context(a.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(ends(&context.callees), ["src/inner/m.rs:2 b exact"]);
+}
+
+/// A name two files define is a guess: the caller points at both, each
+/// marked `heuristic`, and the count of what matched is kept.
+#[tokio::test]
+async fn a_name_defined_twice_resolves_to_both_as_a_guess() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/one/m.rs", "pub fn b() {}\n"),
+            ("src/two/m.rs", "pub fn b() {}\n"),
+            // No import: nothing says which `b` is meant.
+            ("src/a.rs", "pub fn a() {\n    b();\n}\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let found = store
+        .definitions("b", &[("repo".into(), "main".into())])
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 2, "{found:#?}");
+    for definition in &found {
+        let context = store
+            .context(definition.id, "repo", "main", 20)
+            .await
+            .unwrap();
+        assert_eq!(
+            ends(&context.callers),
+            ["src/a.rs:1 a heuristic"],
+            "{}",
+            definition.path
+        );
+    }
+}
+
+/// One import shape per language of the index: the name it brought in is the
+/// definition the call resolves to, exactly.
+///
+/// Every name is defined twice, once where the import points and once in a
+/// directory nothing imports. The import is what decides: without it the name
+/// would match both and the edge would be a guess. Each decoy says something
+/// of its own, because two files of the same text are one blob and so one
+/// definition.
+#[tokio::test]
+async fn an_import_of_every_language_resolves_the_name_it_brought_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            // Rust `use`.
+            ("src/inner/rust.rs", "pub fn rust_target() {}\n"),
+            (
+                "decoys/rust.rs",
+                "pub fn rust_target() {\n    let _ = 1;\n}\n",
+            ),
+            (
+                "caller.rs",
+                "use crate::src::inner::rust::rust_target;\n\npub fn rust_caller() {\n    rust_target();\n}\n",
+            ),
+            // Python `from pkg.m import x`.
+            ("pkg/m.py", "def python_target():\n    pass\n"),
+            ("decoys/m.py", "def python_target():\n    return 1\n"),
+            (
+                "caller.py",
+                "from pkg.m import python_target\n\ndef python_caller():\n    python_target()\n",
+            ),
+            // TypeScript `import { x } from './m'`.
+            ("lib/m.ts", "export function tsTarget(): void {}\n"),
+            (
+                "decoys/m.ts",
+                "export function tsTarget(): void {\n    return;\n}\n",
+            ),
+            (
+                "caller.ts",
+                "import { tsTarget } from './lib/m';\n\nexport function tsCaller(): void {\n    tsTarget();\n}\n",
+            ),
+            // JavaScript `require`.
+            (
+                "lib/util.js",
+                "function jsTarget() {}\nmodule.exports = { jsTarget };\n",
+            ),
+            (
+                "decoys/util.js",
+                "function jsTarget() {\n    return 1;\n}\nmodule.exports = { jsTarget };\n",
+            ),
+            (
+                "caller.js",
+                "const { jsTarget } = require('./lib/util');\n\nfunction jsCaller() {\n    jsTarget();\n}\n",
+            ),
+            // C# `using`, which names a namespace rather than a path: the
+            // namespace is what tells the two `Run` methods apart.
+            (
+                "api/Helper.cs",
+                "namespace Lib {\n    public class Helper {\n        public static void Run() {}\n    }\n}\n",
+            ),
+            (
+                "decoys/Other.cs",
+                "namespace Elsewhere {\n    public class Other {\n        public static void Run() {}\n    }\n}\n",
+            ),
+            (
+                "caller.cs",
+                "using Lib;\n\npublic class Caller {\n    public void Call() {\n        Helper.Run();\n    }\n}\n",
+            ),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    for (target, path, decoy, caller) in [
+        (
+            "rust_target",
+            "src/inner/rust.rs",
+            "decoys/rust.rs",
+            "caller.rs:3 rust_caller exact",
+        ),
+        (
+            "python_target",
+            "pkg/m.py",
+            "decoys/m.py",
+            "caller.py:3 python_caller exact",
+        ),
+        (
+            "tsTarget",
+            "lib/m.ts",
+            "decoys/m.ts",
+            "caller.ts:3 tsCaller exact",
+        ),
+        (
+            "jsTarget",
+            "lib/util.js",
+            "decoys/util.js",
+            "caller.js:3 jsCaller exact",
+        ),
+        (
+            "Run",
+            "api/Helper.cs",
+            "decoys/Other.cs",
+            "caller.cs:4 Call exact",
+        ),
+    ] {
+        let imported = definition_at(&store, target, path).await;
+        let context = store
+            .context(imported.id, "repo", "main", 20)
+            .await
+            .unwrap();
+        assert_eq!(ends(&context.callers), [caller], "{target}");
+
+        let spare = definition_at(&store, target, decoy).await;
+        let context = store.context(spare.id, "repo", "main", 20).await.unwrap();
+        assert!(
+            context.callers.is_empty(),
+            "{target} at {decoy}: {:#?}",
+            context.callers
+        );
+    }
+}
+
+/// The callers of a definition are walked by depth, and the tests of it are
+/// the test definitions at most two edges away.
+#[tokio::test]
+async fn the_callers_are_walked_by_depth_and_a_test_two_edges_away_is_a_test() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/inner/m.rs", "pub fn b() {}\n"),
+            (
+                "src/a.rs",
+                "use crate::inner::m::b;\n\npub fn a() {\n    b();\n}\n",
+            ),
+            (
+                "src/top.rs",
+                "use crate::a::a;\n\npub fn top() {\n    a();\n}\n",
+            ),
+            (
+                "src/proof.rs",
+                "use crate::a::a;\n\n#[test]\nfn a_proof() {\n    a();\n}\n",
+            ),
+            ("src/aside.rs", "pub fn untouched() {}\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let b = only(&store, "b").await;
+    let (callers, stopped) = store.impact(b.id, "repo", "main", 2).await.unwrap();
+    let walked: Vec<String> = callers
+        .iter()
+        .map(|caller| {
+            format!(
+                "{} {}:{} {}",
+                caller.depth, caller.path, caller.line, caller.name
+            )
+        })
+        .collect();
+    assert_eq!(
+        walked,
+        [
+            "1 src/a.rs:3 a",
+            "2 src/proof.rs:4 a_proof",
+            "2 src/top.rs:3 top",
+        ],
+        "{callers:#?}"
+    );
+    assert!(stopped.is_empty(), "{stopped:?}");
+
+    // The test reaches `b` over two edges: it calls `a`, and `a` calls `b`.
+    let context = store.context(b.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(ends(&context.tests), ["src/proof.rs:4 a_proof exact"]);
+
+    // Nothing calls `untouched`, so nothing is reached from it.
+    let untouched = only(&store, "untouched").await;
+    let (none, _) = store.impact(untouched.id, "repo", "main", 4).await.unwrap();
+    assert!(none.is_empty(), "{none:#?}");
+}
+
+/// Edges belong to the ref they were resolved at. Two refs share the blob of
+/// an unchanged caller, and each answers for the definition its own tree
+/// holds: a later run on the base branch does not take the branch's edges.
+#[tokio::test]
+async fn edges_belong_to_the_ref_they_were_resolved_at() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/inner/m.rs", "pub fn b() {}\n"),
+            ("src/inner/other.rs", "pub fn c() {}\n"),
+            (
+                "src/a.rs",
+                "use crate::inner::m::b;\nuse crate::inner::other::c;\n\n                 pub fn a() {\n    b();\n    c();\n}\n",
+            ),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    // A branch changes `b`, so the branch has a `b` of its own. The caller is
+    // untouched, so both refs hold the same blob of it.
+    sh(&repo, "git checkout -q -b task");
+    commit_files(
+        &repo,
+        "change-b",
+        &[("src/inner/m.rs", "pub fn b() {\n    let _ = 1;\n}\n")],
+    );
+    store.index("repo", &repo, "task").await.unwrap();
+
+    // The base branch moves on, over a name the same caller also names. That
+    // resolves the caller again, at the base branch.
+    sh(&repo, "git checkout -q main");
+    commit_files(
+        &repo,
+        "change-c",
+        &[("src/inner/other.rs", "pub fn c() {\n    let _ = 2;\n}\n")],
+    );
+    store.index("repo", &repo, "main").await.unwrap();
+
+    // Each ref still answers for its own `b`.
+    for git_ref in ["main", "task"] {
+        let found = store
+            .definitions("b", &[("repo".into(), git_ref.into())])
+            .await
+            .unwrap();
+        assert_eq!(found.len(), 1, "one `b` at {git_ref}: {found:#?}");
+        let context = store
+            .context(found[0].id, "repo", git_ref, 20)
+            .await
+            .unwrap();
+        assert_eq!(
+            ends(&context.callers),
+            ["src/a.rs:4 a exact"],
+            "the callers of `b` at {git_ref}"
+        );
+        let (callers, _) = store.impact(found[0].id, "repo", git_ref, 2).await.unwrap();
+        assert_eq!(
+            callers.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["a"],
+            "what a change to `b` reaches at {git_ref}"
+        );
+    }
+
+    // Dropping the branch takes the branch's edges with it, and leaves the
+    // base branch's whole.
+    store.drop_ref("repo", "task").await.unwrap();
+    let base = only(&store, "b").await;
+    let context = store.context(base.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(ends(&context.callers), ["src/a.rs:4 a exact"]);
+}
+
+/// A branch that changes one definition: the diff names it, and its callers
+/// are what the change reaches. An untouched definition is not in the answer.
+#[tokio::test]
+async fn a_diff_names_the_definitions_it_changed_and_their_callers() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/inner/m.rs", "pub fn b() {}\n"),
+            (
+                "src/a.rs",
+                "use crate::inner::m::b;\n\npub fn a() {\n    b();\n}\n",
+            ),
+            ("src/aside.rs", "pub fn untouched() {}\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    sh(&repo, "git checkout -q -b task");
+    commit_files(
+        &repo,
+        "change",
+        &[("src/inner/m.rs", "pub fn b() {\n    let _ = 1;\n}\n")],
+    );
+    store.index("repo", &repo, "task").await.unwrap();
+
+    let changed = ariadne_knowledge::index::changed_lines(&repo, "main..task")
+        .await
+        .unwrap();
+    let paths: Vec<&str> = changed.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(paths, ["src/inner/m.rs"], "{changed:?}");
+    let touched = store
+        .symbols_in_lines("repo", "task", &changed)
+        .await
+        .unwrap();
+    let names: Vec<&str> = touched
+        .iter()
+        .map(|(_, symbol)| symbol.name.as_str())
+        .collect();
+    assert_eq!(names, ["b"], "only what the diff changed: {touched:#?}");
+
+    let (callers, _) = store.impact(touched[0].0, "repo", "task", 2).await.unwrap();
+    assert_eq!(
+        callers.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        ["a"]
+    );
+
+    // A range that is no range is refused rather than handed to git.
+    let refused = ariadne_knowledge::index::changed_lines(&repo, "--output=/tmp/x")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("<base>..<head>"), "{refused}");
+}
+
+/// A definition with more callers than the cap is not walked past, and the
+/// answer names it.
+#[tokio::test]
+async fn a_definition_with_more_than_two_hundred_callers_is_not_walked_past() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut files: Vec<(String, String)> = vec![(
+        "src/hot.rs".to_string(),
+        "pub fn inner() {}\n\npub fn hot() {\n    inner();\n}\n".to_string(),
+    )];
+    for n in 0..201 {
+        files.push((
+            format!("src/callers/c{n}.rs"),
+            format!("use crate::hot::hot;\n\npub fn caller{n}() {{\n    hot();\n}}\n"),
+        ));
+    }
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let repo = graph_repo(dir.path(), &borrowed);
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    // One step out from `inner`, the walk reaches `hot` and stops there.
+    let inner = only(&store, "inner").await;
+    let (callers, stopped) = store.impact(inner.id, "repo", "main", 3).await.unwrap();
+    assert_eq!(
+        callers.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        ["hot"],
+        "{callers:#?}"
+    );
+    assert_eq!(stopped, ["hot"]);
+
+    // Asked about `hot` itself, the walk stops before it starts.
+    let hot = only(&store, "hot").await;
+    let (callers, stopped) = store.impact(hot.id, "repo", "main", 3).await.unwrap();
+    assert!(callers.is_empty(), "{callers:#?}");
+    assert_eq!(stopped, ["hot"]);
+}
+
+/// A changed blob has its own edges derived again, and so has every blob that
+/// names a definition the change moved. Nothing else is resolved.
+#[tokio::test]
+async fn a_changed_blob_resolves_itself_and_what_names_what_moved() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/inner/m.rs", "pub fn b() {}\n"),
+            (
+                "src/a.rs",
+                "use crate::inner::m::b;\n\npub fn a() {\n    b();\n}\n",
+            ),
+            ("src/aside.rs", "pub fn untouched() {}\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    let first = store.index("repo", &repo, "main").await.unwrap();
+    assert_eq!(first.resolved, 3, "a first read resolves every blob");
+
+    // `b` moves: the file it is in, and the file that calls it.
+    commit_files(
+        &repo,
+        "move-b",
+        &[("src/inner/m.rs", "pub fn b() {\n    let _ = 1;\n}\n")],
+    );
+    let second = store.index("repo", &repo, "main").await.unwrap();
+    assert_eq!(second.parsed, 1, "{second:?}");
+    assert_eq!(second.resolved, 2, "the changed blob and its caller");
+
+    // A file nothing names moves alone.
+    commit_files(
+        &repo,
+        "move-aside",
+        &[("src/aside.rs", "pub fn untouched() {}\npub fn alone() {}\n")],
+    );
+    let third = store.index("repo", &repo, "main").await.unwrap();
+    assert_eq!(third.parsed, 1, "{third:?}");
+    assert_eq!(third.resolved, 1, "nothing names what moved");
+
+    // The edge into `b` is still there, and still exact.
+    let b = only(&store, "b").await;
+    let context = store.context(b.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(ends(&context.callers), ["src/a.rs:3 a exact"]);
+}
+
+/// A Rust `impl Trait for Type` is an edge from the type to the trait, and
+/// the trait lists it as an implementation.
+#[tokio::test]
+async fn an_implementation_is_listed_under_the_trait_it_is_of() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            (
+                "src/inner/t.rs",
+                "pub trait Shape {\n    fn area(&self);\n}\n",
+            ),
+            (
+                "src/widget.rs",
+                "use crate::inner::t::Shape;\n\npub struct Widget;\n\nimpl Shape for Widget {\n    fn area(&self) {}\n}\n",
+            ),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let shape = only(&store, "Shape").await;
+    let context = store.context(shape.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(
+        ends(&context.implementations),
+        ["src/widget.rs:3 Widget exact"]
+    );
+}

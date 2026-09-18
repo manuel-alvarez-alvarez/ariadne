@@ -54,6 +54,8 @@ impl McpSeat {
                 "search_memory",
                 "search_code",
                 "outline",
+                "symbol",
+                "impact",
             ],
             McpSeat::Author => &[
                 "get_task",
@@ -67,6 +69,8 @@ impl McpSeat {
                 "search_memory",
                 "search_code",
                 "outline",
+                "symbol",
+                "impact",
             ],
             McpSeat::Reviewer => &[
                 "get_task",
@@ -79,6 +83,8 @@ impl McpSeat {
                 "search_memory",
                 "search_code",
                 "outline",
+                "symbol",
+                "impact",
             ],
         }
     }
@@ -86,7 +92,7 @@ impl McpSeat {
 
 /// The tools of the knowledge base (022): every seat has them, and none has
 /// them while the daemon runs with `knowledge_enabled = false`.
-const KNOWLEDGE_TOOLS: &[&str] = &["search_code", "outline"];
+const KNOWLEDGE_TOOLS: &[&str] = &["search_code", "outline", "symbol", "impact"];
 
 #[derive(Clone)]
 pub struct AriadneMcp {
@@ -203,6 +209,37 @@ impl AriadneMcp {
                 None,
             )),
         }
+    }
+
+    /// This task's repository, and the range of its own change: the base
+    /// branch to the task branch. What a reviewer reads when it asks for the
+    /// impact of the change it is judging.
+    async fn task_diff(&self) -> Result<(String, String), McpError> {
+        let Some(task_id) = &self.task_id else {
+            return Err(McpError::invalid_params(
+                "no task in scope: pass diff as `<base>..<head>`",
+                None,
+            ));
+        };
+        let task: serde_json::Value = self.get(&format!("/v1/tasks/{task_id}")).await?;
+        let (Some(repository_id), Some(branch)) =
+            (task["repo_id"].as_str(), task["branch"].as_str())
+        else {
+            return Err(McpError::internal_error(
+                "the task names no repository and no branch",
+                None,
+            ));
+        };
+        let repository: serde_json::Value = self
+            .get(&format!("/v1/repositories/{repository_id}"))
+            .await?;
+        let Some(base) = repository["base_branch"].as_str() else {
+            return Err(McpError::internal_error(
+                "the repository names no base branch",
+                None,
+            ));
+        };
+        Ok((repository_id.to_string(), format!("{base}..{branch}")))
     }
 }
 
@@ -410,6 +447,8 @@ pub(crate) mod tests {
                     "search_memory",
                     "search_code",
                     "outline",
+                    "symbol",
+                    "impact",
                 ][..],
             ),
             (
@@ -426,6 +465,8 @@ pub(crate) mod tests {
                     "search_memory",
                     "search_code",
                     "outline",
+                    "symbol",
+                    "impact",
                 ][..],
             ),
             (
@@ -441,6 +482,8 @@ pub(crate) mod tests {
                     "search_memory",
                     "search_code",
                     "outline",
+                    "symbol",
+                    "impact",
                 ][..],
             ),
         ] {
@@ -458,6 +501,7 @@ pub(crate) mod tests {
             "finish_task",
             "get_diff",
             "get_task",
+            "impact",
             "list_models",
             "list_skills",
             "list_tasks",
@@ -472,6 +516,7 @@ pub(crate) mod tests {
             "search_memory",
             "send_message",
             "submit_verdict",
+            "symbol",
             "update_task",
         ];
         assert_eq!(distinct_tools(), EVERY_TOOL);

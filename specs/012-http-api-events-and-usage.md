@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-18
+updated: 2026-09-19
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -163,7 +163,8 @@ and the ACP runtime that reports the agent events (021).
 24. The knowledge base (022) is served at `GET
     /v1/repositories/{id}/knowledge`, `POST
     /v1/repositories/{id}/knowledge/reindex` (202), `GET
-    /v1/knowledge/search` and `GET /v1/knowledge/outline`, and reports
+    /v1/knowledge/search`, `GET /v1/knowledge/outline`, `GET
+    /v1/knowledge/symbol` and `GET /v1/knowledge/impact`, and reports
     every index run on the domain stream as `knowledge_indexed`
     (`repository_id`, `git_ref`, `commit`, `files`, `symbols`) or
     `knowledge_failed` (`repository_id`, `error`). Like a branch move, these

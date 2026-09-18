@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-knowledge/tests/knowledge.rs
   - crates/ariadne-knowledge/src/languages.rs
   - crates/ariadne-knowledge/src/parser.rs
+  - crates/ariadne-knowledge/src/resolve.rs
   - crates/ariadne-knowledge/src/store.rs
   - crates/ariadne-knowledge/src/index.rs
   - crates/ariadne-daemon/tests/it/knowledge.rs
@@ -30,15 +31,17 @@ grepping and slicing files.
 
 ## Scope
 
-In: the language registry, the parser, the store and its schema, when the
-daemon indexes what, the REST surface and its events, the two MCP tools, the
+In: the language registry, the parser, the resolution pass that turns a
+reference into an edge, the store and its schema, when the daemon indexes
+what, the REST surface and its events, the four MCP tools, the
 `ariadne knowledge` commands, the `knowledge_enabled` key, and the desktop
 knowledge page over the same routes (015).
 
-Out: references and the `edges` between symbols (a later task fills the
-table reserved here, and the interactions read off it), what the skill
-documents tell an agent to do with the tools (017), and the memory tools
-beside these (019).
+Out: resolution across repositories, and the edges a manifest, a route or an
+environment variable makes (a later task adds them, with the interactions
+listing that reads them off); languages beyond the registry here; what the
+skill documents tell an agent to do with the tools (017); and the memory
+tools beside these (019).
 
 ## Behavior
 
@@ -49,8 +52,10 @@ beside these (019).
    ships. Every definition the query captures is a symbol, of the query's
    own kind: `function`, `method`, `class`, `module`, `interface`, `macro`
    or `constant`. The Rust query gets one pattern more, naming every `impl`
-   block by its type, and the C# query loses its one bare `@module` capture,
-   which is no tags capture. No query is vendored from elsewhere.
+   block by its type; the C# query loses its one bare `@module` capture,
+   which is no tags capture; and each language that has base classes gets a
+   `@reference.extends` pattern, because no upstream query tells a base apart
+   from any other class reference. No query is vendored from elsewhere.
 3. Markdown is outline-only: each heading is a symbol of kind `heading`,
    spanning to the line before the next heading of its level or above, and
    qualified by the headings above it (`Title > Sub`).
@@ -68,83 +73,156 @@ beside these (019).
    definition (`#[test]`, `#[tokio::test]`); a `test_` name in Python;
    `[Fact]`, `[Theory]`, `[Test]` or `[TestMethod]` on a C# method; in
    TypeScript and JavaScript an `it(` or `test(` call, which becomes a symbol
-   of kind `test` named by the call's first string argument.
-7. The store is one SQLite file, `knowledge.db`, beside the daemon's
-   database, with the schema below. It is disposable: `PRAGMA user_version`
-   holds the schema version, and a file at another version is deleted and
-   rebuilt from the repositories.
-8. Symbols are keyed by blob: a file whose content did not change is parsed
-   once, and its symbols are shared by every ref and every repository that
-   holds it. A symbol's id is never given twice. A blob no file holds any
-   more is dropped, with its symbols, whenever a ref or a repository is.
-9. The daemon indexes one repository at a time, off the request path. A
-   repository's base branch is read at daemon start, at registration, when
-   its base branch is edited, and after every landing (a task transition to
-   `finished`). A task branch is read every time the daemon sees its head
-   move (002, rule 11), and every in-flight task branch is read at daemon
-   start — leniently: a task branch the repository no longer has fails
-   nothing, and its rows go. A landing drops the rows of the task's branch
-   and of its author branches (002, rule 6) before the base branch is read
-   again. A deleted repository's rows go with it.
-10. The first read of a ref takes every file git tracks at its head; every
+   of kind `test` named by the call's first string argument and scopes what
+   its body names.
+7. Every reference the tags query captures is a mention of one blob: its
+   kind (`call` and `send` are `calls`, `implementation` is `implements`,
+   `extends` is `extends`, every other capture is `references`), the name, the
+   line, and the definition it sits in — none for a reference at file scope. A
+   Rust `impl Trait for Type` is a mention from `Type` to `Trait`. One
+   definition naming another names it once, at the first line it does.
+8. The import statements of a file are read off its text, by the syntax of
+   its language: `use` in Rust, `import` and `from … import` in Python,
+   `import` and `require` in TypeScript and JavaScript, `using` in C#. Each
+   one names a module, and a name in it where the statement names one — a
+   glob, a whole-module import and every C# directive name only the module.
+   An alias keeps the original name, which is what a definition is called.
+   A named import is a mention of kind `imports`, at file scope. Every other
+   language names no import, and its references resolve on the three steps
+   that are left.
+9. A mention becomes edges by looking for the definitions of its name in
+   four places, nearest first: the same file, the same directory, the modules
+   the file imports, and then anywhere in the repository at that ref. The
+   first of those that holds a definition answers. One definition there is
+   one edge marked `exact`; several are one edge to each, marked `heuristic`,
+   and every edge carries how many matched. A step that holds more than 20
+   definitions says nothing about which one was meant, and the mention is left
+   unresolved. A module is what an import named where the definition's path,
+   or its qualified name, carries the module's segments, past `crate`, `self`,
+   `super` and a leading `.` or `/`.
+10. Edges are keyed by the referencing blob at one ref of one repository, so
+    deriving them again is one delete by that key and one insert. The ref is
+    part of the key because the answer depends on it: two refs share the blob
+    of an unchanged file, and each resolves its names against its own tree, so
+    one edge set per blob would hold whichever ref resolved it last and the
+    other ref would answer for a definition it does not have. A dropped ref
+    and a dropped repository take their edges with them. A run derives the
+    edges again for every blob it parsed, and for every blob of the ref that
+    names a definition the run moved — which is every name the touched paths
+    held before the run and after it.
+11. A symbol's tests are the symbols marked `is_test` with a path of at most
+    two `calls` edges to it: a test that calls it, and a test that calls
+    something that calls it.
+12. The store is one SQLite file, `knowledge.db`, beside the daemon's
+    database, with the schema below. It is disposable: `PRAGMA user_version`
+    holds the schema version, and a file at another version is deleted and
+    rebuilt from the repositories.
+13. Symbols are keyed by blob: a file whose content did not change is parsed
+    once, and its symbols, its mentions and its imports are shared by every
+    ref and every repository that holds it. A symbol's id is never given
+    twice. A blob no file holds any more is dropped, with its symbols, its
+    mentions, its imports and its edges, whenever a ref or a repository is.
+14. The daemon indexes one repository at a time, off the request path. A
+    repository's base branch is read at daemon start, at registration, when
+    its base branch is edited, and after every landing (a task transition to
+    `finished`). A task branch is read every time the daemon sees its head
+    move (002, rule 11), and every in-flight task branch is read at daemon
+    start — leniently: a task branch the repository no longer has fails
+    nothing, and its rows go. A landing drops the rows of the task's branch
+    and of its author branches (002, rule 6) before the base branch is read
+    again. A deleted repository's rows go with it.
+15. The first read of a ref takes every file git tracks at its head; every
     later read runs `git diff --name-only <last indexed commit> <head>` and
     reads only the changed paths. A file over 1 MiB, a binary file (a NUL
     byte in its first 8000 bytes), a symlink and a submodule are skipped,
     and a changed path the run skips loses the row it had. Content is read
     from the commit over `git cat-file --batch`, never from a working tree.
-11. A search matches identifiers by their parts: a name is stored whole and
+    The files of one batch are parsed a core each.
+16. A search matches identifiers by their parts: a name is stored whole and
     split on camelCase, snake_case and the segments of its qualified name,
     and every word of the query is a prefix that has to match. An exact name
     comes first, then a name the query is a prefix of, then FTS rank.
-12. `GET /v1/repositories/{id}/knowledge` answers `KnowledgeStatusDto`:
+17. `GET /v1/repositories/{id}/knowledge` answers `KnowledgeStatusDto`:
     `repository_id`, `state` (`idle`, `indexing`, `failed`, `disabled`),
     `refs` (each `git_ref`, `commit`, `indexed_at`, `files`, `symbols`),
     `files` (distinct paths across the refs), `symbols` (of the distinct
     blobs those paths hold), `languages` (`language`, `files`) and `error`.
-13. `POST /v1/repositories/{id}/knowledge/reindex` marks the repository
+18. `POST /v1/repositories/{id}/knowledge/reindex` marks the repository
     `indexing`, answers 202 with its status, and the worker then drops its
     rows and reads its base branch and every task branch it had again.
-14. `GET /v1/knowledge/search` takes `q`, and optionally `repository`,
+19. `GET /v1/knowledge/search` takes `q`, and optionally `repository`,
     `all`, `git_ref`, `kind`, `path` (a substring) and `limit` (default 20,
     max 50), and answers `KnowledgeHitDto`s: `repository_id`, `path`,
     `line`, `kind`, `name`, `signature`. Without `repository` a user
     searches every repository, and an agent session the repositories of its
     goal, or every one with `all=true`.
-15. Without `git_ref` a repository is read at the caller's own ref: a task
+20. Without `git_ref` a repository is read at the caller's own ref: a task
     session's task branch, where that branch has been indexed in the task's
     repository, else the base branch. A task branch not yet indexed is the
     base branch's tree, so the base branch answers for it.
-16. `GET /v1/knowledge/outline` takes `repository`, `path` and optionally
+21. `GET /v1/knowledge/outline` takes `repository`, `path` and optionally
     `git_ref`, and answers `KnowledgeOutlineEntryDto`s in line order: `kind`,
     `name`, `start_line`, `end_line`, `signature`. A path not indexed at
     that ref is a 404.
-17. Every index run publishes `knowledge_indexed` (`repository_id`,
+22. `GET /v1/knowledge/symbol` takes `name`, and optionally `repository`,
+    `git_ref` and `detail` (`outline`, `source` or `context`; `outline` by
+    default). It answers one `KnowledgeSymbolDto` per definition of the name,
+    in path order: `repository_id`, `path`, `start_line`, `end_line`, `kind`,
+    `name`, `signature` and `doc`. `source` adds `source`, the text of the
+    definition, read from the blob it was parsed from. `context` adds
+    `callers`, `callees`, `implementations` and `tests`, each a list of
+    `repository_id`, `path`, `line`, `name` and `confidence`, and each capped
+    at 20 entries. Without `repository` a user reads every repository, and an
+    agent session the repositories of its goal; the ref is the caller's own
+    (rule 20).
+23. `GET /v1/knowledge/impact` takes `repository`, optionally `git_ref` and
+    `depth` (default 2, max 4), and exactly one of `symbol` and `diff`
+    (`<base>..<head>`) — neither and both are refused. `symbol` names every
+    definition of that name; `diff` names every definition whose lines a hunk
+    of `git diff --unified=0 <base>..<head>` touched. A value that could read
+    as a git flag is refused rather than run. For each changed definition it
+    answers a `KnowledgeImpactDto`: the `symbol` itself, its `callers` by
+    depth (`depth`, `repository_id`, `path`, `line`, `name`, `confidence`,
+    each caller once and at its shortest depth), and `stopped`, the
+    definitions the walk did not go past because each has more than 200
+    callers.
+24. Every index run publishes `knowledge_indexed` (`repository_id`,
     `git_ref`, `commit`, `files`, `symbols`) on the domain stream, and a
     failed run `knowledge_failed` (`repository_id`, `error`) (012). Neither
     belongs to a goal or a task.
-18. Every seat has `search_code` and `outline` (013). `search_code` passes
-    `query`, `repository`, `all`, `git_ref`, `kind`, `path` and `limit`
-    through to the search; the daemon applies the defaults of rules 14 and
-    15. `outline` takes the repository the memory tools take: the task's,
-    then the goal's only one, and refuses with an instruction where the goal
-    has several.
-19. Both tools answer plain text, one line per result: `path:line kind name
-    signature` for a search (each line led by its repository id where the
-    answer spans several), `path:start-end kind name signature` for an
-    outline. An answer is cut at 8 KiB, with a last line naming how many
-    results were left and saying to narrow the query.
-20. `ariadne knowledge status|reindex|search|outline` (014) read the same
-    endpoints. `search` takes `--repository`, `--ref`, `--kind`, `--path`
-    and `--limit`; `outline` takes the repository, the path and `--ref`.
-    `search` and `outline` are listings, whose `-q` prints `path:line` and
-    the line range.
-21. `knowledge_enabled` in `config.toml` defaults to true. False, the daemon
+25. Every seat has `search_code`, `outline`, `symbol` and `impact` (013).
+    `search_code` passes `query`, `repository`, `all`, `git_ref`, `kind`,
+    `path` and `limit` through to the search; the daemon applies the defaults
+    of rules 19 and 20. `outline`, `symbol` and `impact` take the repository
+    the memory tools take: the task's, then the goal's only one, and refuse
+    with an instruction where the goal has several. `impact` with neither
+    `symbol` nor `diff` is the task's own diff, the base branch to the task
+    branch, for a reviewer, and a refusal naming both arguments for any other
+    seat.
+26. `search_code` and `outline` answer plain text, one line per result:
+    `path:line kind name signature` for a search (each line led by its
+    repository id where the answer spans several), `path:start-end kind name
+    signature` for an outline. `symbol` and `impact` group their answer under
+    headings: `# <repository id>` per repository, `## <location> …` per
+    definition, and `### callers|callees|implementations|tests` per list of a
+    context, an empty list reading `(none)`. An answer is cut at 8 KiB, with
+    a last line naming how many results were left and saying to narrow the
+    query.
+27. `ariadne knowledge status|reindex|search|outline|symbol|impact` (014)
+    read the same endpoints. `search` takes `--repository`, `--ref`,
+    `--kind`, `--path` and `--limit`; `outline` takes the repository, the path
+    and `--ref`; `symbol` takes the name, `--repository`, `--ref` and
+    `--detail`; `impact` takes `--repository`, one of `--symbol` and
+    `--diff`, `--ref` and `--depth`. `search`, `outline` and `impact` are
+    listings, whose `-q` prints `path:line` and the line range; `symbol`
+    prints a block per definition.
+28. `knowledge_enabled` in `config.toml` defaults to true. False, the daemon
     indexes nothing and opens no store, the status says `disabled`, a
     search, an outline or a reindex is refused with a line naming the key,
     and every launch tells the session's MCP server
-    (`ARIADNE_KNOWLEDGE_ENABLED=false`), which then lists and serves
-    neither tool.
-22. The desktop app's knowledge page (015) shows the status card, a Reindex
+    (`ARIADNE_KNOWLEDGE_ENABLED=false`), which then lists and serves none of
+    the four tools.
+29. The desktop app's knowledge page (015) shows the status card, a Reindex
     button that posts the reindex and shows `indexing` at once, a search box
     over `q`, `kind` and `path`, and the interactions of the repository
     grouped by kind — reached from a row on the repositories screen and from
@@ -230,7 +308,7 @@ which its `~1.2.1` requirement pins for every crate that also builds with
 
 ## Schema
 
-`crates/ariadne-knowledge/src/schema.sql`, version 2:
+`crates/ariadne-knowledge/src/schema.sql`, version 4:
 
 | Table | Columns | Holds |
 | --- | --- | --- |
@@ -240,12 +318,23 @@ which its `~1.2.1` requirement pins for every crate that also builds with
 | `blobs` | `blob`, `language`, `parsed_at` | every blob parsed so far |
 | `symbols` | `id` (autoincrement), `blob`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, `signature`, `doc`, `is_test` | the definitions of one blob |
 | `symbols_fts` | `terms`, rowid = `symbols.id` | FTS5 over each symbol's identifier parts |
-| `edges` | `kind`, `from_symbol`, `to_symbol`, `from_repository`, `to_repository`, `confidence` | relations between symbols; empty until a later task fills it |
+| `mentions` | `blob`, `kind`, `name`, `line`, `from_symbol` | the names one blob names, before they are resolved |
+| `imports` | `blob`, `module`, `name`, `line` | the import statements of one blob |
+| `edges` | `from_repository`, `git_ref`, `from_blob`, `kind`, `from_symbol`, `to_symbol`, `to_repository`, `from_line`, `confidence`, `candidates` | the relations the resolution pass derived, keyed by the referencing blob at one ref |
 
-`refs` cascade from `repositories`, `files` from `refs`, `symbols` and
-`edges` from `blobs` and `symbols`. Dropping a ref or a repository then
-drops the blobs no file holds, with their symbols and FTS rows, in two
-statements: the FTS rows are found by rowid, never by reading the table.
+`refs` cascade from `repositories`, `files` from `refs`, and `symbols`,
+`mentions`, `imports` and `edges` from `blobs` and `symbols`. Dropping a ref
+or a repository then drops the blobs no file holds, with their symbols and
+FTS rows, in two statements: the FTS rows are found by rowid, never by reading
+the table; everything keyed by the blob goes with it.
+
+`edges` is indexed in both directions under the ref a walk reads,
+`(from_repository, git_ref, kind, from_symbol, to_symbol, confidence)` and
+`(from_repository, git_ref, kind, to_symbol, from_symbol, confidence)`, so a
+walk over the graph reads an index and no rows of the table; and by
+`(from_repository, git_ref, from_blob)`, which is what deriving a blob's edges
+again and dropping a ref delete by. `symbols` is indexed by `name`, which is
+what resolution and `symbol` ask by.
 
 ## Acceptance criteria
 
@@ -273,6 +362,52 @@ statements: the FTS rows are found by rowid, never by reading the table.
   symbols — YAML, TOML and JSON their keys, HTML its elements with an `id`,
   CSS its selectors, SQL its `CREATE`/`ALTER` object names
   (`knowledge.rs::every_format_is_outlined`).
+- An import is read by the syntax of its language, and a reference belongs to
+  the definition it sits in — a Rust `impl Trait for Type` to the type, a base
+  class to the class that names it
+  (`parser.rs::an_import_is_read_by_the_syntax_of_its_language`,
+  `::a_reference_belongs_to_the_definition_it_sits_in`).
+- A name resolves at the nearest step that holds a definition, a name past the
+  candidate cap resolves nowhere, and a module is matched by the path or the
+  qualified name it names
+  (`resolve.rs::a_name_resolves_at_the_nearest_step_that_holds_a_definition`,
+  `::a_name_past_the_candidate_cap_is_left_unresolved`,
+  `::a_module_is_matched_by_the_path_or_the_qualified_name_it_names`).
+- A Rust file that calls a definition it brought in with `use` names it
+  exactly, and the caller and the callee each list the other, while a second
+  definition of the same name that nothing imports is called by nobody
+  (`knowledge.rs::a_call_through_an_import_resolves_to_the_definition_it_named`);
+  a name two files define, imported by neither, is a guess, and both are
+  listed (`::a_name_defined_twice_resolves_to_both_as_a_guess`).
+- Two files that import the same name each get an edge of their own
+  (`resolve.rs::two_files_that_import_the_same_name_each_get_an_edge`).
+- Edges belong to the ref they were resolved at: two refs share the blob of an
+  unchanged caller and each answers for its own definition, a later run on the
+  base branch does not take the branch's edges, and a dropped ref takes its
+  own
+  (`knowledge.rs::edges_belong_to_the_ref_they_were_resolved_at`).
+- One import shape per language of the registry resolves the name it brought
+  in: Rust `use`, Python `from pkg.m import x`, TypeScript
+  `import { x } from './m'`, JavaScript `require`, C# `using`
+  (`knowledge.rs::an_import_of_every_language_resolves_the_name_it_brought_in`).
+- The callers are walked by depth, a test two edges away is a test of a
+  definition, and nothing is reached from a definition nothing calls
+  (`knowledge.rs::the_callers_are_walked_by_depth_and_a_test_two_edges_away_is_a_test`).
+- A Rust `impl Trait for Type` is listed under the trait
+  (`knowledge.rs::an_implementation_is_listed_under_the_trait_it_is_of`).
+- A diff names the definitions it changed and no others, their callers are
+  what the change reaches, and a range that is no range is refused
+  (`knowledge.rs::a_diff_names_the_definitions_it_changed_and_their_callers`);
+  the hunks of a file the diff deletes belong to no path
+  (`index.rs::the_hunks_of_a_deleted_file_belong_to_no_path`).
+- A definition with more than 200 callers is not walked past, and the answer
+  names it
+  (`knowledge.rs::a_definition_with_more_than_two_hundred_callers_is_not_walked_past`).
+- A changed blob has its own edges derived again, and so has every blob that
+  names a definition the change moved, and nothing else
+  (`knowledge.rs::a_changed_blob_resolves_itself_and_what_names_what_moved`).
+- A walk three deep over a hundred thousand edges answers in under 100 ms
+  (`store.rs::impact_three_deep_over_a_hundred_thousand_edges_answers_under_a_tenth_of_a_second`).
 - A second commit that changes one file parses only that file, and a run
   over an unchanged ref parses nothing
   (`knowledge.rs::a_second_commit_that_changes_one_file_parses_only_that_file`).
@@ -327,9 +462,13 @@ statements: the FTS rows are found by rowid, never by reading the table.
   `::a_launch_says_when_the_knowledge_base_is_off`), and no seat is listed a
   knowledge tool
   (`mcp.rs::the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off`).
+- `symbol` answers the outline, the source and the context of a definition,
+  and `impact` the callers of a change; a diff with no ref is read at its own
+  head; one of `symbol` and `diff` is required and both are refused
+  (`tests/it/knowledge.rs::the_symbol_and_impact_endpoints_answer_from_the_derived_graph`).
 - Every endpoint is in the OpenAPI document
   (`tests/it/knowledge.rs::every_knowledge_endpoint_is_in_the_openapi_document`).
-- Every seat lists `search_code` and `outline`
+- Every seat lists `search_code`, `outline`, `symbol` and `impact`
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`), and
   their descriptions are Simplified Technical English
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
@@ -341,12 +480,24 @@ statements: the FTS rows are found by rowid, never by reading the table.
   (`tools.rs::an_answer_over_8_kib_is_cut_with_the_number_of_results_left`).
 - `outline` takes the task's repository by default and lists line ranges
   (`tools.rs::outline_defaults_to_the_task_repository_and_lists_line_ranges`).
+- `symbol` groups its answer under a heading for each repository, each
+  definition and each list of the context
+  (`tools.rs::symbol_groups_its_answer_under_a_heading_for_each_repository`),
+  and takes the task's repository by default
+  (`::symbol_defaults_to_the_task_repository`).
+- `impact` with no argument is the task's own diff for a reviewer
+  (`tools.rs::impact_reads_the_task_diff_for_a_reviewer_that_names_nothing`),
+  and a refusal for any other seat
+  (`::impact_needs_a_symbol_or_a_diff_from_a_seat_that_is_no_reviewer`).
 - The CLI commands are classified and parse their flags
   (`cli/tests.rs::every_command_in_the_tree_is_classified`,
   `::knowledge_search_takes_its_filters`,
-  `::knowledge_outline_takes_the_repository_and_the_path`), and a search row
-  leads with its location
-  (`commands/knowledge.rs::a_search_row_leads_with_its_location_and_titles_the_symbol`).
+  `::knowledge_outline_takes_the_repository_and_the_path`,
+  `::knowledge_symbol_takes_its_name_and_detail`,
+  `::knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth`), and a search row
+  and an impact row each lead with their location
+  (`commands/knowledge.rs::a_search_row_leads_with_its_location_and_titles_the_symbol`,
+  `::an_impact_row_leads_with_its_location_and_says_how_far_away_it_is`).
 - The desktop knowledge page renders the status card in every state, posts a
   reindex and shows `indexing` at once, refetches once `knowledge_indexed` or
   `knowledge_failed` arrives, searches with `q`, `kind` and `path`, and groups
@@ -362,21 +513,28 @@ statements: the FTS rows are found by rowid, never by reading the table.
 
 ## Known gap
 
-References are parsed only where a rule needs them (the `it(`/`test(`
-calls) and are not stored; `edges` stays empty until the task that reads
-references fills it. A reviewer on a task staffed with several authors reads
-the task's first branch by default and names another with `git_ref`. A blob
-is parsed as the language of the first path it was seen at. The branch of a
-cancelled or failed task, and of a task whose goal was deleted, keeps its
-rows until a reindex or a restart drops what no longer resolves.
+Resolution reads one repository: a name that is only defined in another
+repository resolves nowhere. An alias keeps the original name, so a file that
+calls the definition by its alias resolves nothing. Two files of the same text
+are one blob and so one definition, listed once per path and carrying the
+edges of both. Dropping a ref drops the edges into the symbols it alone held,
+and the blobs at other refs that pointed at them are not resolved again until
+they or the names they name move.
+
+A reviewer on a task staffed with several authors reads the task's first
+branch by default and names another with `git_ref`. A blob is parsed as the
+language of the first path it was seen at. The branch of a cancelled or failed
+task, and of a task whose goal was deleted, keeps its rows until a reindex or
+a restart drops what no longer resolves.
 
 The desktop page also reads `GET /v1/knowledge/interactions`: the edges
 found between files, grouped by kind (`depends_on`, `references`,
 `calls_route`, `sets_env`), filtered by `repository` and `git_ref`, each
 naming both ends (repository, path, line, symbol) and whether it was found
-exactly or by a heuristic. The daemon does not serve it yet — the task that
-fills `edges` adds it — so until then the page's interactions section shows
-the daemon's refusal.
+exactly or by a heuristic. `edges` holds `calls`, `references`, `implements`,
+`extends` and `imports` now, and the two kinds a manifest and a route make are
+the later task's, which is also the task that serves the listing. Until then
+the page's interactions section shows the daemon's refusal.
 
 ## Sources
 
