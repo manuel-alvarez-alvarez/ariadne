@@ -22,7 +22,15 @@ Implement the task you were given, and nothing else. The task is one commit.
    Done when the answer settles the reading.
 6. Build the whole task, with the tests its acceptance criteria call for.
    Done when every criterion has the code and the test that prove it.
-7. Prove the work: run the tests and the lint of what you changed.
+7. Prove the work: run the tests and the lint of what you changed, as
+   one command in the foreground, with a timeout up to ten minutes.
+   Split a run too long by crate or package. Never poll a background
+   run with a no-op command.
+   Send the whole output to a log file outside the worktree, such as
+   `/tmp/<task>-check.log`. Print only the summary and the failures.
+   For nextest: `cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40`.
+   For another runner: `| tail -n 40`.
+   Read the log file only for the detail of a failure.
    Done when both are green.
 8. Commit the work once, with an imperative subject.
    Done when the task is one commit on your branch.

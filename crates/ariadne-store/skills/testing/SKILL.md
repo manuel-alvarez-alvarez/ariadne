@@ -32,6 +32,14 @@ A test states one claim at a seam and fails when that claim breaks.
 - Make tests independent of order and of each other.
 - Spend tests on your own claims, not on what the language or the library
   already guarantees.
+- Run a check in the foreground and wait for it. Give it a timeout up to
+  ten minutes, and split a run too long by crate or package. Never poll a
+  background run with a no-op command.
+- Send the whole output to a log file outside the worktree, such as
+  `/tmp/<task>-check.log`. Print only the summary and the failures.
+  For nextest: `cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40`.
+  For another runner: `| tail -n 40`.
+- Read the log file only for the detail of a failure.
 
 ## Anti-patterns
 

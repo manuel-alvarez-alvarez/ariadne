@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-09-13
+updated: 2026-09-18
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -83,7 +83,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
     same as every other default text. It also obeys the rules the seat texts
     state. No skill divides a task into slices or small commits. `coding`
     builds the whole task and commits it once, and `refactoring` holds every
-    move in one commit (004).
+    move in one commit (004). `testing`, `coding`, `debugging` and
+    `code-review` each state one more rule, in their own words and place:
+    run a check in the foreground and never poll a background one, and send
+    its full output to a log file outside the worktree, so only the summary
+    and the failures reach the agent.
 11. The orchestrator staffs each task: it names the skills of each agent and
     the model each runs on (011), may size the effort beside it, and may add
     a brief that the task itself does not carry. How the task ends is agreed
@@ -128,6 +132,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - Every shipped skill is named once and describes itself
   (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`), and
   every document is within its cap (`defaults.rs::skill_size_caps_hold`).
+- `testing`, `coding`, `debugging` and `code-review` run a check in the
+  foreground and send its output to a log file outside the worktree, rather
+  than poll a background run
+  (`defaults.rs::checks_run_in_the_foreground_and_print_only_failures`).
 - No shipped skill divides a task, and `coding` and `refactoring` each name
   one commit
   (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).

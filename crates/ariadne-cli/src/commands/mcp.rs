@@ -221,7 +221,7 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
 /// playbook names the texts of its own seat again, in its own layer.
 fn session_rules(seat: &McpSeat) -> String {
     format!(
-        r#"Reach Ariadne only through these tools. A backticked name is a tool. {} Never narrate progress. Take as few turns as you can.
+        r#"Reach Ariadne only through these tools. A backticked name is a tool. {} Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
 
 Write all text in ASD-STE100 Simplified Technical English (STE):
 - Write one instruction in one sentence.
@@ -551,9 +551,15 @@ pub(crate) mod tests {
     /// the list of what they cover, and 700 is what those fit in: it holds
     /// for every word of every seat, and no playbook can state it for all
     /// three.
+    ///
+    /// The cap rises to 800 for one more rule: run a check in the
+    /// foreground, and never poll a background one with a no-op command.
+    /// It holds for every seat the way the others here do, even though
+    /// only an author or a reviewer runs a check, because it is the one
+    /// place all three are told the same thing at once.
     #[test]
     fn the_shared_rules_stay_small() {
-        const CAP: usize = 700;
+        const CAP: usize = 800;
         for seat in SEATS {
             let rules = session_rules(&seat);
             assert!(

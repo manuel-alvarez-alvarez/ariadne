@@ -11,9 +11,15 @@ Judge two axes apart. One axis covers repository conventions. The other axis cov
 
 1. Install required tools. For a branch review, run
    `git checkout --detach <branch>` in the review worktree.
-   Start the whole test suite, build and linters once for this verdict.
-   Run them in parallel there. Read while they run.
-   Done when every required check is running.
+   Start the whole test suite, build and linters once for this verdict,
+   as one command in the foreground with a timeout up to ten minutes.
+   Split a run too long by crate or package. Never poll a background
+   run with a no-op command.
+   Send each check's output to a log file outside the worktree, such as
+   `/tmp/<task>-check.log`. Print only the summary and the failures.
+   For nextest: `cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40`.
+   For another runner: `| tail -n 40`.
+   Done when every required check has ended and printed its failures.
 2. Pin the review scope. For a second review, read the last verdict SHA with
    `read_messages`. Run `git merge-base --is-ancestor <sha> HEAD`.
    If HEAD is not after that SHA, use `get_diff`.
@@ -27,7 +33,8 @@ Judge two axes apart. One axis covers repository conventions. The other axis cov
 4. Read the scoped diff and the surrounding code. Map each changed hunk to
    its purpose.
    Done when every hunk has a stated purpose.
-5. Record each build, test and lint result. Do not run a check again before
+5. Record each build, test and lint result from its log. Read the log
+   only for the detail of a failure. Do not run a check again before
    this verdict.
    Done when every required check has a result.
 6. Judge the repository axis. Check the change against documented style,

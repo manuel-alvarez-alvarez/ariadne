@@ -249,7 +249,7 @@ const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first c
 /// stated: one per review asked for, through `submit_verdict`.
 const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one Ariadne task. An approval gates the merge: approve only what you would merge yourself. Your detached worktree holds the branch, read-only: do not edit, commit, amend or branch.
 
-1. Install required tools. Move this worktree to the branch named in the briefing with `git checkout --detach <branch>`. Start the whole test suite, build and linters once for this verdict. Run them in parallel in this worktree. Read while they run. Record `git rev-parse HEAD` as the SHA you judge.
+1. Install required tools. Move this worktree to the branch named in the briefing with `git checkout --detach <branch>`. Start the whole test suite, build and linters once for this verdict, in the foreground. Record `git rev-parse HEAD` as the SHA you judge.
 2. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
 3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests and clarity. Judge each test by reading its setup, action and assertions. Never change code to see whether a test fails.
 4. Wait for every check. Use each result in your verdict. Where something blocks the review, request changes and name it.
@@ -438,9 +438,9 @@ const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title}
 /// there are: an author that revised the change under its worktree, and a
 /// review it has simply gone quiet in. Either way the diff it last read may
 /// be stale and the verdict is still outstanding.
-const REVIEWER_RESUME: &str = r#""{task_title}" needs your verdict. Move this worktree to the current branch tip with `git checkout --detach {branch}`. Start the whole test suite, build and linters once again for this verdict. Run them in parallel in this worktree.
+const REVIEWER_RESUME: &str = r#""{task_title}" needs your verdict. Move this worktree to the current branch tip with `git checkout --detach {branch}`. Start the whole test suite, build and linters once again for this verdict, in the foreground.
 
-Read the SHA from your last verdict with `read_messages`. Confirm it with `git merge-base --is-ancestor <sha> HEAD`. If HEAD is not after that SHA, use `get_diff`. If no SHA is known, use `get_diff`. Otherwise, run `git log <sha>..HEAD` and `git diff <sha>..HEAD` here. Read only those new commits while the checks run. Use every check result before your verdict.
+Read the SHA from your last verdict with `read_messages`. Confirm it with `git merge-base --is-ancestor <sha> HEAD`. If HEAD is not after that SHA, use `get_diff`. If no SHA is known, use `get_diff`. Otherwise, run `git log <sha>..HEAD` and `git diff <sha>..HEAD` here. Read only those new commits. Use every check result before your verdict.
 
 Summary: {summary}"#;
 
@@ -1635,6 +1635,68 @@ mod tests {
         }
     }
 
+    /// A background poll of a check was the largest single waste a
+    /// measurement of this week's sessions found: an agent started
+    /// `cargo nextest` in the background and re-sent its whole context on
+    /// every no-op turn spent waiting for it. `testing`, `coding`,
+    /// `debugging` and `code-review` each carry the fix: a check runs in
+    /// the foreground and is never polled, and its full output goes to a
+    /// log file outside the worktree so only the summary and the failures
+    /// reach the agent's context.
+    ///
+    /// The reviewer's seat text starts the same checks, so it names the
+    /// foreground rule too, in its own words: the detail of the fix —
+    /// the timeout, the log file, the command — stays the skill's alone to
+    /// state, the way spec 006 holds every rule to one place.
+    ///
+    /// Each document is read with its line wrapping taken out first, so a
+    /// rewrap that moves a marker across a line break cannot make a rule
+    /// that is still there read as gone.
+    #[test]
+    fn checks_run_in_the_foreground_and_print_only_failures() {
+        for name in ["testing", "coding", "debugging", "code-review"] {
+            let doc = unwrapped(default_skill_document(name).unwrap());
+            assert!(
+                doc.contains("in the foreground"),
+                "{name} does not run a check in the foreground"
+            );
+            assert!(
+                doc.contains("no-op command"),
+                "{name} does not forbid polling a background run with a no-op command"
+            );
+            assert!(
+                doc.contains("a log file outside the worktree"),
+                "{name} does not send a check's output to a log file outside the worktree"
+            );
+            assert!(
+                doc.contains(
+                    "cargo nextest run --status-level fail --final-status-level fail 2>&1 | tail -n 40"
+                ),
+                "{name} does not print only the summary and the failures of a nextest run"
+            );
+            assert!(
+                doc.contains("the detail of a failure"),
+                "{name} does not scope a log read to the detail of a failure"
+            );
+        }
+
+        for (name, text) in [
+            (
+                "reviewer system prompt",
+                default_system_prompt(Seat::Reviewer),
+            ),
+            (
+                "reviewer resume",
+                default_prompt_text(PromptKind::ReviewerResume),
+            ),
+        ] {
+            assert!(
+                unwrapped(text).contains("in the foreground"),
+                "{name} does not run a check in the foreground"
+            );
+        }
+    }
+
     /// A skill is read on demand rather than on every launch, so it is capped
     /// on its own rather than against the briefings' total. The caps are still
     /// what a rewrite fits in: moving one is a decision, not a way round a
@@ -1664,6 +1726,15 @@ mod tests {
     /// starts every check before reading, refreshes a detached worktree and
     /// scopes another review from the last verdict SHA. These rules add
     /// commands and ordering that the old procedure did not hold.
+    ///
+    /// `debugging` rises from 3200 to 3400 and `code-review` from 3500 to
+    /// 4000 for one more rule, carried in `testing`, `coding`, `debugging`
+    /// and `code-review` alike: run a check in the foreground, never poll a
+    /// background run, and send its output to a log file so only the
+    /// summary and the failures reach the agent. A background poll of
+    /// `cargo nextest` was the largest single waste a measurement of this
+    /// week's sessions found, and the fix costs each of the four skills a
+    /// paragraph.
     #[test]
     fn skill_size_caps_hold() {
         const TOTAL: usize = 50_000;
@@ -1673,8 +1744,8 @@ mod tests {
             // and the contract rule that keeps a frontend task and its
             // backend task off a false `depends_on`.
             ORCHESTRATION_SKILL => 3900,
-            "debugging" => 3200,
-            "code-review" => 3500,
+            "debugging" => 3400,
+            "code-review" => 4000,
             "coding" | "testing" => 3000,
             _ => 2400,
         };

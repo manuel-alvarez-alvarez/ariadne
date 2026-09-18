@@ -1,7 +1,7 @@
 ---
 id: authoring-and-review
 status: current
-updated: 2026-09-15
+updated: 2026-09-18
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 2ca6dd29, 88bf39ac, da10e748, b21bd69e, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -73,7 +73,8 @@ Out: the transition table itself (001), the landing that follows approval
    reviewer's identity, only of the briefing it is woken with.
 7. A reviewer moves its detached worktree to the branch tip named by its
    briefing. It then starts the whole test suite, build and linters in that
-   worktree, once for each verdict, and reads while they run. It judges tests
+   worktree, once for each verdict, as one command in the foreground, and
+   reads only once they end. It judges tests
    by reading them and never changes code to see a test fail. It gives exactly
    one verdict through `submit_verdict` on each review it is asked for, and
    every verdict carries the SHA from `git rev-parse HEAD` that it judged.
@@ -189,6 +190,9 @@ Out: the transition table itself (001), the landing that follows approval
 - The reviewer and its code-review skill start every full check before reading,
   once per verdict
   (`defaults.rs::reviewer_checks_start_before_the_read_once_per_verdict`).
+- The reviewer's seat text and its skill run those checks in the foreground
+  and never poll a background one
+  (`defaults.rs::checks_run_in_the_foreground_and_print_only_failures`).
 - Every verdict carries the SHA it judged
   (`defaults.rs::every_reviewer_verdict_carries_the_sha_it_judged`), and a
   resumed reviewer reads only commits after that SHA
