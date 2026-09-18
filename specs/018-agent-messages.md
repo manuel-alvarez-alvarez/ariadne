@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-09-15
+updated: 2026-09-18
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -54,7 +54,11 @@ and the wording of the text a message arrives in (006).
    there once rather than in each seat's playbook (006).
 7. A message is about one task, or about the goal itself. The goal's channel
    is the orchestrator's inbox, and everything said about a task is on that
-   task.
+   task. A message about a task carries the goal it belongs to as well, so
+   every reader of a goal's channel — the transport and the API alike — asks
+   for the goal's own messages rather than for every message of the goal:
+   what an author and a reviewer say to each other is on their task, and is
+   nobody else's to read.
 8. Two rules the daemon holds the channel to, and no more — it is a
    conversation, and the daemon is not in it:
    - a recipient that the task does not staff is refused;
@@ -69,6 +73,30 @@ and the wording of the text a message arrives in (006).
    behind that turn. `delivered_at` is stamped when the runtime takes the
    text, so a message still undelivered is one waiting for a live agent to
    take it.
+   `delivered_at` is the one gate on every way a message reaches an agent,
+   and a message that carries it is never handed over again — across a
+   resume of the recipient, a relaunch, or a restart of the daemon. There
+   are three ways, and each one stamps what it hands over:
+   - the prompt above;
+   - a briefing that carries the message whole: the reviewer's for a review
+     request (12), and the author's for the change requests that closed its
+     review. A briefing that carries a message is its delivery, so the prompt
+     transport passes that message over rather than saying it twice. The
+     author's briefing is the delivery only where the task has one author, or
+     a winner has been picked: on a contested task each author is nudged on
+     its own branch and no briefing carries a verdict, so there the prompt
+     transport is what carries a change request;
+   - a default `read_messages` (013), which answers with the undelivered
+     messages addressed to the calling session's own agent and stamps them.
+     The daemon narrows that read to the caller rather than to what the
+     caller asked for: a read that stamps is a delivery, and no agent may
+     spend another's. A delivering session must be of the channel's own goal:
+     a stamp is spent once and cannot be given back, and the orchestrator is
+     narrowed by its seat alone — every goal has one — so naming another
+     goal's task would take delivery of that goal's orchestrator's messages.
+     The task scope check cannot say so, since it exempts the orchestrator.
+     `read_messages` with `all` reads the whole thread of the task or the
+     goal instead, delivered messages included, and stamps nothing.
 10. Nothing about a message starts a session. Waking an agent is the
     lifecycle's business (009), and a message is not a reason to put one back
     on a task nobody is working on.
@@ -161,6 +189,21 @@ and the wording of the text a message arrives in (006).
   (`agent_messages.rs::a_review_is_not_closed_by_the_answers_to_the_review_before_it`).
 - A message is delivered once, and the stamp says which have gone
   (`store.rs::a_message_is_delivered_once_and_the_stamp_says_so`).
+- A message handed to an agent as a prompt is gone from what a default
+  `read_messages` gives that agent, and a read of the whole thread holds it
+  (`agent_messages.rs::a_message_handed_over_as_a_prompt_is_absent_from_a_default_read`).
+- A message a read hands over is stamped by that read, and is never handed
+  over as a prompt afterwards — through a resume of its recipient and a
+  restart of the daemon
+  (`agent_messages.rs::a_message_a_read_hands_over_is_never_handed_over_as_a_prompt`).
+- A change request reaches its author once: the briefing that carries it
+  stamps it, and the transport does not say it again
+  (`agent_messages.rs::a_change_request_reaches_its_author_once`).
+- A delivering read is refused a channel of another goal, and spends no stamp
+  on it
+  (`agent_messages.rs::a_delivering_read_is_refused_a_channel_of_another_goal`).
+- A goal's channel holds none of what its tasks said
+  (`agent_messages.rs::a_goals_channel_holds_none_of_what_its_tasks_said`).
 - On a contested task, a review request reaches a live reviewer only as its
   briefing
   (`multi_author_tasks.rs::a_contested_review_request_reaches_a_live_reviewer_only_as_its_briefing`),

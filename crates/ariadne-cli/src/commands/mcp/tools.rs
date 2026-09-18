@@ -176,7 +176,12 @@ pub enum LandingReq {
 }
 
 /// The permission policy for one task.
+///
+/// Spelled the same way twice on purpose: the schema an agent reads is
+/// `schemars`' and the value it sends back is `serde`'s, so a rename on one
+/// alone advertises `auto` and then refuses it.
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 #[schemars(crate = "rmcp::schemars", rename_all = "snake_case")]
 pub enum PermissionModeReq {
     Auto,
@@ -247,9 +252,14 @@ pub struct PickWinnerReq {
 #[schemars(crate = "rmcp::schemars")]
 pub struct SendMessageReq {
     /// Who to write to: the id of an agent `get_task` lists, or
-    /// `orchestrator`.
+    /// `orchestrator`. A seat word works too: `author` or `reviewer` where
+    /// the task staffs one.
     pub to: String,
     /// What it needs from you, whole. Nobody answers it.
+    // `message` is taken too: an agent that spells the field that way writes
+    // the message it meant to, instead of reading a refusal and spending a
+    // turn on the same call again.
+    #[serde(alias = "message")]
     pub body: String,
     /// The task it is about. Omit it for your own task.
     pub task_id: Option<String>,
@@ -260,6 +270,8 @@ pub struct SendMessageReq {
 pub struct ReadMessagesReq {
     /// The task whose channel to read. Omit it for your own task.
     pub task_id: Option<String>,
+    /// Read the whole thread. Omit it to read only what is new for you.
+    pub all: Option<bool>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -348,26 +360,56 @@ fn verdict_message(verdict: Verdict, body: Option<String>) -> Result<SendMessage
     })
 }
 
-/// Who a message is for, as an agent spells it: `orchestrator`, or the id of
-/// an agent the task staffs.
+/// Who a message is for, as an agent spells it: `orchestrator`, the id of an
+/// agent the task staffs, or the seat word of a seat one agent sits in.
 ///
 /// The seat is looked up rather than asked for. An agent reading `get_task`
 /// has the ids in front of it and no reason to also work out which seat each
 /// one sits in — and a `to` that named the wrong seat would be refused for a
 /// reason nobody could act on.
+///
+/// A seat word is taken because most tasks staff one author and one reviewer,
+/// and an agent that writes `author` on such a task means the only one there
+/// is. Where the seat holds several, the word is ambiguous and is refused
+/// with the ids of that seat.
 fn addressee(to: &str, agents: &[serde_json::Value]) -> Result<(Actor, Option<String>), McpError> {
     if to.eq_ignore_ascii_case("orchestrator") {
         return Ok((Actor::Orchestrator, None));
     }
-    let Some(agent) = agents.iter().find(|a| a["id"] == to) else {
-        let known: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
-        return Err(McpError::invalid_params(
-            format!(
-                "no agent {to} on this task. Say `orchestrator`, or one of: {}",
-                known.join(", ")
-            ),
-            None,
-        ));
+    let seated: Vec<&serde_json::Value> = agents
+        .iter()
+        .filter(|a| {
+            a["seat"]
+                .as_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case(to))
+        })
+        .collect();
+    let agent = match (agents.iter().find(|a| a["id"] == to), seated.as_slice()) {
+        (Some(agent), _) => agent,
+        (None, [only]) => only,
+        (None, []) => {
+            return Err(McpError::invalid_params(
+                format!(
+                    "no agent {to} on this task. Say `orchestrator`, or one of: {}",
+                    roll_call(agents)
+                ),
+                None,
+            ));
+        }
+        (None, several) => {
+            return Err(McpError::invalid_params(
+                format!(
+                    "this task staffs several agents in the {to} seat. Name the one you \
+                     write to: {}",
+                    several
+                        .iter()
+                        .filter_map(|a| a["id"].as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                None,
+            ));
+        }
     };
     let actor = match agent["seat"].as_str() {
         Some("author") => Actor::Author,
@@ -379,7 +421,24 @@ fn addressee(to: &str, agents: &[serde_json::Value]) -> Result<(Actor, Option<St
             ));
         }
     };
-    Ok((actor, Some(to.to_string())))
+    let Some(id) = agent["id"].as_str() else {
+        return Err(McpError::invalid_params(
+            format!("agent {to} has no id to write to"),
+            None,
+        ));
+    };
+    Ok((actor, Some(id.to_string())))
+}
+
+/// The addresses that would have worked, each id with the seat it sits in:
+/// an agent reading a refusal picks its reader from this line.
+fn roll_call(agents: &[serde_json::Value]) -> String {
+    agents
+        .iter()
+        .filter_map(|a| Some((a["id"].as_str()?, a["seat"].as_str().unwrap_or("agent"))))
+        .map(|(id, seat)| format!("{id} ({seat})"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[tool_router(vis = "pub(super)")]
@@ -532,15 +591,18 @@ impl AriadneMcp {
         Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
         let skills: Vec<SkillDto> = self.get("/v1/skills").await?;
-        json_result(
-            serde_json::to_value(
-                skills
-                    .into_iter()
-                    .filter(|skill| skill.seat == SkillSeat::Task)
-                    .collect::<Vec<_>>(),
-            )
-            .expect("skills serialize"),
-        )
+        // The name and the one line about it, and nothing else. The whole
+        // `SKILL.md` of every skill is what an orchestrator used to read to
+        // staff one agent — tens of thousands of characters per call, none of
+        // which it chooses between. The agent staffed on the skill is the one
+        // that reads the document.
+        json_result(serde_json::Value::Array(
+            skills
+                .into_iter()
+                .filter(|skill| skill.seat == SkillSeat::Task)
+                .map(|skill| serde_json::json!({"name": skill.name, "summary": skill.summary}))
+                .collect(),
+        ))
     }
 
     #[tool(
@@ -724,13 +786,20 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Read everything the agents of a task have said to each other, oldest first: the messages, the review requests and the verdicts."
+        description = "Read the messages sent to you that you have not received yet, oldest first. Ariadne hands over each message once. Set `all` to true for the whole thread of the task or the goal. Read the whole thread to find the sha in the last verdict."
     )]
     async fn read_messages(
         &self,
         Parameters(req): Parameters<ReadMessagesReq>,
     ) -> Result<CallToolResult, McpError> {
-        let path = self.task_path(req.task_id, "/messages")?;
+        let path = self.channel_path(req.task_id, "/messages");
+        let path = match req.all.unwrap_or(false) {
+            true => path,
+            // A default read is a delivery: the daemon narrows it to this
+            // session's own agent and stamps what it hands over, so nothing
+            // reaches an agent twice.
+            false => format!("{path}?deliver=true"),
+        };
         json_result(self.get::<serde_json::Value>(&path).await?)
     }
 }
@@ -910,12 +979,18 @@ mod tests {
 
     /// The skill catalog staffs task agents, so the orchestrator's own
     /// playbook stays out of this list even though the API lists it for edits.
+    ///
+    /// And an entry is a name and the one line about the skill, and nothing
+    /// else. The document is what the agent staffed on the skill reads; an
+    /// orchestrator choosing between skills reads the line, so a catalog that
+    /// carried every `SKILL.md` spent tens of thousands of characters on what
+    /// nobody chooses between.
     #[tokio::test]
     async fn the_skill_catalog_excludes_orchestrator_only_skills() {
         let (endpoint, seen) = recording_daemon_answering(
             r#"[
                 {"name":"orchestration","seat":"orchestrator","summary":"Plan a goal.","document":"","document_is_default":true,"builtin":true,"created_at":"","updated_at":""},
-                {"name":"coding","seat":"task","summary":"Write code.","document":"","document_is_default":true,"builtin":true,"created_at":"","updated_at":""}
+                {"name":"coding","seat":"task","summary":"Write code.","document":"Coding\n\nThe whole document of the skill.","document_is_default":true,"builtin":true,"created_at":"","updated_at":""}
             ]"#,
         )
         .await;
@@ -935,7 +1010,11 @@ mod tests {
         let skills: Vec<serde_json::Value> =
             serde_json::from_str(&text.text).expect("the skill catalog is json");
         assert_eq!(skills.len(), 1, "{skills:?}");
-        assert_eq!(skills[0]["name"], serde_json::json!("coding"));
+        assert_eq!(
+            skills[0],
+            serde_json::json!({"name": "coding", "summary": "Write code."}),
+            "the catalog is a name and a summary per skill, and nothing else"
+        );
     }
 
     /// An author submits its work in one request, and the summary travels
@@ -1569,6 +1648,140 @@ mod tests {
                 );
                 assert_eq!(models[1]["efforts"], serde_json::json!([]));
             }
+        }
+    }
+
+    /// A default read of the channel is a delivery: the daemon narrows it to
+    /// this session's own agent and stamps what it hands over, so a message
+    /// the agent has already had as a turn is not sent to it a second time as
+    /// the whole thread. `all` is the whole thread, which a second review
+    /// reads for the sha of the last verdict.
+    #[tokio::test]
+    async fn a_default_read_takes_delivery_and_all_reads_the_whole_thread() {
+        for (all, path) in [
+            (None, "/v1/tasks/01TASK/messages?deliver=true"),
+            (Some(false), "/v1/tasks/01TASK/messages?deliver=true"),
+            (Some(true), "/v1/tasks/01TASK/messages"),
+        ] {
+            let (endpoint, seen) = recording_daemon_answering("[]").await;
+            server_at(
+                McpSeat::Author,
+                Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+            )
+            .read_messages(Parameters(ReadMessagesReq { task_id: None, all }))
+            .await
+            .expect("read the messages");
+
+            let seen = seen.lock().expect("lock").clone();
+            assert_eq!(seen.len(), 1, "{seen:?}");
+            assert_eq!(seen[0].method, "GET");
+            assert_eq!(seen[0].path, path, "all = {all:?}");
+        }
+    }
+
+    /// The orchestrator reads the channel of its goal, which is its inbox: it
+    /// is staffed on no task, so a read that asked for one would refuse the
+    /// one seat whose messages are all on the goal.
+    #[tokio::test]
+    async fn the_orchestrator_reads_the_channel_of_its_goal() {
+        let (endpoint, seen) = recording_daemon_answering("[]").await;
+        let mut mcp = orchestrator_at(&endpoint);
+        mcp.task_id = None;
+        mcp.read_messages(Parameters(ReadMessagesReq {
+            task_id: None,
+            all: None,
+        }))
+        .await
+        .expect("read the messages");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].path, "/v1/goals/01GOAL/messages?deliver=true");
+    }
+
+    /// A seat word is an address where the seat holds one agent.
+    ///
+    /// Agents write `to: "author"` and `to: "reviewer"`, and a task with one
+    /// of each leaves no doubt about who they mean. Refused, each of those
+    /// cost a whole turn to say again with an id — so the word is taken, and
+    /// the id it stands for is what travels.
+    #[test]
+    fn a_seat_word_addresses_the_one_agent_that_sits_in_it() {
+        let agents = vec![
+            serde_json::json!({"id": "01AUTHOR", "seat": "author"}),
+            serde_json::json!({"id": "01REVIEWER", "seat": "reviewer"}),
+        ];
+        assert_eq!(
+            addressee("author", &agents).expect("the one author"),
+            (Actor::Author, Some("01AUTHOR".to_string()))
+        );
+        assert_eq!(
+            addressee("reviewer", &agents).expect("the one reviewer"),
+            (Actor::Reviewer, Some("01REVIEWER".to_string()))
+        );
+        // An id still addresses, and still travels as itself.
+        assert_eq!(
+            addressee("01REVIEWER", &agents).expect("by id"),
+            (Actor::Reviewer, Some("01REVIEWER".to_string()))
+        );
+
+        // Where the seat holds several, the word means nobody in particular,
+        // and the refusal names the ones it could have meant.
+        let contested = vec![
+            serde_json::json!({"id": "01FIRST", "seat": "author"}),
+            serde_json::json!({"id": "01SECOND", "seat": "author"}),
+        ];
+        let err = addressee("author", &contested).expect_err("two authors");
+        assert!(err.message.contains("01FIRST"), "{}", err.message);
+        assert!(err.message.contains("01SECOND"), "{}", err.message);
+
+        // And an address that is neither names the seats, so the sender can
+        // pick a reader rather than guess again.
+        let err = addressee("01NOBODY", &agents).expect_err("no such agent");
+        assert!(err.message.contains("01AUTHOR (author)"), "{}", err.message);
+        assert!(
+            err.message.contains("01REVIEWER (reviewer)"),
+            "{}",
+            err.message
+        );
+    }
+
+    /// The body of a message is taken under the name agents write it with.
+    ///
+    /// `message` is the commonest of those, and every one of them used to be
+    /// refused as a missing `body` — a whole turn spent to send the same
+    /// words under another key.
+    #[test]
+    fn a_message_body_is_taken_as_message_too() {
+        let req: SendMessageReq = serde_json::from_value(serde_json::json!({
+            "to": "01AUTHOR",
+            "message": "The bound is the caller's.",
+        }))
+        .expect("a body written as `message`");
+        assert_eq!(req.body, "The bound is the caller's.");
+    }
+
+    /// Every word the schema offers is a word the tool takes.
+    ///
+    /// The schema an agent reads is `schemars`', and the value it sends back
+    /// is `serde`'s. A permission mode renamed on one of the two alone
+    /// offered `auto` and then refused it as an unknown variant, which no
+    /// agent reading the schema could have avoided.
+    #[test]
+    fn a_task_takes_every_permission_mode_its_schema_offers() {
+        let schema = tool_schema("create_task");
+        let offered = schema["$defs"]["PermissionModeReq"]["enum"]
+            .as_array()
+            .expect("the permission modes")
+            .clone();
+        assert_eq!(
+            offered,
+            ["auto", "ask", "learn"].map(|m| serde_json::json!(m))
+        );
+        for mode in offered {
+            serde_json::from_value::<PermissionModeReq>(mode.clone()).unwrap_or_else(|e| {
+                panic!("the schema offers {mode} and the tool refuses it: {e}")
+            });
         }
     }
 }

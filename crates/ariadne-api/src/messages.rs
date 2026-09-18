@@ -53,4 +53,12 @@ pub struct MessageListQuery {
     /// Only the ones that have not reached their agent yet.
     #[serde(default)]
     pub undelivered: bool,
+    /// Hand the caller its own undelivered messages: narrow the list to the
+    /// calling session's agent, and stamp every row it returns delivered.
+    ///
+    /// This is a delivery, not a read. It needs a session behind it, and it
+    /// is what makes a read of the channel count the same as a prompt: a
+    /// message handed over here is never handed over again.
+    #[serde(default)]
+    pub deliver: bool,
 }

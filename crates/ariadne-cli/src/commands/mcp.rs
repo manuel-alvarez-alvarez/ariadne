@@ -117,6 +117,19 @@ impl AriadneMcp {
         Ok(format!("/v1/tasks/{task}{tail}"))
     }
 
+    /// The channel a message tool reads: the task it named, else this
+    /// session's own, else the goal.
+    ///
+    /// A goal has a channel of its own, and it is the orchestrator's inbox —
+    /// which is a session with no task, so a refusal for want of one would
+    /// leave the seat that reads that channel unable to read it.
+    fn channel_path(&self, named: Option<String>, tail: &str) -> String {
+        match named.or_else(|| self.task_id.clone()) {
+            Some(task) => format!("/v1/tasks/{task}{tail}"),
+            None => format!("/v1/goals/{}{tail}", self.goal_id),
+        }
+    }
+
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, McpError> {
         self.client.get_json(path).await.map_err(to_mcp_err)
     }

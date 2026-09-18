@@ -379,10 +379,12 @@ impl super::Scheduler {
                 // its own, so it is named by the skills it reviewed with, and
                 // by its id where it is staffed no longer.
                 let mut feedback: Vec<(String, String)> = Vec::new();
+                let mut carried: Vec<String> = Vec::new();
                 for verdict in verdicts
                     .iter()
                     .filter(|m| m.kind() == Some(MessageKind::RequestChanges))
                 {
+                    carried.push(verdict.id.clone());
                     let agent_id = verdict.from_agent_id.clone().unwrap_or_default();
                     let skills = self.store.agent_skills(&agent_id).await.unwrap_or_default();
                     let who = match skills.is_empty() {
@@ -406,6 +408,14 @@ impl super::Scheduler {
                         &prompts::changes_requested_briefing(template, &feedback),
                     )
                     .await?;
+                // This briefing is the delivery of every change request it
+                // carries, so each one is stamped by it — the same rule the
+                // reviewer's briefing holds a review request to. Stamped
+                // after the resume rather than before it: a briefing that
+                // never went out has delivered nothing.
+                for id in carried {
+                    self.store.mark_message_delivered(&id).await?;
+                }
                 self.store
                     .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
                     .await?;

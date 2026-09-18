@@ -14,7 +14,7 @@ use super::AppState;
 use super::caller::call_ctx;
 use super::convert::{goal_dto_of, message_dto};
 use super::error::{ApiError, ApiResult, Json};
-use super::pins;
+use super::{landing, pins};
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct GoalListQuery {
@@ -309,19 +309,19 @@ pub async fn complete(
 pub async fn list_goal_messages(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Query(q): Query<MessageListQuery>,
 ) -> ApiResult<Json<Vec<MessageDto>>> {
     state.store.get_goal(&id).await?;
-    let rows = state
-        .store
-        .list_messages(MessageFilter {
-            goal_id: Some(id),
-            to_agent_id: q.to_agent_id,
-            undelivered_only: q.undelivered,
-            ..Default::default()
-        })
-        .await?;
-    Ok(Json(rows.into_iter().map(message_dto).collect()))
+    // The goal's own messages, and none of its tasks'. A message about a task
+    // carries the goal it belongs to as well, so a filter on the goal alone
+    // hands every task's author-to-reviewer thread to whoever reads the goal.
+    let filter = MessageFilter {
+        goal_id: Some(id.clone()),
+        goal_channel_only: true,
+        ..Default::default()
+    };
+    landing::read_channel(&state, &headers, q, &id, filter).await
 }
 
 /// Send a message about the goal itself.

@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-09-11
+updated: 2026-09-18
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -72,9 +72,25 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 8. The tool listing carries cache hints (fresh for 0 ms, private to this
    session), because clients of protocol 2026-07-28 reject a listing without
    them and the tools then silently never load.
-9. `list_skills` lists only skills that can staff a task agent. The
-   orchestrator's own skill stays available through the API and CLI, but is
-   not a task staffing choice.
+9. `list_skills` lists only skills that can staff a task agent, and gives the
+   name and the one-line summary of each one and nothing else. The document
+   is what the agent staffed on the skill reads; an orchestrator choosing
+   between skills reads the line. The orchestrator's own skill stays
+   available through the API and CLI, but is not a task staffing choice.
+10. `read_messages` reads an inbox, not a transcript: a default read takes
+    delivery of what is addressed to this session's own agent, and `all`
+    reads the whole thread instead (018). The channel is the session's task,
+    or its goal where it has no task. The tool's description says both ways.
+11. `send_message` takes the address an agent writes rather than the one
+    address it could have written. `to` takes the id of a staffed agent,
+    `orchestrator`, or the seat word `author` or `reviewer` where one agent
+    sits in that seat; the body is taken as `body` or as `message`. A refusal
+    names every id with the seat it sits in, so the sender picks a reader
+    rather than guessing again.
+12. A value the schema offers is a value the tool takes. The schema an agent
+    reads is derived from the parameter types, and the value it sends back is
+    deserialized from them, so a spelling set on one of the two alone offers
+    a word and then refuses it.
 
 ## Acceptance criteria
 
@@ -101,8 +117,21 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
 - A refused call reaches the agent in the daemon's words
   (`mcp.rs::a_refused_call_reaches_the_agent_in_the_daemons_words`).
-- The skill catalog excludes orchestrator-only skills
+- The skill catalog excludes orchestrator-only skills, and gives a name and a
+  summary per skill and nothing else
   (`tools.rs::the_skill_catalog_excludes_orchestrator_only_skills`).
+- A default `read_messages` takes delivery, and `all` reads the whole thread
+  (`tools.rs::a_default_read_takes_delivery_and_all_reads_the_whole_thread`);
+  a session with no task reads the channel of its goal
+  (`::the_orchestrator_reads_the_channel_of_its_goal`).
+- A seat word addresses the one agent that sits in it, a seat with several is
+  refused with their ids, and an address that names nobody is refused with
+  every id and its seat
+  (`tools.rs::a_seat_word_addresses_the_one_agent_that_sits_in_it`).
+- A message body written as `message` is taken
+  (`tools.rs::a_message_body_is_taken_as_message_too`).
+- Every permission mode the schema offers is one the tool takes
+  (`tools.rs::a_task_takes_every_permission_mode_its_schema_offers`).
 - Memory tools save and search the repository they name
   (`tools.rs::memory_tools_save_and_search_the_named_repository`).
 - Memory tools default to a task's repository

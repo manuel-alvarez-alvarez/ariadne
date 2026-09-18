@@ -10,8 +10,10 @@
 
 use crate::common;
 
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
 
+use ariadne_api::SESSION_HEADER;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::messages::MessageDto;
 use ariadne_core::{Actor, MessageKind, Seat, SessionStatus, TaskStatus};
@@ -21,6 +23,16 @@ use common::{Cast, TIMEOUT, as_session, eventually, get, harness, sh, test_pin};
 
 fn messages_uri(cast: &Cast) -> String {
     format!("/v1/tasks/{}/messages", cast.task.id)
+}
+
+/// A read an agent makes as itself, carrying the session header the daemon
+/// identifies it by: the shape `read_messages` calls the channel with.
+fn read_as(uri: &str, session_id: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .header(SESSION_HEADER, session_id)
+        .body(Body::empty())
+        .unwrap()
 }
 
 /// One message body, as an agent sends it.
@@ -1285,5 +1297,350 @@ async fn only_one_verdict_per_reviewer_per_review_is_taken() {
         h.store.open_verdicts(&cast.task.id).await.unwrap().len(),
         1,
         "and the verdict before the request is not counted in this review"
+    );
+}
+
+/// A message the daemon handed to its agent as a prompt is gone from what a
+/// default read gives that agent back.
+///
+/// One stamp gates every way a message reaches an agent. The prompt is the
+/// first of them, so what the read has left to hand over is what the prompt
+/// did not: a default read is the inbox, not the transcript. The transcript
+/// is `all`, and it holds the delivered message too — it is what a second
+/// review reads the last verdict off.
+#[tokio::test]
+async fn a_message_handed_over_as_a_prompt_is_absent_from_a_default_read() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.agent_runs(&author).await;
+    h.set_status(&author, SessionStatus::Idle).await;
+    let reviewer = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
+        .await;
+    h.advance(&cast.task, TaskStatus::UnderReview).await;
+
+    let sent: MessageDto = h
+        .json(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message(
+                    "author",
+                    Some(&cast.author.id),
+                    "The bound is the caller's.",
+                ),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+    eventually(TIMEOUT, "the message to be stamped delivered", async || {
+        h.store.get_message(&sent.id).await.unwrap().is_delivered()
+    })
+    .await;
+
+    let inbox: Vec<MessageDto> = h
+        .json(
+            read_as(&format!("{}?deliver=true", messages_uri(&cast)), &author.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(
+        inbox.is_empty(),
+        "the agent was handed a message it had already read as a turn: {inbox:?}"
+    );
+
+    let thread: Vec<MessageDto> = h
+        .json(read_as(&messages_uri(&cast), &author.id), StatusCode::OK)
+        .await;
+    assert_eq!(
+        thread.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [sent.id.as_str()],
+        "the whole thread holds what was delivered"
+    );
+    assert!(thread[0].delivered_at.is_some());
+}
+
+/// A message a read handed over is never handed over as a prompt afterwards,
+/// and it survives a resume of its recipient and a restart of the daemon.
+///
+/// The read is a delivery like the prompt, so it stamps what it gives. The
+/// stamp is a row in the database rather than anything the scheduler holds in
+/// memory, which is what makes it hold across a session that came up again
+/// and a scheduler that started from nothing.
+///
+/// What proves the skip is the next message: the transport walks one batch in
+/// the order it was written, so a second message reaching the agent is that
+/// pass having read the first and passed it over.
+#[tokio::test]
+async fn a_message_a_read_hands_over_is_never_handed_over_as_a_prompt() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.agent_runs(&author).await;
+    h.set_status(&author, SessionStatus::Idle).await;
+    let reviewer = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
+        .await;
+    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    let write = |body: &'static str| {
+        h.json::<MessageDto>(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                message("author", Some(&cast.author.id), body),
+            ),
+            StatusCode::CREATED,
+        )
+    };
+
+    let read = write("READ: the bound is the caller's.").await;
+    let handed: Vec<MessageDto> = h
+        .json(
+            read_as(&format!("{}?deliver=true", messages_uri(&cast)), &author.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        handed.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [read.id.as_str()]
+    );
+    assert!(
+        handed[0].delivered_at.is_some(),
+        "a read that hands a message over stamps it: {handed:?}"
+    );
+
+    // The recipient comes up again, and the daemon with it.
+    h.set_status(&author, SessionStatus::Exited).await;
+    let resumed = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.agent_runs(&resumed).await;
+    h.set_status(&resumed, SessionStatus::Idle).await;
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let after = write("AFTER: and the inner one stays.").await;
+    sched
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
+        .unwrap();
+
+    eventually(TIMEOUT, "the message written after the read", async || {
+        h.prompted(&resumed).contains("AFTER:")
+    })
+    .await;
+    assert!(
+        !h.told(&resumed.id).contains("READ:"),
+        "a message the agent had read was typed at it again: {}",
+        h.told(&resumed.id)
+    );
+    assert!(
+        h.store.get_message(&after.id).await.unwrap().is_delivered(),
+        "and the one that did go out is stamped too"
+    );
+}
+
+/// A change request reaches its author once.
+///
+/// The author of a task with one author is resumed with the feedback of every
+/// reviewer that asked for changes, in a briefing that says what the round
+/// decided. That briefing is the delivery of each verdict it carries, and
+/// stamps it, so the transport does not type the same words at the author a
+/// second time as a bare message.
+#[tokio::test]
+async fn a_change_request_reaches_its_author_once() {
+    let h = harness().scheduler().await;
+    h.git_repo("repo");
+    let cast = h.active_cast().await;
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    h.agent_runs(&author).await;
+    h.set_status(&author, SessionStatus::Idle).await;
+    let reviewer = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Seat::Reviewer,
+            &cast.reviewer.id,
+        )
+        .await;
+    h.advance(&cast.task, TaskStatus::UnderReview).await;
+    h.store
+        .send_message(ariadne_store::NewMessage {
+            goal_id: cast.goal.id.clone(),
+            task_id: Some(cast.task.id.clone()),
+            kind: MessageKind::ReviewRequest,
+            from_actor: Actor::Author,
+            from_agent_id: Some(cast.author.id.clone()),
+            from_session: None,
+            to_actor: Actor::Reviewer,
+            to_agent_id: Some(cast.reviewer.id.clone()),
+            body: "the first review".into(),
+        })
+        .await
+        .unwrap();
+
+    let verdict: MessageDto = h
+        .json(
+            as_session(
+                &messages_uri(&cast),
+                &reviewer.id,
+                serde_json::json!({
+                    "kind": "request_changes",
+                    "to_actor": "author",
+                    "to_agent_id": cast.author.id,
+                    "body": "BOUND: the retry loop has no bound.",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    h.notify(&cast.task.id);
+    eventually(TIMEOUT, "the author to be sent back to work", async || {
+        h.status(&cast.task.id).await == TaskStatus::InProgress
+    })
+    .await;
+    h.flush_scheduler().await;
+
+    let told = h.told(&author.id);
+    assert_eq!(
+        told.matches("BOUND:").count(),
+        1,
+        "the change request reached its author more than once: {told}"
+    );
+    assert!(
+        h.store
+            .get_message(&verdict.id)
+            .await
+            .unwrap()
+            .is_delivered(),
+        "the briefing that carried it is its delivery, so it is stamped"
+    );
+}
+
+/// A delivering read is refused a channel of another goal.
+///
+/// The stamp a delivering read spends cannot be given back, and the
+/// orchestrator is the one seat a delivery narrows by its seat alone: every
+/// goal has one, so `to_actor = orchestrator` on another goal's task names
+/// that goal's orchestrator's messages. Naming a task is all it would take,
+/// and the task scope check exempts the orchestrator — it reads and moves
+/// every task of its own goal. So the goal is what is checked here.
+#[tokio::test]
+async fn a_delivering_read_is_refused_a_channel_of_another_goal() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let elsewhere = h.lone_session("elsewhere").await;
+
+    let waiting = h
+        .store
+        .send_message(ariadne_store::NewMessage {
+            goal_id: cast.goal.id.clone(),
+            task_id: Some(cast.task.id.clone()),
+            kind: MessageKind::Message,
+            from_actor: Actor::Author,
+            from_agent_id: Some(cast.author.id.clone()),
+            from_session: None,
+            to_actor: Actor::Orchestrator,
+            to_agent_id: None,
+            body: "The task names no CLI, and the spec it cites has one.".into(),
+        })
+        .await
+        .unwrap();
+
+    let envelope: ErrorBody = h
+        .json(
+            read_as(
+                &format!("{}?deliver=true", messages_uri(&cast)),
+                &elsewhere.id,
+            ),
+            StatusCode::FORBIDDEN,
+        )
+        .await;
+    assert!(
+        envelope.error.message.contains(&cast.goal.id),
+        "{}",
+        envelope.error.message
+    );
+    assert!(
+        !h.store
+            .get_message(&waiting.id)
+            .await
+            .unwrap()
+            .is_delivered(),
+        "another goal's orchestrator took delivery of a message meant for this one's"
+    );
+}
+
+/// A goal's channel is the orchestrator's inbox, and holds nothing its tasks
+/// said.
+///
+/// Every message carries the goal it belongs to, the ones about a task
+/// included, so a read narrowed by the goal alone would hand every task's
+/// author-to-reviewer thread to whoever read the goal — the whole of what
+/// this task cut out of `read_messages`.
+#[tokio::test]
+async fn a_goals_channel_holds_none_of_what_its_tasks_said() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let about_the_goal = h
+        .store
+        .send_message(ariadne_store::NewMessage {
+            goal_id: cast.goal.id.clone(),
+            task_id: None,
+            kind: MessageKind::Message,
+            from_actor: Actor::Author,
+            from_agent_id: Some(cast.author.id.clone()),
+            from_session: None,
+            to_actor: Actor::Orchestrator,
+            to_agent_id: None,
+            body: "The plan names no CLI.".into(),
+        })
+        .await
+        .unwrap();
+    h.store
+        .send_message(ariadne_store::NewMessage {
+            goal_id: cast.goal.id.clone(),
+            task_id: Some(cast.task.id.clone()),
+            kind: MessageKind::Message,
+            from_actor: Actor::Reviewer,
+            from_agent_id: Some(cast.reviewer.id.clone()),
+            from_session: None,
+            to_actor: Actor::Author,
+            to_agent_id: Some(cast.author.id.clone()),
+            body: "PRIVATE: the retry loop has no bound.".into(),
+        })
+        .await
+        .unwrap();
+
+    let thread: Vec<MessageDto> = h
+        .json(
+            get(&format!("/v1/goals/{}/messages", cast.goal.id)),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        thread.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        [about_the_goal.id.as_str()],
+        "a task's own thread reached the goal's channel"
     );
 }

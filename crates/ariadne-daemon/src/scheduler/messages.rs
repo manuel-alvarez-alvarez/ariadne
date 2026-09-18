@@ -29,33 +29,55 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await;
-        self.deliver(waiting.unwrap_or_default()).await;
+        self.deliver(
+            waiting.unwrap_or_default(),
+            self.briefs_its_author(task_id).await,
+        )
+        .await;
+    }
+
+    /// Whether this task answers a change request with a briefing of its own.
+    ///
+    /// A task with one author does: the `changes_requested` arm resumes that
+    /// author with the feedback of every reviewer that asked, and stamps
+    /// those verdicts. A contested task does not — each of its authors is
+    /// nudged on its own branch while the reviews run side by side — so there
+    /// the channel is what carries a change request.
+    async fn briefs_its_author(&self, task_id: &str) -> bool {
+        let Ok(task) = self.store.get_task(task_id).await else {
+            return false;
+        };
+        let Ok(authors) = self.store.list_task_authors(task_id).await else {
+            return false;
+        };
+        authors.len() == 1 || task.picked_agent_id.is_some()
     }
 
     /// And everything waiting on the goal's own channel, which is the
     /// orchestrator's inbox.
     pub(super) async fn deliver_goal_messages(&mut self, goal_id: &str) {
+        // A message about a task is delivered on that task's pass, so the
+        // goal's own pass carries only what is not about one.
         let waiting = self
             .store
             .list_messages(MessageFilter {
                 goal_id: Some(goal_id.to_string()),
+                goal_channel_only: true,
                 undelivered_only: true,
                 ..Default::default()
             })
             .await;
-        // A message about a task is delivered on that task's pass, so the
-        // goal's own pass carries only what is not about one.
-        let waiting = waiting
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|m| m.task_id.is_none())
-            .collect();
-        self.deliver(waiting).await;
+        // Nothing on a goal's channel is a verdict, so nothing there is
+        // briefed anywhere else.
+        self.deliver(waiting.unwrap_or_default(), false).await;
     }
 
     /// One pass over a batch of undelivered messages, in the order they were
     /// written: the runtime queues each prompt behind the one before it.
-    async fn deliver(&mut self, waiting: Vec<Message>) {
+    ///
+    /// `briefed_author` says that a change request in this batch travels as
+    /// the author's own briefing, so it is not handed on here as well.
+    async fn deliver(&mut self, waiting: Vec<Message>, briefed_author: bool) {
         for message in waiting {
             // A review request is not a message to hand on: the reviewer's
             // briefing is its delivery, and that briefing stamps it delivered.
@@ -63,6 +85,17 @@ impl super::Scheduler {
                 && message.to_actor() == Some(Actor::Reviewer)
             {
                 debug!(message = %message.id, "a review request travels as the reviewer's briefing");
+                continue;
+            }
+            // And a change request is not one either: the author is resumed
+            // with the feedback of every reviewer that asked, in one briefing
+            // that stamps them. Handed on here as well, each one would reach
+            // the author twice.
+            if briefed_author
+                && message.kind() == Some(MessageKind::RequestChanges)
+                && message.to_actor() == Some(Actor::Author)
+            {
+                debug!(message = %message.id, "a change request travels as the author's briefing");
                 continue;
             }
             let Some(session) = self.recipient_session(&message).await else {

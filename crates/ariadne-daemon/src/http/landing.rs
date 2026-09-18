@@ -165,19 +165,88 @@ pub async fn record_pull_request(
 pub async fn list_task_messages(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Query(q): Query<MessageListQuery>,
 ) -> ApiResult<Json<Vec<MessageDto>>> {
-    state.store.get_task(&id).await?;
-    let rows = state
-        .store
-        .list_messages(MessageFilter {
+    let task = state.store.get_task(&id).await?;
+    read_channel(
+        &state,
+        &headers,
+        q,
+        &task.goal_id,
+        MessageFilter {
             task_id: Some(id),
-            to_agent_id: q.to_agent_id,
-            undelivered_only: q.undelivered,
             ..Default::default()
-        })
-        .await?;
-    Ok(Json(rows.into_iter().map(message_dto).collect()))
+        },
+    )
+    .await
+}
+
+/// One read of a channel, and the one place where a read is also a delivery.
+///
+/// A plain read answers the filter it was given and changes nothing. A read
+/// with `deliver` is the second way a message reaches the agent it is for —
+/// the first is the prompt the scheduler hands over — so it obeys the one
+/// rule both of them obey: it takes only what is addressed to the calling
+/// session's own agent and still undelivered, and it stamps every row it
+/// returns. A message handed over here is handed over once.
+///
+/// `goal_id` is the goal the channel belongs to, and a delivering session
+/// must be of that goal. A stamp is spent once and cannot be given back, so
+/// the seat that is narrowed by nothing but its seat — the orchestrator,
+/// which every goal has one of — would otherwise take delivery of another
+/// goal's orchestrator's messages by naming one of that goal's tasks.
+/// [`ensure_task_scope`] cannot say so: it exempts the orchestrator, which
+/// reads and moves every task of its own goal.
+pub(super) async fn read_channel(
+    state: &AppState,
+    headers: &HeaderMap,
+    q: MessageListQuery,
+    goal_id: &str,
+    mut filter: MessageFilter,
+) -> ApiResult<Json<Vec<MessageDto>>> {
+    if !q.deliver {
+        filter.to_agent_id = q.to_agent_id;
+        filter.undelivered_only = q.undelivered;
+        let rows = state.store.list_messages(filter).await?;
+        return Ok(Json(rows.into_iter().map(message_dto).collect()));
+    }
+    let ctx = call_ctx(&state.store, headers).await?;
+    let Some(session) = &ctx.session else {
+        return Err(ApiError::bad_request(
+            "`deliver` hands the caller its own messages, so it needs an agent session",
+        ));
+    };
+    if session.goal_id != goal_id {
+        return Err(ApiError::forbidden(format!(
+            "session {} does not belong to goal {goal_id}",
+            session.id
+        )));
+    }
+    // Narrowed to the caller itself, never to what the caller asked for: a
+    // delivery stamps what it returns, and no agent may spend another's.
+    filter.undelivered_only = true;
+    match session.seat() {
+        Seat::Orchestrator => filter.to_actor = Some(Actor::Orchestrator),
+        _ => {
+            let Some(agent_id) = session.task_agent_id.clone() else {
+                return Err(ApiError::bad_request(format!(
+                    "session {} is staffed on no agent, so no message is addressed to it",
+                    session.id
+                )));
+            };
+            filter.to_agent_id = Some(agent_id);
+        }
+    }
+    let waiting = state.store.list_messages(filter).await?;
+    let mut handed = Vec::with_capacity(waiting.len());
+    for message in waiting {
+        state.store.mark_message_delivered(&message.id).await?;
+        // Read back rather than answered as it was read: the row the caller
+        // is given carries the stamp this call put on it.
+        handed.push(state.store.get_message(&message.id).await?);
+    }
+    Ok(Json(handed.into_iter().map(message_dto).collect()))
 }
 
 /// Send a message about a task.

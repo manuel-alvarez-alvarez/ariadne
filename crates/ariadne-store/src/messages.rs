@@ -47,6 +47,14 @@ pub struct MessageFilter {
     pub to_actor: Option<Actor>,
     /// Only the ones that have not reached their agent yet.
     pub undelivered_only: bool,
+    /// Only the messages about the goal itself, and none about one of its
+    /// tasks.
+    ///
+    /// A message about a task carries its goal too, so a filter on the goal
+    /// alone reads every task's channel as well as the goal's own. The goal's
+    /// channel is the orchestrator's inbox, and what is said about a task is
+    /// on that task (spec 018).
+    pub goal_channel_only: bool,
 }
 
 impl Store {
@@ -108,6 +116,7 @@ impl Store {
             .maybe(" AND to_agent_id = ?", filter.to_agent_id)
             .maybe(" AND to_actor = ?", filter.to_actor.map(|a| a.as_str()))
             .flag(" AND delivered_at IS NULL", filter.undelivered_only)
+            .flag(" AND task_id IS NULL", filter.goal_channel_only)
             .fetch(self, " ORDER BY id", &[])
             .await
     }
