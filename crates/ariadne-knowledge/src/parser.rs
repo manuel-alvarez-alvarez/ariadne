@@ -42,8 +42,15 @@ const DOC_MAX: usize = 1000;
 
 /// The definitions of `source`, read as `language`.
 pub fn parse(language: Language, source: &str) -> Vec<Symbol> {
-    if language == Language::Markdown {
-        return markdown_outline(source);
+    match language {
+        Language::Markdown => return markdown_outline(source),
+        Language::Yaml => return yaml_outline(source),
+        Language::Toml => return toml_outline(source),
+        Language::Json => return json_outline(source),
+        Language::Html => return html_outline(source),
+        Language::Css => return css_outline(source),
+        Language::Sql => return sql_outline(source),
+        _ => {}
     }
     let Some(configuration) = language.tags() else {
         return Vec::new();
@@ -105,7 +112,11 @@ pub fn parse(language: Language, source: &str) -> Vec<Symbol> {
                 .or_else(|| doc_of(doc_syntax, source, &item));
             let is_test = match test_rule {
                 TestRule::Attribute(names) => has_attribute(source, &item, names),
+                TestRule::Annotation(names) => has_annotation(source, &item, names),
                 TestRule::NamePrefix(prefix) => item.name.starts_with(prefix),
+                TestRule::AnnotationOrNamePrefix(names, prefix) => {
+                    has_annotation(source, &item, names) || item.name.starts_with(prefix)
+                }
                 TestRule::Call(_) | TestRule::None => false,
             };
             symbols.push(Symbol {
@@ -161,7 +172,7 @@ struct Item {
 fn is_scope(kind: &str) -> bool {
     matches!(
         kind,
-        "class" | "module" | "interface" | "function" | "method" | "implementation"
+        "class" | "module" | "interface" | "function" | "method" | "implementation" | "object"
     )
 }
 
@@ -358,6 +369,40 @@ fn attributes_in(line: &str) -> Vec<String> {
     names
 }
 
+/// Whether one of `names` is an `@Name` annotation on the definition: on a
+/// line of its own above it, or inside it ahead of its name, as Java,
+/// Kotlin and Swift write them.
+fn has_annotation(source: &str, item: &Item, names: &[&str]) -> bool {
+    let above = lines_above(source, item.range.start)
+        .take_while(|line| is_annotation_line(line))
+        .map(str::to_string);
+    let inside = source[item.range.start..item.name_range.start]
+        .lines()
+        .map(str::to_string);
+    above.chain(inside).any(|line| {
+        annotations_in(&line)
+            .iter()
+            .any(|annotation| names.contains(&annotation.as_str()))
+    })
+}
+
+/// An `@Name` annotation on a line of its own.
+fn is_annotation_line(line: &str) -> bool {
+    line.trim_start().starts_with('@')
+}
+
+/// The annotation names on a line: `@Test` names `Test`, `@Test(timeout=1)`
+/// names `Test`.
+fn annotations_in(line: &str) -> Vec<String> {
+    line.split('@')
+        .skip(1)
+        .filter_map(|rest| {
+            let name = rest.split(['(', ' ', '\t']).next()?.trim();
+            (!name.is_empty()).then(|| name.to_string())
+        })
+        .collect()
+}
+
 /// `text` split on the commas outside parentheses: the items of
 /// `Fact, Trait("a", "b")` are two.
 fn split_outside_parentheses(text: &str) -> Vec<&str> {
@@ -532,6 +577,424 @@ fn markdown_outline(source: &str) -> Vec<Symbol> {
     symbols
 }
 
+/// `text`'s first line, cut to `SIGNATURE_MAX`: what an outline-only
+/// format's symbol shows in place of a code signature.
+fn first_line_signature(text: &str) -> String {
+    cut(
+        text.lines().next().unwrap_or_default().trim(),
+        SIGNATURE_MAX,
+    )
+}
+
+/// A parser for `language`, or an empty outline where the grammar refuses
+/// to load.
+fn outline_parser(language: Language) -> Option<tree_sitter::Parser> {
+    let grammar = language.grammar();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&grammar).ok()?;
+    Some(parser)
+}
+
+/// The top-level keys of a JSON object, and one level of keys nested under
+/// an object value: JSON has no comments to read for a doc.
+fn json_outline(source: &str) -> Vec<Symbol> {
+    let Some(mut parser) = outline_parser(Language::Json) else {
+        return Vec::new();
+    };
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+    let Some(object) = tree
+        .root_node()
+        .named_child(0)
+        .filter(|node| node.kind() == "object")
+    else {
+        return Vec::new();
+    };
+    let lines = Lines::of(source);
+    let mut symbols = Vec::new();
+    json_pairs(object, None, 1, source, &lines, &mut symbols);
+    symbols
+}
+
+fn json_pairs(
+    object: tree_sitter::Node,
+    parent: Option<&str>,
+    depth: u32,
+    source: &str,
+    lines: &Lines,
+    symbols: &mut Vec<Symbol>,
+) {
+    let mut cursor = object.walk();
+    for pair in object.named_children(&mut cursor) {
+        if pair.kind() != "pair" {
+            continue;
+        }
+        let Some(key) = pair.child_by_field_name("key") else {
+            continue;
+        };
+        let name = key
+            .named_child(0)
+            .map(|content| source[content.byte_range()].to_string())
+            .unwrap_or_default();
+        let qualified_name = match parent {
+            Some(parent) => format!("{parent}.{name}"),
+            None => name.clone(),
+        };
+        let (start_line, end_line) = lines.of_range(&pair.byte_range());
+        symbols.push(Symbol {
+            kind: "key".into(),
+            name,
+            qualified_name: qualified_name.clone(),
+            start_line,
+            end_line,
+            signature: first_line_signature(&source[pair.byte_range()]),
+            doc: None,
+            is_test: false,
+        });
+        if depth < 2
+            && let Some(value) = pair.child_by_field_name("value")
+            && value.kind() == "object"
+        {
+            json_pairs(
+                value,
+                Some(&qualified_name),
+                depth + 1,
+                source,
+                lines,
+                symbols,
+            );
+        }
+    }
+}
+
+/// The top-level keys of a YAML mapping, and one level of keys nested under
+/// a mapping value.
+fn yaml_outline(source: &str) -> Vec<Symbol> {
+    let Some(mut parser) = outline_parser(Language::Yaml) else {
+        return Vec::new();
+    };
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+    let Some(mapping) = find_block_mapping(tree.root_node()) else {
+        return Vec::new();
+    };
+    let lines = Lines::of(source);
+    let mut symbols = Vec::new();
+    yaml_pairs(mapping, None, 1, source, &lines, &mut symbols);
+    symbols
+}
+
+/// The first `block_mapping` at or under `node`.
+fn find_block_mapping(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    if node.kind() == "block_mapping" {
+        return Some(node);
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find_map(find_block_mapping)
+}
+
+fn yaml_pairs(
+    mapping: tree_sitter::Node,
+    parent: Option<&str>,
+    depth: u32,
+    source: &str,
+    lines: &Lines,
+    symbols: &mut Vec<Symbol>,
+) {
+    let mut cursor = mapping.walk();
+    for pair in mapping.named_children(&mut cursor) {
+        if pair.kind() != "block_mapping_pair" {
+            continue;
+        }
+        let Some(key) = pair.child_by_field_name("key") else {
+            continue;
+        };
+        let name = source[key.byte_range()].trim().to_string();
+        let qualified_name = match parent {
+            Some(parent) => format!("{parent}.{name}"),
+            None => name.clone(),
+        };
+        let (start_line, end_line) = lines.of_range(&pair.byte_range());
+        symbols.push(Symbol {
+            kind: "key".into(),
+            name,
+            qualified_name: qualified_name.clone(),
+            start_line,
+            end_line,
+            signature: first_line_signature(&source[pair.byte_range()]),
+            doc: None,
+            is_test: false,
+        });
+        if depth < 2
+            && let Some(value) = pair.child_by_field_name("value")
+            && let Some(nested) = find_block_mapping(value)
+        {
+            yaml_pairs(
+                nested,
+                Some(&qualified_name),
+                depth + 1,
+                source,
+                lines,
+                symbols,
+            );
+        }
+    }
+}
+
+/// The top-level keys of a TOML document, and the keys of each `[table]`.
+fn toml_outline(source: &str) -> Vec<Symbol> {
+    let Some(mut parser) = outline_parser(Language::Toml) else {
+        return Vec::new();
+    };
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+    let lines = Lines::of(source);
+    let mut symbols = Vec::new();
+    let mut cursor = tree.root_node().walk();
+    for node in tree.root_node().named_children(&mut cursor) {
+        match node.kind() {
+            "pair" => symbols.extend(toml_pair(node, None, source, &lines)),
+            "table" => {
+                let Some(key) = node.named_child(0) else {
+                    continue;
+                };
+                let name = toml_key_text(key, source);
+                let (start_line, end_line) = lines.of_range(&node.byte_range());
+                symbols.push(Symbol {
+                    kind: "table".into(),
+                    name: name.clone(),
+                    qualified_name: name.clone(),
+                    start_line,
+                    end_line,
+                    signature: first_line_signature(&source[node.byte_range()]),
+                    doc: None,
+                    is_test: false,
+                });
+                let mut pairs = node.walk();
+                for pair in node.named_children(&mut pairs) {
+                    if pair.kind() == "pair" {
+                        symbols.extend(toml_pair(pair, Some(&name), source, &lines));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    symbols
+}
+
+fn toml_pair(
+    pair: tree_sitter::Node,
+    parent: Option<&str>,
+    source: &str,
+    lines: &Lines,
+) -> Option<Symbol> {
+    let key = pair.named_child(0)?;
+    let name = toml_key_text(key, source);
+    let qualified_name = match parent {
+        Some(parent) => format!("{parent}.{name}"),
+        None => name.clone(),
+    };
+    let (start_line, end_line) = lines.of_range(&pair.byte_range());
+    Some(Symbol {
+        kind: "key".into(),
+        name,
+        qualified_name,
+        start_line,
+        end_line,
+        signature: first_line_signature(&source[pair.byte_range()]),
+        doc: None,
+        is_test: false,
+    })
+}
+
+/// A TOML key's text, its quotes stripped where it is a quoted key.
+fn toml_key_text(node: tree_sitter::Node, source: &str) -> String {
+    source[node.byte_range()]
+        .trim_matches(['"', '\''])
+        .to_string()
+}
+
+/// The elements of an HTML file that carry an `id`, named by its value.
+fn html_outline(source: &str) -> Vec<Symbol> {
+    let Some(mut parser) = outline_parser(Language::Html) else {
+        return Vec::new();
+    };
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+    let lines = Lines::of(source);
+    let mut symbols = Vec::new();
+    html_elements(tree.root_node(), source, &lines, &mut symbols);
+    symbols
+}
+
+/// Every element at or under `node` that carries an `id`, depth-first.
+fn html_elements(node: tree_sitter::Node, source: &str, lines: &Lines, symbols: &mut Vec<Symbol>) {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "element"
+            && let Some(start_tag) = child
+                .named_child(0)
+                .filter(|tag| matches!(tag.kind(), "start_tag" | "self_closing_tag"))
+            && let Some(id) = html_id_attribute(start_tag, source)
+        {
+            let (start_line, end_line) = lines.of_range(&child.byte_range());
+            symbols.push(Symbol {
+                kind: "element".into(),
+                name: id.clone(),
+                qualified_name: id,
+                start_line,
+                end_line,
+                signature: first_line_signature(&source[start_tag.byte_range()]),
+                doc: None,
+                is_test: false,
+            });
+        }
+        html_elements(child, source, lines, symbols);
+    }
+}
+
+/// The value of a `start_tag` or `self_closing_tag`'s `id` attribute, if it
+/// has one.
+fn html_id_attribute(start_tag: tree_sitter::Node, source: &str) -> Option<String> {
+    let mut cursor = start_tag.walk();
+    for attribute in start_tag.named_children(&mut cursor) {
+        if attribute.kind() != "attribute" {
+            continue;
+        }
+        let mut parts = attribute.walk();
+        let mut is_id = false;
+        let mut value = None;
+        for part in attribute.named_children(&mut parts) {
+            match part.kind() {
+                "attribute_name" => is_id = &source[part.byte_range()] == "id",
+                "quoted_attribute_value" => {
+                    value = part
+                        .named_child(0)
+                        .map(|content| source[content.byte_range()].to_string())
+                }
+                _ => {}
+            }
+        }
+        if is_id {
+            return value;
+        }
+    }
+    None
+}
+
+/// The selectors of a CSS file's rule sets.
+fn css_outline(source: &str) -> Vec<Symbol> {
+    let Some(mut parser) = outline_parser(Language::Css) else {
+        return Vec::new();
+    };
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+    let grammar = Language::Css.grammar();
+    let Ok(query) = tree_sitter::Query::new(&grammar, "(rule_set (selectors) @selectors) @rule")
+    else {
+        return Vec::new();
+    };
+    let lines = Lines::of(source);
+    let mut symbols = Vec::new();
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    while let Some(matched) = matches.next() {
+        let mut rule = None;
+        let mut selectors = None;
+        for capture in matched.captures() {
+            match query.capture_names()[capture.index as usize] {
+                "rule" => rule = Some(capture.node),
+                "selectors" => selectors = Some(capture.node),
+                _ => {}
+            }
+        }
+        let (Some(rule), Some(selectors)) = (rule, selectors) else {
+            continue;
+        };
+        let name = source[selectors.byte_range()]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (start_line, end_line) = lines.of_range(&rule.byte_range());
+        symbols.push(Symbol {
+            kind: "selector".into(),
+            name: name.clone(),
+            qualified_name: name.clone(),
+            start_line,
+            end_line,
+            signature: cut(&name, SIGNATURE_MAX),
+            doc: None,
+            is_test: false,
+        });
+    }
+    symbols
+}
+
+/// The object name of every `CREATE` and `ALTER` statement in a SQL file:
+/// a table, a view, an index, a function, a sequence, a type, a trigger, a
+/// materialized view or a schema.
+fn sql_outline(source: &str) -> Vec<Symbol> {
+    let Some(mut parser) = outline_parser(Language::Sql) else {
+        return Vec::new();
+    };
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+    let lines = Lines::of(source);
+    let mut symbols = Vec::new();
+    let mut cursor = tree.root_node().walk();
+    for statement in tree.root_node().named_children(&mut cursor) {
+        let Some(node) = statement.named_child(0) else {
+            continue;
+        };
+        let kind = node.kind();
+        let Some(kind) = kind
+            .strip_prefix("create_")
+            .or_else(|| kind.strip_prefix("alter_"))
+        else {
+            continue;
+        };
+        let Some(name) = sql_object_name(node, source) else {
+            continue;
+        };
+        let (start_line, end_line) = lines.of_range(&statement.byte_range());
+        symbols.push(Symbol {
+            kind: kind.to_string(),
+            name: name.clone(),
+            qualified_name: name,
+            start_line,
+            end_line,
+            signature: first_line_signature(&source[statement.byte_range()]),
+            doc: None,
+            is_test: false,
+        });
+    }
+    symbols
+}
+
+/// The name of the object a `create_*`/`alter_*` node names: its first
+/// `object_reference` or bare `identifier` child, before any table, column
+/// or target the rest of the statement goes on to name.
+fn sql_object_name(node: tree_sitter::Node, source: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find_map(|child| match child.kind() {
+            "object_reference" => {
+                let name = child.child_by_field_name("name")?;
+                Some(source[name.byte_range()].to_string())
+            }
+            "identifier" => Some(source[child.byte_range()].to_string()),
+            _ => None,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,6 +1085,77 @@ pub async fn add_worktree(
         assert!(find(&csharp, "Holds").is_test);
         assert!(find(&csharp, "Waits").is_test);
         assert!(!find(&csharp, "Plain").is_test);
+    }
+
+    #[test]
+    fn a_test_is_marked_by_the_rule_of_the_new_languages() {
+        let go = parse(Language::Go, "func TestHolds(t *T) {}\nfunc Plain() {}\n");
+        assert!(find(&go, "TestHolds").is_test);
+        assert!(!find(&go, "Plain").is_test);
+
+        let java = parse(
+            Language::Java,
+            "class T {\n    @Test\n    void holds() {}\n    void plain() {}\n}\n",
+        );
+        assert!(find(&java, "holds").is_test);
+        assert!(!find(&java, "plain").is_test);
+
+        let kotlin = parse(
+            Language::Kotlin,
+            "class T {\n    @Test\n    fun holds() {}\n    fun plain() {}\n}\n",
+        );
+        assert!(find(&kotlin, "holds").is_test);
+        assert!(!find(&kotlin, "plain").is_test);
+
+        let ruby = parse(
+            Language::Ruby,
+            "describe 'a thing' do\n  it 'holds' do\n  end\nend\ndef plain\nend\n",
+        );
+        assert!(find(&ruby, "holds").is_test);
+        assert!(!find(&ruby, "plain").is_test);
+
+        let php = parse(
+            Language::Php,
+            "<?php\nclass T {\n    public function testHolds() {}\n    public function plain() {}\n}\n",
+        );
+        assert!(find(&php, "testHolds").is_test);
+        assert!(!find(&php, "plain").is_test);
+
+        let swift = parse(
+            Language::Swift,
+            "class T {\n    @Test\n    func attributed() {}\n    func testNamed() {}\n    func plain() {}\n}\n",
+        );
+        assert!(find(&swift, "attributed").is_test);
+        assert!(find(&swift, "testNamed").is_test);
+        assert!(!find(&swift, "plain").is_test);
+
+        let dart = parse(
+            Language::Dart,
+            "void main() {\n  test('holds', () {});\n}\nvoid plain() {}\n",
+        );
+        assert!(find(&dart, "holds").is_test);
+        assert!(!find(&dart, "plain").is_test);
+
+        let scala = parse(
+            Language::Scala,
+            "class T {\n  test(\"holds\") {}\n  def plain() = {}\n}\n",
+        );
+        assert!(find(&scala, "holds").is_test);
+        assert!(!find(&scala, "plain").is_test);
+
+        let elixir = parse(
+            Language::Elixir,
+            "defmodule T do\n  test \"holds\" do\n  end\n  def plain do\n  end\nend\n",
+        );
+        assert!(find(&elixir, "holds").is_test);
+        assert!(!find(&elixir, "plain").is_test);
+
+        let bash = parse(
+            Language::Bash,
+            "@test \"holds\" {\n  true\n}\nplain() {\n  true\n}\n",
+        );
+        assert!(find(&bash, "holds").is_test);
+        assert!(!find(&bash, "plain").is_test);
     }
 
     #[test]

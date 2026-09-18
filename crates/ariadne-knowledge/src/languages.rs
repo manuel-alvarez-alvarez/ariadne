@@ -2,9 +2,12 @@
 //!
 //! Each language names its grammar, the tags query that picks its
 //! definitions out, how its doc comments are written, and what marks a
-//! definition as a test. The tags queries are the ones the grammars ship;
-//! Markdown ships none and is outline-only, its headings standing in for
-//! definitions (see [`crate::parser`]).
+//! definition as a test. The tags queries are the ones the grammars ship,
+//! except Scala's, Kotlin's and Bash's, whose grammars ship none: those
+//! three are vendored from Aider (`src/vendor/`, see `NOTICE`). An
+//! outline-only format — Markdown and the six formats after it — has no
+//! tags query at all; its structure stands in for definitions (see
+//! [`crate::parser`]).
 
 use std::sync::OnceLock;
 
@@ -20,7 +23,39 @@ pub enum Language {
     Jsx,
     CSharp,
     Python,
+    Go,
+    Java,
+    C,
+    Cpp,
+    Ruby,
+    Php,
+    Kotlin,
+    Swift,
+    Dart,
+    Scala,
+    Bash,
+    Lua,
+    Elixir,
+    /// Outline-only: no tags query, its headings standing in for
+    /// definitions.
     Markdown,
+    /// Outline-only: its top-level and depth-2 keys standing in for
+    /// definitions.
+    Yaml,
+    /// Outline-only: its top-level keys and each table's keys standing in
+    /// for definitions.
+    Toml,
+    /// Outline-only: its top-level and depth-2 keys standing in for
+    /// definitions.
+    Json,
+    /// Outline-only: its elements that carry an `id` standing in for
+    /// definitions.
+    Html,
+    /// Outline-only: its selectors standing in for definitions.
+    Css,
+    /// Outline-only: the object names of its `CREATE` and `ALTER`
+    /// statements standing in for definitions.
+    Sql,
 }
 
 /// How a definition's doc comment is written, which is how it is read where
@@ -44,18 +79,29 @@ pub enum TestRule {
     /// An attribute on the definition naming one of these: `#[test]` in
     /// Rust, `[Fact]` or `[Test]` in C#.
     Attribute(&'static [&'static str]),
-    /// A definition whose name starts with this: `test_` in Python.
+    /// An `@Name` annotation on the definition naming one of these: `@Test`
+    /// in Java and Kotlin.
+    Annotation(&'static [&'static str]),
+    /// A definition whose name starts with this: `test_` in Python, `Test`
+    /// in Go, `test` in PHPUnit.
     NamePrefix(&'static str),
     /// A call to one of these, with the test's name as its first argument:
-    /// `it(` and `test(` in TypeScript and JavaScript.
+    /// `it(` and `test(` in TypeScript and JavaScript, `describe`/`it` in
+    /// Ruby, `test(` in Dart and Scala, `test` in Elixir, a bats `@test` in
+    /// Bash.
     Call(&'static [&'static str]),
+    /// Either of these marks a test: an `@Name` annotation, or a name
+    /// starting with a prefix — Swift's `@Test` and its `test` names in an
+    /// `XCTestCase` subclass.
+    AnnotationOrNamePrefix(&'static [&'static str], &'static str),
     /// Nothing is a test.
     None,
 }
 
 impl Language {
-    /// Every language the registry holds.
-    pub const ALL: [Language; 8] = [
+    /// Every language the registry holds: 20 read by a tags query, and 7
+    /// outline-only formats.
+    pub const ALL: [Language; 27] = [
         Language::Rust,
         Language::TypeScript,
         Language::Tsx,
@@ -63,7 +109,26 @@ impl Language {
         Language::Jsx,
         Language::CSharp,
         Language::Python,
+        Language::Go,
+        Language::Java,
+        Language::C,
+        Language::Cpp,
+        Language::Ruby,
+        Language::Php,
+        Language::Kotlin,
+        Language::Swift,
+        Language::Dart,
+        Language::Scala,
+        Language::Bash,
+        Language::Lua,
+        Language::Elixir,
         Language::Markdown,
+        Language::Yaml,
+        Language::Toml,
+        Language::Json,
+        Language::Html,
+        Language::Css,
+        Language::Sql,
     ];
 
     /// The language a path is read as, by its extension. `None` is a file
@@ -90,7 +155,26 @@ impl Language {
             Language::Jsx => "jsx",
             Language::CSharp => "csharp",
             Language::Python => "python",
+            Language::Go => "go",
+            Language::Java => "java",
+            Language::C => "c",
+            Language::Cpp => "cpp",
+            Language::Ruby => "ruby",
+            Language::Php => "php",
+            Language::Kotlin => "kotlin",
+            Language::Swift => "swift",
+            Language::Dart => "dart",
+            Language::Scala => "scala",
+            Language::Bash => "bash",
+            Language::Lua => "lua",
+            Language::Elixir => "elixir",
             Language::Markdown => "markdown",
+            Language::Yaml => "yaml",
+            Language::Toml => "toml",
+            Language::Json => "json",
+            Language::Html => "html",
+            Language::Css => "css",
+            Language::Sql => "sql",
         }
     }
 
@@ -104,7 +188,26 @@ impl Language {
             Language::Jsx => &["jsx"],
             Language::CSharp => &["cs"],
             Language::Python => &["py", "pyi"],
+            Language::Go => &["go"],
+            Language::Java => &["java"],
+            Language::C => &["c", "h"],
+            Language::Cpp => &["cpp", "cc", "cxx", "hpp", "hh", "hxx"],
+            Language::Ruby => &["rb"],
+            Language::Php => &["php"],
+            Language::Kotlin => &["kt", "kts"],
+            Language::Swift => &["swift"],
+            Language::Dart => &["dart"],
+            Language::Scala => &["scala", "sc"],
+            Language::Bash => &["sh", "bash", "bats"],
+            Language::Lua => &["lua"],
+            Language::Elixir => &["ex", "exs"],
             Language::Markdown => &["md", "markdown"],
+            Language::Yaml => &["yaml", "yml"],
+            Language::Toml => &["toml"],
+            Language::Json => &["json"],
+            Language::Html => &["html", "htm"],
+            Language::Css => &["css"],
+            Language::Sql => &["sql"],
         }
     }
 
@@ -117,7 +220,26 @@ impl Language {
             Language::JavaScript | Language::Jsx => tree_sitter_javascript::LANGUAGE.into(),
             Language::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
             Language::Python => tree_sitter_python::LANGUAGE.into(),
+            Language::Go => tree_sitter_go::LANGUAGE.into(),
+            Language::Java => tree_sitter_java::LANGUAGE.into(),
+            Language::C => tree_sitter_c::LANGUAGE.into(),
+            Language::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+            Language::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+            Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+            Language::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+            Language::Swift => tree_sitter_swift::LANGUAGE.into(),
+            Language::Dart => tree_sitter_dart::LANGUAGE.into(),
+            Language::Scala => tree_sitter_scala::LANGUAGE.into(),
+            Language::Bash => tree_sitter_bash::LANGUAGE.into(),
+            Language::Lua => tree_sitter_lua::LANGUAGE.into(),
+            Language::Elixir => tree_sitter_elixir::LANGUAGE.into(),
             Language::Markdown => tree_sitter_md::LANGUAGE.into(),
+            Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
+            Language::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
+            Language::Json => tree_sitter_json::LANGUAGE.into(),
+            Language::Html => tree_sitter_html::LANGUAGE.into(),
+            Language::Css => tree_sitter_css::LANGUAGE.into(),
+            Language::Sql => tree_sitter_sequel::LANGUAGE.into(),
         }
     }
 
@@ -153,7 +275,39 @@ impl Language {
                 .collect::<Vec<_>>()
                 .join("\n"),
             Language::Python => tree_sitter_python::TAGS_QUERY.to_string(),
-            Language::Markdown => return None,
+            Language::Go => tree_sitter_go::TAGS_QUERY.to_string(),
+            Language::Java => tree_sitter_java::TAGS_QUERY.to_string(),
+            Language::C => tree_sitter_c::TAGS_QUERY.to_string(),
+            Language::Cpp => tree_sitter_cpp::TAGS_QUERY.to_string(),
+            Language::Ruby => tree_sitter_ruby::TAGS_QUERY.to_string(),
+            Language::Php => tree_sitter_php::TAGS_QUERY.to_string(),
+            // Neither grammar ships a tags query; these are vendored from
+            // Aider (see the module doc and `NOTICE`).
+            Language::Kotlin => include_str!("vendor/kotlin-tags.scm").to_string(),
+            Language::Scala => include_str!("vendor/scala-tags.scm").to_string(),
+            Language::Bash => include_str!("vendor/bash-tags.scm").to_string(),
+            // Three patterns tag a method, an `init`/`deinit`/subscript or a
+            // property by the range of the whole class or protocol around
+            // it, not its own: `end_line` would be the enclosing type's.
+            // Dropping them leaves every plain function — a method among
+            // them — tagged as `function` by the one pattern that already
+            // gives it its own range; `init`, `deinit` and a subscript are
+            // not tagged at all.
+            Language::Swift => tree_sitter_swift::TAGS_QUERY
+                .split("\n\n")
+                .filter(|block| !block.contains("_body"))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            Language::Dart => tree_sitter_dart::TAGS_QUERY.to_string(),
+            Language::Lua => tree_sitter_lua::TAGS_QUERY.to_string(),
+            Language::Elixir => tree_sitter_elixir::TAGS_QUERY.to_string(),
+            Language::Markdown
+            | Language::Yaml
+            | Language::Toml
+            | Language::Json
+            | Language::Html
+            | Language::Css
+            | Language::Sql => return None,
         })
     }
 
@@ -161,11 +315,31 @@ impl Language {
     pub fn doc_syntax(self) -> DocSyntax {
         match self {
             Language::Rust | Language::CSharp => DocSyntax::LinePrefix("///"),
-            Language::TypeScript | Language::Tsx | Language::JavaScript | Language::Jsx => {
-                DocSyntax::Block
-            }
+            Language::TypeScript
+            | Language::Tsx
+            | Language::JavaScript
+            | Language::Jsx
+            | Language::Go
+            | Language::Java
+            | Language::C
+            | Language::Cpp
+            | Language::Php
+            | Language::Kotlin
+            | Language::Scala => DocSyntax::Block,
             Language::Python => DocSyntax::Docstring,
-            Language::Markdown => DocSyntax::None,
+            Language::Ruby | Language::Bash => DocSyntax::LinePrefix("#"),
+            Language::Swift | Language::Dart => DocSyntax::LinePrefix("///"),
+            Language::Lua => DocSyntax::LinePrefix("--"),
+            // Elixir's doc comment is a `@doc """ … """` attribute above the
+            // definition, not a comment; it is not read.
+            Language::Elixir => DocSyntax::None,
+            Language::Markdown
+            | Language::Yaml
+            | Language::Toml
+            | Language::Json
+            | Language::Html
+            | Language::Css
+            | Language::Sql => DocSyntax::None,
         }
     }
 
@@ -178,7 +352,23 @@ impl Language {
             Language::TypeScript | Language::Tsx | Language::JavaScript | Language::Jsx => {
                 TestRule::Call(&["it", "test"])
             }
-            Language::Markdown => TestRule::None,
+            Language::Go => TestRule::NamePrefix("Test"),
+            Language::Java | Language::Kotlin => TestRule::Annotation(&["Test"]),
+            Language::Ruby => TestRule::Call(&["describe", "it"]),
+            Language::Php => TestRule::NamePrefix("test"),
+            Language::Swift => TestRule::AnnotationOrNamePrefix(&["Test"], "test"),
+            Language::Dart | Language::Scala => TestRule::Call(&["test"]),
+            Language::Elixir => TestRule::Call(&["test"]),
+            Language::Bash => TestRule::Call(&["@test"]),
+            // Neither C, C++ nor Lua has a common test marker.
+            Language::C | Language::Cpp | Language::Lua => TestRule::None,
+            Language::Markdown
+            | Language::Yaml
+            | Language::Toml
+            | Language::Json
+            | Language::Html
+            | Language::Css
+            | Language::Sql => TestRule::None,
         }
     }
 
@@ -282,6 +472,29 @@ mod tests {
             Language::of_path("docs/README.md"),
             Some(Language::Markdown)
         );
+        assert_eq!(Language::of_path("cmd/main.go"), Some(Language::Go));
+        assert_eq!(Language::of_path("src/Main.java"), Some(Language::Java));
+        assert_eq!(Language::of_path("src/lib.c"), Some(Language::C));
+        assert_eq!(Language::of_path("include/lib.hpp"), Some(Language::Cpp));
+        assert_eq!(Language::of_path("app/model.rb"), Some(Language::Ruby));
+        assert_eq!(Language::of_path("src/index.php"), Some(Language::Php));
+        assert_eq!(Language::of_path("app/Main.kt"), Some(Language::Kotlin));
+        assert_eq!(
+            Language::of_path("Sources/App.swift"),
+            Some(Language::Swift)
+        );
+        assert_eq!(Language::of_path("lib/main.dart"), Some(Language::Dart));
+        assert_eq!(Language::of_path("src/Main.scala"), Some(Language::Scala));
+        assert_eq!(Language::of_path("bin/run.sh"), Some(Language::Bash));
+        assert_eq!(Language::of_path("script.bats"), Some(Language::Bash));
+        assert_eq!(Language::of_path("src/util.lua"), Some(Language::Lua));
+        assert_eq!(Language::of_path("lib/calc.ex"), Some(Language::Elixir));
+        assert_eq!(Language::of_path("config/app.yaml"), Some(Language::Yaml));
+        assert_eq!(Language::of_path("Cargo.toml"), Some(Language::Toml));
+        assert_eq!(Language::of_path("package.json"), Some(Language::Json));
+        assert_eq!(Language::of_path("public/index.html"), Some(Language::Html));
+        assert_eq!(Language::of_path("styles/app.css"), Some(Language::Css));
+        assert_eq!(Language::of_path("db/schema.sql"), Some(Language::Sql));
         assert_eq!(Language::of_path("Cargo.lock"), None);
         assert_eq!(Language::of_path("a.dir/Makefile"), None);
         assert_eq!(Language::of_path("LICENSE"), None);

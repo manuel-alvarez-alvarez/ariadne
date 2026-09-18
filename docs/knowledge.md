@@ -28,14 +28,43 @@ The languages, by extension:
 | JavaScript, JSX | `js`, `mjs`, `cjs`, `jsx` | the same |
 | C# | `cs` | classes, interfaces, methods, namespaces |
 | Python | `py`, `pyi` | functions, classes, module-level constants |
+| Go | `go` | functions, methods, types |
+| Java | `java` | classes, interfaces, methods |
+| C | `c`, `h` | functions, structs, unions, enums, type aliases |
+| C++ | `cpp`, `cc`, `cxx`, `hpp`, `hh`, `hxx` | the same, plus classes and methods |
+| Ruby | `rb` | methods, classes, modules, `describe`/`it` blocks |
+| PHP | `php` | functions, methods, classes, interfaces, traits, namespaces |
+| Kotlin | `kt`, `kts` | classes, objects, functions |
+| Swift | `swift` | classes, protocols, functions (including methods), properties |
+| Dart | `dart` | classes, mixins, enums, functions, methods, constructors, `test(` calls |
+| Scala | `scala`, `sc` | classes, objects, traits, enums, functions, `test(` calls |
+| Bash | `sh`, `bash`, `bats` | functions, variables, a bats `@test` block |
+| Lua | `lua` | functions and methods |
+| Elixir | `ex`, `exs` | modules, functions and macros, `test "…" do` blocks |
 | Markdown | `md`, `markdown` | headings, each spanning to the next heading of its level |
+| YAML | `yaml`, `yml` | top-level keys, and keys nested one level under a mapping |
+| TOML | `toml` | top-level keys, and each `[table]`'s own keys |
+| JSON | `json` | top-level keys, and keys nested one level under an object |
+| HTML | `html`, `htm` | elements that carry an `id` |
+| CSS | `css` | each rule set's selector |
+| SQL | `sql` | the object name of a `CREATE` or `ALTER` statement |
+
+The last 7 are outline-only: they have no tags query, so their own
+structure — headings, keys, elements, selectors, statements — stands in for
+definitions, with no doc comment and no test marker.
 
 Each definition carries its kind (`function`, `method`, `class`, `module`,
-`interface`, `macro`, `constant`, `test`, `heading`), its qualified name
-(`GitManager::add_worktree`), its first and last line, its signature, its
-doc comment, and whether it is a test: `#[test]` in Rust, a `test_` name in
-Python, an `it(`/`test(` call in TypeScript and JavaScript, `[Fact]`/`[Test]`
-in C#.
+`interface`, `macro`, `constant`, `test`, `heading`, and more for the newer
+languages: `object`, `key`, `table`, `element`, `selector`), its qualified
+name (`GitManager::add_worktree`), its first and last line, its signature,
+its doc comment, and whether it is a test: an attribute or annotation
+(`#[test]` in Rust, `[Fact]`/`[Test]` in C#, `@Test` in Java and Kotlin), a
+name (`test_` in Python, a `TestX` name in Go, a `test` name in PHPUnit, a
+name starting with `test` in Swift — read on any class, not only an
+`XCTestCase` subclass), or a call (`it(`/`test(` in TypeScript and
+JavaScript, `describe`/`it` in Ruby, `test(` in Dart and Scala, `test "…" do`
+in Elixir, a bats `@test` block in Bash). C, C++ and Lua have no common test
+marker.
 
 ## The tools agents get
 

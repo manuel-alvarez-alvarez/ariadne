@@ -1,0 +1,7 @@
+# The fixture config.
+name: demo
+server:
+  host: &host localhost
+  tls:
+    enabled: true
+same_host: *host

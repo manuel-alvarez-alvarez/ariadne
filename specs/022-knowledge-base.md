@@ -1,7 +1,7 @@
 ---
 id: knowledge-base
 status: current
-updated: 2026-09-18
+updated: 2026-09-19
 areas: [daemon, api, mcp, cli, ui]
 commits: []
 tests:
@@ -42,10 +42,9 @@ beside these (019).
 
 ## Behavior
 
-1. A file is read by its extension. The languages are Rust (`rs`),
-   TypeScript (`ts`, `mts`, `cts`), TSX (`tsx`), JavaScript (`js`, `mjs`,
-   `cjs`), JSX (`jsx`), C# (`cs`), Python (`py`, `pyi`) and Markdown (`md`,
-   `markdown`). Any other file is skipped.
+1. A file is read by its extension: 20 languages read by a tags query, and
+   7 outline-only formats with no tags query, listed in the table below.
+   Any other file is skipped.
 2. A code file is parsed with tree-sitter and the tags query its grammar
    ships. Every definition the query captures is a symbol, of the query's
    own kind: `function`, `method`, `class`, `module`, `interface`, `macro`
@@ -154,6 +153,81 @@ beside these (019).
     shows for their repository and leave every other repository's caches
     alone.
 
+## Languages
+
+The 20 tags languages, each with the grammar crate pinned in
+`crates/ariadne-knowledge/Cargo.toml`, its test marker, and the import
+syntax a later task's resolver reads (`edges` stays empty until then):
+
+| Language | Extensions | Test marker | Import syntax |
+| --- | --- | --- | --- |
+| Rust | `rs` | `#[test]`, `#[tokio::test]` | `use path::Item;` |
+| TypeScript, TSX | `ts`, `mts`, `cts`, `tsx` | `it(`/`test(` | `import { x } from "path"` |
+| JavaScript, JSX | `js`, `mjs`, `cjs`, `jsx` | `it(`/`test(` | `import`/`require(` |
+| C# | `cs` | `[Fact]`, `[Theory]`, `[Test]`, `[TestMethod]` | `using Namespace;` |
+| Python | `py`, `pyi` | a `test_` name | `import module`, `from x import y` |
+| Go | `go` | a `TestX` name | `import "path"` |
+| Java | `java` | `@Test` | `import package.Class;` |
+| C | `c`, `h` | none | `#include "file.h"` |
+| C++ | `cpp`, `cc`, `cxx`, `hpp`, `hh`, `hxx` | none | `#include "file.hpp"` |
+| Ruby | `rb` | a `describe`/`it` block | `require`/`require_relative` |
+| PHP | `php` | a `test` name (PHPUnit) | `use Namespace\Class;` |
+| Kotlin | `kt`, `kts` | `@Test` | `import package.Class` |
+| Swift | `swift` | `@Test`, or a name starting with `test` | `import Module` |
+| Dart | `dart` | `test(` | `import 'package:pkg/file.dart';` |
+| Scala | `scala`, `sc` | `test(` | `import package.Class` |
+| Bash | `sh`, `bash`, `bats` | a bats `@test` block | `source file.sh`, `. file.sh` |
+| Lua | `lua` | none | `require("module")` |
+| Elixir | `ex`, `exs` | `test "…" do` | `alias`/`import`/`use Module` |
+
+Ruby's `_test.rb` filename convention is not read: `parse` takes a file's
+text, not its path, so only the `describe`/`it` block marks a test. A bats
+`@test "…" { … }` block is read as a call named `@test`, the same mechanism
+as `it(`/`test(`; nothing else in Bash is read as a test. Neither C, C++
+nor Lua has a common test marker. Swift's rule does not read whether the
+function's class extends `XCTestCase`: a plain function or method named
+`testConnection`, in any class, is marked as a test too.
+
+Kotlin, Scala and Bash ship no tags query; `crates/ariadne-knowledge/src/vendor/`
+holds one adapted from Aider (Apache-2.0) for each, attributed in `NOTICE`.
+Swift's shipped query tags a method, an `init`/`deinit`/subscript or a
+property with the range of the whole class or protocol around it; the
+patterns that do this are dropped, so a method reads as kind `function`,
+with its own range, and `init`, `deinit` and a subscript are not tagged.
+
+Every grammar crate named above and below was checked against the
+`tree-sitter` 0.27 runtime pinned here and built without changes; no
+language was found unsupported.
+
+The 7 outline-only formats have no tags query and no test marker; their own
+structure stands in for definitions:
+
+| Format | Extensions | Definitions |
+| --- | --- | --- |
+| Markdown | `md`, `markdown` | headings, each spanning to the next heading of its level |
+| YAML | `yaml`, `yml` | top-level keys, and keys nested one level under a mapping |
+| TOML | `toml` | top-level keys, and each `[table]`'s own keys |
+| JSON | `json` | top-level keys, and keys nested one level under an object |
+| HTML | `html`, `htm` | elements that carry an `id`, named by its value |
+| CSS | `css` | each rule set's selector |
+| SQL | `sql` | the object name of a `CREATE` or `ALTER` statement |
+
+YAML, TOML and JSON stop at one level of nesting; a key deeper than that is
+not a symbol. TOML's `[a.b]` is read as one table named `a.b`, not as `b`
+nested under `a`: the grammar does not nest a dotted table under the table
+its prefix names. SQL reads every `CREATE` and `ALTER` statement
+`tree-sitter-sequel` names an object for — a table, a view, an index, a
+function, a sequence, a type, a trigger, a materialized view or a schema —
+by its own name: the first `object_reference` or bare identifier the
+statement holds, before any table, column or rename target it goes on to
+name. A statement of another kind is not read. `tree-sitter-toml` 0.20 and
+`tree-sitter-sql` 0.0.2 predate `tree-sitter-language` and were not tried;
+`tree-sitter-toml-ng` and `tree-sitter-sequel` are the maintained grammars
+used instead, and both built against the runtime here — `tree-sitter-sequel`
+at the cost of holding the workspace's `cc` build dependency below 1.3,
+which its `~1.2.1` requirement pins for every crate that also builds with
+`cc`, not only this one.
+
 ## Schema
 
 `crates/ariadne-knowledge/src/schema.sql`, version 2:
@@ -192,8 +266,13 @@ statements: the FTS rows are found by rowid, never by reading the table.
   `::an_impl_block_is_named_by_the_type_it_is_for`).
 - A test is marked by the rule of its language, in the parser and in the
   store (`parser.rs::a_test_is_marked_by_the_rule_of_its_language`,
+  `::a_test_is_marked_by_the_rule_of_the_new_languages`,
   `::attributes_are_read_by_their_last_path_segment`,
   `knowledge.rs::a_test_definition_is_marked_in_every_language`).
+- Each of the 6 outline-only formats added here reads its own structure as
+  symbols — YAML, TOML and JSON their keys, HTML its elements with an `id`,
+  CSS its selectors, SQL its `CREATE`/`ALTER` object names
+  (`knowledge.rs::every_format_is_outlined`).
 - A second commit that changes one file parses only that file, and a run
   over an unchanged ref parses nothing
   (`knowledge.rs::a_second_commit_that_changes_one_file_parses_only_that_file`).

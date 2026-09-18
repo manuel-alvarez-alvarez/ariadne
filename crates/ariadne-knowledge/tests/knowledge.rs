@@ -74,8 +74,8 @@ async fn every_language_definition_is_found_and_outlined_with_its_line_range() {
     let store = store(dir.path()).await;
 
     let indexed = store.index("repo", &repo, "main").await.unwrap();
-    assert_eq!(indexed.files, 8, "{indexed:?}");
-    assert_eq!(indexed.parsed, 8);
+    assert_eq!(indexed.files, 27, "{indexed:?}");
+    assert_eq!(indexed.parsed, 27);
 
     // (file, definition, kind, first line, last line), the lines read off
     // the fixture files themselves.
@@ -93,6 +93,19 @@ async fn every_language_definition_is_found_and_outlined_with_its_line_range() {
         ("tool.py", "clamp", "function", 6, 8),
         ("tool.py", "Gauge", "class", 11, 16),
         ("README.md", "Install", "heading", 5, 12),
+        ("calc.go", "Add", "function", 4, 6),
+        ("Calculator.java", "add", "method", 3, 5),
+        ("calc.c", "add", "function", 2, 2),
+        ("calc.cpp", "add", "function", 2, 2),
+        ("calc.rb", "add", "method", 2, 4),
+        ("calc.php", "add", "function", 4, 6),
+        ("calc.kt", "add", "function", 3, 5),
+        ("calc.swift", "add", "function", 3, 5),
+        ("calc.dart", "add", "function", 2, 4),
+        ("calc.scala", "add", "function", 3, 5),
+        ("calc.bats", "add", "function", 2, 4),
+        ("calc.lua", "add", "function", 2, 4),
+        ("calc.ex", "add", "function", 2, 4),
     ];
     for (file, name, kind, start, end) in expected {
         let hits = store
@@ -134,7 +147,7 @@ async fn every_language_definition_is_found_and_outlined_with_its_line_range() {
     assert_eq!(readme, ["Fixture", "Install", "Details", "Use"]);
 
     let status = store.status("repo").await.unwrap();
-    assert_eq!(status.files, 8);
+    assert_eq!(status.files, 27);
     assert_eq!(status.refs.len(), 1);
     assert_eq!(status.refs[0].git_ref, "main");
     assert_eq!(status.refs[0].commit, sh(&repo, "git rev-parse main"));
@@ -146,14 +159,33 @@ async fn every_language_definition_is_found_and_outlined_with_its_line_range() {
     assert_eq!(
         languages,
         [
+            ("bash", 1),
+            ("c", 1),
+            ("cpp", 1),
             ("csharp", 1),
+            ("css", 1),
+            ("dart", 1),
+            ("elixir", 1),
+            ("go", 1),
+            ("html", 1),
+            ("java", 1),
             ("javascript", 1),
+            ("json", 1),
             ("jsx", 1),
+            ("kotlin", 1),
+            ("lua", 1),
             ("markdown", 1),
+            ("php", 1),
             ("python", 1),
+            ("ruby", 1),
             ("rust", 1),
+            ("scala", 1),
+            ("sql", 1),
+            ("swift", 1),
+            ("toml", 1),
             ("tsx", 1),
             ("typescript", 1),
+            ("yaml", 1),
         ]
     );
 }
@@ -179,7 +211,26 @@ async fn a_test_definition_is_marked_in_every_language() {
 
     // The tests the languages mark on a definition of another kind.
     let mut marked: Vec<(String, String)> = Vec::new();
-    for file in ["lib.rs", "app.ts", "util.js", "Program.cs", "tool.py"] {
+    for file in [
+        "lib.rs",
+        "app.ts",
+        "util.js",
+        "Program.cs",
+        "tool.py",
+        "calc.go",
+        "Calculator.java",
+        "calc.c",
+        "calc.cpp",
+        "calc.rb",
+        "calc.php",
+        "calc.kt",
+        "calc.swift",
+        "calc.dart",
+        "calc.scala",
+        "calc.bats",
+        "calc.lua",
+        "calc.ex",
+    ] {
         for entry in store.outline("repo", "main", file).await.unwrap().unwrap() {
             let is_test = store
                 .search(&SearchQuery {
@@ -191,7 +242,16 @@ async fn a_test_definition_is_marked_in_every_language() {
                 .unwrap();
             assert!(!is_test.is_empty(), "{file}::{}", entry.name);
             if entry.kind == "test"
-                || ["adds", "GreetsByName", "test_clamp"].contains(&entry.name.as_str())
+                || [
+                    "adds",
+                    "GreetsByName",
+                    "test_clamp",
+                    "TestAdd",
+                    "addsNumbers",
+                    "testAdd",
+                    "testAdds",
+                ]
+                .contains(&entry.name.as_str())
             {
                 marked.push((file.to_string(), entry.name.clone()));
             }
@@ -201,11 +261,115 @@ async fn a_test_definition_is_marked_in_every_language() {
     assert_eq!(
         marked,
         [
+            ("Calculator.java".to_string(), "addsNumbers".to_string()),
             ("Program.cs".to_string(), "GreetsByName".to_string()),
             ("app.ts".to_string(), "multiplies".to_string()),
+            ("calc.bats".to_string(), "adds".to_string()),
+            ("calc.dart".to_string(), "adds".to_string()),
+            ("calc.ex".to_string(), "adds".to_string()),
+            ("calc.go".to_string(), "TestAdd".to_string()),
+            ("calc.kt".to_string(), "addsNumbers".to_string()),
+            ("calc.php".to_string(), "testAdd".to_string()),
+            ("calc.rb".to_string(), "add".to_string()),
+            ("calc.rb".to_string(), "adds".to_string()),
+            ("calc.scala".to_string(), "adds".to_string()),
+            ("calc.swift".to_string(), "testAdds".to_string()),
             ("lib.rs".to_string(), "adds".to_string()),
             ("tool.py".to_string(), "test_clamp".to_string()),
             ("util.js".to_string(), "halves".to_string()),
+        ]
+    );
+}
+
+/// Each outline-only format's structure stands in for a definition: a
+/// YAML, TOML or JSON key at the top level or nested one level, an HTML
+/// element that carries an `id`, a CSS selector, and the object name of a
+/// SQL `CREATE` or `ALTER` statement.
+#[tokio::test]
+async fn every_format_is_outlined() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = fixture_repo(dir.path());
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let yaml = store
+        .outline("repo", "main", "config.yaml")
+        .await
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = yaml.iter().map(|entry| entry.name.as_str()).collect();
+    assert_eq!(names, ["name", "server", "host", "tls", "same_host"]);
+    let server = yaml.iter().find(|entry| entry.name == "server").unwrap();
+    assert_eq!(
+        (server.kind.as_str(), server.start_line, server.end_line),
+        ("key", 3, 6)
+    );
+
+    let toml = store
+        .outline("repo", "main", "config.toml")
+        .await
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = toml.iter().map(|entry| entry.name.as_str()).collect();
+    assert_eq!(names, ["name", "server", "host", "server.tls", "enabled"]);
+    assert_eq!(
+        toml.iter()
+            .find(|entry| entry.name == "server")
+            .unwrap()
+            .kind,
+        "table"
+    );
+
+    let json = store
+        .outline("repo", "main", "config.json")
+        .await
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = json.iter().map(|entry| entry.name.as_str()).collect();
+    assert_eq!(names, ["name", "server", "host", "tls"]);
+
+    let html = store
+        .outline("repo", "main", "page.html")
+        .await
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = html.iter().map(|entry| entry.name.as_str()).collect();
+    assert_eq!(names, ["main", "inner", "query"]);
+    assert!(html.iter().all(|entry| entry.kind == "element"));
+
+    let css = store
+        .outline("repo", "main", "style.css")
+        .await
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = css.iter().map(|entry| entry.name.as_str()).collect();
+    assert_eq!(names, [".card .title", "#hero"]);
+    assert!(css.iter().all(|entry| entry.kind == "selector"));
+
+    let sql = store
+        .outline("repo", "main", "schema.sql")
+        .await
+        .unwrap()
+        .unwrap();
+    let rows: Vec<(&str, &str)> = sql
+        .iter()
+        .map(|entry| (entry.kind.as_str(), entry.name.as_str()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("table", "users"),
+            ("table", "users"),
+            ("view", "active_users"),
+            ("view", "active_users"),
+            ("index", "users_id"),
+            ("index", "users_id"),
+            ("sequence", "user_ids"),
+            ("type", "mood"),
+            ("schema", "app"),
+            ("materialized_view", "recent_users"),
+            ("function", "next_id"),
+            ("trigger", "users_trigger"),
         ]
     );
 }
@@ -218,7 +382,7 @@ async fn a_second_commit_that_changes_one_file_parses_only_that_file() {
     let repo = fixture_repo(dir.path());
     let store = store(dir.path()).await;
     let first = store.index("repo", &repo, "main").await.unwrap();
-    assert_eq!(first.parsed, 8);
+    assert_eq!(first.parsed, 27);
 
     std::fs::write(
         repo.join("tool.py"),
@@ -231,7 +395,7 @@ async fn a_second_commit_that_changes_one_file_parses_only_that_file() {
     );
     let second = store.index("repo", &repo, "main").await.unwrap();
     assert_eq!(second.parsed, 1, "{second:?}");
-    assert_eq!(second.files, 8);
+    assert_eq!(second.files, 27);
     assert_eq!(second.commit, sh(&repo, "git rev-parse main"));
 
     let hits = store
@@ -252,7 +416,7 @@ async fn a_second_commit_that_changes_one_file_parses_only_that_file() {
     // Nothing moved: nothing is parsed, and nothing is lost.
     let third = store.index("repo", &repo, "main").await.unwrap();
     assert_eq!(third.parsed, 0);
-    assert_eq!(third.files, 8);
+    assert_eq!(third.files, 27);
 }
 
 /// A branch cut from an indexed base shares every blob with it, so indexing
@@ -272,7 +436,7 @@ async fn a_branch_is_indexed_on_its_own_and_shares_the_base_blobs() {
     );
     let branch = store.index("repo", &repo, "task").await.unwrap();
     assert_eq!(branch.parsed, 1, "{branch:?}");
-    assert_eq!(branch.files, 9);
+    assert_eq!(branch.files, 28);
 
     let on_branch = store
         .search(&query("only_on_the_branch", &[("repo", "task")]))
@@ -289,7 +453,7 @@ async fn a_branch_is_indexed_on_its_own_and_shares_the_base_blobs() {
     let status = store.status("repo").await.unwrap();
     let refs: Vec<&str> = status.refs.iter().map(|r| r.git_ref.as_str()).collect();
     assert_eq!(refs, ["main", "task"]);
-    assert_eq!(status.files, 9, "distinct paths across both refs");
+    assert_eq!(status.files, 28, "distinct paths across both refs");
 
     store.drop_repository("repo").await.unwrap();
     let status = store.status("repo").await.unwrap();
@@ -299,7 +463,7 @@ async fn a_branch_is_indexed_on_its_own_and_shares_the_base_blobs() {
     // The blobs went with the files that held them: a read after the drop
     // parses every file again.
     let again = store.index("repo", &repo, "main").await.unwrap();
-    assert_eq!(again.parsed, 8, "{again:?}");
+    assert_eq!(again.parsed, 27, "{again:?}");
 }
 
 /// Dropping one ref takes its files with it, and the blobs only that ref
@@ -321,14 +485,14 @@ async fn a_dropped_ref_takes_its_files_and_its_orphan_blobs() {
     let status = store.status("repo").await.unwrap();
     let refs: Vec<&str> = status.refs.iter().map(|r| r.git_ref.as_str()).collect();
     assert_eq!(refs, ["main"]);
-    assert_eq!(status.files, 8);
+    assert_eq!(status.files, 27);
     let gone = store
         .search(&query("only_on_the_branch", &[("repo", "task")]))
         .await
         .unwrap();
     assert!(gone.is_empty(), "{gone:#?}");
 
-    // The branch's own blob was pruned and is parsed again; the eight the
+    // The branch's own blob was pruned and is parsed again; the 27 the
     // base branch still holds are not.
     let again = store.index("repo", &repo, "task").await.unwrap();
     assert_eq!(again.parsed, 1, "{again:?}");
@@ -363,7 +527,7 @@ async fn a_changed_file_the_run_skips_loses_its_symbols() {
 
     let second = store.index("repo", &repo, "main").await.unwrap();
     assert_eq!(second.parsed, 0, "{second:?}");
-    assert_eq!(second.files, 7);
+    assert_eq!(second.files, 26);
     assert!(
         store
             .outline("repo", "main", "tool.py")
