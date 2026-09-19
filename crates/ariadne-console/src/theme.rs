@@ -38,6 +38,14 @@ pub const FILE: Style = Style::new().add_modifier(Modifier::BOLD);
 /// The frames of the spinner, one per tick while a turn runs.
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// What stands between two parts of the status row or two hints of the
+/// footer, and between the session's status and what the turn is doing.
+pub const SEPARATOR: &str = " · ";
+pub const GAP: &str = "   ";
+/// The tokens the session has read and written, on the right of the footer.
+pub const TOKENS_IN: &str = "↑ ";
+pub const TOKENS_OUT: &str = "↓ ";
+
 /// Where a block starts: what was typed, what the agent said, what it
 /// thought, what the daemon sent, and what went wrong.
 pub const USER_MARKER: &str = "> ";

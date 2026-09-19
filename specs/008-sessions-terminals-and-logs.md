@@ -179,8 +179,8 @@ goal id to a seat (014).
 23. `ariadne attach` on a terminal is an inline pane, never the alternate
     screen. A finished block goes into the terminal's own buffer above the
     pane, so it stays in the scrollback; the pane holds the block still being
-    written, a status line and the input box. The status line names the seat,
-    the model and the session's status — the row's at attach, then what the
+    written, a status row, the input box and a footer. The status row names
+    the seat, the model and the session's status — the row's at attach, then what the
     stored events move it to, as the daemon moves the row on them (021):
     `running` on the session's start, a prompt, a tool event or an answered
     permission, `idle` on a stop or a compaction, `exited` on the session's
@@ -189,13 +189,34 @@ goal id to a seat (014).
     daemon moves a live row only and a row its sweep ended has no
     `session_end` stored; a live row's replay may hold an earlier launch's
     `session_end` before this launch's `session_start`, and follows both, so
-    a resumed session reads as the daemon has it. The status line also turns
+    a resumed session reads as the daemon has it; while the stream is down
+    the status reads `reconnecting`. The status row also turns
     a spinner with "thinking" or
     "running &lt;tool&gt;" while a turn runs, followed by how long the turn
     has run — `12s`, or `1m 04s` past a minute — counted from the event that
     began it, so a turn already running at attach counts from its prompt;
     the count starts again with each turn, survives a reconnect's replay,
-    and is absent between turns. Every block, the agent's markdown and the
+    and is absent between turns. The footer holds, on the left, the key
+    hints of the state the console is in — a Ctrl-C armed to leave: `ctrl-c
+    again to leave`; a pending question: `↑↓ or 1-9 choose · enter answer`;
+    a running turn: `enter send · shift+enter newline · esc cancel · ctrl-c
+    quit`; idle: `enter send · shift+enter newline · ctrl-c quit` — and on the
+    right the tokens the session has spent, `↑ <input> ↓ <output>` in
+    compact numbers (`950`, `12.4k`, `1.2M`), drawn nowhere both are zero.
+    The tokens are the session's, as `SessionDto.usage` is: the sum over its
+    launches of each launch's last totals. At attach they are the row's
+    `usage`; each event that carries an `ariadne_usage` — a `stop` does —
+    holds its launch's totals so far, keyed by `source`, and replaces that
+    launch's figure. The footer draws the sum of those figures, or the row's
+    at attach where that is more, counter by counter: the row can hold a
+    figure read mid-turn, ahead of the launch's last stop. Neither row is
+    ever cut. Each is made of parts measured by display width, and a row
+    wider than the pane drops whole parts, the least important first: on the
+    status row the model, then the seat, the turn's clock, the spinner with
+    what the turn is doing, and the session's status last; on the footer the
+    hints after the first, the last of them first, then the tokens, and the
+    first hint — the armed notice is the only one of its state — last.
+    Every block, the agent's markdown and the
     input box wrap and cut by display width, so a wide character or an emoji
     takes the two columns it draws on, and a cut falls between grapheme
     clusters, so an emoji of several characters is never split. A resize of
@@ -411,8 +432,8 @@ goal id to a seat (014).
   (`acp_console.rs::cancelling_a_running_turn_ends_it_as_cancelled`), is
   refused between turns (`::cancel_with_no_turn_running_is_refused`), and is
   in the OpenAPI document (`::the_cancel_endpoint_is_in_the_openapi_document`).
-- The terminal socket serves bytes that draw the transcript and the status
-  line at the size the client sent
+- The terminal socket serves bytes that draw the transcript, the status
+  row and the footer at the size the client sent
   (`acp_terminal.rs::the_terminal_draws_the_transcript_and_the_status_line_at_the_client_size`),
   typed keys and Enter reach the agent as a prompt
   (`::typed_keys_and_enter_reach_the_stub_agent_as_a_prompt`), a key answers
@@ -475,6 +496,24 @@ goal id to a seat (014).
   (`ariadne-console/markdown.rs::every_prefix_of_streamed_markdown_renders_without_a_panic`),
   and every returned line fits its width
   (`::markdown_never_returns_a_line_wider_than_its_width`).
+- Each row of each state — idle, thinking, running a tool with a long name,
+  reconnecting, armed, a pending question — drops whole parts at 40, 60, 80
+  and 120 columns, and never cuts one
+  (`ariadne-console/tui/chrome.rs::each_row_drops_whole_parts_and_never_cuts_one_at_any_width`);
+  every part of every state shows at 120 columns
+  (`::at_120_columns_every_part_of_every_state_shows`), and the session's
+  status and the first hint still show at 40
+  (`::at_40_columns_the_status_and_the_first_hint_still_show`). A tool name
+  of wide characters is measured by the columns it takes
+  (`::a_tool_name_of_wide_characters_is_measured_by_the_columns_it_takes`).
+- The footer draws the tokens spent, compact, at its right end
+  (`ariadne-console/tui/chrome.rs::the_tokens_spent_are_drawn_compact_at_the_right_end_of_the_footer`,
+  `::counts_are_compact_by_the_thousand_and_the_million`), a stop that
+  reports usage moves them (`::a_stop_that_reports_usage_moves_the_footer`),
+  a session that spent nothing draws none
+  (`::a_session_that_spent_nothing_draws_no_tokens`), and the hints are on
+  the footer and not on the status row
+  (`::the_hints_are_on_the_footer_and_not_on_the_status_row`).
 - The status line follows the session's status from its events
   (`ariadne-console/tui/chrome.rs::the_status_line_follows_the_sessions_status_from_its_events`)
   and is not revived off an end by the events replayed under it

@@ -37,15 +37,37 @@ ariadne attach <session-id>              # one specific session
 
 In a terminal the console is a small inline pane. The transcript scrolls in
 the terminal's own buffer, so it is still there in your scrollback after you
-leave; a status line and the input box stay pinned under it. The status line
-names the seat, the model and the session's status — `running` while the
-agent works, `idle` between turns, `exited` once it has gone, moving as the
-session does — and a spinner says
-"thinking" or "running &lt;tool&gt;" while a turn runs, with how long the
-turn has been running next to it: `12s`, or `1m 04s` past a minute. The
-count starts again with each turn and is not shown between turns; attaching
-in the middle of a turn counts from its prompt. Resizing the terminal
-redraws the pane at the new size.
+leave. Three things stay pinned under it: a status row, the input box, and a
+footer.
+
+```
+ author · claude:opus · running   ⠹ thinking 12s
+┌──────────────────────────────────────────────────────┐
+│the input box                                         │
+└──────────────────────────────────────────────────────┘
+ enter send · shift+enter newline · esc cancel    ↑ 12.4k ↓ 3.1k
+```
+
+The status row names the seat, the model and the session's status — `running`
+while the agent works, `idle` between turns, `exited` once it has gone, moving
+as the session does — and a spinner says "thinking" or "running &lt;tool&gt;"
+while a turn runs, with how long the turn has been running next to it: `12s`,
+or `1m 04s` past a minute. The count starts again with each turn and is not
+shown between turns; attaching in the middle of a turn counts from its prompt.
+
+The footer shows the keys you can press now on the left — to send, to answer
+a permission question (`↑↓ or 1-9 choose · enter answer`), or to confirm that
+you want to leave after one Ctrl-C — and on the right the tokens the session
+has spent, read (`↑`) and written (`↓`), such as `↑ 12.4k ↓ 3.1k`. The counts
+are the whole session's, every launch of it included, and they move each time
+a turn ends. Nothing is shown there before the session has spent a token.
+
+Neither row is ever cut off. In a narrow terminal each row leaves out whole
+items, the least important first: the status row drops the model, then the
+seat, the clock, and what the turn is doing, and keeps the session's status to
+the last; the footer drops its later key hints, then the tokens, and keeps the
+first hint to the last. Resizing the terminal redraws the pane at the new
+size.
 
 The pane opens where the cursor is, which the console asks the terminal for
 once. A terminal that does not answer — a pseudo-terminal with nothing behind
@@ -98,7 +120,7 @@ and all; nothing is sent until you press Enter. Wide characters and emoji
 take the two columns they draw on, in the transcript and in the box alike.
 
 A typed prompt shows as `> text` straight away, and is replaced when the
-daemon confirms it. If the daemon's stream drops, the status line says
+daemon confirms it. If the daemon's stream drops, the status row says
 "reconnecting" until it is back, and nothing already on screen is printed
 twice.
 

@@ -8,9 +8,10 @@ use ratatui::layout::{Position, Size};
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
 /// How tall the inline viewport is. The bottom [`super::Console::pinned_rows`]
-/// rows are the status line and the input box; the rest shows the block still
-/// being written, which moves into the scrollback the moment it is finished.
-pub(super) const VIEWPORT: u16 = 12;
+/// rows are the status row, the input box and the footer; the rest shows the
+/// block still being written, which moves into the scrollback the moment it
+/// is finished.
+pub(super) const VIEWPORT: u16 = 13;
 
 /// A ratatui backend whose failures `anyhow` can carry: the real terminal's
 /// and the test one's alike.
@@ -169,8 +170,9 @@ mod tests {
 
     use super::*;
 
-    /// The status line, and the input box with its two border rows.
-    const PINNED: u16 = 4;
+    /// The status row, the input box with its two border rows, and the
+    /// footer.
+    const PINNED: u16 = 5;
 
     /// A screen that says where its cursor is `answers` times and never
     /// again: the terminal that answers no query, as ratatui sees it, and the
@@ -265,7 +267,7 @@ mod tests {
 
         let shown = rows(terminal.backend().inner.0.buffer());
         assert_eq!(
-            row_of(&shown, "author claude:opus · running"),
+            row_of(&shown, " author · claude:opus · running"),
             Some(40 - usize::from(PINNED)),
             "the status line is drawn, with the pane on the bottom rows: {shown}"
         );

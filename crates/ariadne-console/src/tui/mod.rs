@@ -22,7 +22,7 @@
 //! takes the backend as an argument, so one that answers no cursor query
 //! proves the viewport still opens.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::time::Duration;
 
@@ -37,6 +37,7 @@ use tokio::time::{Instant, interval};
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::SessionDto;
+use ariadne_api::usage::TokenUsageDto;
 
 use crate::transcript::{self, PermissionOption, TranscriptItem};
 
@@ -93,13 +94,15 @@ enum Link {
     Reconnecting,
 }
 
-/// The unchanging half of the status line.
+/// The unchanging half of the status line, and the tokens the session had
+/// spent at attach.
 #[derive(Debug, Clone, Default)]
 pub struct Header {
     seat: String,
     /// The `<agent>:<model>` pin: the agent and the model it runs, in one.
     model: String,
     status: String,
+    usage: TokenUsageDto,
 }
 
 impl Header {
@@ -109,11 +112,13 @@ impl Header {
                 seat: "session".into(),
                 model: "-".into(),
                 status: "unknown".into(),
+                usage: TokenUsageDto::default(),
             },
             |session| Self {
                 seat: session.seat.as_str().into(),
                 model: session.model.clone(),
                 status: session.status.as_str().into(),
+                usage: session.usage,
             },
         )
     }
@@ -150,6 +155,9 @@ pub struct Console {
     /// The row had ended when the console attached: the daemon moves a live
     /// row only, so no replayed event moves the status line off that end.
     ended: bool,
+    /// The last totals each launch of the session reported, by the launch
+    /// they were read under: what the footer sums.
+    launches: BTreeMap<String, TokenUsageDto>,
 }
 
 impl Console {
@@ -168,6 +176,7 @@ impl Console {
             since: None,
             armed: false,
             ended,
+            launches: BTreeMap::new(),
         }
     }
 
@@ -192,6 +201,7 @@ impl Console {
         for event in events {
             absorb(&mut items, event);
             self.follow_turn(event);
+            self.follow_usage(event);
         }
         self.committed = self.committed.min(items.len());
         self.items = items;
@@ -201,6 +211,7 @@ impl Console {
     /// Fold one streamed event into the transcript.
     pub fn apply(&mut self, event: &AgentEventDto) {
         self.follow_turn(event);
+        self.follow_usage(event);
         // A daemon that predates `source` and `text` (021) names neither.
         // Its prompt event is the typed prompt's confirmation where the
         // whole it carries is the system prompt, a blank line and the typed

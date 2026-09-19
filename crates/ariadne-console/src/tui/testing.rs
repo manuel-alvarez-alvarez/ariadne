@@ -118,6 +118,7 @@ pub(super) fn header() -> Header {
         seat: "author".into(),
         model: "claude:opus".into(),
         status: "running".into(),
+        usage: Default::default(),
     }
 }
 

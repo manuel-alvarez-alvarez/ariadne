@@ -256,8 +256,9 @@ impl Client {
     }
 }
 
-/// The bytes draw the transcript — the tool call and the agent's text — and
-/// the status line, laid out at the width the client said.
+/// The bytes draw the transcript — the tool call and the agent's text — the
+/// status row over the box and the footer under it, laid out at the width the
+/// client said.
 #[tokio::test]
 async fn the_terminal_draws_the_transcript_and_the_status_line_at_the_client_size() {
     let (_dir, _stub, _h, session, address) = idle_daemon().await;
@@ -271,13 +272,24 @@ async fn the_terminal_draws_the_transcript_and_the_status_line_at_the_client_siz
 
     let screen = client.screen();
     assert!(screen.contains("Read"), "the tool call is drawn:\n{screen}");
-    assert!(
-        screen.contains("author stub:test-model"),
-        "the status line names the seat and the model:\n{screen}"
+    let rows: Vec<&str> = screen.lines().collect();
+    let top = rows
+        .iter()
+        .rposition(|row| *row == border(100))
+        .unwrap_or_else(|| panic!("the input box spans the client's width:\n{screen}"));
+    assert_eq!(
+        rows[top - 1].trim_end(),
+        " author · stub:test-model · idle",
+        "the status row names the seat, the model and the status:\n{screen}"
     );
+    let bottom = top
+        + rows[top..]
+            .iter()
+            .position(|row| row.starts_with('└'))
+            .unwrap_or_else(|| panic!("the box has a bottom border:\n{screen}"));
     assert!(
-        screen.lines().any(|row| row == border(100)),
-        "the input box spans the client's width:\n{screen}"
+        rows[bottom + 1].starts_with(" enter send · shift+enter newline"),
+        "the footer holds the hints:\n{screen}"
     );
     assert_eq!(client.statuses, [SessionStatus::Idle]);
 }
