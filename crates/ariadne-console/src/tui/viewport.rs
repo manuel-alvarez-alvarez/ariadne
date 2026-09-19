@@ -294,7 +294,7 @@ mod tests {
         terminal.draw(|frame| console.render(frame)).unwrap();
 
         let shown = rows(terminal.backend().inner.0.buffer());
-        let prompt = row_of(&shown, "> first").expect(&shown);
+        let prompt = row_of(&shown, "❯ first").expect(&shown);
         assert!(
             prompt < 40 - usize::from(VIEWPORT),
             "the finished prompt is above the pane, in the scrollback: {shown}"
@@ -324,7 +324,7 @@ mod tests {
         terminal.draw(|frame| console.render(frame)).unwrap();
 
         let shown = rows(terminal.backend().inner.0.buffer());
-        let prompt = row_of(&shown, "> first").expect(&shown);
+        let prompt = row_of(&shown, "❯ first").expect(&shown);
         assert!(
             prompt < 40 - usize::from(VIEWPORT),
             "the finished prompt is above the pane, in the scrollback: {shown}"

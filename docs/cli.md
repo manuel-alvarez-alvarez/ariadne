@@ -84,7 +84,12 @@ terminal is not asked again after that, however many blocks scroll past.
 
 The agent's text streams in as it is written and renders as markdown:
 headings, bold, code spans, fenced code and lists. A thought is dimmed and
-folded to a few lines. A plan is a checklist.
+folded to a few lines. A plan is a checklist that counts what is done
+(`plan 2/5`): `☐` pending, `◐` in progress, `☑` done and dimmed. A briefing
+or a nudge from the daemon shows under `» daemon`, folded to its first six
+lines. An error shows whole after `✗`. A note says what happened in words,
+such as `turn cancelled`; a turn that simply ends adds nothing. One blank line
+separates two blocks.
 
 A tool call is one block. Its head line says what the call did and on what:
 a status mark (`○` pending, `●` running, `✓` done, `✗` failed), a glyph for
@@ -92,15 +97,17 @@ the kind of call (`$` a command, `≡` a read, `✎` an edit, `⌫` a delete, `�
 move, `⌕` a search, `↓` a fetch), then the command, the path and line, the
 pattern, or the URL. Once the call has ended, the head says how long it took.
 Its output is folded to its last lines under the head, with a count of the
-lines left out. A file change is a diff: the file's name, then the hunks with
-added and removed lines in colour, folded past a page with a count.
+lines left out, and hangs from the head by `⎿`. A file change is a diff: the
+file's name, then the hunks with added and removed lines in colour, folded
+past a page with a count.
 
 ```
 ✓ $ cargo nextest run  8.2s
-    … 41 more lines
+  ⎿ … 41 more lines
     Summary [   7.910s] 345 tests run: 345 passed, 0 skipped
+
 ✓ ✎ src/main.rs
-    src/main.rs
+  ⎿ src/main.rs
     @@ -1,3 +1,3 @@
      fn main() {
     -    println!("hello");
@@ -124,10 +131,11 @@ Pasting puts the text into the input box where the cursor is, line breaks
 and all; nothing is sent until you press Enter. Wide characters and emoji
 take the two columns they draw on, in the transcript and in the box alike.
 
-A typed prompt shows as `> text` straight away, and is replaced when the
-daemon confirms it. If the daemon's stream drops, the status row says
-"reconnecting" until it is back, and nothing already on screen is printed
-twice.
+A typed prompt shows as `❯ text` straight away, with a coloured bar down its
+left edge. Until the daemon takes it, it carries a dim `queued` tag: a prompt
+typed while a turn runs waits for that turn to end. If the daemon's stream
+drops, the status row says "reconnecting" until it is back, and nothing
+already on screen is printed twice.
 
 With stdin or stdout redirected there is no pane to draw: `ariadne attach`
 then prints one `kind · summary` line per event and numbered options for a

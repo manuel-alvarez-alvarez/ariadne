@@ -323,7 +323,7 @@ async fn typed_keys_and_enter_reach_the_stub_agent_as_a_prompt() {
     );
     client
         .read_until("the prompt on the transcript", |screen| {
-            screen.contains("> hello from the terminal")
+            screen.contains("❯ hello from the terminal")
         })
         .await;
 }

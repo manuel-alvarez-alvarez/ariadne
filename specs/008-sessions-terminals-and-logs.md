@@ -238,23 +238,40 @@ goal id to a seat (014).
     an unavailable task or repository leaves out only that line. The CLI reads
     this context over its HTTP client; the terminal socket host reads it from
     daemon state. Redirected CLI attach remains the plain line protocol.
-24. The pane renders each block as it arrives: a prompt as `> text`, holding
-    the event's `text` alone — never the whole `prompt` with the system
-    prompt ahead of it (021), nor the summary, one line cut short; an event
-    carrying no `text` says the text was not recorded rather than draw the
-    whole. A prompt the daemon sent (`source: daemon`: a briefing,
-    a nudge, a message) draws under its own marker and label, `» daemon`,
-    with its text beneath, so it reads apart from what was typed. Agent text
-    is markdown chunk by chunk under one marker, a thought dimmed and folded,
-    a tool call the block of the next rule, a plan a checklist, and a
-    permission question a picker. Markdown tables align their display-width
-    cells under bold headers and wrap in a cell, or become `header: value`
-    lines where the pane is too narrow. Fenced code has a dim language label,
-    a two-column code indent and a dim `↪` on continued lines, never a fence.
-    Links retain their plain URL, lists use `•`, `◦` and `▪` by depth with task
-    markers, and every wrapped quote line keeps its `│ ` bar. The renderer is
-    pure, uses no syntax colour or OSC 8 link, and accepts each incomplete
-    markdown prefix without a panic.
+24. The pane renders each block as it arrives, one blank line between two
+    blocks in the live area as in the scrollback. A typed prompt draws as
+    `❯ text`, the input box's glyph, with a bar `▌` in the user's colour down
+    the left edge of each of its rows and its text bold in the terminal's own
+    foreground, so it stands out on a dark and a light theme. It holds the
+    event's `text` alone — never the whole `prompt` with the system prompt
+    ahead of it (021), nor the summary, one line cut short; an event carrying
+    no `text` says the text was not recorded rather than draw the whole. A
+    prompt typed and not yet taken back as its `user_prompt_submit` carries a
+    dim `queued` tag, which goes when the event comes back. A prompt the
+    daemon sent (`source: daemon`: a briefing, a nudge, a message) draws
+    under its own marker and label, `» daemon`, with its first 6 lines
+    beneath and a count of the rest (`… 34 more lines`), so it reads apart
+    from what was typed. Agent text is markdown chunk by chunk under one
+    marker, a thought dimmed and folded, a tool call the block of the next
+    rule, and a permission question a picker. Markdown tables align their
+    display-width cells under bold headers and wrap in a cell, or become
+    `header: value` lines where the pane is too narrow. Fenced code has a dim
+    language label, a two-column code indent and a dim `↪` on continued lines,
+    never a fence. Links retain their plain URL, lists use `•`, `◦` and `▪` by
+    depth with task markers, and every wrapped quote line keeps its `│ ` bar.
+    The renderer is pure, uses no syntax colour or OSC 8 link, and accepts
+    each incomplete markdown prefix without a panic. A plan is a checklist
+    under a head that counts the completed entries, `plan 1/3`: `☐` pending,
+    `◐` in progress in the plan colour, `☑` completed and dimmed, a long entry
+    wrapped under its own text. An error keeps `✗` and wraps whole: a row
+    keeps the space after its last word, a word wider than the pane is cut
+    between grapheme clusters across rows, and no character is lost. A note
+    is in plain words — `session started`,
+    `session ended`, `context compacted`, `turn cancelled`, and any other
+    stop reason as words (`turn stopped: token limit reached`); a stop with
+    reason `end_turn` draws nothing, in the pane and in `ariadne session
+    logs` alike. An event of a kind the pane has no block for draws dimmed
+    as `<kind> · <summary>`, from the event's summary.
 25. A tool call reads as a coding agent's. Its head line is a status glyph —
     `○` pending, `●` in progress, `✓` completed, `✗` failed — then a glyph
     for the ACP `kind` (`$` execute, `≡` read, `✎` edit, `⌫` delete, `→`
@@ -276,6 +293,9 @@ goal id to a seat (014).
     text of its `content` entries otherwise, and the structure as JSON only
     where there is neither. It is folded to its last lines with a count of
     the hidden ones, trailing blank lines trimmed; the fold is the thought's.
+    Its first row starts with `⎿ ` two columns under the head's mark, which
+    ties it to the call, and its next rows and the diff's rows start at the
+    column of its text.
     A tab in the output takes the columns to the next stop of eight, since a
     cell drawn with a tab draws nothing. A `diff` content entry draws as a
     unified diff under a file header — the path, or the old name to the new
@@ -575,6 +595,38 @@ goal id to a seat (014).
   and while it waits the picker is on the screen whatever came after it and
   however long its diff
   (`::a_pending_picker_is_on_the_screen_whatever_came_after_it_and_however_long_its_diff`).
+- A typed prompt of three rows draws the bar on each row and `❯` on the
+  first
+  (`ariadne-console/tui/blocks.rs::a_typed_prompt_of_three_rows_draws_the_bar_on_each_row_and_the_marker_on_the_first`).
+  A prompt typed during a running turn draws `queued` until its
+  `user_prompt_submit`, and is then drawn once without it
+  (`ariadne-console/tui/chrome.rs::a_prompt_typed_during_a_running_turn_is_queued_until_the_daemon_takes_it`).
+  A daemon prompt of 40 lines draws 6 and `… 34 more lines`
+  (`ariadne-console/tui/blocks.rs::a_daemon_prompt_of_forty_lines_draws_six_and_a_count_of_the_rest`).
+- A call's first output row starts with `⎿ `, and its next rows and its diff
+  rows start at the same column
+  (`ariadne-console/tui/blocks.rs::the_output_and_the_diff_of_a_call_hang_from_its_head_at_one_column`).
+- An error of 300 columns wraps in a pane of 80 with no character lost, as
+  one long word
+  (`ariadne-console/tui/blocks.rs::an_error_wider_than_the_pane_wraps_with_no_character_lost`)
+  and as many words, the space that ends a row kept
+  (`::a_multi_word_error_wider_than_the_pane_keeps_every_character`).
+- A stop with `end_turn` adds no line and a cancelled turn draws `turn
+  cancelled`
+  (`ariadne-console/tui/blocks.rs::a_stop_at_the_end_of_a_turn_adds_no_line_and_a_cancelled_turn_says_so`),
+  every stop reason reads as words
+  (`ariadne-console/transcript.rs::a_stop_reads_in_words_and_an_ended_turn_is_no_block`),
+  and `ariadne session logs` prints the same
+  (`transcript.rs::an_ended_turn_prints_no_block_and_a_cancelled_one_says_so_in_words`).
+- An unknown event `foo.bar` with summary `baz` draws `foo.bar · baz`
+  (`ariadne-console/tui/blocks.rs::an_unknown_event_draws_its_kind_and_its_summary`).
+- A plan with one entry of each status draws the three marks and `plan 1/3`
+  (`ariadne-console/tui/blocks.rs::a_plan_draws_a_mark_per_status_and_counts_the_completed_in_its_head`),
+  and a long entry wraps under its own text
+  (`::a_long_plan_entry_wraps_under_its_own_text`).
+- Two live blocks have one blank line between them, and the scrollback one,
+  not two
+  (`ariadne-console/tui/chrome.rs::two_live_blocks_have_one_blank_line_between_them_as_in_the_scrollback`).
 - A tab in a tool's output takes the columns to the next tab stop
   (`ariadne-console/tui/blocks.rs::a_tab_in_a_tool_output_takes_the_columns_to_the_next_tab_stop`),
   and a call whose raw output is a structure draws its content text

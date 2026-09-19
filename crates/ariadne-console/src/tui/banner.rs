@@ -198,7 +198,7 @@ mod tests {
         let shown = crate::tui::testing::screen(&terminal);
         assert_eq!(shown.matches("ariadne · author").count(), 1, "{shown}");
         assert!(
-            shown.find("ariadne · author").unwrap() < shown.find("> first").unwrap(),
+            shown.find("ariadne · author").unwrap() < shown.find("❯ first").unwrap(),
             "{shown}"
         );
     }

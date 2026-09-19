@@ -93,6 +93,7 @@ pub mod render {
                 meta,
                 kind,
                 payload,
+                ..
             } => text_block(
                 meta,
                 &kind.to_ascii_uppercase(),
@@ -642,6 +643,20 @@ mod tests {
 
         assert!(output.contains("✓ Inspect the code"), "{output}");
         assert!(output.contains("○ Run the tests"), "{output}");
+    }
+
+    #[test]
+    fn an_ended_turn_prints_no_block_and_a_cancelled_one_says_so_in_words() {
+        let events = [
+            event("ended", "stop", json!({"stop_reason": "end_turn"})),
+            event("cancelled", "stop", json!({"stop_reason": "cancelled"})),
+        ];
+
+        let output = render::transcript(&fold(&events), None, false);
+
+        assert_eq!(output.matches("SYSTEM").count(), 1, "{output}");
+        assert!(output.contains("turn cancelled"), "{output}");
+        assert!(!output.contains("end_turn"), "{output}");
     }
 
     #[test]

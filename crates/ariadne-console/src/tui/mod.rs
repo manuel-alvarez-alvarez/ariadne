@@ -931,7 +931,7 @@ mod tests {
         )
         .await;
 
-        assert!(shown.contains("> Run the tests"), "{shown}");
+        assert!(shown.contains("❯ Run the tests"), "{shown}");
         assert!(
             shown.contains("# Report"),
             "the heading is a heading: {shown}"
@@ -1172,7 +1172,7 @@ mod tests {
         let shown = screen(&terminal);
 
         let answer = row_of(&shown, "answer to one").expect(&shown);
-        let two = row_of(&shown, "> two").expect(&shown);
+        let two = row_of(&shown, "❯ two").expect(&shown);
         assert!(
             answer < two,
             "the answer to the first prompt is above the second: {shown}"
@@ -1183,7 +1183,7 @@ mod tests {
             "the answer is whole, not cut at the chunk the pane was redrawn on: {shown}"
         );
         assert_eq!(
-            shown.matches("> two").count(),
+            shown.matches("❯ two").count(),
             1,
             "and the typed prompt is drawn once: {shown}"
         );
@@ -1263,8 +1263,8 @@ mod tests {
         terminal.draw(|frame| console.render(frame)).unwrap();
 
         let shown = screen(&terminal);
-        assert_eq!(shown.matches("> a").count(), 1, "{shown}");
-        assert_eq!(shown.matches("> b").count(), 1, "{shown}");
+        assert_eq!(shown.matches("❯ a").count(), 1, "{shown}");
+        assert_eq!(shown.matches("❯ b").count(), 1, "{shown}");
     }
 
     #[tokio::test]
@@ -1355,7 +1355,7 @@ mod tests {
 
         assert_eq!(prompts, ["hi"]);
         assert_eq!(
-            shown.matches("> hi").count(),
+            shown.matches("❯ hi").count(),
             1,
             "the confirmed prompt took the pending one's place: {shown}"
         );
@@ -1378,7 +1378,7 @@ mod tests {
         )
         .await;
 
-        assert!(shown.contains("> Run the tests"), "{shown}");
+        assert!(shown.contains("❯ Run the tests"), "{shown}");
         assert!(
             !shown.contains("You plan"),
             "the system prompt stays off the screen: {shown}"
@@ -1409,7 +1409,7 @@ mod tests {
             "the system prompt stays off the screen: {shown}"
         );
         assert!(
-            shown.contains("> (prompt text not recorded)"),
+            shown.contains("❯ (prompt text not recorded)"),
             "the prompt is on the transcript, said to be unrecorded: {shown}"
         );
     }
@@ -1435,7 +1435,7 @@ mod tests {
 
         assert_eq!(prompts, ["hi"]);
         assert_eq!(
-            shown.matches("> hi").count(),
+            shown.matches("❯ hi").count(),
             1,
             "the typed text stays, once: {shown}"
         );
@@ -1467,7 +1467,7 @@ mod tests {
         terminal.draw(|frame| console.render(frame)).unwrap();
         let shown = screen(&terminal);
         assert_eq!(
-            shown.matches("> tests").count(),
+            shown.matches("❯ tests").count(),
             1,
             "the typed prompt is still pending: {shown}"
         );
@@ -1485,7 +1485,7 @@ mod tests {
         terminal.draw(|frame| console.render(frame)).unwrap();
         let shown = screen(&terminal);
         assert_eq!(
-            shown.matches("> tests").count(),
+            shown.matches("❯ tests").count(),
             1,
             "the confirmation took the typed prompt's place: {shown}"
         );
@@ -1526,7 +1526,7 @@ mod tests {
 
         assert_eq!(action, Action::Send("ship it".into()));
         assert!(
-            screen(&terminal).contains("> ship it"),
+            screen(&terminal).contains("❯ ship it"),
             "the prompt shows before any event comes back: {}",
             screen(&terminal)
         );
@@ -1610,7 +1610,7 @@ mod tests {
 
         let shown = screen(&terminal);
         assert_eq!(committed, 2, "everything but the open block was printed");
-        assert_eq!(shown.matches("> first").count(), 1, "{shown}");
+        assert_eq!(shown.matches("❯ first").count(), 1, "{shown}");
         assert_eq!(shown.matches("second").count(), 1, "{shown}");
         assert_eq!(shown.matches("third").count(), 1, "{shown}");
     }

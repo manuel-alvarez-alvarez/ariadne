@@ -17,7 +17,7 @@ use ariadne_api::usage::TokenUsageDto;
 
 use crate::theme::{AGENT, DIM, GAP, SEPARATOR, SPINNER, TOKENS_IN, TOKENS_OUT, TOOL};
 
-use super::blocks::block;
+use super::blocks::{block, queued};
 use super::picker::picker;
 use super::{Console, Link, Turn};
 
@@ -117,17 +117,24 @@ impl Console {
         self.draw_footer(frame, footer);
     }
 
-    /// The blocks not yet in the scrollback, and the picker of a question
-    /// waiting for its answer.
-    fn draw_live(&self, frame: &mut Draw, area: Rect) {
-        let width = usize::from(area.width);
-        let height = usize::from(area.height);
+    /// Every line of the live area, `width` columns wide: the blocks not yet
+    /// in the scrollback, and the picker of a question waiting for its
+    /// answer, folded to `height` rows. One blank line separates two blocks,
+    /// as in the scrollback. The head of a long block is in it too: the area
+    /// draws the tail.
+    pub fn live_lines(&self, width: u16, height: u16) -> Vec<Line<'static>> {
+        let width = usize::from(width);
+        let height = usize::from(height);
         let asking = self.question();
-        let mut lines = Vec::new();
+        let mut blocks = Vec::new();
         for (at, item) in self.items.iter().enumerate().skip(self.committed) {
-            if Some(at) != asking {
-                lines.extend(block(item, width, None));
+            if Some(at) == asking {
+                continue;
             }
+            blocks.push(match self.pending.contains(&at) {
+                true => queued(item, width),
+                false => block(item, width, None),
+            });
         }
         // The picker is what the keys act on, so it is drawn last, above the
         // box, whatever came after it — a snapshot taken mid-turn ends on the
@@ -135,11 +142,25 @@ impl Console {
         // its command or diff is folded to the room its question and options
         // leave, so both are on the screen however long the diff.
         if let Some(at) = asking {
-            lines.extend(picker(&self.items[at], self.picked, width, height));
+            blocks.push(picker(&self.items[at], self.picked, width, height));
         }
+        let mut lines = Vec::new();
+        for block in blocks.into_iter().filter(|block| !block.is_empty()) {
+            if !lines.is_empty() {
+                lines.push(Line::default());
+            }
+            lines.extend(block);
+        }
+        lines
+    }
+
+    /// The blocks not yet in the scrollback, and the picker of a question
+    /// waiting for its answer.
+    fn draw_live(&self, frame: &mut Draw, area: Rect) {
+        let lines = self.live_lines(area.width, area.height);
         // The tail is what is happening now; the head of a long block has
         // scrolled past, exactly as it would have in the scrollback.
-        let skip = lines.len().saturating_sub(height);
+        let skip = lines.len().saturating_sub(usize::from(area.height));
         frame.render_widget(Paragraph::new(Text::from(lines[skip..].to_vec())), area);
     }
 
@@ -594,6 +615,60 @@ mod tests {
         assert!(
             status.ends_with("thinking 5s"),
             "the next turn starts from zero: {status}"
+        );
+    }
+
+    #[test]
+    fn a_prompt_typed_during_a_running_turn_is_queued_until_the_daemon_takes_it() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&event(
+            "user_prompt_submit",
+            "one",
+            json!({"text": "one", "source": "console"}),
+        ));
+        type_into(&mut console, "two");
+        enter(&mut console);
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let waiting = screen(&terminal);
+        console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
+        console.apply(&event(
+            "user_prompt_submit",
+            "two",
+            json!({"text": "two", "source": "console"}),
+        ));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let taken = screen(&terminal);
+
+        assert!(waiting.contains("▌❯ two  queued"), "{waiting}");
+        assert!(!waiting.contains("one  queued"), "{waiting}");
+        assert!(!taken.contains("queued"), "{taken}");
+        assert_eq!(taken.matches("❯ two").count(), 1, "{taken}");
+    }
+
+    /// The scrollback puts one blank line after each block, and the live
+    /// area one between its blocks: a block that moves from one to the other
+    /// keeps the one blank line above the next.
+    #[test]
+    fn two_live_blocks_have_one_blank_line_between_them_as_in_the_scrollback() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&event("agent_message", "first", json!({"text": "first"})));
+        console.apply(&event("agent_message", "second", json!({"text": "second"})));
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let live = screen(&terminal);
+        console.commit(&mut terminal).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let committed = screen(&terminal);
+
+        assert!(live.contains("● first\n\n● second"), "{live}");
+        assert!(committed.contains("● first\n\n● second"), "{committed}");
+        assert_eq!(
+            console.live_lines(72, 30).len(),
+            1,
+            "only the open block is live"
         );
     }
 

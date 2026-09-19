@@ -7,6 +7,10 @@
 use ratatui::style::{Color, Modifier, Style};
 
 pub const USER: Style = Style::new().fg(Color::Cyan);
+/// The text of a typed prompt: the terminal's own foreground, bold, so it
+/// reads on a dark and a light theme alike. The bar and the marker carry the
+/// user's colour.
+pub const PROMPT: Style = Style::new().add_modifier(Modifier::BOLD);
 /// A prompt the daemon sent: the user's colour, dimmed — it was said to the
 /// agent on the user's behalf, not by them.
 pub const DAEMON: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::DIM);
@@ -49,8 +53,12 @@ pub const TOKENS_IN: &str = "↑ ";
 pub const TOKENS_OUT: &str = "↓ ";
 
 /// Where a block starts: what was typed, what the agent said, what it
-/// thought, what the daemon sent, and what went wrong.
-pub const USER_MARKER: &str = "> ";
+/// thought, what the daemon sent, and what went wrong. A typed prompt has
+/// the input box's glyph, and a bar down the left edge of each of its rows.
+pub const USER_MARKER: &str = "❯ ";
+pub const USER_BAR: &str = "▌";
+/// The tag of a typed prompt the daemon has not taken yet.
+pub const QUEUED: &str = "queued";
 pub const AGENT_MARKER: &str = "● ";
 pub const THOUGHT_MARKER: &str = "· ";
 pub const DAEMON_MARKER: &str = "» daemon";
@@ -77,10 +85,14 @@ pub const KINDS: &[(&str, &str)] = &[
     ("switch_mode", "⇄"),
 ];
 pub const KIND_OTHER: &str = "•";
+/// What ties a call's output to its head: the first row of the output
+/// starts with it, two columns in.
+pub const OUTPUT_MARKER: &str = "  ⎿ ";
 
-/// A plan entry, done and not yet.
-pub const PLAN_DONE: &str = "  ☑ ";
+/// A plan entry: pending, in progress, and completed.
 pub const PLAN_TODO: &str = "  ☐ ";
+pub const PLAN_DOING: &str = "  ◐ ";
+pub const PLAN_DONE: &str = "  ☑ ";
 
 /// The picker of a permission question: the label in the rule above, the option
 /// it is on and the ones it is not on, and the option that was chosen once the

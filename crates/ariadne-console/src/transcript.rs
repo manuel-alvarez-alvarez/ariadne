@@ -282,6 +282,8 @@ pub enum TranscriptItem {
     Raw {
         meta: ItemMeta,
         kind: String,
+        /// The event's summary: what it was about, in a line.
+        summary: String,
         payload: Value,
     },
 }
@@ -365,9 +367,7 @@ impl From<&AgentEventDto> for TranscriptItem {
             },
             "stop" => Self::SystemNote {
                 meta,
-                text: string_at(&event.payload, "/stop_reason")
-                    .map(|reason| format!("turn stopped: {reason}"))
-                    .unwrap_or_else(|| "turn stopped".into()),
+                text: stop_note(string_at(&event.payload, "/stop_reason").as_deref()),
             },
             "compaction_update" => Self::SystemNote {
                 meta,
@@ -380,9 +380,28 @@ impl From<&AgentEventDto> for TranscriptItem {
             _ => Self::Raw {
                 meta,
                 kind: event.kind.clone(),
+                summary: event.summary.clone(),
                 payload: event.payload.clone(),
             },
         }
+    }
+}
+
+/// The ACP stop reason of a turn that ended the way turns end.
+const END_TURN: &str = "end_turn";
+
+/// Why a turn stopped, in words: a cancel as `turn cancelled`, a limit or a
+/// refusal as what happened, and any other reason with its underscores as
+/// spaces.
+fn stop_note(reason: Option<&str>) -> String {
+    match reason {
+        None => "turn stopped".into(),
+        Some(END_TURN) => "turn ended".into(),
+        Some("cancelled") => "turn cancelled".into(),
+        Some("max_tokens") => "turn stopped: token limit reached".into(),
+        Some("max_turn_requests") => "turn stopped: request limit reached".into(),
+        Some("refusal") => "turn stopped: the agent refused".into(),
+        Some(other) => format!("turn stopped: {}", other.replace('_', " ")),
     }
 }
 
@@ -400,6 +419,13 @@ pub fn fold(events: &[AgentEventDto]) -> Vec<TranscriptItem> {
 /// [`fold`] is this over a whole snapshot; the inline console is this over a
 /// live stream, which is why the one event is a seam of its own.
 pub fn fold_into(items: &mut Vec<TranscriptItem>, event: &AgentEventDto) {
+    // A turn that ended the way turns end says nothing a reader needs: the
+    // next block is the next turn.
+    if event.kind == "stop"
+        && string_at(&event.payload, "/stop_reason").as_deref() == Some(END_TURN)
+    {
+        return;
+    }
     if event.kind == "permission.replied"
         && let Some(TranscriptItem::PermissionQuestion {
             meta,
@@ -720,6 +746,27 @@ mod tests {
         assert_eq!(
             tool.output.as_deref(),
             Some("Tool: list_tasks\nTool: finalize_plan")
+        );
+    }
+
+    #[test]
+    fn a_stop_reads_in_words_and_an_ended_turn_is_no_block() {
+        let stop = |reason: &str| event(reason, "stop", json!({"stop_reason": reason}));
+        let note = |reason: &str| match fold(&[stop(reason)]).as_slice() {
+            [TranscriptItem::SystemNote { text, .. }] => text.clone(),
+            items => panic!("{items:?}"),
+        };
+
+        assert!(fold(&[stop("end_turn")]).is_empty());
+        assert_eq!(note("cancelled"), "turn cancelled");
+        assert_eq!(note("max_tokens"), "turn stopped: token limit reached");
+        assert_eq!(note("some_new_reason"), "turn stopped: some new reason");
+        assert_eq!(
+            fold(&[event("stop", "stop", json!({}))]),
+            [TranscriptItem::SystemNote {
+                meta: super::ItemMeta::from_event(&event("stop", "stop", json!({}))),
+                text: "turn stopped".into(),
+            }]
         );
     }
 
