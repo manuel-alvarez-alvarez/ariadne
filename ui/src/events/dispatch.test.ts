@@ -129,7 +129,39 @@ describe("memory events", () => {
 
     expect(stale(queryClient, qk.memories.list({ repository: REPOSITORY.id }))).toBe(true)
   })
+
+  it("refetches every list that holds a saved global memory", () => {
+    const queryClient = globalMemoryLists()
+
+    dispatch(queryClient, { event: "memory_created", data: aMemory({ repository_id: null }) })
+
+    for (const key of GLOBAL_MEMORY_LISTS) expect(stale(queryClient, key)).toBe(true)
+  })
+
+  it("refetches every list that held a deleted global memory", () => {
+    const queryClient = globalMemoryLists()
+
+    dispatch(queryClient, {
+      event: "memory_deleted",
+      data: { id: MEMORY.id, repository_id: null },
+    })
+
+    for (const key of GLOBAL_MEMORY_LISTS) expect(stale(queryClient, key)).toBe(true)
+  })
 })
+
+/** The lists a global memory is in: its own scope, every scope, a repository's page. */
+const GLOBAL_MEMORY_LISTS = [
+  qk.memories.list({ scope: "global" }),
+  qk.memories.list({}),
+  qk.memories.list({ repository: REPOSITORY.id }),
+]
+
+function globalMemoryLists(): QueryClient {
+  const queryClient = new QueryClient()
+  for (const key of GLOBAL_MEMORY_LISTS) queryClient.setQueryData(key, [])
+  return queryClient
+}
 
 describe("knowledge events (022)", () => {
   /** A client showing the knowledge page, next to everything else. */

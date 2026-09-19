@@ -108,7 +108,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List agent events (poll with `after` for tailing). */
+        /**
+         * List agent events (poll with `after` for tailing, or read the newest with
+         *     `order=desc` and walk back with `before`).
+         */
         get: operations["events_list"];
         put?: never;
         post?: never;
@@ -328,6 +331,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/knowledge/impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["knowledge_impact"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/interactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["knowledge_interactions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["knowledge_map"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/outline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["knowledge_outline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["knowledge_path"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["knowledge_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/symbol": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["knowledge_symbol"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/logs": {
         parameters: {
             query?: never;
@@ -365,6 +480,54 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["memories_list"];
+        put?: never;
+        post: operations["memories_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memories/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["memories_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["memories_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -497,30 +660,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/repositories/{repository_id}/memories": {
+    "/v1/repositories/{id}/knowledge": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["memories_list"];
-        put?: never;
-        post: operations["memories_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/repositories/{repository_id}/memories/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["memories_search"];
+        get: operations["knowledge_status"];
         put?: never;
         post?: never;
         delete?: never;
@@ -529,7 +676,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/repositories/{repository_id}/memories/{id}": {
+    "/v1/repositories/{id}/knowledge/reindex": {
         parameters: {
             query?: never;
             header?: never;
@@ -538,8 +685,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post?: never;
-        delete: operations["memories_delete"];
+        post: operations["knowledge_reindex"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1267,8 +1414,13 @@ export interface components {
             title: string;
         };
         CreateMemoryRequest: {
-            /** @description The RFC 3339 time after which this entry stays hidden. */
-            expires_at: string;
+            /**
+             * @description The RFC 3339 time after which this entry stays hidden. Omit it for an
+             *     entry that never expires.
+             */
+            expires_at?: string | null;
+            /** @description The repository the fact is about. Omit it to save a global fact. */
+            repository_id?: string | null;
             text: string;
         };
         CreateRepositoryRequest: {
@@ -1423,9 +1575,19 @@ export interface components {
             /** @enum {string} */
             event: "memory_created";
         } | {
-            data: components["schemas"]["DeletedDto"];
+            data: components["schemas"]["MemoryDeletedDto"];
             /** @enum {string} */
             event: "memory_deleted";
+        } | {
+            /** @description The knowledge base read one ref of a repository. */
+            data: components["schemas"]["KnowledgeIndexedDto"];
+            /** @enum {string} */
+            event: "knowledge_indexed";
+        } | {
+            /** @description An index run of a repository failed. */
+            data: components["schemas"]["KnowledgeFailedDto"];
+            /** @enum {string} */
+            event: "knowledge_failed";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -1446,6 +1608,11 @@ export interface components {
             /** @example high */
             id: string;
         };
+        /**
+         * @description Which end of the recorded events a page of `GET /v1/events` is taken from.
+         * @enum {string}
+         */
+        EventOrder: "asc" | "desc";
         /** @description An active goal that receives the new task. */
         ExistingOutsideSessionGoal: {
             id: string;
@@ -1533,6 +1700,294 @@ export interface components {
             version: string;
         };
         /**
+         * @description What one definition is joined to, on `detail=context`. Each list holds
+         *     the definition's own repository first, then the other repositories'
+         *     ends.
+         */
+        KnowledgeContextDto: {
+            callees: components["schemas"]["KnowledgeRelatedDto"][];
+            /** @description Up to 20 of each. */
+            callers: components["schemas"]["KnowledgeRelatedDto"][];
+            implementations: components["schemas"]["KnowledgeRelatedDto"][];
+            /**
+             * @description How many entries each list held past its cap, 0 where the list is
+             *     whole.
+             */
+            more?: components["schemas"]["KnowledgeContextMoreDto"];
+            /**
+             * @description What names it without calling it: a type annotation, an import, a
+             *     reference from another repository.
+             */
+            references?: components["schemas"]["KnowledgeRelatedDto"][];
+            /** @description The tests at most two edges away. */
+            tests: components["schemas"]["KnowledgeRelatedDto"][];
+        };
+        /**
+         * @description How many entries each list of a [`KnowledgeContextDto`] held back past
+         *     its cap, 0 where the list is whole.
+         */
+        KnowledgeContextMoreDto: {
+            /** Format: int64 */
+            callees: number;
+            /** Format: int64 */
+            callers: number;
+            /** Format: int64 */
+            implementations: number;
+            /** Format: int64 */
+            references: number;
+            /** Format: int64 */
+            tests: number;
+        };
+        /**
+         * @description How much `GET /v1/knowledge/symbol` answers with.
+         * @enum {string}
+         */
+        KnowledgeDetail: "outline" | "source" | "context";
+        /** @description One edge between two repositories. */
+        KnowledgeEdgeDto: {
+            /**
+             * Format: int64
+             * @description How many definitions matched at that step.
+             */
+            candidates: number;
+            /** @description `exact` or `heuristic`. */
+            confidence: string;
+            from: components["schemas"]["KnowledgeEndpointDto"];
+            /**
+             * @description Which step joined the two ends: `path` or `name` for a dependency,
+             *     `route` for a route use, `name` for a variable and for a reference.
+             */
+            step: string;
+            to: components["schemas"]["KnowledgeEndpointDto"];
+        };
+        /** @description One end of an interaction. */
+        KnowledgeEndpointDto: {
+            /**
+             * Format: int64
+             * @description 1-based.
+             */
+            line: number;
+            path: string;
+            repository_id: string;
+            /**
+             * @description The definition at that end, or what the edge is about where the end
+             *     is no definition: the package, the route, the variable.
+             */
+            symbol: string;
+        };
+        /** @description Payload of `knowledge_failed`: an index run of a repository failed. */
+        KnowledgeFailedDto: {
+            error: string;
+            repository_id: string;
+        };
+        /** @description One search answer. */
+        KnowledgeHitDto: {
+            kind: string;
+            /**
+             * Format: int64
+             * @description The line the definition starts on, 1-based.
+             */
+            line: number;
+            name: string;
+            path: string;
+            repository_id: string;
+            signature: string;
+        };
+        /** @description One caller of a changed definition, and how far from it. */
+        KnowledgeImpactCallerDto: {
+            /**
+             * Format: int64
+             * @description How many definitions matched at that step.
+             */
+            candidates: number;
+            confidence: string;
+            /**
+             * Format: int64
+             * @description 1 is a direct caller.
+             */
+            depth: number;
+            /** Format: int64 */
+            line: number;
+            name: string;
+            path: string;
+            repository_id: string;
+            /** @description Which step answered the name the call was resolved by. */
+            step: string;
+        };
+        /** @description What one changed definition reaches. */
+        KnowledgeImpactDto: {
+            callers: components["schemas"]["KnowledgeImpactCallerDto"][];
+            /**
+             * @description The definitions the walk did not go past, each with more than 200
+             *     callers.
+             */
+            stopped: string[];
+            symbol: components["schemas"]["KnowledgeRelatedDto"];
+        };
+        /** @description Payload of `knowledge_indexed`: one ref of one repository was read. */
+        KnowledgeIndexedDto: {
+            commit: string;
+            /** Format: int64 */
+            files: number;
+            git_ref: string;
+            repository_id: string;
+            /** Format: int64 */
+            symbols: number;
+        };
+        /**
+         * @description The interactions of one kind: `depends_on`, `references`, `calls_route`
+         *     or `sets_env`.
+         */
+        KnowledgeInteractionGroupDto: {
+            edges: components["schemas"]["KnowledgeEdgeDto"][];
+            kind: string;
+        };
+        KnowledgeLanguageDto: {
+            /** Format: int64 */
+            files: number;
+            language: string;
+        };
+        /**
+         * @description The map of one ref: the files that carry it, ranked, with the definitions
+         *     most of the ref points at.
+         */
+        KnowledgeMapDto: {
+            /**
+             * Format: int64
+             * @description How many files the text names.
+             */
+            files: number;
+            /**
+             * Format: int64
+             * @description The ranked files the text did not hold, 0 where the budget held
+             *     every one of them.
+             */
+            files_left?: number;
+            git_ref: string;
+            repository_id: string;
+            /** @description The map itself, plain text and under the budget. */
+            text: string;
+            /**
+             * Format: int64
+             * @description How long the text is, in tokens.
+             */
+            tokens: number;
+        };
+        /** @description One definition of an outline. */
+        KnowledgeOutlineEntryDto: {
+            /** Format: int64 */
+            end_line: number;
+            kind: string;
+            name: string;
+            signature: string;
+            /**
+             * Format: int64
+             * @description 1-based, inclusive.
+             */
+            start_line: number;
+        };
+        /** @description The shortest directed path between two symbol names. */
+        KnowledgePathDto: {
+            hops: components["schemas"]["KnowledgePathHopDto"][];
+        };
+        /** @description One definition on a shortest path. The edge fields name the edge into it. */
+        KnowledgePathHopDto: {
+            /** @description Empty on the first hop; otherwise `exact` or `heuristic`. */
+            confidence?: string | null;
+            /** @description Empty on the first hop. */
+            edge_kind?: string | null;
+            kind: string;
+            /**
+             * Format: int64
+             * @description The line the definition starts on, 1-based.
+             */
+            line: number;
+            name: string;
+            path: string;
+            repository_id: string;
+        };
+        /** @description One ref indexed for a repository. */
+        KnowledgeRefDto: {
+            /** @description The commit the ref was last read at. */
+            commit: string;
+            /** Format: int64 */
+            files: number;
+            git_ref: string;
+            indexed_at: string;
+            /** Format: int64 */
+            symbols: number;
+        };
+        /** @description One end of an edge: a caller, a callee, an implementation or a test. */
+        KnowledgeRelatedDto: {
+            /**
+             * Format: int64
+             * @description How many definitions matched at that step.
+             */
+            candidates: number;
+            /**
+             * @description `exact` where one definition matched the name, `heuristic` where
+             *     several did.
+             */
+            confidence: string;
+            /**
+             * Format: int64
+             * @description The line the definition starts on, 1-based.
+             */
+            line: number;
+            name: string;
+            path: string;
+            repository_id: string;
+            /**
+             * @description Which step answered the name: `file`, `directory`, `import` or
+             *     `repository` within one repository, and `name` across two. Null where
+             *     the end is a definition itself rather than the other end of an edge.
+             */
+            step?: string | null;
+        };
+        /**
+         * @description Where a repository's index stands.
+         * @enum {string}
+         */
+        KnowledgeState: "idle" | "indexing" | "failed" | "disabled";
+        /** @description Response of `GET /v1/repositories/{id}/knowledge`. */
+        KnowledgeStatusDto: {
+            /** @description Why the last run failed, on a `failed` repository. */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description Distinct paths indexed across the repository's refs.
+             */
+            files: number;
+            languages: components["schemas"]["KnowledgeLanguageDto"][];
+            refs: components["schemas"]["KnowledgeRefDto"][];
+            repository_id: string;
+            state: components["schemas"]["KnowledgeState"];
+            /**
+             * Format: int64
+             * @description Symbols of the files those paths hold.
+             */
+            symbols: number;
+        };
+        /** @description One definition of a name. */
+        KnowledgeSymbolDto: {
+            context?: null | components["schemas"]["KnowledgeContextDto"];
+            doc?: string | null;
+            /** Format: int64 */
+            end_line: number;
+            kind: string;
+            name: string;
+            path: string;
+            repository_id: string;
+            signature: string;
+            /** @description The text of the definition, on `detail=source`. */
+            source?: string | null;
+            /**
+             * Format: int64
+             * @description 1-based, inclusive.
+             */
+            start_line: number;
+        };
+        /**
          * @description How one task ends.
          *
          *     The one thing about the end of a task the author has to be told, since the
@@ -1573,15 +2028,42 @@ export interface components {
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
         };
+        /** @description Payload of `memory_deleted`: the entry that went, and its scope. */
+        MemoryDeletedDto: {
+            id: string;
+            /** @description The repository the entry was about, or null when it was global. */
+            repository_id?: string | null;
+        };
         MemoryDto: {
             created_at: string;
-            expires_at: string;
+            /**
+             * @description The RFC 3339 time after which this entry stays hidden, or null when it
+             *     never expires.
+             */
+            expires_at?: string | null;
             id: string;
-            repository_id: string;
-            source_goal_id: string;
-            source_session_id: string;
+            /** @description The repository the fact is about, or null when it is global. */
+            repository_id?: string | null;
+            source_goal_id?: string | null;
+            /**
+             * @description The session that saved the fact, and its task and goal. All null when
+             *     the user saved it.
+             */
+            source_session_id?: string | null;
             source_task_id?: string | null;
             text: string;
+        };
+        /**
+         * @description Which memories a list or a search reads.
+         * @enum {string}
+         */
+        MemoryScope: "repository" | "global" | "all";
+        /** @description Search hits and whether newest memories stand in for a word match. */
+        MemorySearchResult: {
+            /** @description True where no word matched and the newest memories are the answer. */
+            fallback: boolean;
+            /** @description Matching memories, or newest active memories when `fallback` is true. */
+            hits: components["schemas"]["MemoryDto"][];
         };
         MessageDto: {
             body: string;
@@ -2260,6 +2742,21 @@ export interface operations {
                 session?: string | null;
                 /** @description Filter by task id. */
                 task?: string | null;
+                /**
+                 * @description Filter by goal id: every event whose session, or whose task, belongs
+                 *     to that goal.
+                 */
+                goal?: string | null;
+                /**
+                 * @description Return events with an id less than this one, which is how a descending
+                 *     page walks further back.
+                 */
+                before?: string | null;
+                /**
+                 * @description Which end of the recorded events the page is taken from (default
+                 *     `asc`).
+                 */
+                order?: null | components["schemas"]["EventOrder"];
                 /** @description Return items with id greater than this. */
                 after?: string | null;
                 /** @description Max items to return (default 50, cap 200). */
@@ -2584,6 +3081,15 @@ export interface operations {
                 to_agent_id?: string | null;
                 /** @description Only the ones that have not reached their agent yet. */
                 undelivered?: boolean;
+                /**
+                 * @description Hand the caller its own undelivered messages: narrow the list to the
+                 *     calling session's agent, and stamp every row it returns delivered.
+                 *
+                 *     This is a delivery, not a read. It needs a session behind it, and it
+                 *     is what makes a read of the channel count the same as a prompt: a
+                 *     message handed over here is never handed over again.
+                 */
+                deliver?: boolean;
             };
             header?: never;
             path: {
@@ -2662,6 +3168,339 @@ export interface operations {
             };
         };
     };
+    knowledge_impact: {
+        parameters: {
+            query: {
+                /** @description One repository id. */
+                repository: string;
+                /** @description The branch to read. Omit it for the caller's own. */
+                git_ref?: string | null;
+                /** @description The name of the changed definition. Pass this or `diff`, never both. */
+                symbol?: string | null;
+                /** @description `<base>..<head>`: every definition the diff changed. */
+                diff?: string | null;
+                /** @description How far to walk the callers (default 2, max 4). */
+                depth?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeImpactDto"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge base is disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    knowledge_interactions: {
+        parameters: {
+            query: {
+                /** @description One repository id. */
+                repository: string;
+                /** @description The branch to read. Omit it for the caller's own. */
+                git_ref?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeInteractionGroupDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge base is disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    knowledge_map: {
+        parameters: {
+            query: {
+                /** @description One repository id. */
+                repository: string;
+                /** @description The branch to read. Omit it for the caller's own. */
+                git_ref?: string | null;
+                /** @description Rank the files around this one first, and the rest after them. */
+                path?: string | null;
+                /**
+                 * @description How long the map may be, in tokens (default 1000, max 4000). One
+                 *     token is four characters.
+                 */
+                budget?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeMapDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge base is disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    knowledge_outline: {
+        parameters: {
+            query: {
+                repository: string;
+                /** @description The path of the file, relative to the repository root. */
+                path: string;
+                /**
+                 * @description The branch to read. Omit it for the caller's own: a task session's
+                 *     branch, else the base branch.
+                 */
+                git_ref?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeOutlineEntryDto"][];
+                };
+            };
+            /** @description no such repository, or the path is not indexed at the ref */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge base is disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    knowledge_path: {
+        parameters: {
+            query: {
+                /** @description One repository id. */
+                repository: string;
+                /** @description The name of every starting definition. */
+                from: string;
+                /** @description The name of every ending definition. */
+                to: string;
+                /** @description The branch to read. Omit it for the caller's own. */
+                git_ref?: string | null;
+                /** @description How far to walk the directed edges (default 6, max 10). */
+                depth?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgePathDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge base is disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    knowledge_search: {
+        parameters: {
+            query: {
+                /**
+                 * @description The identifier to find. Words, camelCase and snake_case parts all
+                 *     match, each as a prefix.
+                 */
+                q: string;
+                /**
+                 * @description One repository id. Omit it for the caller's repositories: an agent
+                 *     session's goal, or every repository for a user.
+                 */
+                repository?: string | null;
+                /** @description Search every registered repository. Only an agent session needs it. */
+                all?: boolean | null;
+                /**
+                 * @description The branch to read. Omit it for the caller's own: a task session's
+                 *     branch, else the base branch of each repository.
+                 */
+                git_ref?: string | null;
+                /**
+                 * @description Only symbols of this kind: `function`, `method`, `class`, `module`,
+                 *     `interface`, `macro`, `constant`, `test`, `heading`.
+                 */
+                kind?: string | null;
+                /** @description Only paths that contain this text. */
+                path?: string | null;
+                /** @description How many results at most (default 20, max 50). */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeHitDto"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge base is disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    knowledge_symbol: {
+        parameters: {
+            query: {
+                /** @description The name of the definition, spelled in full. */
+                name: string;
+                /** @description One repository id. Omit it for the caller's repositories. */
+                repository?: string | null;
+                /** @description The branch to read. Omit it for the caller's own. */
+                git_ref?: string | null;
+                /** @description `outline` (default), `source` or `context`. */
+                detail?: null | components["schemas"]["KnowledgeDetail"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSymbolDto"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge base is disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     logs_snapshot: {
         parameters: {
             query?: {
@@ -2701,6 +3540,171 @@ export interface operations {
                 content: {
                     "text/event-stream": components["schemas"]["LogSnapshotResponse"];
                 };
+            };
+        };
+    };
+    memories_list: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Read the memories of this repository. Omit it for every repository the
+                 *     caller may read.
+                 */
+                repository?: string | null;
+                /** @description `all` (default), `repository` or `global`. */
+                scope?: null | components["schemas"]["MemoryScope"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryDto"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memories_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMemoryRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memories_search: {
+        parameters: {
+            query: {
+                /** @description Find entries that hold any word, or a prefix of a word, in this text. */
+                q: string;
+                /**
+                 * @description Search the memories of this repository. Omit it for every repository
+                 *     the caller may read.
+                 */
+                repository?: string | null;
+                /** @description `all` (default), `repository` or `global`. */
+                scope?: null | components["schemas"]["MemoryScope"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySearchResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    memories_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description memory id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -3008,148 +4012,62 @@ export interface operations {
             };
         };
     };
-    memories_list: {
+    knowledge_status: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 /** @description repository id */
-                repository_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MemoryDto"][];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    memories_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description repository id */
-                repository_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateMemoryRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MemoryDto"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    memories_search: {
-        parameters: {
-            query: {
-                /** @description Find entries that contain this text, without case sensitivity. */
-                q: string;
-            };
-            header?: never;
-            path: {
-                /** @description repository id */
-                repository_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MemoryDto"][];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    memories_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description repository id */
-                repository_id: string;
-                /** @description memory id */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
+                content: {
+                    "application/json": components["schemas"]["KnowledgeStatusDto"];
                 };
-                content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    knowledge_reindex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description repository id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeStatusDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge base is disabled */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3234,6 +4152,13 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the console streamed faster than a snapshot could be read, every time it was tried; ask again */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3772,6 +4697,15 @@ export interface operations {
                 to_agent_id?: string | null;
                 /** @description Only the ones that have not reached their agent yet. */
                 undelivered?: boolean;
+                /**
+                 * @description Hand the caller its own undelivered messages: narrow the list to the
+                 *     calling session's agent, and stamp every row it returns delivered.
+                 *
+                 *     This is a delivery, not a read. It needs a session behind it, and it
+                 *     is what makes a read of the channel count the same as a prompt: a
+                 *     message handed over here is never handed over again.
+                 */
+                deliver?: boolean;
             };
             header?: never;
             path: {

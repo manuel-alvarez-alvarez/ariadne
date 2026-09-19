@@ -125,14 +125,13 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
       break
     }
-    case "memory_created": {
-      // A memory carries no id of its own to key a detail on and list results
-      // are filtered by repository and search text, so — like `agent_event` —
-      // the only sound move is to refetch every open list.
-      void queryClient.invalidateQueries({ queryKey: qk.memories.lists() })
-      break
-    }
+    case "memory_created":
     case "memory_deleted": {
+      // A memory carries no id of its own to key a detail on, and list results
+      // are filtered by repository, scope and search text. A global memory
+      // (`repository_id` null) sits in the global list, the list of every
+      // scope and every repository's own list beside it, so — like
+      // `agent_event` — the only sound move is to refetch every open list.
       void queryClient.invalidateQueries({ queryKey: qk.memories.lists() })
       break
     }

@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
     },
-    "version": "0.6.0"
+    "version": "0.7.0"
   },
   "paths": {
     "/v1/acp-agents": {
@@ -154,7 +154,7 @@
         "tags": [
           "events"
         ],
-        "summary": "List agent events (poll with `after` for tailing).",
+        "summary": "List agent events (poll with `after` for tailing, or read the newest with\n`order=desc` and walk back with `before`).",
         "operationId": "list",
         "parameters": [
           {
@@ -178,6 +178,46 @@
               "type": [
                 "string",
                 "null"
+              ]
+            }
+          },
+          {
+            "name": "goal",
+            "in": "query",
+            "description": "Filter by goal id: every event whose session, or whose task, belongs\nto that goal.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Return events with an id less than this one, which is how a descending\npage walks further back.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Which end of the recorded events the page is taken from (default\n`asc`).",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/EventOrder"
+                }
               ]
             }
           },
@@ -632,6 +672,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "deliver",
+            "in": "query",
+            "description": "Hand the caller its own undelivered messages: narrow the list to the\ncalling session's agent, and stamp every row it returns delivered.\n\nThis is a delivery, not a read. It needs a session behind it, and it\nis what makes a read of the channel count the same as a prompt: a\nmessage handed over here is never handed over again.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -718,6 +767,566 @@
         }
       }
     },
+    "/v1/knowledge/impact": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "impact",
+        "parameters": [
+          {
+            "name": "repository",
+            "in": "query",
+            "description": "One repository id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_ref",
+            "in": "query",
+            "description": "The branch to read. Omit it for the caller's own.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "description": "The name of the changed definition. Pass this or `diff`, never both.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "diff",
+            "in": "query",
+            "description": "`<base>..<head>`: every definition the diff changed.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "depth",
+            "in": "query",
+            "description": "How far to walk the callers (default 2, max 4).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeImpactDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": "the knowledge base is disabled"
+          }
+        }
+      }
+    },
+    "/v1/knowledge/interactions": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "interactions",
+        "parameters": [
+          {
+            "name": "repository",
+            "in": "query",
+            "description": "One repository id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_ref",
+            "in": "query",
+            "description": "The branch to read. Omit it for the caller's own.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeInteractionGroupDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": "the knowledge base is disabled"
+          }
+        }
+      }
+    },
+    "/v1/knowledge/map": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "map",
+        "parameters": [
+          {
+            "name": "repository",
+            "in": "query",
+            "description": "One repository id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_ref",
+            "in": "query",
+            "description": "The branch to read. Omit it for the caller's own.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Rank the files around this one first, and the rest after them.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "budget",
+            "in": "query",
+            "description": "How long the map may be, in tokens (default 1000, max 4000). One\ntoken is four characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeMapDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": "the knowledge base is disabled"
+          }
+        }
+      }
+    },
+    "/v1/knowledge/outline": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "outline",
+        "parameters": [
+          {
+            "name": "repository",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "The path of the file, relative to the repository root.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_ref",
+            "in": "query",
+            "description": "The branch to read. Omit it for the caller's own: a task session's\nbranch, else the base branch.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeOutlineEntryDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such repository, or the path is not indexed at the ref"
+          },
+          "409": {
+            "description": "the knowledge base is disabled"
+          }
+        }
+      }
+    },
+    "/v1/knowledge/path": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "path",
+        "parameters": [
+          {
+            "name": "repository",
+            "in": "query",
+            "description": "One repository id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "The name of every starting definition.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "The name of every ending definition.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_ref",
+            "in": "query",
+            "description": "The branch to read. Omit it for the caller's own.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "depth",
+            "in": "query",
+            "description": "How far to walk the directed edges (default 6, max 10).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgePathDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": "the knowledge base is disabled"
+          }
+        }
+      }
+    },
+    "/v1/knowledge/search": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "The identifier to find. Words, camelCase and snake_case parts all\nmatch, each as a prefix.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repository",
+            "in": "query",
+            "description": "One repository id. Omit it for the caller's repositories: an agent\nsession's goal, or every repository for a user.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "description": "Search every registered repository. Only an agent session needs it.",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "git_ref",
+            "in": "query",
+            "description": "The branch to read. Omit it for the caller's own: a task session's\nbranch, else the base branch of each repository.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Only symbols of this kind: `function`, `method`, `class`, `module`,\n`interface`, `macro`, `constant`, `test`, `heading`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Only paths that contain this text.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many results at most (default 20, max 50).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeHitDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": "the knowledge base is disabled"
+          }
+        }
+      }
+    },
+    "/v1/knowledge/symbol": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "symbol",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "The name of the definition, spelled in full.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repository",
+            "in": "query",
+            "description": "One repository id. Omit it for the caller's repositories.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "git_ref",
+            "in": "query",
+            "description": "The branch to read. Omit it for the caller's own.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "detail",
+            "in": "query",
+            "description": "`outline` (default), `source` or `context`.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/KnowledgeDetail"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeSymbolDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": "the knowledge base is disabled"
+          }
+        }
+      }
+    },
     "/v1/logs": {
       "get": {
         "tags": [
@@ -772,6 +1381,203 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/memories": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "repository",
+            "in": "query",
+            "description": "Read the memories of this repository. Omit it for every repository the\ncaller may read.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`all` (default), `repository` or `global`.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/MemoryScope"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMemoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/memories/search": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Find entries that hold any word, or a prefix of a word, in this text.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repository",
+            "in": "query",
+            "description": "Search the memories of this repository. Omit it for every repository\nthe caller may read.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`all` (default), `repository` or `global`.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/MemoryScope"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemorySearchResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/memories/{id}": {
+      "delete": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "memory id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
           }
         }
       }
@@ -1174,163 +1980,17 @@
         }
       }
     },
-    "/v1/repositories/{repository_id}/memories": {
+    "/v1/repositories/{id}/knowledge": {
       "get": {
         "tags": [
-          "memories"
+          "knowledge"
         ],
-        "operationId": "list",
+        "operationId": "status",
         "parameters": [
-          {
-            "name": "repository_id",
-            "in": "path",
-            "description": "repository id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MemoryDto"
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "memories"
-        ],
-        "operationId": "create",
-        "parameters": [
-          {
-            "name": "repository_id",
-            "in": "path",
-            "description": "repository id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateMemoryRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/repositories/{repository_id}/memories/search": {
-      "get": {
-        "tags": [
-          "memories"
-        ],
-        "operationId": "search",
-        "parameters": [
-          {
-            "name": "repository_id",
-            "in": "path",
-            "description": "repository id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "description": "Find entries that contain this text, without case sensitivity.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MemoryDto"
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/repositories/{repository_id}/memories/{id}": {
-      "delete": {
-        "tags": [
-          "memories"
-        ],
-        "operationId": "delete",
-        "parameters": [
-          {
-            "name": "repository_id",
-            "in": "path",
-            "description": "repository id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "id",
             "in": "path",
-            "description": "memory id",
+            "description": "repository id",
             "required": true,
             "schema": {
               "type": "string"
@@ -1338,14 +1998,55 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeStatusDto"
+                }
+              }
+            }
           },
           "404": {
             "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}/knowledge/reindex": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "reindex",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "repository id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeStatusDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": "the knowledge base is disabled"
           }
         }
       }
@@ -1497,6 +2198,9 @@
           },
           "404": {
             "description": ""
+          },
+          "503": {
+            "description": "the console streamed faster than a snapshot could be read, every time it was tried; ask again"
           }
         }
       }
@@ -2174,6 +2878,15 @@
             "name": "undelivered",
             "in": "query",
             "description": "Only the ones that have not reached their agent yet.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "deliver",
+            "in": "query",
+            "description": "Hand the caller its own undelivered messages: narrow the list to the\ncalling session's agent, and stamp every row it returns delivered.\n\nThis is a delivery, not a read. It needs a session behind it, and it\nis what makes a read of the channel count the same as a prompt: a\nmessage handed over here is never handed over again.",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -2933,13 +3646,22 @@
       "CreateMemoryRequest": {
         "type": "object",
         "required": [
-          "text",
-          "expires_at"
+          "text"
         ],
         "properties": {
           "expires_at": {
-            "type": "string",
-            "description": "The RFC 3339 time after which this entry stays hidden."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The RFC 3339 time after which this entry stays hidden. Omit it for an\nentry that never expires."
+          },
+          "repository_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The repository the fact is about. Omit it to save a global fact."
           },
           "text": {
             "type": "string"
@@ -3446,12 +4168,52 @@
             ],
             "properties": {
               "data": {
-                "$ref": "#/components/schemas/DeletedDto"
+                "$ref": "#/components/schemas/MemoryDeletedDto"
               },
               "event": {
                 "type": "string",
                 "enum": [
                   "memory_deleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The knowledge base read one ref of a repository.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/KnowledgeIndexedDto",
+                "description": "The knowledge base read one ref of a repository."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "knowledge_indexed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An index run of a repository failed.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/KnowledgeFailedDto",
+                "description": "An index run of a repository failed."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "knowledge_failed"
                 ]
               }
             }
@@ -3483,6 +4245,14 @@
             "example": "high"
           }
         }
+      },
+      "EventOrder": {
+        "type": "string",
+        "description": "Which end of the recorded events a page of `GET /v1/events` is taken from.",
+        "enum": [
+          "asc",
+          "desc"
+        ]
       },
       "ExistingOutsideSessionGoal": {
         "type": "object",
@@ -3642,6 +4412,669 @@
           }
         }
       },
+      "KnowledgeContextDto": {
+        "type": "object",
+        "description": "What one definition is joined to, on `detail=context`. Each list holds\nthe definition's own repository first, then the other repositories'\nends.",
+        "required": [
+          "callers",
+          "callees",
+          "implementations",
+          "tests"
+        ],
+        "properties": {
+          "callees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeRelatedDto"
+            }
+          },
+          "callers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeRelatedDto"
+            },
+            "description": "Up to 20 of each."
+          },
+          "implementations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeRelatedDto"
+            }
+          },
+          "more": {
+            "$ref": "#/components/schemas/KnowledgeContextMoreDto",
+            "description": "How many entries each list held past its cap, 0 where the list is\nwhole."
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeRelatedDto"
+            },
+            "description": "What names it without calling it: a type annotation, an import, a\nreference from another repository."
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeRelatedDto"
+            },
+            "description": "The tests at most two edges away."
+          }
+        }
+      },
+      "KnowledgeContextMoreDto": {
+        "type": "object",
+        "description": "How many entries each list of a [`KnowledgeContextDto`] held back past\nits cap, 0 where the list is whole.",
+        "required": [
+          "callers",
+          "callees",
+          "implementations",
+          "references",
+          "tests"
+        ],
+        "properties": {
+          "callees": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "callers": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "implementations": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "references": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tests": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "KnowledgeDetail": {
+        "type": "string",
+        "description": "How much `GET /v1/knowledge/symbol` answers with.",
+        "enum": [
+          "outline",
+          "source",
+          "context"
+        ]
+      },
+      "KnowledgeEdgeDto": {
+        "type": "object",
+        "description": "One edge between two repositories.",
+        "required": [
+          "from",
+          "to",
+          "confidence",
+          "step",
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many definitions matched at that step."
+          },
+          "confidence": {
+            "type": "string",
+            "description": "`exact` or `heuristic`."
+          },
+          "from": {
+            "$ref": "#/components/schemas/KnowledgeEndpointDto"
+          },
+          "step": {
+            "type": "string",
+            "description": "Which step joined the two ends: `path` or `name` for a dependency,\n`route` for a route use, `name` for a variable and for a reference."
+          },
+          "to": {
+            "$ref": "#/components/schemas/KnowledgeEndpointDto"
+          }
+        }
+      },
+      "KnowledgeEndpointDto": {
+        "type": "object",
+        "description": "One end of an interaction.",
+        "required": [
+          "repository_id",
+          "path",
+          "line",
+          "symbol"
+        ],
+        "properties": {
+          "line": {
+            "type": "integer",
+            "format": "int64",
+            "description": "1-based."
+          },
+          "path": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string",
+            "description": "The definition at that end, or what the edge is about where the end\nis no definition: the package, the route, the variable."
+          }
+        }
+      },
+      "KnowledgeFailedDto": {
+        "type": "object",
+        "description": "Payload of `knowledge_failed`: an index run of a repository failed.",
+        "required": [
+          "repository_id",
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeHitDto": {
+        "type": "object",
+        "description": "One search answer.",
+        "required": [
+          "repository_id",
+          "path",
+          "line",
+          "kind",
+          "name",
+          "signature"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The line the definition starts on, 1-based."
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeImpactCallerDto": {
+        "type": "object",
+        "description": "One caller of a changed definition, and how far from it.",
+        "required": [
+          "depth",
+          "repository_id",
+          "path",
+          "line",
+          "name",
+          "confidence",
+          "step",
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many definitions matched at that step."
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "depth": {
+            "type": "integer",
+            "format": "int64",
+            "description": "1 is a direct caller."
+          },
+          "line": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string",
+            "description": "Which step answered the name the call was resolved by."
+          }
+        }
+      },
+      "KnowledgeImpactDto": {
+        "type": "object",
+        "description": "What one changed definition reaches.",
+        "required": [
+          "symbol",
+          "callers",
+          "stopped"
+        ],
+        "properties": {
+          "callers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeImpactCallerDto"
+            }
+          },
+          "stopped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The definitions the walk did not go past, each with more than 200\ncallers."
+          },
+          "symbol": {
+            "$ref": "#/components/schemas/KnowledgeRelatedDto"
+          }
+        }
+      },
+      "KnowledgeIndexedDto": {
+        "type": "object",
+        "description": "Payload of `knowledge_indexed`: one ref of one repository was read.",
+        "required": [
+          "repository_id",
+          "git_ref",
+          "commit",
+          "files",
+          "symbols"
+        ],
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "git_ref": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "symbols": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "KnowledgeInteractionGroupDto": {
+        "type": "object",
+        "description": "The interactions of one kind: `depends_on`, `references`, `calls_route`\nor `sets_env`.",
+        "required": [
+          "kind",
+          "edges"
+        ],
+        "properties": {
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeEdgeDto"
+            }
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeLanguageDto": {
+        "type": "object",
+        "required": [
+          "language",
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "language": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeMapDto": {
+        "type": "object",
+        "description": "The map of one ref: the files that carry it, ranked, with the definitions\nmost of the ref points at.",
+        "required": [
+          "repository_id",
+          "git_ref",
+          "text",
+          "tokens",
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many files the text names."
+          },
+          "files_left": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The ranked files the text did not hold, 0 where the budget held\nevery one of them."
+          },
+          "git_ref": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "The map itself, plain text and under the budget."
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long the text is, in tokens."
+          }
+        }
+      },
+      "KnowledgeOutlineEntryDto": {
+        "type": "object",
+        "description": "One definition of an outline.",
+        "required": [
+          "kind",
+          "name",
+          "start_line",
+          "end_line",
+          "signature"
+        ],
+        "properties": {
+          "end_line": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "start_line": {
+            "type": "integer",
+            "format": "int64",
+            "description": "1-based, inclusive."
+          }
+        }
+      },
+      "KnowledgePathDto": {
+        "type": "object",
+        "description": "The shortest directed path between two symbol names.",
+        "required": [
+          "hops"
+        ],
+        "properties": {
+          "hops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgePathHopDto"
+            }
+          }
+        }
+      },
+      "KnowledgePathHopDto": {
+        "type": "object",
+        "description": "One definition on a shortest path. The edge fields name the edge into it.",
+        "required": [
+          "repository_id",
+          "path",
+          "line",
+          "kind",
+          "name"
+        ],
+        "properties": {
+          "confidence": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Empty on the first hop; otherwise `exact` or `heuristic`."
+          },
+          "edge_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Empty on the first hop."
+          },
+          "kind": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The line the definition starts on, 1-based."
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeRefDto": {
+        "type": "object",
+        "description": "One ref indexed for a repository.",
+        "required": [
+          "git_ref",
+          "commit",
+          "indexed_at",
+          "files",
+          "symbols"
+        ],
+        "properties": {
+          "commit": {
+            "type": "string",
+            "description": "The commit the ref was last read at."
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "git_ref": {
+            "type": "string"
+          },
+          "indexed_at": {
+            "type": "string"
+          },
+          "symbols": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "KnowledgeRelatedDto": {
+        "type": "object",
+        "description": "One end of an edge: a caller, a callee, an implementation or a test.",
+        "required": [
+          "repository_id",
+          "path",
+          "line",
+          "name",
+          "confidence",
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many definitions matched at that step."
+          },
+          "confidence": {
+            "type": "string",
+            "description": "`exact` where one definition matched the name, `heuristic` where\nseveral did."
+          },
+          "line": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The line the definition starts on, 1-based."
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which step answered the name: `file`, `directory`, `import` or\n`repository` within one repository, and `name` across two. Null where\nthe end is a definition itself rather than the other end of an edge."
+          }
+        }
+      },
+      "KnowledgeState": {
+        "type": "string",
+        "description": "Where a repository's index stands.",
+        "enum": [
+          "idle",
+          "indexing",
+          "failed",
+          "disabled"
+        ]
+      },
+      "KnowledgeStatusDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/repositories/{id}/knowledge`.",
+        "required": [
+          "repository_id",
+          "state",
+          "refs",
+          "files",
+          "symbols",
+          "languages"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last run failed, on a `failed` repository."
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct paths indexed across the repository's refs."
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeLanguageDto"
+            }
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeRefDto"
+            }
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/KnowledgeState"
+          },
+          "symbols": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Symbols of the files those paths hold."
+          }
+        }
+      },
+      "KnowledgeSymbolDto": {
+        "type": "object",
+        "description": "One definition of a name.",
+        "required": [
+          "repository_id",
+          "path",
+          "start_line",
+          "end_line",
+          "kind",
+          "name",
+          "signature"
+        ],
+        "properties": {
+          "context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/KnowledgeContextDto",
+                "description": "On `detail=context`."
+              }
+            ]
+          },
+          "doc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_line": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The text of the definition, on `detail=source`."
+          },
+          "start_line": {
+            "type": "integer",
+            "format": "int64",
+            "description": "1-based, inclusive."
+          }
+        }
+      },
       "Landing": {
         "type": "string",
         "description": "How one task ends.\n\nThe one thing about the end of a task the author has to be told, since the\ncommands it runs differ entirely between the three. The orchestrator agrees\nit with the user task by task: some work lands on the base branch, some\ngoes through a request the author then sees to its merge, and some has\nnothing to land at all — a report filed, a document published, a release\ncut. All three reach [`TaskStatus::Finished`]; landing is one way of\ngetting there rather than the meaning of being there.\n\nWhich forge a published request goes to is *not* here: `origin` says\nwhether it is GitHub or GitLab, and asking the remote at landing time\ncannot go stale the way a second copy of the answer would.",
@@ -3697,35 +5130,65 @@
           }
         }
       },
+      "MemoryDeletedDto": {
+        "type": "object",
+        "description": "Payload of `memory_deleted`: the entry that went, and its scope.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The repository the entry was about, or null when it was global."
+          }
+        }
+      },
       "MemoryDto": {
         "type": "object",
         "required": [
           "id",
-          "repository_id",
           "text",
-          "source_session_id",
-          "source_goal_id",
-          "created_at",
-          "expires_at"
+          "created_at"
         ],
         "properties": {
           "created_at": {
             "type": "string"
           },
           "expires_at": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The RFC 3339 time after which this entry stays hidden, or null when it\nnever expires."
           },
           "id": {
             "type": "string"
           },
           "repository_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The repository the fact is about, or null when it is global."
           },
           "source_goal_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "source_session_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The session that saved the fact, and its task and goal. All null when\nthe user saved it."
           },
           "source_task_id": {
             "type": [
@@ -3735,6 +5198,36 @@
           },
           "text": {
             "type": "string"
+          }
+        }
+      },
+      "MemoryScope": {
+        "type": "string",
+        "description": "Which memories a list or a search reads.",
+        "enum": [
+          "repository",
+          "global",
+          "all"
+        ]
+      },
+      "MemorySearchResult": {
+        "type": "object",
+        "description": "Search hits and whether newest memories stand in for a word match.",
+        "required": [
+          "hits",
+          "fallback"
+        ],
+        "properties": {
+          "fallback": {
+            "type": "boolean",
+            "description": "True where no word matched and the newest memories are the answer."
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryDto"
+            },
+            "description": "Matching memories, or newest active memories when `fallback` is true."
           }
         }
       },
@@ -4834,7 +6327,11 @@
     },
     {
       "name": "memories",
-      "description": "Searchable facts learned about one repository"
+      "description": "Searchable facts learned about one repository, or about every one"
+    },
+    {
+      "name": "knowledge",
+      "description": "The symbol index over every registered repository"
     },
     {
       "name": "goals",

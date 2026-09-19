@@ -71,6 +71,7 @@ const routes: RouteObject[] = [
   // The models were folded into the agents screen; the address outlives it.
   { path: "models", element: <Navigate to={paths.agents()} replace /> },
   { path: "repositories", element: <RepositoriesPage />, handle: { title: "Repositories" } },
+  { path: "memory", element: <MemoryPage />, handle: { title: "Memory" } },
   {
     path: "repositories/:repositoryId/memory",
     element: <MemoryPageRoute />,

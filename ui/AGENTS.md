@@ -138,7 +138,7 @@ the query cache and it stays live.
 | `repository_created` | patch `repositories.detail`, invalidate `repositories.lists` |
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
-| `memory_created`, `memory_deleted` | invalidate `memories.lists` — a memory carries no id worth a detail key, so, like `agent_event`, this simply refetches |
+| `memory_created`, `memory_deleted` | invalidate `memories.lists` — a memory carries no id worth a detail key, and a global one sits in the global list, the every-scope list and each repository's, so, like `agent_event`, this simply refetches |
 | `knowledge_indexed`, `knowledge_failed` | invalidate that repository's `knowledgeStatus` and every `knowledgeInteractions` list under it (022) |
 
 The daemon has **no replay**: anything that happened while the stream was down
@@ -219,21 +219,23 @@ There is no per-feature route file: there are a handful of routes, half of them
 one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
-Five screens have URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
-`#/agents`, `#/repositories` — and `#/` redirects onto the board. Goals, tasks
-and sessions have no pages: their details open as **side panels** driven by
+Six screens have URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
+`#/agents`, `#/repositories`, `#/memory` — and `#/` redirects onto the board.
+Goals, tasks and sessions have no pages: their details open as **side panels** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
 a session's own panel, `?tab=sessions&session=` for a session inside a goal's or
 a task's panel), which `src/components/detail-panels.tsx` reads. The old
 `#/goals/:goalId` and `#/tasks/:taskId` deep links survive as redirects onto the
 board with the panel open.
 
-A repository's memory (019) is the one screen that is neither: it is a full
-page rather than a panel, because there is no list beside it worth keeping on
-screen, reached from a row on `#/repositories` rather than the sidebar at
-`#/repositories/:repositoryId/memory`. Its route reads the id with a small
-wrapper (`MemoryPageRoute`, next to `GoalPanelRedirect` and `TaskPanelRedirect`)
-so the page itself takes `repositoryId` as a prop and stays easy to test.
+Memory (019) has a sidebar screen of its own at `#/memory`, over the global
+memories and every repository's. A repository's memory is the one screen that
+is neither: it is a full page rather than a panel, because there is no list
+beside it worth keeping on screen, reached from a row on `#/repositories`
+rather than the sidebar at `#/repositories/:repositoryId/memory`. Both are
+`MemoryPage`; its route reads the id with a small wrapper (`MemoryPageRoute`,
+next to `GoalPanelRedirect` and `TaskPanelRedirect`) so the page itself takes
+`repositoryId` as a prop and stays easy to test.
 
 **The sessions screen is the one exception**, and the only place a param means
 two things: there `?goal=` and `?task=` are what the *list* is narrowed to — the

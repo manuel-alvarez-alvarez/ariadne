@@ -56,7 +56,9 @@ export const paths = {
   outsideSessions: () => "/sessions/outside",
   agents: () => "/agents",
   repositories: () => "/repositories",
-  /** One repository's saved memory: the list, search and delete screen (019). */
+  /** Every saved memory, global and every repository's: list, search, add and delete (019). */
+  memory: () => "/memory",
+  /** One repository's saved memory and the global ones (019). */
   repositoryMemory: (repositoryId: string) => `/repositories/${repositoryId}/memory`,
   /** One repository's knowledge base: status, reindex, search and interactions (022). */
   repositoryKnowledge: (repositoryId: string) => `/repositories/${repositoryId}/knowledge`,

@@ -15,15 +15,13 @@ import { useDeleteMemory } from "./queries"
 export function DeleteMemoryDialog({
   open,
   onOpenChange,
-  repositoryId,
   memory,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  repositoryId: string
   memory: MemoryDto | null
 }) {
-  const deleteMemory = useDeleteMemory(repositoryId)
+  const deleteMemory = useDeleteMemory()
 
   // Re-opening on another row must not show the previous failure.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `reset` is the trigger's cleanup, not an input
@@ -36,7 +34,7 @@ export function DeleteMemoryDialog({
       open={open}
       onClose={() => onOpenChange(false)}
       title="Delete this memory?"
-      description="Nothing kept a copy: an agent that searches this repository's memory again will not find it."
+      description="Nothing kept a copy: an agent that searches memory again will not find it."
       confirmLabel="Delete memory"
       destructive
       pending={deleteMemory.isPending}

@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/cli/tests.rs
   - ui/src/features/memory/memory-page.test.tsx
+  - ui/src/events/dispatch.test.ts
 ---
 
 # Memory
@@ -77,8 +78,17 @@ Out: prompt injection. Agents choose when to search.
 11. Memory creation emits the complete entry, and memory deletion emits the
     removed id and its repository, which is null for a global memory, on the
     domain event stream (012).
-12. The desktop app has a memory page per repository: it lists, searches and
-    deletes through the same REST endpoints the CLI uses, matching it (015).
+12. The desktop app has a top-level memory page and a memory page per
+    repository, and each lists, searches, adds and deletes through the same
+    REST endpoints the CLI uses, matching it (015). The top-level page shows
+    the global memories and every repository's, and names the scope of each
+    row. A scope filter narrows the list. Its add form takes the text, the
+    scope (global or one repository) and an optional expiry. A repository's
+    page shows its own memories and the global ones, and its add form saves
+    for that repository alone. A refused save shows the daemon's message and
+    keeps the typed text. Where no word of a search matched, a line above the
+    list says so, and the newest memories stand in. A creation or deletion event refreshes every open
+    memory list, so a global memory reaches each list that holds it.
 
 ## Acceptance criteria
 
@@ -144,6 +154,26 @@ Out: prompt injection. Agents choose when to search.
   (`memories.rs::a_taskless_session_saves_two_memories_per_goal`).
 - The FTS index excludes nonmatches and follows text updates and deletes
   (`store.rs::memory_word_search_excludes_nonmatches_and_tracks_text_changes`).
+- The top-level desktop page lists memories of both scopes and names the
+  scope of each row
+  (`memory-page.test.tsx::lists memories of both scopes and names the scope of each row`),
+  and its scope filter shows the global set alone
+  (`::shows the global set alone under the global scope filter`).
+- The desktop add form creates a global memory that the list then shows
+  (`memory-page.test.tsx::adds a global memory, and the list shows it`),
+  creates a memory for one repository
+  (`::adds a memory for one repository`), and on a repository's page saves
+  for that repository alone (`::adds a memory for its own repository alone`).
+- A refused desktop save shows the daemon's message and keeps the typed text
+  (`memory-page.test.tsx::shows the daemon's refusal and keeps the typed text`).
+- The desktop page says so where no search word matched
+  (`memory-page.test.tsx::says no word matched, where the newest memories stand in`).
+- The desktop page deletes an entry of either scope
+  (`memory-page.test.tsx::deletes an entry of either scope`).
+- A creation or deletion event of a global memory refreshes every list that
+  holds it
+  (`dispatch.test.ts::refetches every list that holds a saved global memory`,
+  `::refetches every list that held a deleted global memory`).
 
 ## Sources
 

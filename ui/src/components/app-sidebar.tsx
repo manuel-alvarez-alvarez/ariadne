@@ -1,13 +1,13 @@
 /**
- * The app's navigation. Five screens, in the order an orchestrator asks for
+ * The app's navigation. Six screens, in the order an orchestrator asks for
  * them: what is being worked on, who is working on it right now, what the
- * agents run as, how the agents themselves are launched, and the checkouts
- * they work in.
+ * agents run as, how the agents themselves are launched, the checkouts
+ * they work in, and what they have saved for later.
  *
  * What is *stuck* has no entry of its own — it is a strip on the goals board,
  * above the lanes it is about (see `features/goals/attention-strip.tsx`), and a
  * count on the Goals entry here, which is what says an agent is waiting while
- * the user is on one of the other four screens. "Sessions" is
+ * the user is on one of the other five screens. "Sessions" is
  * the agents that are running, across every goal; "Agents" is the CLIs, their flags
  * and the models they can be staffed on, not what is running on them. A single session still has no entry
  * of its own: it opens as a panel over whichever list picked it (see
@@ -27,6 +27,7 @@
 
 import {
   BotIcon,
+  BrainIcon,
   CpuIcon,
   FolderGit2Icon,
   type LucideIcon,
@@ -51,6 +52,7 @@ const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean
   { to: paths.skills(), label: "Skills", icon: CpuIcon },
   { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
+  { to: paths.memory(), label: "Memory", icon: BrainIcon },
 ]
 
 export function AppSidebar({ collapsed = false }: { collapsed?: boolean }) {
