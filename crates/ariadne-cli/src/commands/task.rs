@@ -859,9 +859,9 @@ mod tests {
     /// know".
     #[test]
     fn a_task_that_has_spent_nothing_says_zero() {
-        assert_eq!(ls_row(&dto(), now())[6], "↑0 0% ↓0");
+        assert_eq!(ls_row(&dto(), now())[6], "↑0 0.0% ↓0");
         let block = usage_lines(&dto());
-        assert_eq!(block.lines().next().unwrap(), "input   0  0%");
+        assert_eq!(block.lines().next().unwrap(), "input   0  0.0%");
         assert!(block.contains("output  0"), "{block}");
     }
 
@@ -890,7 +890,7 @@ mod tests {
         assert_eq!(
             usage_lines(&t),
             [
-                "input   1.2M  91%",
+                "input   1.2M  91.3%",
                 "              output   45k",
                 "              author           ↑1.2M ↓45k",
                 "              code-review      ↑4.6k ↓300",
@@ -900,7 +900,7 @@ mod tests {
         );
         assert_eq!(
             ls_row(&t, now())[6],
-            "↑1.2M 91% ↓45k",
+            "↑1.2M 91.3% ↓45k",
             "the row carries the total, and the same share"
         );
     }
@@ -1044,7 +1044,7 @@ mod tests {
                 "3h",
                 "-",
                 "yes",
-                "↑0 0% ↓0",
+                "↑0 0.0% ↓0",
                 "add-the-frobnicator-01task",
             ]
         );

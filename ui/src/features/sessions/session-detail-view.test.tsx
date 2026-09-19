@@ -167,7 +167,7 @@ it("shows what the session's agent has spent, as the pair it is", () => {
   // What was sent and what came back, each behind its own arrow, with the
   // share of the input the cache served on the half it is a property of; the
   // exact counts are the hint behind them.
-  expect(detail("Tokens")).toBe("12k in, 81% cached, 950 out")
+  expect(detail("Tokens")).toBe("12k in, 81.0% cached, 950 out")
 })
 
 it("says zero for a session that has reported nothing yet", () => {
@@ -176,5 +176,5 @@ it("says zero for a session that has reported nothing yet", () => {
     usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
   })
 
-  expect(detail("Tokens")).toBe("0 in, 0% cached, 0 out")
+  expect(detail("Tokens")).toBe("0 in, 0.0% cached, 0 out")
 })

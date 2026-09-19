@@ -110,17 +110,20 @@ function decimal(value: number): string {
 }
 
 /**
- * What share of the input the cache served, as a whole percent: `95%`.
+ * What share of the input the cache served, to one decimal place: `89.1%`.
  *
- * Almost all of the input is cache reads, so the raw pair of counts buries the
- * one thing a reader wants from them: the two are eight digits long and a
- * hundred thousand apart, and telling 89% from 92% by eye off `1,234,567` and
- * `1,100,000` is arithmetic, not reading. The percent does the arithmetic.
+ * Cached input counts cache reads only. A cache write is a token the model
+ * read for the first time, so it stays in the input and is not a hit.
  *
- * No decimals: a tenth of a percent moves nothing anyone would act on, and the
- * figure this sits beside is already rounded to three digits.
+ * The raw pair of counts buries the one thing a reader wants from them: the
+ * two are eight digits long and a hundred thousand apart, and telling 89.1%
+ * from 92% by eye off `1,234,567` and `1,100,000` is arithmetic, not reading.
+ * The percent does the arithmetic.
  *
- * An input of zero is `0%` rather than a dash or a blank. Nothing was sent, so
+ * One decimal, because a cache that reads most of the input sits close to the
+ * top, and a whole percent hides a share that moved from 89.8% to 89.2%.
+ *
+ * An input of zero is `0.0%` rather than a dash or a blank. Nothing was sent, so
  * nothing was cached — that is an answer, and a figure that comes and goes as
  * a run starts up is harder to read than one that says zero. The clamp is for
  * a daemon that ever reported more cached than input: a share above 100% would
@@ -131,9 +134,10 @@ function decimal(value: number): string {
  * two look like they disagree about a number neither of them is wrong about.
  */
 export function cachedShare({ input_tokens, cached_input_tokens }: TokenUsage): string {
-  if (input_tokens <= 0) return "0%"
-  const share = Math.round((cached_input_tokens / input_tokens) * 100)
-  return `${Math.min(100, Math.max(0, share))}%`
+  if (input_tokens <= 0) return "0.0%"
+  // Tenths of a percent, rounded from an exact integer numerator.
+  const tenths = Math.round((cached_input_tokens * 1000) / input_tokens)
+  return `${(Math.min(1000, Math.max(0, tenths)) / 10).toFixed(1)}%`
 }
 
 // ── Identifiers ───────────────────────────────────────────────────────────

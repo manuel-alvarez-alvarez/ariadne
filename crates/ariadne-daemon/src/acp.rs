@@ -1494,25 +1494,30 @@ async fn prompt_once(
 fn usage_for_prompt_response(response: &Value) -> Option<TokenUsage> {
     response
         .pointer("/_meta/quota/token_count")
-        .and_then(|usage| adapter_usage(usage, &["cachedInputTokens", "cachedWriteTokens"]))
+        .and_then(|usage| adapter_usage(usage, "cachedInputTokens"))
         .or_else(|| {
             response
                 .get("usage")
-                .and_then(|usage| adapter_usage(usage, &["cachedReadTokens", "cachedWriteTokens"]))
+                .and_then(|usage| adapter_usage(usage, "cachedReadTokens"))
         })
 }
 
-/// Map one ACP usage object into Ariadne's cache-inclusive counters.
-fn adapter_usage(usage: &Value, cached_fields: &[&str]) -> Option<TokenUsage> {
+/// Map one ACP usage object into Ariadne's counters. Input holds every prompt
+/// token: fresh, cache read and cache written. Cached input holds only the
+/// cache reads, named by `read_field`: a cache write is a token the model read
+/// for the first time, not a cache hit.
+fn adapter_usage(usage: &Value, read_field: &str) -> Option<TokenUsage> {
     let input_tokens = usage.get("inputTokens").and_then(Value::as_u64)?;
     let output_tokens = usage.get("outputTokens").and_then(Value::as_u64)?;
-    let mut cached_input_tokens = 0_u64;
-    for field in cached_fields {
-        cached_input_tokens = cached_input_tokens
-            .checked_add(usage.get(*field).and_then(Value::as_u64).unwrap_or(0))?;
-    }
+    let cached_input_tokens = usage.get(read_field).and_then(Value::as_u64).unwrap_or(0);
+    let cached_write_tokens = usage
+        .get("cachedWriteTokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     Some(TokenUsage {
-        input_tokens: input_tokens.checked_add(cached_input_tokens)?,
+        input_tokens: input_tokens
+            .checked_add(cached_input_tokens)?
+            .checked_add(cached_write_tokens)?,
         cached_input_tokens,
         output_tokens,
     })
@@ -1714,8 +1719,9 @@ mod tests {
         assert_eq!(approved_option(&json!({})), None);
     }
 
-    /// The standard and quota shapes name cached input differently, and the
-    /// quota figure wins because it includes the adapter's subagents.
+    /// The standard and quota shapes name cache reads differently, and the
+    /// quota figure wins because it includes the adapter's subagents. Both
+    /// keep cache writes in input and out of cached input.
     #[test]
     fn prompt_usage_maps_each_adapter_shape_and_prefers_quota() {
         let standard = json!({"usage": {
@@ -1728,7 +1734,7 @@ mod tests {
             usage_for_prompt_response(&standard),
             Some(TokenUsage {
                 input_tokens: 60,
-                cached_input_tokens: 50,
+                cached_input_tokens: 20,
                 output_tokens: 40,
             })
         );
@@ -1746,8 +1752,39 @@ mod tests {
             usage_for_prompt_response(&quota),
             Some(TokenUsage {
                 input_tokens: 15,
-                cached_input_tokens: 11,
+                cached_input_tokens: 5,
                 output_tokens: 7,
+            })
+        );
+
+        // A turn measured on claude-agent-acp 0.79.0: its transcript agrees.
+        let measured = json!({"_meta": {"quota": {"token_count": {
+            "inputTokens": 10,
+            "cachedInputTokens": 90232,
+            "cachedWriteTokens": 10189,
+            "outputTokens": 291,
+        }}}});
+        assert_eq!(
+            usage_for_prompt_response(&measured),
+            Some(TokenUsage {
+                input_tokens: 100431,
+                cached_input_tokens: 90232,
+                output_tokens: 291,
+            })
+        );
+
+        // Cache reads alone are cached input; a write stays in input only.
+        let written = json!({"usage": {
+            "inputTokens": 1,
+            "cachedWriteTokens": 4,
+            "outputTokens": 2,
+        }});
+        assert_eq!(
+            usage_for_prompt_response(&written),
+            Some(TokenUsage {
+                input_tokens: 5,
+                cached_input_tokens: 0,
+                output_tokens: 2,
             })
         );
 

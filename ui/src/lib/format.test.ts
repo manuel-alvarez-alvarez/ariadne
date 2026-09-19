@@ -79,34 +79,40 @@ describe("cachedShare", () => {
   const share = (input: number, cached: number) =>
     cachedShare({ input_tokens: input, cached_input_tokens: cached, output_tokens: 0 })
 
-  it("is the cached part of the input, to the whole percent", () => {
+  it("is the cached part of the input, to one decimal place", () => {
     // The fixture the figure's own tests use: 1,100,000 of 1,234,567 is
     // 89.1%, not the 92% the two rounded figures beside it would suggest —
     // which is the whole reason the share is computed rather than eyeballed.
-    expect(share(1_234_567, 1_100_000)).toBe("89%")
-    expect(share(1_000_000, 900_000)).toBe("90%")
+    expect(share(1_234_567, 1_100_000)).toBe("89.1%")
+    expect(share(1_000_000, 900_000)).toBe("90.0%")
   })
 
-  it("rounds to the nearer percent, and keeps no decimals", () => {
-    expect(share(1_000, 894)).toBe("89%")
-    expect(share(1_000, 895)).toBe("90%")
-    expect(share(3, 1)).toBe("33%")
+  it("reads a turn measured on claude-agent-acp as 89.8%", () => {
+    // 10 fresh + 90,232 read + 10,189 written: the write is input, not a hit.
+    expect(share(100_431, 90_232)).toBe("89.8%")
   })
 
-  it("is 100% where the cache served the whole input", () => {
-    expect(share(1_234_567, 1_234_567)).toBe("100%")
+  it("rounds to the nearer tenth of a percent", () => {
+    expect(share(1_000, 894)).toBe("89.4%")
+    expect(share(2_000, 1_789)).toBe("89.5%")
+    expect(share(3, 1)).toBe("33.3%")
+    expect(share(8, 3)).toBe("37.5%")
   })
 
-  it("is 0% for a run that sent nothing, rather than dividing by it", () => {
+  it("is 100.0% where the cache served the whole input", () => {
+    expect(share(1_234_567, 1_234_567)).toBe("100.0%")
+  })
+
+  it("is 0.0% for a run that sent nothing, rather than dividing by it", () => {
     // A run that sent nothing cached nothing. Not `NaN%`, and not a dash: a
     // figure that comes and goes as a session starts up is harder to read.
-    expect(share(0, 0)).toBe("0%")
-    expect(share(0, 5_000)).toBe("0%")
+    expect(share(0, 0)).toBe("0.0%")
+    expect(share(0, 5_000)).toBe("0.0%")
   })
 
   it("clamps a count the daemon could only report by being wrong", () => {
-    expect(share(1_000, 2_000)).toBe("100%")
-    expect(share(1_000, -100)).toBe("0%")
+    expect(share(1_000, 2_000)).toBe("100.0%")
+    expect(share(1_000, -100)).toBe("0.0%")
   })
 })
 

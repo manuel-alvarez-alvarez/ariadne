@@ -552,7 +552,7 @@ mod tests {
         assert_eq!(
             usage_lines(&g),
             [
-                "input    12M  89%",
+                "input    12M  89.1%",
                 "             output  456k",
                 "             orchestrator  ↑345k ↓6k",
                 "             authors       ↑10M ↓400k",
@@ -570,7 +570,7 @@ mod tests {
         assert_eq!(
             usage_lines(&g),
             [
-                "input   0  0%",
+                "input   0  0.0%",
                 "             output  0",
                 "             orchestrator  ↑0 ↓0",
                 "             authors       ↑0 ↓0",

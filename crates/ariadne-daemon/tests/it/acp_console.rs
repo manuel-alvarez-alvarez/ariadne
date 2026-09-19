@@ -128,7 +128,7 @@ fn tokens(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> To
 }
 
 /// ACP's prompt usage is what one turn spent, so a launch's turns add up, and
-/// cached tokens remain part of input.
+/// cache reads and writes remain part of input while only reads are cached.
 #[tokio::test]
 async fn standard_prompt_usage_adds_up_a_launchs_turns_and_rolls_up() {
     let agent_dir = tempfile::tempdir().unwrap();
@@ -145,7 +145,7 @@ async fn standard_prompt_usage_adds_up_a_launchs_turns_and_rolls_up() {
     let session = spawned_idle(&h, &cast).await;
 
     let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
-    assert_eq!(session_usage.usage, tokens(60, 50, 40));
+    assert_eq!(session_usage.usage, tokens(60, 20, 40));
 
     let (status, _) = h
         .send(post_console_input(&session.id, "report a second turn"))
@@ -158,11 +158,11 @@ async fn standard_prompt_usage_adds_up_a_launchs_turns_and_rolls_up() {
     .await;
 
     let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
-    assert_eq!(session_usage.usage, tokens(660, 550, 440));
+    assert_eq!(session_usage.usage, tokens(660, 220, 440));
     let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
-    assert_eq!(task.usage.total, tokens(660, 550, 440));
+    assert_eq!(task.usage.total, tokens(660, 220, 440));
     let goal: GoalDto = h.get(&format!("/v1/goals/{}", cast.goal.id)).await;
-    assert_eq!(goal.usage.total, tokens(660, 550, 440));
+    assert_eq!(goal.usage.total, tokens(660, 220, 440));
 }
 
 /// A script whose first turn spends `usage` and then holds the turn open on
@@ -703,7 +703,7 @@ async fn quota_prompt_usage_takes_precedence_over_standard_usage() {
     let session = spawned_idle(&h, &cast).await;
 
     let session: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
-    assert_eq!(session.usage, tokens(15, 11, 7));
+    assert_eq!(session.usage, tokens(15, 5, 7));
 }
 
 /// A response without either usage shape keeps usage at zero, but the turn
@@ -761,7 +761,7 @@ async fn resumed_prompt_usage_adds_a_new_launch_total() {
     .await;
 
     let session_usage: SessionDto = h.get(&format!("/v1/sessions/{}", resumed.id)).await;
-    assert_eq!(session_usage.usage, tokens(66, 55, 44));
+    assert_eq!(session_usage.usage, tokens(66, 22, 44));
 }
 
 /// The console stream opens with a snapshot of everything the session has

@@ -217,7 +217,8 @@ gone (009).
   a burst of reports before the review call's loses none of them, and the
   cancel still follows
   (`::a_burst_of_reports_before_the_review_calls_loses_none_and_the_cancel_follows`).
-- Prompt usage maps cache-inclusive input totals, prefers quota, adds up one
+- Prompt usage keeps cache writes in input and counts only cache reads as
+  cached input, prefers quota, adds up one
   launch's turns, adds a resumed launch, and leaves an absent report at zero
   (`acp_console.rs::standard_prompt_usage_adds_up_a_launchs_turns_and_rolls_up`,
   `::quota_prompt_usage_takes_precedence_over_standard_usage`,

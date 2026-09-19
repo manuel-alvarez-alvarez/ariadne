@@ -436,24 +436,27 @@ pub fn tokens(count: u64) -> String {
     }
 }
 
-/// How much of what went in the prompt cache served, as a whole percent:
-/// `92%`.
+/// How much of what went in the prompt cache served, to one decimal place:
+/// `89.1%`.
 ///
-/// `0%` where nothing went in at all — a spend of nothing served nothing, and
+/// Cached input counts cache reads only; a cache write stays in the input and
+/// is not a hit.
+///
+/// `0.0%` where nothing went in at all — a spend of nothing served nothing, and
 /// a dash there would read as a figure the daemon does not have — and never
-/// past `100%`, whatever an agent's own transcript says about a cache that
+/// past `100.0%`, whatever an agent's own transcript says about a cache that
 /// served more than the prompt it was serving. The same rule
 /// `ui/src/lib/format.ts` renders, so the share reads the same in a terminal
 /// and on a screen.
 pub fn cached_share(usage: &TokenUsageDto) -> String {
-    let share = match usage.input_tokens {
+    let tenths = match usage.input_tokens {
         0 => 0,
         input => {
             let (cached, input) = (u128::from(usage.cached_input_tokens), u128::from(input));
-            ((cached * 100 + input / 2) / input).min(100)
+            ((cached * 1000 + input / 2) / input).min(1000)
         }
     };
-    format!("{share}%")
+    format!("{}.{}%", tenths / 10, tenths % 10)
 }
 
 /// A spend as a table cell: what went in under an up arrow, how much of it
@@ -461,7 +464,7 @@ pub fn cached_share(usage: &TokenUsageDto) -> String {
 ///
 /// The share rides on the input it is a share of rather than sitting at the
 /// end, because that is the half it qualifies: a column is read downwards,
-/// and `↑1.2M 92%` is one figure to hold against the row above. The exact
+/// and `↑1.2M 89.1%` is one figure to hold against the row above. The exact
 /// counts are left to [`usage_block`] — a cell is for comparing rows, not
 /// for reading one.
 pub fn usage_cell(usage: &TokenUsageDto) -> String {
@@ -798,26 +801,31 @@ mod tests {
     /// has not sent a prompt yet has sent nothing the cache could serve.
     #[test]
     fn a_spend_of_nothing_is_zeros_and_not_a_dash() {
-        assert_eq!(cached_share(&TokenUsageDto::default()), "0%");
-        assert_eq!(usage_cell(&TokenUsageDto::default()), "↑0 0% ↓0");
+        assert_eq!(cached_share(&TokenUsageDto::default()), "0.0%");
+        assert_eq!(usage_cell(&TokenUsageDto::default()), "↑0 0.0% ↓0");
         assert_eq!(
             usage_block(&TokenUsageDto::default(), &[], "\n"),
-            ["input   0  0%", "output  0"].join("\n")
+            ["input   0  0.0%", "output  0"].join("\n")
         );
     }
 
-    /// A whole percent, rounded half away from zero the way every other
-    /// figure here is, and never past `100%`: an agent that reports a cache
-    /// serving more than the prompt it served is reporting `100%`, not a
-    /// share no reader could place.
+    /// A percent to one decimal place, rounded half away from zero the way
+    /// every other figure here is, and never past `100.0%`: an agent that
+    /// reports a cache serving more than the prompt it served is reporting
+    /// `100.0%`, not a share no reader could place.
+    ///
+    /// The same cases the web's `cachedShare` is held to, share for share.
     #[test]
-    fn the_cached_share_is_a_whole_percent_between_zero_and_a_hundred() {
-        assert_eq!(cached_share(&usage(8, 3, 0)), "38%");
-        assert_eq!(cached_share(&usage(3, 1, 0)), "33%");
-        assert_eq!(cached_share(&usage(1_234_567, 1_100_000, 0)), "89%");
-        assert_eq!(cached_share(&usage(100, 0, 0)), "0%");
-        assert_eq!(cached_share(&usage(100, 100, 0)), "100%");
-        assert_eq!(cached_share(&usage(100, 1_000, 0)), "100%");
+    fn the_cached_share_is_a_percent_to_one_decimal_between_zero_and_a_hundred() {
+        assert_eq!(cached_share(&usage(8, 3, 0)), "37.5%");
+        assert_eq!(cached_share(&usage(3, 1, 0)), "33.3%");
+        assert_eq!(cached_share(&usage(1_234_567, 1_100_000, 0)), "89.1%");
+        assert_eq!(cached_share(&usage(1_000, 894, 0)), "89.4%");
+        assert_eq!(cached_share(&usage(2_000, 1_789, 0)), "89.5%");
+        assert_eq!(cached_share(&usage(100_431, 90_232, 291)), "89.8%");
+        assert_eq!(cached_share(&usage(100, 0, 0)), "0.0%");
+        assert_eq!(cached_share(&usage(100, 100, 0)), "100.0%");
+        assert_eq!(cached_share(&usage(100, 1_000, 0)), "100.0%");
     }
 
     /// The cell is the three figures a row is scanned by; the block is the
@@ -826,7 +834,7 @@ mod tests {
     #[test]
     fn a_spend_reads_as_arrows_in_a_cell_and_as_labelled_counts_in_a_block() {
         let spent = usage(1_234_567, 1_100_000, 45_300);
-        assert_eq!(usage_cell(&spent), "↑1.2M 89% ↓45k");
+        assert_eq!(usage_cell(&spent), "↑1.2M 89.1% ↓45k");
         assert_eq!(
             usage_block(
                 &spent,
@@ -837,7 +845,7 @@ mod tests {
                 "\n",
             ),
             [
-                "input   1.2M  89%",
+                "input   1.2M  89.1%",
                 "output   45k",
                 "author    ↑1.2M ↓45k",
                 "Reviewer  ↑4.6k ↓300",

@@ -86,13 +86,13 @@ it("shows the goal's total among its facts, as the pair it is", () => {
 
   // The pair on its own line: both halves, and the share the cache served of
   // the input riding on the half it belongs to.
-  expect(detail("Tokens").textContent).toBe("1.2M in, 89% cached, 45k out")
+  expect(detail("Tokens").textContent).toBe("1.2M in, 89.1% cached, 45k out")
 })
 
 it("says zero for a goal whose agents have reported nothing", () => {
   mount(aGoal())
 
-  expect(detail("Tokens").textContent).toBe("0 in, 0% cached, 0 out")
+  expect(detail("Tokens").textContent).toBe("0 in, 0.0% cached, 0 out")
 })
 
 it("breaks the total down by the seat that spent it, behind the figure", async () => {
@@ -105,9 +105,9 @@ it("breaks the total down by the seat that spent it, behind the figure", async (
   expect(roles).toEqual(["Orchestrator", "Authors", "Reviewers"])
   const figures = [...popup.querySelectorAll("dd")].map((figure) => figure.textContent)
   expect(figures).toEqual([
-    "235k in, 85% cached, 5.3k out",
-    "1M in, 90% cached, 40k out",
-    "0 in, 0% cached, 0 out",
+    "235k in, 85.3% cached, 5.3k out",
+    "1M in, 90.0% cached, 40k out",
+    "0 in, 0.0% cached, 0 out",
   ])
 
   // The two halves lead the hint, named and each on its own line, and they are
@@ -118,7 +118,7 @@ it("breaks the total down by the seat that spent it, behind the figure", async (
   expect(input.nextElementSibling?.textContent).toBe("1.2M")
   // The share rides beside the input count, part of it rather than a count of
   // its own — the same share the figure itself shows.
-  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
+  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89.1%")
   expect(total.getByText("Output").nextElementSibling?.textContent).toBe("45k")
   // Nothing in the hint is spelled to the digit any more: not the halves, not
   // the rows under them.

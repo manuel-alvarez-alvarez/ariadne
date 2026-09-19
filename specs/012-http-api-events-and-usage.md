@@ -128,10 +128,15 @@ and the ACP runtime that reports the agent events (021).
     does.
 16. The ACP runtime reads a prompt response's well-formed
     `_meta.quota.token_count`, or its `usage` where quota is absent or
-    malformed, as what that one turn spent (ACP). It adds cached reads and
-    writes to input, records their sum as cached input, adds the turn to the
-    launch's earlier turns, names the running launch as the source, and
-    attaches the launch's totals only to the turn's `stop` event.
+    malformed, as what that one turn spent (ACP). It adds cache reads and
+    cache writes to input, records only the cache reads as cached input (a
+    cache write is a token the model read for the first time, not a cache
+    hit), adds the turn to the launch's earlier turns, names the running
+    launch as the source, and attaches the launch's totals only to the turn's
+    `stop` event. The cached share that the web and the CLI show is cached
+    input over input, to one decimal place, and the two spell it alike
+    (`ui/src/lib/format.test.ts`,
+    `output.rs::the_cached_share_is_a_percent_to_one_decimal_between_zero_and_a_hundred`).
 17. `GET /v1/agents` lists every registry agent's flags, in registry order,
     as `AgentConfigDto{agent_id, extra_flags, default_flags}`. `PUT
     /v1/agents/{id}` replaces one agent's list whole, an empty one included,

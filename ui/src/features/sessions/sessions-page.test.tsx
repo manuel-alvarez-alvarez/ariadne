@@ -371,11 +371,15 @@ it("restores the filters under a panel the entry opened", async () => {
 it("carries each session's tokens, and zero for one that has reported none", async () => {
   renderPage()
 
-  expect(tokens(await row("Open Author session")).textContent).toBe("1.2M in, 89% cached, 45k out")
+  expect(tokens(await row("Open Author session")).textContent).toBe(
+    "1.2M in, 89.1% cached, 45k out",
+  )
   // The orchestrator has spent nothing yet, which is a figure of its own — both
   // halves of it: a blank cell would read as a column the daemon has no
   // answer for.
-  expect(tokens(await row("Open Orchestrator session")).textContent).toBe("0 in, 0% cached, 0 out")
+  expect(tokens(await row("Open Orchestrator session")).textContent).toBe(
+    "0 in, 0.0% cached, 0 out",
+  )
 })
 
 it("names the two halves behind the tokens column in reach of a keyboard", async () => {
@@ -393,7 +397,7 @@ it("names the two halves behind the tokens column in reach of a keyboard", async
   expect(input.nextElementSibling?.textContent).toBe("1.2M")
   // The share rides beside the input count, part of it rather than a count of
   // its own — the same share the figure itself shows.
-  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
+  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89.1%")
   expect(total.getByText("Output").nextElementSibling?.textContent).toBe("45k")
   // The counts are the figure's own rounded form, to the digit nowhere.
   expect(popup.textContent).not.toMatch(/\d,\d/)
@@ -455,7 +459,7 @@ it("carries the tokens figure in the row's hint, folded column or not", async ()
     if (!hint) throw new Error("no hint behind the last activity")
     return hint
   })
-  expect(popup.textContent).toContain("1.2M in, 89% cached, 45k out")
+  expect(popup.textContent).toContain("1.2M in, 89.1% cached, 45k out")
 })
 
 it("shows only the sessions the daemon has raised a reason on", async () => {

@@ -2,7 +2,7 @@
  * What was spent, and by whom — the one way tokens are shown anywhere.
  *
  * A figure is always the pair: what went to the agent and what came back, as
- * `↑1.2M 89% ↓45k`. Two numbers rather than one because they are two different
+ * `↑1.2M 89.1% ↓45k`. Two numbers rather than one because they are two different
  * costs and they move independently, and an arrow rather than a word because
  * this sits in a lane header, a table cell and a panel column, none of which
  * has room for "in" and "out" spelled out on every row. The arrows point the

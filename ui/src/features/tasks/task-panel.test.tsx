@@ -341,8 +341,8 @@ it("shows the task's total, as the daemon aggregated it", () => {
   mount()
 
   // The share is read off the exact counts, not the rounded halves beside
-  // it: 1,100,000 of 1,234,567 is 89%, where 1.1M of 1.2M would say 92%.
-  expect(fact("Tokens")).toBe("1.2M in, 89% cached, 45k out")
+  // it: 1,100,000 of 1,234,567 is 89.1%, where 1.1M of 1.2M would say 92%.
+  expect(fact("Tokens")).toBe("1.2M in, 89.1% cached, 45k out")
 })
 
 it("says zero for a task whose agents have reported nothing", () => {
@@ -357,7 +357,7 @@ it("says zero for a task whose agents have reported nothing", () => {
 
   // A share of zero rather than a gap: nothing was sent, so nothing was
   // cached, and that is an answer.
-  expect(fact("Tokens")).toBe("0 in, 0% cached, 0 out")
+  expect(fact("Tokens")).toBe("0 in, 0.0% cached, 0 out")
 })
 
 it("breaks the total down by the agent that spent it, reviewers named", async () => {
@@ -372,7 +372,7 @@ it("breaks the total down by the agent that spent it, reviewers named", async ()
   expect(popup.textContent).not.toContain("security-review")
 
   const figures = [...popup.querySelectorAll("dd")].map((figure) => figure.textContent)
-  expect(figures).toEqual(["1M in, 90% cached, 40k out", "235k in, 85% cached, 5.3k out"])
+  expect(figures).toEqual(["1M in, 90.0% cached, 40k out", "235k in, 85.3% cached, 5.3k out"])
 
   // The two halves lead the hint, named and each on its own line, in the same
   // rounded form the figure shows and carrying the task's own total rather
@@ -382,7 +382,7 @@ it("breaks the total down by the agent that spent it, reviewers named", async ()
   expect(input.nextElementSibling?.textContent).toBe("1.2M")
   // The share rides beside the input count, part of it rather than a count of
   // its own — the same share the figure itself shows.
-  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
+  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89.1%")
   expect(total.getByText("Output").nextElementSibling?.textContent).toBe("45k")
   // Nothing in the hint is spelled to the digit any more: not the halves, not
   // the rows under them.
@@ -453,7 +453,7 @@ it("folds the sessions table down to what a panel holds", async () => {
     return hint
   })
   expect(popup.textContent).toContain("started")
-  expect(popup.textContent).toContain("1M in, 90% cached, 40k out")
+  expect(popup.textContent).toContain("1M in, 90.0% cached, 40k out")
 })
 
 /**
