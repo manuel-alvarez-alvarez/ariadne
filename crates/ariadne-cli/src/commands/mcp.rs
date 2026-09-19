@@ -339,7 +339,7 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
 /// playbook names the texts of its own seat again, in its own layer.
 fn session_rules(seat: &McpSeat) -> String {
     format!(
-        r#"Reach Ariadne only through these tools. A backticked name is a tool. {} Find code with `search_code` and `symbol` before you read a file. Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
+        r#"Reach Ariadne only through these tools. A backticked name is a tool. {} Find code with `search_code` and `symbol` before you read a file. Call `search_memory` before you repeat a discovery. Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
 
 Write all text in ASD-STE100 Simplified Technical English (STE):
 - Write one instruction in one sentence.
@@ -644,6 +644,8 @@ pub(crate) mod tests {
             let instructions = mcp.get_info().instructions.expect("instructions");
             for rule in [
                 "Reach Ariadne only through these tools",
+                "Find code with `search_code` and `symbol` before you read a file",
+                "Call `search_memory` before you repeat a discovery",
                 "as few turns as you can",
                 "Write all text in ASD-STE100 Simplified Technical English",
                 "Write no more than 20 words in a sentence",
@@ -736,9 +738,16 @@ pub(crate) mod tests {
     /// could have asked for by name pays for the whole file. Each skill
     /// names the tool its own step needs; this is the one line that holds
     /// wherever a seat reaches for a file.
+    ///
+    /// The cap rises to 900 for the memory rule, which is the same shape
+    /// again: call `search_memory` before you repeat a discovery. Every
+    /// seat holds the tool (019) and no seat was ever told when to use it,
+    /// so the store held nothing. The reading rule is the one line that
+    /// holds for every seat alike; when a skill writes a memory is that
+    /// skill's own step to say.
     #[test]
     fn the_shared_rules_stay_small() {
-        const CAP: usize = 850;
+        const CAP: usize = 900;
         for seat in SEATS {
             let rules = session_rules(&seat);
             assert!(

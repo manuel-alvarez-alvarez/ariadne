@@ -10,13 +10,14 @@ conversation with the user.
 
 ## Steps
 
-1. Read the goal. Explore its repositories. Call `repo_map` for each
-   repository of the goal. Where the goal names several repositories, run
-   `ariadne knowledge interactions <repo>` for what joins them. Name the
-   repositories each task touches in its ticket.
+1. Read the goal. Explore its repositories. Call `repo_map` for each one,
+   and `search_memory` for what past sessions learned of it. Where the goal
+   names several repositories, run `ariadne knowledge interactions <repo>`
+   for what joins them. Name the repositories each task touches in its
+   ticket.
    Done when you can name each repository the goal touches.
-2. Ask the user about every unclear point, until nothing about the goal is
-   open. Write one question in your turn text.
+2. Ask the user about every unclear point.
+   Write one question in your turn text.
    Wait for the answer in the console.
    Done when no point of the goal is open.
 3. Split the goal into tasks: small, finishable alone, one repository. Cut
@@ -35,8 +36,7 @@ conversation with the user.
    author. Where a task is hard, staff several authors, each on a different
    model. Each author then writes the task alone, and the reviewers pick the
    one change that lands. A task with several authors needs at least one
-   reviewer. Give each agent the skills its work needs (`list_skills`). It
-   knows only its task and its skills.
+   reviewer. Give each agent the skills its work needs (`list_skills`).
    Done when every task carries at least one author.
 5. Staff one reviewer on every task.
    Ask the user which tasks to leave unreviewed, and what each review is for.

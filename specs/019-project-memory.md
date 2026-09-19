@@ -1,11 +1,12 @@
 ---
 id: project-memory
 status: current
-updated: 2026-09-10
-areas: [store, api, daemon, mcp, cli, ui]
+updated: 2026-09-19
+areas: [store, api, daemon, mcp, cli, ui, prompts]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/memories.rs
+  - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/cli/tests.rs
@@ -40,8 +41,19 @@ Out: prompt injection. Agents choose when to search.
 7. Every seat has `save_memory` and `search_memory`. A task session defaults
    to its task repository, and an orchestrator names a repository when its
    goal does not have exactly one.
-8. No memory is added to a prompt. An agent calls `search_memory` when past
-   repository knowledge can avoid repeated discovery or answer a question.
+8. No memory is added to a prompt. The MCP session rules tell every seat to
+   call `search_memory` before it repeats a discovery, and that read rule is
+   stated there alone (006). Five skills carry a `save_memory` step at the
+   step that earns it: `coding` the trap it hit or the command that proved
+   the change, `testing` the seam or the flake it had to learn, `debugging`
+   the cause once proved, `code-review` a convention breach that repeats
+   across tasks, and `research` the finding that answers the question again
+   later. `orchestration` searches memory while it explores a goal. Every
+   write step carries the same bar: save a trap, a working command or a
+   convention no file states, and only a fact that cost time; never save a
+   task report, a change summary, a plan, or what the code, a spec or
+   `AGENTS.md` already states; a task saves two memories at most, and the
+   daemon refuses the third.
 9. `ariadne memory ls|search|delete` names a repository by id or path and uses
    the shared list, mutation, JSON and quiet output forms (014).
 10. The REST surface adds, lists, searches and deletes memory under one
@@ -79,6 +91,13 @@ Out: prompt injection. Agents choose when to search.
   (`::memory_search_needs_a_repository_when_the_goal_has_several`).
 - Every MCP text is Simplified Technical English
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
+- Every session is told to search memory before it repeats a discovery
+  (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), and no default
+  text or skill repeats that rule
+  (`defaults.rs::no_default_repeats_what_every_session_is_told_by_the_mcp_server`).
+- Each of the five skills that learn names `save_memory` at its own step with
+  the bar on what is worth keeping, and `orchestration` names `search_memory`
+  (`defaults.rs::every_skill_that_learns_names_the_memory_tools`).
 - The desktop memory page lists, searches through the daemon's own search
   endpoint, and deletes an entry
   (`ui/src/features/memory/memory-page.test.tsx`).
@@ -90,4 +109,6 @@ Out: prompt injection. Agents choose when to search.
 `crates/ariadne-daemon/src/http/memories.rs`,
 `crates/ariadne-cli/src/commands/memory.rs`,
 `crates/ariadne-cli/src/commands/mcp/tools.rs`,
+`crates/ariadne-cli/src/commands/mcp.rs` (the read rule),
+`crates/ariadne-store/skills/` (the write steps),
 `ui/src/features/memory/`.

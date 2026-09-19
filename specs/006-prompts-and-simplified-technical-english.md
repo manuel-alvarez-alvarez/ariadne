@@ -34,8 +34,9 @@ they describe (003, 004, 005) — and what a skill is (017).
      prompt, whatever its seat: that Ariadne is reached only through its
      tools, whether a session works alone or waits on the user, when it may
      ask anyway, that code is found with `search_code` and `symbol` before a
-     file is read (022), how few turns to take, and the English to write in
-     (013);
+     file is read (022), that memory is searched with `search_memory` before
+     a discovery is repeated (019), how few turns to take, and the English to
+     write in (013);
    - the **system prompt**, which states what a seat owes from its first read
      to the call that ends its turn, and then indexes the skills this agent
      was staffed with (017) — for the orchestrator, the one skill its seat
@@ -72,6 +73,12 @@ they describe (003, 004, 005) — and what a skill is (017).
    only the commit of the step it owns: `coding` commits the task it built,
    and `refactoring` the moves it made. It repeats neither the review answer
    nor the amend. No skill divides a task into slices or small commits.
+   When a memory is written is a skill's step to say, the way the tool of a
+   step is: `coding`, `testing`, `debugging`, `code-review` and `research`
+   each call `save_memory` at the step that earns it, and each carries the
+   same bar on what is worth keeping (019). `orchestration` calls
+   `search_memory` while it explores a goal. No skill repeats the read rule
+   the session rules state.
 4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. The
@@ -163,6 +170,11 @@ they describe (003, 004, 005) — and what a skill is (017).
   (`defaults.rs::skill_size_caps_hold`), and every skill that reads code
   names the knowledge tool of its own step
   (`defaults.rs::every_skill_that_reads_code_names_the_knowledge_tools`).
+- Every skill that learns names `save_memory` at its own step with the bar
+  on what is worth keeping, and `orchestration` names `search_memory`
+  (`defaults.rs::every_skill_that_learns_names_the_memory_tools`); the read
+  rule stays the session rules' alone
+  (`::no_default_repeats_what_every_session_is_told_by_the_mcp_server`).
 
 ## Sources
 

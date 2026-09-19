@@ -20,6 +20,11 @@ A finding without a source is an opinion.
    Done when you have hunted the strongest counter-evidence and written
    what you found.
 5. Write the report: question, findings, recommendation, confidence.
+6. Call `save_memory` for the finding that answers the question again later.
+   Save a trap, a working command or a convention no file states. Save only
+   a fact that cost you time. Never save a task report, a change summary, a
+   plan, or what the code, a spec or `AGENTS.md` states. A task saves 2
+   memories at most, and the daemon refuses the third.
 
 ## Rules
 
@@ -39,6 +44,8 @@ A finding without a source is an opinion.
   the source that disagrees.
 - "The report reads thin without more." -> Padding buries the finding. An
   unsettled question is a finding too.
+- "This might help somebody later." -> The report is the record. Save the
+  finding a later question needs again.
 
 ## Done
 
