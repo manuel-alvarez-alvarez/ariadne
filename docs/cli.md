@@ -69,6 +69,11 @@ the last; the footer drops its later key hints, then the tokens, and keeps the
 first hint to the last. Resizing the terminal redraws the pane at the new
 size.
 
+Before the transcript, the scrollback gets a short welcome banner naming the
+seat, task (or orchestrator goal), model and effort, repository, and session.
+On a narrow terminal it uses the same lines without a box; long titles are
+shortened to fit.
+
 The pane opens where the cursor is, which the console asks the terminal for
 once. A terminal that does not answer — a pseudo-terminal with nothing behind
 it, as `script` gives a process with no terminal of its own — keeps the

@@ -116,7 +116,11 @@ impl Sink for Stub {
 pub(super) fn header() -> Header {
     Header {
         seat: "author".into(),
-        model: "claude:opus".into(),
+        model: Some("claude:opus".into()),
+        effort: Some("high".into()),
+        id: Some("01m2x2gbzj5c1234".into()),
+        task: Some("Input box".into()),
+        repository: Some("ariadne".into()),
         status: "running".into(),
         usage: Default::default(),
     }

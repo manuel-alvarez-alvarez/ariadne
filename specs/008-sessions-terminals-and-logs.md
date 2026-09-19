@@ -229,6 +229,15 @@ goal id to a seat (014).
     and never sent to the terminal: once the key stream reads the terminal, a
     query's answer would come through the reader the stream holds, and time
     out. There is no alternate-screen fallback.
+    Each attach puts one welcome banner into scrollback before its first
+    transcript block: seat, task title (or `orchestrator` with the goal title),
+    model and effort, repository name, and the session id cut to 12 columns.
+    The frame fits its contents but no more than the pane; a long title cuts
+    at a grapheme boundary with `…`, and a pane narrower than 40 columns uses
+    unframed lines. A reconnect snapshot does not print the banner again, and
+    an unavailable task or repository leaves out only that line. The CLI reads
+    this context over its HTTP client; the terminal socket host reads it from
+    daemon state. Redirected CLI attach remains the plain line protocol.
 24. The pane renders each block as it arrives: a prompt as `> text`, holding
     the event's `text` alone — never the whole `prompt` with the system
     prompt ahead of it (021), nor the summary, one line cut short; an event
@@ -662,6 +671,24 @@ goal id to a seat (014).
   (`::a_first_dial_the_daemon_refuses_ends_the_stream_with_the_error`), and
   its sink posts input and cancel and says a refusal
   (`::the_sink_posts_input_and_cancel_and_says_a_refusal`).
+- An attach puts its five-value welcome banner above the first block
+  (`ariadne-console/tui/banner.rs::the_banner_precedes_the_first_block_and_a_snapshot_does_not_repeat_it`).
+- An orchestrator banner uses the goal title and `orchestrator`
+  (`ariadne-console/tui/banner.rs::orchestrator_context_uses_the_goal_title`).
+- A reconnect snapshot does not add another banner
+  (`ariadne-console/tui/banner.rs::the_banner_precedes_the_first_block_and_a_snapshot_does_not_repeat_it`).
+- A long title cuts at `…` and an 80-column frame never exceeds 80 columns
+  (`ariadne-console/tui/banner.rs::a_long_title_is_cut_inside_an_eighty_column_frame`).
+- A 30-column pane has no frame
+  (`ariadne-console/tui/banner.rs::a_narrow_pane_has_no_frame`).
+- Missing task and repository context omits those lines
+  (`ariadne-console/tui/banner.rs::missing_context_omits_its_lines`).
+- The daemon terminal socket includes the task title
+  (`ariadne-daemon/tests/it/acp_terminal.rs::the_terminal_draws_the_transcript_and_the_status_line_at_the_client_size`).
+- The CLI reads a task title from its daemon
+  (`ariadne-cli/commands/console/tui.rs::the_cli_reads_the_task_title_for_its_banner`).
+- Redirected attach retains the plain line protocol
+  (`ariadne-cli/commands/console/tui.rs::only_a_terminal_on_both_ends_gets_the_inline_console`).
 - A readable transcript folds tool and permission pairs, keeps full text and
   renders plain output without colour
   (`transcript.rs::a_transcript_renders_one_full_block_per_item`,
@@ -697,6 +724,7 @@ goal id to a seat (014).
 `crates/ariadne-console/src/transcript.rs`,
 `crates/ariadne-console/src/theme.rs`,
 `crates/ariadne-console/src/tui/mod.rs`,
+`crates/ariadne-console/src/tui/banner.rs`,
 `crates/ariadne-console/src/tui/blocks.rs`,
 `crates/ariadne-console/src/tui/chrome.rs`,
 `crates/ariadne-console/src/tui/input.rs`,

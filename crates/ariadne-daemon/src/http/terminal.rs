@@ -19,6 +19,7 @@
 //! the last bytes and closes the socket.
 
 use std::io::{self, Write};
+use std::path::Path as FsPath;
 
 use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -68,12 +69,52 @@ pub async fn terminal(
     // A session that does not exist is a 404 before the upgrade, in the
     // envelope every other handler answers with.
     let session = state.store.get_session(&id).await?;
-    let header = Header::of(Some(&session_dto_of(&state.store, session).await?));
+    let header = header(&state, &session_dto_of(&state.store, session).await?).await;
     Ok(ws.on_upgrade(move |socket| async move {
         if let Err(error) = run(state, id.clone(), header, socket).await {
             tracing::warn!(session = %id, error = %format!("{error:#}"), "terminal console ended");
         }
     }))
+}
+
+/// Add the task or goal context that is not stored on the session row.
+async fn header(state: &AppState, session: &ariadne_api::sessions::SessionDto) -> Header {
+    let (title, repository) = match &session.task_id {
+        Some(id) => match state.store.get_task(id).await {
+            Ok(task) => {
+                let repository = state
+                    .store
+                    .get_repository(&task.repo_id)
+                    .await
+                    .ok()
+                    .and_then(|repo| repository_name(&repo.path));
+                (Some(task.title), repository)
+            }
+            Err(_) => (None, None),
+        },
+        None => match state.store.get_goal(&session.goal_id).await {
+            Ok(goal) => {
+                let repository = state
+                    .store
+                    .list_goal_repositories(&goal.id)
+                    .await
+                    .ok()
+                    .and_then(|repos| repos.into_iter().next())
+                    .and_then(|repo| repository_name(&repo.path));
+                (Some(goal.title), repository)
+            }
+            Err(_) => (None, None),
+        },
+    };
+    Header::of(Some(session)).with_task(title, repository)
+}
+
+fn repository_name(path: &str) -> Option<String> {
+    FsPath::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
 }
 
 /// Run the console on the socket until one end closes it.

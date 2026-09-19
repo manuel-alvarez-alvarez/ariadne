@@ -165,7 +165,10 @@ impl Console {
             Part::new(
                 1,
                 SEPARATOR,
-                vec![Span::styled(self.header.model.clone(), DIM)],
+                vec![Span::styled(
+                    self.header.model.as_deref().unwrap_or("-").to_string(),
+                    DIM,
+                )],
             ),
             Part::new(
                 5,

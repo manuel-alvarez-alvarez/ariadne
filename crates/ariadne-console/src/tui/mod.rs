@@ -41,6 +41,7 @@ use ariadne_api::usage::TokenUsageDto;
 
 use crate::transcript::{self, PermissionOption, TranscriptItem};
 
+mod banner;
 mod blocks;
 mod chrome;
 mod input;
@@ -100,7 +101,11 @@ enum Link {
 pub struct Header {
     seat: String,
     /// The `<agent>:<model>` pin: the agent and the model it runs, in one.
-    model: String,
+    model: Option<String>,
+    effort: Option<String>,
+    id: Option<String>,
+    task: Option<String>,
+    repository: Option<String>,
     status: String,
     usage: TokenUsageDto,
 }
@@ -110,17 +115,32 @@ impl Header {
         session.map_or_else(
             || Self {
                 seat: "session".into(),
-                model: "-".into(),
+                model: None,
+                effort: None,
+                id: None,
+                task: None,
+                repository: None,
                 status: "unknown".into(),
                 usage: TokenUsageDto::default(),
             },
             |session| Self {
                 seat: session.seat.as_str().into(),
-                model: session.model.clone(),
+                model: Some(session.model.clone()),
+                effort: session.effort.clone(),
+                id: Some(session.id.clone()),
+                task: None,
+                repository: None,
                 status: session.status.as_str().into(),
                 usage: session.usage,
             },
         )
+    }
+
+    /// Add the task (or goal) and repository the session row does not hold.
+    pub fn with_task(mut self, title: Option<String>, repository: Option<String>) -> Self {
+        self.task = title;
+        self.repository = repository;
+        self
     }
 }
 
@@ -178,6 +198,17 @@ impl Console {
             ended,
             launches: BTreeMap::new(),
         }
+    }
+
+    /// Put the attach identity into the terminal's scrollback before its first block.
+    pub fn banner<B: Screen>(&self, terminal: &mut Terminal<B>) -> Result<()> {
+        let width = usize::from(terminal.size()?.width);
+        let lines = banner::draw(&self.header, width);
+        let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+        terminal.insert_before(height, |buffer| {
+            Paragraph::new(Text::from(lines)).render(buffer.area, buffer);
+        })?;
+        Ok(())
     }
 
     /// Rebuild from a fresh snapshot, keeping what is already in the
@@ -782,9 +813,13 @@ where
     // pressed at once answers a question that is already on the screen. A
     // session that had already ended is over here too: the caller's close
     // puts the transcript in the scrollback, and nothing more will come.
-    if let Some(frame) = source.next().await
-        && console.frame(frame?)
-    {
+    let ended = match source.next().await {
+        Some(frame) => console.frame(frame?),
+        None => false,
+    };
+    terminal.autoresize()?;
+    console.banner(terminal)?;
+    if ended {
         return Ok(());
     }
 

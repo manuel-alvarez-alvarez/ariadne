@@ -34,6 +34,8 @@ pub const ADDED: Style = Style::new().fg(Color::Green);
 pub const REMOVED: Style = Style::new().fg(Color::Red);
 pub const HUNK: Style = Style::new().fg(Color::Cyan);
 pub const FILE: Style = Style::new().add_modifier(Modifier::BOLD);
+/// The welcome banner that identifies a console as it opens.
+pub const BANNER: Style = Style::new().fg(Color::Blue);
 
 /// The frames of the spinner, one per tick while a turn runs.
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -95,3 +97,11 @@ pub const CODE_CONTINUATION: &str = "↪";
 pub const LIST_BULLETS: [&str; 3] = ["• ", "◦ ", "▪ "];
 pub const TASK_DONE: &str = "☑ ";
 pub const TASK_TODO: &str = "☐ ";
+
+/// The box around a welcome banner where the pane is wide enough for one.
+pub const BANNER_TOP_LEFT: &str = "╭";
+pub const BANNER_TOP_RIGHT: &str = "╮";
+pub const BANNER_BOTTOM_LEFT: &str = "╰";
+pub const BANNER_BOTTOM_RIGHT: &str = "╯";
+pub const BANNER_HORIZONTAL: &str = "─";
+pub const BANNER_VERTICAL: &str = "│";

@@ -9,6 +9,7 @@
 //! sink.
 
 use std::io::{IsTerminal, Write};
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -20,7 +21,10 @@ use futures_util::{Stream, stream};
 use ratatui::backend::CrosstermBackend;
 use tokio::time::{Instant, sleep_until};
 
+use ariadne_api::goals::GoalDto;
+use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::{ConsoleInputRequest, SessionDto};
+use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent, SseStream};
 use ariadne_console::{Console, Frame, Header, Sink, drive, open};
 
@@ -45,7 +49,11 @@ pub async fn attach(client: &Client, id: &str) -> Result<()> {
         .get_json::<SessionDto>(&format!("/v1/sessions/{id}"))
         .await
         .ok();
-    let mut console = Console::new(Header::of(session.as_ref()));
+    let header = match session {
+        Some(session) => header(client, session).await,
+        None => Header::of(None),
+    };
+    let mut console = Console::new(header);
 
     // The terminal is held before the viewport is opened, so a terminal that
     // cannot be opened at all is still given back: raw mode off, cursor shown.
@@ -69,6 +77,45 @@ pub async fn attach(client: &Client, id: &str) -> Result<()> {
         "left the console — the session is still running; attach again with: ariadne attach {id}"
     ));
     outcome
+}
+
+/// Read the context the session row does not carry. A missing description
+/// leaves its line out, but never prevents an otherwise healthy attach.
+async fn header(client: &Client, session: SessionDto) -> Header {
+    let (title, repository) = match &session.task_id {
+        Some(id) => match client.get_json::<TaskDto>(&format!("/v1/tasks/{id}")).await {
+            Ok(task) => {
+                let repository = client
+                    .get_json::<RepositoryDto>(&format!("/v1/repositories/{}", task.repo_id))
+                    .await
+                    .ok()
+                    .and_then(|repo| repository_name(&repo.path));
+                (Some(task.title), repository)
+            }
+            Err(_) => (None, None),
+        },
+        None => match client
+            .get_json::<GoalDto>(&format!("/v1/goals/{}", session.goal_id))
+            .await
+        {
+            Ok(goal) => (
+                Some(goal.title),
+                goal.repos
+                    .first()
+                    .and_then(|repo| repository_name(&repo.path)),
+            ),
+            Err(_) => (None, None),
+        },
+    };
+    Header::of(Some(&session)).with_task(title, repository)
+}
+
+fn repository_name(path: &str) -> Option<String> {
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
 }
 
 /// Where the daemon's console stream stands, between one frame and the next.
@@ -291,6 +338,9 @@ mod tests {
     use serde_json::json;
 
     use ariadne_api::events::AgentEventDto;
+    use ariadne_api::sessions::SessionDto;
+    use ariadne_api::usage::TokenUsageDto;
+    use ariadne_core::{Seat, SessionStatus};
 
     use super::*;
 
@@ -342,8 +392,31 @@ mod tests {
         StatusCode::NO_CONTENT
     }
 
+    async fn task() -> Json<serde_json::Value> {
+        Json(json!({
+            "id": "task", "goal_id": "goal", "repo_id": "repo", "title": "Input box",
+            "description": "", "status": "in_progress", "agents": [], "depends_on": [],
+            "branch": "task", "landing": "merge", "worktree_path": null, "stalled": false,
+            "merge_commit": null, "pr_url": null, "picked_agent_id": null, "picks": [],
+            "reason": null,
+            "usage": {"total": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0},
+                      "author": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0},
+                      "reviewers": []},
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
+        }))
+    }
+
+    async fn repository() -> Json<serde_json::Value> {
+        Json(json!({
+            "id": "repo", "path": "/work/ariadne", "base_branch": "main", "description": null,
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
+        }))
+    }
+
     async fn serve(stub: Stub) -> (Client, tokio::task::JoinHandle<()>) {
         let app = Router::new()
+            .route("/v1/tasks/task", get(task))
+            .route("/v1/repositories/repo", get(repository))
             .route("/v1/sessions/session/console/stream", get(open))
             .route("/v1/sessions/session/console/input", post(input))
             .route("/v1/sessions/session/console/cancel", post(cancel))
@@ -375,6 +448,38 @@ mod tests {
             summary: summary.into(),
             created_at: "2026-09-12T00:00:00Z".into(),
         }
+    }
+
+    #[tokio::test]
+    async fn the_cli_reads_the_task_title_for_its_banner() {
+        let (client, server) = serve(stub(true, false)).await;
+        let session = SessionDto {
+            id: "01m2x2gbzj5c1234".into(),
+            goal_id: "goal".into(),
+            task_id: Some("task".into()),
+            task_agent_id: None,
+            seat: Seat::Author,
+            model: "stub:model".into(),
+            effort: Some("high".into()),
+            internal_session_id: None,
+            worktree_path: None,
+            status: SessionStatus::Idle,
+            attention_reason: None,
+            attention_since: None,
+            last_activity_at: None,
+            usage: TokenUsageDto::default(),
+            context_used: None,
+            context_size: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            ended_at: None,
+        };
+
+        let header = super::header(&client, session).await;
+        server.abort();
+
+        let shown = format!("{header:?}");
+        assert!(shown.contains("Input box"), "{shown}");
+        assert!(shown.contains("ariadne"), "{shown}");
     }
 
     /// What a frame reads as: the kinds a snapshot holds, an event's kind,

@@ -262,7 +262,7 @@ impl Client {
 #[tokio::test]
 async fn the_terminal_draws_the_transcript_and_the_status_line_at_the_client_size() {
     let (_dir, _stub, _h, session, address) = idle_daemon().await;
-    let mut client = Client::open(address, &session.id, 100, 30).await;
+    let mut client = Client::open(address, &session.id, 100, 200).await;
 
     client
         .read_until("the transcript and the status line", |screen| {
@@ -290,6 +290,10 @@ async fn the_terminal_draws_the_transcript_and_the_status_line_at_the_client_siz
     assert!(
         rows[bottom + 1].starts_with(" enter send · shift+enter newline"),
         "the footer holds the hints:\n{screen}"
+    );
+    assert!(
+        screen.contains("task     task"),
+        "the welcome banner names the task:\n{screen}"
     );
     assert_eq!(client.statuses, [SessionStatus::Idle]);
 }
