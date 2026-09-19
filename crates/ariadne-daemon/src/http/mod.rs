@@ -156,7 +156,7 @@ impl AppState {
         (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
-        (name = "memories", description = "Searchable facts learned about one repository"),
+        (name = "memories", description = "Searchable facts learned about one repository, or about every one"),
         (name = "knowledge", description = "The symbol index over every registered repository"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
@@ -200,18 +200,10 @@ pub fn router(state: AppState) -> Router {
                 .put(repositories::update)
                 .delete(repositories::delete),
         )
-        .route(
-            "/v1/repositories/{repository_id}/memories",
-            post(memories::create).get(memories::list),
-        )
-        .route(
-            "/v1/repositories/{repository_id}/memories/search",
-            get(memories::search),
-        )
-        .route(
-            "/v1/repositories/{repository_id}/memories/{id}",
-            axum::routing::delete(memories::delete),
-        )
+        // memories
+        .route("/v1/memories", post(memories::create).get(memories::list))
+        .route("/v1/memories/search", get(memories::search))
+        .route("/v1/memories/{id}", axum::routing::delete(memories::delete))
         // knowledge
         .route("/v1/repositories/{id}/knowledge", get(knowledge::status))
         .route(

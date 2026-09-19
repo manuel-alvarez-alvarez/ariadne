@@ -14,6 +14,7 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, warn};
 
 use ariadne_api::goals::GoalDto;
+use ariadne_api::memories::MemoryDeletedDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
@@ -173,7 +174,12 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
             unscoped(DomainEvent::RepositoryDeleted(DeletedDto { id }))
         }
         Change::MemoryCreated(memory) => unscoped(DomainEvent::MemoryCreated(memory_dto(memory))),
-        Change::MemoryDeleted(id) => unscoped(DomainEvent::MemoryDeleted(DeletedDto { id })),
+        Change::MemoryDeleted { id, repository_id } => {
+            unscoped(DomainEvent::MemoryDeleted(MemoryDeletedDto {
+                id,
+                repository_id,
+            }))
+        }
     };
     Ok(event)
 }

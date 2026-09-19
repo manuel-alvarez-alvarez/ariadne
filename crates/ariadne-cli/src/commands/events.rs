@@ -392,7 +392,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             kind,
             subject: memory.id.clone(),
             detail: memory.text.clone(),
-            session: Some(memory.source_session_id.clone()),
+            session: memory.source_session_id.clone(),
             status: None,
         },
         DomainEvent::KnowledgeIndexed(k) => Line {
@@ -417,10 +417,17 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
+        DomainEvent::MemoryDeleted(deleted) => Line {
+            at: now(),
+            kind,
+            subject: deleted.id.clone(),
+            detail: String::new(),
+            session: None,
+            status: None,
+        },
         DomainEvent::GoalDeleted(DeletedDto { id })
         | DomainEvent::SkillDeleted(DeletedDto { id })
-        | DomainEvent::RepositoryDeleted(DeletedDto { id })
-        | DomainEvent::MemoryDeleted(DeletedDto { id }) => Line {
+        | DomainEvent::RepositoryDeleted(DeletedDto { id }) => Line {
             at: now(),
             kind,
             subject: id.clone(),

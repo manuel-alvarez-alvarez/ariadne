@@ -664,7 +664,8 @@ impl AriadneMcp {
                 &path,
                 &CreateMemoryRequest {
                     text: req.text,
-                    expires_at: req.expires_at,
+                    repository_id: Some(repository_id),
+                    expires_at: Some(req.expires_at),
                 },
             )
             .await?,

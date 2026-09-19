@@ -64,6 +64,19 @@ pub fn ensure_task_scope(ctx: &CallCtx, task_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
+/// The repositories an agent session may read: its task's, or its goal's.
+pub async fn session_repositories(store: &Store, session: &AgentSession) -> ApiResult<Vec<String>> {
+    Ok(match &session.task_id {
+        Some(task_id) => vec![store.get_task(task_id).await?.repo_id],
+        None => store
+            .list_goal_repositories(&session.goal_id)
+            .await?
+            .into_iter()
+            .map(|repository| repository.id)
+            .collect(),
+    })
+}
+
 /// Ensure an agent session belongs to the repository it reads or changes.
 pub async fn ensure_repository_scope(
     store: &Store,
@@ -73,14 +86,10 @@ pub async fn ensure_repository_scope(
     let Some(session) = &ctx.session else {
         return Ok(());
     };
-    let allowed = match &session.task_id {
-        Some(task_id) => store.get_task(task_id).await?.repo_id == repository_id,
-        None => store
-            .list_goal_repositories(&session.goal_id)
-            .await?
-            .iter()
-            .any(|repository| repository.id == repository_id),
-    };
+    let allowed = session_repositories(store, session)
+        .await?
+        .iter()
+        .any(|id| id == repository_id);
     if !allowed {
         return Err(ApiError::forbidden(format!(
             "session {} does not belong to repository {repository_id}",

@@ -14,7 +14,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::events::AgentEventDto;
 use crate::goals::GoalDto;
 use crate::knowledge::{KnowledgeFailedDto, KnowledgeIndexedDto};
-use crate::memories::MemoryDto;
+use crate::memories::{MemoryDeletedDto, MemoryDto};
 use crate::messages::MessageDto;
 use crate::repositories::RepositoryDto;
 use crate::sessions::SessionDto;
@@ -108,7 +108,7 @@ pub enum DomainEvent {
     RepositoryUpdated(RepositoryDto),
     RepositoryDeleted(DeletedDto),
     MemoryCreated(MemoryDto),
-    MemoryDeleted(DeletedDto),
+    MemoryDeleted(MemoryDeletedDto),
     /// The knowledge base read one ref of a repository.
     KnowledgeIndexed(KnowledgeIndexedDto),
     /// An index run of a repository failed.

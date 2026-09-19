@@ -109,21 +109,22 @@ fn print_memories(format: Format, memories: &[MemoryDto], empty: String) -> Resu
         memories,
         LS,
         |memory| {
-            let task = memory
-                .source_task_id
-                .as_deref()
-                .map(short_id)
-                .unwrap_or_else(|| "-".into());
+            let short =
+                |id: &Option<String>| id.as_deref().map(short_id).unwrap_or_else(|| "-".into());
             vec![
                 memory.id.clone(),
                 memory.text.clone(),
                 age(&memory.created_at, now),
-                moment(&memory.expires_at),
+                memory
+                    .expires_at
+                    .as_deref()
+                    .map(moment)
+                    .unwrap_or_else(|| "-".into()),
                 format!(
                     "session {} · task {} · goal {}",
-                    short_id(&memory.source_session_id),
-                    task,
-                    short_id(&memory.source_goal_id)
+                    short(&memory.source_session_id),
+                    short(&memory.source_task_id),
+                    short(&memory.source_goal_id)
                 ),
             ]
         },

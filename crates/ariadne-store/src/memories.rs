@@ -1,22 +1,71 @@
-//! Searchable facts learned about one repository.
+//! Searchable facts learned about one repository, or about every repository.
 
 use ariadne_core::id::new_id;
 
-use crate::{Change, Memory, Result, Store, not_found, now};
+use crate::{Change, Memory, Result, Store, now};
 
 #[derive(Debug, Clone)]
 pub struct NewMemory {
-    pub repository_id: String,
+    /// The repository the fact is about. `None` saves a global fact.
+    pub repository_id: Option<String>,
     pub text: String,
-    pub source_session_id: String,
+    /// The session that taught the fact, and its task and goal. All `None`
+    /// when the user wrote it.
+    pub source_session_id: Option<String>,
     pub source_task_id: Option<String>,
-    pub source_goal_id: String,
-    pub expires_at: String,
+    pub source_goal_id: Option<String>,
+    /// When the fact stops being read. `None` never expires.
+    pub expires_at: Option<String>,
+}
+
+/// Which memories a list or a search reads.
+#[derive(Debug, Clone)]
+pub enum MemoryScope {
+    /// Every memory, of every repository and of none.
+    All,
+    /// The memories of no repository.
+    Global,
+    /// The memories of these repositories, and the global ones too when
+    /// `global` is set.
+    Repositories { ids: Vec<String>, global: bool },
+}
+
+impl MemoryScope {
+    /// The condition that holds this scope, with one `?` per bound id.
+    fn clause(&self) -> String {
+        match self {
+            Self::All => "1 = 1".into(),
+            Self::Global => "repository_id IS NULL".into(),
+            Self::Repositories { ids, global } => {
+                let repositories = if ids.is_empty() {
+                    "0 = 1".to_string()
+                } else {
+                    let marks = vec!["?"; ids.len()].join(", ");
+                    format!("repository_id IN ({marks})")
+                };
+                if *global {
+                    format!("({repositories} OR repository_id IS NULL)")
+                } else {
+                    repositories
+                }
+            }
+        }
+    }
+
+    /// The repository ids the clause binds, in order.
+    fn ids(&self) -> &[String] {
+        match self {
+            Self::All | Self::Global => &[],
+            Self::Repositories { ids, .. } => ids,
+        }
+    }
 }
 
 impl Store {
     pub async fn create_memory(&self, new: NewMemory) -> Result<Memory> {
-        self.get_repository(&new.repository_id).await?;
+        if let Some(repository_id) = &new.repository_id {
+            self.get_repository(repository_id).await?;
+        }
         let id = new_id();
         sqlx::query(
             "INSERT INTO memories
@@ -34,58 +83,66 @@ impl Store {
         .bind(&new.expires_at)
         .execute(self.w())
         .await?;
-        let memory = self.get_memory(&new.repository_id, &id).await?;
+        let memory = self.get_memory(&id).await?;
         self.publish(Change::MemoryCreated(memory.clone()));
         Ok(memory)
     }
 
-    pub async fn get_memory(&self, repository_id: &str, id: &str) -> Result<Memory> {
-        sqlx::query_as::<_, Memory>("SELECT * FROM memories WHERE repository_id = ? AND id = ?")
-            .bind(repository_id)
-            .bind(id)
-            .fetch_optional(self.r())
-            .await?
-            .ok_or_else(|| not_found("memory", id))
+    pub async fn get_memory(&self, id: &str) -> Result<Memory> {
+        self.fetch_by("memory", "memories", "id", id).await
     }
 
-    /// List active memories, newest first.
-    pub async fn list_memories(&self, repository_id: &str) -> Result<Vec<Memory>> {
-        self.get_repository(repository_id).await?;
-        Ok(sqlx::query_as::<_, Memory>(
+    /// List the active memories of a scope, newest first.
+    pub async fn list_memories(&self, scope: &MemoryScope) -> Result<Vec<Memory>> {
+        self.active_memories(scope, None).await
+    }
+
+    /// Find the active memories of a scope containing `query`, without case
+    /// sensitivity.
+    pub async fn search_memories(&self, scope: &MemoryScope, query: &str) -> Result<Vec<Memory>> {
+        self.active_memories(scope, Some(query)).await
+    }
+
+    /// The memories of a scope that have not expired, narrowed to the ones
+    /// that contain `text` where a text is given.
+    ///
+    /// Only fixed fragments are assembled — the ids and the text go in as
+    /// bindings — which is what makes the statement safe to assert.
+    async fn active_memories(
+        &self,
+        scope: &MemoryScope,
+        text: Option<&str>,
+    ) -> Result<Vec<Memory>> {
+        let mut sql = format!(
             "SELECT * FROM memories
-              WHERE repository_id = ? AND expires_at > ?
-              ORDER BY id DESC",
-        )
-        .bind(repository_id)
-        .bind(now())
-        .fetch_all(self.r())
-        .await?)
+              WHERE {} AND (expires_at IS NULL OR expires_at > ?)",
+            scope.clause()
+        );
+        if text.is_some() {
+            sql.push_str(" AND instr(lower(text), lower(?)) > 0");
+        }
+        sql.push_str(" ORDER BY id DESC");
+        let mut query = sqlx::query_as::<_, Memory>(sqlx::AssertSqlSafe(sql));
+        for id in scope.ids() {
+            query = query.bind(id.as_str());
+        }
+        query = query.bind(now());
+        if let Some(text) = text {
+            query = query.bind(text);
+        }
+        Ok(query.fetch_all(self.r()).await?)
     }
 
-    /// Find active memories containing `query`, without case sensitivity.
-    pub async fn search_memories(&self, repository_id: &str, query: &str) -> Result<Vec<Memory>> {
-        self.get_repository(repository_id).await?;
-        Ok(sqlx::query_as::<_, Memory>(
-            "SELECT * FROM memories
-              WHERE repository_id = ? AND expires_at > ?
-                AND instr(lower(text), lower(?)) > 0
-              ORDER BY id DESC",
-        )
-        .bind(repository_id)
-        .bind(now())
-        .bind(query)
-        .fetch_all(self.r())
-        .await?)
-    }
-
-    pub async fn delete_memory(&self, repository_id: &str, id: &str) -> Result<()> {
-        self.get_memory(repository_id, id).await?;
-        sqlx::query("DELETE FROM memories WHERE repository_id = ? AND id = ?")
-            .bind(repository_id)
+    pub async fn delete_memory(&self, id: &str) -> Result<()> {
+        let memory = self.get_memory(id).await?;
+        sqlx::query("DELETE FROM memories WHERE id = ?")
             .bind(id)
             .execute(self.w())
             .await?;
-        self.publish(Change::MemoryDeleted(id.to_string()));
+        self.publish(Change::MemoryDeleted {
+            id: memory.id,
+            repository_id: memory.repository_id,
+        });
         Ok(())
     }
 }

@@ -89,18 +89,21 @@ CREATE TABLE repositories (
     UNIQUE (path, base_branch)
 );
 
--- What past work learned about one repository. Source ids are kept as text,
--- not foreign keys: a memory survives deletion of the session, task or goal
--- that taught it. Deleting the repository removes its memories.
+-- What past work learned about one repository, or about every repository.
+-- A NULL `repository_id` is a global fact. Source ids are kept as text, not
+-- foreign keys: a memory survives deletion of the session, task or goal that
+-- taught it, and they are all NULL when the user wrote the fact. Deleting the
+-- repository removes its memories and leaves the global ones. A NULL
+-- `expires_at` never expires.
 CREATE TABLE memories (
     id                TEXT PRIMARY KEY,
-    repository_id     TEXT NOT NULL REFERENCES repositories (id) ON DELETE CASCADE,
+    repository_id     TEXT REFERENCES repositories (id) ON DELETE CASCADE,
     text              TEXT NOT NULL,
-    source_session_id TEXT NOT NULL,
+    source_session_id TEXT,
     source_task_id    TEXT,
-    source_goal_id    TEXT NOT NULL,
+    source_goal_id    TEXT,
     created_at        TEXT NOT NULL,
-    expires_at        TEXT NOT NULL
+    expires_at        TEXT
 );
 CREATE INDEX idx_memories_repository ON memories (repository_id, id);
 

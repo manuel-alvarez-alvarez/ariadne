@@ -186,17 +186,20 @@ pub struct Repository {
     pub updated_at: String,
 }
 
-/// One fact learned about a repository, with the work that taught it.
+/// One fact learned about a repository, with the work that taught it. A
+/// memory of no repository is global, and one of no source is the user's.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Memory {
     pub id: String,
-    pub repository_id: String,
+    /// The repository the fact is about, or `None` when it is global.
+    pub repository_id: Option<String>,
     pub text: String,
-    pub source_session_id: String,
+    pub source_session_id: Option<String>,
     pub source_task_id: Option<String>,
-    pub source_goal_id: String,
+    pub source_goal_id: Option<String>,
     pub created_at: String,
-    pub expires_at: String,
+    /// When the fact stops being read, or `None` when it never expires.
+    pub expires_at: Option<String>,
 }
 
 /// The model, and optionally the effort, that a goal's orchestrator or one

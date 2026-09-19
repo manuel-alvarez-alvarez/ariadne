@@ -13,31 +13,38 @@ tests:
   - ui/src/features/memory/memory-page.test.tsx
 ---
 
-# Project memory
+# Memory
 
-Facts one session learns about a repository can help later sessions without
-becoming part of every prompt.
+Facts one session learns about a repository, or about the work itself, can
+help later sessions without becoming part of every prompt.
 
 ## Scope
 
-In: repository memory storage, expiry, source records, REST access, MCP save
-and search tools, CLI list, search and delete commands, and the desktop
-screen that offers the same three (015).
+In: repository and global memory storage, the user write path, an optional
+expiry, source records, REST access, MCP save and search tools, CLI list,
+search and delete commands, and the desktop screen that offers the same three
+(015).
 
 Out: prompt injection. Agents choose when to search.
 
 ## Behavior
 
-1. Each memory belongs to one registered repository and contains text, its
-   creation and expiry times, and the session, task and goal that sourced it.
-2. An agent session saves a memory, and the daemon records its source from the
-   session instead of accepting source fields from the caller.
-3. A memory remains after its source session, task or goal is deleted. It is
-   removed when its repository is deleted.
+1. Each memory belongs to one registered repository, or to none, which makes
+   it global. It holds text, its creation time, an expiry time where one was
+   given, and the session, task and goal that sourced it. A memory saved
+   without an expiry time never expires.
+2. An agent session saves a memory for a repository of its task or goal, and
+   the daemon records its source from the session instead of accepting source
+   fields from the caller. A session that saves a global memory is refused. A
+   user call carries no session, and saves in any scope without a source.
+3. A memory remains after its source session, task or goal is deleted. A
+   repository memory is removed when its repository is deleted, and a global
+   memory stays.
 4. List and search return only memories whose expiry time is still ahead.
 5. Search matches a case-insensitive literal substring inside the memory text.
-6. An agent can read or change memories only for a repository in its task or
-   goal. A user can manage any registered repository.
+6. An agent reads and changes the memories of a repository in its task or
+   goal, and reads the global memories. A user reads, writes and deletes in
+   every scope.
 7. Every seat has `save_memory` and `search_memory`. A task session defaults
    to its task repository, and an orchestrator names a repository when its
    goal does not have exactly one.
@@ -56,10 +63,13 @@ Out: prompt injection. Agents choose when to search.
    daemon refuses the third.
 9. `ariadne memory ls|search|delete` names a repository by id or path and uses
    the shared list, mutation, JSON and quiet output forms (014).
-10. The REST surface adds, lists, searches and deletes memory under one
-    repository, and every endpoint appears in OpenAPI (012).
+10. The REST surface adds, lists, searches and deletes memory under
+    `/v1/memories`. A list and a search take a repository and a scope, which
+    is `repository`, `global` or `all`, and `all` is the default. Every
+    endpoint appears in OpenAPI (012).
 11. Memory creation emits the complete entry, and memory deletion emits the
-    removed id on the domain event stream (012).
+    removed id and its repository, which is null for a global memory, on the
+    domain event stream (012).
 12. The desktop app has a memory page per repository: it lists, searches and
     deletes through the same REST endpoints the CLI uses, matching it (015).
 
@@ -68,15 +78,27 @@ Out: prompt injection. Agents choose when to search.
 - Another goal session of the same repository finds an author's saved memory
   after the source goal is deleted
   (`memories.rs::another_session_of_the_same_repository_finds_an_authors_memory`).
-- A session of another repository does not find it
-  (`memories.rs::another_repository_does_not_find_the_memory`).
-- An expired memory never returns from list or search
+- A user call with no session saves a global memory, and a session of any
+  repository reads it
+  (`memories.rs::a_user_saves_a_global_memory_that_any_repository_reads`).
+- An agent session that saves a global memory is refused
+  (`memories.rs::an_agent_session_cannot_save_a_global_memory`).
+- An agent session never reads a memory of a repository outside its goal
+  (`memories.rs::an_agent_session_never_reads_another_repositorys_memory`).
+- A memory saved without an expiry returns from list and search
+  (`memories.rs::a_memory_without_an_expiry_stays_in_the_list_and_the_search`),
+  and an expired memory never does
   (`memories.rs::an_expired_memory_never_returns_from_list_or_search`).
-- Delete removes a memory (`memories.rs::delete_removes_a_memory`), and the
-  CLI accepts the entry and repository
+- A read of the scope `repository` hides the global memories
+  (`memories.rs::the_repository_scope_hides_the_global_memories`).
+- Deleting a repository removes its memories and keeps the global ones
+  (`memories.rs::deleting_a_repository_removes_its_memories_and_keeps_the_global_ones`).
+- Delete removes a memory (`memories.rs::delete_removes_a_memory`), a session
+  deletes no global memory (`memories.rs::a_session_deletes_no_global_memory`),
+  and the CLI accepts the entry and repository
   (`cli/tests.rs::memory_delete_takes_the_entry_and_its_repository`).
-- Memory creation and deletion reach the domain event stream
-  (`memories.rs::delete_removes_a_memory`).
+- The creation and the deletion events carry the scope
+  (`memories.rs::the_creation_and_the_deletion_events_carry_the_scope`).
 - Every endpoint appears in OpenAPI
   (`memories.rs::every_memory_endpoint_is_in_the_openapi_document`).
 - Every seat receives both memory tools

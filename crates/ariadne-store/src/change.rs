@@ -32,5 +32,10 @@ pub enum Change {
     RepositoryUpdated(Repository),
     RepositoryDeleted(String),
     MemoryCreated(Memory),
-    MemoryDeleted(String),
+    /// The entry that went, and the repository it was about; the repository
+    /// is `None` for a global memory.
+    MemoryDeleted {
+        id: String,
+        repository_id: Option<String>,
+    },
 }
