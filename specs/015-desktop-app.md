@@ -188,7 +188,7 @@ Out: the daemon endpoints themselves (012).
     Overview tab. The refs offered are the ones
     `GET /v1/repositories/{id}/knowledge` lists, and the base branch. The
     tabs are one list in `ui/src/features/knowledge/knowledge-tabs.tsx`, one
-    entry per tab. `files` says only that it is coming.
+    entry per tab.
 32. The Overview tab shows one card per registered repository: its state,
     its files and symbols, its languages, its indexed refs and a Reindex
     button. Reindex posts the reindex and shows `indexing` at once; it is off
@@ -199,7 +199,9 @@ Out: the daemon endpoints themselves (012).
     zooms, pans and fits the graph to the view; a hovered node keeps its
     neighbours and fades the rest; a click on a node or an edge goes back to
     the caller by its key; labels stay on at every size; and a legend names
-    each colour. The model names a tone of the status ramp, and the colours
+    each colour. The layout stops once the nodes barely move between two
+    checks, and after ten seconds at most. The caller can hide nodes and
+    edges by key: a filter redraws and never builds the model again. The model names a tone of the status ramp, and the colours
     are read off the tokens in `index.css` for the theme on screen. sigma.js
     needs WebGL, which jsdom lacks, so each test file that draws a graph
     mocks the renderer with a stand-in that lists what sigma would be told
@@ -252,10 +254,27 @@ Out: the daemon endpoints themselves (012).
       and ref.
     - `knowledge_indexed` and `knowledge_failed` refetch the walks of their
       repository.
+38. The Files tab draws one repository ref's files from
+    `GET /v1/knowledge/graph`: a node per file, sized by its symbols and
+    coloured by its top-level directory (the seven largest have a colour
+    each and the legend names them; the rest share one, named Other), and
+    an edge per `(from, to, kind)` weighted by its `count`, dashed where it
+    is `heuristic`. A level switch draws files or directories: at directory
+    level the files of each directory, cut to a depth of path segments, are
+    one node, and their edges are summed, from the same response. Path text,
+    edge kinds and Hide unlinked hide nodes and edges without a rebuild.
+    When the response is `truncated`, the tab says "Showing N of
+    total_nodes files." and offers to double `limit`, up to 10000. A click
+    on a file opens a pane with its outline (`GET /v1/knowledge/outline`),
+    its incoming and outgoing edges, and a link per symbol to
+    `?tab=symbols&symbol=<name>`. The URL keeps `?level=`, `?depth=`,
+    `?filter=`, `?hidden_kinds=`, `?isolated=hide`, `?limit=` and `?file=`.
+    `knowledge_indexed` and `knowledge_failed` refetch its graph and
+    outlines.
 
 ## Acceptance criteria
 
-- 76 test files cover the features, the API layer and the event stream; each
+- 77 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
 - A task staffed with several authors shows each one's branch and its own
   vote count, marks the one the reviewers picked, and lists what each
@@ -294,8 +313,9 @@ Out: the daemon endpoints themselves (012).
   `ariadne knowledge status|reindex` (022).
 - The shared graph places what the model left unplaced, keeps a hovered
   node's neighbourhood and fades the rest, colours nodes, edges and the
-  legend from the status tokens, draws dashed edges dashed, and hands a
-  clicked node and a clicked edge back by their keys
+  legend from the status tokens, draws dashed edges dashed, leaves out what
+  it is told to hide, calls a layout settled once its nodes barely move, and
+  hands a clicked node and a clicked edge back by their keys
   (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx`).
 - The Symbols graph holds the centre and every relation in its own colour.
   It includes hidden-count nodes, foreign markers, and dashed heuristic edges
@@ -328,6 +348,21 @@ Out: the daemon endpoints themselves (012).
   default, and a click on a node opens the Symbols tab on it
   (`ui/src/features/knowledge/impact-tab.test.tsx`) — parity with
   `ariadne knowledge impact|path` (022).
+- The Files graph has a node per file sized by its symbols and coloured by
+  its top-level directory, with the legend naming each colour, and edges
+  weighted by their count; at directory level it merges files by a depth
+  of segments and sums their edges; the path text, kind and Hide unlinked
+  filters hide without changing the model; and both levels of 5000 files
+  build and filter within a second
+  (`ui/src/features/knowledge/files-graph.test.ts`). On screen it draws the
+  route's files, switches level, filters, keeps all of it in the URL, opens
+  a clicked file's outline and edges with links to the Symbols tab, and
+  says "Showing N of total_nodes files." with a control that raises the
+  limit when the response is truncated
+  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Files tab`);
+  the knowledge events refetch the graph and the outlines
+  (`ui/src/events/dispatch.test.ts::knowledge events (022)`) — parity with
+  `ariadne knowledge graph` (022).
 - `#/repositories/:id/knowledge` leads nowhere, a repository row has no
   Knowledge button, and the palette opens `#/knowledge?repository=<id>`
   (`ui/src/routes/router.test.tsx::leads nowhere from a repository's old knowledge page`,

@@ -331,6 +331,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/knowledge/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["knowledge_graph"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/knowledge/impact": {
         parameters: {
             query?: never;
@@ -1780,6 +1796,41 @@ export interface components {
             error: string;
             repository_id: string;
         };
+        /**
+         * @description How confidently every symbol edge in a file edge was resolved.
+         * @enum {string}
+         */
+        KnowledgeGraphConfidence: "exact" | "heuristic";
+        /** @description The files and file-to-file edges of one repository ref. */
+        KnowledgeGraphDto: {
+            edges: components["schemas"]["KnowledgeGraphEdgeDto"][];
+            git_ref: string;
+            nodes: components["schemas"]["KnowledgeGraphNodeDto"][];
+            repository_id: string;
+            /** Format: int64 */
+            total_nodes: number;
+            truncated: boolean;
+        };
+        /** @description One grouped edge between two files. */
+        KnowledgeGraphEdgeDto: {
+            /** @description `exact` only when every grouped edge is exact. */
+            confidence: components["schemas"]["KnowledgeGraphConfidence"];
+            /**
+             * Format: int64
+             * @description How many symbol-level edges this file edge groups.
+             */
+            count: number;
+            from: string;
+            kind: string;
+            to: string;
+        };
+        /** @description One file in a repository graph. */
+        KnowledgeGraphNodeDto: {
+            language: string;
+            path: string;
+            /** Format: int64 */
+            symbols: number;
+        };
         /** @description One search answer. */
         KnowledgeHitDto: {
             kind: string;
@@ -3173,6 +3224,45 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
+            };
+        };
+    };
+    knowledge_graph: {
+        parameters: {
+            query: {
+                /** @description One repository id. */
+                repository: string;
+                /** @description The branch to read. Omit it for the caller's own. */
+                git_ref?: string | null;
+                /** @description How many file nodes to return (default 2000, max 10000). */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGraphDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge base is disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

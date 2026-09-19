@@ -767,6 +767,68 @@
         }
       }
     },
+    "/v1/knowledge/graph": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "operationId": "graph",
+        "parameters": [
+          {
+            "name": "repository",
+            "in": "query",
+            "description": "One repository id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_ref",
+            "in": "query",
+            "description": "The branch to read. Omit it for the caller's own.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many file nodes to return (default 2000, max 10000).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGraphDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": "the knowledge base is disabled"
+          }
+        }
+      }
+    },
     "/v1/knowledge/impact": {
       "get": {
         "tags": [
@@ -4575,6 +4637,105 @@
           },
           "repository_id": {
             "type": "string"
+          }
+        }
+      },
+      "KnowledgeGraphConfidence": {
+        "type": "string",
+        "description": "How confidently every symbol edge in a file edge was resolved.",
+        "enum": [
+          "exact",
+          "heuristic"
+        ]
+      },
+      "KnowledgeGraphDto": {
+        "type": "object",
+        "description": "The files and file-to-file edges of one repository ref.",
+        "required": [
+          "repository_id",
+          "git_ref",
+          "nodes",
+          "edges",
+          "truncated",
+          "total_nodes"
+        ],
+        "properties": {
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeGraphEdgeDto"
+            }
+          },
+          "git_ref": {
+            "type": "string"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeGraphNodeDto"
+            }
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "total_nodes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "KnowledgeGraphEdgeDto": {
+        "type": "object",
+        "description": "One grouped edge between two files.",
+        "required": [
+          "from",
+          "to",
+          "kind",
+          "count",
+          "confidence"
+        ],
+        "properties": {
+          "confidence": {
+            "$ref": "#/components/schemas/KnowledgeGraphConfidence",
+            "description": "`exact` only when every grouped edge is exact."
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many symbol-level edges this file edge groups."
+          },
+          "from": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
+      "KnowledgeGraphNodeDto": {
+        "type": "object",
+        "description": "One file in a repository graph.",
+        "required": [
+          "path",
+          "language",
+          "symbols"
+        ],
+        "properties": {
+          "language": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "symbols": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

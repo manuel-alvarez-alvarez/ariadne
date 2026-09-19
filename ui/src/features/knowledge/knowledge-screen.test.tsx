@@ -3,8 +3,9 @@
 /**
  * The knowledge screen against a stubbed daemon (022): the pickers and the
  * tab read from and write to the URL, the Overview cards in every state the
- * daemon answers with and their Reindex button, and the Repositories graph
- * with the side list an edge click fills.
+ * daemon answers with and their Reindex button, the Repositories graph
+ * with the side list an edge click fills, and the Files graph with its
+ * level, its filters, its truncation notice and the file pane a click opens.
  *
  * The event path is driven through the app's own `EventStreamProvider`, the
  * way `task-diff.test.tsx` drives the diff tab's refresh: a daemon pushing
@@ -16,7 +17,13 @@ import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { KnowledgeInteractionGroupDto, KnowledgeStatusDto, RepositoryDto } from "@/api"
+import type {
+  KnowledgeGraphDto,
+  KnowledgeInteractionGroupDto,
+  KnowledgeOutlineEntryDto,
+  KnowledgeStatusDto,
+  RepositoryDto,
+} from "@/api"
 import { EventStreamProvider } from "@/events/provider"
 import { type FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { aRepository } from "@/test/fixtures"
@@ -90,6 +97,27 @@ const CALLS: KnowledgeInteractionGroupDto[] = [
   },
 ]
 
+/** web/src/app.ts → web/src/api.ts, web/lib/log.ts on its own. */
+function aFileGraph(overrides: Partial<KnowledgeGraphDto> = {}): KnowledgeGraphDto {
+  return {
+    repository_id: WEB.id,
+    git_ref: "main",
+    nodes: [
+      { path: "src/app.ts", language: "typescript", symbols: 12 },
+      { path: "src/api.ts", language: "typescript", symbols: 3 },
+      { path: "lib/log.ts", language: "typescript", symbols: 1 },
+    ],
+    edges: [{ from: "src/app.ts", to: "src/api.ts", kind: "calls", count: 2, confidence: "exact" }],
+    truncated: false,
+    total_nodes: 3,
+    ...overrides,
+  }
+}
+
+const APP_OUTLINE: KnowledgeOutlineEntryDto[] = [
+  { name: "mount", kind: "function", signature: "function mount()", start_line: 3, end_line: 9 },
+]
+
 interface Recorded {
   method: string
   url: string
@@ -98,6 +126,7 @@ interface Recorded {
 let requests: Recorded[] = []
 let statuses: Record<string, KnowledgeStatusDto> = {}
 let interactions: KnowledgeInteractionGroupDto[] = []
+let fileGraph: KnowledgeGraphDto = aFileGraph()
 
 function stubDaemon() {
   requests = []
@@ -113,6 +142,10 @@ function stubDaemon() {
     const status = /^\/v1\/repositories\/([^/]+)\/knowledge$/.exec(url.pathname)
     if (status?.[1]) return jsonResponse(statuses[status[1]])
     if (url.pathname === "/v1/knowledge/interactions") return jsonResponse(interactions)
+    if (url.pathname === "/v1/knowledge/graph") return jsonResponse(fileGraph)
+    if (url.pathname === "/v1/knowledge/outline") {
+      return jsonResponse(url.searchParams.get("path") === "src/app.ts" ? APP_OUTLINE : [])
+    }
     return jsonResponse([])
   })
 }
@@ -124,6 +157,7 @@ function card(name: string): HTMLElement {
 beforeEach(() => {
   statuses = { [WEB.id]: idleStatus(WEB), [API.id]: idleStatus(API) }
   interactions = []
+  fileGraph = aFileGraph()
   stubDaemon()
 })
 
@@ -314,5 +348,128 @@ describe("the Repositories tab", () => {
     renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=repositories" })
 
     expect(await screen.findByText("No interactions between repositories yet.")).toBeDefined()
+  })
+})
+
+describe("the Files tab", () => {
+  function shownNodes(): string[] {
+    return within(screen.getByRole("list", { name: "Graph nodes" }))
+      .getAllByRole("button")
+      .map((button) => button.textContent ?? "")
+  }
+
+  function params(url: string): URLSearchParams {
+    return new URLSearchParams(url.split("?")[1])
+  }
+
+  it("draws a node per file from the graph route, with a legend colour per directory", async () => {
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files&ref=feature" })
+
+    await screen.findByRole("list", { name: "Graph nodes" })
+    expect(shownNodes()).toEqual(["app.ts", "api.ts", "log.ts"])
+    expect(screen.getByRole("button", { name: "app.ts → api.ts" })).toBeDefined()
+    const legend = within(screen.getByRole("list", { name: "Legend" }))
+    expect(legend.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["src", "lib"])
+    const asked = requests.find((request) => request.url.startsWith("/v1/knowledge/graph"))
+    expect(params(asked?.url ?? "").get("repository")).toBe(WEB.id)
+    expect(params(asked?.url ?? "").get("git_ref")).toBe("feature")
+  })
+
+  it("merges the files into directories at directory level, and keeps the level in the URL", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+    await screen.findByRole("list", { name: "Graph nodes" })
+
+    await user.click(screen.getByRole("button", { name: "Directories", pressed: false }))
+
+    expect(params(location.url).get("level")).toBe("directory")
+    expect(shownNodes()).toEqual(["src", "lib"])
+  })
+
+  it("hides the files the path text and the kinds leave out, and keeps both in the URL", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+    await screen.findByRole("list", { name: "Graph nodes" })
+
+    await user.type(screen.getByRole("textbox", { name: "Filter by path" }), "src/")
+    await waitFor(() => expect(shownNodes()).toEqual(["app.ts", "api.ts"]))
+    expect(params(location.url).get("filter")).toBe("src/")
+
+    await user.click(screen.getByRole("button", { name: "calls", pressed: true }))
+    expect(screen.queryByRole("button", { name: "app.ts → api.ts" })).toBeNull()
+    expect(params(location.url).get("hidden_kinds")).toBe("calls")
+  })
+
+  it("hides a file with no edge when unlinked files are hidden", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+    await screen.findByRole("list", { name: "Graph nodes" })
+
+    await user.click(screen.getByRole("button", { name: "Hide unlinked", pressed: false }))
+
+    expect(shownNodes()).toEqual(["app.ts", "api.ts"])
+    expect(params(location.url).get("isolated")).toBe("hide")
+  })
+
+  it("reads the level and the filters back from the URL", async () => {
+    renderScreen(<KnowledgeScreen />, {
+      route: "/knowledge?tab=files&level=directory&filter=lib",
+    })
+
+    await screen.findByRole("list", { name: "Graph nodes" })
+    await waitFor(() => expect(shownNodes()).toEqual(["lib"]))
+    expect(screen.getByRole("button", { name: "Directories", pressed: true })).toBeDefined()
+  })
+
+  it("opens a clicked file's outline and edges, with a link per symbol to the Symbols tab", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<KnowledgeScreen />, {
+      route: "/knowledge?tab=files&ref=feature",
+    })
+    const nodes = await screen.findByRole("list", { name: "Graph nodes" })
+
+    await user.click(within(nodes).getByRole("button", { name: "app.ts" }))
+
+    expect(params(location.url).get("file")).toBe("src/app.ts")
+    const pane = within(screen.getByRole("complementary", { name: "File" }))
+    const symbol = await pane.findByRole("link", { name: "mount" })
+    const target = params(symbol.getAttribute("href") ?? "")
+    expect(target.get("tab")).toBe("symbols")
+    expect(target.get("symbol")).toBe("mount")
+    expect(target.get("ref")).toBe("feature")
+    expect(target.has("file")).toBe(false)
+    const outgoing = within(pane.getByRole("region", { name: "Outgoing" }))
+    expect(outgoing.getByRole("button", { name: "src/api.ts" })).toBeDefined()
+    expect(outgoing.getByText("calls × 2")).toBeDefined()
+    expect(pane.getByRole("region", { name: "Incoming" }).textContent).toContain("0 edges")
+    const outline = requests.find((request) => request.url.startsWith("/v1/knowledge/outline"))
+    expect(params(outline?.url ?? "").get("path")).toBe("src/app.ts")
+  })
+
+  it("says how many files it shows when the graph is cut, and raises the limit on request", async () => {
+    fileGraph = aFileGraph({ truncated: true, total_nodes: 4500 })
+    const user = userEvent.setup()
+    const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+
+    expect(await screen.findByText("Showing 3 of 4500 files.")).toBeDefined()
+    await user.click(screen.getByRole("button", { name: "Show up to 4000" }))
+
+    expect(params(location.url).get("limit")).toBe("4000")
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request) =>
+            request.url.startsWith("/v1/knowledge/graph") &&
+            params(request.url).get("limit") === "4000",
+        ),
+      ).toBe(true),
+    )
+  })
+
+  it("shows no notice when the graph holds every file", async () => {
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+
+    await screen.findByRole("list", { name: "Graph nodes" })
+    expect(screen.queryByText(/^Showing/)).toBeNull()
   })
 })

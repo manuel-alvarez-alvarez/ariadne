@@ -278,6 +278,41 @@ describe("knowledge events (022)", () => {
     ).toBe(true)
   })
 
+  it("refetches every file graph and outline once indexing finishes or fails", () => {
+    const graphKey = qk.repositories.knowledgeGraph(REPOSITORY.id, {
+      repository: REPOSITORY.id,
+      git_ref: "main",
+      limit: 4000,
+    })
+    const outlineKey = qk.repositories.knowledgeOutline(REPOSITORY.id, {
+      repository: REPOSITORY.id,
+      path: "src/app.ts",
+      git_ref: "main",
+    })
+    for (const event of [
+      {
+        event: "knowledge_indexed" as const,
+        data: {
+          repository_id: REPOSITORY.id,
+          git_ref: "main",
+          commit: "abc1230000000000000000000000000000000000",
+          files: 12,
+          symbols: 34,
+        },
+      },
+      { event: "knowledge_failed" as const, data: { repository_id: REPOSITORY.id, error: "no" } },
+    ]) {
+      const queryClient = withKnowledge()
+      queryClient.setQueryData(graphKey, { nodes: [], edges: [] })
+      queryClient.setQueryData(outlineKey, [])
+
+      dispatch(queryClient, event)
+
+      expect(stale(queryClient, graphKey)).toBe(true)
+      expect(stale(queryClient, outlineKey)).toBe(true)
+    }
+  })
+
   it("leaves another repository's knowledge caches alone", () => {
     const queryClient = withKnowledge()
     const other = "01JREPO000000000000OTHER1"

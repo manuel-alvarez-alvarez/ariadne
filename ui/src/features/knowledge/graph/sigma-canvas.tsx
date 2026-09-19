@@ -14,6 +14,7 @@
 import "@react-sigma/core/lib/style.css"
 
 import { SigmaContainer, useCamera, useRegisterEvents, useSigma } from "@react-sigma/core"
+import type Graph from "graphology"
 import forceAtlas2 from "graphology-layout-forceatlas2"
 import FA2Layout from "graphology-layout-forceatlas2/worker"
 import { MaximizeIcon, ZoomInIcon, ZoomOutIcon } from "lucide-react"
@@ -25,11 +26,12 @@ import type { NodeDisplayData, PartialButFor } from "sigma/types"
 import { Button } from "@/components/ui/button"
 
 import { DashedEdgeProgram } from "./dashed-edge-program"
-import type {
-  GraphEdgeAttributes,
-  GraphLayout,
-  GraphNodeAttributes,
-  KnowledgeGraphModel,
+import {
+  type GraphEdgeAttributes,
+  type GraphLayout,
+  type GraphNodeAttributes,
+  type KnowledgeGraphModel,
+  settled,
 } from "./graph-model"
 import type { GraphPalette } from "./graph-palette"
 
@@ -40,6 +42,8 @@ export interface NodeDisplay {
   size: number
   /** Drawn above the rest, with its label whatever the density. */
   highlighted: boolean
+  /** Not drawn, and its edges with it. */
+  hidden: boolean
   zIndex: number
 }
 
@@ -49,6 +53,7 @@ export interface EdgeDisplay {
   color: string
   size: number
   type: "line" | "dashed"
+  hidden: boolean
   zIndex: number
 }
 
@@ -65,8 +70,12 @@ export interface SigmaCanvasProps {
   onClickEdge: (edge: string) => void
 }
 
-/** How long the force layout runs before it is stopped where it got to. */
-const FORCE_LAYOUT_MS = 2000
+/** How often the force layout is checked for whether it has settled. */
+const SETTLE_CHECK_MS = 250
+/** How long the force layout may run at most, settled or not. */
+const FORCE_LAYOUT_MS = 10_000
+/** From this many nodes, the layout approximates far nodes in groups: exact is quadratic. */
+const BARNES_HUT_NODES = 500
 
 export function SigmaCanvas({ graph, palette, ...rest }: SigmaCanvasProps) {
   const settings = useMemo(
@@ -154,17 +163,45 @@ function Behaviour({
     const graph = sigma.getGraph()
     if (graph.order < 2) return
     const worker = new FA2Layout(graph, {
-      settings: { ...forceAtlas2.inferSettings(graph), gravity: 1, barnesHutOptimize: false },
+      getEdgeWeight: "weight",
+      settings: {
+        ...forceAtlas2.inferSettings(graph),
+        gravity: 1,
+        barnesHutOptimize: graph.order >= BARNES_HUT_NODES,
+        edgeWeightInfluence: 1,
+      },
     })
     worker.start()
-    const stop = window.setTimeout(() => worker.stop(), FORCE_LAYOUT_MS)
+    let last = positions(graph)
+    const check = window.setInterval(() => {
+      const next = positions(graph)
+      if (settled(last, next)) stop()
+      last = next
+    }, SETTLE_CHECK_MS)
+    const cap = window.setTimeout(() => stop(), FORCE_LAYOUT_MS)
+    function stop() {
+      window.clearInterval(check)
+      window.clearTimeout(cap)
+      worker.stop()
+    }
     return () => {
-      window.clearTimeout(stop)
+      stop()
       worker.kill()
     }
   }, [sigma, layout])
 
   return null
+}
+
+/** Every node's place, as `x, y` pairs in node order. */
+function positions(graph: Graph): Float64Array {
+  const out = new Float64Array(graph.order * 2)
+  let index = 0
+  graph.forEachNode((_node, attributes) => {
+    out[index++] = attributes.x ?? 0
+    out[index++] = attributes.y ?? 0
+  })
+  return out
 }
 
 function CameraButtons() {

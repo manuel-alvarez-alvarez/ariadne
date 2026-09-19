@@ -8,8 +8,8 @@
 import type { ReactNode } from "react"
 
 import type { RepositoryDto } from "@/api"
-import { EmptyState } from "@/components/empty-state"
 
+import { FilesTab } from "./files-tab"
 import { ImpactTab } from "./impact-tab"
 import { OverviewTab } from "./overview-tab"
 import { RepositoriesTab } from "./repositories-tab"
@@ -67,9 +67,9 @@ export const KNOWLEDGE_TABS: readonly KnowledgeTab[] = [
     label: "Impact & path",
     render: ({ repository, gitRef }) => <ImpactTab repositoryId={repository.id} gitRef={gitRef} />,
   },
-  { id: "files", label: "Files", render: () => <Coming /> },
+  {
+    id: "files",
+    label: "Files",
+    render: ({ repository, gitRef }) => <FilesTab repositoryId={repository.id} gitRef={gitRef} />,
+  },
 ]
-
-function Coming() {
-  return <EmptyState emphasis="quiet" className="py-12" title="This tab is coming." />
-}

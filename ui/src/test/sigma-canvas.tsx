@@ -7,7 +7,8 @@
  * would be told: a button per node and per edge, each carrying what the
  * reducers said about it, and it fires the same callbacks sigma's pointer
  * events would. The model and the reducers are the app's own; only the
- * pixels are left out.
+ * pixels are left out. A node or an edge the reducers hide is `hidden`, so a
+ * role query does not find it.
  */
 
 import type { SigmaCanvasProps } from "@/features/knowledge/graph/sigma-canvas"
@@ -28,7 +29,7 @@ export function SigmaCanvas({
         {graph.mapNodes((node, attributes) => {
           const drawn = nodeReducer(node, attributes)
           return (
-            <li key={node}>
+            <li key={node} hidden={drawn.hidden}>
               <button
                 type="button"
                 data-node={node}
@@ -51,7 +52,7 @@ export function SigmaCanvas({
         {graph.mapEdges((edge, attributes, _source, _target, from, to) => {
           const drawn = edgeReducer(edge, attributes)
           return (
-            <li key={edge}>
+            <li key={edge} hidden={drawn.hidden}>
               <button
                 type="button"
                 data-edge={edge}

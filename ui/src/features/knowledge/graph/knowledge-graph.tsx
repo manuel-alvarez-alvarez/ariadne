@@ -9,7 +9,9 @@
  * changes.
  *
  * Hovering a node keeps it and its neighbours and fades the rest. A click on
- * a node or an edge goes to the caller, by its key in the graph.
+ * a node or an edge goes to the caller, by its key in the graph. What
+ * `hidden` names is left out of the drawing, and out of the model's layout
+ * never: a filter redraws, and does not place the nodes again.
  */
 
 import { useTheme } from "next-themes"
@@ -22,6 +24,7 @@ import {
   type GraphEdgeAttributes,
   type GraphLayout,
   type GraphNodeAttributes,
+  type GraphVisibility,
   type KnowledgeGraphModel,
   type LegendEntry,
   placed,
@@ -31,12 +34,14 @@ import { type EdgeDisplay, type NodeDisplay, SigmaCanvas } from "./sigma-canvas"
 
 const NODE_SIZE = 10
 const EDGE_SIZE = 2
+const NOTHING_HIDDEN: GraphVisibility = { nodes: new Set(), edges: new Set() }
 
 export function KnowledgeGraph({
   graph,
   layout,
   legend,
   label,
+  hidden = NOTHING_HIDDEN,
   onNodeClick,
   onEdgeClick,
   className,
@@ -46,6 +51,7 @@ export function KnowledgeGraph({
   legend: LegendEntry[]
   /** What the graph shows, for a screen reader: the canvas itself says nothing. */
   label: string
+  hidden?: GraphVisibility
   onNodeClick?: (node: string) => void
   onEdgeClick?: (edge: string) => void
   className?: string
@@ -65,10 +71,11 @@ export function KnowledgeGraph({
         color: faded ? palette.faded : palette.tones[attributes.tone],
         size: attributes.size ?? NODE_SIZE,
         highlighted,
+        hidden: hidden.nodes.has(node),
         zIndex: highlighted ? 1 : 0,
       }
     },
-    [emphasised, palette],
+    [emphasised, palette, hidden],
   )
   const edgeReducer = useCallback(
     (edge: string, attributes: GraphEdgeAttributes): EdgeDisplay => {
@@ -78,10 +85,11 @@ export function KnowledgeGraph({
         color: faded ? palette.faded : palette.tones[attributes.tone],
         size: attributes.size ?? EDGE_SIZE,
         type: attributes.dashed ? "dashed" : "line",
+        hidden: hidden.edges.has(edge),
         zIndex: highlighted ? 1 : 0,
       }
     },
-    [emphasised, palette],
+    [emphasised, palette, hidden],
   )
   const leave = useCallback(() => setHovered(null), [])
   const clickNode = useCallback((node: string) => onNodeClick?.(node), [onNodeClick])

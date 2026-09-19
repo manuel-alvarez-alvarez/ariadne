@@ -45,9 +45,20 @@ export interface GraphEdgeAttributes {
   dashed?: boolean
   /** The width on screen, in pixels. */
   size?: number
+  /** How hard the force layout pulls its ends together; 1 when unset. */
+  weight?: number
 }
 
 export type KnowledgeGraphModel = Graph<GraphNodeAttributes, GraphEdgeAttributes>
+
+/**
+ * The nodes and edges a filter hides, by key. The model stays as it was
+ * built, so a filter costs a redraw and never a new layout.
+ */
+export interface GraphVisibility {
+  nodes: ReadonlySet<string>
+  edges: ReadonlySet<string>
+}
 
 /**
  * How the component places the nodes: a force layout, a ring, or where the
@@ -118,4 +129,30 @@ export function emphasis(graph: KnowledgeGraphModel, hovered: string | null) {
       return { highlighted: touches, faded: !touches }
     },
   }
+}
+
+/**
+ * The force layout has settled once a check finds the nodes moved, on
+ * average, less than this share of the graph's width since the last one.
+ */
+const SETTLED_SHARE = 0.002
+
+/**
+ * Whether the nodes moved, on average, less than {@link SETTLED_SHARE} of
+ * the graph's width between two reads of their places: `x, y` pairs in node
+ * order.
+ */
+export function settled(before: Float64Array, after: Float64Array): boolean {
+  if (before.length !== after.length || after.length === 0) return false
+  let moved = 0
+  let min = Number.POSITIVE_INFINITY
+  let max = Number.NEGATIVE_INFINITY
+  for (let index = 0; index < after.length; index++) {
+    const value = after[index] ?? 0
+    moved += Math.abs(value - (before[index] ?? 0))
+    min = Math.min(min, value)
+    max = Math.max(max, value)
+  }
+  const width = Math.max(max - min, Number.EPSILON)
+  return moved / (after.length / 2) < SETTLED_SHARE * width
 }

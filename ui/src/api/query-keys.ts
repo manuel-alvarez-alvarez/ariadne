@@ -100,6 +100,20 @@ interface KnowledgePathFilters {
   depth: number
 }
 
+/** `GET /v1/knowledge/graph`, for one repository from its page (022). */
+interface KnowledgeGraphFilters {
+  repository: string
+  git_ref?: string
+  limit?: number
+}
+
+/** `GET /v1/knowledge/outline`: one file of one repository (022). */
+interface KnowledgeOutlineFilters {
+  repository: string
+  path: string
+  git_ref?: string
+}
+
 export const qk = {
   goals: {
     all: () => ["goals"] as const,
@@ -185,6 +199,15 @@ export const qk = {
         "knowledge-interactions",
         filters ?? { repository: id },
       ] as const,
+    /** Every file graph of one repository, whatever its ref and limit: the prefix events invalidate. */
+    knowledgeGraphAll: (id: string) => ["repositories", "detail", id, "knowledge-graph"] as const,
+    knowledgeGraph: (id: string, filters: KnowledgeGraphFilters) =>
+      ["repositories", "detail", id, "knowledge-graph", filters] as const,
+    /** Every file outline of one repository: the prefix events invalidate. */
+    knowledgeOutlineAll: (id: string) =>
+      ["repositories", "detail", id, "knowledge-outline"] as const,
+    knowledgeOutline: (id: string, filters: KnowledgeOutlineFilters) =>
+      ["repositories", "detail", id, "knowledge-outline", filters] as const,
   },
   /**
    * How each registry agent is launched (`GET /v1/agents`): one unfiltered

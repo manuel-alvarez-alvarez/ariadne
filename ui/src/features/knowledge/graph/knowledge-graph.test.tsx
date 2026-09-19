@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { renderScreen } from "@/test/harness"
 
-import { emphasis, emptyGraph, type KnowledgeGraphModel, placed } from "./graph-model"
+import { emphasis, emptyGraph, type KnowledgeGraphModel, placed, settled } from "./graph-model"
 import { KnowledgeGraph } from "./knowledge-graph"
 
 // jsdom has no WebGL, and sigma.js reads `WebGLRenderingContext` as its module
@@ -84,6 +84,14 @@ describe("the model", () => {
     expect(hover.edge("b-c")).toEqual({ highlighted: false, faded: true })
   })
 
+  it("calls a layout settled once its nodes barely move, and not while they still travel", () => {
+    // Two nodes, ten units apart.
+    const before = new Float64Array([0, 0, 10, 0])
+
+    expect(settled(before, new Float64Array([0.001, 0, 10, 0]))).toBe(true)
+    expect(settled(before, new Float64Array([1, 0, 10, 0]))).toBe(false)
+  })
+
   it("neither keeps nor fades anything while nothing is hovered", () => {
     const hover = emphasis(aChain(), null)
 
@@ -147,6 +155,23 @@ describe("the view", () => {
 
     expect(node("delta").dataset.label).toBe("delta")
     expect(node("delta").dataset.color).toBe(unfaded)
+  })
+
+  it("leaves out the nodes and edges it is told to hide, and draws the rest", () => {
+    renderScreen(
+      <KnowledgeGraph
+        graph={aChain()}
+        layout="force"
+        legend={[]}
+        label="Chain"
+        hidden={{ nodes: new Set(["d"]), edges: new Set(["b-c"]) }}
+      />,
+    )
+
+    const nodes = within(screen.getByRole("list", { name: "Graph nodes" })).getAllByRole("button")
+    expect(nodes.map((button) => button.textContent)).toEqual(["alpha", "beta", "gamma"])
+    expect(edge("b-c").closest("li")?.hidden).toBe(true)
+    expect(edge("a-b").closest("li")?.hidden).toBe(false)
   })
 
   it("hands a clicked node and a clicked edge back by their keys", async () => {

@@ -1,7 +1,7 @@
 /**
  * The knowledge screen's reads and writes (022): a repository's status, a
- * reindex, the interactions of one ref, and the symbol reads the Impact and
- * path tab makes.
+ * reindex, the interactions of one ref, the symbol reads the Impact and
+ * path tab makes, and the file graph and outlines of the Files tab.
  *
  * Reindex answers 202 with no body — the rebuild runs in the background — so
  * the mutation flips the cached status to `indexing` itself rather than
@@ -147,5 +147,44 @@ export function knowledgePathQueryOptions(
         }),
       ),
     enabled: from.length > 0 && to.length > 0,
+  })
+}
+
+/**
+ * `GET /v1/knowledge/graph`: the files of one repository ref and the edges
+ * between them, at most `limit` files. Without a limit the daemon keeps 2000.
+ */
+export function knowledgeGraphQueryOptions(repositoryId: string, gitRef: string, limit?: number) {
+  return queryOptions({
+    queryKey: qk.repositories.knowledgeGraph(repositoryId, {
+      repository: repositoryId,
+      git_ref: gitRef,
+      limit,
+    }),
+    queryFn: () =>
+      unwrap(
+        api().GET("/v1/knowledge/graph", {
+          params: {
+            query: { repository: repositoryId, git_ref: gitRef, ...(limit ? { limit } : {}) },
+          },
+        }),
+      ),
+  })
+}
+
+/** `GET /v1/knowledge/outline`: the definitions of one file, in order. */
+export function knowledgeOutlineQueryOptions(repositoryId: string, gitRef: string, path: string) {
+  return queryOptions({
+    queryKey: qk.repositories.knowledgeOutline(repositoryId, {
+      repository: repositoryId,
+      path,
+      git_ref: gitRef,
+    }),
+    queryFn: () =>
+      unwrap(
+        api().GET("/v1/knowledge/outline", {
+          params: { query: { repository: repositoryId, path, git_ref: gitRef } },
+        }),
+      ),
   })
 }

@@ -28,6 +28,7 @@ tests:
   - ui/src/features/knowledge/path-graph.test.ts
   - ui/src/features/knowledge/impact-tab.test.tsx
   - ui/src/features/knowledge/graph/layered-layout.test.ts
+  - ui/src/features/knowledge/files-graph.test.ts
   - ui/src/features/knowledge/graph/knowledge-graph.test.tsx
   - ui/src/events/dispatch.test.ts
   - ui/src/features/command-palette/command-palette.test.tsx
@@ -296,7 +297,8 @@ agent to do with the tools (017); and the memory tools beside these (019).
     between two symbols in layers (015). The command palette opens the
     screen on a repository. `knowledge_indexed` and `knowledge_failed`
     refetch what the screen shows for their repository and leave every other
-    repository's caches alone.
+    repository's caches alone; for the Files tab that includes its file
+    graphs and outlines.
     The Symbols tab searches the selected repository and ref by name, kind,
     and path. Its graph puts the chosen definition at the centre. Callers,
     callees, implementations, references, and tests surround it in separate
@@ -306,6 +308,15 @@ agent to do with the tools (017); and the memory tools beside these (019).
     keeps the name in `?symbol=`. Equal names offer a definition picker. The
     side pane shows the signature, documentation, line range, and numbered
     source. Find symbol in the palette opens this tab.
+    The Files tab draws `GET /v1/knowledge/graph` for the picked
+    repository and ref: a node per file, sized by its symbols and coloured
+    by its top-level directory, and an edge per file pair and kind weighted
+    by its count. A level switch merges the files of each directory, to a
+    depth of path segments, and sums their edges on the client. Path text,
+    edge kinds and Hide unlinked filter it; a truncated response says how
+    many of `total_nodes` files it shows and offers a higher `limit`; and a
+    click on a file shows its outline, its edges both ways and a link per
+    symbol to the Symbols tab.
 30. Beyond its symbols, a file holds interfaces: what it offers another
     repository and what it takes from one. Each is read off the text at parse
     time, kept per blob like the mentions, and carries the definition it sits
@@ -867,8 +878,8 @@ and by `(kind, name)`.
   (`ui/src/features/knowledge/symbols-tab.test.tsx::the Symbols tab`).
 - Find symbol opens the Symbols tab
   (`ui/src/features/command-palette/command-palette.test.tsx::opens symbol search from the palette`).
-- The shared graph component builds the model it draws and hands node and
-  edge clicks back by key
+- The shared graph component builds the model it draws, hides what it is
+  told to hide, and hands node and edge clicks back by key
   (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx`).
 - The Impact graph puts the changed definition in the first layer and each
   caller in the layer of its depth, dashes a heuristic call, and marks a
@@ -882,9 +893,17 @@ and by `(kind, name)`.
   tab on a clicked node
   (`ui/src/features/knowledge/impact-tab.test.tsx`) — parity with
   `ariadne knowledge impact|path` (rules 23, 34).
+- The Files graph sizes, colours and weights its model, merges it by
+  directory at a depth and sums the edges, filters by path, kind and
+  unlinked files without a rebuild, and builds 5000 files within a second
+  (`ui/src/features/knowledge/files-graph.test.ts`); on screen, a click on
+  a file shows its outline and edges, and a truncated response shows its
+  notice and raises the limit
+  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Files tab`).
 - `knowledge_indexed` and `knowledge_failed` invalidate a repository's
-  knowledge status, every interactions list and every impact and path walk
-  under it, and leave another repository's caches alone
+  knowledge status, every interactions list, every impact and path walk,
+  and every file graph and outline under it, and leave another repository's
+  caches alone
   (`ui/src/events/dispatch.test.ts::knowledge events (022)`).
 - The command palette opens the knowledge screen on a repository
   (`ui/src/features/command-palette/command-palette.test.tsx::opens the
