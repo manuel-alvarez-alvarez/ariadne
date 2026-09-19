@@ -175,23 +175,24 @@ same binary also serves (013).
     permission answers. `--tail`, `--since` and repeatable `--kind` narrow the
     snapshot. Their `-f` forms follow the console stream and print agent chunks
     as they arrive, while JSON keeps the daemon's event objects unchanged.
-29. `ariadne knowledge status|reindex|search|outline|symbol|impact|interactions|map`
+29. `ariadne knowledge status|reindex|search|outline|symbol|path|impact|interactions|map`
     read the knowledge base (022). `status`, `reindex` and `interactions`
     name a repository by id or path, `interactions` taking `--ref` too;
     `search <query>` takes `--repository`, `--ref`, `--kind`, `--path` and
     `--limit`; `outline <repo> <path>` takes `--ref`; `symbol <name>` takes
     `--repository`, `--ref` and `--detail` (`outline`, `source` or
-    `context`, `outline` by default); `impact` takes a required
+    `context`, `outline` by default); `path <from> <to>` takes a required
+    `--repository`, `--ref` and `--depth`; `impact` takes a required
     `--repository`, one of `--symbol` and `--diff`, `--ref` and `--depth`;
     and `map <repo>` takes `--path`, the file to rank around, `--budget`,
     how many tokens the map runs to, and `--ref`. `map` prints the one text
     the daemon rendered, as it came.
-    `search`, `outline`, `impact` and `interactions` are listings like every
-    other, whose subject column is `title`, and whose `-q` prints the
+    `search`, `outline`, `path`, `impact` and `interactions` are listings like
+    every other, whose subject column is `title`, and whose `-q` prints the
     location (`path:line`, `repository:path:line` for an interaction's from
     end) or the line range, an impact row carrying how far away the caller
     is and an interaction row its kind, its to end and its confidence.
-    `impact` and `interactions` answer the daemon's own objects under
+    `path`, `impact` and `interactions` answer the daemon's own objects under
     `--format json`, and `impact` says what it stopped at in a note rather
     than a row. `symbol` prints a block per definition, an end in another
     repository led by that repository's id; `reindex` is a mutation whose
@@ -346,12 +347,13 @@ same binary also serves (013).
   its entry and repository (`::memory_delete_takes_the_entry_and_its_repository`).
 - The knowledge commands are classified the same way, `search` takes its
   filters, `outline` its repository and path, `symbol` its name and detail,
-  `impact` one of a symbol and a diff, and `interactions` its repository and
-  ref
+  `path` its two names and depth, `impact` one of a symbol and a diff, and
+  `interactions` its repository and ref
   (`cli/tests.rs::every_command_in_the_tree_is_classified`,
   `::knowledge_search_takes_its_filters`,
   `::knowledge_outline_takes_the_repository_and_the_path`,
   `::knowledge_symbol_takes_its_name_and_detail`,
+  `::knowledge_path_takes_two_names_and_the_depth`,
   `::knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth`,
   `::knowledge_interactions_takes_the_repository_and_the_ref`,
   `::knowledge_map_takes_the_path_and_the_budget`), and a search

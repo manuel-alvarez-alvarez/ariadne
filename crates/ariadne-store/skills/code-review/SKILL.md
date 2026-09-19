@@ -34,7 +34,8 @@ Judge two axes apart. One axis covers repository conventions. The other axis cov
 4. Read the scoped diff and the surrounding code. Map each changed hunk to
    its purpose. Call `impact` with no argument for the callers this task
    diff reaches. Call `symbol --detail context` on each changed definition,
-   and read the tests it lists.
+   and read the tests it lists. Call `path` when changed definitions connect
+   through more than one edge.
    Done when every hunk has a stated purpose, and you know the callers and
    the tests of every changed definition.
 5. Record each build, test and lint result from its log. Read the log

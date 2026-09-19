@@ -27,9 +27,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 
 1. `ariadne mcp serve` is spawned by the agent, which the daemon's ACP
    runtime hands it as an MCP server on `session/new`, `session/load` and
-   `session/resume` (021). It reads its identity from the environment — session, seat,
-   goal and, for a task session, the task — and proxies to the daemon's REST
-   API with a session header, so the daemon enforces the scoping itself.
+   `session/resume` (021). It reads its identity from the environment —
+   session, seat, goal and, for a task session, the task — and proxies to the
+   daemon's REST API with a session header, so the daemon enforces the scoping
+   itself.
 2. The server's instructions, which every session receives before its first
    prompt, say what this session is and carry the session rules that hold for
    every seat alike (006).
@@ -62,15 +63,15 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    - **every seat**: `send_message`, `read_messages` — the channel
      the agents talk to each other on (018); `save_memory`, `search_memory` —
      the repository facts agents choose to keep and retrieve (019);
-     `search_code`, `outline`, `symbol`, `impact`, `repo_map` — the symbol
-     index over the
+     `search_code`, `outline`, `symbol`, `path`, `impact`, `repo_map` — the
+     symbol index over the
      repositories and the graph over it (022), listed and served only while
      the daemon runs with `knowledge_enabled`, which every launch tells the
      server in `ARIADNE_KNOWLEDGE_ENABLED`. `impact` with neither `symbol`
      nor `diff` is the reviewer's own task diff, base branch to task branch,
      and a refusal for any other seat. `repo_map` with no `repository` maps
      every repository of the session's goal, each on a share of the budget
-     and under a heading of its own. `symbol` and `impact` head each
+     and under a heading of its own. `symbol`, `path` and `impact` head each
      repository's hits with the repository's path, read from
      `GET /v1/repositories` once per call, and put another repository's
      hits — a caller across a route, a reference by name — under a heading
@@ -161,6 +162,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   `::outline_defaults_to_the_task_repository_and_lists_line_ranges`,
   `::symbol_groups_its_answer_under_a_heading_for_each_repository`,
   `::symbol_defaults_to_the_task_repository`,
+  `::path_answers_one_line_per_hop_and_says_when_none`,
   `::impact_reads_the_task_diff_for_a_reviewer_that_names_nothing`,
   `::impact_needs_a_symbol_or_a_diff_from_a_seat_that_is_no_reviewer`,
   `::repo_map_maps_every_repository_of_the_goal_on_a_share_of_the_budget`,

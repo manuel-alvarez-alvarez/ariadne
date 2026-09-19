@@ -742,6 +742,46 @@ async fn a_call_resolves_to_a_code_definition_and_never_to_an_outline_key() {
     assert!(context.callers.is_empty(), "{:#?}", context.callers);
 }
 
+#[tokio::test]
+async fn the_shortest_path_between_two_symbols_is_answered_hop_by_hop() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[(
+            "src/lib.rs",
+            "pub fn first() { middle(); }\n\
+             pub fn middle() { last(); }\n\
+             pub fn last() {}\n",
+        )],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+    let first = only(&store, "first").await;
+    let last = only(&store, "last").await;
+
+    let path = store.path(&[first], &[last], 6).await.unwrap();
+    let answered = path
+        .iter()
+        .map(|hop| {
+            (
+                hop.name.as_str(),
+                hop.path.as_str(),
+                hop.line,
+                hop.edge_kind.as_deref(),
+                hop.confidence.as_deref(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        answered,
+        [
+            ("first", "src/lib.rs", 1, None, None),
+            ("middle", "src/lib.rs", 2, Some("calls"), Some("exact")),
+            ("last", "src/lib.rs", 3, Some("calls"), Some("exact")),
+        ]
+    );
+}
+
 /// A name two files define is a guess: the caller points at both, each
 /// marked `heuristic`, and the count of what matched is kept.
 #[tokio::test]

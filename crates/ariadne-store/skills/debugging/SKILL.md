@@ -24,8 +24,8 @@ and the rest is mechanical.
    green.
 4. Rank three to five falsifiable hypotheses before you test one. Write the
    prediction each one makes: "if X is the cause, then Y turns the loop
-   green." Rank them by the callers each one touches: read `symbol --detail
-   context` and `impact` for the definitions the repro runs through.
+   green." Rank them with `symbol --detail context`, `impact` and `path` for
+   the definitions the repro runs through.
    Discard a hypothesis that makes no prediction.
    Done when the list is ranked and each entry has a prediction.
 5. Test the top hypothesis with one probe. Change one variable at a time.

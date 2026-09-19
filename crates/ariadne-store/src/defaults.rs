@@ -1697,19 +1697,19 @@ mod tests {
         }
     }
 
-    /// The knowledge base serves five tools to every seat (022), and a skill
+    /// The knowledge base serves six tools to every seat (022), and a skill
     /// that says nothing about them is a seat that grepped and read whole
     /// files instead. Each of the five skills that reads code names the tool
     /// its own step needs, at that step:
     ///
-    /// - `coding` finds the code with `search_code`, `outline` and `symbol`
-    ///   before it opens a file, and asks `impact` what a change reaches;
+    /// - `coding` finds code with `search_code`, `outline` and `symbol`, asks
+    ///   `impact` what changes reach, and asks `path` how definitions connect;
     /// - `code-review` asks `impact` for the callers of the task diff, and
-    ///   `symbol --detail context` for the tests of each changed definition,
+    ///   `symbol --detail context` for tests, and `path` between definitions,
     ///   and reads the last verdict with `read_messages` and `all: true`;
-    /// - `debugging` ranks its hypotheses by what `symbol --detail context`
-    ///   and `impact` say each one touches;
-    /// - `refactoring` reads the callers and tests of what it moves;
+    /// - `debugging` ranks hypotheses with `symbol --detail context`, `impact`
+    ///   and `path`;
+    /// - `refactoring` reads callers, tests and paths around what it moves;
     /// - `orchestration` explores a goal with `repo_map`, and with
     ///   `interactions` where the goal names several repositories.
     ///
@@ -1721,19 +1721,29 @@ mod tests {
         for (name, tools) in [
             (
                 "coding",
-                &["`search_code`", "`outline`", "`symbol`", "`impact`"][..],
+                &[
+                    "`search_code`",
+                    "`outline`",
+                    "`symbol`",
+                    "`path`",
+                    "`impact`",
+                ][..],
             ),
             (
                 "code-review",
                 &[
                     "`impact`",
                     "`symbol --detail context`",
+                    "`path`",
                     "`read_messages`",
                     "`all: true`",
                 ][..],
             ),
-            ("debugging", &["`symbol --detail context`", "`impact`"][..]),
-            ("refactoring", &["`symbol --detail context`"][..]),
+            (
+                "debugging",
+                &["`symbol --detail context`", "`impact`", "`path`"][..],
+            ),
+            ("refactoring", &["`symbol --detail context`", "`path`"][..]),
             // `interactions` is a CLI command and no tool, so the skill
             // names it the way it is run.
             (

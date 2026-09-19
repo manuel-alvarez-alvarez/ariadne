@@ -128,7 +128,7 @@ per kind.
 
 ## The tools agents get
 
-Every seat has five tools, beside the memory tools:
+Every seat has six tools, beside the memory tools:
 
 - `search_code` finds definitions by name. Words, camelCase parts and
   snake_case parts all match, each as a prefix: `add_worktree`, `addWork` and
@@ -145,6 +145,10 @@ Every seat has five tools, beside the memory tools:
   is, its signature and its doc. `detail=source` adds its text, and `detail=context` adds its callers,
   its callees, what implements it and the tests that reach it, 20 of each at
   most.
+- `path` finds the shortest directed path between two symbols, six edges deep
+  by default and ten at most. It follows calls, routes, references,
+  implementations, extensions and imports, including routes into another
+  repository.
 - `impact` lists what a change reaches: the callers of a definition, by how
   many calls away they are. `symbol` names one definition, `diff` as
   `<base>..<head>` names every definition a diff changed, and a reviewer that
@@ -168,11 +172,12 @@ stops at the last whole line the budget holds.
 
 `search_code` and `outline` answer plain text, one line per result, in the
 form `path:line kind name signature` (`path:start-end` for an outline).
-`symbol` and `impact` group their answer under headings, one per repository
-(its path) and one per definition, with what another repository contributes
-— a caller across a route, a reference by name — under that repository's
-own heading. An answer is cut at 8 KiB, and its last line then says how many
-results were left out and to narrow the query.
+`symbol`, `path` and `impact` group their answer under headings, one per
+repository (its path) and one per definition, with what another repository
+contributes under that repository's own heading. A path prints one line per
+hop as `path:line kind name <- edge_kind confidence`; its first hop has no
+edge. An answer is cut at 8 KiB, and its last line then says how many results
+were left out and to narrow the query.
 
 Nothing is added to a prompt: an agent calls the tools when it needs them.
 
@@ -185,6 +190,7 @@ ariadne knowledge search Manager --kind class --path src/
 ariadne knowledge search parse --ref feat-parser  # a task branch
 ariadne knowledge outline ~/projects/api src/lib.rs
 ariadne knowledge symbol add_worktree --detail context
+ariadne knowledge path add_worktree remove_worktree --repository ~/projects/api
 ariadne knowledge impact --repository ~/projects/api --symbol add_worktree
 ariadne knowledge impact --repository ~/projects/api --diff main..feat-parser
 ariadne knowledge interactions ~/projects/web     # what joins web to the others
@@ -201,20 +207,21 @@ for the daemon's own objects, `-q` for the first column (`path:line`, or the
 line range of an outline), `-o wide` and `--columns` for the layout.
 `search` reads every repository unless `--repository` names one, at the base
 branch unless `--ref` names another. `symbol` prints a block per definition,
-with the lists `--detail context` asked for; `impact` prints one row per
+with the lists `--detail context` asked for. `path` prints one row per hop,
+with `--depth` six by default and ten at most; `-q` prints `path:line` and
+`--format json` prints the daemon's path object. `impact` prints one row per
 caller, led by its location, with how far away it is, names every definition
-it stopped at in a note, and answers the daemon's own objects under
-`--format json`. `map` prints the one text the daemon rendered, as it came,
-and `--format json` adds the ref, the token count and how many files it
-names.
+it stopped at in a note, and answers the daemon's own objects under `--format
+json`. `map` prints the one text the daemon rendered, as it came, and
+`--format json` adds the ref, the token count and how many files it names.
 
 The same is on the API: `GET /v1/repositories/{id}/knowledge`, `POST
 /v1/repositories/{id}/knowledge/reindex`, `GET /v1/knowledge/search`, `GET
 /v1/knowledge/outline`, `GET /v1/knowledge/symbol`, `GET
-/v1/knowledge/impact`, `GET /v1/knowledge/interactions` and `GET
-/v1/knowledge/map`, and the domain
-events `knowledge_indexed` and `knowledge_failed` on the event stream
-(`ariadne events` prints them).
+/v1/knowledge/path`, `GET /v1/knowledge/impact`, `GET
+/v1/knowledge/interactions` and `GET /v1/knowledge/map`, and the domain events
+`knowledge_indexed` and `knowledge_failed` on the event stream (`ariadne
+events` prints them).
 
 ## Turning it off
 

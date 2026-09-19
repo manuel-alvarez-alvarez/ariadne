@@ -29,6 +29,16 @@ pub const SCHEMA_VERSION: i64 = 5;
 /// a route the definition handles.
 const CALL_KINDS: &[&str] = &["calls", "calls_route"];
 
+/// The directed edge kinds a path between definitions follows.
+const PATH_KINDS: &[&str] = &[
+    "calls",
+    "calls_route",
+    "references",
+    "implements",
+    "extends",
+    "imports",
+];
+
 /// The edge kinds a map ranks over: the symbol edges of one name resolved to
 /// one definition (022, rule 9), and no interface edge.
 ///
@@ -249,6 +259,19 @@ pub struct ImpactCaller {
     pub line: i64,
     pub name: String,
     pub confidence: String,
+}
+
+/// One definition on a shortest directed path. The edge fields name the
+/// edge into this definition, and are empty on the first hop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PathHop {
+    pub repository_id: String,
+    pub path: String,
+    pub line: i64,
+    pub kind: String,
+    pub name: String,
+    pub edge_kind: Option<String>,
+    pub confidence: Option<String>,
 }
 
 /// How many callers a symbol may have and still be walked past. A symbol
@@ -886,6 +909,191 @@ impl KnowledgeStore {
         stopped.sort();
         stopped.dedup();
         Ok((callers, stopped))
+    }
+
+    /// The shortest directed path from any definition in `starts` to any
+    /// definition in `ends`, up to `depth` edges. The search grows from both
+    /// sides, and reads each reached repository at the ref its edge names.
+    pub async fn path(
+        &self,
+        starts: &[Definition],
+        ends: &[Definition],
+        depth: i64,
+    ) -> Result<Vec<PathHop>> {
+        if starts.is_empty() || ends.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut forward: HashMap<PathKey, PathVisit> = starts
+            .iter()
+            .map(|definition| {
+                let node = PathNode::from(definition);
+                (node.key.clone(), PathVisit { node, link: None })
+            })
+            .collect();
+        let mut backward: HashMap<PathKey, PathVisit> = ends
+            .iter()
+            .map(|definition| {
+                let node = PathNode::from(definition);
+                (node.key.clone(), PathVisit { node, link: None })
+            })
+            .collect();
+        let mut forward_level: Vec<PathNode> =
+            forward.values().map(|visit| visit.node.clone()).collect();
+        let mut backward_level: Vec<PathNode> =
+            backward.values().map(|visit| visit.node.clone()).collect();
+        forward_level.sort_by(path_node_order);
+        backward_level.sort_by(path_node_order);
+
+        if let Some(meeting) = forward_level
+            .iter()
+            .find(|node| backward.contains_key(&node.key))
+        {
+            return Ok(join_path(&meeting.key, &forward, &backward));
+        }
+
+        let max_depth = depth.max(0);
+        let mut forward_depth = 0;
+        let mut backward_depth = 0;
+        while forward_depth + backward_depth < max_depth {
+            if forward_level.is_empty() && backward_level.is_empty() {
+                break;
+            }
+            let grow_forward = !forward_level.is_empty()
+                && (backward_level.is_empty() || forward_level.len() <= backward_level.len());
+            let mut meeting = None;
+            if grow_forward {
+                forward_depth += 1;
+                let mut next = Vec::new();
+                for neighbor in self.path_neighbors(&forward_level, true).await? {
+                    if forward.contains_key(&neighbor.far.key) {
+                        continue;
+                    }
+                    let key = neighbor.far.key.clone();
+                    forward.insert(
+                        key.clone(),
+                        PathVisit {
+                            node: neighbor.far.clone(),
+                            link: Some((neighbor.near, neighbor.edge)),
+                        },
+                    );
+                    next.push(neighbor.far);
+                    if meeting.is_none() && backward.contains_key(&key) {
+                        meeting = Some(key);
+                    }
+                }
+                forward_level = next;
+            } else {
+                backward_depth += 1;
+                let mut next = Vec::new();
+                for neighbor in self.path_neighbors(&backward_level, false).await? {
+                    if backward.contains_key(&neighbor.far.key) {
+                        continue;
+                    }
+                    let key = neighbor.far.key.clone();
+                    backward.insert(
+                        key.clone(),
+                        PathVisit {
+                            node: neighbor.far.clone(),
+                            link: Some((neighbor.near, neighbor.edge)),
+                        },
+                    );
+                    next.push(neighbor.far);
+                    if meeting.is_none() && forward.contains_key(&key) {
+                        meeting = Some(key);
+                    }
+                }
+                backward_level = next;
+            }
+            if let Some(meeting) = meeting {
+                return Ok(join_path(&meeting, &forward, &backward));
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// One level beside `level`. Forward reads edges out of the level;
+    /// backward reads edges into it. Each query stays on an edge index.
+    async fn path_neighbors(&self, level: &[PathNode], forward: bool) -> Result<Vec<PathNeighbor>> {
+        let mut scopes: Vec<((String, String), Vec<i64>)> = Vec::new();
+        for node in level {
+            let scope = (node.key.repository_id.clone(), node.key.git_ref.clone());
+            match scopes.iter_mut().find(|(found, _)| *found == scope) {
+                Some((_, ids)) => ids.push(node.key.symbol_id),
+                None => scopes.push((scope, vec![node.key.symbol_id])),
+            }
+        }
+        let mut neighbors = Vec::new();
+        for ((repository, git_ref), ids) in scopes {
+            for chunk in ids.chunks(CHUNK) {
+                let mut sql = match forward {
+                    true => QueryBuilder::<Sqlite>::new(
+                        "SELECT e.from_symbol AS near_symbol, s.id AS far_symbol,
+                                f.repository_id AS far_repository, f.git_ref AS far_ref,
+                                f.path, s.start_line AS line, s.kind, s.name,
+                                e.kind AS edge_kind, e.confidence
+                         FROM edges e
+                         JOIN symbols s ON s.id = e.to_symbol
+                         JOIN files f ON f.blob = s.blob AND f.repository_id = e.to_repository
+                                     AND f.git_ref = e.to_ref
+                         WHERE e.from_repository = ",
+                    ),
+                    false => QueryBuilder::<Sqlite>::new(
+                        "SELECT e.to_symbol AS near_symbol, s.id AS far_symbol,
+                                f.repository_id AS far_repository, f.git_ref AS far_ref,
+                                f.path, s.start_line AS line, s.kind, s.name,
+                                e.kind AS edge_kind, e.confidence
+                         FROM edges e
+                         JOIN symbols s ON s.id = e.from_symbol
+                         JOIN files f ON f.blob = s.blob AND f.repository_id = e.from_repository
+                                     AND f.git_ref = e.git_ref
+                         WHERE e.to_repository = ",
+                    ),
+                };
+                sql.push_bind(&repository)
+                    .push(if forward {
+                        " AND e.git_ref = "
+                    } else {
+                        " AND e.to_ref = "
+                    })
+                    .push_bind(&git_ref)
+                    .push(" AND ");
+                push_kinds(&mut sql, "e.", PATH_KINDS);
+                sql.push(if forward {
+                    " AND e.from_symbol IN ("
+                } else {
+                    " AND e.to_symbol IN ("
+                });
+                let mut values = sql.separated(", ");
+                for id in chunk {
+                    values.push_bind(id);
+                }
+                sql.push(") ORDER BY near_symbol, edge_kind, far_repository, path, line");
+                let rows: Vec<PathEdgeRow> = sql.build_query_as().fetch_all(&self.read).await?;
+                neighbors.extend(rows.into_iter().map(|row| PathNeighbor {
+                    near: PathKey {
+                        symbol_id: row.near_symbol,
+                        repository_id: repository.clone(),
+                        git_ref: git_ref.clone(),
+                    },
+                    far: PathNode {
+                        key: PathKey {
+                            symbol_id: row.far_symbol,
+                            repository_id: row.far_repository,
+                            git_ref: row.far_ref,
+                        },
+                        path: row.path,
+                        line: row.line,
+                        kind: row.kind,
+                        name: row.name,
+                    },
+                    edge: PathEdge {
+                        kind: row.edge_kind,
+                        confidence: row.confidence,
+                    },
+                }));
+            }
+        }
+        Ok(neighbors)
     }
 
     /// The edges between one ref of a repository and every other repository,
@@ -1866,6 +2074,121 @@ impl KnowledgeStore {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct PathKey {
+    symbol_id: i64,
+    repository_id: String,
+    git_ref: String,
+}
+
+#[derive(Clone, Debug)]
+struct PathNode {
+    key: PathKey,
+    path: String,
+    line: i64,
+    kind: String,
+    name: String,
+}
+
+impl From<&Definition> for PathNode {
+    fn from(definition: &Definition) -> Self {
+        Self {
+            key: PathKey {
+                symbol_id: definition.id,
+                repository_id: definition.repository_id.clone(),
+                git_ref: definition.git_ref.clone(),
+            },
+            path: definition.path.clone(),
+            line: definition.start_line,
+            kind: definition.kind.clone(),
+            name: definition.name.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PathEdge {
+    kind: String,
+    confidence: String,
+}
+
+#[derive(Clone, Debug)]
+struct PathVisit {
+    node: PathNode,
+    /// Forward: the prior node and its edge into this one. Backward: the next
+    /// node and this node's edge into it.
+    link: Option<(PathKey, PathEdge)>,
+}
+
+#[derive(Clone, Debug)]
+struct PathNeighbor {
+    near: PathKey,
+    far: PathNode,
+    edge: PathEdge,
+}
+
+#[derive(sqlx::FromRow)]
+struct PathEdgeRow {
+    near_symbol: i64,
+    far_symbol: i64,
+    far_repository: String,
+    far_ref: String,
+    path: String,
+    line: i64,
+    kind: String,
+    name: String,
+    edge_kind: String,
+    confidence: String,
+}
+
+fn path_node_order(a: &PathNode, b: &PathNode) -> std::cmp::Ordering {
+    a.key
+        .repository_id
+        .cmp(&b.key.repository_id)
+        .then_with(|| a.path.cmp(&b.path))
+        .then(a.line.cmp(&b.line))
+}
+
+fn path_hop(node: &PathNode, edge: Option<&PathEdge>) -> PathHop {
+    PathHop {
+        repository_id: node.key.repository_id.clone(),
+        path: node.path.clone(),
+        line: node.line,
+        kind: node.kind.clone(),
+        name: node.name.clone(),
+        edge_kind: edge.map(|edge| edge.kind.clone()),
+        confidence: edge.map(|edge| edge.confidence.clone()),
+    }
+}
+
+fn join_path(
+    meeting: &PathKey,
+    forward: &HashMap<PathKey, PathVisit>,
+    backward: &HashMap<PathKey, PathVisit>,
+) -> Vec<PathHop> {
+    let mut answer = Vec::new();
+    let mut at = meeting;
+    loop {
+        let visit = &forward[at];
+        answer.push(path_hop(
+            &visit.node,
+            visit.link.as_ref().map(|(_, edge)| edge),
+        ));
+        match &visit.link {
+            Some((previous, _)) => at = previous,
+            None => break,
+        }
+    }
+    answer.reverse();
+
+    let mut at = meeting;
+    while let Some((next, edge)) = &backward[at].link {
+        answer.push(path_hop(&backward[next].node, Some(edge)));
+        at = next;
+    }
+    answer
+}
+
 /// One interaction as the query reads it, both ends flat.
 #[derive(sqlx::FromRow)]
 struct InteractionRow {
@@ -2229,6 +2552,102 @@ mod tests {
             "a three-deep walk over {} edges took {took:?}",
             edges.len()
         );
+    }
+
+    #[tokio::test]
+    async fn a_path_is_found_between_two_definitions_and_none_past_the_depth() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KnowledgeStore::open(dir.path().join("knowledge.db"))
+            .await
+            .unwrap();
+        let parsed: Vec<ParsedBlob> = ["a", "b", "c"]
+            .into_iter()
+            .map(|name| ParsedBlob {
+                blob: format!("blob-{name}"),
+                language: "rust",
+                symbols: vec![Symbol {
+                    kind: "function".into(),
+                    name: name.into(),
+                    qualified_name: name.into(),
+                    start_line: 1,
+                    end_line: 1,
+                    signature: format!("fn {name}()"),
+                    doc: None,
+                    is_test: false,
+                }],
+                references: Vec::new(),
+                imports: Vec::new(),
+                interfaces: Vec::new(),
+            })
+            .collect();
+        store.commit_blobs(&parsed).await.unwrap();
+        store
+            .commit_files(
+                "repo",
+                "main",
+                "commit",
+                &FileChanges {
+                    replace_all: true,
+                    removed: Vec::new(),
+                    upserted: ["a", "b", "c"]
+                        .into_iter()
+                        .map(|name| FileRow {
+                            path: format!("src/{name}.rs"),
+                            blob: format!("blob-{name}"),
+                            language: "rust",
+                        })
+                        .collect(),
+                },
+            )
+            .await
+            .unwrap();
+        let scope = [("repo".into(), "main".into())];
+        let a = store.definitions("a", &scope).await.unwrap().remove(0);
+        let b = store.definitions("b", &scope).await.unwrap().remove(0);
+        let c = store.definitions("c", &scope).await.unwrap().remove(0);
+        let edge = |from: &Definition, to: &Definition| Edge {
+            kind: "calls".into(),
+            from_blob: from.blob.clone(),
+            from_symbol: Some(from.id),
+            from_line: from.start_line,
+            to_blob: to.blob.clone(),
+            to_symbol: Some(to.id),
+            to_line: to.start_line,
+            name: None,
+            confidence: "exact",
+            candidates: 1,
+        };
+        store
+            .commit_edges(
+                "repo",
+                "main",
+                &[],
+                &[edge(&a, &b), edge(&b, &c), edge(&a, &c)],
+            )
+            .await
+            .unwrap();
+
+        let path = store
+            .path(std::slice::from_ref(&a), std::slice::from_ref(&c), 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            path.iter().map(|hop| hop.name.as_str()).collect::<Vec<_>>(),
+            ["a", "c"]
+        );
+        assert_eq!(path[0].edge_kind, None);
+        assert_eq!(path[1].edge_kind.as_deref(), Some("calls"));
+
+        let path = store
+            .path(std::slice::from_ref(&a), std::slice::from_ref(&c), 6)
+            .await
+            .unwrap();
+        assert_eq!(
+            path.iter().map(|hop| hop.name.as_str()).collect::<Vec<_>>(),
+            ["a", "c"]
+        );
+
+        assert!(store.path(&[a], &[b], 0).await.unwrap().is_empty());
     }
 
     /// The schema is applied to a fresh file, and a file at another version

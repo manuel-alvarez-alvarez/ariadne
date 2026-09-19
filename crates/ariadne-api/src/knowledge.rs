@@ -243,6 +243,54 @@ pub struct KnowledgeImpactDto {
     pub stopped: Vec<String>,
 }
 
+/// Query of `GET /v1/knowledge/path`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgePathQuery {
+    /// One repository id.
+    pub repository: String,
+    /// The name of every starting definition.
+    pub from: String,
+    /// The name of every ending definition.
+    pub to: String,
+    /// The branch to read. Omit it for the caller's own.
+    pub git_ref: Option<String>,
+    /// How far to walk the directed edges (default 6, max 10).
+    pub depth: Option<i64>,
+}
+
+impl KnowledgePathQuery {
+    pub const DEFAULT_DEPTH: i64 = 6;
+    pub const MAX_DEPTH: i64 = 10;
+
+    pub fn depth(&self) -> i64 {
+        self.depth
+            .unwrap_or(Self::DEFAULT_DEPTH)
+            .clamp(0, Self::MAX_DEPTH)
+    }
+}
+
+/// One definition on a shortest path. The edge fields name the edge into it.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgePathHopDto {
+    pub repository_id: String,
+    pub path: String,
+    /// The line the definition starts on, 1-based.
+    pub line: i64,
+    pub kind: String,
+    pub name: String,
+    /// Empty on the first hop.
+    pub edge_kind: Option<String>,
+    /// Empty on the first hop; otherwise `exact` or `heuristic`.
+    pub confidence: Option<String>,
+}
+
+/// The shortest directed path between two symbol names.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgePathDto {
+    pub hops: Vec<KnowledgePathHopDto>,
+}
+
 /// Query of `GET /v1/knowledge/map`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 #[serde(deny_unknown_fields)]

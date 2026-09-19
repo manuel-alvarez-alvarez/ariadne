@@ -114,6 +114,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("knowledge interactions", true),
     ("knowledge map", true),
     ("knowledge outline", true),
+    ("knowledge path", true),
     ("knowledge reindex", true),
     ("knowledge search", true),
     ("knowledge status", true),
@@ -787,6 +788,41 @@ fn knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth() {
         .is_err(),
         "a symbol and a diff at once name two questions"
     );
+}
+
+#[test]
+fn knowledge_path_takes_two_names_and_the_depth() {
+    let Command::Knowledge {
+        command:
+            KnowledgeCommand::Path {
+                from,
+                to,
+                repository,
+                git_ref,
+                depth,
+            },
+    } = parse(&[
+        "ariadne",
+        "knowledge",
+        "path",
+        "first",
+        "last",
+        "--repository",
+        "01REPO",
+        "--ref",
+        "next",
+        "--depth",
+        "4",
+    ])
+    .command
+    else {
+        panic!("knowledge path");
+    };
+    assert_eq!(from, "first");
+    assert_eq!(to, "last");
+    assert_eq!(repository, "01REPO");
+    assert_eq!(git_ref.as_deref(), Some("next"));
+    assert_eq!(depth, Some(4));
 }
 
 /// `knowledge map` takes the repository, the file to rank around, how long

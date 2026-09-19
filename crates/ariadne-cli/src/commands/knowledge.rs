@@ -7,8 +7,9 @@ use ariadne_api::knowledge::{
     KnowledgeDetail, KnowledgeEdgeDto, KnowledgeEndpointDto, KnowledgeHitDto,
     KnowledgeImpactCallerDto, KnowledgeImpactDto, KnowledgeImpactQuery,
     KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeMapDto, KnowledgeMapQuery,
-    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeRelatedDto, KnowledgeSearchQuery,
-    KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto, KnowledgeSymbolQuery,
+    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgePathDto, KnowledgePathQuery,
+    KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
+    KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_client::Client;
 
@@ -47,6 +48,17 @@ const IMPACT: &[Column] = &[
     col("title", 40).title(),
     col("confidence", UNCAPPED).rank(1),
     col("changed", 40).rank(2),
+    col("repo", UNCAPPED).id().rank(3),
+];
+
+/// Columns of `knowledge path`: each definition, followed by the directed
+/// edge that enters it. The first column is what `-q` prints.
+const PATH: &[Column] = &[
+    col("location", UNCAPPED),
+    col("kind", UNCAPPED).rank(2),
+    col("title", 40).title(),
+    col("edge", UNCAPPED).rank(1),
+    col("confidence", UNCAPPED).rank(1),
     col("repo", UNCAPPED).id().rank(3),
 ];
 
@@ -150,6 +162,22 @@ pub enum KnowledgeCommand {
         #[arg(long = "ref", value_name = "REF")]
         git_ref: Option<String>,
         /// How far to walk the callers (default 2, max 4)
+        #[arg(long)]
+        depth: Option<i64>,
+    },
+    /// List the shortest directed path between two definitions
+    Path {
+        /// The name of every starting definition
+        from: String,
+        /// The name of every ending definition
+        to: String,
+        /// Repository id or path
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
+        repository: String,
+        /// The branch to read (default: the base branch)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// How far to walk the directed edges (default 6, max 10)
         #[arg(long)]
         depth: Option<i64>,
     },
@@ -330,6 +358,44 @@ pub async fn run(client: &Client, command: KnowledgeCommand, format: Format) -> 
                     "{name} has more than 200 callers: the walk stopped there."
                 ));
             }
+        }
+        KnowledgeCommand::Path {
+            from,
+            to,
+            repository,
+            git_ref,
+            depth,
+        } => {
+            let repository = resolve::id(client, Kind::Repo, &repository).await?;
+            let request = KnowledgePathQuery {
+                repository,
+                from,
+                to,
+                git_ref,
+                depth,
+            };
+            let found: KnowledgePathDto = client
+                .get_json(&query_path("/v1/knowledge/path", &request)?)
+                .await?;
+            if let Format::Json = format {
+                return print_json(&found);
+            }
+            print_list(
+                format,
+                &found.hops,
+                PATH,
+                |hop| {
+                    vec![
+                        format!("{}:{}", hop.path, hop.line),
+                        hop.kind.clone(),
+                        hop.name.clone(),
+                        hop.edge_kind.clone().unwrap_or_else(|| "-".into()),
+                        hop.confidence.clone().unwrap_or_else(|| "-".into()),
+                        hop.repository_id.clone(),
+                    ]
+                },
+                empty_state("No path exists within the depth.", None),
+            )?;
         }
         KnowledgeCommand::Interactions { repo, git_ref } => {
             let repository = resolve::id(client, Kind::Repo, &repo).await?;

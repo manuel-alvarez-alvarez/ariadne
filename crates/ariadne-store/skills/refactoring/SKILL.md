@@ -12,7 +12,7 @@ the proof.
 
 1. Understand a thing before you remove or reshape it: Chesterton's Fence.
    Call `symbol --detail context` for the callers and the tests of what you
-   move. Read them, and read its history.
+   move. Call `path` from each entry point to what you move. Read its history.
    Done when you can state the reason it exists, or show that the reason is
    gone.
 2. Find the tests that cover the code. Run them and record the green.

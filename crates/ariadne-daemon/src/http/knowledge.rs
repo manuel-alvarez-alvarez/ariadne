@@ -1,5 +1,5 @@
 //! Knowledge base endpoints: a repository's index status, its reindex, the
-//! four questions every seat asks the index, and the interactions between
+//! six questions every seat asks the index, and the interactions between
 //! one repository and the others.
 
 use axum::extract::{Path, Query, State};
@@ -10,7 +10,8 @@ use ariadne_api::knowledge::{
     KnowledgeImpactCallerDto, KnowledgeImpactDto, KnowledgeImpactQuery,
     KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeLanguageDto,
     KnowledgeMapDto, KnowledgeMapQuery, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery,
-    KnowledgeRefDto, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
+    KnowledgePathDto, KnowledgePathHopDto, KnowledgePathQuery, KnowledgeRefDto,
+    KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
     KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_knowledge::store::{CONTEXT_LIMIT, INTERACTION_KINDS};
@@ -361,6 +362,72 @@ pub async fn impact(
         });
     }
     Ok(Json(answers))
+}
+
+#[utoipa::path(get, path = "/v1/knowledge/path", tag = "knowledge",
+    params(KnowledgePathQuery),
+    responses((status = 200, body = KnowledgePathDto), (status = 400), (status = 404),
+              (status = 409, description = "the knowledge base is disabled")))]
+pub async fn path(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<KnowledgePathQuery>,
+) -> ApiResult<Json<KnowledgePathDto>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let knowledge = enabled(&state)?;
+    if query.from.trim().is_empty() || query.to.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "from and to must each name a definition",
+        ));
+    }
+    let repository = state.store.get_repository(&query.repository).await?;
+    let git_ref = ref_for(
+        &state,
+        knowledge,
+        &ctx,
+        &repository,
+        query.git_ref.as_deref(),
+    )
+    .await?;
+    let starts = knowledge
+        .definitions(
+            query.from.trim(),
+            &[(repository.id.clone(), git_ref.clone())],
+        )
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+
+    // The destination may sit across an edge in another repository. Read
+    // each other repository at its own ref, as rule 20 does.
+    let repositories = state.store.list_repositories().await?;
+    let mut end_scopes = Vec::with_capacity(repositories.len());
+    for candidate in &repositories {
+        let candidate_ref = match candidate.id == repository.id {
+            true => git_ref.clone(),
+            false => ref_for(&state, knowledge, &ctx, candidate, None).await?,
+        };
+        end_scopes.push((candidate.id.clone(), candidate_ref));
+    }
+    let ends = knowledge
+        .definitions(query.to.trim(), &end_scopes)
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    let hops = knowledge
+        .path(&starts, &ends, query.depth())
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?
+        .into_iter()
+        .map(|hop| KnowledgePathHopDto {
+            repository_id: hop.repository_id,
+            path: hop.path,
+            line: hop.line,
+            kind: hop.kind,
+            name: hop.name,
+            edge_kind: hop.edge_kind,
+            confidence: hop.confidence,
+        })
+        .collect();
+    Ok(Json(KnowledgePathDto { hops }))
 }
 
 #[utoipa::path(get, path = "/v1/knowledge/map", tag = "knowledge",

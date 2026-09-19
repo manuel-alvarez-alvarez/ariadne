@@ -19,8 +19,8 @@ use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::knowledge::{
     KnowledgeDetail, KnowledgeHitDto, KnowledgeImpactCallerDto, KnowledgeImpactDto,
     KnowledgeImpactQuery, KnowledgeMapDto, KnowledgeMapQuery, KnowledgeOutlineEntryDto,
-    KnowledgeOutlineQuery, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeSymbolDto,
-    KnowledgeSymbolQuery,
+    KnowledgeOutlineQuery, KnowledgePathDto, KnowledgePathQuery, KnowledgeRelatedDto,
+    KnowledgeSearchQuery, KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_api::memories::{CreateMemoryRequest, MemoryDto};
 use ariadne_api::messages::SendMessageRequest;
@@ -391,6 +391,21 @@ pub struct ImpactReq {
     /// The branch to read. Omit it for your own branch.
     pub git_ref: Option<String>,
     /// How far to walk the callers: 2 by default, 4 at most.
+    pub depth: Option<u32>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct PathReq {
+    /// The name of every starting definition.
+    pub from: String,
+    /// The name of every ending definition.
+    pub to: String,
+    /// Repository id. Omit it when this session works in one repository.
+    pub repository: Option<String>,
+    /// The branch to read. Omit it for your own branch.
+    pub git_ref: Option<String>,
+    /// How far to walk the directed edges: 6 by default, 10 at most.
     pub depth: Option<u32>,
 }
 
@@ -908,6 +923,46 @@ impl AriadneMcp {
                 }
                 repository = other.to_string();
             }
+        }
+        text_result(cut_answer(lines, ANSWER_CAP))
+    }
+
+    #[tool(
+        description = "Find the shortest directed path between two definitions. Each line names one hop and the edge into it."
+    )]
+    async fn path(&self, Parameters(req): Parameters<PathReq>) -> Result<CallToolResult, McpError> {
+        let repository = self.memory_repository(req.repository).await?;
+        let depth = req
+            .depth
+            .map(i64::from)
+            .unwrap_or(KnowledgePathQuery::DEFAULT_DEPTH)
+            .clamp(0, KnowledgePathQuery::MAX_DEPTH);
+        let query = KnowledgePathQuery {
+            repository,
+            from: req.from,
+            to: req.to,
+            git_ref: req.git_ref,
+            depth: req.depth.map(i64::from),
+        };
+        let found: KnowledgePathDto = self
+            .get(&knowledge_path("/v1/knowledge/path", &query)?)
+            .await?;
+        if found.hops.is_empty() {
+            return text_result(format!("(no path within {depth})\n"));
+        }
+        let paths = self.repository_paths().await?;
+        let mut lines = Vec::new();
+        let mut repository = String::new();
+        for hop in &found.hops {
+            if hop.repository_id != repository {
+                repository = hop.repository_id.clone();
+                lines.push(repository_heading(&paths, &repository));
+            }
+            let mut line = format!("{}:{} {} {}", hop.path, hop.line, hop.kind, hop.name);
+            if let (Some(kind), Some(confidence)) = (&hop.edge_kind, &hop.confidence) {
+                line.push_str(&format!(" <- {kind} {confidence}"));
+            }
+            lines.push(line);
         }
         text_result(cut_answer(lines, ANSWER_CAP))
     }
@@ -2157,6 +2212,67 @@ mod tests {
              hot has more than 200 callers: the walk stopped there.\n\
              # /repos/web\n\
              1 src/client.ts:5 fetchItem heuristic\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn path_answers_one_line_per_hop_and_says_when_none() {
+        let (endpoint, seen) = recording_daemon_answering_in_order(&[
+            r#"{"hops":[{"repository_id":"01REPO","path":"src/a.rs","line":1,"kind":"function","name":"a","edge_kind":null,"confidence":null},{"repository_id":"01WEB","path":"src/b.ts","line":2,"kind":"function","name":"b","edge_kind":"calls_route","confidence":"heuristic"}]}"#,
+            r#"[{"id":"01REPO","path":"/repos/api"},{"id":"01WEB","path":"/repos/web"}]"#,
+            r#"{"hops":[]}"#,
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+
+        let answered = mcp
+            .path(Parameters(PathReq {
+                from: "a".into(),
+                to: "b".into(),
+                repository: Some("01REPO".into()),
+                git_ref: Some("main".into()),
+                depth: Some(4),
+            }))
+            .await
+            .expect("path");
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(
+            text.text,
+            "# /repos/api\n\
+             src/a.rs:1 function a\n\
+             # /repos/web\n\
+             src/b.ts:2 function b <- calls_route heuristic\n"
+        );
+
+        let answered = mcp
+            .path(Parameters(PathReq {
+                from: "b".into(),
+                to: "a".into(),
+                repository: Some("01REPO".into()),
+                git_ref: None,
+                depth: None,
+            }))
+            .await
+            .expect("no path");
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(text.text, "(no path within 6)\n");
+
+        let seen = seen.lock().expect("lock").clone();
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/v1/knowledge/path?repository=01REPO&from=a&to=b&git_ref=main&depth=4",
+                "/v1/repositories",
+                "/v1/knowledge/path?repository=01REPO&from=b&to=a",
+            ]
         );
     }
 

@@ -13,8 +13,9 @@ Implement the task you were given, and nothing else. The task is one commit.
 2. Find the code before you read a file. Call `search_code` for a name,
    `outline` for the shape of a file, `symbol` for one definition. Read a
    file by the line range `symbol` gives. Call `impact` on each definition
-   you change, before you change it. Match the style, the naming and the
-   structure around the change.
+   you change, before you change it. Call `path` between related definitions
+   when the change crosses several edges. Match the style, naming and
+   structure.
    Done when a tool named every file you opened.
 3. Read the repository's conventions: `AGENTS.md`, `CLAUDE.md`,
    `CONTRIBUTING.md`.

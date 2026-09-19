@@ -55,6 +55,7 @@ impl McpSeat {
                 "search_code",
                 "outline",
                 "symbol",
+                "path",
                 "impact",
                 "repo_map",
             ],
@@ -71,6 +72,7 @@ impl McpSeat {
                 "search_code",
                 "outline",
                 "symbol",
+                "path",
                 "impact",
                 "repo_map",
             ],
@@ -86,6 +88,7 @@ impl McpSeat {
                 "search_code",
                 "outline",
                 "symbol",
+                "path",
                 "impact",
                 "repo_map",
             ],
@@ -95,7 +98,14 @@ impl McpSeat {
 
 /// The tools of the knowledge base (022): every seat has them, and none has
 /// them while the daemon runs with `knowledge_enabled = false`.
-const KNOWLEDGE_TOOLS: &[&str] = &["search_code", "outline", "symbol", "impact", "repo_map"];
+const KNOWLEDGE_TOOLS: &[&str] = &[
+    "search_code",
+    "outline",
+    "symbol",
+    "path",
+    "impact",
+    "repo_map",
+];
 
 #[derive(Clone)]
 pub struct AriadneMcp {
@@ -471,6 +481,7 @@ pub(crate) mod tests {
                     "search_code",
                     "outline",
                     "symbol",
+                    "path",
                     "impact",
                     "repo_map",
                 ][..],
@@ -490,6 +501,7 @@ pub(crate) mod tests {
                     "search_code",
                     "outline",
                     "symbol",
+                    "path",
                     "impact",
                     "repo_map",
                 ][..],
@@ -508,6 +520,7 @@ pub(crate) mod tests {
                     "search_code",
                     "outline",
                     "symbol",
+                    "path",
                     "impact",
                     "repo_map",
                 ][..],
@@ -532,6 +545,7 @@ pub(crate) mod tests {
             "list_skills",
             "list_tasks",
             "outline",
+            "path",
             "pick_winner",
             "read_messages",
             "record_pull_request",

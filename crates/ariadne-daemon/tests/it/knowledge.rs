@@ -13,8 +13,8 @@ use axum::http::{Request, StatusCode};
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::knowledge::{
     KnowledgeHitDto, KnowledgeImpactDto, KnowledgeIndexedDto, KnowledgeInteractionGroupDto,
-    KnowledgeMapDto, KnowledgeOutlineEntryDto, KnowledgeState, KnowledgeStatusDto,
-    KnowledgeSymbolDto,
+    KnowledgeMapDto, KnowledgeOutlineEntryDto, KnowledgePathDto, KnowledgeState,
+    KnowledgeStatusDto, KnowledgeSymbolDto,
 };
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{Actor, SessionStatus, TaskStatus};
@@ -501,6 +501,7 @@ async fn every_knowledge_endpoint_is_in_the_openapi_document() {
         "/v1/knowledge/outline",
         "/v1/knowledge/symbol",
         "/v1/knowledge/impact",
+        "/v1/knowledge/path",
         "/v1/knowledge/interactions",
         "/v1/knowledge/map",
     ] {
@@ -726,6 +727,30 @@ async fn a_route_handler_change_reaches_the_call_site_in_the_other_repository() 
             "heuristic"
         )]
     );
+}
+
+#[tokio::test]
+async fn a_path_crosses_a_route_into_the_other_repository() {
+    let h = harness().knowledge().await;
+    let mut rx = h.bus.subscribe();
+    let (api, web) = api_and_web(&h, &mut rx).await;
+
+    let path: KnowledgePathDto = h
+        .get(&format!(
+            "/v1/knowledge/path?repository={}&from=fetchItem&to=get_item",
+            web.id
+        ))
+        .await;
+    assert_eq!(path.hops.len(), 2, "{path:?}");
+    assert_eq!(path.hops[0].repository_id, web.id);
+    assert_eq!(path.hops[0].path, "src/client.ts");
+    assert_eq!(path.hops[0].name, "fetchItem");
+    assert_eq!(path.hops[0].edge_kind, None);
+    assert_eq!(path.hops[1].repository_id, api.id);
+    assert_eq!(path.hops[1].path, "src/lib.rs");
+    assert_eq!(path.hops[1].name, "get_item");
+    assert_eq!(path.hops[1].edge_kind.as_deref(), Some("calls_route"));
+    assert_eq!(path.hops[1].confidence.as_deref(), Some("heuristic"));
 }
 
 /// `symbol Item --detail context` from `api` lists the `web` reference under
