@@ -42,8 +42,8 @@ same binary also serves (013).
 
 ## Behavior
 
-1. Every user-facing action except project memory exists both here and in the
-   desktop app. Project memory is currently CLI-only (019).
+1. Every user-facing action exists both here and in the desktop app, project
+   memory included (019).
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
    `models`, `skill`, `repo`, `goal`, `task`, `session`, `events`,
    `attention`, `memory`, `knowledge`, `attach`, `doctor`, `completions`,
@@ -163,8 +163,9 @@ same binary also serves (013).
     ids, `--repo` repository ids and `--agent` registry agent ids. The
     command prints a status line each for the goal, the task and the session;
     JSON preserves all three, and quiet output prints the task id.
-27. `ariadne memory ls|search|delete` reads and removes active repository
-    memories. Each command names the repository by id or path (019).
+27. `ariadne memory add|ls|search|delete` writes, reads and removes active
+    memories. `add`, `ls` and `search` name a repository, by id or path, or
+    `--global`; `delete` takes only the entry's id (019).
 28. `ariadne attach`, `goal attach` and `task attach` open the console of the
     session an id names, revived first when it is gone. On a terminal it is an
     inline pane (008); with stdin or stdout redirected it is the plain line
@@ -343,8 +344,9 @@ same binary also serves (013).
   (`cli/tests.rs::adopt_takes_the_session_the_new_goal_and_the_task_flags`,
   `::adopt_takes_a_goal_or_a_new_goal_and_exactly_one`).
 - The memory commands are classified like other lists and mutations
-  (`cli/tests.rs::every_command_in_the_tree_is_classified`), and delete takes
-  its entry and repository (`::memory_delete_takes_the_entry_and_its_repository`).
+  (`cli/tests.rs::every_command_in_the_tree_is_classified`), `add` names
+  exactly one scope (`::memory_add_names_exactly_one_scope`), and delete
+  takes its entry alone (`::memory_delete_takes_the_entry_alone`).
 - The knowledge commands are classified the same way, `search` takes its
   filters, `outline` its repository and path, `symbol` its name and detail,
   `path` its two names and depth, `impact` one of a symbol and a diff, and

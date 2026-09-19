@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-store/src/defaults.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
+  - crates/ariadne-cli/src/commands/memory.rs
   - crates/ariadne-cli/src/cli/tests.rs
   - ui/src/features/memory/memory-page.test.tsx
   - ui/src/events/dispatch.test.ts
@@ -55,7 +56,13 @@ Out: prompt injection. Agents choose when to search.
    every scope.
 7. Every seat has `save_memory` and `search_memory`. A task session defaults
    to its task repository, and an orchestrator names a repository when its
-   goal does not have exactly one.
+   goal does not have exactly one. `search_memory` reads the named
+   repository's memories and the global ones together. `save_memory` takes
+   an optional expiry, and an omitted one never expires; its own text states
+   the bound every write keeps to (behavior 8): two memories a task at most,
+   a near-duplicate of an existing memory refused, and worth saving only a
+   trap, a working command or a convention no file states — never a report
+   of the task itself.
 8. No memory is added to a prompt. The MCP session rules tell every seat to
    call `search_memory` before it repeats a discovery, and that read rule is
    stated there alone (006). Five skills carry a `save_memory` step at the
@@ -69,8 +76,13 @@ Out: prompt injection. Agents choose when to search.
    task report, a change summary, a plan, or what the code, a spec or
    `AGENTS.md` already states; a task saves two memories at most, and the
    daemon refuses the third.
-9. `ariadne memory ls|search|delete` names a repository by id or path and uses
-   the shared list, mutation, JSON and quiet output forms (014).
+9. `ariadne memory add <text>` names its one scope with `--repo <id|path>` or
+   `--global`, one of the two required, and takes an optional `--expires`.
+   `ariadne memory ls` and `ariadne memory search` take the same two flags,
+   or neither for every memory of every scope, and never both. `ariadne
+   memory delete <id>` finds the entry by its id alone. Every list shows a
+   `scope` column, `global` or the repository, and all four use the shared
+   list, mutation, JSON and quiet output forms (014).
 10. The REST surface adds, lists, searches and deletes memory under
     `/v1/memories`. A list and a search take a repository and a scope, which
     is `repository`, `global` or `all`, and `all` is the default. Every
@@ -112,8 +124,8 @@ Out: prompt injection. Agents choose when to search.
   (`memories.rs::deleting_a_repository_removes_its_memories_and_keeps_the_global_ones`).
 - Delete removes a memory (`memories.rs::delete_removes_a_memory`), a session
   deletes no global memory (`memories.rs::a_session_deletes_no_global_memory`),
-  and the CLI accepts the entry and repository
-  (`cli/tests.rs::memory_delete_takes_the_entry_and_its_repository`).
+  and the CLI accepts the entry alone, with no repository
+  (`cli/tests.rs::memory_delete_takes_the_entry_alone`).
 - The creation and the deletion events carry the scope
   (`memories.rs::the_creation_and_the_deletion_events_carry_the_scope`).
 - Every endpoint appears in OpenAPI
@@ -174,6 +186,13 @@ Out: prompt injection. Agents choose when to search.
   holds it
   (`dispatch.test.ts::refetches every list that holds a saved global memory`,
   `::refetches every list that held a deleted global memory`).
+- `ariadne memory add` names exactly one scope and refuses a call that names
+  none or both (`cli/tests.rs::memory_add_names_exactly_one_scope`).
+- `ariadne memory ls` and `search` take a repository, `--global` or neither,
+  and refuse both
+  (`cli/tests.rs::memory_ls_and_search_take_a_repository_or_global_or_neither`).
+- The memory list names its scope, `global` or the repository, in every row
+  (`memory.rs::the_memory_list_names_its_scope`).
 
 ## Sources
 

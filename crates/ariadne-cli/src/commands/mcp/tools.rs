@@ -22,7 +22,7 @@ use ariadne_api::knowledge::{
     KnowledgeOutlineQuery, KnowledgePathDto, KnowledgePathQuery, KnowledgeRelatedDto,
     KnowledgeSearchQuery, KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
-use ariadne_api::memories::{CreateMemoryRequest, MemoryDto};
+use ariadne_api::memories::{CreateMemoryRequest, MemorySearchResult};
 use ariadne_api::messages::SendMessageRequest;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
@@ -295,8 +295,9 @@ pub struct SaveMemoryReq {
     pub repository_id: Option<String>,
     /// The useful fact to save.
     pub text: String,
-    /// The RFC 3339 time after which this fact stays hidden.
-    pub expires_at: String,
+    /// The RFC 3339 time after which this fact stays hidden. Omit it for a
+    /// fact that never expires.
+    pub expires_at: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -651,21 +652,20 @@ impl AriadneMcp {
     // ---- every seat ----
 
     #[tool(
-        description = "Save a useful fact about this repository for later sessions. Use it for stable conventions, traps, or verification commands. Set when it expires."
+        description = "Save a fact for later sessions. Save a trap, a working command, or a convention no file states. Never save a report of this task. A task saves 2 memories at most. The daemon refuses a near-duplicate of an existing memory. Set when the fact expires, or omit it for a fact that never expires."
     )]
     async fn save_memory(
         &self,
         Parameters(req): Parameters<SaveMemoryReq>,
     ) -> Result<CallToolResult, McpError> {
         let repository_id = self.memory_repository(req.repository_id).await?;
-        let path = format!("/v1/repositories/{repository_id}/memories");
         json_result(
             self.post(
-                &path,
+                "/v1/memories",
                 &CreateMemoryRequest {
                     text: req.text,
                     repository_id: Some(repository_id),
-                    expires_at: Some(req.expires_at),
+                    expires_at: req.expires_at,
                 },
             )
             .await?,
@@ -673,18 +673,18 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Search facts saved about this repository. Use it before repeated discovery, or when past work can answer a repository question."
+        description = "Search the facts of this repository and the global facts together. Use it before repeated discovery, or when past work answers a question. A true fallback means no word matched: the hits are the newest facts instead."
     )]
     async fn search_memory(
         &self,
         Parameters(req): Parameters<SearchMemoryReq>,
     ) -> Result<CallToolResult, McpError> {
         let repository_id = self.memory_repository(req.repository_id).await?;
-        let query = serde_urlencoded::to_string([("q", req.query)])
+        let query = serde_urlencoded::to_string([("q", req.query), ("repository", repository_id)])
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
-        let path = format!("/v1/repositories/{repository_id}/memories/search?{query}");
-        let memories: Vec<MemoryDto> = self.get(&path).await?;
-        json_result(serde_json::to_value(memories).expect("memories serialize"))
+        let path = format!("/v1/memories/search?{query}");
+        let result: MemorySearchResult = self.get(&path).await?;
+        json_result(serde_json::to_value(result).expect("memory search result serializes"))
     }
 
     #[tool(
@@ -1686,7 +1686,8 @@ mod tests {
         assert_eq!(seen[0].path, "/v1/tasks/01TASK");
     }
 
-    /// Every seat uses these tools through the repository endpoints.
+    /// Every seat uses these tools through `/v1/memories`, scoped by the
+    /// repository they name.
     #[tokio::test]
     async fn memory_tools_save_and_search_the_named_repository() {
         let (endpoint, seen) = recording_daemon().await;
@@ -1697,7 +1698,7 @@ mod tests {
         mcp.save_memory(Parameters(SaveMemoryReq {
             repository_id: Some("01REPO".into()),
             text: "Run the parser fixture.".into(),
-            expires_at: "2099-01-01T00:00:00Z".into(),
+            expires_at: Some("2099-01-01T00:00:00Z".into()),
         }))
         .await
         .expect("save memory");
@@ -1705,30 +1706,38 @@ mod tests {
         let seen = seen.lock().expect("lock").clone();
         assert_eq!(seen.len(), 1, "{seen:?}");
         assert_eq!(seen[0].method, "POST");
-        assert_eq!(seen[0].path, "/v1/repositories/01REPO/memories");
+        assert_eq!(seen[0].path, "/v1/memories");
         let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
         assert_eq!(sent["text"], "Run the parser fixture.");
+        assert_eq!(sent["repository_id"], "01REPO");
         assert_eq!(sent["expires_at"], "2099-01-01T00:00:00Z");
 
-        let (endpoint, seen) = recording_daemon_answering("[]").await;
+        let (endpoint, seen) = recording_daemon_answering(r#"{"hits":[],"fallback":true}"#).await;
         let mcp = server_at(
             McpSeat::Reviewer,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
-        mcp.search_memory(Parameters(SearchMemoryReq {
-            repository_id: Some("01REPO".into()),
-            query: "parser fixture".into(),
-        }))
-        .await
-        .expect("search memory");
+        let answered = mcp
+            .search_memory(Parameters(SearchMemoryReq {
+                repository_id: Some("01REPO".into()),
+                query: "parser fixture".into(),
+            }))
+            .await
+            .expect("search memory");
 
         let seen = seen.lock().expect("lock").clone();
         assert_eq!(seen.len(), 1, "{seen:?}");
         assert_eq!(seen[0].method, "GET");
         assert_eq!(
             seen[0].path,
-            "/v1/repositories/01REPO/memories/search?q=parser+fixture"
+            "/v1/memories/search?q=parser+fixture&repository=01REPO"
         );
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        let answer: serde_json::Value = serde_json::from_str(&text.text).expect("json");
+        assert_eq!(answer["fallback"], true, "{answer:?}");
+        assert_eq!(answer["hits"], serde_json::json!([]), "{answer:?}");
     }
 
     #[tokio::test]
@@ -1737,7 +1746,7 @@ mod tests {
             r#"{"repo_id":"01REPO"}"#,
             "{}",
             r#"{"repo_id":"01REPO"}"#,
-            "[]",
+            r#"{"hits":[],"fallback":false}"#,
         ])
         .await;
         let mcp = server_at(
@@ -1747,7 +1756,7 @@ mod tests {
         mcp.save_memory(Parameters(SaveMemoryReq {
             repository_id: None,
             text: "Run the parser fixture.".into(),
-            expires_at: "2099-01-01T00:00:00Z".into(),
+            expires_at: Some("2099-01-01T00:00:00Z".into()),
         }))
         .await
         .expect("save memory");
@@ -1764,17 +1773,20 @@ mod tests {
             paths,
             [
                 "/v1/tasks/01TASK",
-                "/v1/repositories/01REPO/memories",
+                "/v1/memories",
                 "/v1/tasks/01TASK",
-                "/v1/repositories/01REPO/memories/search?q=parser",
+                "/v1/memories/search?q=parser&repository=01REPO",
             ]
         );
     }
 
     #[tokio::test]
     async fn memory_search_defaults_to_the_goals_only_repository() {
-        let (endpoint, seen) =
-            recording_daemon_answering_in_order(&[r#"{"repos":[{"id":"01REPO"}]}"#, "[]"]).await;
+        let (endpoint, seen) = recording_daemon_answering_in_order(&[
+            r#"{"repos":[{"id":"01REPO"}]}"#,
+            r#"{"hits":[],"fallback":false}"#,
+        ])
+        .await;
         let mut mcp = server_at(
             McpSeat::Orchestrator,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
@@ -1793,7 +1805,7 @@ mod tests {
             paths,
             [
                 "/v1/goals/01GOAL",
-                "/v1/repositories/01REPO/memories/search?q=parser",
+                "/v1/memories/search?q=parser&repository=01REPO",
             ]
         );
     }

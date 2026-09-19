@@ -73,9 +73,11 @@ Examples:
 
 const MEMORY_EXAMPLES: &str = "\
 Examples:
-  ariadne memory ls --repo <repo-id>
+  ariadne memory add \"Run the parser fixture before a knowledge change\" --repo <repo-id>
+  ariadne memory add \"The daemon needs a real git checkout\" --global
+  ariadne memory ls --repo <repo-id>            # or --global, or neither for every scope
   ariadne memory search parser --repo <repo-id>
-  ariadne memory delete <memory-id> --repo <repo-id>
+  ariadne memory delete <memory-id>
 ";
 
 const KNOWLEDGE_EXAMPLES: &str = "\
@@ -349,10 +351,11 @@ pub enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
-    /// Read repository memory
+    /// Save and read memory
     ///
-    /// Agents save useful facts about a repository. These commands list,
-    /// search, and delete those facts without adding them to any prompt.
+    /// A fact about one repository, or a global one true of every
+    /// repository. An agent saves one about its own work; you save, list,
+    /// search and delete in any scope. Nothing here is added to a prompt.
     #[command(after_help = MEMORY_EXAMPLES)]
     Memory {
         #[command(subcommand)]
@@ -551,6 +554,7 @@ const QUIET_OUTPUT: &[&str] = &[
     "models disable",
     "models enable",
     "models ls",
+    "memory add",
     "memory delete",
     "memory ls",
     "memory search",
