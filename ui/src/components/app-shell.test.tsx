@@ -57,6 +57,14 @@ it("shows the navigation in full until it is folded away", () => {
   expect(screen.getByRole("link", { name: "Repositories" }).textContent).toBe("Repositories")
 })
 
+it("lists the knowledge screen right after memory", () => {
+  mountShell()
+
+  const links = screen.getAllByRole("link").map((link) => link.getAttribute("aria-label"))
+  expect(links.indexOf("Knowledge")).toBe(links.indexOf("Memory") + 1)
+  expect(screen.getByRole("link", { name: "Knowledge" }).getAttribute("href")).toBe("/knowledge")
+})
+
 it("folds down to an icon rail from the header, and back", async () => {
   const { user, aside } = mountShell()
 

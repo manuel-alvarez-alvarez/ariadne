@@ -223,6 +223,13 @@ The same is on the API: `GET /v1/repositories/{id}/knowledge`, `POST
 `knowledge_indexed` and `knowledge_failed` on the event stream (`ariadne
 events` prints them).
 
+In the desktop app, **Knowledge** in the sidebar opens the same data. Pick a
+repository and a ref at the top. The **Overview** tab shows each
+repository's status with a Reindex button. The **Repositories** tab draws
+how the repositories use each other: one node per repository, one edge per
+pair and kind, with the count on it. A dashed edge is a guess only. Click an
+edge to list the files at its ends.
+
 ## Turning it off
 
 ```toml

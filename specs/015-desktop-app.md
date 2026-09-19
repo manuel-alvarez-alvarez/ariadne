@@ -1,11 +1,13 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-12
+updated: 2026-09-19
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
   - ui/src/features/**/*.test.tsx
+  - ui/src/features/**/*.test.ts
+  - ui/src/routes/**/*.test.tsx
   - ui/src/api/**/*.test.ts
   - ui/src/components/**/*.test.tsx
   - ui/src/lib/**/*.test.ts
@@ -34,7 +36,7 @@ Out: the daemon endpoints themselves (012).
    panel (facts, diff, messages, history), sessions, each shown in its
    console, outside sessions that a ready task can adopt as its author,
    skills, repositories, memory (list, search, add, delete, narrowed to one
-   repository by `?repository=<id>`), one repository's knowledge base (status, reindex, search, interactions), the
+   repository by `?repository=<id>`), the knowledge screen (below), the
    agents of the daemon's ACP registry with their launch flags and the models
    each may be staffed on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
@@ -178,10 +180,47 @@ Out: the daemon endpoints themselves (012).
 30. A session panel shows a reported context window as `<used> / <size>`,
     using the compact spelling of token figures. It shows no context fact
     before the agent reports one, and it never shows a cost.
+31. The knowledge screen (022) is a sidebar entry next to Memory, at
+    `#/knowledge`. A repository picker and a ref picker lead it, and tabs
+    follow: `overview`, `repositories`, `symbols`, `impact` and `files`. The
+    URL keeps all three as `?repository=`, `?ref=` and `?tab=`; without them
+    the screen reads the first repository, at its base branch, on the
+    Overview tab. The refs offered are the ones
+    `GET /v1/repositories/{id}/knowledge` lists, and the base branch. The
+    tabs are one list in `ui/src/features/knowledge/knowledge-tabs.tsx`, one
+    entry per tab. `symbols`, `impact` and `files` say only that they are
+    coming.
+32. The Overview tab shows one card per registered repository: its state,
+    its files and symbols, its languages, its indexed refs and a Reindex
+    button. Reindex posts the reindex and shows `indexing` at once; it is off
+    while the state is `disabled`.
+33. Every knowledge graph is drawn by one component,
+    `ui/src/features/knowledge/graph/knowledge-graph.tsx`, with sigma.js v3
+    over a graphology graph and a ForceAtlas2 layout in a web worker. It
+    zooms, pans and fits the graph to the view; a hovered node keeps its
+    neighbours and fades the rest; a click on a node or an edge goes back to
+    the caller by its key; labels stay on at every size; and a legend names
+    each colour. The model names a tone of the status ramp, and the colours
+    are read off the tokens in `index.css` for the theme on screen. sigma.js
+    needs WebGL, which jsdom lacks, so each test file that draws a graph
+    mocks the renderer with a stand-in that lists what sigma would be told
+    (`ui/src/test/sigma-canvas.tsx`).
+34. The Repositories tab draws one node per repository, named by its folder,
+    from `GET /v1/knowledge/interactions` for each repository: the picked
+    one at the picked ref, every other at its base. An edge that both
+    repositories report is counted once. The edges of one pair and one kind
+    are one graph edge with their count, in the kind's colour, and dashed
+    where every one of them is `heuristic`. Kind and confidence filters
+    narrow it. A click on an edge lists its file-level ends (`path:line` and
+    symbol, with the confidence and the step); a click on a node picks that
+    repository. With no interaction at all, the tab says so.
+35. A repository has no knowledge page of its own and its row has no
+    Knowledge button; the command palette opens `#/knowledge?repository=<id>`
+    for a repository.
 
 ## Acceptance criteria
 
-- 70 test files cover the features, the API layer and the event stream; each
+- 74 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
 - A task staffed with several authors shows each one's branch and its own
   vote count, marks the one the reviewers picked, and lists what each
@@ -203,14 +242,40 @@ Out: the daemon endpoints themselves (012).
   — parity with `ariadne memory ls|search|delete` (019). A repository row
   has no Memory button
   (`ui/src/features/repositories/repositories-page.test.tsx::offers no Memory button on a row, which is managed from its own screen`).
-- One repository's knowledge page shows its status card in every state the
-  daemon can answer with, posts a reindex and shows the indexing state at
-  once, refetches once the daemon says indexing finished or failed, searches
-  with `q`, `kind` and `path`, and groups interactions by kind with both ends
-  and their confidence
-  (`ui/src/features/knowledge/knowledge-page.test.tsx`,
+- The sidebar lists Knowledge right after Memory, and `#/knowledge` mounts
+  the knowledge screen
+  (`ui/src/components/app-shell.test.tsx::lists the knowledge screen right after memory`,
+  `ui/src/routes/router.test.tsx::mounts the knowledge screen at #/knowledge`).
+- The screen opens on the Overview tab, the first repository and its base
+  branch; it reads the repository, the ref and the tab back from the URL,
+  so they survive a reload; and a pick writes them into it
+  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the pickers and the tab`).
+- The Overview tab shows a card per repository in every state the daemon
+  answers with, turns Reindex off for a disabled one, posts a reindex and
+  shows `indexing` at once, and refetches once the daemon says indexing
+  finished
+  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Overview tab`,
   `ui/src/events/dispatch.test.ts::knowledge events (022)`) — parity with
-  `ariadne knowledge status|reindex|search|interactions` (022).
+  `ariadne knowledge status|reindex` (022).
+- The shared graph places what the model left unplaced, keeps a hovered
+  node's neighbourhood and fades the rest, colours nodes, edges and the
+  legend from the status tokens, draws dashed edges dashed, and hands a
+  clicked node and a clicked edge back by their keys
+  (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx`).
+- The Repositories graph has one node per repository named by its folder,
+  one edge per pair and kind with its count and its kind's colour, counts an
+  edge both repositories report once, dashes an edge that is heuristic only,
+  and filters by kind and confidence
+  (`ui/src/features/knowledge/repositories-graph.test.ts`); on screen, a
+  click on an edge lists its ends, a click on a node picks its repository,
+  and a tab with no interaction says so
+  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Repositories tab`)
+  — parity with `ariadne knowledge interactions` (022).
+- `#/repositories/:id/knowledge` leads nowhere, a repository row has no
+  Knowledge button, and the palette opens `#/knowledge?repository=<id>`
+  (`ui/src/routes/router.test.tsx::leads nowhere from a repository's old knowledge page`,
+  `ui/src/features/repositories/repositories-page.test.tsx::offers no Knowledge button on a row, which is on the knowledge screen`,
+  `ui/src/features/command-palette/command-palette.test.tsx::opens the knowledge screen on a repository from the palette`).
 - The task's channel reads as one list, every kind is told apart, and both
   ends of a message are named by the skills they work with
   (`ui/src/features/tasks/task-messages.test.tsx`).

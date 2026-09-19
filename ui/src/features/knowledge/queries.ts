@@ -1,6 +1,6 @@
 /**
- * The knowledge page's reads and writes (022): one repository's status, a
- * reindex, a search and its interactions.
+ * The knowledge screen's reads and writes (022): a repository's status, a
+ * reindex, and the interactions of one ref.
  *
  * Reindex answers 202 with no body — the rebuild runs in the background — so
  * the mutation flips the cached status to `indexing` itself rather than
@@ -10,10 +10,7 @@
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 
-import { qk, unwrap } from "@/api"
-
-import { knowledgeApi } from "./api"
-import type { KnowledgeStatusDto } from "./types"
+import { api, type KnowledgeStatusDto, qk, unwrap } from "@/api"
 
 /** `GET /v1/repositories/{id}/knowledge`. */
 export function knowledgeStatusQueryOptions(repositoryId: string) {
@@ -21,8 +18,8 @@ export function knowledgeStatusQueryOptions(repositoryId: string) {
     queryKey: qk.repositories.knowledgeStatus(repositoryId),
     queryFn: () =>
       unwrap(
-        knowledgeApi().GET("/v1/repositories/{repository_id}/knowledge", {
-          params: { path: { repository_id: repositoryId } },
+        api().GET("/v1/repositories/{id}/knowledge", {
+          params: { path: { id: repositoryId } },
         }),
       ),
   })
@@ -33,8 +30,8 @@ export function useReindexKnowledge(repositoryId: string) {
   return useMutation({
     mutationFn: () =>
       unwrap(
-        knowledgeApi().POST("/v1/repositories/{repository_id}/knowledge/reindex", {
-          params: { path: { repository_id: repositoryId } },
+        api().POST("/v1/repositories/{id}/knowledge/reindex", {
+          params: { path: { id: repositoryId } },
         }),
       ),
     onSuccess: () => {
@@ -47,48 +44,21 @@ export function useReindexKnowledge(repositoryId: string) {
   })
 }
 
-/** `GET /v1/knowledge/search`, narrowed to one repository from its page. */
-export function knowledgeSearchQueryOptions(
-  repositoryId: string,
-  filters: { q: string; kind: string; path: string },
-) {
-  const q = filters.q.trim()
-  const kind = filters.kind.trim()
-  const path = filters.path.trim()
+/**
+ * `GET /v1/knowledge/interactions` for one repository: the edges between it
+ * and every other repository, both ways. Without a ref the daemon reads the
+ * repository's own base.
+ */
+export function knowledgeInteractionsQueryOptions(repositoryId: string, gitRef?: string) {
   return queryOptions({
-    queryKey: qk.repositories.knowledgeSearch(repositoryId, {
+    queryKey: qk.repositories.knowledgeInteractions(repositoryId, {
       repository: repositoryId,
-      q: q || undefined,
-      kind: kind || undefined,
-      path: path || undefined,
+      git_ref: gitRef,
     }),
     queryFn: () =>
       unwrap(
-        knowledgeApi().GET("/v1/knowledge/search", {
-          params: {
-            query: {
-              repository: repositoryId,
-              ...(q ? { q } : {}),
-              ...(kind ? { kind } : {}),
-              ...(path ? { path } : {}),
-            },
-          },
-        }),
-      ),
-    // Only once there is something to search for; an unfiltered search of the
-    // whole repository is not what an empty box is asking for.
-    enabled: q.length > 0 || kind.length > 0 || path.length > 0,
-  })
-}
-
-/** `GET /v1/knowledge/interactions`, narrowed to one repository from its page. */
-export function knowledgeInteractionsQueryOptions(repositoryId: string) {
-  return queryOptions({
-    queryKey: qk.repositories.knowledgeInteractions(repositoryId, { repository: repositoryId }),
-    queryFn: () =>
-      unwrap(
-        knowledgeApi().GET("/v1/knowledge/interactions", {
-          params: { query: { repository: repositoryId } },
+        api().GET("/v1/knowledge/interactions", {
+          params: { query: { repository: repositoryId, ...(gitRef ? { git_ref: gitRef } : {}) } },
         }),
       ),
   })

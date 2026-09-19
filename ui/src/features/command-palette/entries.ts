@@ -136,14 +136,14 @@ export function buildPaletteEntries({
     })),
 
     // A repository has no panel either, and picking one from the palette
-    // means its knowledge base (022) — the one screen scoped to a single
-    // repository, the way a skill's own screen is a page rather than a panel.
+    // means its knowledge base (022): the knowledge screen, with that
+    // repository picked, the way a skill's own screen opens on that skill.
     repositories: (repositories ?? []).map((repository) => ({
       value: `${folderName(repository.path)} ${shortId(repository.id)}`,
       label: folderName(repository.path),
       detail: shortId(repository.id),
       keywords: [repository.id, repository.path],
-      target: { kind: "page", path: paths.repositoryKnowledge(repository.id) },
+      target: { kind: "page", path: paths.knowledge(repository.id) },
     })),
   }
 }

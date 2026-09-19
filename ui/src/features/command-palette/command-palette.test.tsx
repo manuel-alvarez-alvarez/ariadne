@@ -181,7 +181,7 @@ it("leaves the popup's own height to what is inside it", async () => {
   expect(command?.className).not.toMatch(/(^|\s)(h-full|size-full)(\s|$)/)
 })
 
-it("opens a repository's knowledge page from the palette", async () => {
+it("opens the knowledge screen on a repository from the palette", async () => {
   const user = userEvent.setup()
   const location = renderPalette("/repositories")
   await screen.findByText("Actions")
@@ -189,7 +189,7 @@ it("opens a repository's knowledge page from the palette", async () => {
   await user.type(screen.getByRole("combobox"), "ariadne")
   await user.click(await screen.findByText("ariadne"))
 
-  expect(location.url).toBe(`/repositories/${REPOSITORY.id}/knowledge`)
+  expect(location.url).toBe(`/knowledge?repository=${REPOSITORY.id}`)
 })
 
 it("asks the daemon nothing until it is opened", async () => {

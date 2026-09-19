@@ -19,7 +19,12 @@ The suite needs no daemon and no agent. The daemon is a stubbed `fetch`, a
 stubbed `EventSource` and a stubbed `WebSocket` (`src/test/`), and a session's
 console is the real xterm.js on that socket stand-in, fed the bytes a test
 writes — jsdom lays nothing out, so the grid keeps xterm's default 80 by 24
-and what it drew is read back off its rows.
+and what it drew is read back off its rows. jsdom has no WebGL either, so a
+knowledge graph is drawn by `src/test/sigma-canvas.tsx`: it lists each node and
+edge as the app's reducers describe them, and fires the same clicks. Each test
+file that draws a graph mocks `graph/sigma-canvas` with it. Do not put that
+mock in `src/test/setup.ts`: a mock there slows every file, and the dialog
+tests then time out.
 
 ## Layout
 
@@ -45,6 +50,8 @@ src/
     models/        the pin picker, the model catalog and the agent summary
     skills/        skills screen: the catalog, and the document each one is
     repositories/  the registered checkouts goals are created against
+    knowledge/     knowledge screen (022): the pickers, the tab registry, and
+                   the one graph component every graph tab draws with (`graph/`)
     agents/        agents screen: the flags each registry agent is launched with
     system/        the daemon-logs drawer and the log stream behind it
   test/            setup, render harness, DTO fixtures and the browser stand-ins
@@ -219,8 +226,11 @@ There is no per-feature route file: there are a handful of routes, half of them
 one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
-Six screens have URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
-`#/agents`, `#/repositories`, `#/memory` — and `#/` redirects onto the board.
+Seven screens have URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
+`#/agents`, `#/repositories`, `#/memory`, `#/knowledge` — and `#/` redirects
+onto the board. The knowledge screen keeps its repository, ref and tab in
+`?repository=`, `?ref=` and `?tab=`; a tab is one entry in
+`src/features/knowledge/knowledge-tabs.tsx`.
 Goals, tasks and sessions have no pages: their details open as **side panels** driven by
 search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
 a session's own panel, `?tab=sessions&session=` for a session inside a goal's or

@@ -58,8 +58,12 @@ export const paths = {
   repositories: () => "/repositories",
   /** Every saved memory, global and every repository's: list, search, add and delete (019). */
   memory: () => "/memory",
-  /** One repository's knowledge base: status, reindex, search and interactions (022). */
-  repositoryKnowledge: (repositoryId: string) => `/repositories/${repositoryId}/knowledge`,
+  /**
+   * What the knowledge base holds for every repository (022), opened on one
+   * repository's pick when given: see `features/knowledge/knowledge-screen.tsx`.
+   */
+  knowledge: (repositoryId?: string) =>
+    repositoryId ? `/knowledge?repository=${repositoryId}` : "/knowledge",
   /**
    * The goals board with this goal's panel open on one of its sessions.
    *

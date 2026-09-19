@@ -31,6 +31,7 @@ import {
   CpuIcon,
   FolderGit2Icon,
   type LucideIcon,
+  NetworkIcon,
   RadioTowerIcon,
   TargetIcon,
 } from "lucide-react"
@@ -53,6 +54,7 @@ const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean
   { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
   { to: paths.memory(), label: "Memory", icon: BrainIcon },
+  { to: paths.knowledge(), label: "Knowledge", icon: NetworkIcon },
 ]
 
 export function AppSidebar({ collapsed = false }: { collapsed?: boolean }) {

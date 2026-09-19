@@ -13,9 +13,8 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { DatabaseIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
+import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
 
 import type { RepositoryDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
@@ -24,7 +23,6 @@ import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { plural } from "@/lib/format"
-import { paths } from "@/routes/paths"
 
 import { DeleteRepositoryDialog } from "./delete-repository-dialog"
 import { NoRepositories as SharedNoRepositories } from "./no-repositories"
@@ -118,8 +116,6 @@ function RepositoryRow({
   onEdit: () => void
   onDelete: () => void
 }) {
-  const navigate = useNavigate()
-
   return (
     <TableRow>
       {/* The path is what this screen is visited for: it is read here on its
@@ -141,11 +137,6 @@ function RepositoryRow({
         {repository.description ?? <span className="italic">no description</span>}
       </TableCell>
       <TableCell className="text-right">
-        <RowAction
-          icon={<DatabaseIcon />}
-          label={`Knowledge for ${repository.path}`}
-          onClick={() => navigate(paths.repositoryKnowledge(repository.id))}
-        />
         <RowAction icon={<PencilIcon />} label={`Edit ${repository.path}`} onClick={onEdit} />
         <RowAction icon={<Trash2Icon />} label={`Remove ${repository.path}`} onClick={onDelete} />
       </TableCell>

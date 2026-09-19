@@ -20,7 +20,9 @@ tests:
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-cli/src/commands/knowledge.rs
   - crates/ariadne-cli/src/cli/tests.rs
-  - ui/src/features/knowledge/knowledge-page.test.tsx
+  - ui/src/features/knowledge/knowledge-screen.test.tsx
+  - ui/src/features/knowledge/repositories-graph.test.ts
+  - ui/src/features/knowledge/graph/knowledge-graph.test.tsx
   - ui/src/events/dispatch.test.ts
   - ui/src/features/command-palette/command-palette.test.tsx
 ---
@@ -39,7 +41,7 @@ reference into an edge, the interfaces a file holds beyond its symbols and
 the link pass that matches them between repositories, the store and its
 schema, when the daemon indexes what, the REST surface and its events, the
 six MCP tools, the `ariadne knowledge` commands, the `knowledge_enabled`
-key, and the desktop knowledge page over the same routes (015).
+key, and the desktop knowledge screen over the same routes (015).
 
 Out: languages beyond the registry here; what the skill documents tell an
 agent to do with the tools (017); and the memory tools beside these (019).
@@ -270,15 +272,19 @@ agent to do with the tools (017); and the memory tools beside these (019).
     and every launch tells the session's MCP server
     (`ARIADNE_KNOWLEDGE_ENABLED=false`), which then lists and serves none of
     the six tools.
-29. The desktop app's knowledge page (015) shows the status card, a Reindex
-    button that posts the reindex and shows `indexing` at once, a search box
-    over `q`, `kind` and `path`, and the interactions of the repository
-    grouped by kind, each edge naming the step beside its confidence —
-    reached from a row on the repositories screen and from the command
-    palette, the way the memory page (019) is reached from its
-    row. `knowledge_indexed` and `knowledge_failed` refetch what the page
-    shows for their repository and leave every other repository's caches
-    alone.
+29. The desktop app's knowledge screen (015) is a sidebar entry at
+    `#/knowledge`, over every repository. A repository picker and a ref
+    picker lead it; the refs are the ones the status lists. Its tabs are
+    `overview`, `repositories`, `symbols`, `impact` and `files`, and the URL
+    keeps the picks and the tab. The Overview tab shows a card per
+    repository with its status and a Reindex button that posts the reindex
+    and shows `indexing` at once. The Repositories tab draws the
+    interactions between repositories as a graph: a node per repository, an
+    edge per pair and kind with its count, dashed where it is heuristic only,
+    and a click on an edge lists its file-level ends with the step each
+    rests on. The command palette opens the screen on a repository.
+    `knowledge_indexed` and `knowledge_failed` refetch what the screen shows
+    for their repository and leave every other repository's caches alone.
 30. Beyond its symbols, a file holds interfaces: what it offers another
     repository and what it takes from one. Each is read off the text at parse
     time, kept per blob like the mentions, and carries the definition it sits
@@ -790,19 +796,27 @@ and by `(kind, name)`.
   `::an_interaction_row_leads_with_its_from_end_and_names_its_kind`), and an
   end of a `symbol` block names its step and its candidate count
   (`::an_end_row_names_the_step_that_resolved_it`).
-- The desktop knowledge page renders the status card in every state, posts a
-  reindex and shows `indexing` at once, refetches once `knowledge_indexed` or
-  `knowledge_failed` arrives, searches with `q`, `kind` and `path`, and groups
-  interactions by kind with both ends, their confidence and the step each
-  rests on
-  (`ui/src/features/knowledge/knowledge-page.test.tsx`).
+- The desktop knowledge screen keeps its pickers and its tab in the URL,
+  renders a status card per repository in every state, posts a reindex and
+  shows `indexing` at once, and refetches once `knowledge_indexed` arrives
+  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the pickers and the tab`,
+  `::the Overview tab`).
+- The Repositories graph has a node per repository named by its folder, one
+  edge per pair and kind with its count and colour, dashed where heuristic
+  only, filtered by kind and confidence
+  (`ui/src/features/knowledge/repositories-graph.test.ts`), and a click on
+  an edge lists its ends with their confidence and step
+  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Repositories tab`).
+- The shared graph component builds the model it draws and hands node and
+  edge clicks back by key
+  (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx`).
 - `knowledge_indexed` and `knowledge_failed` invalidate a repository's
   knowledge status and every interactions list under it, and leave another
   repository's caches alone
   (`ui/src/events/dispatch.test.ts::knowledge events (022)`).
-- The command palette opens a repository's knowledge page
-  (`ui/src/features/command-palette/command-palette.test.tsx::opens a
-  repository's knowledge page from the palette`).
+- The command palette opens the knowledge screen on a repository
+  (`ui/src/features/command-palette/command-palette.test.tsx::opens the
+  knowledge screen on a repository from the palette`).
 
 ## Known gap
 
@@ -830,11 +844,6 @@ branch by default and names another with `git_ref`. A blob is parsed as the
 language of the first path it was seen at. The branch of a cancelled or failed
 task, and of a task whose goal was deleted, keeps its rows until a reindex or
 a restart drops what no longer resolves.
-
-The desktop page reads `GET /v1/knowledge/interactions` from hand-written
-types: the generated schema under `ui/src/api/` has not been regenerated
-since the knowledge endpoints were added, and the task that builds the page
-over the served listing regenerates it.
 
 ## Sources
 

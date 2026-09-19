@@ -90,6 +90,13 @@ describe("RepositoriesPage", () => {
     expect(screen.queryByRole("button", { name: `Memory for ${ARIADNE.path}` })).toBeNull()
   })
 
+  it("offers no Knowledge button on a row, which is on the knowledge screen", async () => {
+    renderScreen(<RepositoriesPage />)
+    await screen.findByTitle(ARIADNE.path)
+
+    expect(screen.queryByRole("button", { name: `Knowledge for ${ARIADNE.path}` })).toBeNull()
+  })
+
   it("says nothing about how work ends, which is the task's own", async () => {
     renderScreen(<RepositoriesPage />)
     await screen.findByTitle(ARIADNE.path)
