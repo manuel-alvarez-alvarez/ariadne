@@ -290,7 +290,8 @@ goal id to a seat (014).
     from what was typed. Agent text is markdown chunk by chunk under one
     marker, a thought dimmed and folded, a tool call the block of the next
     rule, and a permission question a picker. Markdown tables align their
-    display-width cells under bold headers and wrap in a cell, a code span
+    display-width cells under bold headers — not underlined, with one dim
+    rule beneath the row — and wrap in a cell, a code span
     keeping its backticks there as in text, or become
     `header: value` lines where the pane is too narrow. Fenced code has a dim
     language label, a two-column code indent and a dim `↪` on continued lines,
@@ -567,7 +568,7 @@ goal id to a seat (014).
   and markdown keeps a heading, a code block and a list apart
   (`ariadne-console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
-- Markdown tables align wide cells and bold headers
+- Markdown tables align wide cells under bold, not underlined, headers
   (`ariadne-console/markdown.rs::a_table_aligns_wide_cells_under_its_headers`),
   honour right alignment (`::a_right_aligned_table_column_is_flush_right`),
   wrap wide cells without loss (`::a_wide_table_wraps_each_cell_without_losing_text`),

@@ -29,6 +29,9 @@ pub const DIM: Style = Style::new().add_modifier(Modifier::DIM);
 pub const HEADING: Style = Style::new()
     .fg(Color::Cyan)
     .add_modifier(Modifier::BOLD.union(Modifier::UNDERLINED));
+/// A table's header row: a heading's colour, bold, and not underlined — the
+/// rule drawn under the row is its line, and an underline would be a second.
+pub const TABLE_HEADER: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 /// Markdown code spans and blocks use one quiet, distinct colour.
 pub const CODE: Style = Style::new().fg(Color::Yellow);
 /// Markdown structure is context, not the answer itself.

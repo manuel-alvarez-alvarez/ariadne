@@ -143,7 +143,10 @@ Out: the daemon endpoints themselves (012).
     the UI is drawn in, in both themes, re-read when the theme switches:
     the six named terminal colours map onto the status ramp. It fills the
     box it is given, refits when that box changes, and the daemon redraws
-    at the new size.
+    at the new size. It draws on WebGL where the webview has a context, so
+    box-drawing glyphs — the input box's rules, a table's rule — are the
+    emulator's own and join into one line; without one it keeps the DOM
+    renderer, which takes them from the font.
 23. A drop of the socket is retried on the event stream's backoff, and the
     pane says it is reconnecting meanwhile. A close the daemon meant — the
     session ended, Ctrl-C twice, Ctrl-D — ends the console instead: the

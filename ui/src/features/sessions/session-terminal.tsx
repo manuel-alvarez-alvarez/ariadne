@@ -13,7 +13,8 @@
  *
  * The pane fills the box it is given and refits when that box changes, which
  * the daemon answers by redrawing at the new size. Its colours and font are
- * the app's own (`terminal-theme.ts`), re-read when the theme switches.
+ * the app's own (`terminal-theme.ts`), re-read when the theme switches, and
+ * it draws on WebGL where it can, so rules and box edges join up.
  *
  * A drop is retried on the event stream's backoff, and the pane says so
  * meanwhile; a close the daemon meant — the session ended, Ctrl-C twice,
@@ -25,6 +26,7 @@
 import "@xterm/xterm/css/xterm.css"
 
 import { FitAddon } from "@xterm/addon-fit"
+import { WebglAddon } from "@xterm/addon-webgl"
 import { Terminal } from "@xterm/xterm"
 import { Loader2Icon, Maximize2Icon, Minimize2Icon, PlugZapIcon } from "lucide-react"
 import { useTheme } from "next-themes"
@@ -142,6 +144,7 @@ function TerminalPane({
       const fit = new FitAddon()
       term.loadAddon(fit)
       term.open(el)
+      drawOnWebgl(term)
       fit.fit()
 
       const link = new TerminalSocket(terminalUrl(baseUrl, sessionId), {
@@ -262,6 +265,23 @@ function TerminalPane({
       </div>
     </div>
   )
+}
+
+/**
+ * Draw the grid with WebGL where the webview has it. Only a canvas renderer
+ * draws box-drawing glyphs itself, so the console's rules — the input box, a
+ * table's header — read as one line; the DOM renderer takes them from the
+ * font, cell by cell, with gaps between. Without a context — the test runner,
+ * or one the GPU took back — the DOM renderer draws.
+ */
+function drawOnWebgl(term: Terminal) {
+  try {
+    const webgl = new WebglAddon()
+    webgl.onContextLoss(() => webgl.dispose())
+    term.loadAddon(webgl)
+  } catch {
+    // No WebGL here: the DOM renderer stays.
+  }
 }
 
 /**

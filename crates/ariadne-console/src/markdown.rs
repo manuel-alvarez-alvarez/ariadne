@@ -10,7 +10,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{
-    CODE, CODE_CONTINUATION, HEADING, LIST_BULLETS, MARK, QUOTE_BAR, RULE, TASK_DONE, TASK_TODO,
+    CODE, CODE_CONTINUATION, HEADING, LIST_BULLETS, MARK, QUOTE_BAR, RULE, TABLE_HEADER, TASK_DONE,
+    TASK_TODO,
 };
 
 /// Render `text` as markdown, wrapped to `width` columns.
@@ -486,11 +487,7 @@ impl Writer {
             self.line(
                 prefix,
                 &line,
-                if header {
-                    HEADING.add_modifier(Modifier::BOLD)
-                } else {
-                    Style::new()
-                },
+                if header { TABLE_HEADER } else { Style::new() },
             );
         }
     }
@@ -673,10 +670,8 @@ mod tests {
         assert_eq!(text(&lines)[0], "name | place  | count");
         assert_eq!(text(&lines)[1], RULE.repeat(21));
         assert_eq!(text(&lines)[2], "日本 | Madrid | 2    ");
-        assert_eq!(
-            styles(&lines, "name"),
-            Some(HEADING.add_modifier(Modifier::BOLD))
-        );
+        // One line under the header: the rule, not an underline as well.
+        assert_eq!(styles(&lines, "name"), Some(TABLE_HEADER));
     }
 
     #[test]
