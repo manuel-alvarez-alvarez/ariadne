@@ -449,10 +449,7 @@ pub async fn run(client: &Client, command: KnowledgeCommand, format: Format) -> 
                 .await?;
             // The map is one text, so it is printed as it came: a file per
             // heading, its definitions under it.
-            print(format, &map, || match map.text.is_empty() {
-                true => println!("The repository holds nothing the index read."),
-                false => print!("{}", map.text),
-            })?;
+            print(format, &map, || print!("{}", map_text(&map)))?;
         }
         KnowledgeCommand::Outline {
             repo,
@@ -513,14 +510,21 @@ fn print_symbols(found: &[KnowledgeSymbolDto]) {
             ("repository", Kv::id(definition.repository_id.clone())),
         ];
         if let Some(context) = &definition.context {
-            for (name, ends) in [
-                ("callers", &context.callers),
-                ("callees", &context.callees),
-                ("implementations", &context.implementations),
-                ("references", &context.references),
-                ("tests", &context.tests),
+            for (name, ends, left) in [
+                ("callers", &context.callers, context.more.callers),
+                ("callees", &context.callees, context.more.callees),
+                (
+                    "implementations",
+                    &context.implementations,
+                    context.more.implementations,
+                ),
+                ("references", &context.references, context.more.references),
+                ("tests", &context.tests, context.more.tests),
             ] {
-                rows.push((name, ends_line(ends, &definition.repository_id).into()));
+                rows.push((
+                    name,
+                    ends_line(ends, &definition.repository_id, left).into(),
+                ));
             }
         }
         print_kv(&rows);
@@ -532,21 +536,39 @@ fn print_symbols(found: &[KnowledgeSymbolDto]) {
 
 /// One line for a list of edge ends, or `-` for an empty one. An end in
 /// another repository than `repository_id` is led by that repository's id.
-fn ends_line(ends: &[KnowledgeRelatedDto], repository_id: &str) -> String {
-    match ends.is_empty() {
+/// `left` past 0 ends the line with how many more matched the cap.
+fn ends_line(ends: &[KnowledgeRelatedDto], repository_id: &str, left: i64) -> String {
+    let mut parts: Vec<String> = ends
+        .iter()
+        .map(|end| {
+            let location = format!("{}:{}", end.path, end.line);
+            let location = match end.repository_id == repository_id {
+                true => location,
+                false => format!("{}:{location}", end.repository_id),
+            };
+            format!("{location} {} ({})", end.name, end.confidence)
+        })
+        .collect();
+    if left > 0 {
+        parts.push(format!("{left} more. Narrow the query."));
+    }
+    match parts.is_empty() {
         true => "-".to_string(),
-        false => ends
-            .iter()
-            .map(|end| {
-                let location = format!("{}:{}", end.path, end.line);
-                let location = match end.repository_id == repository_id {
-                    true => location,
-                    false => format!("{}:{location}", end.repository_id),
-                };
-                format!("{location} {} ({})", end.name, end.confidence)
-            })
-            .collect::<Vec<_>>()
-            .join("; "),
+        false => parts.join("; "),
+    }
+}
+
+/// The map's text as it came, or, where the budget held none of it, how
+/// many ranked files were left out — a budget too small even for that line
+/// still names them, rather than reading as an empty repository.
+fn map_text(map: &KnowledgeMapDto) -> String {
+    match (map.text.is_empty(), map.files_left > 0) {
+        (false, _) => map.text.clone(),
+        (true, true) => format!(
+            "{} files left. Raise the budget or name a path.\n",
+            map.files_left
+        ),
+        (true, false) => "The repository holds nothing the index read.\n".to_string(),
     }
 }
 
@@ -676,5 +698,51 @@ mod tests {
         assert!(header.starts_with("FROM"), "{table}");
         assert!(header.contains("KIND"), "{table}");
         assert!(header.contains("TO"), "{table}");
+    }
+
+    /// A capped list ends with how many more matched the cap; a whole list
+    /// does not.
+    #[test]
+    fn a_capped_list_ends_with_how_many_more_matched() {
+        let ends = [KnowledgeRelatedDto {
+            repository_id: "01REPO".into(),
+            path: "src/a.rs".into(),
+            line: 3,
+            name: "a".into(),
+            confidence: "exact".into(),
+        }];
+        assert_eq!(
+            ends_line(&ends, "01REPO", 5),
+            "src/a.rs:3 a (exact); 5 more. Narrow the query."
+        );
+        assert_eq!(ends_line(&ends, "01REPO", 0), "src/a.rs:3 a (exact)");
+    }
+
+    /// A budget too small to hold even the files-left line still names how
+    /// many were left out, rather than reading as an empty repository. A
+    /// repository truly holding nothing keeps its own note.
+    #[test]
+    fn map_text_says_how_many_files_are_left_when_the_budget_held_none() {
+        let map = KnowledgeMapDto {
+            repository_id: "01REPO".into(),
+            git_ref: "main".into(),
+            text: String::new(),
+            tokens: 0,
+            files: 0,
+            files_left: 2,
+        };
+        assert_eq!(
+            map_text(&map),
+            "2 files left. Raise the budget or name a path.\n"
+        );
+
+        let empty = KnowledgeMapDto {
+            files_left: 0,
+            ..map
+        };
+        assert_eq!(
+            map_text(&empty),
+            "The repository holds nothing the index read.\n"
+        );
     }
 }

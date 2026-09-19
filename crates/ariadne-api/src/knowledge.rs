@@ -174,6 +174,21 @@ pub struct KnowledgeContextDto {
     pub references: Vec<KnowledgeRelatedDto>,
     /// The tests at most two edges away.
     pub tests: Vec<KnowledgeRelatedDto>,
+    /// How many entries each list held past its cap, 0 where the list is
+    /// whole.
+    #[serde(default)]
+    pub more: KnowledgeContextMoreDto,
+}
+
+/// How many entries each list of a [`KnowledgeContextDto`] held back past
+/// its cap, 0 where the list is whole.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeContextMoreDto {
+    pub callers: i64,
+    pub callees: i64,
+    pub implementations: i64,
+    pub references: i64,
+    pub tests: i64,
 }
 
 /// One definition of a name.
@@ -329,6 +344,10 @@ pub struct KnowledgeMapDto {
     pub tokens: i64,
     /// How many files the text names.
     pub files: i64,
+    /// The ranked files the text did not hold, 0 where the budget held
+    /// every one of them.
+    #[serde(default)]
+    pub files_left: i64,
 }
 
 /// Query of `GET /v1/knowledge/interactions`.

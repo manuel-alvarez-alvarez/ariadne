@@ -792,26 +792,33 @@ impl AriadneMcp {
             }
             if let Some(context) = &definition.context {
                 let lists = [
-                    ("callers", &context.callers),
-                    ("callees", &context.callees),
-                    ("implementations", &context.implementations),
-                    ("references", &context.references),
-                    ("tests", &context.tests),
+                    ("callers", &context.callers, context.more.callers),
+                    ("callees", &context.callees, context.more.callees),
+                    (
+                        "implementations",
+                        &context.implementations,
+                        context.more.implementations,
+                    ),
+                    ("references", &context.references, context.more.references),
+                    ("tests", &context.tests, context.more.tests),
                 ];
                 let own =
                     |end: &&KnowledgeRelatedDto| end.repository_id == definition.repository_id;
-                for (heading, ends) in lists {
+                for (heading, ends, left) in lists {
                     lines.push(format!("### {heading}"));
                     let mine: Vec<&KnowledgeRelatedDto> = ends.iter().filter(own).collect();
                     match mine.is_empty() {
                         true => lines.push("(none)".into()),
                         false => lines.extend(mine.into_iter().map(related_line)),
                     }
+                    if left > 0 {
+                        lines.push(format!("{left} more. Narrow the query."));
+                    }
                 }
                 // The other repositories' ends, each repository under a
                 // heading of its own, with only the lists it has an end in.
                 let mut others: Vec<&str> = Vec::new();
-                for end in lists.iter().flat_map(|(_, ends)| ends.iter()) {
+                for end in lists.iter().flat_map(|(_, ends, _)| ends.iter()) {
                     if end.repository_id != definition.repository_id
                         && !others.contains(&end.repository_id.as_str())
                     {
@@ -820,7 +827,7 @@ impl AriadneMcp {
                 }
                 for other in others {
                     lines.push(repository_heading(&paths, other));
-                    for (heading, ends) in lists {
+                    for (heading, ends, _) in lists {
                         let theirs: Vec<&KnowledgeRelatedDto> = ends
                             .iter()
                             .filter(|end| end.repository_id == other)
@@ -1005,9 +1012,13 @@ impl AriadneMcp {
             if several {
                 lines.push(repository_heading(&paths, repository));
             }
-            match map.text.is_empty() {
-                true => lines.push("No file is indexed.".into()),
-                false => lines.extend(map.text.lines().map(str::to_string)),
+            match (map.text.is_empty(), map.files_left > 0) {
+                (false, _) => lines.extend(map.text.lines().map(str::to_string)),
+                (true, true) => lines.push(format!(
+                    "{} files left. Raise the budget or name a path.",
+                    map.files_left
+                )),
+                (true, false) => lines.push("No file is indexed.".into()),
             }
         }
         text_result(cut_answer(lines, ANSWER_CAP))
@@ -2053,6 +2064,38 @@ mod tests {
         assert_eq!(text.text, "src/a.rs\n");
     }
 
+    /// A budget too small to hold even the files-left line still says how
+    /// many ranked files were left out, rather than reading as a repository
+    /// with no file indexed.
+    #[tokio::test]
+    async fn repo_map_says_how_many_files_are_left_when_the_text_is_empty() {
+        let (endpoint, _seen) = recording_daemon_answering(
+            r#"{"repository_id":"01REPO","git_ref":"main","text":"","tokens":0,"files":0,"files_left":2}"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .repo_map(Parameters(RepoMapReq {
+                repository: Some("01REPO".into()),
+                path: None,
+                git_ref: None,
+                budget: Some(11),
+            }))
+            .await
+            .expect("repo_map");
+
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(
+            text.text,
+            "2 files left. Raise the budget or name a path.\n"
+        );
+    }
+
     /// `symbol` asks the daemon for the detail it was given, and groups its
     /// answer under a heading per repository — its path — a heading per
     /// definition, and one per list of the context. Another repository's
@@ -2122,6 +2165,61 @@ mod tests {
              src/client.ts:5 fetchItem heuristic\n\
              ### references\n\
              src/types.ts:9 Item heuristic\n"
+        );
+    }
+
+    /// A capped list ends with how many more matched, right after its own
+    /// repository's ends.
+    #[tokio::test]
+    async fn symbol_says_how_many_ends_a_capped_list_left() {
+        let (endpoint, _seen) = recording_daemon_answering_in_order(&[
+            r#"[
+                {"repository_id":"01REPO","path":"src/inner/m.rs","start_line":2,"end_line":2,
+                 "kind":"function","name":"b","signature":"pub fn b()","doc":null,
+                 "source":null,
+                 "context":{"callers":[{"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"}],
+                            "callees":[],
+                            "implementations":[],
+                            "references":[],
+                            "tests":[],
+                            "more":{"callers":5,"callees":0,"implementations":0,"references":0,"tests":0}}}
+            ]"#,
+            r#"[{"id":"01REPO","path":"/repos/api"}]"#,
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .symbol(Parameters(SymbolReq {
+                name: "b".into(),
+                repository: Some("01REPO".into()),
+                git_ref: Some("main".into()),
+                detail: Some(DetailReq::Context),
+            }))
+            .await
+            .expect("symbol");
+
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(
+            text.text,
+            "# /repos/api\n\
+             ## src/inner/m.rs:2-2 function b\n\
+             pub fn b()\n\
+             ### callers\n\
+             src/a.rs:3 a exact\n\
+             5 more. Narrow the query.\n\
+             ### callees\n\
+             (none)\n\
+             ### implementations\n\
+             (none)\n\
+             ### references\n\
+             (none)\n\
+             ### tests\n\
+             (none)\n"
         );
     }
 

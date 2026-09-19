@@ -185,9 +185,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
     and `tests`, each a list of `repository_id`, `path`, `line`, `name` and
     `confidence`, each capped at 20 entries, and each listing the
     definition's own repository first and every other repository's ends
-    after it. Without `repository` a user reads every repository, and an
-    agent session the repositories of its goal; the ref is the caller's own
-    (rule 20).
+    after it. `context` also adds `more`: `callers`, `callees`,
+    `implementations`, `references` and `tests`, each how many entries the
+    matching list held back past its cap, 0 where the list is whole. Without
+    `repository` a user reads every repository, and an agent session the
+    repositories of its goal; the ref is the caller's own (rule 20).
 23. `GET /v1/knowledge/impact` takes `repository`, optionally `git_ref` and
     `depth` (default 2, max 4), and exactly one of `symbol` and `diff`
     (`<base>..<head>`) — neither and both are refused. `symbol` names every
@@ -228,8 +230,10 @@ agent to do with the tools (017); and the memory tools beside these (019).
     is what an agent knows a repository by; its id where it is no longer
     listed — `## <location> …` per definition, and `###
     callers|callees|implementations|references|tests` per list of a context,
-    an empty list reading `(none)`. The lists under a definition hold its own
-    repository's ends; every other repository's ends follow under a `#`
+    an empty list reading `(none)`, and a list past its cap ending with a
+    line naming how many more matched and saying to narrow the query. The
+    lists under a definition hold its own repository's ends; every other
+    repository's ends follow under a `#`
     heading of that repository's own, with only the lists it has an end in
     (`symbol`), its ordered hops (`path`), or its callers alone (`impact`). A
     path hop is `path:line kind name <- edge_kind confidence`, with no edge on
@@ -374,15 +378,21 @@ agent to do with the tools (017); and the memory tools beside these (019).
     and no interface edge of rule 31, whose ends are manifest lines rather
     than definitions — the walk restarting at `path` where the call names one
     and at the whole ref where it does not, and answers a `KnowledgeMapDto`:
-    `repository_id`, `git_ref`, `text`, `tokens` and `files`. A reference
-    joins two files the way it points, and back at a quarter of that, so a
-    map of the whole ref names what the ref depends on, and a map toward one
-    path names that file's neighbours whichever way the reference points.
-    The text is a line per file — its path — and under it a line per
+    `repository_id`, `git_ref`, `text`, `tokens`, `files` and `files_left`.
+    A reference joins two files the way it points, and back at a quarter of
+    that, so a map of the whole ref names what the ref depends on, and a map
+    toward one path names that file's neighbours whichever way the reference
+    points. The text is a line per file — its path — and under it a line per
     definition, `<start>-<end> <kind> <name> <signature>`, indented by two
     spaces: the definitions most of the ref points at, 10 a file, in line
     order. A file that defines nothing is left out, 100 files are ranked at
     most, and the text stops at the last whole line the budget holds.
+    `files_left` is the ranked files the text did not hold, 0 where the
+    budget held them all. Where the cut leaves room for the whole line, the
+    text ends with it: `N files left. Raise the budget or name a path.` —
+    the same rule every other line keeps, so a budget under the line's own
+    length holds none of it, though `files_left` still counts what was left
+    out.
 
 34. `GET /v1/knowledge/path` takes `repository`, `from`, `to`, and optionally
     `git_ref` (the caller's own by default, rule 20) and `depth` (6 by default,

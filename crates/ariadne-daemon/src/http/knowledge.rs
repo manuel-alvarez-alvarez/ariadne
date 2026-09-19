@@ -6,12 +6,12 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::knowledge::{
-    KnowledgeContextDto, KnowledgeDetail, KnowledgeEdgeDto, KnowledgeEndpointDto, KnowledgeHitDto,
-    KnowledgeImpactCallerDto, KnowledgeImpactDto, KnowledgeImpactQuery,
-    KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeLanguageDto,
-    KnowledgeMapDto, KnowledgeMapQuery, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery,
-    KnowledgePathDto, KnowledgePathHopDto, KnowledgePathQuery, KnowledgeRefDto,
-    KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
+    KnowledgeContextDto, KnowledgeContextMoreDto, KnowledgeDetail, KnowledgeEdgeDto,
+    KnowledgeEndpointDto, KnowledgeHitDto, KnowledgeImpactCallerDto, KnowledgeImpactDto,
+    KnowledgeImpactQuery, KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery,
+    KnowledgeLanguageDto, KnowledgeMapDto, KnowledgeMapQuery, KnowledgeOutlineEntryDto,
+    KnowledgeOutlineQuery, KnowledgePathDto, KnowledgePathHopDto, KnowledgePathQuery,
+    KnowledgeRefDto, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
     KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_knowledge::store::{CONTEXT_LIMIT, INTERACTION_KINDS};
@@ -238,6 +238,13 @@ pub async fn symbol(
                         implementations: related(context.implementations),
                         references: related(context.references),
                         tests: related(context.tests),
+                        more: KnowledgeContextMoreDto {
+                            callers: context.more.callers,
+                            callees: context.more.callees,
+                            implementations: context.more.implementations,
+                            references: context.more.references,
+                            tests: context.more.tests,
+                        },
                     })
                     .map_err(|e| ApiError::conflict(e.to_string()))?,
             ),
@@ -465,6 +472,7 @@ pub async fn map(
         git_ref,
         tokens: map.tokens(),
         files: map.files,
+        files_left: map.files_left,
         text: map.text,
     }))
 }

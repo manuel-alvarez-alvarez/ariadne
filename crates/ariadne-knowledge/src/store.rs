@@ -222,6 +222,20 @@ pub struct SymbolContext {
     /// class, an import, and every reference from another repository.
     pub references: Vec<Related>,
     pub tests: Vec<Related>,
+    /// How many entries each list held past [`CONTEXT_LIMIT`], 0 where the
+    /// list is whole.
+    pub more: ContextMore,
+}
+
+/// How many entries each list of a [`SymbolContext`] held back past
+/// [`CONTEXT_LIMIT`], 0 where the list is whole.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ContextMore {
+    pub callers: i64,
+    pub callees: i64,
+    pub implementations: i64,
+    pub references: i64,
+    pub tests: i64,
 }
 
 /// One end of an interaction.
@@ -663,51 +677,64 @@ impl KnowledgeStore {
     ) -> Result<SymbolContext> {
         let at =
             |query: RelatedQuery| self.related(query, symbol_id, repository_id, git_ref, limit);
+        // Who calls it: the far end of a call into it.
+        let (callers, callers_more) = at(RelatedQuery {
+            listed: End::From,
+            kinds: CALL_KINDS,
+            ..Default::default()
+        })
+        .await?;
+        // What it calls: the far end of a call out of it.
+        let (callees, callees_more) = at(RelatedQuery {
+            listed: End::To,
+            kinds: CALL_KINDS,
+            ..Default::default()
+        })
+        .await?;
+        // What implements it, or what it is a base of.
+        let (implementations, implementations_more) = at(RelatedQuery {
+            listed: End::From,
+            kinds: &["implements", "extends"],
+            ..Default::default()
+        })
+        .await?;
+        // What names it: a type annotation, an import, a foreign reference.
+        let (references, references_more) = at(RelatedQuery {
+            listed: End::From,
+            kinds: &["references", "imports"],
+            ..Default::default()
+        })
+        .await?;
+        // The tests at most two edges away: a test that calls it, and a
+        // test that calls something that calls it.
+        let (tests, tests_more) = at(RelatedQuery {
+            listed: End::From,
+            kinds: CALL_KINDS,
+            two_hops: true,
+            tests_only: true,
+        })
+        .await?;
         Ok(SymbolContext {
-            // Who calls it: the far end of a call into it.
-            callers: at(RelatedQuery {
-                listed: End::From,
-                kinds: CALL_KINDS,
-                ..Default::default()
-            })
-            .await?,
-            // What it calls: the far end of a call out of it.
-            callees: at(RelatedQuery {
-                listed: End::To,
-                kinds: CALL_KINDS,
-                ..Default::default()
-            })
-            .await?,
-            // What implements it, or what it is a base of.
-            implementations: at(RelatedQuery {
-                listed: End::From,
-                kinds: &["implements", "extends"],
-                ..Default::default()
-            })
-            .await?,
-            // What names it: a type annotation, an import, a foreign reference.
-            references: at(RelatedQuery {
-                listed: End::From,
-                kinds: &["references", "imports"],
-                ..Default::default()
-            })
-            .await?,
-            // The tests at most two edges away: a test that calls it, and a
-            // test that calls something that calls it.
-            tests: at(RelatedQuery {
-                listed: End::From,
-                kinds: CALL_KINDS,
-                two_hops: true,
-                tests_only: true,
-            })
-            .await?,
+            callers,
+            callees,
+            implementations,
+            references,
+            tests,
+            more: ContextMore {
+                callers: callers_more,
+                callees: callees_more,
+                implementations: implementations_more,
+                references: references_more,
+                tests: tests_more,
+            },
         })
     }
 
-    /// One side of the edges of a symbol, as the answer names them. The
-    /// symbol sits at `repository_id` and `git_ref`; the listed end is the
-    /// other one, wherever it is, and its file is read at its own
-    /// repository and ref. The symbol's own repository is listed first.
+    /// One side of the edges of a symbol, as the answer names them, and how
+    /// many more matched past `limit`. The symbol sits at `repository_id`
+    /// and `git_ref`; the listed end is the other one, wherever it is, and
+    /// its file is read at its own repository and ref. The symbol's own
+    /// repository is listed first.
     async fn related(
         &self,
         query: RelatedQuery,
@@ -715,7 +742,7 @@ impl KnowledgeStore {
         repository_id: &str,
         git_ref: &str,
         limit: i64,
-    ) -> Result<Vec<Related>> {
+    ) -> Result<(Vec<Related>, i64)> {
         let (listed, listed_repository, listed_ref, other, other_repository, other_ref) =
             match query.listed {
                 End::From => (
@@ -735,57 +762,70 @@ impl KnowledgeStore {
                     "git_ref",
                 ),
             };
+        let where_clause = |sql: &mut QueryBuilder<Sqlite>| {
+            sql.push(listed)
+                .push(" JOIN files f ON f.blob = s.blob AND f.repository_id = e.")
+                .push(listed_repository)
+                .push(" AND f.git_ref = e.")
+                .push(listed_ref)
+                .push(" WHERE e.")
+                .push(other_repository)
+                .push(" = ")
+                .push_bind(repository_id)
+                .push(" AND e.")
+                .push(other_ref)
+                .push(" = ")
+                .push_bind(git_ref)
+                .push(" AND ");
+            push_kinds(sql, "e.", query.kinds);
+            sql.push(" AND e.").push(other);
+            match query.two_hops {
+                false => {
+                    sql.push(" = ").push_bind(symbol_id);
+                }
+                true => {
+                    sql.push(" IN (SELECT ")
+                        .push_bind(symbol_id)
+                        .push(" UNION SELECT from_symbol FROM edges WHERE to_repository = ")
+                        .push_bind(repository_id)
+                        .push(" AND to_ref = ")
+                        .push_bind(git_ref)
+                        .push(" AND ");
+                    push_kinds(sql, "", query.kinds);
+                    sql.push(" AND from_symbol IS NOT NULL AND to_symbol = ")
+                        .push_bind(symbol_id)
+                        .push(")");
+                }
+            }
+            if query.tests_only {
+                sql.push(" AND s.is_test = 1");
+            }
+            sql.push(" AND s.id <> ").push_bind(symbol_id);
+        };
+
+        let mut count_sql = QueryBuilder::<Sqlite>::new(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT f.repository_id, f.path, s.start_line AS line, s.name, e.confidence
+             FROM edges e JOIN symbols s ON s.id = e.",
+        );
+        where_clause(&mut count_sql);
+        count_sql.push(")");
+        let total: i64 = count_sql.build_query_scalar().fetch_one(&self.read).await?;
+
+        let limit = limit.max(1);
         let mut sql = QueryBuilder::<Sqlite>::new(
             "SELECT DISTINCT f.repository_id, f.path, s.start_line AS line, s.name, e.confidence
              FROM edges e JOIN symbols s ON s.id = e.",
         );
-        sql.push(listed)
-            .push(" JOIN files f ON f.blob = s.blob AND f.repository_id = e.")
-            .push(listed_repository)
-            .push(" AND f.git_ref = e.")
-            .push(listed_ref)
-            .push(" WHERE e.")
-            .push(other_repository)
-            .push(" = ")
-            .push_bind(repository_id)
-            .push(" AND e.")
-            .push(other_ref)
-            .push(" = ")
-            .push_bind(git_ref)
-            .push(" AND ");
-        push_kinds(&mut sql, "e.", query.kinds);
-        sql.push(" AND e.").push(other);
-        match query.two_hops {
-            false => {
-                sql.push(" = ").push_bind(symbol_id);
-            }
-            true => {
-                sql.push(" IN (SELECT ")
-                    .push_bind(symbol_id)
-                    .push(" UNION SELECT from_symbol FROM edges WHERE to_repository = ")
-                    .push_bind(repository_id)
-                    .push(" AND to_ref = ")
-                    .push_bind(git_ref)
-                    .push(" AND ");
-                push_kinds(&mut sql, "", query.kinds);
-                sql.push(" AND from_symbol IS NOT NULL AND to_symbol = ")
-                    .push_bind(symbol_id)
-                    .push(")");
-            }
-        }
-        if query.tests_only {
-            sql.push(" AND s.is_test = 1");
-        }
-        sql.push(" AND s.id <> ")
-            .push_bind(symbol_id)
-            .push(" ORDER BY (f.repository_id <> ")
+        where_clause(&mut sql);
+        sql.push(" ORDER BY (f.repository_id <> ")
             .push_bind(repository_id)
             .push("), f.repository_id, f.path, line LIMIT ")
-            .push_bind(limit.max(1));
-        Ok(sql
+            .push_bind(limit);
+        let rows = sql
             .build_query_as::<Related>()
             .fetch_all(&self.read)
-            .await?)
+            .await?;
+        Ok((rows, (total - limit).max(0)))
     }
 
     /// The callers of `symbol_id`, walked out to `depth`, with the symbols

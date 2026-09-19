@@ -1127,6 +1127,39 @@ async fn a_diff_names_the_definitions_it_changed_and_their_callers() {
     assert!(refused.contains("<base>..<head>"), "{refused}");
 }
 
+/// A context list past its cap says how many more matched; a whole list
+/// says none are left.
+#[tokio::test]
+async fn a_context_list_at_its_cap_says_how_many_more_exist() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut files: Vec<(String, String)> = vec![(
+        "src/target.rs".to_string(),
+        "pub fn target() {}\n".to_string(),
+    )];
+    for n in 0..25 {
+        files.push((
+            format!("src/callers/c{n}.rs"),
+            format!("use crate::target::target;\n\npub fn caller{n}() {{\n    target();\n}}\n"),
+        ));
+    }
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let repo = graph_repo(dir.path(), &borrowed);
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let target = only(&store, "target").await;
+    let context = store.context(target.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(context.callers.len(), 20, "{:#?}", context.callers);
+    assert_eq!(context.more.callers, 5);
+
+    // Nothing calls `target` out again, so its callees are a whole list.
+    assert!(context.callees.is_empty(), "{:#?}", context.callees);
+    assert_eq!(context.more.callees, 0);
+}
+
 /// A definition with more callers than the cap is not walked past, and the
 /// answer names it.
 #[tokio::test]

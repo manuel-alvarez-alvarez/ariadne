@@ -49,6 +49,9 @@ pub struct RepoMap {
     pub text: String,
     /// How many files the text names.
     pub files: i64,
+    /// The ranked files the text did not hold, 0 where the budget held
+    /// every one of them.
+    pub files_left: i64,
 }
 
 impl RepoMap {
@@ -105,15 +108,21 @@ pub(crate) fn both_ways(from: usize, to: usize, count: f64) -> [(usize, usize, f
     [(from, to, count), (to, from, count * BACK_WEIGHT)]
 }
 
+/// Room kept for the files-left line, whatever number it carries.
+const TAIL: usize = 64;
+
 /// The map as the text an agent reads: a file per heading, its definitions
-/// under it, and nothing past `budget` tokens.
+/// under it, and nothing past `budget` tokens. Where the budget cuts the
+/// text, the last line says how many ranked files were left out, counted
+/// against the budget like every other line.
 pub(crate) fn render(files: &[MapFile], budget: usize) -> RepoMap {
     let cap = budget.saturating_mul(TOKEN_CHARS);
+    let room = cap.saturating_sub(TAIL);
     let mut map = RepoMap::default();
-    for file in files {
+    for (at, file) in files.iter().enumerate() {
         let heading = format!("{}\n", file.path);
-        if map.text.len() + heading.len() > cap {
-            break;
+        if map.text.len() + heading.len() > room {
+            return cut(map, files.len() - at, cap);
         }
         map.text.push_str(&heading);
         map.files += 1;
@@ -122,11 +131,26 @@ pub(crate) fn render(files: &[MapFile], budget: usize) -> RepoMap {
                 "  {}-{} {} {} {}\n",
                 symbol.start_line, symbol.end_line, symbol.kind, symbol.name, symbol.signature
             );
-            if map.text.len() + line.len() > cap {
-                return map;
+            if map.text.len() + line.len() > room {
+                return cut(map, files.len() - at - 1, cap);
             }
             map.text.push_str(&line);
         }
+    }
+    map
+}
+
+/// `map`, ended with the line that says how many ranked files `files_left`
+/// leaves out — only where that whole line still fits under `cap`, the same
+/// rule every other line of the map keeps.
+fn cut(mut map: RepoMap, files_left: usize, cap: usize) -> RepoMap {
+    map.files_left = files_left as i64;
+    let tail = format!(
+        "{} files left. Raise the budget or name a path.\n",
+        map.files_left
+    );
+    if map.text.len() + tail.len() <= cap {
+        map.text.push_str(&tail);
     }
     map
 }
@@ -187,13 +211,53 @@ mod tests {
         let whole = render(&files, 1000);
         assert_eq!(whole.files, 2);
         assert!(whole.text.ends_with("pub fn three()\n"), "{}", whole.text);
+    }
 
-        let cut = render(&files, 8);
-        assert!(cut.tokens() <= 8, "{} tokens: {}", cut.tokens(), cut.text);
-        assert!(
-            cut.text.lines().all(|line| !line.is_empty()),
-            "{}",
-            cut.text
+    /// A budget that holds every ranked file whole says nothing about what
+    /// it left out. A budget that cuts the text ends it with a line naming
+    /// the ranked files the cut left out, and `files_left` counts them.
+    #[test]
+    fn the_text_names_the_files_the_budget_left_out() {
+        let files = [file("a.rs", &["one", "two"]), file("b.rs", &["three"])];
+
+        let whole = render(&files, 1000);
+        assert_eq!(whole.files_left, 0);
+        assert!(!whole.text.contains("files left"), "{}", whole.text);
+
+        // `a.rs` and its two definitions fit; `b.rs` does not, and the
+        // budget holds only the line that says so.
+        let cut = render(&files, 34);
+        assert_eq!(cut.files, 1, "{}", cut.text);
+        assert_eq!(cut.files_left, 1, "{}", cut.text);
+        assert_eq!(
+            cut.text,
+            "a.rs\n\
+             \x20 1-3 function one pub fn one()\n\
+             \x20 1-3 function two pub fn two()\n\
+             1 files left. Raise the budget or name a path.\n"
         );
+    }
+
+    /// The files-left line only writes whole, the same rule every other
+    /// line keeps: below its own length the budget holds none of it, but
+    /// `files_left` still counts every ranked file the cut left out.
+    #[test]
+    fn the_files_left_line_never_passes_its_own_budget() {
+        let files = [file("a.rs", &["one", "two"]), file("b.rs", &["three"])];
+
+        // 44 bytes: shorter than the 47-byte line a count of two needs.
+        let too_small = render(&files, 11);
+        assert_eq!(too_small.text, "");
+        assert_eq!(too_small.files_left, 2);
+        assert!(too_small.tokens() <= 11, "{}", too_small.text);
+
+        // 48 bytes: just enough to hold that same line whole.
+        let just_enough = render(&files, 12);
+        assert_eq!(
+            just_enough.text,
+            "2 files left. Raise the budget or name a path.\n"
+        );
+        assert_eq!(just_enough.files_left, 2);
+        assert!(just_enough.tokens() <= 12, "{}", just_enough.text);
     }
 }
