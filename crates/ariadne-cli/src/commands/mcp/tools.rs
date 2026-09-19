@@ -9,15 +9,17 @@
 //! depend on the session rather than on the arguments go through
 //! [`AriadneMcp::task_path`].
 
+use std::collections::HashMap;
+
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::knowledge::{
-    KnowledgeDetail, KnowledgeHitDto, KnowledgeImpactDto, KnowledgeImpactQuery,
-    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeRelatedDto, KnowledgeSearchQuery,
-    KnowledgeSymbolDto, KnowledgeSymbolQuery,
+    KnowledgeDetail, KnowledgeHitDto, KnowledgeImpactCallerDto, KnowledgeImpactDto,
+    KnowledgeImpactQuery, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeRelatedDto,
+    KnowledgeSearchQuery, KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_api::memories::{CreateMemoryRequest, MemoryDto};
 use ariadne_api::messages::SendMessageRequest;
@@ -418,6 +420,17 @@ fn related_line(end: &KnowledgeRelatedDto) -> String {
     format!("{}:{} {} {}", end.path, end.line, end.name, end.confidence)
 }
 
+/// The heading a repository's hits sit under: its path, or its id for a
+/// repository the daemon no longer lists.
+fn repository_heading(paths: &HashMap<String, String>, repository_id: &str) -> String {
+    format!(
+        "# {}",
+        paths
+            .get(repository_id)
+            .map_or(repository_id, String::as_str)
+    )
+}
+
 fn text_result(text: String) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
 }
@@ -721,6 +734,7 @@ impl AriadneMcp {
         if found.is_empty() {
             return text_result(format!("No definition of {}.\n", req.name));
         }
+        let paths = self.repository_paths().await?;
         let mut lines = Vec::new();
         let mut repository = String::new();
         for definition in &found {
@@ -728,7 +742,7 @@ impl AriadneMcp {
             // repository is under a heading of its own.
             if definition.repository_id != repository {
                 repository = definition.repository_id.clone();
-                lines.push(format!("# {repository}"));
+                lines.push(repository_heading(&paths, &repository));
             }
             lines.push(format!(
                 "## {}:{}-{} {} {}",
@@ -747,17 +761,46 @@ impl AriadneMcp {
                 lines.extend(source.lines().map(str::to_string));
             }
             if let Some(context) = &definition.context {
-                for (heading, ends) in [
+                let lists = [
                     ("callers", &context.callers),
                     ("callees", &context.callees),
                     ("implementations", &context.implementations),
+                    ("references", &context.references),
                     ("tests", &context.tests),
-                ] {
+                ];
+                let own =
+                    |end: &&KnowledgeRelatedDto| end.repository_id == definition.repository_id;
+                for (heading, ends) in lists {
                     lines.push(format!("### {heading}"));
-                    match ends.is_empty() {
+                    let mine: Vec<&KnowledgeRelatedDto> = ends.iter().filter(own).collect();
+                    match mine.is_empty() {
                         true => lines.push("(none)".into()),
-                        false => lines.extend(ends.iter().map(related_line)),
+                        false => lines.extend(mine.into_iter().map(related_line)),
                     }
+                }
+                // The other repositories' ends, each repository under a
+                // heading of its own, with only the lists it has an end in.
+                let mut others: Vec<&str> = Vec::new();
+                for end in lists.iter().flat_map(|(_, ends)| ends.iter()) {
+                    if end.repository_id != definition.repository_id
+                        && !others.contains(&end.repository_id.as_str())
+                    {
+                        others.push(&end.repository_id);
+                    }
+                }
+                for other in others {
+                    lines.push(repository_heading(&paths, other));
+                    for (heading, ends) in lists {
+                        let theirs: Vec<&KnowledgeRelatedDto> = ends
+                            .iter()
+                            .filter(|end| end.repository_id == other)
+                            .collect();
+                        if !theirs.is_empty() {
+                            lines.push(format!("### {heading}"));
+                            lines.extend(theirs.into_iter().map(related_line));
+                        }
+                    }
+                    repository = other.to_string();
                 }
             }
         }
@@ -800,12 +843,13 @@ impl AriadneMcp {
         if found.is_empty() {
             return text_result("No changed definition.\n".into());
         }
+        let paths = self.repository_paths().await?;
         let mut lines = Vec::new();
         let mut repository = String::new();
         for impact in &found {
             if impact.symbol.repository_id != repository {
                 repository = impact.symbol.repository_id.clone();
-                lines.push(format!("# {repository}"));
+                lines.push(repository_heading(&paths, &repository));
             }
             lines.push(format!(
                 "## {}:{} {} — callers: {}",
@@ -814,19 +858,59 @@ impl AriadneMcp {
                 impact.symbol.name,
                 impact.callers.len()
             ));
-            for caller in &impact.callers {
-                lines.push(format!(
+            let caller_line = |caller: &KnowledgeImpactCallerDto| {
+                format!(
                     "{} {}:{} {} {}",
                     caller.depth, caller.path, caller.line, caller.name, caller.confidence
-                ));
+                )
+            };
+            for caller in &impact.callers {
+                if caller.repository_id == impact.symbol.repository_id {
+                    lines.push(caller_line(caller));
+                }
             }
             for name in &impact.stopped {
                 lines.push(format!(
                     "{name} has more than 200 callers: the walk stopped there."
                 ));
             }
+            // The callers in other repositories, each repository under a
+            // heading of its own.
+            let mut others: Vec<&str> = Vec::new();
+            for caller in &impact.callers {
+                if caller.repository_id != impact.symbol.repository_id
+                    && !others.contains(&caller.repository_id.as_str())
+                {
+                    others.push(&caller.repository_id);
+                }
+            }
+            for other in others {
+                lines.push(repository_heading(&paths, other));
+                for caller in &impact.callers {
+                    if caller.repository_id == other {
+                        lines.push(caller_line(caller));
+                    }
+                }
+                repository = other.to_string();
+            }
         }
         text_result(cut_answer(lines, ANSWER_CAP))
+    }
+
+    /// The path of every registered repository, by id: what `symbol` and
+    /// `impact` head each repository's hits with. An agent knows a
+    /// repository by where it is checked out, not by its id.
+    async fn repository_paths(&self) -> Result<HashMap<String, String>, McpError> {
+        let repositories: Vec<serde_json::Value> = self.get("/v1/repositories").await?;
+        Ok(repositories
+            .into_iter()
+            .filter_map(|repository| {
+                Some((
+                    repository["id"].as_str()?.to_string(),
+                    repository["path"].as_str()?.to_string(),
+                ))
+            })
+            .collect())
     }
 
     // ---- orchestrator ----
@@ -1769,21 +1853,26 @@ mod tests {
     }
 
     /// `symbol` asks the daemon for the detail it was given, and groups its
-    /// answer under a heading per repository, a heading per definition, and
-    /// one per list of the context.
+    /// answer under a heading per repository — its path — a heading per
+    /// definition, and one per list of the context. Another repository's
+    /// ends sit under a heading of that repository's own, with only the
+    /// lists it has an end in.
     #[tokio::test]
     async fn symbol_groups_its_answer_under_a_heading_for_each_repository() {
-        let (endpoint, seen) = recording_daemon_answering(
+        let (endpoint, seen) = recording_daemon_answering_in_order(&[
             r#"[
                 {"repository_id":"01REPO","path":"src/inner/m.rs","start_line":2,"end_line":2,
                  "kind":"function","name":"b","signature":"pub fn b()","doc":"Adds.",
                  "source":null,
-                 "context":{"callers":[{"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"}],
+                 "context":{"callers":[{"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"},
+                                       {"repository_id":"01WEB","path":"src/client.ts","line":5,"name":"fetchItem","confidence":"heuristic"}],
                             "callees":[],
                             "implementations":[],
+                            "references":[{"repository_id":"01WEB","path":"src/types.ts","line":9,"name":"Item","confidence":"heuristic"}],
                             "tests":[{"repository_id":"01REPO","path":"src/proof.rs","line":4,"name":"a_proof","confidence":"exact"}]}}
             ]"#,
-        )
+            r#"[{"id":"01REPO","path":"/repos/api"},{"id":"01WEB","path":"/repos/web"}]"#,
+        ])
         .await;
         let mcp = server_at(
             McpSeat::Author,
@@ -1800,17 +1889,20 @@ mod tests {
             .expect("symbol");
 
         let seen = seen.lock().expect("lock").clone();
-        assert_eq!(seen.len(), 1, "{seen:?}");
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
         assert_eq!(
-            seen[0].path,
-            "/v1/knowledge/symbol?name=b&repository=01REPO&git_ref=main&detail=context"
+            paths,
+            [
+                "/v1/knowledge/symbol?name=b&repository=01REPO&git_ref=main&detail=context",
+                "/v1/repositories",
+            ]
         );
         let ContentBlock::Text(text) = &answered.content[0] else {
             panic!("the answer is not text");
         };
         assert_eq!(
             text.text,
-            "# 01REPO\n\
+            "# /repos/api\n\
              ## src/inner/m.rs:2-2 function b\n\
              pub fn b()\n\
              Adds.\n\
@@ -1820,8 +1912,15 @@ mod tests {
              (none)\n\
              ### implementations\n\
              (none)\n\
+             ### references\n\
+             (none)\n\
              ### tests\n\
-             src/proof.rs:4 a_proof exact\n"
+             src/proof.rs:4 a_proof exact\n\
+             # /repos/web\n\
+             ### callers\n\
+             src/client.ts:5 fetchItem heuristic\n\
+             ### references\n\
+             src/types.ts:9 Item heuristic\n"
         );
     }
 
@@ -1861,15 +1960,18 @@ mod tests {
     }
 
     /// A reviewer that names neither a symbol nor a diff asks about its own
-    /// task: the base branch of the repository to the task branch.
+    /// task: the base branch of the repository to the task branch. The
+    /// callers in another repository sit under that repository's path.
     #[tokio::test]
     async fn impact_reads_the_task_diff_for_a_reviewer_that_names_nothing() {
         let (endpoint, seen) = recording_daemon_answering_in_order(&[
             r#"{"repo_id":"01REPO","branch":"feat-task-abc"}"#,
             r#"{"id":"01REPO","base_branch":"main"}"#,
             r#"[{"symbol":{"repository_id":"01REPO","path":"src/inner/m.rs","line":2,"name":"b","confidence":"exact"},
-                 "callers":[{"depth":1,"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"}],
+                 "callers":[{"depth":1,"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"},
+                            {"depth":1,"repository_id":"01WEB","path":"src/client.ts","line":5,"name":"fetchItem","confidence":"heuristic"}],
                  "stopped":["hot"]}]"#,
+            r#"[{"id":"01REPO","path":"/repos/api"},{"id":"01WEB","path":"/repos/web"}]"#,
         ])
         .await;
         let mcp = server_at(
@@ -1895,6 +1997,7 @@ mod tests {
                 "/v1/tasks/01TASK",
                 "/v1/repositories/01REPO",
                 "/v1/knowledge/impact?repository=01REPO&diff=main..feat-task-abc",
+                "/v1/repositories",
             ]
         );
         let ContentBlock::Text(text) = &answered.content[0] else {
@@ -1902,10 +2005,12 @@ mod tests {
         };
         assert_eq!(
             text.text,
-            "# 01REPO\n\
-             ## src/inner/m.rs:2 b — callers: 1\n\
+            "# /repos/api\n\
+             ## src/inner/m.rs:2 b — callers: 2\n\
              1 src/a.rs:3 a exact\n\
-             hot has more than 200 callers: the walk stopped there.\n"
+             hot has more than 200 callers: the walk stopped there.\n\
+             # /repos/web\n\
+             1 src/client.ts:5 fetchItem heuristic\n"
         );
     }
 

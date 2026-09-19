@@ -82,6 +82,50 @@ of them, and the answer says how many matched. A name that matches more than
 The tests of a definition are the test definitions at most two calls away, so
 a test that calls a helper that calls the definition is one of its tests.
 
+## Interactions between repositories
+
+The store is one for every registered repository, so a change in one shows
+its effect in another. Beyond its symbols, every file is read for what it
+offers other repositories and takes from them:
+
+- **Packages.** A manifest — `Cargo.toml`, `package.json`, `pubspec.yaml`,
+  `go.mod`, `pom.xml`, `build.gradle` — names the package it defines and the
+  packages it depends on. A dependency that names a package another
+  repository defines is a `depends_on` edge: exact for a path dependency,
+  a guess for one by name.
+- **Routes.** A string literal like `/v1/items/{id}` in a call that registers
+  a route (`.route(…)` in axum, `app.get(…)` in Express, `HandleFunc` in Go,
+  `@app.route` in Flask) is a route template; the same literal in a request
+  (`fetch(…)`, `axios.get(…)`, `client.get(…)`) is a route use. A use that
+  fits a template is a `calls_route` edge, pointing at the handler the
+  registration names: exact where every segment matches, a guess where
+  `{id}`, `:id` or `${id}` stood in for one.
+- **Environment variables.** A variable set in a `.env` file, a compose file,
+  a workflow or `env::set_var`, and read elsewhere by the language's own call
+  (`std::env::var`, `process.env.X`, `os.environ[…]`,
+  `Environment.GetEnvironmentVariable`, `Platform.environment[…]`), is a
+  `sets_env` edge, exact.
+- **Names.** A name a repository uses but defines nowhere, and another
+  repository defines, is a `references` edge, always a guess. Where the
+  manifest says which repository this one depends on, that repository's
+  definition wins.
+
+Another repository is read at its base branch, so a route added on a task
+branch reaches its callers once it lands. `symbol --detail context` and
+`impact` list the other repositories' hits under a heading of their own, and
+`impact --diff` on a change to a route handler names the call sites in the
+front end that requests it.
+
+```sh
+ariadne knowledge interactions ~/projects/web    # what joins web to the others
+ariadne knowledge interactions ~/projects/web --format json
+```
+
+`interactions` lists every edge between the repository and the others, in
+either direction, one row per edge: where it starts, its kind, the two ends
+and how sure the match is. `--format json` prints the daemon's own groups, one
+per kind.
+
 ## The tools agents get
 
 Every seat has four tools, beside the memory tools:
@@ -111,8 +155,10 @@ Every seat has four tools, beside the memory tools:
 `search_code` and `outline` answer plain text, one line per result, in the
 form `path:line kind name signature` (`path:start-end` for an outline).
 `symbol` and `impact` group their answer under headings, one per repository
-and one per definition. An answer is cut at 8 KiB, and its last line then
-says how many results were left out and to narrow the query.
+(its path) and one per definition, with what another repository contributes
+— a caller across a route, a reference by name — under that repository's
+own heading. An answer is cut at 8 KiB, and its last line then says how many
+results were left out and to narrow the query.
 
 Nothing is added to a prompt: an agent calls the tools when it needs them.
 
@@ -127,6 +173,7 @@ ariadne knowledge outline ~/projects/api src/lib.rs
 ariadne knowledge symbol add_worktree --detail context
 ariadne knowledge impact --repository ~/projects/api --symbol add_worktree
 ariadne knowledge impact --repository ~/projects/api --diff main..feat-parser
+ariadne knowledge interactions ~/projects/web     # what joins web to the others
 ariadne knowledge reindex ~/projects/api          # drop it and build it again
 ```
 
@@ -145,9 +192,10 @@ it stopped at in a note, and answers the daemon's own objects under
 
 The same is on the API: `GET /v1/repositories/{id}/knowledge`, `POST
 /v1/repositories/{id}/knowledge/reindex`, `GET /v1/knowledge/search`, `GET
-/v1/knowledge/outline`, `GET /v1/knowledge/symbol` and `GET
-/v1/knowledge/impact`, and the domain events `knowledge_indexed` and
-`knowledge_failed` on the event stream (`ariadne events` prints them).
+/v1/knowledge/outline`, `GET /v1/knowledge/symbol`, `GET
+/v1/knowledge/impact` and `GET /v1/knowledge/interactions`, and the domain
+events `knowledge_indexed` and `knowledge_failed` on the event stream
+(`ariadne events` prints them).
 
 ## Turning it off
 

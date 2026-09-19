@@ -13,15 +13,25 @@
 //! definition there is `exact`; several are `heuristic`, the count is kept,
 //! and an edge is written to each — an author asking who calls a name is
 //! better served by a list that holds the answer than by a guess.
+//!
+//! The second half is what joins two repositories, or two files of one: the
+//! interfaces of [`crate::interfaces`], matched by name and by route, in
+//! [`interface_edges`].
 
 use std::collections::{HashMap, HashSet};
 
+use crate::interfaces::{InterfaceKind, route_match};
 use crate::parser::{EdgeKind, Import};
 
 /// How many definitions a name may match and still be resolved. Past this,
 /// the name says nothing about which definition was meant — `new` in a large
 /// repository — and the edges would be noise measured in thousands.
 pub const MAX_CANDIDATES: usize = 20;
+
+/// The shortest name a reference across repositories is looked up by: a
+/// shorter one — `get`, `run`, `new` — is defined everywhere and means
+/// nothing in particular.
+pub const MIN_FOREIGN_NAME: usize = 4;
 
 /// One definition a name could mean, at one ref of one repository.
 #[derive(Clone, Debug)]
@@ -30,6 +40,7 @@ pub(crate) struct Candidate {
     pub blob: String,
     pub path: String,
     pub qualified_name: String,
+    pub start_line: i64,
 }
 
 /// One reference of one blob, as the store holds it.
@@ -49,16 +60,177 @@ pub(crate) struct Names {
     pub imports: Vec<Import>,
 }
 
-/// One row of `edges`.
+/// One interface of one blob at a ref, as the store holds it.
+#[derive(Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
+pub(crate) struct InterfaceRow {
+    pub blob: String,
+    pub path: String,
+    pub kind: String,
+    pub name: String,
+    pub line: i64,
+    pub symbol: Option<i64>,
+    /// The handler names a route registration passes, space-separated.
+    pub handlers: Option<String>,
+}
+
+/// One row of `edges`, without the repositories and refs of its two ends:
+/// those are the pair the edge is committed under.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Edge {
     pub kind: String,
     pub from_blob: String,
     pub from_symbol: Option<i64>,
-    pub to_symbol: i64,
     pub from_line: i64,
+    pub to_blob: String,
+    pub to_symbol: Option<i64>,
+    pub to_line: i64,
+    /// What an interface edge is about, and the name a foreign reference
+    /// named. `None` on a symbol edge within one repository.
+    pub name: Option<String>,
     pub confidence: &'static str,
     pub candidates: i64,
+}
+
+/// The kinds an interface edge can be: the edges [`interface_edges`]
+/// derives, and the ones the link pass replaces as a pair.
+pub const INTERFACE_KINDS: [&str; 3] = ["depends_on", "calls_route", "sets_env"];
+
+/// The interface edges from every row of `from` to every row of `to`: a
+/// dependency to the package it names, a route use to the template it fits,
+/// a set variable to every read of it. `handlers` holds the definitions the
+/// route registrations of `to` name, which is where a route edge points
+/// when one of them resolves; the registration itself is where it points
+/// otherwise.
+pub(crate) fn interface_edges(
+    from: &[InterfaceRow],
+    to: &[InterfaceRow],
+    handlers: &HashMap<String, Vec<Candidate>>,
+) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    let mut seen: HashSet<(String, String, i64, String, Option<i64>, i64)> = HashSet::new();
+    let mut push = |kind: &str,
+                    a: &InterfaceRow,
+                    to_blob: &str,
+                    to_symbol: Option<i64>,
+                    to_line: i64,
+                    name: &str,
+                    confidence: &'static str,
+                    candidates: i64| {
+        let key = (
+            kind.to_string(),
+            a.blob.clone(),
+            a.line,
+            to_blob.to_string(),
+            to_symbol,
+            to_line,
+        );
+        if seen.insert(key) {
+            edges.push(Edge {
+                kind: kind.to_string(),
+                from_blob: a.blob.clone(),
+                from_symbol: a.symbol,
+                from_line: a.line,
+                to_blob: to_blob.to_string(),
+                to_symbol,
+                to_line,
+                name: Some(name.to_string()),
+                confidence,
+                candidates,
+            });
+        }
+    };
+    fn of(rows: &[InterfaceRow], kind: InterfaceKind) -> Vec<&InterfaceRow> {
+        rows.iter()
+            .filter(|row| row.kind == kind.as_str())
+            .collect()
+    }
+    // A dependency to the package it names.
+    let packages = of(to, InterfaceKind::Package);
+    for dependency in from
+        .iter()
+        .filter(|row| row.kind == "dependency" || row.kind == "path_dependency")
+    {
+        let confidence = match dependency.kind.as_str() {
+            "path_dependency" => "exact",
+            _ => "heuristic",
+        };
+        for package in packages.iter().filter(|p| p.name == dependency.name) {
+            push(
+                "depends_on",
+                dependency,
+                &package.blob,
+                package.symbol,
+                package.line,
+                &package.name,
+                confidence,
+                1,
+            );
+        }
+    }
+    // A request to the template it fits. The edge points at the handler
+    // where the registration named one the ref defines — in the same file
+    // first, then wherever it is — and at the registration itself otherwise.
+    let templates = of(to, InterfaceKind::Route);
+    for used in of(from, InterfaceKind::RouteUse) {
+        for template in &templates {
+            let Some(confidence) = route_match(&used.name, &template.name) else {
+                continue;
+            };
+            let resolved: Vec<&Candidate> = template
+                .handlers
+                .as_deref()
+                .unwrap_or("")
+                .split_whitespace()
+                .filter_map(|name| handlers.get(name))
+                .filter_map(|matched| narrow(matched, &template.blob, &template.path, &[]))
+                .flat_map(|(step, _)| step)
+                .collect();
+            match resolved.is_empty() {
+                true => push(
+                    "calls_route",
+                    used,
+                    &template.blob,
+                    template.symbol,
+                    template.line,
+                    &template.name,
+                    confidence,
+                    1,
+                ),
+                false => {
+                    let count = resolved.len() as i64;
+                    for handler in resolved {
+                        push(
+                            "calls_route",
+                            used,
+                            &handler.blob,
+                            Some(handler.id),
+                            handler.start_line,
+                            &template.name,
+                            confidence,
+                            count,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // A set variable to every read of it.
+    let reads = of(to, InterfaceKind::EnvRead);
+    for set in of(from, InterfaceKind::EnvSet) {
+        for read in reads.iter().filter(|read| read.name == set.name) {
+            push(
+                "sets_env",
+                set,
+                &read.blob,
+                read.symbol,
+                read.line,
+                &read.name,
+                "exact",
+                1,
+            );
+        }
+    }
+    edges
 }
 
 /// The edges of every blob in `named`, resolved against `candidates`: the
@@ -114,10 +286,58 @@ pub(crate) fn edges_of(
                     kind: mention.kind.clone(),
                     from_blob: blob.clone(),
                     from_symbol: mention.from_symbol,
-                    to_symbol: candidate.id,
                     from_line: mention.line,
+                    to_blob: candidate.blob.clone(),
+                    to_symbol: Some(candidate.id),
+                    to_line: candidate.start_line,
+                    name: None,
                     confidence,
                     candidates: step.len() as i64,
+                });
+            }
+        }
+    }
+    edges
+}
+
+/// The foreign references of one ref: every mention of a name the ref
+/// defines nowhere, pointed at the definitions of that name in another
+/// repository. Each is `heuristic` — the name is all that joins them — and
+/// carries how many definitions it matched.
+///
+/// `mentions` are the ones whose names `defined` holds, keyed by name;
+/// `defined` is what the other repository defines under each name. A name
+/// past [`MAX_CANDIDATES`] says nothing about which definition was meant
+/// and makes no edge.
+pub(crate) fn foreign_edges(
+    mentions: &HashMap<String, Vec<(String, Mention)>>,
+    defined: &HashMap<String, Vec<Candidate>>,
+) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    let mut seen: HashSet<(String, Option<i64>, i64)> = HashSet::new();
+    for (name, candidates) in defined {
+        if candidates.is_empty() || candidates.len() > MAX_CANDIDATES {
+            continue;
+        }
+        let Some(named) = mentions.get(name) else {
+            continue;
+        };
+        for (blob, mention) in named {
+            for candidate in candidates {
+                if !seen.insert((blob.clone(), mention.from_symbol, candidate.id)) {
+                    continue;
+                }
+                edges.push(Edge {
+                    kind: "references".into(),
+                    from_blob: blob.clone(),
+                    from_symbol: mention.from_symbol,
+                    from_line: mention.line,
+                    to_blob: candidate.blob.clone(),
+                    to_symbol: Some(candidate.id),
+                    to_line: candidate.start_line,
+                    name: Some(name.clone()),
+                    confidence: "heuristic",
+                    candidates: candidates.len() as i64,
                 });
             }
         }
@@ -234,7 +454,146 @@ mod tests {
             blob: blob.into(),
             path: path.into(),
             qualified_name: qualified_name.into(),
+            start_line: 1,
         }
+    }
+
+    fn row(blob: &str, kind: InterfaceKind, name: &str, line: i64) -> InterfaceRow {
+        InterfaceRow {
+            blob: blob.into(),
+            path: format!("{blob}.rs"),
+            kind: kind.as_str().into(),
+            name: name.into(),
+            line,
+            symbol: None,
+            handlers: None,
+        }
+    }
+
+    /// A dependency joins the package it names, exactly by path and as a
+    /// guess by name; a route use joins the template it fits, at the handler
+    /// the registration named where the ref defines it; a set variable joins
+    /// every read of it.
+    #[test]
+    fn interface_edges_join_a_dependency_a_route_use_and_a_set_variable() {
+        let from = [
+            row("manifest", InterfaceKind::Dependency, "api-types", 3),
+            row("manifest", InterfaceKind::PathDependency, "shared", 4),
+            row("client", InterfaceKind::RouteUse, "/v1/items/42", 8),
+            row("client", InterfaceKind::RouteUse, "/v1/items", 9),
+            row("env", InterfaceKind::EnvSet, "API_TOKEN", 1),
+        ];
+        let mut template = row("routes", InterfaceKind::Route, "/v1/items/{id}", 12);
+        template.handlers = Some("get get_item".into());
+        let mut unresolved = row("routes", InterfaceKind::Route, "/v1/items", 13);
+        unresolved.symbol = Some(70);
+        let to = [
+            row("cargo", InterfaceKind::Package, "api-types", 2),
+            row("other", InterfaceKind::Package, "shared", 1),
+            template,
+            unresolved,
+            row("handler", InterfaceKind::EnvRead, "API_TOKEN", 20),
+        ];
+        let handlers = HashMap::from([(
+            "get_item".to_string(),
+            vec![Candidate {
+                id: 42,
+                blob: "handler".into(),
+                path: "handler.rs".into(),
+                qualified_name: "get_item".into(),
+                start_line: 18,
+            }],
+        )]);
+
+        let edges = interface_edges(&from, &to, &handlers);
+        let summary: Vec<String> = edges
+            .iter()
+            .map(|e| {
+                format!(
+                    "{} {}:{} -> {}:{}{} {} {}",
+                    e.kind,
+                    e.from_blob,
+                    e.from_line,
+                    e.to_blob,
+                    e.to_line,
+                    e.to_symbol.map(|id| format!("#{id}")).unwrap_or_default(),
+                    e.name.as_deref().unwrap_or("-"),
+                    e.confidence
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                "depends_on manifest:3 -> cargo:2 api-types heuristic",
+                "depends_on manifest:4 -> other:1 shared exact",
+                "calls_route client:8 -> handler:18#42 /v1/items/{id} heuristic",
+                "calls_route client:9 -> routes:13#70 /v1/items exact",
+                "sets_env env:1 -> handler:20 API_TOKEN exact",
+            ]
+        );
+    }
+
+    /// A foreign reference points at every definition of its name in the
+    /// other repository, as a guess, and a name defined too often there
+    /// makes none.
+    #[test]
+    fn a_foreign_reference_is_a_guess_at_every_definition_of_its_name() {
+        let mention = |from_symbol| Mention {
+            kind: "calls".into(),
+            name: "Item".into(),
+            line: 5,
+            from_symbol,
+        };
+        let mentions = HashMap::from([
+            (
+                "Item".to_string(),
+                vec![
+                    ("client".to_string(), mention(Some(1))),
+                    ("client".to_string(), mention(None)),
+                ],
+            ),
+            (
+                "Everywhere".to_string(),
+                vec![("client".to_string(), mention(Some(1)))],
+            ),
+        ]);
+        let defined = HashMap::from([
+            (
+                "Item".to_string(),
+                vec![
+                    candidate(10, "types", "types.rs", "Item"),
+                    candidate(11, "more", "more.rs", "Item"),
+                ],
+            ),
+            (
+                "Everywhere".to_string(),
+                (0..MAX_CANDIDATES as i64 + 1)
+                    .map(|id| candidate(100 + id, "b", "b.rs", "Everywhere"))
+                    .collect(),
+            ),
+        ]);
+
+        let mut edges = foreign_edges(&mentions, &defined);
+        edges.sort_by_key(|e| (e.from_symbol, e.to_symbol));
+        let summary: Vec<(Option<i64>, Option<i64>, &str, i64)> = edges
+            .iter()
+            .map(|e| (e.from_symbol, e.to_symbol, e.confidence, e.candidates))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (None, Some(10), "heuristic", 2),
+                (None, Some(11), "heuristic", 2),
+                (Some(1), Some(10), "heuristic", 2),
+                (Some(1), Some(11), "heuristic", 2),
+            ]
+        );
+        assert!(edges.iter().all(|e| e.kind == "references"));
+        assert!(
+            edges.iter().all(|e| e.name.as_deref() == Some("Item")),
+            "a name past the cap makes no edge"
+        );
     }
 
     /// Two files that import the same name each get their own edge. An
@@ -265,7 +624,7 @@ mod tests {
             .iter()
             .map(|edge| {
                 assert_eq!(edge.kind, "imports");
-                assert_eq!(edge.to_symbol, 7);
+                assert_eq!(edge.to_symbol, Some(7));
                 assert_eq!(edge.from_symbol, None, "an import sits at file scope");
                 edge.from_blob.as_str()
             })

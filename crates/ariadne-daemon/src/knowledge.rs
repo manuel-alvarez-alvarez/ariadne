@@ -317,6 +317,12 @@ async fn run(
     {
         warn!(repository = %repository_id, error = %e, "cannot record the indexing state");
     }
+    // The base branch is what another repository is linked against.
+    if git_ref == repository.base_branch
+        && let Err(e) = knowledge.set_base_ref(repository_id, git_ref).await
+    {
+        warn!(repository = %repository_id, error = %e, "cannot record the base branch");
+    }
     match knowledge
         .index(repository_id, Path::new(&repository.path), git_ref)
         .await

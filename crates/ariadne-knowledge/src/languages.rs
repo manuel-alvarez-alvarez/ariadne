@@ -61,6 +61,10 @@ pub enum Language {
     /// Outline-only: the object names of its `CREATE` and `ALTER`
     /// statements standing in for definitions.
     Sql,
+    /// A manifest with no language of its own — `go.mod`, `pom.xml`, a
+    /// Gradle script, a `.env` file — read for its interfaces alone (see
+    /// [`crate::interfaces`]): no definitions, no references.
+    Manifest,
 }
 
 /// How a definition's doc comment is written, which is how it is read where
@@ -104,9 +108,9 @@ pub enum TestRule {
 }
 
 impl Language {
-    /// Every language the registry holds: 20 read by a tags query, and 7
-    /// outline-only formats.
-    pub const ALL: [Language; 27] = [
+    /// Every language the registry holds: 20 read by a tags query, 7
+    /// outline-only formats, and the manifests read by name.
+    pub const ALL: [Language; 28] = [
         Language::Rust,
         Language::TypeScript,
         Language::Tsx,
@@ -134,20 +138,25 @@ impl Language {
         Language::Html,
         Language::Css,
         Language::Sql,
+        Language::Manifest,
     ];
 
-    /// The language a path is read as, by its extension. `None` is a file
-    /// the index skips.
+    /// The language a path is read as, by its extension — or by its name,
+    /// for a manifest with no language of its own. `None` is a file the
+    /// index skips.
     pub fn of_path(path: &str) -> Option<Language> {
-        let extension = path.rsplit_once('.')?.1;
-        // The extension is what comes after the last dot of the last
-        // segment; a dot in a directory name is not one.
-        if extension.contains('/') {
-            return None;
-        }
-        Self::ALL
-            .into_iter()
-            .find(|language| language.extensions().contains(&extension))
+        let by_extension = path.rsplit_once('.').and_then(|(_, extension)| {
+            // The extension is what comes after the last dot of the last
+            // segment; a dot in a directory name is not one.
+            if extension.contains('/') {
+                return None;
+            }
+            Self::ALL
+                .into_iter()
+                .find(|language| language.extensions().contains(&extension))
+        });
+        by_extension
+            .or_else(|| crate::interfaces::is_manifest_only(path).then_some(Language::Manifest))
     }
 
     /// How the language is named in the store and in the status.
@@ -180,6 +189,7 @@ impl Language {
             Language::Html => "html",
             Language::Css => "css",
             Language::Sql => "sql",
+            Language::Manifest => "manifest",
         }
     }
 
@@ -213,10 +223,13 @@ impl Language {
             Language::Html => &["html", "htm"],
             Language::Css => &["css"],
             Language::Sql => &["sql"],
+            // Matched by name, never by extension.
+            Language::Manifest => &[],
         }
     }
 
-    /// The grammar the language is parsed with.
+    /// The grammar the language is parsed with. A manifest has none, and is
+    /// never parsed: the JSON grammar stands in, and nothing asks for it.
     pub fn grammar(self) -> tree_sitter::Language {
         match self {
             Language::Rust => tree_sitter_rust::LANGUAGE.into(),
@@ -241,7 +254,7 @@ impl Language {
             Language::Markdown => tree_sitter_md::LANGUAGE.into(),
             Language::Yaml => tree_sitter_yaml::LANGUAGE.into(),
             Language::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
-            Language::Json => tree_sitter_json::LANGUAGE.into(),
+            Language::Json | Language::Manifest => tree_sitter_json::LANGUAGE.into(),
             Language::Html => tree_sitter_html::LANGUAGE.into(),
             Language::Css => tree_sitter_css::LANGUAGE.into(),
             Language::Sql => tree_sitter_sequel::LANGUAGE.into(),
@@ -334,7 +347,8 @@ impl Language {
             | Language::Json
             | Language::Html
             | Language::Css
-            | Language::Sql => return None,
+            | Language::Sql
+            | Language::Manifest => return None,
         })
     }
 
@@ -366,7 +380,8 @@ impl Language {
             | Language::Json
             | Language::Html
             | Language::Css
-            | Language::Sql => DocSyntax::None,
+            | Language::Sql
+            | Language::Manifest => DocSyntax::None,
         }
     }
 
@@ -395,7 +410,8 @@ impl Language {
             | Language::Json
             | Language::Html
             | Language::Css
-            | Language::Sql => TestRule::None,
+            | Language::Sql
+            | Language::Manifest => TestRule::None,
         }
     }
 
@@ -486,6 +502,19 @@ mod tests {
         assert_eq!(Language::of_path("public/index.html"), Some(Language::Html));
         assert_eq!(Language::of_path("styles/app.css"), Some(Language::Css));
         assert_eq!(Language::of_path("db/schema.sql"), Some(Language::Sql));
+        for manifest in [
+            "go.mod",
+            "pom.xml",
+            "build.gradle",
+            ".env",
+            "deploy/.env.production",
+        ] {
+            assert_eq!(
+                Language::of_path(manifest),
+                Some(Language::Manifest),
+                "{manifest}"
+            );
+        }
         assert_eq!(Language::of_path("Cargo.lock"), None);
         assert_eq!(Language::of_path("a.dir/Makefile"), None);
         assert_eq!(Language::of_path("LICENSE"), None);

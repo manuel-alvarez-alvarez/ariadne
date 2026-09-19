@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-knowledge/tests/knowledge.rs
   - crates/ariadne-knowledge/src/languages.rs
   - crates/ariadne-knowledge/src/parser.rs
+  - crates/ariadne-knowledge/src/interfaces.rs
   - crates/ariadne-knowledge/src/resolve.rs
   - crates/ariadne-knowledge/src/store.rs
   - crates/ariadne-knowledge/src/index.rs
@@ -27,27 +28,29 @@ tests:
 
 A symbol index over every registered repository, so an agent finds a
 definition by name and reads a function by its line range instead of
-grepping and slicing files.
+grepping and slicing files — and, the store being one for every repository,
+so a change in one repository shows its effect in another.
 
 ## Scope
 
 In: the language registry, the parser, the resolution pass that turns a
-reference into an edge, the store and its schema, when the daemon indexes
-what, the REST surface and its events, the four MCP tools, the
-`ariadne knowledge` commands, the `knowledge_enabled` key, and the desktop
-knowledge page over the same routes (015).
+reference into an edge, the interfaces a file holds beyond its symbols and
+the link pass that matches them between repositories, the store and its
+schema, when the daemon indexes what, the REST surface and its events, the
+four MCP tools, the `ariadne knowledge` commands, the `knowledge_enabled`
+key, and the desktop knowledge page over the same routes (015).
 
-Out: resolution across repositories, and the edges a manifest, a route or an
-environment variable makes (a later task adds them, with the interactions
-listing that reads them off); languages beyond the registry here; what the
-skill documents tell an agent to do with the tools (017); and the memory
-tools beside these (019).
+Out: languages beyond the registry here; what the skill documents tell an
+agent to do with the tools (017); and the memory tools beside these (019).
 
 ## Behavior
 
 1. A file is read by its extension: 20 languages read by a tags query, and
-   7 outline-only formats with no tags query, listed in the table below.
-   Any other file is skipped.
+   7 outline-only formats with no tags query, listed in the table below. A
+   manifest with no language of its own — `go.mod`, `pom.xml`,
+   `build.gradle`, `settings.gradle`, a `.env` file (`.env`, `.env.*`) — is
+   read by its name, as the language `manifest`, for its interfaces alone
+   (rule 30). Any other file is skipped.
 2. A code file is parsed with tree-sitter and the tags query its grammar
    ships. Every definition the query captures is a symbol, of the query's
    own kind: `function`, `method`, `class`, `module`, `interface`, `macro`
@@ -100,16 +103,19 @@ tools beside these (019).
    unresolved. A module is what an import named where the definition's path,
    or its qualified name, carries the module's segments, past `crate`, `self`,
    `super` and a leading `.` or `/`.
-10. Edges are keyed by the referencing blob at one ref of one repository, so
-    deriving them again is one delete by that key and one insert. The ref is
-    part of the key because the answer depends on it: two refs share the blob
-    of an unchanged file, and each resolves its names against its own tree, so
-    one edge set per blob would hold whichever ref resolved it last and the
+10. An edge joins two ends, each a blob at one ref of one repository, a line,
+    and the definition there where there is one. A symbol edge (rule 9) is
+    keyed by the referencing blob at one ref of one repository, so deriving
+    it again is one delete by that key and one insert. The ref is part of
+    the key because the answer depends on it: two refs share the blob of an
+    unchanged file, and each resolves its names against its own tree, so one
+    edge set per blob would hold whichever ref resolved it last and the
     other ref would answer for a definition it does not have. A dropped ref
-    and a dropped repository take their edges with them. A run derives the
-    edges again for every blob it parsed, and for every blob of the ref that
-    names a definition the run moved — which is every name the touched paths
-    held before the run and after it.
+    and a dropped repository take their edges with them, at either end. A
+    run derives the symbol edges again for every blob it parsed, and for
+    every blob of the ref that names a definition the run moved — which is
+    every name the touched paths held before the run and after it — and then
+    runs the link pass (rule 31).
 11. A symbol's tests are the symbols marked `is_test` with a path of at most
     two `calls` edges to it: a test that calls it, and a test that calls
     something that calls it.
@@ -170,9 +176,13 @@ tools beside these (019).
     in path order: `repository_id`, `path`, `start_line`, `end_line`, `kind`,
     `name`, `signature` and `doc`. `source` adds `source`, the text of the
     definition, read from the blob it was parsed from. `context` adds
-    `callers`, `callees`, `implementations` and `tests`, each a list of
-    `repository_id`, `path`, `line`, `name` and `confidence`, and each capped
-    at 20 entries. Without `repository` a user reads every repository, and an
+    `callers` (the `calls` and `calls_route` edges into it), `callees`,
+    `implementations`, `references` (the `references` and `imports` edges
+    into it, which is where a reference from another repository is listed)
+    and `tests`, each a list of `repository_id`, `path`, `line`, `name` and
+    `confidence`, each capped at 20 entries, and each listing the
+    definition's own repository first and every other repository's ends
+    after it. Without `repository` a user reads every repository, and an
     agent session the repositories of its goal; the ref is the caller's own
     (rule 20).
 23. `GET /v1/knowledge/impact` takes `repository`, optionally `git_ref` and
@@ -185,7 +195,10 @@ tools beside these (019).
     depth (`depth`, `repository_id`, `path`, `line`, `name`, `confidence`,
     each caller once and at its shortest depth), and `stopped`, the
     definitions the walk did not go past because each has more than 200
-    callers.
+    callers. The walk follows `calls` and `calls_route` edges alike, so a
+    request in another repository is a caller of the handler it reaches, and
+    the walk goes on in that repository at the ref the edge names. Within one
+    depth the changed definition's own repository comes first.
 24. Every index run publishes `knowledge_indexed` (`repository_id`,
     `git_ref`, `commit`, `files`, `symbols`) on the domain stream, and a
     failed run `knowledge_failed` (`repository_id`, `error`) (012). Neither
@@ -203,19 +216,29 @@ tools beside these (019).
     `path:line kind name signature` for a search (each line led by its
     repository id where the answer spans several), `path:start-end kind name
     signature` for an outline. `symbol` and `impact` group their answer under
-    headings: `# <repository id>` per repository, `## <location> …` per
-    definition, and `### callers|callees|implementations|tests` per list of a
-    context, an empty list reading `(none)`. An answer is cut at 8 KiB, with
-    a last line naming how many results were left and saying to narrow the
-    query.
-27. `ariadne knowledge status|reindex|search|outline|symbol|impact` (014)
-    read the same endpoints. `search` takes `--repository`, `--ref`,
+    headings: `# <repository path>` per repository — the path the repository
+    is registered at, read once per call from `GET /v1/repositories`, which
+    is what an agent knows a repository by; its id where it is no longer
+    listed — `## <location> …` per definition, and `###
+    callers|callees|implementations|references|tests` per list of a context,
+    an empty list reading `(none)`. The lists under a definition hold its own
+    repository's ends; every other repository's ends follow under a `#`
+    heading of that repository's own, with only the lists it has an end in
+    (`symbol`), or its callers alone (`impact`). An answer is cut at 8 KiB,
+    with a last line naming how many results were left and saying to narrow
+    the query.
+27. `ariadne knowledge status|reindex|search|outline|symbol|impact|interactions`
+    (014) read the same endpoints. `search` takes `--repository`, `--ref`,
     `--kind`, `--path` and `--limit`; `outline` takes the repository, the path
     and `--ref`; `symbol` takes the name, `--repository`, `--ref` and
     `--detail`; `impact` takes `--repository`, one of `--symbol` and
-    `--diff`, `--ref` and `--depth`. `search`, `outline` and `impact` are
-    listings, whose `-q` prints `path:line` and the line range; `symbol`
-    prints a block per definition.
+    `--diff`, `--ref` and `--depth`; `interactions` takes the repository and
+    `--ref`. `search`, `outline`, `impact` and `interactions` are listings,
+    whose `-q` prints `path:line` and the line range — an interaction row
+    leads with its from end as `repository:path:line`, and names its kind,
+    its to end and its confidence; `--format json` prints the daemon's
+    groups; `symbol` prints a block per definition, an end in another
+    repository led by that repository's id.
 28. `knowledge_enabled` in `config.toml` defaults to true. False, the daemon
     indexes nothing and opens no store, the status says `disabled`, a
     search, an outline or a reindex is refused with a line naming the key,
@@ -230,12 +253,111 @@ tools beside these (019).
     row. `knowledge_indexed` and `knowledge_failed` refetch what the page
     shows for their repository and leave every other repository's caches
     alone.
+30. Beyond its symbols, a file holds interfaces: what it offers another
+    repository and what it takes from one. Each is read off the text at parse
+    time, kept per blob like the mentions, and carries the definition it sits
+    in where there is one:
+    - A manifest, read by its file name, names the package it defines and
+      the packages it depends on. `Cargo.toml`: `[package] name`, and every
+      key of a `dependencies`, `dev-dependencies`, `build-dependencies`,
+      `workspace.dependencies` or `target.*.dependencies` table, a `path`
+      dependency told from one by name and `package = "x"` naming what is
+      depended on. `package.json`: `name`, and every key of `dependencies`,
+      `devDependencies`, `peerDependencies` and `optionalDependencies`, a
+      `file:`, `link:`, `workspace:` or `portal:` value being a path
+      dependency, and every `workspaces` entry that names a directory a path
+      dependency on the package named by its last segment. `pubspec.yaml`:
+      `name`, and every key under `dependencies`, `dev_dependencies` and
+      `dependency_overrides`, one with a `path:` key under it by path.
+      `go.mod`: `module`, every `require`, and every `replace` to a
+      directory as a path dependency. `pom.xml`: the project's own
+      `groupId:artifactId` — the first outside `<parent>`, `<dependency>` and
+      `<plugin>` — and one per `<dependency>`. `build.gradle` and
+      `build.gradle.kts`: the `group:artifact` of every `implementation`,
+      `api`, `compileOnly`, `runtimeOnly`, `testImplementation`,
+      `testCompileOnly`, `testRuntimeOnly`, `annotationProcessor`, `kapt`
+      and `classpath` line, a `project(':x')` being a path dependency on `x`;
+      `settings.gradle` and `settings.gradle.kts`: `rootProject.name`. Best
+      effort throughout: a manifest shape not named here names nothing.
+    - A string literal that starts with `/` and has two or more segments, in
+      the arguments of a call, is a route. In a call that registers one it is
+      a route template: a call named `route`, `nest`, `route_service`,
+      `handle`, `Handle`, `HandleFunc`, `handleFunc`, `resource`, `service`,
+      `mount`, `MapGet`, `MapPost`, `MapPut`, `MapDelete`, `MapPatch`,
+      `MapMethods`, `RequestMapping`, `GetMapping`, `PostMapping`,
+      `PutMapping`, `DeleteMapping`, `PatchMapping` or `Path`; an HTTP verb
+      (`get`, `post`, `put`, `patch`, `delete`, `head`, `options`, `all`,
+      `any`, `use`, in lowercase, uppercase or capitalised) on a receiver
+      named `app`, `router`, `routes`, `r`, `mux`, `server`, `srv`, `group`,
+      `g`, `route` or `sub`; or any of those under a decorator (`@app.get`)
+      or an attribute (`#[get(…)]`). In a request call it is a route use: a
+      verb on any other receiver (`axios.get`, `client.get`, `http.Get`), or
+      a call named `fetch`, `request`, `Request`, `NewRequest`,
+      `NewRequestWithContext`, `open`, `ajax`, `getJSON`, `apiFetch`,
+      `daemonFetch` or `$http`. A query string and a trailing `/` are
+      dropped. A template carries the identifiers the registration passes
+      after the literal, up to a closure's body and past the verbs and the
+      routing words, as its handler names, and sits in the definition a
+      decorator or an attribute is on, else the definition around it.
+    - An environment variable is read by `env::var(`, `env::var_os(`,
+      `option_env!(`, `env!(`, `process.env.X`, `process.env[`,
+      `import.meta.env.X`, `Deno.env.get(`, `os.environ[`, `os.environ.get(`,
+      `os.getenv(`, `GetEnvironmentVariable(`, `Platform.environment[`,
+      `String.fromEnvironment(`, `os.Getenv(`, `os.LookupEnv(`,
+      `System.getenv(`, `System.get_env(`, `ENV[`, `ENV.fetch(` and
+      `getenv(`, the name a string literal or, after a dot, an identifier;
+      and set by `env::set_var(`, by an `X=` line of a `.env` file (with or
+      without `export`), and by an `X:` or `- X=` line of a compose file
+      (`docker-compose*.yml`, `compose*.yml`) or a workflow
+      (`.github/workflows/*.yml`) whose `X` is an uppercase name.
+31. The link pass runs after every index run of a ref, and derives the edges
+    between that ref and every other repository at its base ref, in both
+    directions, and the interface edges within the ref itself — each pair of
+    refs derived whole and replaced as one. The base ref of a repository is
+    the base branch the daemon records before it reads it, and the first ref
+    indexed until it does; a repository whose base ref is not indexed is
+    left out. Three edges come off the interfaces, marked `exact` or
+    `heuristic`:
+    - `depends_on`, from a dependency to every package of the same name the
+      other ref defines: `exact` for a path dependency, `heuristic` for one
+      by name. Both ends are manifest lines and no definition.
+    - `calls_route`, from a route use to every template it fits segment by
+      segment, a segment that starts with `:`, `{`, `<`, `*` or `$` or holds
+      `$` or `{` standing for any value on either side: `exact` where every
+      segment is the same, `heuristic` where a wildcard stood in for one,
+      and no edge where the counts differ. The edge points at the handler:
+      the definition of a handler name the template carries, in the
+      template's own file first, then its directory, then anywhere in the
+      ref under the candidate cap, one edge to each; and at the registration
+      itself, with the definition it sits in, where none resolves.
+    - `sets_env`, from a set to every read of the same variable, `exact`.
+    Then, between two repositories only, `references`: every mention or
+    named import of a name at least 4 characters long that the ref defines
+    nowhere, pointed at every definition of that name the other ref holds
+    under the candidate cap, `heuristic`, carrying how many matched, and
+    keyed by the name. Where the ref's manifests depend on some registered
+    repository but not on this one, and one it depends on also defines the
+    name at its base ref, the name is taken to mean that one's definition and
+    makes no edge here. The interface edges of a pair are derived before its
+    references, which is what that reads.
+32. `GET /v1/knowledge/interactions` takes `repository` and optionally
+    `git_ref` (the caller's own by default, rule 20), and answers the edges
+    whose from end or to end is that ref and whose other end is another
+    repository — the edges of rule 31 and no edge within one repository —
+    as `KnowledgeInteractionGroupDto`s, one per kind that has an edge, in
+    the order `depends_on`, `references`, `calls_route`, `sets_env`, each
+    holding `kind` and `edges`. An edge is `from`, `to` and `confidence`;
+    each end is a `KnowledgeEndpointDto` — `repository_id`, `path`, `line`
+    and `symbol`, the definition at that end, or what the edge is about
+    (the package, the route template, the variable, the referenced name)
+    where the end sits in no definition. The edges of a kind come in the
+    order of their from end, then their to end.
 
 ## Languages
 
 The 20 tags languages, each with the grammar crate pinned in
 `crates/ariadne-knowledge/Cargo.toml`, its test marker, and the import
-syntax a later task's resolver reads (`edges` stays empty until then):
+syntax the resolver reads:
 
 | Language | Extensions | Test marker | Import syntax |
 | --- | --- | --- | --- |
@@ -306,13 +428,21 @@ at the cost of holding the workspace's `cc` build dependency below 1.3,
 which its `~1.2.1` requirement pins for every crate that also builds with
 `cc`, not only this one.
 
+The manifests are no grammar: `Cargo.toml`, `package.json`, `pubspec.yaml`,
+the compose files, the workflows and `build.gradle.kts` are outlined by the
+format above and read for their interfaces by their name besides; `go.mod`,
+`pom.xml`, `build.gradle`, `settings.gradle` and a `.env` file are read for
+their interfaces alone, under the language `manifest`, and define nothing.
+`package.json` is walked with the JSON grammar; every other manifest is a
+scan of its lines.
+
 ## Schema
 
-`crates/ariadne-knowledge/src/schema.sql`, version 4:
+`crates/ariadne-knowledge/src/schema.sql`, version 5:
 
 | Table | Columns | Holds |
 | --- | --- | --- |
-| `repositories` | `id`, `state`, `error`, `updated_at` | every repository the index heard of, at `idle`, `indexing` or `failed` |
+| `repositories` | `id`, `state`, `error`, `updated_at`, `base_ref` | every repository the index heard of, at `idle`, `indexing` or `failed`, and the ref another repository is linked against |
 | `refs` | `repository_id`, `git_ref`, `commit_sha`, `indexed_at` | the refs read per repository, each at the commit it was last read at |
 | `files` | `repository_id`, `git_ref`, `path`, `blob`, `language` | the tracked files of a ref, each with the blob it held there |
 | `blobs` | `blob`, `language`, `parsed_at` | every blob parsed so far |
@@ -320,21 +450,26 @@ which its `~1.2.1` requirement pins for every crate that also builds with
 | `symbols_fts` | `terms`, rowid = `symbols.id` | FTS5 over each symbol's identifier parts |
 | `mentions` | `blob`, `kind`, `name`, `line`, `from_symbol` | the names one blob names, before they are resolved |
 | `imports` | `blob`, `module`, `name`, `line` | the import statements of one blob |
-| `edges` | `from_repository`, `git_ref`, `from_blob`, `kind`, `from_symbol`, `to_symbol`, `to_repository`, `from_line`, `confidence`, `candidates` | the relations the resolution pass derived, keyed by the referencing blob at one ref |
+| `interfaces` | `blob`, `kind`, `name`, `line`, `symbol`, `handlers` | the packages, routes and variables of one blob (rule 30), before they are linked |
+| `edges` | `from_repository`, `git_ref`, `from_blob`, `kind`, `from_symbol`, `from_line`, `to_repository`, `to_ref`, `to_blob`, `to_symbol`, `to_line`, `name`, `confidence`, `candidates` | the relations the resolution and link passes derived, each end a blob at a ref of a repository, a line and a definition where there is one |
 
 `refs` cascade from `repositories`, `files` from `refs`, and `symbols`,
-`mentions`, `imports` and `edges` from `blobs` and `symbols`. Dropping a ref
-or a repository then drops the blobs no file holds, with their symbols and
-FTS rows, in two statements: the FTS rows are found by rowid, never by reading
-the table; everything keyed by the blob goes with it.
+`mentions`, `imports`, `interfaces` and `edges` from `blobs` and `symbols`.
+Dropping a ref or a repository then drops the blobs no file holds, with
+their symbols and FTS rows, in two statements: the FTS rows are found by
+rowid, never by reading the table; everything keyed by the blob goes with
+it.
 
-`edges` is indexed in both directions under the ref a walk reads,
-`(from_repository, git_ref, kind, from_symbol, to_symbol, confidence)` and
-`(from_repository, git_ref, kind, to_symbol, from_symbol, confidence)`, so a
-walk over the graph reads an index and no rows of the table; and by
+`edges` is indexed in both directions, `(from_repository, git_ref, kind,
+from_symbol, to_symbol, confidence)` and `(to_repository, to_ref, kind,
+to_symbol, from_symbol, confidence)`, so a walk over the graph reads an
+index and no rows of the table, and the edges into a definition are found
+under its own repository and ref whichever repository they come from; and by
 `(from_repository, git_ref, from_blob)`, which is what deriving a blob's edges
-again and dropping a ref delete by. `symbols` is indexed by `name`, which is
-what resolution and `symbol` ask by.
+again deletes by. `files` is indexed by `(blob, repository_id, git_ref)`,
+which is what reading an end's path back joins by. `symbols` is indexed by
+`name`, which is what resolution and `symbol` ask by; `interfaces` by blob
+and by `(kind, name)`.
 
 ## Acceptance criteria
 
@@ -434,6 +569,46 @@ what resolution and `symbol` ask by.
   NUL byte marks a binary
   (`index.rs::an_ls_tree_record_is_read_for_its_mode_blob_size_and_path`,
   `::a_cat_file_batch_is_read_object_by_object`, `::a_nul_byte_marks_a_binary`).
+- Each manifest names its package and its dependencies, a path dependency
+  told from one by name
+  (`interfaces.rs::every_manifest_names_its_package_and_its_dependencies`),
+  and a manifest with no language of its own is read by its name
+  (`languages.rs::a_path_is_read_by_its_extension`).
+- An environment variable is set by a `.env` line, a compose or workflow
+  entry and `set_var`, and read by each language's own call
+  (`interfaces.rs::an_environment_variable_is_set_and_read_by_each_syntax`).
+- A literal in a registration call is a route template with the handler the
+  call names, a literal in a request call is a route use, a decorator
+  registers the definition under it, and a literal with one segment is
+  neither
+  (`interfaces.rs::a_route_is_registered_by_a_router_and_used_by_a_request`).
+- A route use with a wildcard segment matches its template and is marked
+  `heuristic`, a full match is `exact`, and a different segment count is no
+  match (`interfaces.rs::a_route_use_fits_a_template_segment_by_segment`).
+- A dependency joins the package it names, exactly by path and as a guess by
+  name; a route use joins the template it fits, at the handler the
+  registration named where the ref defines it; a set variable joins every
+  read of it
+  (`resolve.rs::interface_edges_join_a_dependency_a_route_use_and_a_set_variable`).
+- A foreign reference is a guess at every definition of its name in the
+  other repository, and a name past the cap makes none
+  (`resolve.rs::a_foreign_reference_is_a_guess_at_every_definition_of_its_name`).
+- With `api` (Rust: the package `api-types`, a type `Item`, an axum route
+  `/v1/items/{id}` and a read of `API_TOKEN`) and `web` (TypeScript: a
+  dependency on `api-types`, a `new Item()`, a request to `/v1/items/42`
+  and a `.env` that sets `API_TOKEN`) registered, `interactions` for `web`
+  lists one edge of each kind with its ends and confidence — the
+  dependency, the reference and the wildcard route as guesses, the variable
+  exact — `api` lists the same edges from its side, and removing the
+  dependency from `web` and reading it again removes the `depends_on` edge
+  and no other
+  (`tests/it/knowledge.rs::interactions_between_two_repositories_are_listed_by_kind`).
+- `impact --diff` for a change to the route handler in `api` lists the `web`
+  call site, under `web`
+  (`tests/it/knowledge.rs::a_route_handler_change_reaches_the_call_site_in_the_other_repository`).
+- `symbol Item --detail context` from `api` lists the `web` reference under
+  `web` with confidence `heuristic`
+  (`tests/it/knowledge.rs::a_type_named_in_the_other_repository_lists_that_reference_as_a_guess`).
 - A ref that does not resolve fails the run, and the status says why
   (`knowledge.rs::a_ref_that_does_not_resolve_fails_the_run`,
   `tests/it/knowledge.rs::a_repository_git_cannot_read_reads_as_failed`).
@@ -480,12 +655,14 @@ what resolution and `symbol` ask by.
   (`tools.rs::an_answer_over_8_kib_is_cut_with_the_number_of_results_left`).
 - `outline` takes the task's repository by default and lists line ranges
   (`tools.rs::outline_defaults_to_the_task_repository_and_lists_line_ranges`).
-- `symbol` groups its answer under a heading for each repository, each
-  definition and each list of the context
+- `symbol` groups its answer under a heading for each repository — its path
+  — each definition and each list of the context, another repository's ends
+  under a heading of that repository's own
   (`tools.rs::symbol_groups_its_answer_under_a_heading_for_each_repository`),
   and takes the task's repository by default
   (`::symbol_defaults_to_the_task_repository`).
-- `impact` with no argument is the task's own diff for a reviewer
+- `impact` with no argument is the task's own diff for a reviewer, and the
+  callers in another repository sit under that repository's path
   (`tools.rs::impact_reads_the_task_diff_for_a_reviewer_that_names_nothing`),
   and a refusal for any other seat
   (`::impact_needs_a_symbol_or_a_diff_from_a_seat_that_is_no_reviewer`).
@@ -494,10 +671,12 @@ what resolution and `symbol` ask by.
   `::knowledge_search_takes_its_filters`,
   `::knowledge_outline_takes_the_repository_and_the_path`,
   `::knowledge_symbol_takes_its_name_and_detail`,
-  `::knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth`), and a search row
-  and an impact row each lead with their location
+  `::knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth`,
+  `::knowledge_interactions_takes_the_repository_and_the_ref`), and a search
+  row, an impact row and an interaction row each lead with their location
   (`commands/knowledge.rs::a_search_row_leads_with_its_location_and_titles_the_symbol`,
-  `::an_impact_row_leads_with_its_location_and_says_how_far_away_it_is`).
+  `::an_impact_row_leads_with_its_location_and_says_how_far_away_it_is`,
+  `::an_interaction_row_leads_with_its_from_end_and_names_its_kind`).
 - The desktop knowledge page renders the status card in every state, posts a
   reindex and shows `indexing` at once, refetches once `knowledge_indexed` or
   `knowledge_failed` arrives, searches with `q`, `kind` and `path`, and groups
@@ -513,13 +692,24 @@ what resolution and `symbol` ask by.
 
 ## Known gap
 
-Resolution reads one repository: a name that is only defined in another
-repository resolves nowhere. An alias keeps the original name, so a file that
-calls the definition by its alias resolves nothing. Two files of the same text
-are one blob and so one definition, listed once per path and carrying the
-edges of both. Dropping a ref drops the edges into the symbols it alone held,
-and the blobs at other refs that pointed at them are not resolved again until
-they or the names they name move.
+An alias keeps the original name, so a file that calls the definition by its
+alias resolves nothing. Two files of the same text are one blob and so one
+definition, listed once per path and carrying the edges of both. Dropping a
+ref drops the edges into the symbols it alone held, and the blobs at other
+refs that pointed at them are not resolved again until they or the names
+they name move.
+
+Another repository is read at its base ref only: a task branch of `web` is
+linked against `main` of `api`, and a task branch of `api` is what `main` of
+`web` is linked against, so a route added on an `api` branch reaches `web`
+once it lands. A reference across repositories is joined by its name alone
+and is always a guess; a call across repositories is a `references` edge,
+not a `calls` one, so `impact` reaches another repository through a route
+and not through a name. A route registered at file scope with no handler the
+ref defines points at nothing but its own line. A manifest or a `.env` file
+is read by the first path its blob was seen at, like every blob's language.
+The link pass derives a whole pair of refs at a time, which is one scan of
+the interfaces and the unresolved names of each side per run.
 
 A reviewer on a task staffed with several authors reads the task's first
 branch by default and names another with `git_ref`. A blob is parsed as the
@@ -527,14 +717,10 @@ language of the first path it was seen at. The branch of a cancelled or failed
 task, and of a task whose goal was deleted, keeps its rows until a reindex or
 a restart drops what no longer resolves.
 
-The desktop page also reads `GET /v1/knowledge/interactions`: the edges
-found between files, grouped by kind (`depends_on`, `references`,
-`calls_route`, `sets_env`), filtered by `repository` and `git_ref`, each
-naming both ends (repository, path, line, symbol) and whether it was found
-exactly or by a heuristic. `edges` holds `calls`, `references`, `implements`,
-`extends` and `imports` now, and the two kinds a manifest and a route make are
-the later task's, which is also the task that serves the listing. Until then
-the page's interactions section shows the daemon's refusal.
+The desktop page reads `GET /v1/knowledge/interactions` from hand-written
+types: the generated schema under `ui/src/api/` has not been regenerated
+since the knowledge endpoints were added, and the task that builds the page
+over the served listing regenerates it.
 
 ## Sources
 

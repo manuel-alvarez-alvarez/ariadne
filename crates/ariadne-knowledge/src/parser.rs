@@ -316,17 +316,17 @@ fn is_scope(kind: &str) -> bool {
 
 /// Where each line of a file starts, so a byte offset is a line number in
 /// one binary search.
-struct Lines(Vec<usize>);
+pub(crate) struct Lines(Vec<usize>);
 
 impl Lines {
-    fn of(source: &str) -> Self {
+    pub(crate) fn of(source: &str) -> Self {
         let mut starts = vec![0];
         starts.extend(source.match_indices('\n').map(|(at, _)| at + 1));
         Self(starts)
     }
 
     /// The 1-based line holding byte `at`.
-    fn line_of(&self, at: usize) -> u32 {
+    pub(crate) fn line_of(&self, at: usize) -> u32 {
         self.0.partition_point(|start| *start <= at) as u32
     }
 
@@ -730,7 +730,7 @@ fn statements<'a>(source: &'a str, keywords: &[&str], end: char) -> Vec<(usize, 
 
 /// Where a statement ends: at the first `end` outside a bracket, so a
 /// `from a import (\n b,\n)` and a `use a::{\n b,\n};` are read whole.
-fn statement_end(rest: &str, end: char) -> usize {
+pub(crate) fn statement_end(rest: &str, end: char) -> usize {
     let mut depth = 0i32;
     for (at, ch) in rest.char_indices() {
         if ch == end && depth <= 0 {

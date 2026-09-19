@@ -159,13 +159,19 @@ pub struct KnowledgeRelatedDto {
     pub confidence: String,
 }
 
-/// What one definition is joined to, on `detail=context`.
+/// What one definition is joined to, on `detail=context`. Each list holds
+/// the definition's own repository first, then the other repositories'
+/// ends.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct KnowledgeContextDto {
     /// Up to 20 of each.
     pub callers: Vec<KnowledgeRelatedDto>,
     pub callees: Vec<KnowledgeRelatedDto>,
     pub implementations: Vec<KnowledgeRelatedDto>,
+    /// What names it without calling it: a type annotation, an import, a
+    /// reference from another repository.
+    #[serde(default)]
+    pub references: Vec<KnowledgeRelatedDto>,
     /// The tests at most two edges away.
     pub tests: Vec<KnowledgeRelatedDto>,
 }
@@ -235,6 +241,45 @@ pub struct KnowledgeImpactDto {
     /// The definitions the walk did not go past, each with more than 200
     /// callers.
     pub stopped: Vec<String>,
+}
+
+/// Query of `GET /v1/knowledge/interactions`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeInteractionsQuery {
+    /// One repository id.
+    pub repository: String,
+    /// The branch to read. Omit it for the caller's own.
+    pub git_ref: Option<String>,
+}
+
+/// One end of an interaction.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeEndpointDto {
+    pub repository_id: String,
+    pub path: String,
+    /// 1-based.
+    pub line: i64,
+    /// The definition at that end, or what the edge is about where the end
+    /// is no definition: the package, the route, the variable.
+    pub symbol: String,
+}
+
+/// One edge between two repositories.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeEdgeDto {
+    pub from: KnowledgeEndpointDto,
+    pub to: KnowledgeEndpointDto,
+    /// `exact` or `heuristic`.
+    pub confidence: String,
+}
+
+/// The interactions of one kind: `depends_on`, `references`, `calls_route`
+/// or `sets_env`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeInteractionGroupDto {
+    pub kind: String,
+    pub edges: Vec<KnowledgeEdgeDto>,
 }
 
 /// Payload of `knowledge_indexed`: one ref of one repository was read.

@@ -12,14 +12,15 @@ use axum::http::{Request, StatusCode};
 
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::knowledge::{
-    KnowledgeHitDto, KnowledgeImpactDto, KnowledgeIndexedDto, KnowledgeOutlineEntryDto,
-    KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
+    KnowledgeHitDto, KnowledgeImpactDto, KnowledgeIndexedDto, KnowledgeInteractionGroupDto,
+    KnowledgeOutlineEntryDto, KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
 };
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{Actor, SessionStatus, TaskStatus};
 use ariadne_daemon::bus::BusEvent;
 use ariadne_daemon::knowledge::Knowledge;
 use ariadne_knowledge::State;
+use ariadne_store::Repository;
 use tokio::sync::broadcast::Receiver;
 
 use common::{Harness, QUIET, TIMEOUT, eventually, get, harness, next_event, post, sh, test_pin};
@@ -483,9 +484,273 @@ async fn every_knowledge_endpoint_is_in_the_openapi_document() {
         "/v1/knowledge/outline",
         "/v1/knowledge/symbol",
         "/v1/knowledge/impact",
+        "/v1/knowledge/interactions",
     ] {
         assert!(document["paths"].get(path).is_some(), "no {path}");
     }
+}
+
+/// The two repositories the interactions are found between: `api`, a Rust
+/// service that defines the package `api-types`, a type `Item`, a route
+/// `/v1/items/{id}` and a read of `API_TOKEN`; and `web`, a TypeScript front
+/// end that depends on `api-types`, names `Item`, requests `/v1/items/42`
+/// and sets `API_TOKEN` in its `.env`.
+const API_LIB: &str = "\
+/// One item.
+pub struct Item {
+    pub id: u64,
+}
+
+pub fn router() -> Router {
+    Router::new().route(\"/v1/items/{id}\", get(get_item))
+}
+
+pub fn get_item() -> Item {
+    let _token = std::env::var(\"API_TOKEN\");
+    Item { id: 1 }
+}
+";
+
+const WEB_CLIENT: &str = "\
+export async function fetchItem() {
+  const item = new Item();
+  const response = await fetch(\"/v1/items/42\");
+  return response.json();
+}
+";
+
+const WEB_PACKAGE: &str = "\
+{
+  \"name\": \"web\",
+  \"dependencies\": {
+    \"api-types\": \"^1.0.0\"
+  }
+}
+";
+
+fn write_all(repo: &Path, files: &[(&str, &str)]) {
+    for (path, text) in files {
+        let file = repo.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+}
+
+/// `api` and `web`, each committed on `main` and registered, both indexed.
+async fn api_and_web(h: &Harness, rx: &mut Receiver<BusEvent>) -> (Repository, Repository) {
+    let api_path = h.git_repo("api");
+    write_all(
+        &api_path,
+        &[
+            ("Cargo.toml", "[package]\nname = \"api-types\"\n"),
+            ("src/lib.rs", API_LIB),
+        ],
+    );
+    commit(&api_path, "api");
+    let web_path = h.git_repo("web");
+    write_all(
+        &web_path,
+        &[
+            ("package.json", WEB_PACKAGE),
+            (".env", "API_TOKEN=secret\n"),
+            ("src/client.ts", WEB_CLIENT),
+        ],
+    );
+    commit(&web_path, "web");
+    let api = h.repository(&api_path).await;
+    indexed(rx, &api.id, "main", None).await;
+    let web = h.repository(&web_path).await;
+    indexed(rx, &web.id, "main", None).await;
+    (api, web)
+}
+
+/// `kind from -> to confidence` per edge, each end as `repo:path:line
+/// symbol` with the repository named rather than its id.
+fn interaction_lines(
+    groups: &[KnowledgeInteractionGroupDto],
+    api: &Repository,
+    web: &Repository,
+) -> Vec<String> {
+    let name = |id: &str| match id {
+        _ if id == api.id => "api".to_string(),
+        _ if id == web.id => "web".to_string(),
+        _ => id.to_string(),
+    };
+    groups
+        .iter()
+        .flat_map(|group| {
+            group.edges.iter().map(move |edge| {
+                format!(
+                    "{} {}:{}:{} {} -> {}:{}:{} {} {}",
+                    group.kind,
+                    name(&edge.from.repository_id),
+                    edge.from.path,
+                    edge.from.line,
+                    edge.from.symbol,
+                    name(&edge.to.repository_id),
+                    edge.to.path,
+                    edge.to.line,
+                    edge.to.symbol,
+                    edge.confidence
+                )
+            })
+        })
+        .collect()
+}
+
+/// `interactions` for `web` lists one edge of each kind with its two ends
+/// and its confidence: the dependency by name is a guess, the reference is
+/// a guess, the route use with a wildcard segment is a guess, and the
+/// variable is exact. `api` lists the same edges from its side. Removing
+/// the dependency and reading `web` again removes the `depends_on` edge and
+/// no other.
+#[tokio::test]
+async fn interactions_between_two_repositories_are_listed_by_kind() {
+    let h = harness().knowledge().await;
+    let mut rx = h.bus.subscribe();
+    let (api, web) = api_and_web(&h, &mut rx).await;
+
+    let expected = [
+        "depends_on web:package.json:4 api-types -> api:Cargo.toml:2 api-types heuristic",
+        "references web:src/client.ts:2 fetchItem -> api:src/lib.rs:2 Item heuristic",
+        "calls_route web:src/client.ts:3 fetchItem -> api:src/lib.rs:10 get_item heuristic",
+        "sets_env web:.env:1 API_TOKEN -> api:src/lib.rs:11 get_item exact",
+    ];
+    let groups: Vec<KnowledgeInteractionGroupDto> = h
+        .get(&format!("/v1/knowledge/interactions?repository={}", web.id))
+        .await;
+    assert_eq!(interaction_lines(&groups, &api, &web), expected);
+    let kinds: Vec<&str> = groups.iter().map(|group| group.kind.as_str()).collect();
+    assert_eq!(
+        kinds,
+        ["depends_on", "references", "calls_route", "sets_env"]
+    );
+
+    let from_api: Vec<KnowledgeInteractionGroupDto> = h
+        .get(&format!("/v1/knowledge/interactions?repository={}", api.id))
+        .await;
+    assert_eq!(
+        interaction_lines(&from_api, &api, &web),
+        expected,
+        "the same edges, seen from the other end"
+    );
+
+    // The dependency goes, and the edge with it.
+    std::fs::write(
+        Path::new(&web.path).join("package.json"),
+        "{\n  \"name\": \"web\"\n}\n",
+    )
+    .unwrap();
+    let head = commit(Path::new(&web.path), "no-dependency");
+    h.state.knowledge.index(&web.id, "main");
+    indexed(&mut rx, &web.id, "main", Some(&head)).await;
+    let groups: Vec<KnowledgeInteractionGroupDto> = h
+        .get(&format!("/v1/knowledge/interactions?repository={}", web.id))
+        .await;
+    assert_eq!(interaction_lines(&groups, &api, &web), expected[1..]);
+}
+
+/// `impact --diff` for a change to the route handler in `api` lists the
+/// call site in `web`, under `web`.
+#[tokio::test]
+async fn a_route_handler_change_reaches_the_call_site_in_the_other_repository() {
+    let h = harness().knowledge().await;
+    let mut rx = h.bus.subscribe();
+    let (api, web) = api_and_web(&h, &mut rx).await;
+    let api_path = Path::new(&api.path);
+    let before = sh(api_path, "git rev-parse main");
+
+    std::fs::write(
+        api_path.join("src/lib.rs"),
+        API_LIB.replace("    Item { id: 1 }", "    let _ = 2;\n    Item { id: 1 }"),
+    )
+    .unwrap();
+    let after = commit(api_path, "handler");
+    h.state.knowledge.index(&api.id, "main");
+    indexed(&mut rx, &api.id, "main", Some(&after)).await;
+
+    let impact: Vec<KnowledgeImpactDto> = h
+        .get(&format!(
+            "/v1/knowledge/impact?repository={}&diff={before}..{after}",
+            api.id
+        ))
+        .await;
+    assert_eq!(
+        impact
+            .iter()
+            .map(|impact| impact.symbol.name.as_str())
+            .collect::<Vec<_>>(),
+        ["get_item"],
+        "{impact:?}"
+    );
+    let callers: Vec<(i64, &str, &str, i64, &str, &str)> = impact[0]
+        .callers
+        .iter()
+        .map(|caller| {
+            (
+                caller.depth,
+                caller.repository_id.as_str(),
+                caller.path.as_str(),
+                caller.line,
+                caller.name.as_str(),
+                caller.confidence.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        callers,
+        [(
+            1,
+            web.id.as_str(),
+            "src/client.ts",
+            1,
+            "fetchItem",
+            "heuristic"
+        )]
+    );
+}
+
+/// `symbol Item --detail context` from `api` lists the `web` reference under
+/// `web`, as a guess.
+#[tokio::test]
+async fn a_type_named_in_the_other_repository_lists_that_reference_as_a_guess() {
+    let h = harness().knowledge().await;
+    let mut rx = h.bus.subscribe();
+    let (api, web) = api_and_web(&h, &mut rx).await;
+
+    let found: Vec<KnowledgeSymbolDto> = h
+        .get(&format!(
+            "/v1/knowledge/symbol?name=Item&repository={}&detail=context",
+            api.id
+        ))
+        .await;
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].repository_id, api.id);
+    let context = found[0].context.as_ref().expect("a context");
+    let references: Vec<(&str, &str, i64, &str, &str)> = context
+        .references
+        .iter()
+        .map(|end| {
+            (
+                end.repository_id.as_str(),
+                end.path.as_str(),
+                end.line,
+                end.name.as_str(),
+                end.confidence.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        references,
+        [(
+            web.id.as_str(),
+            "src/client.ts",
+            1,
+            "fetchItem",
+            "heuristic"
+        )]
+    );
+    assert!(context.callers.is_empty(), "{:?}", context.callers);
 }
 
 /// `symbol` and `impact` read the graph the index derived: the definition

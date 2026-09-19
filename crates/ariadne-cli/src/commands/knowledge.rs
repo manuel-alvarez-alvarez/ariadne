@@ -4,10 +4,11 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::knowledge::{
-    KnowledgeDetail, KnowledgeHitDto, KnowledgeImpactCallerDto, KnowledgeImpactDto,
-    KnowledgeImpactQuery, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeRelatedDto,
-    KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
-    KnowledgeSymbolQuery,
+    KnowledgeDetail, KnowledgeEdgeDto, KnowledgeEndpointDto, KnowledgeHitDto,
+    KnowledgeImpactCallerDto, KnowledgeImpactDto, KnowledgeImpactQuery,
+    KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeOutlineEntryDto,
+    KnowledgeOutlineQuery, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState,
+    KnowledgeStatusDto, KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_client::Client;
 
@@ -47,6 +48,17 @@ const IMPACT: &[Column] = &[
     col("confidence", UNCAPPED).rank(1),
     col("changed", 40).rank(2),
     col("repo", UNCAPPED).id().rank(3),
+];
+
+/// Columns of `knowledge interactions`: where the edge starts, its kind,
+/// what the two ends are, and how sure the match is. The from end leads,
+/// so `-q` prints `path:line`.
+const INTERACTIONS: &[Column] = &[
+    col("from", UNCAPPED),
+    col("kind", UNCAPPED).rank(2),
+    col("title", 40).title(),
+    col("to", UNCAPPED),
+    col("confidence", UNCAPPED).rank(1),
 ];
 
 /// How much `knowledge symbol` shows. A local spelling of
@@ -140,6 +152,17 @@ pub enum KnowledgeCommand {
         /// How far to walk the callers (default 2, max 4)
         #[arg(long)]
         depth: Option<i64>,
+    },
+    /// List what joins a repository to the others: the packages it depends
+    /// on, the names it references, the routes it calls, the variables it
+    /// sets, and the same the other way round
+    Interactions {
+        /// Repository id or path
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
+        repo: String,
+        /// The branch to read (default: the base branch)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
     },
     /// List the definitions of one file with their line ranges
     Outline {
@@ -289,6 +312,40 @@ pub async fn run(client: &Client, command: KnowledgeCommand, format: Format) -> 
                 ));
             }
         }
+        KnowledgeCommand::Interactions { repo, git_ref } => {
+            let repository = resolve::id(client, Kind::Repo, &repo).await?;
+            let request = KnowledgeInteractionsQuery {
+                repository,
+                git_ref,
+            };
+            let found: Vec<KnowledgeInteractionGroupDto> = client
+                .get_json(&query_path("/v1/knowledge/interactions", &request)?)
+                .await?;
+            // The daemon's own groups for a script; one row per edge for
+            // the table.
+            if let Format::Json = format {
+                return print_json(&found);
+            }
+            let rows: Vec<(&KnowledgeInteractionGroupDto, &KnowledgeEdgeDto)> = found
+                .iter()
+                .flat_map(|group| group.edges.iter().map(move |edge| (group, edge)))
+                .collect();
+            print_list(
+                format,
+                &rows,
+                INTERACTIONS,
+                |(group, edge)| {
+                    vec![
+                        end_location(&edge.from),
+                        group.kind.clone(),
+                        edge.from.symbol.clone(),
+                        format!("{} {}", end_location(&edge.to), edge.to.symbol),
+                        edge.confidence.clone(),
+                    ]
+                },
+                empty_state("No interaction with another repository.", None),
+            )?;
+        }
         KnowledgeCommand::Outline {
             repo,
             path,
@@ -352,9 +409,10 @@ fn print_symbols(found: &[KnowledgeSymbolDto]) {
                 ("callers", &context.callers),
                 ("callees", &context.callees),
                 ("implementations", &context.implementations),
+                ("references", &context.references),
                 ("tests", &context.tests),
             ] {
-                rows.push((name, ends_line(ends).into()));
+                rows.push((name, ends_line(ends, &definition.repository_id).into()));
             }
         }
         print_kv(&rows);
@@ -364,21 +422,30 @@ fn print_symbols(found: &[KnowledgeSymbolDto]) {
     }
 }
 
-/// One line for a list of edge ends, or `-` for an empty one.
-fn ends_line(ends: &[KnowledgeRelatedDto]) -> String {
+/// One line for a list of edge ends, or `-` for an empty one. An end in
+/// another repository than `repository_id` is led by that repository's id.
+fn ends_line(ends: &[KnowledgeRelatedDto], repository_id: &str) -> String {
     match ends.is_empty() {
         true => "-".to_string(),
         false => ends
             .iter()
             .map(|end| {
-                format!(
-                    "{}:{} {} ({})",
-                    end.path, end.line, end.name, end.confidence
-                )
+                let location = format!("{}:{}", end.path, end.line);
+                let location = match end.repository_id == repository_id {
+                    true => location,
+                    false => format!("{}:{location}", end.repository_id),
+                };
+                format!("{location} {} ({})", end.name, end.confidence)
             })
             .collect::<Vec<_>>()
             .join("; "),
     }
+}
+
+/// `repository:path:line`, as an interaction's end is printed: either end
+/// may be in the other repository.
+fn end_location(end: &KnowledgeEndpointDto) -> String {
+    format!("{}:{}:{}", end.repository_id, end.path, end.line)
 }
 
 fn status_path(repository_id: &str) -> String {
@@ -479,5 +546,27 @@ mod tests {
         let header = table.lines().next().expect("header");
         assert!(header.starts_with("LOCATION"), "{table}");
         assert!(header.contains("DEPTH"), "{table}");
+    }
+
+    /// An interaction row leads with its from end, so `-q` prints where the
+    /// edge starts, and names its kind and its to end.
+    #[test]
+    fn an_interaction_row_leads_with_its_from_end_and_names_its_kind() {
+        let table = crate::output::render_table(
+            INTERACTIONS,
+            &[vec![
+                "01WEB:src/client.ts:4".into(),
+                "calls_route".into(),
+                "fetchItem".into(),
+                "01API:src/lib.rs:12 get_item".into(),
+                "heuristic".into(),
+            ]],
+            &crate::output::View::plain(),
+        )
+        .expect("table");
+        let header = table.lines().next().expect("header");
+        assert!(header.starts_with("FROM"), "{table}");
+        assert!(header.contains("KIND"), "{table}");
+        assert!(header.contains("TO"), "{table}");
     }
 }

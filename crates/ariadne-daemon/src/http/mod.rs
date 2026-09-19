@@ -125,7 +125,7 @@ impl AppState {
         repositories::update, repositories::delete,
         memories::create, memories::list, memories::search, memories::delete,
         knowledge::status, knowledge::reindex, knowledge::search, knowledge::outline,
-        knowledge::symbol, knowledge::impact,
+        knowledge::symbol, knowledge::impact, knowledge::interactions,
 
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
@@ -221,6 +221,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/knowledge/outline", get(knowledge::outline))
         .route("/v1/knowledge/symbol", get(knowledge::symbol))
         .route("/v1/knowledge/impact", get(knowledge::impact))
+        .route("/v1/knowledge/interactions", get(knowledge::interactions))
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))
         .route("/v1/goals/{id}", get(goals::get).delete(goals::delete))

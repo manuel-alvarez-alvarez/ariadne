@@ -1,17 +1,20 @@
-//! Knowledge base endpoints: a repository's index status, its reindex, and
-//! the four questions every seat asks the index.
+//! Knowledge base endpoints: a repository's index status, its reindex, the
+//! four questions every seat asks the index, and the interactions between
+//! one repository and the others.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::knowledge::{
-    KnowledgeContextDto, KnowledgeDetail, KnowledgeHitDto, KnowledgeImpactCallerDto,
-    KnowledgeImpactDto, KnowledgeImpactQuery, KnowledgeLanguageDto, KnowledgeOutlineEntryDto,
-    KnowledgeOutlineQuery, KnowledgeRefDto, KnowledgeRelatedDto, KnowledgeSearchQuery,
-    KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto, KnowledgeSymbolQuery,
+    KnowledgeContextDto, KnowledgeDetail, KnowledgeEdgeDto, KnowledgeEndpointDto, KnowledgeHitDto,
+    KnowledgeImpactCallerDto, KnowledgeImpactDto, KnowledgeImpactQuery,
+    KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeLanguageDto,
+    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeRefDto, KnowledgeRelatedDto,
+    KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
+    KnowledgeSymbolQuery,
 };
-use ariadne_knowledge::store::CONTEXT_LIMIT;
-use ariadne_knowledge::{KnowledgeStore, Related, SearchQuery, index};
+use ariadne_knowledge::store::{CONTEXT_LIMIT, INTERACTION_KINDS};
+use ariadne_knowledge::{InteractionEnd, KnowledgeStore, Related, SearchQuery, index};
 use ariadne_store::Repository;
 
 use super::AppState;
@@ -232,6 +235,7 @@ pub async fn symbol(
                         callers: related(context.callers),
                         callees: related(context.callees),
                         implementations: related(context.implementations),
+                        references: related(context.references),
                         tests: related(context.tests),
                     })
                     .map_err(|e| ApiError::conflict(e.to_string()))?,
@@ -357,6 +361,62 @@ pub async fn impact(
         });
     }
     Ok(Json(answers))
+}
+
+#[utoipa::path(get, path = "/v1/knowledge/interactions", tag = "knowledge",
+    params(KnowledgeInteractionsQuery),
+    responses((status = 200, body = [KnowledgeInteractionGroupDto]), (status = 404),
+              (status = 409, description = "the knowledge base is disabled")))]
+pub async fn interactions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<KnowledgeInteractionsQuery>,
+) -> ApiResult<Json<Vec<KnowledgeInteractionGroupDto>>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let knowledge = enabled(&state)?;
+    let repository = state.store.get_repository(&query.repository).await?;
+    let git_ref = ref_for(
+        &state,
+        knowledge,
+        &ctx,
+        &repository,
+        query.git_ref.as_deref(),
+    )
+    .await?;
+    let found = knowledge
+        .interactions(&repository.id, &git_ref)
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    // One group per kind that has an edge, in the order the kinds are
+    // listed in.
+    let mut groups: Vec<KnowledgeInteractionGroupDto> = Vec::new();
+    for kind in INTERACTION_KINDS {
+        let edges: Vec<KnowledgeEdgeDto> = found
+            .iter()
+            .filter(|interaction| interaction.kind == kind)
+            .map(|interaction| KnowledgeEdgeDto {
+                from: endpoint(&interaction.from),
+                to: endpoint(&interaction.to),
+                confidence: interaction.confidence.clone(),
+            })
+            .collect();
+        if !edges.is_empty() {
+            groups.push(KnowledgeInteractionGroupDto {
+                kind: kind.to_string(),
+                edges,
+            });
+        }
+    }
+    Ok(Json(groups))
+}
+
+fn endpoint(end: &InteractionEnd) -> KnowledgeEndpointDto {
+    KnowledgeEndpointDto {
+        repository_id: end.repository_id.clone(),
+        path: end.path.clone(),
+        line: end.line,
+        symbol: end.symbol.clone(),
+    }
 }
 
 fn related(ends: Vec<Related>) -> Vec<KnowledgeRelatedDto> {

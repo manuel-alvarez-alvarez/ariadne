@@ -67,7 +67,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      the daemon runs with `knowledge_enabled`, which every launch tells the
      server in `ARIADNE_KNOWLEDGE_ENABLED`. `impact` with neither `symbol`
      nor `diff` is the reviewer's own task diff, base branch to task branch,
-     and a refusal for any other seat
+     and a refusal for any other seat. `symbol` and `impact` head each
+     repository's hits with the repository's path, read from
+     `GET /v1/repositories` once per call, and put another repository's
+     hits — a caller across a route, a reference by name — under a heading
+     of that repository's own
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with

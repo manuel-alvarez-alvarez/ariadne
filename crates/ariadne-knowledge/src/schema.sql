@@ -3,13 +3,16 @@
 -- `PRAGMA user_version`, and a file at any other version is deleted and
 -- rebuilt from the repositories. Spec 022 documents every table.
 
--- Every registered repository the index has heard of, with its state.
+-- Every registered repository the index has heard of, with its state and
+-- the ref another repository is read against: what the daemon says the
+-- base branch is, and the first ref indexed until it says.
 CREATE TABLE repositories (
     id          TEXT PRIMARY KEY,
     -- idle | indexing | failed
     state       TEXT NOT NULL,
     error       TEXT,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    base_ref    TEXT
 );
 
 -- The refs indexed per repository, each at the commit it was last read at.
@@ -33,7 +36,9 @@ CREATE TABLE files (
     PRIMARY KEY (repository_id, git_ref, path),
     FOREIGN KEY (repository_id, git_ref) REFERENCES refs(repository_id, git_ref) ON DELETE CASCADE
 );
-CREATE INDEX files_by_blob ON files(blob);
+-- By blob first, then the ref: an edge names a blob at one ref of one
+-- repository, and the join that reads the path back must not scan the ref.
+CREATE INDEX files_by_blob ON files(blob, repository_id, git_ref);
 
 -- The blobs parsed so far, by git object hash.
 CREATE TABLE blobs (
@@ -95,36 +100,76 @@ CREATE TABLE imports (
 CREATE INDEX imports_by_blob ON imports(blob);
 CREATE INDEX imports_by_name ON imports(name);
 
--- Relations between symbols, within and across repositories, as the
--- resolution pass derived them. Keyed by the referencing blob at one ref of
--- one repository: re-deriving them is one delete by that key and one insert.
+-- What one blob offers or takes beyond its symbols: the package a manifest
+-- defines and the ones it depends on, the routes a file registers or
+-- requests, the environment variables it sets or reads. Kept per blob like
+-- the mentions, and matched across repositories by the link pass.
+CREATE TABLE interfaces (
+    blob     TEXT NOT NULL REFERENCES blobs(blob) ON DELETE CASCADE,
+    -- package | dependency | path_dependency | route | route_use | env_read | env_set
+    kind     TEXT NOT NULL,
+    -- The package, the route or the variable.
+    name     TEXT NOT NULL,
+    line     INTEGER NOT NULL,
+    -- The definition it sits in, or the one a route decorator is on. NULL at
+    -- file scope.
+    symbol   INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+    -- The handler names a route registration passes, space-separated. NULL
+    -- on everything else.
+    handlers TEXT
+);
+CREATE INDEX interfaces_by_blob ON interfaces(blob);
+CREATE INDEX interfaces_by_name ON interfaces(kind, name);
+
+-- Relations between two ends, within and across repositories: a reference
+-- to the definition behind it, a manifest to the package it depends on, a
+-- request to the route it calls, a set variable to where it is read. Each
+-- end is a blob at a ref of a repository, a line, and the symbol there where
+-- there is one — a manifest line or a `.env` line is no symbol.
 --
--- The ref is part of the key because the answer depends on it. Two refs share
+-- A symbol edge is keyed by the referencing blob at one ref of one
+-- repository: re-deriving it is one delete by that key and one insert. The
+-- ref is part of the key because the answer depends on it. Two refs share
 -- the blob of an unchanged file, and each resolves its names against its own
 -- tree: `a.rs` points at the `b` of the branch on the branch, and at the `b`
 -- of the base branch on the base branch. One edge set per blob would hold
 -- whichever ref resolved it last, and the other ref would then answer for a
 -- definition it does not have.
+--
+-- An interface edge, and a reference across repositories, is keyed by the
+-- pair of refs it joins instead, and the pair is derived whole.
 CREATE TABLE edges (
     from_repository TEXT NOT NULL,
     git_ref         TEXT NOT NULL,
     from_blob       TEXT NOT NULL REFERENCES blobs(blob) ON DELETE CASCADE,
+    -- calls | references | implements | extends | imports |
+    -- depends_on | calls_route | sets_env
     kind            TEXT NOT NULL,
     -- The definition the reference sits in. NULL at file scope, which is
-    -- where a file's own imports sit.
+    -- where a file's own imports and a manifest's lines sit.
     from_symbol     INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
-    to_symbol       INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
-    to_repository   TEXT NOT NULL,
     from_line       INTEGER NOT NULL,
+    to_repository   TEXT NOT NULL,
+    to_ref          TEXT NOT NULL,
+    to_blob         TEXT NOT NULL REFERENCES blobs(blob) ON DELETE CASCADE,
+    -- The definition the edge points at. NULL where the end is a manifest
+    -- line, a `.env` line or a route nothing resolved the handler of.
+    to_symbol       INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+    to_line         INTEGER NOT NULL,
+    -- What an interface edge is about — the package, the route template, the
+    -- variable — and the name a reference across repositories named. NULL on
+    -- a symbol edge within one repository.
+    name            TEXT,
     -- exact | heuristic
     confidence      TEXT NOT NULL,
     -- How many definitions the name matched at the step that resolved it.
     candidates      INTEGER NOT NULL
 );
 -- Covering, in both directions, under the ref the walk reads: a walk over the
--- graph reads the index alone.
+-- graph reads the index alone. The callers of a definition are the edges into
+-- it at its own repository and ref, whichever repository they come from.
 CREATE INDEX edges_from ON edges(from_repository, git_ref, kind, from_symbol, to_symbol, confidence);
-CREATE INDEX edges_to ON edges(from_repository, git_ref, kind, to_symbol, from_symbol, confidence);
+CREATE INDEX edges_to ON edges(to_repository, to_ref, kind, to_symbol, from_symbol, confidence);
 -- What deriving one blob's edges again deletes by, and what a dropped ref
 -- deletes by.
 CREATE INDEX edges_by_blob ON edges(from_repository, git_ref, from_blob);

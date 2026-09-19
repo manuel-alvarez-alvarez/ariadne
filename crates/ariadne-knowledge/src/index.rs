@@ -21,7 +21,7 @@ use tokio::process::Command;
 
 use crate::languages::Language;
 use crate::store::{FileChanges, FileRow, KnowledgeStore, ParsedBlob};
-use crate::{parser, resolve};
+use crate::{interfaces, parser, resolve};
 
 /// Files over this size are skipped: generated code and data dumps, not the
 /// definitions an agent is looking for.
@@ -99,7 +99,9 @@ impl KnowledgeStore {
             ..Default::default()
         };
 
-        let mut wanted: Vec<(String, Language)> = Vec::new();
+        // Each blob with its language and the first path it was seen at,
+        // which is what its manifest, if it is one, is read by.
+        let mut wanted: Vec<(String, Language, String)> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         for entry in entries {
             // Symlinks and submodules are not files of this repository.
@@ -113,7 +115,7 @@ impl KnowledgeStore {
                 continue;
             };
             if seen.insert(entry.blob.clone()) {
-                wanted.push((entry.blob.clone(), language));
+                wanted.push((entry.blob.clone(), language, entry.path.clone()));
             }
             changes.upserted.push(FileRow {
                 path: entry.path,
@@ -136,11 +138,11 @@ impl KnowledgeStore {
                 .collect();
         }
 
-        let blobs: Vec<String> = wanted.iter().map(|(blob, _)| blob.clone()).collect();
+        let blobs: Vec<String> = wanted.iter().map(|(blob, _, _)| blob.clone()).collect();
         let known = self.known_blobs(&blobs).await?;
-        let to_parse: Vec<(String, Language)> = wanted
+        let to_parse: Vec<(String, Language, String)> = wanted
             .into_iter()
-            .filter(|(blob, _)| !known.contains(blob))
+            .filter(|(blob, _, _)| !known.contains(blob))
             .collect();
         // The names the ref held at the paths this run touches, before it
         // does: a definition that goes takes the edges into it with it.
@@ -154,7 +156,7 @@ impl KnowledgeStore {
 
         let mut parsed = 0;
         for chunk in to_parse.chunks(BATCH) {
-            let ids: Vec<&str> = chunk.iter().map(|(blob, _)| blob.as_str()).collect();
+            let ids: Vec<&str> = chunk.iter().map(|(blob, _, _)| blob.as_str()).collect();
             let contents = cat_file(repo, &ids).await?;
             // A core each: reading every reference of a file costs several
             // times what reading its definitions alone did, and the files of
@@ -168,12 +170,16 @@ impl KnowledgeStore {
                 reading.push(tokio::task::spawn_blocking(move || {
                     piece
                         .into_iter()
-                        .map(|(blob, language)| {
-                            let read = match contents.get(&blob) {
+                        .map(|(blob, language, path)| {
+                            let (read, found) = match contents.get(&blob) {
                                 Some(bytes) if !is_binary(bytes) => {
-                                    parser::read(language, &String::from_utf8_lossy(bytes))
+                                    let text = String::from_utf8_lossy(bytes);
+                                    let read = parser::read(language, &text);
+                                    let found =
+                                        interfaces::read(&path, language, &text, &read.symbols);
+                                    (read, found)
                                 }
-                                _ => parser::Parsed::default(),
+                                _ => (parser::Parsed::default(), Vec::new()),
                             };
                             ParsedBlob {
                                 blob,
@@ -181,6 +187,7 @@ impl KnowledgeStore {
                                 symbols: read.symbols,
                                 references: read.references,
                                 imports: read.imports,
+                                interfaces: found,
                             }
                         })
                         .collect::<Vec<_>>()
@@ -201,12 +208,17 @@ impl KnowledgeStore {
         // and no others. The names the touched paths hold now count too: on
         // the first read of a branch nothing was parsed, and the blobs that
         // name what the branch changed still have to point at it.
-        let mut to_resolve: HashSet<String> = to_parse.into_iter().map(|(blob, _)| blob).collect();
+        let mut to_resolve: HashSet<String> =
+            to_parse.into_iter().map(|(blob, _, _)| blob).collect();
         moved_names.extend(self.names_at(repository_id, git_ref, &touched).await?);
         let moved: Vec<String> = moved_names.into_iter().collect();
         to_resolve.extend(self.blobs_naming(repository_id, git_ref, &moved).await?);
         let to_resolve: Vec<String> = to_resolve.into_iter().collect();
         self.resolve(repository_id, git_ref, &to_resolve).await?;
+        // What this ref offers the other repositories and takes from them,
+        // derived whole: a change here can move a package, a route or a
+        // variable that another repository's edges point at.
+        self.link(repository_id, git_ref).await?;
 
         let (files, symbols) = self.counts(repository_id, git_ref).await?;
         Ok(Indexed {

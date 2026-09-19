@@ -14,12 +14,19 @@ use anyhow::{Context, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, QueryBuilder, Sqlite};
 
+use crate::interfaces::Interface;
 use crate::parser::{Import, Reference, Symbol};
-use crate::resolve::{Candidate, Edge, Mention, Names};
+use crate::resolve::{
+    Candidate, Edge, INTERFACE_KINDS, InterfaceRow, MIN_FOREIGN_NAME, Mention, Names,
+};
 
 /// The schema this build writes. Bump it with every change to `schema.sql`:
 /// a store at another version is thrown away and indexed again.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
+
+/// The edge kinds a walk of the callers follows: a call, and a request of
+/// a route the definition handles.
+const CALL_KINDS: &[&str] = &["calls", "calls_route"];
 
 const SCHEMA: &str = include_str!("schema.sql");
 
@@ -150,6 +157,7 @@ pub(crate) struct ParsedBlob {
     pub symbols: Vec<Symbol>,
     pub references: Vec<Reference>,
     pub imports: Vec<Import>,
+    pub interfaces: Vec<Interface>,
 }
 
 /// One definition of a name, as `GET /v1/knowledge/symbol` answers it.
@@ -187,8 +195,36 @@ pub struct SymbolContext {
     pub callers: Vec<Related>,
     pub callees: Vec<Related>,
     pub implementations: Vec<Related>,
+    /// What names it without calling it: a type annotation, a constructed
+    /// class, an import, and every reference from another repository.
+    pub references: Vec<Related>,
     pub tests: Vec<Related>,
 }
+
+/// One end of an interaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InteractionEnd {
+    pub repository_id: String,
+    pub path: String,
+    pub line: i64,
+    /// The definition at that end, or what the edge is about where the end
+    /// is no definition: the package, the route, the variable.
+    pub symbol: String,
+}
+
+/// One edge between two repositories, as `GET /v1/knowledge/interactions`
+/// lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Interaction {
+    /// `depends_on`, `references`, `calls_route` or `sets_env`.
+    pub kind: String,
+    pub from: InteractionEnd,
+    pub to: InteractionEnd,
+    pub confidence: String,
+}
+
+/// The order the interaction kinds are listed in.
+pub const INTERACTION_KINDS: [&str; 4] = ["depends_on", "references", "calls_route", "sets_env"];
 
 /// One caller of a changed symbol, and how far from it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -336,6 +372,34 @@ impl KnowledgeStore {
         Ok(())
     }
 
+    /// Record the ref another repository is read against: the base branch,
+    /// as the daemon knows it. Until it is recorded, the first ref indexed
+    /// stands in.
+    pub async fn set_base_ref(&self, repository_id: &str, git_ref: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO repositories (id, state, error, updated_at, base_ref) VALUES (?, 'idle', NULL, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET base_ref = excluded.base_ref",
+        )
+        .bind(repository_id)
+        .bind(now())
+        .bind(git_ref)
+        .execute(&self.write)
+        .await?;
+        Ok(())
+    }
+
+    /// Every repository whose base ref is indexed, with that ref: what a
+    /// ref of another repository is linked against.
+    pub(crate) async fn base_refs(&self) -> Result<Vec<(String, String)>> {
+        Ok(sqlx::query_as(
+            "SELECT r.id, r.base_ref FROM repositories r
+             JOIN refs ON refs.repository_id = r.id AND refs.git_ref = r.base_ref
+             WHERE r.base_ref IS NOT NULL ORDER BY r.id",
+        )
+        .fetch_all(&self.read)
+        .await?)
+    }
+
     /// The commit a ref was last indexed at, if ever.
     pub async fn ref_commit(&self, repository_id: &str, git_ref: &str) -> Result<Option<String>> {
         Ok(sqlx::query_scalar(
@@ -385,9 +449,10 @@ impl KnowledgeStore {
             .bind(repository_id)
             .execute(&mut *tx)
             .await?;
-        // Edges are keyed by the ref they were resolved at, which no cascade
-        // reaches: a blob another repository still holds keeps its own rows.
-        sqlx::query("DELETE FROM edges WHERE from_repository = ?")
+        // Edges are keyed by the refs they join, which no cascade reaches: a
+        // blob another repository still holds keeps its own rows.
+        sqlx::query("DELETE FROM edges WHERE from_repository = ? OR to_repository = ?")
+            .bind(repository_id)
             .bind(repository_id)
             .execute(&mut *tx)
             .await?;
@@ -405,11 +470,14 @@ impl KnowledgeStore {
             .bind(git_ref)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM edges WHERE from_repository = ? AND git_ref = ?")
-            .bind(repository_id)
-            .bind(git_ref)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "DELETE FROM edges WHERE (from_repository = ?1 AND git_ref = ?2)
+                                  OR (to_repository = ?1 AND to_ref = ?2)",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .execute(&mut *tx)
+        .await?;
         prune_orphan_blobs(&mut tx).await?;
         tx.commit().await?;
         Ok(())
@@ -535,7 +603,9 @@ impl KnowledgeStore {
     }
 
     /// What one definition is joined to at one ref: who calls it, what it
-    /// calls, what implements it, and the tests that reach it.
+    /// calls, what implements it, what names it, and the tests that reach
+    /// it. The other repositories' ends are in every list, after the
+    /// definition's own.
     ///
     /// A test reaches it over at most two edges — the test itself, or a
     /// helper the test calls — which is what makes a test of a function
@@ -547,103 +617,126 @@ impl KnowledgeStore {
         git_ref: &str,
         limit: i64,
     ) -> Result<SymbolContext> {
-        let at = |join, filter, close| {
-            self.related(
-                join,
-                filter,
-                close,
-                symbol_id,
-                repository_id,
-                git_ref,
-                limit,
-            )
-        };
+        let at =
+            |query: RelatedQuery| self.related(query, symbol_id, repository_id, git_ref, limit);
         Ok(SymbolContext {
-            // Who calls it: the far end of a `calls` edge into it.
-            callers: at(
-                "s.id = e.from_symbol",
-                "e.kind = 'calls' AND e.to_symbol = ",
-                "",
-            )
+            // Who calls it: the far end of a call into it.
+            callers: at(RelatedQuery {
+                listed: End::From,
+                kinds: CALL_KINDS,
+                ..Default::default()
+            })
             .await?,
-            // What it calls: the far end of a `calls` edge out of it.
-            callees: at(
-                "s.id = e.to_symbol",
-                "e.kind = 'calls' AND e.from_symbol = ",
-                "",
-            )
+            // What it calls: the far end of a call out of it.
+            callees: at(RelatedQuery {
+                listed: End::To,
+                kinds: CALL_KINDS,
+                ..Default::default()
+            })
             .await?,
             // What implements it, or what it is a base of.
-            implementations: at(
-                "s.id = e.from_symbol",
-                "e.kind IN ('implements', 'extends') AND e.to_symbol = ",
-                "",
-            )
+            implementations: at(RelatedQuery {
+                listed: End::From,
+                kinds: &["implements", "extends"],
+                ..Default::default()
+            })
+            .await?,
+            // What names it: a type annotation, an import, a foreign reference.
+            references: at(RelatedQuery {
+                listed: End::From,
+                kinds: &["references", "imports"],
+                ..Default::default()
+            })
             .await?,
             // The tests at most two edges away: a test that calls it, and a
             // test that calls something that calls it.
-            tests: at(
-                "s.id = e.from_symbol AND s.is_test = 1",
-                "e.kind = 'calls' AND e.to_symbol IN (SELECT ?1
-                 UNION SELECT from_symbol FROM edges
-                 WHERE ?2 AND kind = 'calls'
-                   AND from_symbol IS NOT NULL AND to_symbol = ",
-                ")",
-            )
+            tests: at(RelatedQuery {
+                listed: End::From,
+                kinds: CALL_KINDS,
+                two_hops: true,
+                tests_only: true,
+            })
             .await?,
         })
     }
 
-    /// One side of the edges of a symbol, as the answer names them: `join`
-    /// says which end of the edge the symbol row is, `filter` is the
-    /// condition up to where the symbol's own id is bound, and `close` is
-    /// what follows it.
-    #[allow(clippy::too_many_arguments)]
+    /// One side of the edges of a symbol, as the answer names them. The
+    /// symbol sits at `repository_id` and `git_ref`; the listed end is the
+    /// other one, wherever it is, and its file is read at its own
+    /// repository and ref. The symbol's own repository is listed first.
     async fn related(
         &self,
-        join: &str,
-        filter: &str,
-        close: &str,
+        query: RelatedQuery,
         symbol_id: i64,
         repository_id: &str,
         git_ref: &str,
         limit: i64,
     ) -> Result<Vec<Related>> {
+        let (listed, listed_repository, listed_ref, other, other_repository, other_ref) =
+            match query.listed {
+                End::From => (
+                    "from_symbol",
+                    "from_repository",
+                    "git_ref",
+                    "to_symbol",
+                    "to_repository",
+                    "to_ref",
+                ),
+                End::To => (
+                    "to_symbol",
+                    "to_repository",
+                    "to_ref",
+                    "from_symbol",
+                    "from_repository",
+                    "git_ref",
+                ),
+            };
         let mut sql = QueryBuilder::<Sqlite>::new(
             "SELECT DISTINCT f.repository_id, f.path, s.start_line AS line, s.name, e.confidence
-             FROM edges e JOIN symbols s ON ",
+             FROM edges e JOIN symbols s ON s.id = e.",
         );
-        sql.push(join)
-            .push(" JOIN files f ON f.blob = s.blob WHERE e.from_repository = ")
+        sql.push(listed)
+            .push(" JOIN files f ON f.blob = s.blob AND f.repository_id = e.")
+            .push(listed_repository)
+            .push(" AND f.git_ref = e.")
+            .push(listed_ref)
+            .push(" WHERE e.")
+            .push(other_repository)
+            .push(" = ")
             .push_bind(repository_id)
-            .push(" AND e.git_ref = ")
+            .push(" AND e.")
+            .push(other_ref)
+            .push(" = ")
             .push_bind(git_ref)
             .push(" AND ");
-        // `?1` inside the filter is the same symbol, bound once more, and
-        // `?2` is the ref the edges of a subquery are read at.
-        for (at, part) in filter.split("?1").enumerate() {
-            if at > 0 {
-                sql.push_bind(symbol_id);
+        push_kinds(&mut sql, "e.", query.kinds);
+        sql.push(" AND e.").push(other);
+        match query.two_hops {
+            false => {
+                sql.push(" = ").push_bind(symbol_id);
             }
-            for (at, part) in part.split("?2").enumerate() {
-                if at > 0 {
-                    sql.push("from_repository = ")
-                        .push_bind(repository_id)
-                        .push(" AND git_ref = ")
-                        .push_bind(git_ref);
-                }
-                sql.push(part);
+            true => {
+                sql.push(" IN (SELECT ")
+                    .push_bind(symbol_id)
+                    .push(" UNION SELECT from_symbol FROM edges WHERE to_repository = ")
+                    .push_bind(repository_id)
+                    .push(" AND to_ref = ")
+                    .push_bind(git_ref)
+                    .push(" AND ");
+                push_kinds(&mut sql, "", query.kinds);
+                sql.push(" AND from_symbol IS NOT NULL AND to_symbol = ")
+                    .push_bind(symbol_id)
+                    .push(")");
             }
         }
-        sql.push_bind(symbol_id)
-            .push(close)
-            .push(" AND f.repository_id = ")
-            .push_bind(repository_id)
-            .push(" AND f.git_ref = ")
-            .push_bind(git_ref)
-            .push(" AND s.id <> ")
+        if query.tests_only {
+            sql.push(" AND s.is_test = 1");
+        }
+        sql.push(" AND s.id <> ")
             .push_bind(symbol_id)
-            .push(" ORDER BY f.path, line LIMIT ")
+            .push(" ORDER BY (f.repository_id <> ")
+            .push_bind(repository_id)
+            .push("), f.repository_id, f.path, line LIMIT ")
             .push_bind(limit.max(1));
         Ok(sql
             .build_query_as::<Related>()
@@ -652,12 +745,15 @@ impl KnowledgeStore {
     }
 
     /// The callers of `symbol_id`, walked out to `depth`, with the symbols
-    /// the walk did not go past.
+    /// the walk did not go past. A call into the definition from another
+    /// repository is followed like any other, and the walk goes on in that
+    /// repository at the ref the edge names.
     ///
-    /// One level is two statements: how many callers each symbol of the
-    /// level has, and then the callers of the ones under [`MAX_FANOUT`].
-    /// Both read the `edges(kind, to_symbol, …)` index and nothing else, so
-    /// the walk costs the callers it answers with and no more.
+    /// One level is two statements per repository and ref it reaches: how
+    /// many callers each symbol of the level has, and then the callers of
+    /// the ones under [`MAX_FANOUT`]. Both read the `edges(kind, to_symbol,
+    /// …)` index and nothing else, so the walk costs the callers it answers
+    /// with and no more.
     pub async fn impact(
         &self,
         symbol_id: i64,
@@ -668,76 +764,90 @@ impl KnowledgeStore {
         let mut callers: Vec<ImpactCaller> = Vec::new();
         let mut stopped: Vec<String> = Vec::new();
         let mut seen: HashSet<i64> = HashSet::from([symbol_id]);
-        let mut level = vec![symbol_id];
+        // The symbols of the level, under the repository and ref each sits
+        // at: the edges into a symbol are read at its own ref.
+        let mut level: Vec<(i64, String, String)> =
+            vec![(symbol_id, repository_id.to_string(), git_ref.to_string())];
         for at in 1..=depth.max(1) {
             if level.is_empty() {
                 break;
             }
-            // How many callers each symbol of the level has, in one
-            // statement: the index answers it without reading a row of the
-            // table.
-            let mut counts: HashMap<i64, i64> = HashMap::new();
-            for chunk in level.chunks(CHUNK) {
-                let mut sql = QueryBuilder::<Sqlite>::new(
-                    "SELECT to_symbol, COUNT(*) FROM edges WHERE from_repository = ",
-                );
-                sql.push_bind(repository_id)
-                    .push(" AND git_ref = ")
-                    .push_bind(git_ref)
-                    .push(" AND kind = 'calls' AND to_symbol IN (");
-                let mut values = sql.separated(", ");
-                for id in chunk {
-                    values.push_bind(id);
-                }
-                sql.push(") GROUP BY to_symbol");
-                let rows: Vec<(i64, i64)> = sql.build_query_as().fetch_all(&self.read).await?;
-                counts.extend(rows);
-            }
-            let mut wanted: Vec<i64> = Vec::new();
-            for id in &level {
-                match counts.get(id).copied().unwrap_or(0) > MAX_FANOUT {
-                    true => stopped.push(self.name_of(*id).await?),
-                    false => wanted.push(*id),
+            let mut scopes: Vec<((String, String), Vec<i64>)> = Vec::new();
+            for (id, repository, git_ref) in level {
+                let scope = (repository, git_ref);
+                match scopes.iter_mut().find(|(s, _)| *s == scope) {
+                    Some((_, ids)) => ids.push(id),
+                    None => scopes.push((scope, vec![id])),
                 }
             }
             let mut next = Vec::new();
-            for chunk in wanted.chunks(CHUNK) {
-                let mut sql = QueryBuilder::<Sqlite>::new(
-                    "SELECT DISTINCT s.id, f.repository_id, f.path, s.start_line, s.name,
-                            e.confidence
-                     FROM edges e
-                     JOIN symbols s ON s.id = e.from_symbol
-                     JOIN files f ON f.blob = s.blob
-                     WHERE e.kind = 'calls' AND e.from_repository = ",
-                );
-                sql.push_bind(repository_id)
-                    .push(" AND e.git_ref = ")
-                    .push_bind(git_ref)
-                    .push(" AND f.repository_id = ")
-                    .push_bind(repository_id)
-                    .push(" AND f.git_ref = ")
-                    .push_bind(git_ref)
-                    .push(" AND e.to_symbol IN (");
-                let mut values = sql.separated(", ");
-                for id in chunk {
-                    values.push_bind(id);
-                }
-                sql.push(")");
-                let rows: Vec<(i64, String, String, i64, String, String)> =
-                    sql.build_query_as().fetch_all(&self.read).await?;
-                for (id, repository_id, path, line, name, confidence) in rows {
-                    if !seen.insert(id) {
-                        continue;
+            for ((repository, git_ref), ids) in scopes {
+                // How many callers each symbol of the level has, in one
+                // statement: the index answers it without reading a row of
+                // the table.
+                let mut counts: HashMap<i64, i64> = HashMap::new();
+                for chunk in ids.chunks(CHUNK) {
+                    let mut sql = QueryBuilder::<Sqlite>::new(
+                        "SELECT to_symbol, COUNT(*) FROM edges WHERE to_repository = ",
+                    );
+                    sql.push_bind(&repository)
+                        .push(" AND to_ref = ")
+                        .push_bind(&git_ref)
+                        .push(" AND ");
+                    push_kinds(&mut sql, "", CALL_KINDS);
+                    sql.push(" AND to_symbol IN (");
+                    let mut values = sql.separated(", ");
+                    for id in chunk {
+                        values.push_bind(id);
                     }
-                    next.push(id);
-                    callers.push(ImpactCaller {
-                        depth: at,
-                        repository_id,
-                        path,
-                        line,
-                        name,
-                        confidence,
-                    });
+                    sql.push(") GROUP BY to_symbol");
+                    let rows: Vec<(i64, i64)> = sql.build_query_as().fetch_all(&self.read).await?;
+                    counts.extend(rows);
+                }
+                let mut wanted: Vec<i64> = Vec::new();
+                for id in &ids {
+                    match counts.get(id).copied().unwrap_or(0) > MAX_FANOUT {
+                        true => stopped.push(self.name_of(*id).await?),
+                        false => wanted.push(*id),
+                    }
+                }
+                for chunk in wanted.chunks(CHUNK) {
+                    let mut sql = QueryBuilder::<Sqlite>::new(
+                        "SELECT DISTINCT s.id, f.repository_id, f.git_ref, f.path, s.start_line,
+                                s.name, e.confidence
+                         FROM edges e
+                         JOIN symbols s ON s.id = e.from_symbol
+                         JOIN files f ON f.blob = s.blob AND f.repository_id = e.from_repository
+                                     AND f.git_ref = e.git_ref
+                         WHERE e.to_repository = ",
+                    );
+                    sql.push_bind(&repository)
+                        .push(" AND e.to_ref = ")
+                        .push_bind(&git_ref)
+                        .push(" AND ");
+                    push_kinds(&mut sql, "e.", CALL_KINDS);
+                    sql.push(" AND e.to_symbol IN (");
+                    let mut values = sql.separated(", ");
+                    for id in chunk {
+                        values.push_bind(id);
+                    }
+                    sql.push(")");
+                    let rows: Vec<(i64, String, String, String, i64, String, String)> =
+                        sql.build_query_as().fetch_all(&self.read).await?;
+                    for (id, repository, git_ref, path, line, name, confidence) in rows {
+                        if !seen.insert(id) {
+                            continue;
+                        }
+                        next.push((id, repository.clone(), git_ref));
+                        callers.push(ImpactCaller {
+                            depth: at,
+                            repository_id: repository,
+                            path,
+                            line,
+                            name,
+                            confidence,
+                        });
+                    }
                 }
             }
             level = next;
@@ -745,12 +855,77 @@ impl KnowledgeStore {
         callers.sort_by(|a, b| {
             a.depth
                 .cmp(&b.depth)
+                .then_with(|| {
+                    (a.repository_id != repository_id).cmp(&(b.repository_id != repository_id))
+                })
+                .then_with(|| a.repository_id.cmp(&b.repository_id))
                 .then_with(|| a.path.cmp(&b.path))
                 .then(a.line.cmp(&b.line))
         });
         stopped.sort();
         stopped.dedup();
         Ok((callers, stopped))
+    }
+
+    /// The edges between one ref of a repository and every other repository,
+    /// in both directions, each end at its own path: what
+    /// `GET /v1/knowledge/interactions` lists. Grouped by kind in the order
+    /// of [`INTERACTION_KINDS`], then by the from end.
+    pub async fn interactions(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+    ) -> Result<Vec<Interaction>> {
+        let rows: Vec<InteractionRow> = sqlx::query_as(
+            "SELECT DISTINCT e.kind,
+                    e.from_repository, ff.path AS from_path, e.from_line,
+                    COALESCE(sf.name, e.name, '') AS from_symbol,
+                    e.to_repository, ft.path AS to_path, e.to_line,
+                    COALESCE(st.name, e.name, '') AS to_symbol,
+                    e.confidence
+             FROM edges e
+             JOIN files ff ON ff.blob = e.from_blob AND ff.repository_id = e.from_repository
+                          AND ff.git_ref = e.git_ref
+             JOIN files ft ON ft.blob = e.to_blob AND ft.repository_id = e.to_repository
+                          AND ft.git_ref = e.to_ref
+             LEFT JOIN symbols sf ON sf.id = e.from_symbol
+             LEFT JOIN symbols st ON st.id = e.to_symbol
+             WHERE e.from_repository <> e.to_repository
+               AND ((e.from_repository = ?1 AND e.git_ref = ?2)
+                    OR (e.to_repository = ?1 AND e.to_ref = ?2))
+             ORDER BY e.from_repository, ff.path, e.from_line, e.to_repository, ft.path, e.to_line",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .fetch_all(&self.read)
+        .await?;
+        let mut found: Vec<Interaction> = rows
+            .into_iter()
+            .map(|row| Interaction {
+                kind: row.kind,
+                from: InteractionEnd {
+                    repository_id: row.from_repository,
+                    path: row.from_path,
+                    line: row.from_line,
+                    symbol: row.from_symbol,
+                },
+                to: InteractionEnd {
+                    repository_id: row.to_repository,
+                    path: row.to_path,
+                    line: row.to_line,
+                    symbol: row.to_symbol,
+                },
+                confidence: row.confidence,
+            })
+            .collect();
+        let rank = |kind: &str| {
+            INTERACTION_KINDS
+                .iter()
+                .position(|k| *k == kind)
+                .unwrap_or(INTERACTION_KINDS.len())
+        };
+        found.sort_by_key(|interaction| rank(&interaction.kind));
+        Ok(found)
     }
 
     /// The name of one symbol, or `?` for one that is gone.
@@ -943,6 +1118,33 @@ impl KnowledgeStore {
             });
             sql.build().execute(&mut *tx).await?;
         }
+        // What each blob offers or takes: the link pass matches these across
+        // repositories, now and for every later run.
+        let interfaces: Vec<(&ParsedBlob, &Interface)> = fresh
+            .iter()
+            .flat_map(|blob| blob.interfaces.iter().map(move |i| (*blob, i)))
+            .collect();
+        for chunk in interfaces.chunks(CHUNK / 6) {
+            let mut sql = QueryBuilder::<Sqlite>::new(
+                "INSERT INTO interfaces (blob, kind, name, line, symbol, handlers) ",
+            );
+            sql.push_values(chunk, |mut row, (blob, interface)| {
+                row.push_bind(&blob.blob)
+                    .push_bind(interface.kind.as_str())
+                    .push_bind(&interface.name)
+                    .push_bind(interface.line as i64)
+                    .push_bind(
+                        interface
+                            .symbol
+                            .and_then(|at| Some(first_id.get(blob.blob.as_str())? + at as i64)),
+                    )
+                    .push_bind(match interface.handlers.is_empty() {
+                        true => None,
+                        false => Some(interface.handlers.join(" ")),
+                    });
+            });
+            sql.build().execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -1083,7 +1285,7 @@ impl KnowledgeStore {
         let mut candidates: HashMap<String, Vec<Candidate>> = HashMap::new();
         for chunk in names.chunks(CHUNK) {
             let mut sql = QueryBuilder::<Sqlite>::new(
-                "SELECT s.name, s.id, s.blob, f.path, s.qualified_name
+                "SELECT s.name, s.id, s.blob, f.path, s.qualified_name, s.start_line
                  FROM symbols s JOIN files f ON f.blob = s.blob
                  WHERE f.repository_id = ",
             );
@@ -1096,14 +1298,15 @@ impl KnowledgeStore {
                 values.push_bind(name);
             }
             sql.push(")");
-            let found: Vec<(String, i64, String, String, String)> =
+            let found: Vec<(String, i64, String, String, String, i64)> =
                 sql.build_query_as().fetch_all(&self.read).await?;
-            for (name, id, blob, path, qualified_name) in found {
+            for (name, id, blob, path, qualified_name, start_line) in found {
                 candidates.entry(name).or_default().push(Candidate {
                     id,
                     blob,
                     path,
                     qualified_name,
+                    start_line,
                 });
             }
         }
@@ -1111,7 +1314,8 @@ impl KnowledgeStore {
     }
 
     /// Replace the edges of `blobs` with `edges`, in one transaction: a
-    /// blob's edges are all derived together or not at all.
+    /// blob's edges are all derived together or not at all. Both ends are
+    /// this repository at this ref.
     pub(crate) async fn commit_edges(
         &self,
         repository_id: &str,
@@ -1133,28 +1337,293 @@ impl KnowledgeStore {
             sql.push(")");
             sql.build().execute(&mut *tx).await?;
         }
-        // Ten values a row, so a chunk stays well under SQLite's bind limit.
-        for chunk in edges.chunks(CHUNK / 10) {
-            let mut sql = QueryBuilder::<Sqlite>::new(
-                "INSERT INTO edges (from_repository, git_ref, from_blob, kind, from_symbol,
-                                    to_symbol, to_repository, from_line, confidence, candidates) ",
-            );
-            sql.push_values(chunk, |mut row, edge| {
-                row.push_bind(repository_id)
-                    .push_bind(git_ref)
-                    .push_bind(&edge.from_blob)
-                    .push_bind(&edge.kind)
-                    .push_bind(edge.from_symbol)
-                    .push_bind(edge.to_symbol)
-                    .push_bind(repository_id)
-                    .push_bind(edge.from_line)
-                    .push_bind(edge.confidence)
-                    .push_bind(edge.candidates);
-            });
-            sql.build().execute(&mut *tx).await?;
-        }
+        insert_edges(
+            &mut tx,
+            repository_id,
+            git_ref,
+            repository_id,
+            git_ref,
+            edges,
+        )
+        .await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    // -- the link pass --------------------------------------------------------
+
+    /// Every interface of one ref, with the path each sits at.
+    pub(crate) async fn interfaces_at(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+    ) -> Result<Vec<InterfaceRow>> {
+        Ok(sqlx::query_as::<_, InterfaceRow>(
+            "SELECT f.blob, f.path, i.kind, i.name, i.line, i.symbol, i.handlers
+             FROM files f JOIN interfaces i ON i.blob = f.blob
+             WHERE f.repository_id = ? AND f.git_ref = ?
+             ORDER BY f.path, i.line",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .fetch_all(&self.read)
+        .await?)
+    }
+
+    /// Derive the edges between one ref and every other repository at its
+    /// base ref, in both directions, and the interface edges within the ref
+    /// itself: the whole set for each pair, replaced as one.
+    ///
+    /// Answers how many edges the pass wrote.
+    pub(crate) async fn link(&self, repository_id: &str, git_ref: &str) -> Result<usize> {
+        let own = self.interfaces_at(repository_id, git_ref).await?;
+        let others: Vec<(String, String, Vec<InterfaceRow>)> = {
+            let mut others = Vec::new();
+            for (other, base) in self.base_refs().await? {
+                if other == repository_id {
+                    continue;
+                }
+                let rows = self.interfaces_at(&other, &base).await?;
+                others.push((other, base, rows));
+            }
+            others
+        };
+        let scope = |repository: &str, git_ref: &str| (repository.to_string(), git_ref.to_string());
+        let mut pairs: Vec<((String, String), (String, String))> =
+            vec![(scope(repository_id, git_ref), scope(repository_id, git_ref))];
+        for (other, base, _) in &others {
+            pairs.push((scope(repository_id, git_ref), scope(other, base)));
+            pairs.push((scope(other, base), scope(repository_id, git_ref)));
+        }
+        let rows_of = |repository: &str, at_ref: &str| -> &[InterfaceRow] {
+            if repository == repository_id && at_ref == git_ref {
+                return &own;
+            }
+            others
+                .iter()
+                .find(|(other, base, _)| other == repository && base == at_ref)
+                .map_or(&[][..], |(_, _, rows)| rows)
+        };
+        let mut written = 0;
+        // The interface edges first: whether one repository depends on
+        // another is what the foreign references are then narrowed by.
+        for ((from_repository, from_ref), (to_repository, to_ref)) in &pairs {
+            let from = rows_of(from_repository, from_ref);
+            let to = rows_of(to_repository, to_ref);
+            let handler_names: Vec<String> = to
+                .iter()
+                .filter(|row| row.kind == "route")
+                .flat_map(|row| {
+                    row.handlers
+                        .as_deref()
+                        .unwrap_or("")
+                        .split_whitespace()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let handlers = match handler_names.is_empty() {
+                true => HashMap::new(),
+                false => {
+                    self.candidates(to_repository, to_ref, &handler_names)
+                        .await?
+                }
+            };
+            let edges = crate::resolve::interface_edges(from, to, &handlers);
+            written += edges.len();
+            self.commit_links(
+                (from_repository, from_ref),
+                (to_repository, to_ref),
+                &INTERFACE_KINDS,
+                &edges,
+            )
+            .await?;
+        }
+        // Then the names one repository uses and another defines.
+        let mut unresolved: HashMap<(String, String), Vec<String>> = HashMap::new();
+        for ((from_repository, from_ref), (to_repository, to_ref)) in &pairs {
+            if from_repository == to_repository {
+                continue;
+            }
+            let key = scope(from_repository, from_ref);
+            if !unresolved.contains_key(&key) {
+                let names = self.unresolved_names(from_repository, from_ref).await?;
+                unresolved.insert(key.clone(), names);
+            }
+            let names = &unresolved[&key];
+            let mut defined = self.candidates(to_repository, to_ref, names).await?;
+            // A repository the manifest depends on is preferred: where the
+            // name is also defined in one this repository depends on, and
+            // this one is not, the name means that one's definition.
+            let linked = self.linked_repositories(from_repository, from_ref).await?;
+            if !linked.contains(to_repository) && !linked.is_empty() {
+                let names: Vec<String> = defined.keys().cloned().collect();
+                let elsewhere = self.defining_repositories(&names).await?;
+                defined.retain(|name, _| {
+                    !elsewhere
+                        .get(name)
+                        .is_some_and(|repositories| repositories.iter().any(|r| linked.contains(r)))
+                });
+            }
+            let names: Vec<String> = defined.keys().cloned().collect();
+            let mentions = self
+                .mentions_named(from_repository, from_ref, &names)
+                .await?;
+            let edges = crate::resolve::foreign_edges(&mentions, &defined);
+            written += edges.len();
+            self.commit_links(
+                (from_repository, from_ref),
+                (to_repository, to_ref),
+                &["references"],
+                &edges,
+            )
+            .await?;
+        }
+        Ok(written)
+    }
+
+    /// Replace the edges of `kinds` from one ref to another with `edges`.
+    async fn commit_links(
+        &self,
+        from: (&str, &str),
+        to: (&str, &str),
+        kinds: &[&str],
+        edges: &[Edge],
+    ) -> Result<()> {
+        let mut tx = self.write.begin().await?;
+        let mut sql = QueryBuilder::<Sqlite>::new("DELETE FROM edges WHERE from_repository = ");
+        sql.push_bind(from.0)
+            .push(" AND git_ref = ")
+            .push_bind(from.1)
+            .push(" AND to_repository = ")
+            .push_bind(to.0)
+            .push(" AND to_ref = ")
+            .push_bind(to.1)
+            .push(" AND ");
+        push_kinds(&mut sql, "", kinds);
+        sql.build().execute(&mut *tx).await?;
+        insert_edges(&mut tx, from.0, from.1, to.0, to.1, edges).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// The names one ref mentions or imports and defines nowhere, at least
+    /// [`MIN_FOREIGN_NAME`] long: what may be defined in another repository.
+    async fn unresolved_names(&self, repository_id: &str, git_ref: &str) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT DISTINCT m.name FROM files f JOIN mentions m ON m.blob = f.blob
+             WHERE f.repository_id = ?1 AND f.git_ref = ?2 AND length(m.name) >= ?3
+               AND NOT EXISTS (SELECT 1 FROM symbols s JOIN files g ON g.blob = s.blob
+                               WHERE s.name = m.name AND g.repository_id = ?1 AND g.git_ref = ?2)
+             UNION
+             SELECT DISTINCT i.name FROM files f JOIN imports i ON i.blob = f.blob
+             WHERE f.repository_id = ?1 AND f.git_ref = ?2 AND i.name IS NOT NULL
+               AND length(i.name) >= ?3
+               AND NOT EXISTS (SELECT 1 FROM symbols s JOIN files g ON g.blob = s.blob
+                               WHERE s.name = i.name AND g.repository_id = ?1 AND g.git_ref = ?2)",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .bind(MIN_FOREIGN_NAME as i64)
+        .fetch_all(&self.read)
+        .await?)
+    }
+
+    /// Every mention and named import of `names` at one ref, keyed by name,
+    /// each with the blob it sits in.
+    async fn mentions_named(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+        names: &[String],
+    ) -> Result<HashMap<String, Vec<(String, Mention)>>> {
+        let mut found: HashMap<String, Vec<(String, Mention)>> = HashMap::new();
+        for chunk in names.chunks(CHUNK / 2) {
+            let mut sql = QueryBuilder::<Sqlite>::new(
+                "SELECT DISTINCT m.blob, m.kind, m.name, m.line, m.from_symbol
+                 FROM files f JOIN mentions m ON m.blob = f.blob
+                 WHERE f.repository_id = ",
+            );
+            sql.push_bind(repository_id)
+                .push(" AND f.git_ref = ")
+                .push_bind(git_ref)
+                .push(" AND m.name IN (");
+            let mut values = sql.separated(", ");
+            for name in chunk {
+                values.push_bind(name);
+            }
+            sql.push(
+                ") UNION SELECT DISTINCT i.blob, 'imports', i.name, i.line, NULL
+                       FROM files f JOIN imports i ON i.blob = f.blob WHERE f.repository_id = ",
+            )
+            .push_bind(repository_id)
+            .push(" AND f.git_ref = ")
+            .push_bind(git_ref)
+            .push(" AND i.name IN (");
+            let mut values = sql.separated(", ");
+            for name in chunk {
+                values.push_bind(name);
+            }
+            sql.push(")");
+            let rows: Vec<(String, String, String, i64, Option<i64>)> =
+                sql.build_query_as().fetch_all(&self.read).await?;
+            for (blob, kind, name, line, from_symbol) in rows {
+                found.entry(name.clone()).or_default().push((
+                    blob,
+                    Mention {
+                        kind,
+                        name,
+                        line,
+                        from_symbol,
+                    },
+                ));
+            }
+        }
+        Ok(found)
+    }
+
+    /// The repositories one ref depends on, by its manifests.
+    async fn linked_repositories(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+    ) -> Result<HashSet<String>> {
+        let found: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT to_repository FROM edges
+             WHERE from_repository = ?1 AND git_ref = ?2 AND kind = 'depends_on'
+               AND to_repository <> ?1",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .fetch_all(&self.read)
+        .await?;
+        Ok(found.into_iter().collect())
+    }
+
+    /// The repositories that define each of `names` at their base ref.
+    async fn defining_repositories(
+        &self,
+        names: &[String],
+    ) -> Result<HashMap<String, HashSet<String>>> {
+        let mut found: HashMap<String, HashSet<String>> = HashMap::new();
+        for chunk in names.chunks(CHUNK) {
+            let mut sql = QueryBuilder::<Sqlite>::new(
+                "SELECT DISTINCT s.name, f.repository_id
+                 FROM symbols s JOIN files f ON f.blob = s.blob
+                 JOIN repositories r ON r.id = f.repository_id AND r.base_ref = f.git_ref
+                 WHERE s.name IN (",
+            );
+            let mut values = sql.separated(", ");
+            for name in chunk {
+                values.push_bind(name);
+            }
+            sql.push(")");
+            let rows: Vec<(String, String)> = sql.build_query_as().fetch_all(&self.read).await?;
+            for (name, repository) in rows {
+                found.entry(name).or_default().insert(repository);
+            }
+        }
+        Ok(found)
     }
 
     /// Record the files of a ref at a commit, once their blobs are stored.
@@ -1167,11 +1636,15 @@ impl KnowledgeStore {
     ) -> Result<()> {
         let mut tx = self.write.begin().await?;
         let stamp = now();
+        // The first ref indexed is the base ref until the daemon says which
+        // one is.
         sqlx::query(
-            "INSERT OR IGNORE INTO repositories (id, state, error, updated_at) VALUES (?, 'idle', NULL, ?)",
+            "INSERT INTO repositories (id, state, error, updated_at, base_ref) VALUES (?1, 'idle', NULL, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET base_ref = COALESCE(base_ref, excluded.base_ref)",
         )
         .bind(repository_id)
         .bind(&stamp)
+        .bind(git_ref)
         .execute(&mut *tx)
         .await?;
         sqlx::query(
@@ -1216,6 +1689,87 @@ impl KnowledgeStore {
         tx.commit().await?;
         Ok(())
     }
+}
+
+/// One interaction as the query reads it, both ends flat.
+#[derive(sqlx::FromRow)]
+struct InteractionRow {
+    kind: String,
+    from_repository: String,
+    from_path: String,
+    from_line: i64,
+    from_symbol: String,
+    to_repository: String,
+    to_path: String,
+    to_line: i64,
+    to_symbol: String,
+    confidence: String,
+}
+
+/// Which end of an edge a listing names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum End {
+    #[default]
+    From,
+    To,
+}
+
+/// One list of a symbol's context: which end is listed, over which kinds,
+/// and whether the walk goes two edges out to find the tests.
+#[derive(Clone, Copy, Debug, Default)]
+struct RelatedQuery {
+    listed: End,
+    kinds: &'static [&'static str],
+    two_hops: bool,
+    tests_only: bool,
+}
+
+/// `<table>kind IN (…)`, over the kinds given; `table` is the alias the
+/// edges are read under, with its dot, or nothing.
+fn push_kinds(sql: &mut QueryBuilder<Sqlite>, table: &str, kinds: &[&str]) {
+    sql.push(table).push("kind IN (");
+    let mut values = sql.separated(", ");
+    for kind in kinds {
+        values.push_bind(kind.to_string());
+    }
+    sql.push(")");
+}
+
+/// Insert `edges` from one ref to another, ten values a row so a chunk stays
+/// well under SQLite's bind limit.
+async fn insert_edges(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    from_repository: &str,
+    from_ref: &str,
+    to_repository: &str,
+    to_ref: &str,
+    edges: &[Edge],
+) -> Result<()> {
+    for chunk in edges.chunks(CHUNK / 14) {
+        let mut sql = QueryBuilder::<Sqlite>::new(
+            "INSERT INTO edges (from_repository, git_ref, from_blob, kind, from_symbol, from_line,
+                                to_repository, to_ref, to_blob, to_symbol, to_line, name,
+                                confidence, candidates) ",
+        );
+        sql.push_values(chunk, |mut row, edge| {
+            row.push_bind(from_repository)
+                .push_bind(from_ref)
+                .push_bind(&edge.from_blob)
+                .push_bind(&edge.kind)
+                .push_bind(edge.from_symbol)
+                .push_bind(edge.from_line)
+                .push_bind(to_repository)
+                .push_bind(to_ref)
+                .push_bind(&edge.to_blob)
+                .push_bind(edge.to_symbol)
+                .push_bind(edge.to_line)
+                .push_bind(&edge.name)
+                .push_bind(edge.confidence)
+                .push_bind(edge.candidates);
+        });
+        sql.build().execute(&mut **tx).await?;
+    }
+    Ok(())
 }
 
 /// `sql`, whose text ends where a condition starts, narrowed to a list of
@@ -1436,6 +1990,7 @@ mod tests {
                     .collect(),
                 references: Vec::new(),
                 imports: Vec::new(),
+                interfaces: Vec::new(),
             })
             .collect();
         for chunk in parsed.chunks(200) {
@@ -1471,8 +2026,11 @@ mod tests {
                         kind: "calls".into(),
                         from_blob: blob((from - 1) / PER_BLOB),
                         from_symbol: Some(from),
-                        to_symbol: to,
                         from_line: 1,
+                        to_blob: blob((to - 1) / PER_BLOB),
+                        to_symbol: Some(to),
+                        to_line: 1,
+                        name: None,
                         confidence: "exact",
                         candidates: 1,
                     })

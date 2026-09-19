@@ -111,6 +111,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal ls", true),
     ("goal rm", true),
     ("knowledge impact", true),
+    ("knowledge interactions", true),
     ("knowledge outline", true),
     ("knowledge reindex", true),
     ("knowledge search", true),
@@ -785,6 +786,27 @@ fn knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth() {
         .is_err(),
         "a symbol and a diff at once name two questions"
     );
+}
+
+/// `knowledge interactions` takes the repository and the ref.
+#[test]
+fn knowledge_interactions_takes_the_repository_and_the_ref() {
+    let Command::Knowledge {
+        command: KnowledgeCommand::Interactions { repo, git_ref },
+    } = parse(&[
+        "ariadne",
+        "knowledge",
+        "interactions",
+        "01REPO",
+        "--ref",
+        "next",
+    ])
+    .command
+    else {
+        panic!("knowledge interactions");
+    };
+    assert_eq!(repo, "01REPO");
+    assert_eq!(git_ref.as_deref(), Some("next"));
 }
 
 /// Every `ls` that hides finished work behind `--all` takes the same short

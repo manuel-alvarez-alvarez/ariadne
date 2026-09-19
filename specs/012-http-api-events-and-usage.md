@@ -164,7 +164,9 @@ and the ACP runtime that reports the agent events (021).
     /v1/repositories/{id}/knowledge`, `POST
     /v1/repositories/{id}/knowledge/reindex` (202), `GET
     /v1/knowledge/search`, `GET /v1/knowledge/outline`, `GET
-    /v1/knowledge/symbol` and `GET /v1/knowledge/impact`, and reports
+    /v1/knowledge/symbol`, `GET /v1/knowledge/impact` and `GET
+    /v1/knowledge/interactions` (the edges between one repository and the
+    others, grouped by kind, each edge two ends and a confidence), and reports
     every index run on the domain stream as `knowledge_indexed`
     (`repository_id`, `git_ref`, `commit`, `files`, `symbols`) or
     `knowledge_failed` (`repository_id`, `error`). Like a branch move, these
@@ -283,6 +285,9 @@ and the ACP runtime that reports the agent events (021).
   failed one as `knowledge_failed`
   (`knowledge.rs::registering_a_repository_indexes_its_base_branch`,
   `::a_repository_git_cannot_read_reads_as_failed`).
+- The interactions of a repository are listed by kind with both ends of
+  each edge
+  (`knowledge.rs::interactions_between_two_repositories_are_listed_by_kind`).
 - ACP registry endpoints expose the cached result and refresh it on demand
   (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`,
   `::discovery_refreshes_on_demand`).
