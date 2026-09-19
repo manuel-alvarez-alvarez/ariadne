@@ -459,8 +459,13 @@ elif [ "$WITH_UI" = 1 ]; then
         # a stale or missing one is no reason to fail the whole install.
         app_npm ci || app_npm install \
             || ui_die "npm install in ui/ failed (--no-ui skips the app)"
-        app_npm run tauri build \
-            || ui_die "npm run tauri build failed (--no-ui skips the app)"
+        # On macOS only the .app is installed, so skip the dmg, as the release
+        # does: its Finder step leaves the image busy and the unmount fails
+        # about half the time on macOS 26.
+        case "$OS" in
+            Darwin) app_npm run tauri build -- --bundles app ;;
+            *) app_npm run tauri build ;;
+        esac || ui_die "npm run tauri build failed (--no-ui skips the app)"
 
         case "$OS" in
             Darwin)
