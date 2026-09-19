@@ -14,6 +14,11 @@ pub const AGENT: Style = Style::new().fg(Color::Green);
 pub const TOOL: Style = Style::new().fg(Color::Yellow);
 pub const PLAN: Style = Style::new().fg(Color::Blue);
 pub const ASK: Style = Style::new().fg(Color::Magenta);
+/// The question of a permission picker, and the option it is on.
+pub const QUESTION: Style = Style::new().add_modifier(Modifier::BOLD);
+pub const PICKED: Style = Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD);
+/// The rules that frame the picker.
+pub const FRAME: Style = Style::new().add_modifier(Modifier::DIM);
 pub const FAIL: Style = Style::new().fg(Color::Red).add_modifier(Modifier::BOLD);
 pub const DIM: Style = Style::new().add_modifier(Modifier::DIM);
 /// Markdown headings separate the parts of an agent answer.
@@ -67,9 +72,13 @@ pub const KIND_OTHER: &str = "•";
 pub const PLAN_DONE: &str = "  ☑ ";
 pub const PLAN_TODO: &str = "  ☐ ";
 
-/// A permission question, and the option the picker is on.
-pub const ASK_MARKER: &str = "? ";
-pub const OPTION_PICKED: &str = "  › ";
+/// The picker of a permission question: the label in the rule above, the option
+/// it is on and the ones it is not on, and the option that was chosen once the
+/// question is answered.
+pub const ASK_LABEL: &str = "permission";
+pub const OPTION_PICKED: &str = "❯ ";
+pub const OPTION_IDLE: &str = "  ";
+pub const ANSWER_MARKER: &str = "→ ";
 
 /// Markdown marks, kept with the pane's other visible vocabulary.
 pub const RULE: &str = "─";

@@ -256,7 +256,15 @@ goal id to a seat (014).
     every new one. A patch that starts at its first hunk takes its file
     header from the entry's `path`. A permission question draws the call it asks about under
     the question — the same head line, then the rest of a command that has
-    more than one line, or the diff — above its options.
+    more than one line, or the diff — above its options. A question still
+    open is framed by a rule with the label `permission` in the ask colour
+    above it and a rule below its options. The question is in bold. The
+    picked option starts with `❯ `, and its number and name are in bold in
+    the ask colour; the others start with two spaces and have their numbers
+    dimmed. A question or an option name wider than the pane wraps and is
+    cut nowhere, between grapheme clusters where a word is wider than the
+    row. Once answered, the block is the question, the head line of the call
+    and `→ ` and the name of the option chosen: no option list and no frame.
 26. A chunk continues the block last written, and starts a block of its own
     where anything else came between: a turn that speaks around a tool call
     reads as two blocks with the call between them. The daemon stores each
@@ -296,8 +304,8 @@ goal id to a seat (014).
     of the pane, above the box, whatever came after it — a snapshot taken
     mid-turn ends on the text so far (rule 13), which comes after the
     question in it — and its command or diff is folded to the room its
-    question and options leave, so the question and every option are on the
-    screen together. A post the daemon refuses is said on the transcript, and
+    question, options and two rules leave, so the question and every option
+    are on the screen together. A post the daemon refuses is said on the transcript, and
     the console stays open.
 28. Escape during a running turn posts to console cancel. Ctrl-C twice, or
     Ctrl-D, leaves the console, and the session stays alive. Every way out
@@ -548,10 +556,23 @@ goal id to a seat (014).
   (`::a_chunk_that_arrives_after_the_whole_of_its_turn_is_not_drawn_again`),
   and text after a tool call is a block of its own that the stored whole does
   not repeat (`::agent_text_after_a_tool_call_is_a_block_of_its_own`).
-- A permission question is a picker the arrows move
+- A pending permission question draws a rule labelled `permission` above it
+  and a rule below its options
+  (`ariadne-console/tui/picker.rs::a_pending_question_draws_a_labelled_rule_above_and_a_rule_below`).
+- A permission question is a picker the arrows move: the picked option alone
+  starts with `❯ `
   (`ariadne-console/tui/picker.rs::a_permission_question_renders_as_a_picker_the_arrows_move`),
   and Enter posts the option it is on
   (`::enter_posts_the_permission_option_the_picker_is_on`).
+- A question with a diff of 200 lines in a room of 12 rows shows the question,
+  both rules and each option
+  (`ariadne-console/tui/picker.rs::a_question_with_a_long_diff_shows_the_question_both_rules_and_each_option_in_twelve_rows`).
+- An answered question draws `→ ` and the option chosen, and no other option
+  name and no frame
+  (`ariadne-console/tui/picker.rs::an_answered_question_draws_the_chosen_option_and_no_other`).
+- A question of 200 columns and a long option name wrap in a pane of 80
+  columns with no character lost
+  (`ariadne-console/tui/picker.rs::a_question_of_200_columns_and_a_long_option_name_wrap_in_80_without_losing_a_character`).
 - A typed line is posted and its pending prompt shows at once
   (`ariadne-console/tui/mod.rs::a_pending_prompt_is_on_the_screen_before_the_daemon_confirms_it`)
   and is replaced by the confirmed one

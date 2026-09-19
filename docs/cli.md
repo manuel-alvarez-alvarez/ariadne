@@ -131,13 +131,18 @@ with the arrow keys or its number key. See
 [Permission modes](permissions.md).
 
 ```
-? Bash
-  $ cargo build
+─ permission ───────────────────────────────────
+Bash
+○ $ cargo build
     cargo build
     cargo nextest run
-  › 1. Allow
-    2. Reject
+❯ 1. Allow
+  2. Reject
+────────────────────────────────────────────────
 ```
+
+Two rules frame the question. Once you answer, the console keeps only the
+question, the call's head line and `→` with the option you chose.
 
 The desktop app shows the same console in a session's detail view, in a
 terminal emulator. The daemon draws the pane above into it, so everything on
