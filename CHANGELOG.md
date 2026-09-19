@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.8.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.7.0...v0.8.0) (2026-09-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **daemon:** `memories.repository_id`, `expires_at` and the source columns are nullable. Carry a live database with the migration script. The routes under `/v1/repositories/{id}/memories` are gone.
+
+### Features
+
+* **cli:** write a memory from the CLI, name its scope, and document it ([c101bec](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c101becbe073d2f071ab6fbe951410285c7ef54f))
+* **daemon:** answer the shortest path between two symbols ([c1f5ecd](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c1f5ecdddd7fc5989b67c204805561e388786688))
+* **daemon:** explain every knowledge edge by its resolution step ([81ff1be](https://github.com/manuel-alvarez-alvarez/ariadne/commit/81ff1beb33515d8147cad603a5f7fa4e2865439a))
+* **daemon:** find interactions between repositories ([4a48a29](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4a48a290b9c56d95ecde2b3b0f6ddd06e41dbb94))
+* **daemon:** give memory a global scope, a user write path and an optional expiry ([3007e7c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3007e7ca4d7d6f7756be085bffea3d939ec51387))
+* **daemon:** index every registered repository and serve search_code and outline ([53663ff](https://github.com/manuel-alvarez-alvarez/ariadne/commit/53663ff5494b68e66810c995883ae69c444c7a54))
+* **daemon:** index the remaining languages and outline formats ([1e28357](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1e28357b346b34466dea2baad1054dff8f65ee01))
+* **daemon:** match memory by words ([4a67fa4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4a67fa488e4c76f9c5c3a0a6be077152dd60ad52))
+* **daemon:** resolve references into a symbol graph and serve symbol and impact ([5dabbb2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5dabbb2ae57e18bd28a2dc58c1eb4136b4b69ffd))
+* **daemon:** say how many results a capped knowledge answer left out ([041f006](https://github.com/manuel-alvarez-alvarez/ariadne/commit/041f006e667fafd9d16373a6d6f8a087dbf81397))
+* **daemon:** show session context window usage ([2ad0b18](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2ad0b185a44446a599f70e610f75594afb772e56))
+* **prompts:** add repo_map, and teach the skills the knowledge tools ([a955bfc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a955bfc118a41ce4bd3f4901be055b3fc6713332))
+* **prompts:** teach every seat to read memory and to save only what is worth keeping ([17dd88f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/17dd88f70bff1faf31e9d287c6a647c44b9959b4))
+* **ui:** show and write memories of both scopes in the desktop app ([326cfb6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/326cfb6f80bba469c8a78ac00229787644c05b14))
+* **ui:** show knowledge status, reindex, search and interactions on the repository page ([7cad156](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7cad156dd957e9d431799b915f72844d24bf6cde))
+
+
+### Bug Fixes
+
+* **daemon:** count only cache reads as cached input ([51b2ab8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/51b2ab84a24218aca04010139aefa7d2b995acad))
+* **daemon:** read token usage from the agent's own transcript ([45a56af](https://github.com/manuel-alvarez-alvarez/ariadne/commit/45a56afd3c0601c2dd428ee06626714439513020))
+* **daemon:** resolve a call to a code definition only ([b7afaca](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b7afaca613424c99cd358f1b5e426366d904000b))
+* **mcp:** deliver each message once, and cut what the message and skill tools return ([ab4faf3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ab4faf34401478d5ab895447799160b8b8ab7173))
+* **prompts:** run checks in the foreground and read only their failures ([ed5c71b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ed5c71bb6e8399baaf100b0ce7730af1bece2707))
+
 ## [0.7.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.6.0...v0.7.0) (2026-09-18)
 
 
