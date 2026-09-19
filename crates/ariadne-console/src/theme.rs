@@ -64,6 +64,12 @@ pub const THOUGHT_MARKER: &str = "· ";
 pub const DAEMON_MARKER: &str = "» daemon";
 pub const ERROR_MARKER: &str = "✗ ";
 
+/// The input box: its rule, first-row prompt, continued-row indent and hint.
+pub const INPUT_RULE: &str = "─";
+pub const INPUT_PROMPT: &str = "❯ ";
+pub const INPUT_CONTINUATION: &str = "  ";
+pub const INPUT_PLACEHOLDER: &str = "Tell the agent what to do";
+
 /// How a call stands, at the head of its line.
 pub const CALL_DONE: &str = "✓";
 pub const CALL_FAILED: &str = "✗";

@@ -330,9 +330,20 @@ goal id to a seat (014).
     prompt: the daemon gives the live chunks and the stored events their ids
     from one monotonic generator, and a new turn's chunk gets its id after
     its prompt, which is after the whole before it.
-27. Enter posts the input box to console input, Shift+Enter and Alt+Enter add
-    a line to it, and each prompt typed shows at once and is replaced by its
-    own `user_prompt_submit`, in the order they were posted. A prompt typed
+27. The input box has one dim horizontal rule above its text and one below,
+    with no side border or corners. Its first text row starts with `❯ ` and
+    every continued row starts with two spaces. An empty box shows the dim
+    placeholder `Tell the agent what to do`, which is not input. Text wraps
+    between grapheme clusters by display width. The box grows to four visual
+    rows and then scrolls down to keep the cursor visible. Up and Down move by
+    visual row. From the first or last visual row they move through prompts
+    this console sent and console-sourced prompts in its snapshot; moving past
+    the newest restores the draft. Daemon-sourced prompts never enter this
+    history. Enter posts the input box to console input. Shift+Enter,
+    Alt+Enter and Ctrl-J add a line and post nothing. Enter after a backslash
+    at the end of the line removes it and adds a line; any other backslash
+    stays and Enter posts the prompt. Each prompt typed shows at once and is
+    replaced by its own `user_prompt_submit`, in the order they were posted. A prompt typed
     while a turn runs is queued behind it (rule 16), so what that turn says
     after the prompt was typed is drawn above the prompt — the prompt is the
     next turn's — and the block above the prompt stays in the pane while the
@@ -564,8 +575,8 @@ goal id to a seat (014).
   (`ariadne-console/tui/blocks.rs::a_line_of_wide_characters_wraps_at_the_display_width`)
   and in markdown
   (`ariadne-console/markdown.rs::a_paragraph_of_wide_characters_wraps_at_the_display_width`);
-  the cursor sits after the columns a wide character draws on
-  (`ariadne-console/tui/input.rs::the_cursor_sits_after_the_columns_a_wide_character_draws_on`),
+  the input wraps wide characters and puts the cursor after their cells
+  (`ariadne-console/tui/input.rs::wide_characters_wrap_at_display_width_and_put_the_cursor_after_their_cells`),
   an emoji sequence measured as it is drawn
   (`::the_cursor_sits_after_an_emoji_sequence_as_it_is_drawn`); and a cut
   keeps an emoji sequence whole, in a call's head
@@ -663,7 +674,9 @@ goal id to a seat (014).
   starts with `❯ `
   (`ariadne-console/tui/picker.rs::a_permission_question_renders_as_a_picker_the_arrows_move`),
   and Enter posts the option it is on
-  (`::enter_posts_the_permission_option_the_picker_is_on`).
+  (`::enter_posts_the_permission_option_the_picker_is_on`), without consuming
+  a trailing input backslash
+  (`ariadne-console/tui/input.rs::permission_enter_keeps_a_trailing_backslash_for_the_input`).
 - A question with a diff of 200 lines in a room of 12 rows shows the question,
   both rules and each option
   (`ariadne-console/tui/picker.rs::a_question_with_a_long_diff_shows_the_question_both_rules_and_each_option_in_twelve_rows`).
@@ -676,22 +689,49 @@ goal id to a seat (014).
 - A typed line is posted and its pending prompt shows at once
   (`ariadne-console/tui/mod.rs::a_pending_prompt_is_on_the_screen_before_the_daemon_confirms_it`)
   and is replaced by the confirmed one
-  (`::a_typed_line_is_posted_and_its_pending_prompt_is_replaced_by_the_confirmed_one`);
-  Shift+Enter and Alt+Enter add a line instead
-  (`::shift_enter_and_alt_enter_add_a_line_instead_of_sending`), and a line
-  longer than the box scrolls under the cursor
-  (`::a_line_longer_than_the_input_box_scrolls_under_the_cursor`). Two
-  prompts posted before the first is confirmed stay apart
+  (`::a_typed_line_is_posted_and_its_pending_prompt_is_replaced_by_the_confirmed_one`).
+  Two prompts posted before the first is confirmed stay apart
   (`::a_second_prompt_typed_before_the_first_is_confirmed_keeps_both_apart`),
   and what a running turn says is drawn above a prompt typed while it ran
   (`::what_a_running_turn_says_is_drawn_above_a_prompt_typed_while_it_ran`).
   A refused prompt is said on the transcript and does not close the console
   (`::a_refused_prompt_is_said_on_the_transcript_and_does_not_close_the_console`).
+- The input box draws two horizontal rules without side or corner borders
+  (`ariadne-console/tui/input.rs::the_input_box_draws_two_rules_and_no_side_or_corner_border`).
+- The input box starts with `❯ ` and indents each wrapped row by two columns
+  (`ariadne-console/tui/input.rs::the_first_input_row_has_a_prompt_and_each_wrapped_row_has_two_spaces`).
+- Two hundred input columns wrap to three rows in an 80-column pane, with the
+  end and cursor visible
+  (`ariadne-console/tui/input.rs::two_hundred_columns_wrap_to_three_rows_without_hiding_the_end`).
+- Wide characters wrap at display width and leave the cursor in the correct
+  cell
+  (`ariadne-console/tui/input.rs::wide_characters_wrap_at_display_width_and_put_the_cursor_after_their_cells`);
+  a cursor after a full row uses the next row's continuation cell
+  (`::the_cursor_uses_the_continuation_cell_after_a_full_wrapped_row`), and
+  wrapping keeps an emoji grapheme whole (`::wrapping_keeps_an_emoji_grapheme_whole`).
+- Shift+Enter, Alt+Enter, Ctrl-J and backslash then Enter add a line without
+  sending; the next Enter sends every line without the backslash
+  (`ariadne-console/tui/input.rs::every_newline_key_adds_a_line_and_sends_only_on_the_next_enter`).
+  Ctrl-J also works when encoded as a line-feed character
+  (`::ctrl_j_encoded_as_a_line_feed_adds_a_line`), while Alt-J and Shift-J
+  are not newline keys (`::alt_j_and_shift_j_are_not_newline_keys`).
+- A backslash before the end of its line stays, and Enter sends it
+  (`ariadne-console/tui/input.rs::a_backslash_before_the_line_end_stays_in_the_prompt_enter_sends`).
+- Up recalls the last sent prompt and Down restores the draft
+  (`ariadne-console/tui/input.rs::up_recalls_the_last_prompt_and_down_restores_the_draft`);
+  Up and Down move through a wrapped draft before using history
+  (`::up_and_down_move_through_a_wrapped_draft_before_history`).
+- A daemon prompt never enters input history
+  (`ariadne-console/tui/input.rs::a_daemon_prompt_never_enters_history`).
+- An empty input shows a dim placeholder which is never sent
+  (`ariadne-console/tui/input.rs::an_empty_input_shows_a_dim_placeholder_that_is_never_sent`).
 - A pasted text with two line breaks is one prompt with two line breaks, and
   sends nothing until Enter
   (`ariadne-console/tui/mod.rs::a_pasted_text_is_one_prompt_with_its_line_breaks_and_sends_nothing_until_enter`);
   it goes in at the cursor, a carriage return being a line break
   (`::a_paste_goes_in_at_the_cursor_and_a_carriage_return_is_a_line_break`).
+- More than four visual input rows scroll down to keep the cursor visible
+  (`ariadne-console/tui/input.rs::more_than_four_visual_rows_scroll_to_keep_the_cursor_visible`).
 - The line-editing keys do what the shell's do: Ctrl-A
   (`ariadne-console/tui/input.rs::ctrl_a_moves_to_the_line_start`), Ctrl-E
   (`::ctrl_e_moves_to_the_line_end`), Ctrl-U

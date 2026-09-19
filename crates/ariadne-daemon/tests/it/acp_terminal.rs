@@ -130,10 +130,14 @@ fn home_with_permission_mode(
     home
 }
 
-/// The top border of the input box, at a width: what a row of the screen
-/// reads as when the console is drawn `cols` wide.
-fn border(cols: usize) -> String {
-    format!("┌{}┐", "─".repeat(cols - 2))
+/// One horizontal rule of the input box at the width the client sent.
+fn rule(cols: usize) -> String {
+    "─".repeat(cols)
+}
+
+fn rule_count(screen: &str, cols: usize) -> usize {
+    let rule = rule(cols);
+    screen.lines().filter(|row| *row == rule).count()
 }
 
 /// The client's end: the emulator the bytes draw on, and the socket they
@@ -273,9 +277,10 @@ async fn the_terminal_draws_the_transcript_and_the_status_line_at_the_client_siz
     let screen = client.screen();
     assert!(screen.contains("Read"), "the tool call is drawn:\n{screen}");
     let rows: Vec<&str> = screen.lines().collect();
+    let rule = rule(100);
     let top = rows
         .iter()
-        .rposition(|row| *row == border(100))
+        .position(|row| *row == rule)
         .unwrap_or_else(|| panic!("the input box spans the client's width:\n{screen}"));
     assert_eq!(
         rows[top - 1].trim_end(),
@@ -283,10 +288,12 @@ async fn the_terminal_draws_the_transcript_and_the_status_line_at_the_client_siz
         "the status row names the seat, the model and the status:\n{screen}"
     );
     let bottom = top
-        + rows[top..]
+        + 1
+        + rows[top + 1..]
             .iter()
-            .position(|row| row.starts_with('└'))
-            .unwrap_or_else(|| panic!("the box has a bottom border:\n{screen}"));
+            .position(|row| *row == rule)
+            .unwrap_or_else(|| panic!("the box has a bottom rule:\n{screen}"));
+    assert_eq!(rule_count(&screen, 100), 2, "the box has two rules");
     assert!(
         rows[bottom + 1].starts_with(" enter send · shift+enter newline"),
         "the footer holds the hints:\n{screen}"
@@ -564,7 +571,7 @@ async fn a_resize_redraws_at_the_new_size() {
     let mut client = Client::open(address, &session.id, 100, 30).await;
     client
         .read_until("the console at 100 columns", |screen| {
-            screen.contains("idle") && screen.lines().any(|row| row == border(100))
+            screen.contains("idle") && rule_count(screen, 100) == 2
         })
         .await;
 
@@ -572,7 +579,7 @@ async fn a_resize_redraws_at_the_new_size() {
 
     client
         .read_until("the console redrawn at 60 columns", |screen| {
-            screen.contains("idle") && screen.lines().any(|row| row == border(60))
+            screen.contains("idle") && rule_count(screen, 60) == 2
         })
         .await;
 }

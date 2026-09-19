@@ -376,6 +376,7 @@ mod tests {
         let marked = |shown: &str| -> Vec<String> {
             shown
                 .lines()
+                .take_while(|row| *row != rule(60))
                 .filter(|row| row.starts_with("❯ "))
                 .map(str::to_string)
                 .collect()

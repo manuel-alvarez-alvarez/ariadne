@@ -42,9 +42,9 @@ footer.
 
 ```
  author · claude:opus · running   ⠹ thinking 12s
-┌──────────────────────────────────────────────────────┐
-│the input box                                         │
-└──────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────
+❯ the input box
+────────────────────────────────────────────────────────
  enter send · shift+enter newline · esc cancel    ↑ 12.4k ↓ 3.1k
 ```
 
@@ -68,6 +68,20 @@ seat, the clock, and what the turn is doing, and keeps the session's status to
 the last; the footer drops its later key hints, then the tokens, and keeps the
 first hint to the last. Resizing the terminal redraws the pane at the new
 size.
+
+The input box has a dim rule above and below it, without side borders. Its
+prompt is `❯ `, and continued rows align under the text:
+
+```
+──────────────────────────────────────────────────────
+❯ typed text wraps at the pane width
+  and continues on the next row
+──────────────────────────────────────────────────────
+```
+
+An empty box says `Tell the agent what to do` in dim text. The hint is not
+part of the prompt. The box grows to four text rows, then scrolls with the
+cursor.
 
 Before the transcript, the scrollback gets a short welcome banner naming the
 seat, task (or orchestrator goal), model and effort, repository, and session.
@@ -118,18 +132,23 @@ past a page with a count.
 | Key | What it does |
 | --- | --- |
 | Enter | Sends what you typed, or answers the permission question on screen |
-| Shift+Enter, Alt+Enter | Starts a new line in the input box |
+| Shift+Enter, Alt+Enter, Ctrl-J | Starts a new line without sending |
+| `\` then Enter | Removes the final backslash and starts a new line without sending |
+| ↑, ↓ | Moves by a wrapped row; at the first or last row, moves through prompt history |
 | Ctrl-A, Ctrl-E | Moves to the start or the end of the line |
 | Ctrl-U, Ctrl-K | Deletes to the start or the end of the line |
 | Ctrl-W | Deletes the word before the cursor |
 | Alt+←, Alt+→ | Moves back or forward one word (Alt-B and Alt-F do the same) |
-| ↑ ↓, or 1 to 9 | Chooses an option of a permission question |
+| ↑, ↓, or 1 to 9 during a question | Chooses a permission option instead of moving through input or history |
 | Escape | Cancels the running turn |
 | Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running |
 
 Pasting puts the text into the input box where the cursor is, line breaks
 and all; nothing is sent until you press Enter. Wide characters and emoji
 take the two columns they draw on, in the transcript and in the box alike.
+Moving down past the newest history entry restores the draft you were typing.
+History includes prompts typed in this console and its snapshot, never prompts
+sent by the daemon.
 
 A typed prompt shows as `❯ text` straight away, with a coloured bar down its
 left edge. Until the daemon takes it, it carries a dim `queued` tag: a prompt

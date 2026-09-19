@@ -224,6 +224,26 @@ impl Console {
     /// viewport across a reconnect. It is in the scrollback, where it was
     /// printed, and the next block redraws the viewport.
     pub fn snapshot(&mut self, events: &[AgentEventDto]) {
+        self.input.sync_history(
+            events
+                .iter()
+                .filter(|event| event.kind == "user_prompt_submit")
+                .filter(|event| {
+                    event
+                        .payload
+                        .get("source")
+                        .and_then(|source| source.as_str())
+                        == Some("console")
+                })
+                .filter_map(|event| {
+                    event
+                        .payload
+                        .get("text")
+                        .and_then(|text| text.as_str())
+                        .map(str::to_owned)
+                })
+                .collect(),
+        );
         // Replaying the transcript replays every turn's start and end, and
         // the clock follows: a turn that was running before the stream
         // dropped counts from its own prompt again, and a turn that began
@@ -437,7 +457,10 @@ impl Console {
             return Action::None;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let newline = key
+        // Crossterm 0.29 reports Ctrl-J in raw mode as Ctrl with `j`, both
+        // for its byte parser and the keyboard protocol. Accept the encoded
+        // line-feed character too, as the terminal WebSocket carries keys.
+        let modified_enter = key
             .modifiers
             .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
 
@@ -484,7 +507,15 @@ impl Console {
 
         match key.code {
             KeyCode::Esc if self.turn.running() => Action::Cancel,
-            KeyCode::Enter if newline => {
+            KeyCode::Enter if modified_enter => {
+                self.input.newline();
+                Action::None
+            }
+            KeyCode::Char('j' | '\n') if ctrl => {
+                self.input.newline();
+                Action::None
+            }
+            KeyCode::Enter if self.input.remove_trailing_backslash() => {
                 self.input.newline();
                 Action::None
             }
@@ -881,7 +912,6 @@ mod tests {
 
     use crate::tui::testing::*;
     use crate::tui::*;
-    use unicode_width::UnicodeWidthStr;
 
     /// A live `tool_call_update` carries the daemon's merged call under
     /// `acp` and no `tool_name` (021).
@@ -1296,8 +1326,8 @@ mod tests {
         assert!(
             shown
                 .lines()
-                .any(|line| line.width() == 40 && line.ends_with('┐')),
-            "the box's border reaches the new right edge: {shown}"
+                .any(|line| line == "────────────────────────────────────────"),
+            "the box's rule reaches the new right edge: {shown}"
         );
     }
 
