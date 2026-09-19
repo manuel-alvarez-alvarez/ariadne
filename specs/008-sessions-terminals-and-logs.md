@@ -296,7 +296,9 @@ goal id to a seat (014).
     marker, a thought dimmed and folded, a tool call the block of the next
     rule, and a permission question a picker. Markdown tables align their
     display-width cells under bold headers — not underlined, with one dim
-    rule beneath the row — and wrap in a cell, a code span
+    rule as wide as the row beneath it — and wrap at spaces in a cell: a
+    table wider than the pane keeps each column that fits its share at its
+    own width and splits what is left among the others, a code span
     keeping its backticks there as in text, or become
     `header: value` lines where the pane is too narrow. Fenced code has a dim
     language label, a two-column code indent and a dim `↪` on continued lines,
@@ -577,6 +579,9 @@ goal id to a seat (014).
   (`ariadne-console/markdown.rs::a_table_aligns_wide_cells_under_its_headers`),
   honour right alignment (`::a_right_aligned_table_column_is_flush_right`),
   wrap wide cells without loss (`::a_wide_table_wraps_each_cell_without_losing_text`),
+  keep short columns whole and wrap long cells at spaces
+  (`::a_wide_table_keeps_short_columns_whole_and_wraps_long_cells_at_spaces`,
+  `::a_word_wider_than_its_cell_is_cut_not_let_out`),
   and become pairs in a narrow pane (`::a_narrow_table_draws_header_value_pairs`).
 - Fenced code shows its language without a fence and wraps every character
   (`ariadne-console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,

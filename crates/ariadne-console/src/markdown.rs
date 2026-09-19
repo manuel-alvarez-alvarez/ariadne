@@ -445,13 +445,14 @@ impl Writer {
             self.draw_pairs(&prefix, width, &table, columns);
             return;
         } else {
-            distribute(
+            fit_columns(
+                &natural,
                 width.saturating_sub(separator.width() * columns.saturating_sub(1)),
-                columns,
             )
         };
+        let drawn = widths.iter().sum::<usize>() + separator.width() * columns.saturating_sub(1);
         self.draw_row(&prefix, &table.header, &widths, &table.alignments, true);
-        self.line(&prefix, &RULE.repeat(natural_width.min(width)), MARK);
+        self.line(&prefix, &RULE.repeat(drawn), MARK);
         for row in &table.rows {
             self.draw_row(&prefix, row, &widths, &table.alignments, false);
         }
@@ -468,7 +469,7 @@ impl Writer {
         let cells: Vec<_> = widths
             .iter()
             .enumerate()
-            .map(|(i, width)| wrap_exact(row.get(i).map(String::as_str).unwrap_or(""), *width))
+            .map(|(i, width)| wrap_words(row.get(i).map(String::as_str).unwrap_or(""), *width))
             .collect();
         let height = cells.iter().map(Vec::len).max().unwrap_or(1);
         for at in 0..height {
@@ -497,7 +498,7 @@ impl Writer {
             for i in 0..columns {
                 let header = table.header.get(i).map(String::as_str).unwrap_or("");
                 let value = row.get(i).map(String::as_str).unwrap_or("");
-                for part in wrap_exact(&format!("{header}: {value}"), width) {
+                for part in wrap_words(&format!("{header}: {value}"), width) {
                     self.line(prefix, &part, Style::new());
                 }
             }
@@ -537,6 +538,60 @@ fn wrap_exact(text: &str, width: usize) -> Vec<String> {
         rest = next;
     }
     out
+}
+
+/// Text wrapped at its spaces, each line at most `width` wide. A word wider
+/// than a line is cut, as [`wrap_exact`] would, rather than let out.
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut out = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let wanted = if line.is_empty() {
+            word.width()
+        } else {
+            line.width() + 1 + word.width()
+        };
+        if wanted <= width {
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+            continue;
+        }
+        if !line.is_empty() {
+            out.push(std::mem::take(&mut line));
+        }
+        let mut parts = wrap_exact(word, width);
+        line = parts.pop().unwrap_or_default();
+        out.extend(parts);
+    }
+    if !line.is_empty() || out.is_empty() {
+        out.push(line);
+    }
+    out
+}
+
+/// Column widths for a table wider than `room`: a column that fits its fair
+/// share keeps its natural width, and the columns that do not share what the
+/// others left, so a narrow `#` column does not take a third of the row.
+fn fit_columns(natural: &[usize], room: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..natural.len()).collect();
+    order.sort_by_key(|&column| natural[column]);
+    let mut widths = natural.to_vec();
+    let mut left = room;
+    for (at, &column) in order.iter().enumerate() {
+        let rest = &order[at..];
+        if natural[column] <= left / rest.len() {
+            left -= natural[column];
+            continue;
+        }
+        for (&column, share) in rest.iter().zip(distribute(left, rest.len())) {
+            widths[column] = share.max(1);
+        }
+        break;
+    }
+    widths
 }
 
 fn distribute(width: usize, columns: usize) -> Vec<usize> {
@@ -689,6 +744,31 @@ mod tests {
         assert_eq!(rendered.matches('a').count(), 46);
         assert_eq!(rendered.matches('b').count(), 46);
         assert_eq!(rendered.matches('c').count(), 47);
+    }
+
+    #[test]
+    fn a_wide_table_keeps_short_columns_whole_and_wraps_long_cells_at_spaces() {
+        let task = "Knowledge screen and Repositories graph with a sidebar entry and pickers";
+        let source =
+            format!("| # | Task | Depends on |\n| --- | --- | --- |\n| A | {task} | B, E |");
+        let lines = render(&source, 40);
+        let rendered = text(&lines);
+        assert!(widest(&lines) <= 40, "{rendered:?}");
+        assert!(rendered[0].starts_with("# | Task"), "{rendered:?}");
+        assert!(rendered[0].ends_with("| Depends on"), "{rendered:?}");
+        // The rule is as wide as the rows it sits between.
+        assert_eq!(rendered[1].width(), rendered[0].width());
+        let words: Vec<&str> = rendered[2..]
+            .iter()
+            .flat_map(|row| row.split(" | ").nth(1).unwrap_or("").split_whitespace())
+            .collect();
+        assert_eq!(words, task.split_whitespace().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_word_wider_than_its_cell_is_cut_not_let_out() {
+        assert_eq!(wrap_words("abcdefgh ij", 3), ["abc", "def", "gh", "ij"]);
+        assert_eq!(wrap_words("", 3), [""]);
     }
 
     #[test]
