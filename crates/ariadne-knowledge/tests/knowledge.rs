@@ -1332,6 +1332,126 @@ async fn an_implementation_is_listed_under_the_trait_it_is_of() {
     );
 }
 
+/// A file graph groups the symbol edges between each pair of files and kind.
+/// It keeps a group exact only when every edge in that group is exact, and
+/// it removes edges whose ends are the same file.
+#[tokio::test]
+async fn a_file_graph_groups_symbol_edges_and_removes_self_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            (
+                "caller/from.rs",
+                "pub fn caller() { unique(); duplicated(); sole(); helper(); }\n\
+                 pub fn helper() {}\n",
+            ),
+            ("exact/to.rs", "pub fn sole() {}\n"),
+            (
+                "one/to.rs",
+                "pub fn unique() {}\n\
+                 pub fn duplicated() {}\n",
+            ),
+            ("two/to.rs", "pub fn duplicated() { let _ = 1; }\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let graph = store.graph("repo", "main", 20).await.unwrap();
+
+    assert_eq!(graph.total_nodes, 4);
+    assert!(!graph.truncated);
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| (node.path.as_str(), node.language.as_str(), node.symbols))
+            .collect::<Vec<_>>(),
+        [
+            ("caller/from.rs", "rust", 2),
+            ("exact/to.rs", "rust", 1),
+            ("one/to.rs", "rust", 2),
+            ("two/to.rs", "rust", 1),
+        ]
+    );
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .map(|edge| {
+                (
+                    edge.from.as_str(),
+                    edge.to.as_str(),
+                    edge.kind.as_str(),
+                    edge.count,
+                    edge.confidence.as_str(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            ("caller/from.rs", "exact/to.rs", "calls", 1, "exact"),
+            ("caller/from.rs", "one/to.rs", "calls", 2, "heuristic"),
+            ("caller/from.rs", "two/to.rs", "calls", 1, "heuristic"),
+        ]
+    );
+}
+
+/// Two paths with the same blob do not turn an edge inside that blob into
+/// an edge between the paths.
+#[tokio::test]
+async fn a_file_graph_removes_blob_self_edges_before_paths_are_joined() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "pub fn one() { two(); }\npub fn two() {}\n";
+    let repo = graph_repo(dir.path(), &[("src/a.rs", text), ("src/b.rs", text)]);
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let graph = store.graph("repo", "main", 20).await.unwrap();
+
+    assert_eq!(graph.total_nodes, 2);
+    assert!(graph.edges.is_empty(), "{:#?}", graph.edges);
+}
+
+/// A limited file graph keeps the files with the largest degree and
+/// reports how many files the complete graph holds.
+#[tokio::test]
+async fn a_file_graph_limit_keeps_the_files_with_most_edges_and_marks_truncation() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            (
+                "caller/from.rs",
+                "pub fn caller() { unique(); duplicated(); }\n",
+            ),
+            (
+                "one/to.rs",
+                "pub fn unique() {}\n\
+                 pub fn duplicated() {}\n",
+            ),
+            ("two/to.rs", "pub fn duplicated() { let _ = 1; }\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let graph = store.graph("repo", "main", 2).await.unwrap();
+
+    assert_eq!(graph.total_nodes, 3);
+    assert!(graph.truncated);
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| node.path.as_str())
+            .collect::<Vec<_>>(),
+        ["caller/from.rs", "one/to.rs"]
+    );
+    assert_eq!(graph.edges.len(), 1);
+    assert_eq!(graph.edges[0].count, 2);
+}
+
 /// The map ranks the files of a ref by what names them, and a map asked for
 /// around one path ranks that file's neighbors first. Both hold to the
 /// budget: the text is cut at the tokens the caller allowed, four characters

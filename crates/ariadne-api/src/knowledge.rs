@@ -360,6 +360,68 @@ pub struct KnowledgeMapDto {
     pub files_left: i64,
 }
 
+/// Query of `GET /v1/knowledge/graph`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeGraphQuery {
+    /// One repository id.
+    pub repository: String,
+    /// The branch to read. Omit it for the caller's own.
+    pub git_ref: Option<String>,
+    /// How many file nodes to return (default 2000, max 10000).
+    pub limit: Option<i64>,
+}
+
+impl KnowledgeGraphQuery {
+    pub const DEFAULT_LIMIT: i64 = 2000;
+    pub const MAX_LIMIT: i64 = 10_000;
+
+    pub fn limit(&self) -> i64 {
+        self.limit
+            .unwrap_or(Self::DEFAULT_LIMIT)
+            .clamp(1, Self::MAX_LIMIT)
+    }
+}
+
+/// One file in a repository graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeGraphNodeDto {
+    pub path: String,
+    pub language: String,
+    pub symbols: i64,
+}
+
+/// How confidently every symbol edge in a file edge was resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeGraphConfidence {
+    Exact,
+    Heuristic,
+}
+
+/// One grouped edge between two files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeGraphEdgeDto {
+    pub from: String,
+    pub to: String,
+    pub kind: String,
+    /// How many symbol-level edges this file edge groups.
+    pub count: i64,
+    /// `exact` only when every grouped edge is exact.
+    pub confidence: KnowledgeGraphConfidence,
+}
+
+/// The files and file-to-file edges of one repository ref.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeGraphDto {
+    pub repository_id: String,
+    pub git_ref: String,
+    pub nodes: Vec<KnowledgeGraphNodeDto>,
+    pub edges: Vec<KnowledgeGraphEdgeDto>,
+    pub truncated: bool,
+    pub total_nodes: i64,
+}
+
 /// Query of `GET /v1/knowledge/interactions`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 #[serde(deny_unknown_fields)]

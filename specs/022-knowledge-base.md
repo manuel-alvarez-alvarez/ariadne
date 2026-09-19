@@ -249,7 +249,7 @@ agent to do with the tools (017); and the memory tools beside these (019).
     edge on the first hop; an empty path is `(no path within N)`. An answer
     is cut at 8 KiB, with a last line naming how many results were left and
     saying to narrow the query.
-27. `ariadne knowledge status|reindex|search|outline|symbol|path|impact|interactions|map`
+27. `ariadne knowledge status|reindex|search|outline|symbol|path|impact|interactions|map|graph`
     (014) read the same endpoints. `search` takes `--repository`, `--ref`,
     `--kind`, `--path` and `--limit`; `outline` takes the repository, the path
     and `--ref`; `symbol` takes the name, `--repository`, `--ref` and
@@ -257,7 +257,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
     `--depth`; `impact` takes `--repository`, one of `--symbol` and
     `--diff`, `--ref` and `--depth`; `interactions` takes the repository and
     `--ref`; `map` takes the repository, `--path`, `--budget` and `--ref`,
-    and prints the map's text as it came. `search`, `outline`, `path`,
+    and prints the map's text as it came; `graph` takes the repository,
+    `--ref`, `--limit` and `--json`. Without `--json`, `graph` prints its
+    node count, its edge counts by kind, and the ten files with the largest
+    degree. With `--json`, it prints the route response. `search`,
+    `outline`, `path`,
     `impact` and `interactions` are listings,
     whose `-q` prints `path:line` and the line range — an interaction row
     leads with its from end as `repository:path:line`, and names its kind,
@@ -426,6 +430,22 @@ agent to do with the tools (017); and the memory tools beside these (019).
     `kind`, `name`, and the `edge_kind` and `confidence` of its incoming edge;
     the first hop has neither edge field. `hops` is empty when no path exists
     within `depth`.
+
+35. `GET /v1/knowledge/graph` takes `repository`, and optionally `git_ref`
+    (the caller's own by default, rule 20) and `limit` (2000 by default,
+    10000 at most). It answers one `KnowledgeGraphDto`: `repository_id`,
+    `git_ref`, `nodes`, `edges`, `truncated` and `total_nodes`. A node is one
+    file at the ref: `path`, `language` and its `symbols` count. An edge is
+    one `(from, to, kind)` of file paths, grouped first by the edge blobs and
+    then joined to the files at the ref: `count` is its symbol-level edge
+    count, and `confidence` is `exact` only when every grouped edge is exact,
+    else `heuristic`. Only edges whose two ends are the named repository and
+    ref are kept. An edge whose blobs match is removed before paths are
+    joined, and an edge from a path to itself is removed. When the ref has
+    more files than `limit`, the response keeps the files with the
+    largest degree, removes edges with an end outside that set, and sets
+    `truncated`; degree counts the grouped edges at both ends. `total_nodes`
+    is the file count before that cut.
 
 ## Languages
 
@@ -740,6 +760,16 @@ and by `(kind, name)`.
   (`knowledge.rs::a_map_ranks_over_the_symbol_edges_and_not_the_manifests`).
 - Registering a repository answers its map under the budget asked for
   (`tests/it/knowledge.rs::registering_a_repository_indexes_its_base_branch`).
+- A file graph groups symbol edges by file pair and kind, counts them, marks
+  a group exact only when every edge is exact, and removes self-edges
+  (`knowledge.rs::a_file_graph_groups_symbol_edges_and_removes_self_edges`,
+  `::a_file_graph_removes_blob_self_edges_before_paths_are_joined`).
+- A limited file graph keeps the files with the largest degree and
+  reports the full file count with `truncated`
+  (`knowledge.rs::a_file_graph_limit_keeps_the_files_with_most_edges_and_marks_truncation`).
+- The file graph route returns its contract for a known repository and 404
+  for an unknown one
+  (`tests/it/knowledge.rs::the_file_graph_route_returns_its_contract_and_rejects_an_unknown_repository`).
 - Every endpoint is in the OpenAPI document
   (`tests/it/knowledge.rs::every_knowledge_endpoint_is_in_the_openapi_document`).
 - A direct edge wins over a two-edge path, the depth stops the walk, and a
@@ -789,13 +819,16 @@ and by `(kind, name)`.
   `::knowledge_path_takes_two_names_and_the_depth`,
   `::knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth`,
   `::knowledge_interactions_takes_the_repository_and_the_ref`,
-  `::knowledge_map_takes_the_path_and_the_budget`), and a search
+  `::knowledge_map_takes_the_path_and_the_budget`,
+  `::knowledge_graph_takes_the_repository_ref_limit_and_json_flag`), and a search
   row, an impact row and an interaction row each lead with their location
   (`commands/knowledge.rs::a_search_row_leads_with_its_location_and_titles_the_symbol`,
   `::an_impact_row_leads_with_its_location_and_says_how_far_away_it_is`,
   `::an_interaction_row_leads_with_its_from_end_and_names_its_kind`), and an
   end of a `symbol` block names its step and its candidate count
-  (`::an_end_row_names_the_step_that_resolved_it`).
+  (`::an_end_row_names_the_step_that_resolved_it`). A graph summary counts
+  its edges by kind and ranks files by degree
+  (`commands/knowledge.rs::graph_summary_counts_edges_by_kind_and_ranks_files_by_degree`).
 - The desktop knowledge screen keeps its pickers and its tab in the URL,
   renders a status card per repository in every state, posts a reindex and
   shows `indexing` at once, and refetches once `knowledge_indexed` arrives

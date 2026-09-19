@@ -12,9 +12,9 @@ use axum::http::{Request, StatusCode};
 
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::knowledge::{
-    KnowledgeHitDto, KnowledgeImpactDto, KnowledgeIndexedDto, KnowledgeInteractionGroupDto,
-    KnowledgeMapDto, KnowledgeOutlineEntryDto, KnowledgePathDto, KnowledgeState,
-    KnowledgeStatusDto, KnowledgeSymbolDto,
+    KnowledgeGraphDto, KnowledgeHitDto, KnowledgeImpactDto, KnowledgeIndexedDto,
+    KnowledgeInteractionGroupDto, KnowledgeMapDto, KnowledgeOutlineEntryDto, KnowledgePathDto,
+    KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
 };
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{Actor, SessionStatus, TaskStatus};
@@ -180,6 +180,39 @@ async fn registering_a_repository_indexes_its_base_branch() {
             "/v1/knowledge/outline?repository={}&path=nothing.rs",
             repo.id
         )),
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+}
+
+/// The file graph route returns its public shape for one repository and
+/// returns not found for an unknown repository.
+#[tokio::test]
+async fn the_file_graph_route_returns_its_contract_and_rejects_an_unknown_repository() {
+    let h = harness().knowledge().await;
+    let mut rx = h.bus.subscribe();
+    let path = code_repo(&h, "repo");
+    let repo = h.repository(&path).await;
+    indexed(&mut rx, &repo.id, "main", None).await;
+
+    let graph: KnowledgeGraphDto = h
+        .get(&format!(
+            "/v1/knowledge/graph?repository={}&limit=1",
+            repo.id
+        ))
+        .await;
+    assert_eq!(graph.repository_id, repo.id);
+    assert_eq!(graph.git_ref, "main");
+    assert_eq!(graph.total_nodes, 1);
+    assert!(!graph.truncated);
+    assert_eq!(graph.nodes.len(), 1);
+    assert_eq!(graph.nodes[0].path, "lib.rs");
+    assert_eq!(graph.nodes[0].language, "rust");
+    assert_eq!(graph.nodes[0].symbols, 1);
+    assert!(graph.edges.is_empty());
+
+    h.error(
+        get("/v1/knowledge/graph?repository=missing"),
         StatusCode::NOT_FOUND,
     )
     .await;
@@ -504,8 +537,20 @@ async fn every_knowledge_endpoint_is_in_the_openapi_document() {
         "/v1/knowledge/path",
         "/v1/knowledge/interactions",
         "/v1/knowledge/map",
+        "/v1/knowledge/graph",
     ] {
         assert!(document["paths"].get(path).is_some(), "no {path}");
+    }
+    for schema in [
+        "KnowledgeGraphDto",
+        "KnowledgeGraphNodeDto",
+        "KnowledgeGraphEdgeDto",
+        "KnowledgeGraphConfidence",
+    ] {
+        assert!(
+            document["components"]["schemas"].get(schema).is_some(),
+            "no {schema}"
+        );
     }
 }
 

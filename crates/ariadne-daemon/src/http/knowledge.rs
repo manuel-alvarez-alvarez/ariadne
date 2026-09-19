@@ -7,12 +7,13 @@ use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::knowledge::{
     KnowledgeContextDto, KnowledgeContextMoreDto, KnowledgeDetail, KnowledgeEdgeDto,
-    KnowledgeEndpointDto, KnowledgeHitDto, KnowledgeImpactCallerDto, KnowledgeImpactDto,
-    KnowledgeImpactQuery, KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery,
-    KnowledgeLanguageDto, KnowledgeMapDto, KnowledgeMapQuery, KnowledgeOutlineEntryDto,
-    KnowledgeOutlineQuery, KnowledgePathDto, KnowledgePathHopDto, KnowledgePathQuery,
-    KnowledgeRefDto, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
-    KnowledgeSymbolDto, KnowledgeSymbolQuery,
+    KnowledgeEndpointDto, KnowledgeGraphConfidence, KnowledgeGraphDto, KnowledgeGraphEdgeDto,
+    KnowledgeGraphNodeDto, KnowledgeGraphQuery, KnowledgeHitDto, KnowledgeImpactCallerDto,
+    KnowledgeImpactDto, KnowledgeImpactQuery, KnowledgeInteractionGroupDto,
+    KnowledgeInteractionsQuery, KnowledgeLanguageDto, KnowledgeMapDto, KnowledgeMapQuery,
+    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgePathDto, KnowledgePathHopDto,
+    KnowledgePathQuery, KnowledgeRefDto, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState,
+    KnowledgeStatusDto, KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_knowledge::store::{CONTEXT_LIMIT, INTERACTION_KINDS};
 use ariadne_knowledge::{InteractionEnd, KnowledgeStore, Related, SearchQuery, index};
@@ -481,6 +482,61 @@ pub async fn map(
         files: map.files,
         files_left: map.files_left,
         text: map.text,
+    }))
+}
+
+#[utoipa::path(get, path = "/v1/knowledge/graph", tag = "knowledge",
+    params(KnowledgeGraphQuery),
+    responses((status = 200, body = KnowledgeGraphDto), (status = 404),
+              (status = 409, description = "the knowledge base is disabled")))]
+pub async fn graph(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<KnowledgeGraphQuery>,
+) -> ApiResult<Json<KnowledgeGraphDto>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let knowledge = enabled(&state)?;
+    let repository = state.store.get_repository(&query.repository).await?;
+    let git_ref = ref_for(
+        &state,
+        knowledge,
+        &ctx,
+        &repository,
+        query.git_ref.as_deref(),
+    )
+    .await?;
+    let graph = knowledge
+        .graph(&repository.id, &git_ref, query.limit() as usize)
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    Ok(Json(KnowledgeGraphDto {
+        repository_id: repository.id,
+        git_ref,
+        nodes: graph
+            .nodes
+            .into_iter()
+            .map(|node| KnowledgeGraphNodeDto {
+                path: node.path,
+                language: node.language,
+                symbols: node.symbols,
+            })
+            .collect(),
+        edges: graph
+            .edges
+            .into_iter()
+            .map(|edge| KnowledgeGraphEdgeDto {
+                from: edge.from,
+                to: edge.to,
+                kind: edge.kind,
+                count: edge.count,
+                confidence: match edge.confidence.as_str() {
+                    "exact" => KnowledgeGraphConfidence::Exact,
+                    _ => KnowledgeGraphConfidence::Heuristic,
+                },
+            })
+            .collect(),
+        truncated: graph.truncated,
+        total_nodes: graph.total_nodes,
     }))
 }
 

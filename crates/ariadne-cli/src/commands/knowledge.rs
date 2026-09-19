@@ -2,15 +2,19 @@
 
 use anyhow::Result;
 use clap::Subcommand;
+use std::collections::BTreeMap;
+use std::fmt::Write;
 
 use ariadne_api::knowledge::{
-    KnowledgeDetail, KnowledgeEdgeDto, KnowledgeEndpointDto, KnowledgeHitDto,
-    KnowledgeImpactCallerDto, KnowledgeImpactDto, KnowledgeImpactQuery,
-    KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeMapDto, KnowledgeMapQuery,
-    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgePathDto, KnowledgePathQuery,
-    KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
-    KnowledgeSymbolDto, KnowledgeSymbolQuery,
+    KnowledgeDetail, KnowledgeEdgeDto, KnowledgeEndpointDto, KnowledgeGraphDto,
+    KnowledgeGraphQuery, KnowledgeHitDto, KnowledgeImpactCallerDto, KnowledgeImpactDto,
+    KnowledgeImpactQuery, KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery,
+    KnowledgeMapDto, KnowledgeMapQuery, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery,
+    KnowledgePathDto, KnowledgePathQuery, KnowledgeRelatedDto, KnowledgeSearchQuery,
+    KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
+#[cfg(test)]
+use ariadne_api::knowledge::{KnowledgeGraphEdgeDto, KnowledgeGraphNodeDto};
 use ariadne_client::Client;
 
 use super::query_path;
@@ -213,6 +217,21 @@ pub enum KnowledgeCommand {
         /// The branch to read (default: the base branch)
         #[arg(long = "ref", value_name = "REF")]
         git_ref: Option<String>,
+    },
+    /// Show the files of a repository ref and the edges between them
+    Graph {
+        /// Repository id or path
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
+        repo: String,
+        /// The branch to read (default: the base branch)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// How many file nodes to return (default 2000, max 10000)
+        #[arg(long)]
+        limit: Option<i64>,
+        /// Print the full graph as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// List the definitions of one file with their line ranges
     Outline {
@@ -456,6 +475,26 @@ pub async fn run(client: &Client, command: KnowledgeCommand, format: Format) -> 
             // heading, its definitions under it.
             print(format, &map, || print!("{}", map_text(&map)))?;
         }
+        KnowledgeCommand::Graph {
+            repo,
+            git_ref,
+            limit,
+            json,
+        } => {
+            let repository = resolve::id(client, Kind::Repo, &repo).await?;
+            let request = KnowledgeGraphQuery {
+                repository,
+                git_ref,
+                limit,
+            };
+            let graph: KnowledgeGraphDto = client
+                .get_json(&query_path("/v1/knowledge/graph", &request)?)
+                .await?;
+            if json || matches!(format, Format::Json) {
+                return print_json(&graph);
+            }
+            print!("{}", graph_text(&graph));
+        }
         KnowledgeCommand::Outline {
             repo,
             path,
@@ -584,6 +623,41 @@ fn map_text(map: &KnowledgeMapDto) -> String {
     }
 }
 
+fn graph_text(graph: &KnowledgeGraphDto) -> String {
+    let mut by_kind: BTreeMap<&str, i64> = BTreeMap::new();
+    let mut degree: BTreeMap<&str, i64> = graph
+        .nodes
+        .iter()
+        .map(|node| (node.path.as_str(), 0))
+        .collect();
+    for edge in &graph.edges {
+        *by_kind.entry(&edge.kind).or_default() += 1;
+        *degree.entry(&edge.from).or_default() += 1;
+        *degree.entry(&edge.to).or_default() += 1;
+    }
+    let edge_count: i64 = by_kind.values().sum();
+    let mut text = match graph.truncated {
+        true => format!(
+            "{} of {} nodes, {edge_count} edges\n",
+            graph.nodes.len(),
+            graph.total_nodes
+        ),
+        false => format!("{} nodes, {edge_count} edges\n", graph.nodes.len()),
+    };
+    for (kind, count) in by_kind {
+        writeln!(text, "{kind}: {count}").expect("writing to a string cannot fail");
+    }
+    text.push_str("\nTop files by degree\n");
+    let mut ranked: Vec<(&str, i64)> = degree.into_iter().collect();
+    ranked.sort_by(|(path_a, degree_a), (path_b, degree_b)| {
+        degree_b.cmp(degree_a).then_with(|| path_a.cmp(path_b))
+    });
+    for (path, degree) in ranked.into_iter().take(10) {
+        writeln!(text, "{degree}  {path}").expect("writing to a string cannot fail");
+    }
+    text
+}
+
 /// `repository:path:line`, as an interaction's end is printed: either end
 /// may be in the other repository.
 fn end_location(end: &KnowledgeEndpointDto) -> String {
@@ -645,6 +719,63 @@ fn print_status(status: &KnowledgeStatusDto) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The graph summary counts symbol edges by kind and ranks files by
+    /// their degree.
+    #[test]
+    fn graph_summary_counts_edges_by_kind_and_ranks_files_by_degree() {
+        let graph = KnowledgeGraphDto {
+            repository_id: "01REPO".into(),
+            git_ref: "main".into(),
+            nodes: vec![
+                KnowledgeGraphNodeDto {
+                    path: "src/a.rs".into(),
+                    language: "rust".into(),
+                    symbols: 2,
+                },
+                KnowledgeGraphNodeDto {
+                    path: "src/b.rs".into(),
+                    language: "rust".into(),
+                    symbols: 1,
+                },
+                KnowledgeGraphNodeDto {
+                    path: "src/c.rs".into(),
+                    language: "rust".into(),
+                    symbols: 1,
+                },
+            ],
+            edges: vec![
+                KnowledgeGraphEdgeDto {
+                    from: "src/a.rs".into(),
+                    to: "src/b.rs".into(),
+                    kind: "calls".into(),
+                    count: 3,
+                    confidence: ariadne_api::knowledge::KnowledgeGraphConfidence::Exact,
+                },
+                KnowledgeGraphEdgeDto {
+                    from: "src/c.rs".into(),
+                    to: "src/b.rs".into(),
+                    kind: "references".into(),
+                    count: 1,
+                    confidence: ariadne_api::knowledge::KnowledgeGraphConfidence::Heuristic,
+                },
+            ],
+            truncated: false,
+            total_nodes: 3,
+        };
+
+        assert_eq!(
+            graph_text(&graph),
+            "3 nodes, 2 edges\n\
+             calls: 1\n\
+             references: 1\n\
+             \n\
+             Top files by degree\n\
+             2  src/b.rs\n\
+             1  src/a.rs\n\
+             1  src/c.rs\n"
+        );
+    }
 
     /// The subject column of a search row is `title`, like every other
     /// table's, and the location leads so `-q` prints `path:line`.

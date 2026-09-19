@@ -270,6 +270,46 @@ pub struct Interaction {
     pub candidates: i64,
 }
 
+/// One file in a graph of a repository ref.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GraphNode {
+    pub path: String,
+    pub language: String,
+    pub symbols: i64,
+}
+
+/// One grouped edge between two files in a repository ref.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GraphEdge {
+    pub from: String,
+    pub to: String,
+    pub kind: String,
+    pub count: i64,
+    pub confidence: String,
+}
+
+/// The file graph of one repository ref.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileGraph {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+    pub truncated: bool,
+    pub total_nodes: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct GraphRow {
+    record_type: i64,
+    path: String,
+    language: Option<String>,
+    symbols: Option<i64>,
+    to_path: Option<String>,
+    kind: Option<String>,
+    edge_count: Option<i64>,
+    confidence: Option<String>,
+    total_nodes: i64,
+}
+
 /// The order the interaction kinds are listed in.
 pub const INTERACTION_KINDS: [&str; 4] = ["depends_on", "references", "calls_route", "sets_env"];
 
@@ -1213,6 +1253,111 @@ impl KnowledgeStore {
         };
         found.sort_by_key(|interaction| rank(&interaction.kind));
         Ok(found)
+    }
+
+    /// The files and grouped file-to-file edges of one repository ref.
+    /// Files past `limit` are removed by edge degree.
+    pub async fn graph(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+        limit: usize,
+    ) -> Result<FileGraph> {
+        let rows: Vec<GraphRow> = sqlx::query_as(
+            "WITH file_nodes AS (
+                 SELECT f.path, f.blob, f.language, COUNT(s.id) AS symbols
+                 FROM files f
+                 LEFT JOIN symbols s ON s.blob = f.blob
+                 WHERE f.repository_id = ?1 AND f.git_ref = ?2
+                 GROUP BY f.path, f.blob, f.language
+             ),
+             blob_edges AS MATERIALIZED (
+                 SELECT e.from_blob, e.to_blob, e.kind, COUNT(*) AS edge_count,
+                        CASE WHEN MIN(CASE WHEN e.confidence = 'exact' THEN 1 ELSE 0 END) = 1
+                             THEN 'exact' ELSE 'heuristic' END AS confidence
+                 FROM edges e
+                 WHERE e.from_repository = ?1 AND e.git_ref = ?2
+                   AND e.to_repository = ?1 AND e.to_ref = ?2
+                 GROUP BY e.from_blob, e.to_blob, e.kind
+             ),
+             file_edges AS MATERIALIZED (
+                 SELECT ff.path AS from_path, ft.path AS to_path, be.kind,
+                        be.edge_count, be.confidence
+                 FROM blob_edges be
+                 CROSS JOIN files AS ff INDEXED BY files_by_blob
+                      ON ff.blob = be.from_blob
+                     AND ff.repository_id = ?1 AND ff.git_ref = ?2
+                 CROSS JOIN files AS ft INDEXED BY files_by_blob
+                      ON ft.blob = be.to_blob
+                     AND ft.repository_id = ?1 AND ft.git_ref = ?2
+                 WHERE be.from_blob <> be.to_blob AND ff.path <> ft.path
+             ),
+             degrees AS (
+                 SELECT path, COUNT(*) AS degree
+                 FROM (
+                     SELECT from_path AS path FROM file_edges
+                     UNION ALL
+                     SELECT to_path AS path FROM file_edges
+                 )
+                 GROUP BY path
+             ),
+             ranked_nodes AS (
+                 SELECT n.path, n.language, n.symbols,
+                        COUNT(*) OVER () AS total_nodes,
+                        ROW_NUMBER() OVER (
+                            ORDER BY COALESCE(d.degree, 0) DESC, n.path
+                        ) AS rank
+                 FROM file_nodes n
+                 LEFT JOIN degrees d ON d.path = n.path
+             ),
+             kept_nodes AS (
+                 SELECT path, language, symbols, total_nodes
+                 FROM ranked_nodes
+                 WHERE rank <= ?3
+             )
+             SELECT 0 AS record_type, path, language, symbols,
+                    NULL AS to_path, NULL AS kind, NULL AS edge_count,
+                    NULL AS confidence, total_nodes
+             FROM kept_nodes
+             UNION ALL
+             SELECT 1 AS record_type, e.from_path AS path, NULL AS language,
+                    NULL AS symbols, e.to_path, e.kind, e.edge_count,
+                    e.confidence, (SELECT COUNT(*) FROM file_nodes) AS total_nodes
+             FROM file_edges e
+             JOIN kept_nodes f ON f.path = e.from_path
+             JOIN kept_nodes t ON t.path = e.to_path
+             ORDER BY record_type, path, to_path, kind",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .bind(limit as i64)
+        .fetch_all(&self.read)
+        .await?;
+
+        let total_nodes = rows.first().map_or(0, |row| row.total_nodes);
+        let mut graph = FileGraph {
+            truncated: total_nodes > limit as i64,
+            total_nodes,
+            ..FileGraph::default()
+        };
+        for row in rows {
+            if row.record_type == 0 {
+                graph.nodes.push(GraphNode {
+                    path: row.path,
+                    language: row.language.unwrap_or_default(),
+                    symbols: row.symbols.unwrap_or_default(),
+                });
+            } else {
+                graph.edges.push(GraphEdge {
+                    from: row.path,
+                    to: row.to_path.unwrap_or_default(),
+                    kind: row.kind.unwrap_or_default(),
+                    count: row.edge_count.unwrap_or_default(),
+                    confidence: row.confidence.unwrap_or_default(),
+                });
+            }
+        }
+        Ok(graph)
     }
 
     /// The map of one ref: its files ranked by PageRank over the references

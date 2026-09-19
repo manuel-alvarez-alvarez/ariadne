@@ -111,6 +111,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal ls", true),
     ("goal rm", true),
     ("knowledge impact", true),
+    ("knowledge graph", true),
     ("knowledge interactions", true),
     ("knowledge map", true),
     ("knowledge outline", true),
@@ -952,6 +953,48 @@ fn knowledge_map_takes_the_path_and_the_budget() {
     };
     assert_eq!(path, None, "the whole repository by default");
     assert_eq!(budget, None, "the daemon's own budget by default");
+}
+
+/// `knowledge graph` takes the repository, ref, node limit and direct JSON
+/// flag, with the daemon defaults left unset.
+#[test]
+fn knowledge_graph_takes_the_repository_ref_limit_and_json_flag() {
+    let Command::Knowledge {
+        command:
+            KnowledgeCommand::Graph {
+                repo,
+                git_ref,
+                limit,
+                json,
+            },
+    } = parse(&[
+        "ariadne",
+        "knowledge",
+        "graph",
+        "01REPO",
+        "--ref",
+        "next",
+        "--limit",
+        "50",
+        "--json",
+    ])
+    .command
+    else {
+        panic!("knowledge graph");
+    };
+    assert_eq!(repo, "01REPO");
+    assert_eq!(git_ref.as_deref(), Some("next"));
+    assert_eq!(limit, Some(50));
+    assert!(json);
+
+    let Command::Knowledge {
+        command: KnowledgeCommand::Graph { limit, json, .. },
+    } = parse(&["ariadne", "knowledge", "graph", "01REPO"]).command
+    else {
+        panic!("knowledge graph");
+    };
+    assert_eq!(limit, None);
+    assert!(!json);
 }
 
 /// `knowledge interactions` takes the repository and the ref.
