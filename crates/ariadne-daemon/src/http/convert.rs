@@ -148,6 +148,8 @@ dto! {
         status: s.status(),
         attention_reason: s.attention_reason(),
         usage: usage,
+        context_used: s.context_used.and_then(|value| u64::try_from(value).ok()),
+        context_size: s.context_size.and_then(|value| u64::try_from(value).ok()),
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
            worktree_path, attention_since,
            last_activity_at, created_at, ended_at

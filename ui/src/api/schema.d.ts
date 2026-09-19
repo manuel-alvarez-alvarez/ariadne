@@ -2268,6 +2268,14 @@ export interface components {
             attention_reason?: null | components["schemas"]["AttentionReason"];
             /** @description When the current `attention_reason` was first raised. */
             attention_since?: string | null;
+            /** Format: int64 */
+            context_size?: number | null;
+            /**
+             * Format: int64
+             * @description The context window position the agent most recently reported. Both
+             *     fields stay null until the agent sends a `usage_update`.
+             */
+            context_used?: number | null;
             created_at: string;
             /**
              * @description Effort that model was launched at, off the same pin as `model`; null =

@@ -127,6 +127,53 @@ fn tokens(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> To
     }
 }
 
+/// Context updates arrive while a prompt is active, and the newest one is the
+/// current context window rather than a cost or a token total.
+#[tokio::test]
+async fn context_updates_keep_the_sessions_window_current_while_it_runs() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let release = agent_dir.path().join("release");
+    let update = agent_dir.path().join("update");
+    let mut scripted = script();
+    scripted["prompts"] = json!([{
+        "updates": [{"sessionUpdate": "usage_update", "used": 20_713, "size": 1_000_000,
+                     "cost": 1.23}],
+        "wait_for": release.display().to_string(),
+        "updates_when": {"file": update.display().to_string(), "updates": [{
+            "sessionUpdate": "usage_update", "used": 45_678, "size": 1_000_000,
+            "cost": 9.87
+        }]}
+    }]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+
+    eventually(TIMEOUT, "the first context update", || async {
+        let session: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+        session.context_used == Some(20_713) && session.context_size == Some(1_000_000)
+    })
+    .await;
+    let reported: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert!(
+        serde_json::to_value(reported)
+            .unwrap()
+            .get("cost")
+            .is_none()
+    );
+
+    std::fs::write(&update, "1").unwrap();
+    eventually(TIMEOUT, "the second context update", || async {
+        let session: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+        session.context_used == Some(45_678)
+            && session.context_size == Some(1_000_000)
+            && session.status == SessionStatus::Running
+    })
+    .await;
+
+    std::fs::write(release, "1").unwrap();
+}
+
 /// ACP's prompt usage is what one turn spent, so a launch's turns add up, and
 /// cache reads and writes remain part of input while only reads are cached.
 #[tokio::test]

@@ -400,6 +400,33 @@ impl Store {
         self.publish_session_update(id).await
     }
 
+    /// Keep the latest context window position an ACP agent reports. A report
+    /// from a launch that the session has replaced cannot overwrite its newer
+    /// agent's position.
+    pub async fn set_session_context_window(
+        &self,
+        id: &str,
+        launch_id: &str,
+        used: i64,
+        size: i64,
+    ) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE agent_sessions SET context_used = ?, context_size = ?
+              WHERE id = ? AND launch_id = ?",
+        )
+        .bind(used)
+        .bind(size)
+        .bind(id)
+        .bind(launch_id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n == 0 {
+            return self.get_session(id).await.map(|_| ());
+        }
+        self.publish_session_update(id).await
+    }
+
     /// One write against a session row, refusing an id that names none.
     async fn write_session<'q>(
         &self,

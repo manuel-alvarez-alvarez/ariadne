@@ -125,7 +125,9 @@ and the ACP runtime that reports the agent events (021).
     its own totals rather than adding to them. Usage rolls up to the task and
     the goal; every session of one reviewer groups together; a session that
     has reported nothing reads as zeros; and usage goes when its session
-    does.
+    does. A session also carries its latest context-window `used` and `size`
+    pair from an ACP `usage_update`; both stay null when no update arrived,
+    and a reported `cost` is neither stored nor exposed.
 16. The ACP runtime reads a prompt response's well-formed
     `_meta.quota.token_count`, or its `usage` where quota is absent or
     malformed, as what that one turn spent (ACP). It adds cache reads and
@@ -253,6 +255,9 @@ and the ACP runtime that reports the agent events (021).
   (`events.rs::a_session_that_has_reported_nothing_reads_as_zeros`), and
   usage goes with its session
   (`store.rs::usage_goes_when_the_session_it_belonged_to_does`).
+- A context update changes the session DTO before its turn ends and carries no
+  cost
+  (`acp_console.rs::context_updates_keep_the_sessions_window_current_while_it_runs`).
 - The ACP runtime maps standard and quota prompt usage, adds up one launch's
   turns, adds a resumed launch, leaves a silent response at zero, and rolls
   totals up (`acp_console.rs::standard_prompt_usage_adds_up_a_launchs_turns_and_rolls_up`,

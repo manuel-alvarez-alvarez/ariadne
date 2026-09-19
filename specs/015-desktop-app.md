@@ -172,6 +172,9 @@ Out: the daemon endpoints themselves (012).
     in the daemon's order, named by its agent id. Each tab holds that agent's
     extra flags and the models of the catalog whose `agent_id` is that agent.
     A flag edit replaces the list whole through `PUT /v1/agents/{id}`.
+30. A session panel shows a reported context window as `<used> / <size>`,
+    using the compact spelling of token figures. It shows no context fact
+    before the agent reports one, and it never shows a cost.
 
 ## Acceptance criteria
 
@@ -257,6 +260,10 @@ Out: the daemon endpoints themselves (012).
 - The agent activity feed shows the daemon's summary and opens and closes the
   raw payload under its row
   (`ui/src/features/sessions/session-activity.test.tsx`).
+- A session panel shows its reported context window with compact token figures
+  and hides an unreported one
+  (`ui/src/features/sessions/session-detail-view.test.tsx::shows the reported context window with compact token figures`,
+  `::hides context when the agent has not reported a window`).
 - The outside-sessions view lists each stored session named by its registry
   agent id and shows why an ACP agent without the session-listing capability
   offers none

@@ -26,7 +26,7 @@ use super::{Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, View, age, at, col, dash, empty_state, moment, note, ok_id_line,
-    print, print_kv, print_list, short_id, status_line, usage_block, usage_cell, view,
+    print, print_kv, print_list, short_id, status_line, tokens, usage_block, usage_cell, view,
 };
 use ariadne_console::transcript::{Filters, Since};
 
@@ -925,7 +925,7 @@ fn attention_label(reason: Option<AttentionReason>) -> String {
 /// — pulled out of the `Inspect` arm so the block's own content is testable
 /// without a daemon behind it.
 fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
-    vec![
+    let mut pairs = vec![
         ("id", Kv::id(s.id.clone())),
         ("goal", Kv::id(s.goal_id.clone())),
         ("task", Kv::id(dash(s.task_id.as_deref()))),
@@ -953,10 +953,19 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
         ("worktree", dash(s.worktree_path.as_deref()).into()),
         ("internal id", dash(s.internal_session_id.as_deref()).into()),
         ("tokens", usage_block(&s.usage, &[], INDENT).into()),
+    ];
+    if let Some((used, size)) = s.context_used.zip(s.context_size) {
+        pairs.push((
+            "context",
+            format!("{} / {}", tokens(used), tokens(size)).into(),
+        ));
+    }
+    pairs.extend([
         ("activity", Kv::meta(at(s.last_activity_at.as_deref()))),
         ("created", Kv::meta(moment(&s.created_at))),
         ("ended", Kv::meta(at(s.ended_at.as_deref()))),
-    ]
+    ]);
+    pairs
 }
 
 /// Whose agent it is: a session has no title, and the seat and the piece
@@ -1617,6 +1626,30 @@ mod tests {
         let plain = kv_block(&pairs, &View::plain());
         assert!(!plain.contains('\u{1b}'), "{plain}");
         assert_eq!(strip_escapes(&coloured), plain, "colour adds only escapes");
+    }
+
+    #[test]
+    fn the_inspect_block_shows_the_reported_context_window() {
+        let s = SessionDto {
+            context_used: Some(20_713),
+            context_size: Some(1_000_000),
+            ..session("01SESS", "01GOAL", Some("01TASK"))
+        };
+
+        let block = kv_block(&inspect_pairs(&s), &View::plain());
+
+        assert!(block.contains("context"), "{block}");
+        assert!(block.contains("21k / 1M"), "{block}");
+    }
+
+    #[test]
+    fn the_inspect_block_hides_an_unreported_context_window() {
+        let block = kv_block(
+            &inspect_pairs(&session("01SESS", "01GOAL", Some("01TASK"))),
+            &View::plain(),
+        );
+
+        assert!(!block.contains("context"), "{block}");
     }
 
     /// The escapes taken back out of a line, the way a reader's terminal

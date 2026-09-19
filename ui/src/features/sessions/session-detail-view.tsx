@@ -47,7 +47,7 @@ import { goalQueryOptions } from "@/features/goals/queries"
 import { SeatSummary } from "@/features/models/agent-summary"
 import { taskQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
-import { SEAT_LABELS } from "@/lib/format"
+import { formatTokens, SEAT_LABELS } from "@/lib/format"
 import { paths, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
 import { SessionActions } from "./session-actions"
@@ -179,6 +179,16 @@ export function SessionDetailView({
         <Fact label="Tokens">
           <TokenFigure usage={session.usage} />
         </Fact>
+        {session.context_used !== null &&
+        session.context_used !== undefined &&
+        session.context_size !== null &&
+        session.context_size !== undefined ? (
+          <Fact label="Context">
+            <span className="tabular-nums">
+              {formatTokens(session.context_used)} / {formatTokens(session.context_size)}
+            </span>
+          </Fact>
+        ) : null}
         {session.attention_reason ? (
           <Fact label="Needs attention since">
             <When at={session.attention_since} label="since" />

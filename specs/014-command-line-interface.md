@@ -198,6 +198,9 @@ same binary also serves (013).
     than a row. `symbol` prints a block per definition, an end in another
     repository led by that repository's id; `reindex` is a mutation whose
     `-q` prints the repository id.
+30. `session inspect` shows a reported context window as `<used> / <size>`
+    with the compact token spelling. It shows no context line when the agent
+    has not reported one, and it never shows a cost.
 
 ## Acceptance criteria
 
@@ -308,6 +311,10 @@ same binary also serves (013).
   `yes` or `no` (`session.rs::the_session_subject_column_is_title`,
   `models.rs::the_description_drops_before_the_efforts_do`,
   `::a_row_stars_the_default_effort_and_dashes_what_is_unsaid`).
+- `session inspect` shows a reported context window with compact token counts
+  and omits an unreported one
+  (`session.rs::the_inspect_block_shows_the_reported_context_window`,
+  `::the_inspect_block_hides_an_unreported_context_window`).
 - `agent update` takes flags, a clear or a reset but only one, and keeps a
   flag that looks like a flag as it is
   (`cli/tests.rs::updating_an_agent_takes_flags_or_clear_or_reset_but_only_one`,

@@ -109,6 +109,8 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     attention_since: null,
     last_activity_at: STAMP,
     usage: NO_TOKENS,
+    context_used: null,
+    context_size: null,
     created_at: STAMP,
     ended_at: null,
     ...overrides,

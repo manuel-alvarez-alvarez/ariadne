@@ -362,6 +362,10 @@ pub struct AgentSession {
     /// When the current `attention_reason` was first raised.
     pub attention_since: Option<String>,
     pub last_activity_at: Option<String>,
+    /// The latest context window position this agent reported. Both fields
+    /// stay absent until it sends a usage update.
+    pub context_used: Option<i64>,
+    pub context_size: Option<i64>,
     /// When this session's agent process was last started. Every launch moves
     /// it, so it dates the run the session is in rather than the row.
     pub launched_at: Option<String>,

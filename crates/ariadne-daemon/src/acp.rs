@@ -904,6 +904,25 @@ impl EventSink {
         }
     }
 
+    /// Keep the session's newest context window report. The report is live
+    /// session state, not an agent event, and a storage failure cannot stop
+    /// the agent's protocol conversation.
+    async fn update_context_window(&self, used: i64, size: i64) {
+        if let Err(error) = self
+            .runtime
+            .inner
+            .store
+            .set_session_context_window(&self.session_id, &self.launch_id, used, size)
+            .await
+        {
+            tracing::warn!(
+                session = %self.session_id,
+                error = %error,
+                "recording ACP context window failed"
+            );
+        }
+    }
+
     /// The ACP session id as a payload value: the one setup learned, else the
     /// one a resume was asked for, else null.
     fn agent_session_id(&self, config: &LaunchConfig) -> Value {
@@ -1106,6 +1125,16 @@ impl RuntimeIncoming<'_> {
                 let mut payload = update;
                 payload["session_id"] = session_id;
                 self.sink.emit("compaction_update", payload).await;
+            }
+            Some("usage_update") => {
+                if let Some((used, size)) = update
+                    .get("used")
+                    .and_then(Value::as_u64)
+                    .zip(update.get("size").and_then(Value::as_u64))
+                    .and_then(|(used, size)| i64::try_from(used).ok().zip(i64::try_from(size).ok()))
+                {
+                    self.sink.update_context_window(used, size).await;
+                }
             }
             _ => {}
         }

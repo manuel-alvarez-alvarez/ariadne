@@ -55,6 +55,8 @@ async fn the_schema_names_agents_by_registry_id_alone() {
             "attention_since",
             "model",
             "effort",
+            "context_used",
+            "context_size",
             "launched_at",
             "launch_id",
         ]

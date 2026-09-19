@@ -289,6 +289,10 @@ CREATE TABLE agent_sessions (
     model               TEXT NOT NULL,
     -- Copied off the pin the session's seat carries, beside its model.
     effort              TEXT,
+    -- The latest context-window position an ACP agent reported. Both are
+    -- NULL until it has reported one; a zero would claim an empty window.
+    context_used        INTEGER,
+    context_size        INTEGER,
     launched_at         TEXT,
     launch_id           TEXT                    -- == ARIADNE_LAUNCH_ID env of that run
 );

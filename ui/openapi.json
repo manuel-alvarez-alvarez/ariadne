@@ -5626,6 +5626,23 @@
             ],
             "description": "When the current `attention_reason` was first raised."
           },
+          "context_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "context_used": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The context window position the agent most recently reported. Both\nfields stay null until the agent sends a `usage_update`.",
+            "minimum": 0
+          },
           "created_at": {
             "type": "string"
           },

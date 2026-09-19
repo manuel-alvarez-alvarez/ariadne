@@ -83,6 +83,8 @@ pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
         attention_since: None,
         last_activity_at: None,
         usage: Default::default(),
+        context_used: None,
+        context_size: None,
         created_at: NOW.into(),
         ended_at: None,
     }

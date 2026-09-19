@@ -178,3 +178,15 @@ it("says zero for a session that has reported nothing yet", () => {
 
   expect(detail("Tokens")).toBe("0 in, 0.0% cached, 0 out")
 })
+
+it("shows the reported context window with compact token figures", () => {
+  renderView({ ...SESSION, context_used: 20_713, context_size: 1_000_000 })
+
+  expect(detail("Context")).toBe("21k / 1M")
+})
+
+it("hides context when the agent has not reported a window", () => {
+  renderView({ ...SESSION, context_used: null, context_size: null })
+
+  expect(screen.queryByText("Context")).toBeNull()
+})

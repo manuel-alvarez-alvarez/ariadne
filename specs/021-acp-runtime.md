@@ -71,6 +71,8 @@ gone (009).
    The `stop` event carries `ariadne_usage` from a well-formed prompt response:
    quota totals before standard usage, read as what that turn spent and added
    to the launch's earlier turns, with the launch id as its source.
+   A `usage_update` keeps its latest `used` and `size` on the session while
+   the turn runs. Its `cost`, when present, is ignored.
 6. A turn's text is stored run by run, where the agent wrote it. A run is
    the chunks of one kind in a row, and of one message where the chunks
    carry an ACP `messageId`; it ends at a chunk of the other kind, a chunk
@@ -224,6 +226,9 @@ gone (009).
   `::quota_prompt_usage_takes_precedence_over_standard_usage`,
   `::a_prompt_without_usage_keeps_zero_totals_and_records_stop`,
   `::resumed_prompt_usage_adds_a_new_launch_total`).
+- Context updates keep a session's current used and size figures before its
+  turn ends, and ignore a reported cost
+  (`acp_console.rs::context_updates_keep_the_sessions_window_current_while_it_runs`).
 - An option is found by its category, or by its id or name where no option
   has the category — the lookup the runtime shares with discovery
   (`acp_discovery.rs::model_and_effort_name_fallbacks_enter_the_discovered_catalog`).

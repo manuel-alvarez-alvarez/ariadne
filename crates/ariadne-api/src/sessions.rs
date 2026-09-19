@@ -40,6 +40,10 @@ pub struct SessionDto {
     /// What this session's agent has spent, summed over every transcript it
     /// reported under. Zeros while nothing has been reported.
     pub usage: TokenUsageDto,
+    /// The context window position the agent most recently reported. Both
+    /// fields stay null until the agent sends a `usage_update`.
+    pub context_used: Option<u64>,
+    pub context_size: Option<u64>,
     pub created_at: String,
     pub ended_at: Option<String>,
 }
