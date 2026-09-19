@@ -217,7 +217,14 @@ goal id to a seat (014).
     with its text beneath, so it reads apart from what was typed. Agent text
     is markdown chunk by chunk under one marker, a thought dimmed and folded,
     a tool call the block of the next rule, a plan a checklist, and a
-    permission question a picker.
+    permission question a picker. Markdown tables align their display-width
+    cells under bold headers and wrap in a cell, or become `header: value`
+    lines where the pane is too narrow. Fenced code has a dim language label,
+    a two-column code indent and a dim `↪` on continued lines, never a fence.
+    Links retain their plain URL, lists use `•`, `◦` and `▪` by depth with task
+    markers, and every wrapped quote line keeps its `│ ` bar. The renderer is
+    pure, uses no syntax colour or OSC 8 link, and accepts each incomplete
+    markdown prefix without a panic.
 25. A tool call reads as a coding agent's. Its head line is a status glyph —
     `○` pending, `●` in progress, `✓` completed, `✗` failed — then a glyph
     for the ACP `kind` (`$` execute, `≡` read, `✎` edit, `⌫` delete, `→`
@@ -443,6 +450,23 @@ goal id to a seat (014).
   and markdown keeps a heading, a code block and a list apart
   (`ariadne-console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
+- Markdown tables align wide cells and bold headers
+  (`ariadne-console/markdown.rs::a_table_aligns_wide_cells_under_its_headers`),
+  honour right alignment (`::a_right_aligned_table_column_is_flush_right`),
+  wrap wide cells without loss (`::a_wide_table_wraps_each_cell_without_losing_text`),
+  and become pairs in a narrow pane (`::a_narrow_table_draws_header_value_pairs`).
+- Fenced code shows its language without a fence and wraps every character
+  (`ariadne-console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
+  `::a_long_code_line_wraps_with_continuation_marks_without_loss`).
+- Markdown links retain a non-autolink destination once
+  (`ariadne-console/markdown.rs::links_keep_their_destination_once`), lists
+  show nested glyphs and task markers
+  (`::nested_lists_use_a_glyph_and_indent_for_each_depth`), and quoted wraps
+  retain their bars (`::every_wrapped_quote_row_keeps_its_bar`).
+- Each incomplete markdown prefix renders at each supported pane width
+  (`ariadne-console/markdown.rs::every_prefix_of_streamed_markdown_renders_without_a_panic`),
+  and every returned line fits its width
+  (`::markdown_never_returns_a_line_wider_than_its_width`).
 - The status line follows the session's status from its events
   (`ariadne-console/tui/chrome.rs::the_status_line_follows_the_sessions_status_from_its_events`)
   and is not revived off an end by the events replayed under it

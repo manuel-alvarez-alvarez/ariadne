@@ -16,6 +16,14 @@ pub const PLAN: Style = Style::new().fg(Color::Blue);
 pub const ASK: Style = Style::new().fg(Color::Magenta);
 pub const FAIL: Style = Style::new().fg(Color::Red).add_modifier(Modifier::BOLD);
 pub const DIM: Style = Style::new().add_modifier(Modifier::DIM);
+/// Markdown headings separate the parts of an agent answer.
+pub const HEADING: Style = Style::new()
+    .fg(Color::Cyan)
+    .add_modifier(Modifier::BOLD.union(Modifier::UNDERLINED));
+/// Markdown code spans and blocks use one quiet, distinct colour.
+pub const CODE: Style = Style::new().fg(Color::Yellow);
+/// Markdown structure is context, not the answer itself.
+pub const MARK: Style = Style::new().add_modifier(Modifier::DIM);
 /// The lines of a diff: added, removed, the hunk header, and the file header.
 pub const ADDED: Style = Style::new().fg(Color::Green);
 pub const REMOVED: Style = Style::new().fg(Color::Red);
@@ -62,3 +70,11 @@ pub const PLAN_TODO: &str = "  ☐ ";
 /// A permission question, and the option the picker is on.
 pub const ASK_MARKER: &str = "? ";
 pub const OPTION_PICKED: &str = "  › ";
+
+/// Markdown marks, kept with the pane's other visible vocabulary.
+pub const RULE: &str = "─";
+pub const QUOTE_BAR: &str = "│ ";
+pub const CODE_CONTINUATION: &str = "↪";
+pub const LIST_BULLETS: [&str; 3] = ["• ", "◦ ", "▪ "];
+pub const TASK_DONE: &str = "☑ ";
+pub const TASK_TODO: &str = "☐ ";

@@ -890,7 +890,14 @@ mod tests {
             shown.contains("# Report"),
             "the heading is a heading: {shown}"
         );
-        assert!(shown.contains("```sh"), "the code block is fenced: {shown}");
+        assert!(
+            shown.contains("  sh\n"),
+            "the code block names its language: {shown}"
+        );
+        assert!(
+            !shown.contains("```"),
+            "the code block has no literal fence: {shown}"
+        );
         assert!(
             shown.contains("✓ $ cargo nextest run"),
             "a completed call is ticked, and its head is its command: {shown}"
