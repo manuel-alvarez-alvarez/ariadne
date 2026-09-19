@@ -71,14 +71,14 @@ async fn another_session_of_the_same_repository_finds_an_authors_memory() {
 
     h.store.delete_goal(&goal.id).await.unwrap();
 
-    let found: Vec<serde_json::Value> = h
+    let found: serde_json::Value = h
         .json(
             get_as_session("/v1/memories/search?q=parser", &searching.id),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(found.len(), 1);
-    assert_eq!(found[0]["id"], created["id"]);
+    assert_eq!(found["hits"].as_array().unwrap().len(), 1);
+    assert_eq!(found["hits"][0]["id"], created["id"]);
 }
 
 #[tokio::test]
@@ -104,14 +104,14 @@ async fn a_user_saves_a_global_memory_that_any_repository_reads() {
     assert!(created["source_session_id"].is_null(), "{created}");
     assert!(created["source_goal_id"].is_null(), "{created}");
 
-    let found: Vec<serde_json::Value> = h
+    let found: serde_json::Value = h
         .json(
             get_as_session("/v1/memories/search?q=imperative", &session.id),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0]["id"], created["id"]);
+    assert_eq!(found["hits"].as_array().unwrap().len(), 1, "{found:?}");
+    assert_eq!(found["hits"][0]["id"], created["id"]);
 
     let listed: Vec<serde_json::Value> = h
         .json(get_as_session("/v1/memories", &session.id), StatusCode::OK)
@@ -186,13 +186,13 @@ async fn an_agent_session_never_reads_another_repositorys_memory() {
         )
         .await;
 
-    let found: Vec<serde_json::Value> = h
+    let found: serde_json::Value = h
         .json(
             get_as_session("/v1/memories/search?q=blue", &searching.id),
             StatusCode::OK,
         )
         .await;
-    assert!(found.is_empty(), "{found:?}");
+    assert!(found["hits"].as_array().unwrap().is_empty(), "{found:?}");
 
     let listed: Vec<serde_json::Value> = h
         .json(
@@ -241,13 +241,13 @@ async fn a_memory_without_an_expiry_stays_in_the_list_and_the_search() {
         .await;
     assert_eq!(listed.len(), 1, "{listed:?}");
 
-    let found: Vec<serde_json::Value> = h
+    let found: serde_json::Value = h
         .json(
             get_as_session("/v1/memories/search?q=fixture", &session.id),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found["hits"].as_array().unwrap().len(), 1, "{found:?}");
 }
 
 #[tokio::test]
@@ -276,10 +276,242 @@ async fn an_expired_memory_never_returns_from_list_or_search() {
     let listed: Vec<serde_json::Value> = h.json(get("/v1/memories"), StatusCode::OK).await;
     assert!(listed.is_empty(), "{listed:?}");
 
-    let found: Vec<serde_json::Value> = h
+    let found: serde_json::Value = h
         .json(get("/v1/memories/search?q=stale"), StatusCode::OK)
         .await;
-    assert!(found.is_empty(), "{found:?}");
+    assert!(found["hits"].as_array().unwrap().is_empty(), "{found:?}");
+}
+
+#[tokio::test]
+async fn two_word_matches_rank_by_fts5_score() {
+    let h = harness().await;
+    let (_goal, repo) = h.goal().await;
+    let better: serde_json::Value = h
+        .json(
+            post_json(
+                "/v1/memories",
+                serde_json::json!({
+                    "text": "Run cargo nextest for daemon tests.",
+                    "repository_id": repo.id,
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let weaker: serde_json::Value = h
+        .json(
+            post_json(
+                "/v1/memories",
+                serde_json::json!({"text": "Daemon monitor reports status."}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let found: serde_json::Value = h
+        .json(
+            get(&format!(
+                "/v1/memories/search?q=daemon%20tests&repository={}",
+                repo.id
+            )),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(found["fallback"], false, "{found:?}");
+    assert_eq!(found["hits"][0]["id"], better["id"], "{found:?}");
+    assert_eq!(found["hits"][1]["id"], weaker["id"], "{found:?}");
+}
+
+#[tokio::test]
+async fn a_nonmatching_memory_stays_out_of_a_matching_search() {
+    let h = harness().await;
+    let (_goal, repo) = h.goal().await;
+    let matched: serde_json::Value = h
+        .json(
+            post_json(
+                "/v1/memories",
+                serde_json::json!({"text": "Run daemon tests.", "repository_id": repo.id}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    h.json::<serde_json::Value>(
+        post_json(
+            "/v1/memories",
+            serde_json::json!({"text": "Walrus owns marmot."}),
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+
+    let found: serde_json::Value = h
+        .json(
+            get(&format!(
+                "/v1/memories/search?q=daemon%20tests&repository={}",
+                repo.id
+            )),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(found["fallback"], false, "{found:?}");
+    assert_eq!(found["hits"].as_array().unwrap().len(), 1, "{found:?}");
+    assert_eq!(found["hits"][0]["id"], matched["id"], "{found:?}");
+}
+
+#[tokio::test]
+async fn a_search_without_a_word_match_answers_the_five_newest_memories() {
+    let h = harness().await;
+    for text in [
+        "apricot",
+        "banana",
+        "cranberry",
+        "date",
+        "elderberry",
+        "fig",
+    ] {
+        h.json::<serde_json::Value>(
+            post_json("/v1/memories", serde_json::json!({"text": text})),
+            StatusCode::CREATED,
+        )
+        .await;
+    }
+
+    let found: serde_json::Value = h
+        .json(get("/v1/memories/search?q=walrus"), StatusCode::OK)
+        .await;
+    assert_eq!(found["fallback"], true, "{found:?}");
+    assert_eq!(found["hits"].as_array().unwrap().len(), 5, "{found:?}");
+    assert_eq!(found["hits"][0]["text"], "fig");
+    assert_eq!(found["hits"][4]["text"], "banana");
+}
+
+#[tokio::test]
+async fn a_second_create_that_repeats_a_memory_is_refused() {
+    let h = harness().await;
+    let (goal, repo) = h.goal().await;
+    let task = h.task_on(&goal, &repo, "task", 0, test_pin()).await;
+    let author = h.store.task_author(&task.id).await.unwrap();
+    let session = h
+        .session(&goal, Some(&task), Seat::Author, &author.id)
+        .await;
+    let saved: serde_json::Value = h
+        .json(
+            save_as_session(
+                &session.id,
+                serde_json::json!({
+                    "text": "Run cargo nextest for the daemon tests.",
+                    "repository_id": repo.id
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let error = h
+        .error(
+            save_as_session(
+                &session.id,
+                serde_json::json!({
+                    "text": "Run the daemon test suite.",
+                    "repository_id": repo.id
+                }),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(error.error.message.contains(saved["id"].as_str().unwrap()));
+    assert!(
+        error
+            .error
+            .message
+            .contains(saved["text"].as_str().unwrap())
+    );
+}
+
+#[tokio::test]
+async fn a_task_saves_two_memories_but_another_task_can_save_its_own_two() {
+    let h = harness().await;
+    let (goal, repo) = h.goal().await;
+    let first = h.task_on(&goal, &repo, "first", 0, test_pin()).await;
+    let second = h.task_on(&goal, &repo, "second", 1, test_pin()).await;
+    let first_author = h.store.task_author(&first.id).await.unwrap();
+    let second_author = h.store.task_author(&second.id).await.unwrap();
+    let first_session = h
+        .session(&goal, Some(&first), Seat::Author, &first_author.id)
+        .await;
+    let second_session = h
+        .session(&goal, Some(&second), Seat::Author, &second_author.id)
+        .await;
+
+    for text in ["apricot", "banana"] {
+        h.json::<serde_json::Value>(
+            save_as_session(
+                &first_session.id,
+                serde_json::json!({"text": text, "repository_id": repo.id}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    }
+    let error = h
+        .error(
+            save_as_session(
+                &first_session.id,
+                serde_json::json!({"text": "cranberry", "repository_id": repo.id}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(
+        error
+            .error
+            .message
+            .contains("task reached its memory limit")
+    );
+
+    let created: serde_json::Value = h
+        .json(
+            save_as_session(
+                &second_session.id,
+                serde_json::json!({"text": "date", "repository_id": repo.id}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created["source_task_id"], second.id);
+}
+
+#[tokio::test]
+async fn a_taskless_session_saves_two_memories_per_goal() {
+    let h = harness().await;
+    let (goal, repo) = h.goal().await;
+    let session = h.orchestrator_session(&goal).await;
+
+    for text in ["apricot", "banana"] {
+        h.json::<serde_json::Value>(
+            save_as_session(
+                &session.id,
+                serde_json::json!({"text": text, "repository_id": repo.id}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    }
+    let error = h
+        .error(
+            save_as_session(
+                &session.id,
+                serde_json::json!({"text": "cranberry", "repository_id": repo.id}),
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert!(
+        error
+            .error
+            .message
+            .contains("goal reached its memory limit")
+    );
 }
 
 #[tokio::test]
@@ -499,6 +731,11 @@ async fn every_memory_endpoint_is_in_the_openapi_document() {
             "no {method} {path}"
         );
     }
+    assert_eq!(
+        document["paths"]["/v1/memories/search"]["get"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/MemorySearchResult"
+    );
     for gone in [
         "/v1/repositories/{repository_id}/memories",
         "/v1/repositories/{repository_id}/memories/search",

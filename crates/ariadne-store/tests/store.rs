@@ -67,6 +67,70 @@ async fn the_schema_names_agents_by_registry_id_alone() {
     assert_eq!(config, ["agent_id", "extra_flags", "updated_at"]);
 }
 
+#[tokio::test]
+async fn memory_word_search_excludes_nonmatches_and_tracks_text_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let store = Store::open(&path).await.unwrap();
+    let matched = store
+        .create_memory(NewMemory {
+            repository_id: None,
+            text: "Run cargo nextest for the daemon tests.".into(),
+            source_session_id: None,
+            source_task_id: None,
+            source_goal_id: None,
+            expires_at: None,
+        })
+        .await
+        .unwrap();
+    let newest = store
+        .create_memory(NewMemory {
+            repository_id: None,
+            text: "Walrus owns marmot.".into(),
+            source_session_id: None,
+            source_task_id: None,
+            source_goal_id: None,
+            expires_at: None,
+        })
+        .await
+        .unwrap();
+
+    let found = store
+        .search_memories(&MemoryScope::All, "daemon tests")
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, matched.id);
+    assert_ne!(found[0].id, newest.id);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE memories SET text = ? WHERE id = ?")
+        .bind("The raven owns the fixture.")
+        .bind(&matched.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .matching_memories(&MemoryScope::All, "raven")
+            .await
+            .unwrap()[0]
+            .id,
+        matched.id
+    );
+
+    store.delete_memory(&matched.id).await.unwrap();
+    assert!(
+        store
+            .matching_memories(&MemoryScope::All, "raven")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
 /// The pin every seeded agent runs on: a model is required everywhere, so the
 /// fixtures name one and the tests that care name their own.
 fn pin(model: &str) -> AgentPin {

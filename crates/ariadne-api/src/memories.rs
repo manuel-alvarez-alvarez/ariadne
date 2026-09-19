@@ -69,11 +69,20 @@ pub struct MemoryListQuery {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 #[serde(deny_unknown_fields)]
 pub struct MemorySearchQuery {
-    /// Find entries that contain this text, without case sensitivity.
+    /// Find entries that hold any word, or a prefix of a word, in this text.
     pub q: String,
     /// Search the memories of this repository. Omit it for every repository
     /// the caller may read.
     pub repository: Option<String>,
     /// `all` (default), `repository` or `global`.
     pub scope: Option<MemoryScope>,
+}
+
+/// Search hits and whether newest memories stand in for a word match.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MemorySearchResult {
+    /// Matching memories, or newest active memories when `fallback` is true.
+    pub hits: Vec<MemoryDto>,
+    /// True where no word matched and the newest memories are the answer.
+    pub fallback: bool,
 }

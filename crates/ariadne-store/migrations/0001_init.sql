@@ -107,6 +107,27 @@ CREATE TABLE memories (
 );
 CREATE INDEX idx_memories_repository ON memories (repository_id, id);
 
+-- The text of every memory, so a question can find any word it shares with a
+-- fact. The triggers keep the external-content index equal to `memories`.
+CREATE VIRTUAL TABLE memories_fts USING fts5(
+    text,
+    content = 'memories',
+    content_rowid = 'rowid',
+    tokenize = 'unicode61'
+);
+CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts (rowid, text) VALUES (new.rowid, new.text);
+END;
+CREATE TRIGGER memories_fts_update AFTER UPDATE OF text ON memories BEGIN
+    INSERT INTO memories_fts (memories_fts, rowid, text)
+        VALUES ('delete', old.rowid, old.text);
+    INSERT INTO memories_fts (rowid, text) VALUES (new.rowid, new.text);
+END;
+CREATE TRIGGER memories_fts_delete AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts (memories_fts, rowid, text)
+        VALUES ('delete', old.rowid, old.text);
+END;
+
 -- The model and effort columns on `goals` and `task_agents` are pins: the
 -- orchestrator sizes each agent it staffs and writes the answer here, and the
 -- row is what the launcher reads from there on. The model is required —

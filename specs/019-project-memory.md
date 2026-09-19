@@ -41,7 +41,14 @@ Out: prompt injection. Agents choose when to search.
    repository memory is removed when its repository is deleted, and a global
    memory stays.
 4. List and search return only memories whose expiry time is still ahead.
-5. Search matches a case-insensitive literal substring inside the memory text.
+5. Search splits its query into words and matches each word without case
+   sensitivity, including a prefix of a word. Where one or more memories
+   match, search returns only those memories, ordered by FTS5 score. Where no
+   word matches, search returns the five newest active memories of the scope
+   and sets `fallback` in the `{hits, fallback}` answer to `true`.
+   A create refuses an active memory of the same scope that matches a word of
+   its text, naming the memory that already holds the fact. A task saves two
+   memories at most; a session with no task saves two memories per goal.
 6. An agent reads and changes the memories of a repository in its task or
    goal, and reads the global memories. A user reads, writes and deletes in
    every scope.
@@ -123,6 +130,20 @@ Out: prompt injection. Agents choose when to search.
 - The desktop memory page lists, searches through the daemon's own search
   endpoint, and deletes an entry
   (`ui/src/features/memory/memory-page.test.tsx`).
+- Two matching facts rank by their FTS5 score
+  (`memories.rs::two_word_matches_rank_by_fts5_score`).
+- A nonmatching fact stays out while another fact matches
+  (`memories.rs::a_nonmatching_memory_stays_out_of_a_matching_search`).
+- A search with no matching word returns the five newest facts with fallback
+  (`memories.rs::a_search_without_a_word_match_answers_the_five_newest_memories`).
+- A repeated fact is refused with the existing memory named
+  (`memories.rs::a_second_create_that_repeats_a_memory_is_refused`).
+- A task saves two facts, and another task of the same goal can save its own
+  fact (`memories.rs::a_task_saves_two_memories_but_another_task_can_save_its_own_two`).
+- A taskless session saves two facts per goal
+  (`memories.rs::a_taskless_session_saves_two_memories_per_goal`).
+- The FTS index excludes nonmatches and follows text updates and deletes
+  (`store.rs::memory_word_search_excludes_nonmatches_and_tracks_text_changes`).
 
 ## Sources
 

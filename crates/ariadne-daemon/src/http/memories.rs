@@ -10,14 +10,19 @@ use chrono::{DateTime, SecondsFormat, Utc};
 
 use ariadne_api::memories::{
     CreateMemoryRequest, MemoryDto, MemoryListQuery, MemoryScope as ApiMemoryScope,
-    MemorySearchQuery,
+    MemorySearchQuery, MemorySearchResult,
 };
-use ariadne_store::{MemoryScope, NewMemory, Store};
+use ariadne_store::{MemoryScope, NewMemory, Store, StoreError};
 
 use super::AppState;
 use super::caller::{CallCtx, call_ctx, ensure_repository_scope, session_repositories};
 use super::convert::memory_dto;
 use super::error::{ApiError, ApiResult, Json};
+
+/// The most facts one task or goal session may save.
+const MEMORY_SOURCE_LIMIT: i64 = 2;
+/// The newest facts to return when no word matched a search.
+const MEMORY_SEARCH_FALLBACK_LIMIT: usize = 5;
 
 #[utoipa::path(post, path = "/v1/memories", tag = "memories",
     request_body = CreateMemoryRequest,
@@ -51,18 +56,41 @@ pub async fn create(
         ensure_repository_scope(&state.store, &ctx, repository_id).await?;
     }
     let session = ctx.session;
-    let memory = state
-        .store
-        .create_memory(NewMemory {
-            repository_id: req.repository_id,
-            text,
-            source_session_id: session.as_ref().map(|s| s.id.clone()),
-            source_task_id: session.as_ref().and_then(|s| s.task_id.clone()),
-            source_goal_id: session.as_ref().map(|s| s.goal_id.clone()),
-            expires_at,
-        })
-        .await?;
+    let new = NewMemory {
+        repository_id: req.repository_id,
+        text,
+        source_session_id: session.as_ref().map(|s| s.id.clone()),
+        source_task_id: session.as_ref().and_then(|s| s.task_id.clone()),
+        source_goal_id: session.as_ref().map(|s| s.goal_id.clone()),
+        expires_at,
+    };
+    let memory = match &session {
+        Some(session) => state
+            .store
+            .create_memory_with_source_limit(new, MEMORY_SOURCE_LIMIT)
+            .await
+            .map_err(|error| source_limit_error(error, session))?,
+        None => state.store.create_memory(new).await?,
+    };
     Ok((StatusCode::CREATED, Json(memory_dto(memory))))
+}
+
+/// Turn the store's atomic source-limit refusal into the agent's next step.
+fn source_limit_error(error: StoreError, session: &ariadne_store::AgentSession) -> ApiError {
+    match error {
+        StoreError::Conflict(message) if message == "memory source limit reached" => {
+            if session.task_id.is_some() {
+                ApiError::conflict(
+                    "This task reached its memory limit. Keep the one fact that matters.",
+                )
+            } else {
+                ApiError::conflict(
+                    "This goal reached its memory limit. Keep the one fact that matters.",
+                )
+            }
+        }
+        error => error.into(),
+    }
 }
 
 #[utoipa::path(get, path = "/v1/memories", tag = "memories",
@@ -87,12 +115,12 @@ pub async fn list(
 
 #[utoipa::path(get, path = "/v1/memories/search", tag = "memories",
     params(MemorySearchQuery),
-    responses((status = 200, body = [MemoryDto]), (status = 400), (status = 403), (status = 404)))]
+    responses((status = 200, body = MemorySearchResult), (status = 400), (status = 403), (status = 404)))]
 pub async fn search(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<MemorySearchQuery>,
-) -> ApiResult<Json<Vec<MemoryDto>>> {
+) -> ApiResult<Json<MemorySearchResult>> {
     let ctx = call_ctx(&state.store, &headers).await?;
     let scope = read_scope(
         &state.store,
@@ -101,8 +129,17 @@ pub async fn search(
         query.scope.unwrap_or_default(),
     )
     .await?;
-    let memories = state.store.search_memories(&scope, query.q.trim()).await?;
-    Ok(Json(memories.into_iter().map(memory_dto).collect()))
+    let query = query.q.trim();
+    let mut memories = state.store.search_memories(&scope, query).await?;
+    let fallback = memories.is_empty();
+    if fallback {
+        memories = state.store.list_memories(&scope).await?;
+        memories.truncate(MEMORY_SEARCH_FALLBACK_LIMIT);
+    }
+    Ok(Json(MemorySearchResult {
+        hits: memories.into_iter().map(memory_dto).collect(),
+        fallback,
+    }))
 }
 
 #[utoipa::path(delete, path = "/v1/memories/{id}", tag = "memories",
