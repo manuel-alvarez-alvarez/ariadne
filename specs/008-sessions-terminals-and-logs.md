@@ -253,7 +253,12 @@ goal id to a seat (014).
     of the screen is made one row at a time, since tmux keeps a copy of what
     that erase removes in its scrollback. The blank end of each row is
     erased, not written as spaces, so a terminal made narrower does not wrap
-    blank cells into rows of their own. The pane
+    blank cells into rows of their own. The console the daemon hosts for
+    the desktop app does not fit in place on a resize: its emulator holds
+    the console and nothing else, so once the size has held for 250 ms it
+    clears the screen and the scrollback and draws the banner, every block
+    and the pane again at the new size. The CLI's terminal holds the
+    user's shell above the console, and fits in place. The pane
     opens from the
     cursor, which the terminal is asked for once, at the open; a terminal that
     does not answer within crossterm's timeout gets the same pane opened from
@@ -886,6 +891,11 @@ goal id to a seat (014).
   (`ariadne-console/tui/viewport.rs::a_narrower_terminal_keeps_the_blocks_that_were_on_the_screen`),
   and a pane on the top row is erased row by row
   (`::a_pane_on_the_top_row_is_erased_row_by_row_and_never_from_the_corner`).
+- The daemon's console draws the whole transcript again once a resize
+  settles, each block once
+  (`ariadne-console/tui/viewport.rs::a_console_that_redraws_whole_draws_the_transcript_again_once_a_resize_settles`),
+  and the CLI's never clears the scrollback
+  (`::a_console_that_fits_in_place_never_clears_the_scrollback`).
 - The shell comes back on the row under the last block
   (`ariadne-console/tui/viewport.rs::the_shell_comes_back_on_the_row_under_the_last_block`),
   and the CLI says the session has ended where it has
@@ -914,15 +924,15 @@ goal id to a seat (014).
 - The launcher refuses a second live session on one seat, and no test pins
   that refusal on its own.
 - No test pins the `409` a finished session gives to console input.
-- A resize is a terminal limitation for the pane. The terminal moves its
-  rows before the console hears of the resize, and the console makes no
+- A resize is a terminal limitation for the CLI's pane. The terminal moves
+  its rows before the console hears of the resize, and the console makes no
   cursor query after the open (rule 23), so it cannot know where they went.
   In tmux, a taller window pulls history rows down onto the screen, and the
   pane drawn again on its old row covers them: they leave the scrollback.
-  xterm.js does not pull them, and loses nothing. On a narrower window, a
-  terminal that rewraps the old pane can leave the rows it moved above the
-  pane in the scrollback. The console keeps one path for every host and
-  guesses no terminal.
+  On a narrower window, a terminal that rewraps the old pane can leave the
+  rows it moved above the pane in the scrollback. The desktop app's console
+  draws the whole transcript again instead, which a terminal holding the
+  user's shell cannot.
 
 ## Sources
 

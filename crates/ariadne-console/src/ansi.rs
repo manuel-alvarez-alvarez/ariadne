@@ -151,8 +151,14 @@ impl<W: Write> Backend for AnsiBackend<W> {
         self.move_to(position.into())
     }
 
+    /// A clear is whole: the screen, the scrollback, and the cursor home.
+    /// The emulator at the far end holds this console and nothing else, so
+    /// the one thing that clears it is a redraw of the whole transcript
+    /// ([`crate::Console::redraws_whole_on_resize`]), which would otherwise
+    /// leave the old copy in the scrollback above the new one.
     fn clear(&mut self) -> io::Result<()> {
-        self.clear_region(ClearType::All)
+        self.out.write_all(b"\x1b[2J\x1b[3J")?;
+        self.move_to(Position::ORIGIN)
     }
 
     fn clear_region(&mut self, clear_type: ClearType) -> io::Result<()> {

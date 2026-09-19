@@ -138,7 +138,7 @@ async fn run(state: AppState, id: String, header: Header, socket: WebSocket) -> 
     let _ = bytes.send(status_frame(&state, &id).await);
 
     let mut terminal = open(|| AnsiBackend::new(Pipe::new(bytes.clone()), window.clone()))?;
-    let mut console = Console::new(header);
+    let mut console = Console::new(header).redraws_whole_on_resize();
     let mut posts = Posts {
         state: state.clone(),
         id: id.clone(),

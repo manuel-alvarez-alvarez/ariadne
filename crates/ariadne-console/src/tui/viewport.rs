@@ -161,6 +161,24 @@ pub(super) fn fit<B: Screen>(terminal: &mut Terminal<Anchored<B>>, wanted: u16) 
     Ok(())
 }
 
+/// Clear the whole terminal, its scrollback too where the backend can, and
+/// open the viewport again on the top row: the start of a redraw of the
+/// whole transcript ([`Console::redraw`]).
+pub(super) fn restart<B: Screen>(terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
+    if terminal.backend().lost() {
+        return Ok(());
+    }
+    let backend = terminal.backend_mut();
+    backend.clear()?;
+    backend.set_cursor_position(Position::ORIGIN)?;
+    let backend = Anchored {
+        inner: backend.inner.take(),
+        known: Some(Position::ORIGIN),
+    };
+    *terminal = inline(backend, OPENING)?;
+    Ok(())
+}
+
 /// A backend whose cursor position is known without asking the terminal.
 ///
 /// ratatui asks where the cursor is when it opens an inline viewport, when it
@@ -784,6 +802,98 @@ mod tests {
             "the pane shrank: {shrunk}"
         );
         assert_eq!(tap.screen(), shrunk.trim_end(), "after the shrink");
+    }
+
+    /// Drive a console on a terminal of 72 by 40 over the ANSI backend,
+    /// resize it to 60 columns once the transcript is drawn, and leave it:
+    /// the bytes it wrote, all told.
+    async fn resized(console: Console) -> Vec<u8> {
+        let tap = Tap::default();
+        let window = Window::new(72, 40);
+        let mut terminal = super::open(|| AnsiBackend::new(tap.clone(), window.clone())).unwrap();
+        let mut console = console;
+        let mut events = Vec::new();
+        for n in 0..2 {
+            events.push(prompt(&format!("go {n}")));
+            events.push(event(
+                "agent_message",
+                &format!("done {n}"),
+                json!({"text": format!("done {n}")}),
+            ));
+            events.push(event(
+                "stop",
+                &format!("stop {n}"),
+                json!({"stop_reason": "end_turn"}),
+            ));
+        }
+        let mut stub = Stub::new(events);
+        let source = stub.source();
+        let (typing, typed) = tokio::sync::mpsc::unbounded_channel();
+        let keys = stream::unfold(typed, |mut typed| async move {
+            typed.recv().await.map(|key| (Ok(key), typed))
+        });
+        let script = async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            window.set(60, 40);
+            typing.send(TermEvent::Resize(60, 40)).unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            typing.send(TermEvent::Key(ctrl('c'))).unwrap();
+            typing.send(TermEvent::Key(ctrl('c'))).unwrap();
+        };
+        let (outcome, ()) = tokio::join!(
+            drive(
+                &mut terminal,
+                source,
+                &mut stub,
+                Box::pin(keys),
+                &mut console
+            ),
+            script
+        );
+        outcome.unwrap();
+        tap.0.lock().unwrap().clone()
+    }
+
+    /// A terminal made narrower re-wraps its rows, so the pane's rows are no
+    /// longer where they were drawn. The desktop app's console draws the
+    /// whole transcript again once the resize settles: from a cleared
+    /// screen and scrollback, each block once and one status row.
+    #[tokio::test(start_paused = true)]
+    async fn a_console_that_redraws_whole_draws_the_transcript_again_once_a_resize_settles() {
+        let written = resized(Console::new(header()).redraws_whole_on_resize()).await;
+
+        let clear = b"\x1b[2J\x1b[3J";
+        let at = written
+            .windows(clear.len())
+            .rposition(|bytes| bytes == clear)
+            .expect("the resize cleared the terminal, scrollback included");
+        let mut emulator = vt100::Parser::new(40, 60, 0);
+        emulator.process(&written[at..]);
+        let shown = emulator.screen().contents();
+        for once in [
+            "╭",
+            "go 0",
+            "done 0",
+            "go 1",
+            "done 1",
+            "claude:opus · idle",
+        ] {
+            assert_eq!(shown.matches(once).count(), 1, "{once} once: {shown}");
+        }
+        assert!(
+            shown.contains(&"─".repeat(60)) && !shown.contains(&"─".repeat(61)),
+            "drawn at the new width: {shown}"
+        );
+    }
+
+    /// The CLI's terminal holds the user's shell above the console: a
+    /// resize fits the pane in place and clears nothing above it.
+    #[tokio::test(start_paused = true)]
+    async fn a_console_that_fits_in_place_never_clears_the_scrollback() {
+        let written = resized(Console::new(header())).await;
+
+        let written = String::from_utf8_lossy(&written);
+        assert!(!written.contains("\x1b[3J"), "{written:?}");
     }
 
     /// A terminal keeps a space it was sent as text: a row that ends in

@@ -61,6 +61,11 @@ use input::Input;
 /// How often the spinner turns while a turn runs.
 const TICK: Duration = Duration::from_millis(120);
 
+/// How long the terminal keeps one size before a console that redraws whole
+/// on a resize does so: a window dragged wider is many resizes, and the
+/// transcript is drawn again once, when the drag stops.
+const SETTLE: Duration = Duration::from_millis(250);
+
 /// What a key asked the console to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -180,6 +185,9 @@ pub struct Console {
     /// The last totals each launch of the session reported, by the launch
     /// they were read under: what the footer sums.
     launches: BTreeMap<String, TokenUsageDto>,
+    /// A resize wipes the terminal and draws the whole transcript again at
+    /// the new size ([`Console::redraws_whole_on_resize`]).
+    whole_on_resize: bool,
 }
 
 impl Console {
@@ -199,7 +207,34 @@ impl Console {
             armed: false,
             ended,
             launches: BTreeMap::new(),
+            whole_on_resize: false,
         }
+    }
+
+    /// Draw the whole transcript again, from a cleared terminal, once a
+    /// resize settles.
+    ///
+    /// A terminal emulator re-wraps its rows when it is made narrower and
+    /// trims the rows under the cursor when it is made shorter — xterm.js
+    /// does both — so the pane's rows are no longer where the console drew
+    /// them, and fitting the pane in place leaves a copy of its status row
+    /// behind, or takes a row of the transcript with it. Where the terminal
+    /// holds this console and nothing else, as the desktop app's does, the
+    /// transcript is drawn again instead. The CLI's terminal holds the
+    /// user's shell above the console, which a clear would take, and fits
+    /// the pane in place.
+    pub fn redraws_whole_on_resize(mut self) -> Self {
+        self.whole_on_resize = true;
+        self
+    }
+
+    /// Clear the terminal and draw it again: the banner, every block, and
+    /// the pane under them.
+    pub fn redraw<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
+        viewport::restart(terminal)?;
+        self.committed = 0;
+        self.banner(terminal)?;
+        self.show(terminal)
     }
 
     /// Put the attach identity into the terminal's scrollback before its first block.
@@ -901,6 +936,9 @@ where
     let mut source = std::pin::pin!(source);
     let mut keys = keys;
     let mut ticker = interval(TICK);
+    // When the terminal last changed size, while a redraw of the whole
+    // transcript waits for it to settle.
+    let mut resized: Option<tokio::time::Instant> = None;
 
     // The stream opens with the transcript snapshot. Take it before any key,
     // so the first thing drawn is the conversation as it stands and a key
@@ -954,11 +992,21 @@ where
                 Action::Cancel => sink.cancel().await,
             },
             Step::Key(TermEvent::Paste(text)) => console.paste(&text),
-            // A resize is a turn of the loop and no more: the loop fits the
-            // pane to the terminal's size on its way round, before it draws.
+            // A resize is a turn of the loop: the loop fits the pane to the
+            // terminal's size on its way round, before it draws, and a
+            // console that redraws whole does so once the size settles.
+            Step::Key(TermEvent::Resize(..)) if console.whole_on_resize => {
+                resized = Some(tokio::time::Instant::now());
+            }
             Step::Key(_) => {}
             Step::Ended | Step::Closed => return Ok(()),
-            Step::Tick => console.tick(),
+            Step::Tick => {
+                console.tick();
+                if resized.is_some_and(|at| at.elapsed() >= SETTLE) {
+                    resized = None;
+                    console.redraw(terminal)?;
+                }
+            }
         }
     }
 }
