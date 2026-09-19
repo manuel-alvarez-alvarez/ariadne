@@ -1459,7 +1459,7 @@ impl KnowledgeStore {
         let mut candidates: HashMap<String, Vec<Candidate>> = HashMap::new();
         for chunk in names.chunks(CHUNK) {
             let mut sql = QueryBuilder::<Sqlite>::new(
-                "SELECT s.name, s.id, s.blob, f.path, s.qualified_name, s.start_line
+                "SELECT s.name, s.id, s.blob, f.path, f.language, s.qualified_name, s.start_line
                  FROM symbols s JOIN files f ON f.blob = s.blob
                  WHERE f.repository_id = ",
             );
@@ -1472,13 +1472,14 @@ impl KnowledgeStore {
                 values.push_bind(name);
             }
             sql.push(")");
-            let found: Vec<(String, i64, String, String, String, i64)> =
+            let found: Vec<(String, i64, String, String, String, String, i64)> =
                 sql.build_query_as().fetch_all(&self.read).await?;
-            for (name, id, blob, path, qualified_name, start_line) in found {
+            for (name, id, blob, path, language, qualified_name, start_line) in found {
                 candidates.entry(name).or_default().push(Candidate {
                     id,
                     blob,
                     path,
+                    language,
                     qualified_name,
                     start_line,
                 });

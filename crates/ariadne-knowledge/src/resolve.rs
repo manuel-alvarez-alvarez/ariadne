@@ -21,6 +21,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::interfaces::{InterfaceKind, route_match};
+use crate::languages::Language;
 use crate::parser::{EdgeKind, Import};
 
 /// How many definitions a name may match and still be resolved. Past this,
@@ -39,6 +40,7 @@ pub(crate) struct Candidate {
     pub id: i64,
     pub blob: String,
     pub path: String,
+    pub language: String,
     pub qualified_name: String,
     pub start_line: i64,
 }
@@ -316,6 +318,10 @@ pub(crate) fn foreign_edges(
     let mut edges = Vec::new();
     let mut seen: HashSet<(String, Option<i64>, i64)> = HashSet::new();
     for (name, candidates) in defined {
+        let candidates: Vec<&Candidate> = candidates
+            .iter()
+            .filter(|candidate| !is_outline_only(candidate))
+            .collect();
         if candidates.is_empty() || candidates.len() > MAX_CANDIDATES {
             continue;
         }
@@ -323,7 +329,7 @@ pub(crate) fn foreign_edges(
             continue;
         };
         for (blob, mention) in named {
-            for candidate in candidates {
+            for candidate in &candidates {
                 if !seen.insert((blob.clone(), mention.from_symbol, candidate.id)) {
                     continue;
                 }
@@ -355,27 +361,39 @@ fn narrow<'a>(
 ) -> Option<(Vec<&'a Candidate>, &'static str)> {
     let directory = directory_of(path);
     let held = |step: Vec<&'a Candidate>| (!step.is_empty()).then_some(step);
-    let step = held(matched.iter().filter(|c| c.blob == blob).collect())
-        // The same module or directory.
-        .or_else(|| {
-            held(
-                matched
-                    .iter()
-                    .filter(|c| directory_of(&c.path) == directory)
-                    .collect(),
-            )
-        })
-        // What the file imports.
-        .or_else(|| {
-            held(
-                matched
-                    .iter()
-                    .filter(|c| modules.iter().any(|module| module_holds(module, c)))
-                    .collect(),
-            )
-        })
-        // Anywhere in the repository.
-        .or_else(|| held(matched.iter().collect()))?;
+    let matched: Vec<&Candidate> = matched
+        .iter()
+        .filter(|candidate| !is_outline_only(candidate))
+        .collect();
+    let step = held(
+        matched
+            .iter()
+            .copied()
+            .filter(|candidate| candidate.blob == blob)
+            .collect(),
+    )
+    // The same module or directory.
+    .or_else(|| {
+        held(
+            matched
+                .iter()
+                .copied()
+                .filter(|candidate| directory_of(&candidate.path) == directory)
+                .collect(),
+        )
+    })
+    // What the file imports.
+    .or_else(|| {
+        held(
+            matched
+                .iter()
+                .copied()
+                .filter(|candidate| modules.iter().any(|module| module_holds(module, candidate)))
+                .collect(),
+        )
+    })
+    // Anywhere in the repository.
+    .or_else(|| held(matched))?;
     if step.len() > MAX_CANDIDATES {
         return None;
     }
@@ -384,6 +402,13 @@ fn narrow<'a>(
         _ => "heuristic",
     };
     Some((step, confidence))
+}
+
+/// Whether a candidate is a definition from an outline-only format.
+fn is_outline_only(candidate: &Candidate) -> bool {
+    Language::OUTLINE_ONLY
+        .into_iter()
+        .any(|language| language.name() == candidate.language)
 }
 
 /// Whether a definition could be what an import statement named: its path or
@@ -453,6 +478,7 @@ mod tests {
             id,
             blob: blob.into(),
             path: path.into(),
+            language: "rust".into(),
             qualified_name: qualified_name.into(),
             start_line: 1,
         }
@@ -500,6 +526,7 @@ mod tests {
                 id: 42,
                 blob: "handler".into(),
                 path: "handler.rs".into(),
+                language: "rust".into(),
                 qualified_name: "get_item".into(),
                 start_line: 18,
             }],
@@ -594,6 +621,44 @@ mod tests {
             edges.iter().all(|e| e.name.as_deref() == Some("Item")),
             "a name past the cap makes no edge"
         );
+    }
+
+    #[test]
+    fn a_foreign_reference_skips_outline_definitions() {
+        let mentions = HashMap::from([(
+            "Value".to_string(),
+            vec![(
+                "caller".to_string(),
+                Mention {
+                    kind: "references".into(),
+                    name: "Value".into(),
+                    line: 1,
+                    from_symbol: Some(1),
+                },
+            )],
+        )]);
+        let mut outline = candidate(2, "config", "config.yml", "Value");
+        outline.language = "yaml".into();
+        let defined = HashMap::from([("Value".to_string(), vec![outline])]);
+
+        assert!(foreign_edges(&mentions, &defined).is_empty());
+    }
+
+    #[test]
+    fn a_route_handler_skips_outline_definitions() {
+        let from = [row("client", InterfaceKind::RouteUse, "/items", 1)];
+        let mut route = row("routes", InterfaceKind::Route, "/items", 2);
+        route.handlers = Some("handle".into());
+        let mut outline = candidate(2, "config", "routes.yml", "handle");
+        outline.language = "yaml".into();
+        let handlers = HashMap::from([(
+            "handle".to_string(),
+            vec![outline, candidate(3, "handler", "handler.rs", "handle")],
+        )]);
+
+        let edges = interface_edges(&from, &[route], &handlers);
+        assert_eq!(edges.len(), 1, "{edges:#?}");
+        assert_eq!(edges[0].to_symbol, Some(3));
     }
 
     /// Two files that import the same name each get their own edge. An

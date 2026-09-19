@@ -108,6 +108,18 @@ pub enum TestRule {
 }
 
 impl Language {
+    /// The formats whose structure makes definitions for outlines, not for
+    /// resolving code mentions.
+    pub const OUTLINE_ONLY: [Language; 7] = [
+        Language::Markdown,
+        Language::Yaml,
+        Language::Toml,
+        Language::Json,
+        Language::Html,
+        Language::Css,
+        Language::Sql,
+    ];
+
     /// Every language the registry holds: 20 read by a tags query, 7
     /// outline-only formats, and the manifests read by name.
     pub const ALL: [Language; 28] = [

@@ -714,6 +714,34 @@ async fn a_call_through_an_import_resolves_to_the_definition_it_named() {
     assert_eq!(ends(&context.callees), ["src/inner/m.rs:2 b exact"]);
 }
 
+/// A call skips an outline key in its directory and resolves to the code
+/// definition farther away.
+#[tokio::test]
+async fn a_call_resolves_to_a_code_definition_and_never_to_an_outline_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/run.rs", "pub fn run() {\n    push();\n}\n"),
+            ("src/push.yml", "push:\n  enabled: true\n"),
+            ("src/util/lib.rs", "pub fn push() {}\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let function = definition_at(&store, "push", "src/util/lib.rs").await;
+    let context = store
+        .context(function.id, "repo", "main", 20)
+        .await
+        .unwrap();
+    assert_eq!(ends(&context.callers), ["src/run.rs:1 run exact"]);
+
+    let key = definition_at(&store, "push", "src/push.yml").await;
+    let context = store.context(key.id, "repo", "main", 20).await.unwrap();
+    assert!(context.callers.is_empty(), "{:#?}", context.callers);
+}
+
 /// A name two files define is a guess: the caller points at both, each
 /// marked `heuristic`, and the count of what matched is kept.
 #[tokio::test]

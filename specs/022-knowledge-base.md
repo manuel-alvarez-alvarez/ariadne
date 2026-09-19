@@ -101,7 +101,9 @@ agent to do with the tools (017); and the memory tools beside these (019).
    one edge marked `exact`; several are one edge to each, marked `heuristic`,
    and every edge carries how many matched. A step that holds more than 20
    definitions says nothing about which one was meant, and the mention is left
-   unresolved. A module is what an import named where the definition's path,
+   unresolved. At every step, definitions from outline-only formats do not
+   hold a candidate; a step with only those definitions is empty and the
+   search continues. A module is what an import named where the definition's path,
    or its qualified name, carries the module's segments, past `crate`, `self`,
    `super` and a leading `.` or `/`.
 10. An edge joins two ends, each a blob at one ref of one repository, a line,
@@ -334,12 +336,13 @@ agent to do with the tools (017); and the memory tools beside these (019).
       the definition of a handler name the template carries, in the
       template's own file first, then its directory, then anywhere in the
       ref under the candidate cap, one edge to each; and at the registration
-      itself, with the definition it sits in, where none resolves.
+      itself, with the definition it sits in, where none resolves. A definition
+      of an outline-only format does not answer a handler name.
     - `sets_env`, from a set to every read of the same variable, `exact`.
     Then, between two repositories only, `references`: every mention or
     named import of a name at least 4 characters long that the ref defines
-    nowhere, pointed at every definition of that name the other ref holds
-    under the candidate cap, `heuristic`, carrying how many matched, and
+    nowhere, pointed at every non-outline definition of that name the other
+    ref holds under the candidate cap, `heuristic`, carrying how many matched, and
     keyed by the name. Where the ref's manifests depend on some registered
     repository but not on this one, and one it depends on also defines the
     name at its base ref, the name is taken to mean that one's definition and
@@ -531,6 +534,9 @@ and by `(kind, name)`.
   (`resolve.rs::a_name_resolves_at_the_nearest_step_that_holds_a_definition`,
   `::a_name_past_the_candidate_cap_is_left_unresolved`,
   `::a_module_is_matched_by_the_path_or_the_qualified_name_it_names`).
+- A call skips a same-directory YAML key and resolves to a Rust function in a
+  subdirectory, exactly; the YAML key has no caller
+  (`knowledge.rs::a_call_resolves_to_a_code_definition_and_never_to_an_outline_key`).
 - A Rust file that calls a definition it brought in with `use` names it
   exactly, and the caller and the callee each list the other, while a second
   definition of the same name that nothing imports is called by nobody
@@ -612,10 +618,13 @@ and by `(kind, name)`.
   name; a route use joins the template it fits, at the handler the
   registration named where the ref defines it; a set variable joins every
   read of it
-  (`resolve.rs::interface_edges_join_a_dependency_a_route_use_and_a_set_variable`).
+  (`resolve.rs::interface_edges_join_a_dependency_a_route_use_and_a_set_variable`,
+  `::a_route_handler_skips_outline_definitions`).
 - A foreign reference is a guess at every definition of its name in the
-  other repository, and a name past the cap makes none
-  (`resolve.rs::a_foreign_reference_is_a_guess_at_every_definition_of_its_name`).
+  other repository, and a name past the cap makes none; an outline definition
+  makes no foreign reference
+  (`resolve.rs::a_foreign_reference_is_a_guess_at_every_definition_of_its_name`,
+  `::a_foreign_reference_skips_outline_definitions`).
 - With `api` (Rust: the package `api-types`, a type `Item`, an axum route
   `/v1/items/{id}` and a read of `API_TOKEN`) and `web` (TypeScript: a
   dependency on `api-types`, a `new Item()`, a request to `/v1/items/42`
