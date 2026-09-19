@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-12
+updated: 2026-09-19
 areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
@@ -17,7 +17,12 @@ tests:
   - crates/ariadne-console/src/ansi.rs
   - crates/ariadne-console/src/markdown.rs
   - crates/ariadne-console/src/transcript.rs
-  - crates/ariadne-console/src/tui.rs
+  - crates/ariadne-console/src/tui/mod.rs
+  - crates/ariadne-console/src/tui/blocks.rs
+  - crates/ariadne-console/src/tui/chrome.rs
+  - crates/ariadne-console/src/tui/input.rs
+  - crates/ariadne-console/src/tui/picker.rs
+  - crates/ariadne-console/src/tui/viewport.rs
 ---
 
 # Sessions and the console
@@ -403,11 +408,11 @@ goal id to a seat (014).
   a socket opened after the session ended gets the transcript and closes
   (`::a_socket_opened_after_the_session_ended_gets_the_transcript_and_closes`;
   the loop leaves on such a snapshot:
-  `ariadne-console/tui.rs::a_snapshot_that_holds_the_session_end_leaves_the_console`),
+  `ariadne-console/tui/mod.rs::a_snapshot_that_holds_the_session_end_leaves_the_console`),
   a relaunch keeps an open socket open, and a later socket too
   (`::a_relaunch_keeps_the_socket_open_and_a_later_socket_too`; a snapshot
   whose session started again after its end keeps the console:
-  `ariadne-console/tui.rs::a_snapshot_whose_session_started_again_after_its_end_keeps_the_console`),
+  `ariadne-console/tui/mod.rs::a_snapshot_whose_session_started_again_after_its_end_keeps_the_console`),
   Ctrl-C twice and Ctrl-D close it with the session alive
   (`::ctrl_c_twice_or_ctrl_d_closes_the_socket_and_the_session_stays_alive`),
   a resize redraws at the new size (`::a_resize_redraws_at_the_new_size`),
@@ -434,12 +439,12 @@ goal id to a seat (014).
 - The inline pane renders the prompt, the agent's markdown, a tool result
   folded to its last lines with its trailing blank lines trimmed, and the
   status line
-  (`ariadne-console/tui.rs::a_transcript_renders_the_prompt_the_markdown_the_tool_call_and_the_status_line`),
+  (`ariadne-console/tui/mod.rs::a_transcript_renders_the_prompt_the_markdown_the_tool_call_and_the_status_line`),
   and markdown keeps a heading, a code block and a list apart
   (`ariadne-console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_paragraph_wraps_at_the_width_it_is_drawn_at`).
 - The status line follows the session's status from its events
-  (`ariadne-console/tui.rs::the_status_line_follows_the_sessions_status_from_its_events`)
+  (`ariadne-console/tui/chrome.rs::the_status_line_follows_the_sessions_status_from_its_events`)
   and is not revived off an end by the events replayed under it
   (`::a_header_that_says_exited_or_failed_is_not_revived_by_the_events_replayed`),
   while a live row resumed after an earlier end follows its new launch
@@ -456,11 +461,11 @@ goal id to a seat (014).
   redraws the pane at the new size
   (`::a_resize_redraws_the_viewport_at_the_new_size`).
 - A line of wide characters wraps at the display width, in a block
-  (`ariadne-console/tui.rs::a_line_of_wide_characters_wraps_at_the_display_width`)
+  (`ariadne-console/tui/blocks.rs::a_line_of_wide_characters_wraps_at_the_display_width`)
   and in markdown
   (`ariadne-console/markdown.rs::a_paragraph_of_wide_characters_wraps_at_the_display_width`);
   the cursor sits after the columns a wide character draws on
-  (`ariadne-console/tui.rs::the_cursor_sits_after_the_columns_a_wide_character_draws_on`),
+  (`ariadne-console/tui/input.rs::the_cursor_sits_after_the_columns_a_wide_character_draws_on`),
   an emoji sequence measured as it is drawn
   (`::the_cursor_sits_after_an_emoji_sequence_as_it_is_drawn`); and a cut
   keeps an emoji sequence whole, in a call's head
@@ -468,7 +473,7 @@ goal id to a seat (014).
   (`ariadne-console/markdown.rs::a_code_line_is_cut_between_whole_emoji_sequences`).
 - A tool call's head is a glyph per kind and what the call is about — the
   command, the path and line, the pattern and path, the URL — never raw JSON
-  (`ariadne-console/tui.rs::each_kind_of_call_draws_its_glyph_and_what_it_is_about`);
+  (`ariadne-console/tui/blocks.rs::each_kind_of_call_draws_its_glyph_and_what_it_is_about`);
   a completed call draws its duration
   (`::a_completed_call_draws_its_duration`); and updates of one call draw one
   block (`::updates_of_one_call_draw_one_block`), because they fold into the
@@ -476,9 +481,9 @@ goal id to a seat (014).
   (`ariadne-console/transcript.rs::updates_of_one_call_fold_into_it_and_the_last_dates_its_end`);
   a call a question asks about reaches the scrollback as it ended, not as
   pending
-  (`ariadne-console/tui.rs::a_call_a_question_asks_about_reaches_the_scrollback_as_it_ended_not_as_pending`).
+  (`ariadne-console/tui/mod.rs::a_call_a_question_asks_about_reaches_the_scrollback_as_it_ended_not_as_pending`).
 - A diff draws a file header, coloured lines and a fold count past the limit
-  (`ariadne-console/tui.rs::a_diff_draws_its_file_header_its_lines_coloured_and_a_fold_count`),
+  (`ariadne-console/tui/blocks.rs::a_diff_draws_its_file_header_its_lines_coloured_and_a_fold_count`),
   and an old text and a new text fold to hunks with context rather than every
   old line and then every new one
   (`ariadne-console/transcript.rs::an_old_and_a_new_text_fold_to_hunks_with_context`). A
@@ -486,16 +491,16 @@ goal id to a seat (014).
   (`ariadne-console/transcript.rs::a_patch_without_file_headers_takes_them_from_the_entry_path`).
 - A permission question draws the call's head and its command or its diff
   above the options
-  (`ariadne-console/tui.rs::a_permission_question_draws_the_call_above_its_options`),
+  (`ariadne-console/tui/picker.rs::a_permission_question_draws_the_call_above_its_options`),
   and while it waits the picker is on the screen whatever came after it and
   however long its diff
   (`::a_pending_picker_is_on_the_screen_whatever_came_after_it_and_however_long_its_diff`).
 - A tab in a tool's output takes the columns to the next tab stop
-  (`ariadne-console/tui.rs::a_tab_in_a_tool_output_takes_the_columns_to_the_next_tab_stop`),
+  (`ariadne-console/tui/blocks.rs::a_tab_in_a_tool_output_takes_the_columns_to_the_next_tab_stop`),
   and a call whose raw output is a structure draws its content text
   (`ariadne-console/transcript.rs::a_structured_raw_output_gives_way_to_the_content_text`).
 - A prompt draws its text alone, never the system prompt
-  (`ariadne-console/tui.rs::a_prompt_draws_its_text_alone_and_never_the_system_prompt`);
+  (`ariadne-console/tui/mod.rs::a_prompt_draws_its_text_alone_and_never_the_system_prompt`);
   an event carrying only the whole prompt draws none of it
   (`::a_prompt_carrying_only_the_whole_prompt_draws_no_system_prompt`); a
   confirmation without `text` keeps what was typed
@@ -506,7 +511,7 @@ goal id to a seat (014).
   (`::a_daemon_sourced_prompt_draws_under_its_own_marker`).
 - Where the cursor position cannot be read, the pane opens from the bottom
   row
-  (`ariadne-console/tui.rs::the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read`)
+  (`ariadne-console/tui/viewport.rs::the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read`)
   and a finished block still reaches the scrollback
   (`::a_finished_block_reaches_the_scrollback_when_the_cursor_position_cannot_be_read`).
   A terminal that answered at the open and answers nothing after — the
@@ -514,17 +519,17 @@ goal id to a seat (014).
   finished block still reaches the scrollback
   (`::a_finished_block_reaches_the_scrollback_when_only_the_first_cursor_query_is_answered`).
 - Streamed chunks append to the block already open
-  (`ariadne-console/tui.rs::streamed_chunks_append_to_the_agent_block_that_is_already_open`),
+  (`ariadne-console/tui/mod.rs::streamed_chunks_append_to_the_agent_block_that_is_already_open`),
   a chunk that arrives after the whole of its turn is not drawn again
   (`::a_chunk_that_arrives_after_the_whole_of_its_turn_is_not_drawn_again`),
   and text after a tool call is a block of its own that the stored whole does
   not repeat (`::agent_text_after_a_tool_call_is_a_block_of_its_own`).
 - A permission question is a picker the arrows move
-  (`ariadne-console/tui.rs::a_permission_question_renders_as_a_picker_the_arrows_move`),
+  (`ariadne-console/tui/picker.rs::a_permission_question_renders_as_a_picker_the_arrows_move`),
   and Enter posts the option it is on
   (`::enter_posts_the_permission_option_the_picker_is_on`).
 - A typed line is posted and its pending prompt shows at once
-  (`ariadne-console/tui.rs::a_pending_prompt_is_on_the_screen_before_the_daemon_confirms_it`)
+  (`ariadne-console/tui/mod.rs::a_pending_prompt_is_on_the_screen_before_the_daemon_confirms_it`)
   and is replaced by the confirmed one
   (`::a_typed_line_is_posted_and_its_pending_prompt_is_replaced_by_the_confirmed_one`);
   Shift+Enter and Alt+Enter add a line instead
@@ -539,18 +544,18 @@ goal id to a seat (014).
   (`::a_refused_prompt_is_said_on_the_transcript_and_does_not_close_the_console`).
 - A pasted text with two line breaks is one prompt with two line breaks, and
   sends nothing until Enter
-  (`ariadne-console/tui.rs::a_pasted_text_is_one_prompt_with_its_line_breaks_and_sends_nothing_until_enter`);
+  (`ariadne-console/tui/mod.rs::a_pasted_text_is_one_prompt_with_its_line_breaks_and_sends_nothing_until_enter`);
   it goes in at the cursor, a carriage return being a line break
   (`::a_paste_goes_in_at_the_cursor_and_a_carriage_return_is_a_line_break`).
 - The line-editing keys do what the shell's do: Ctrl-A
-  (`ariadne-console/tui.rs::ctrl_a_moves_to_the_line_start`), Ctrl-E
+  (`ariadne-console/tui/input.rs::ctrl_a_moves_to_the_line_start`), Ctrl-E
   (`::ctrl_e_moves_to_the_line_end`), Ctrl-U
   (`::ctrl_u_deletes_to_the_line_start`), Ctrl-K
   (`::ctrl_k_deletes_to_the_line_end`), Ctrl-W
   (`::ctrl_w_deletes_the_word_before_the_cursor`) and the Alt arrows
   (`::alt_left_and_alt_right_move_by_word`).
 - Escape cancels the running turn
-  (`ariadne-console/tui.rs::escape_during_a_running_turn_cancels_it`), one
+  (`ariadne-console/tui/mod.rs::escape_during_a_running_turn_cancels_it`), one
   Ctrl-C keeps the console and the second leaves it
   (`::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`), and the pane
   opened from the bottom row runs the loop and closes like the inline one
@@ -560,7 +565,7 @@ goal id to a seat (014).
   with bracketed paste off
   (`::the_terminal_is_given_back_with_bracketed_paste_off`).
 - A dropped stream says so
-  (`ariadne-console/tui.rs::a_dropped_stream_says_reconnecting_on_the_status_line`),
+  (`ariadne-console/tui/chrome.rs::a_dropped_stream_says_reconnecting_on_the_status_line`),
   until the next snapshot says it is back
   (`::a_dropped_frame_says_reconnecting_until_the_next_snapshot`), and its
   fresh snapshot is not printed twice
@@ -606,4 +611,10 @@ goal id to a seat (014).
 `crates/ariadne-console/src/ansi.rs`,
 `crates/ariadne-console/src/markdown.rs`,
 `crates/ariadne-console/src/transcript.rs`,
-`crates/ariadne-console/src/tui.rs`.
+`crates/ariadne-console/src/theme.rs`,
+`crates/ariadne-console/src/tui/mod.rs`,
+`crates/ariadne-console/src/tui/blocks.rs`,
+`crates/ariadne-console/src/tui/chrome.rs`,
+`crates/ariadne-console/src/tui/input.rs`,
+`crates/ariadne-console/src/tui/picker.rs`,
+`crates/ariadne-console/src/tui/viewport.rs`.

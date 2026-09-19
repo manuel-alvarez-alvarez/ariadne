@@ -3,9 +3,10 @@
 //! An agent's recorded events are its transcript, and a line typed at the
 //! console becomes the next prompt. [`transcript`] is the typed model of
 //! those events, folded into the blocks a person reads, and [`markdown`]
-//! draws an agent's markdown as styled lines. The inline pane itself — the
-//! scrolling transcript, the status line and the input box, and the loop
-//! that drives them — is [`tui`].
+//! draws an agent's markdown as styled lines. [`theme`] holds the styles and
+//! glyphs the pane draws with. The inline pane itself — the scrolling
+//! transcript, the status line and the input box, and the loop that drives
+//! them — is [`tui`].
 //!
 //! Nothing here dials a daemon or owns a process terminal. The loop takes a
 //! stream of frames and a sink for what the console sends, and a ratatui
@@ -15,6 +16,7 @@
 
 pub mod ansi;
 pub mod markdown;
+pub mod theme;
 pub mod transcript;
 pub mod tui;
 
