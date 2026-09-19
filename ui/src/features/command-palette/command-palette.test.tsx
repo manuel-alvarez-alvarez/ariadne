@@ -192,6 +192,16 @@ it("opens the knowledge screen on a repository from the palette", async () => {
   expect(location.url).toBe(`/knowledge?repository=${REPOSITORY.id}`)
 })
 
+it("opens symbol search from the palette", async () => {
+  const user = userEvent.setup()
+  const location = renderPalette()
+  await screen.findByText("Actions")
+
+  await user.click(screen.getByText("Find symbol"))
+
+  expect(location.url).toBe("/knowledge?tab=symbols")
+})
+
 it("asks the daemon nothing until it is opened", async () => {
   renderScreen(<CommandPalette open={false} {...handlers} />, { route: "/goals" })
 

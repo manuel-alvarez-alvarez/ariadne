@@ -188,8 +188,7 @@ Out: the daemon endpoints themselves (012).
     Overview tab. The refs offered are the ones
     `GET /v1/repositories/{id}/knowledge` lists, and the base branch. The
     tabs are one list in `ui/src/features/knowledge/knowledge-tabs.tsx`, one
-    entry per tab. `symbols`, `impact` and `files` say only that they are
-    coming.
+    entry per tab. `impact` and `files` say only that they are coming.
 32. The Overview tab shows one card per registered repository: its state,
     its files and symbols, its languages, its indexed refs and a Reindex
     button. Reindex posts the reindex and shows `indexing` at once; it is off
@@ -217,10 +216,21 @@ Out: the daemon endpoints themselves (012).
 35. A repository has no knowledge page of its own and its row has no
     Knowledge button; the command palette opens `#/knowledge?repository=<id>`
     for a repository.
+36. The Symbols tab searches the selected repository and ref by name, kind,
+    and path. Kind uses the index's known kinds. A result shows its name,
+    kind, and `path:line`. Picking one draws its callers, callees,
+    implementations, references, and tests around it. Each relation has its
+    own colour. Heuristic edges are dashed. A foreign node carries an arrow.
+    Each relation has one `+N more` node when the daemon reports hidden ends.
+    A node click centres that definition. Back and Forward move through the
+    symbol history. `?symbol=` keeps the current name. A definition picker
+    separates equal names. The side pane shows the signature, documentation,
+    line range, and numbered source. The palette's Find symbol action opens
+    `#/knowledge?tab=symbols`.
 
 ## Acceptance criteria
 
-- 74 test files cover the features, the API layer and the event stream; each
+- 76 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
 - A task staffed with several authors shows each one's branch and its own
   vote count, marks the one the reviewers picked, and lists what each
@@ -262,6 +272,16 @@ Out: the daemon endpoints themselves (012).
   legend from the status tokens, draws dashed edges dashed, and hands a
   clicked node and a clicked edge back by their keys
   (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx`).
+- The Symbols graph holds the centre and every relation in its own colour.
+  It includes hidden-count nodes, foreign markers, and dashed heuristic edges
+  (`ui/src/features/knowledge/symbols-graph.test.ts`).
+- The Symbols tab sends the selected repository, ref, kind, and path.
+  It opens a result and keeps `?symbol=` through reloads. Node clicks,
+  Back, and Forward change the centre. The pane shows numbered source.
+  Equal names offer a definition picker
+  (`ui/src/features/knowledge/symbols-tab.test.tsx::the Symbols tab`).
+- Find symbol opens the Symbols tab
+  (`ui/src/features/command-palette/command-palette.test.tsx::opens symbol search from the palette`).
 - The Repositories graph has one node per repository named by its folder,
   one edge per pair and kind with its count and its kind's colour, counts an
   edge both repositories report once, dashes an edge that is heuristic only,

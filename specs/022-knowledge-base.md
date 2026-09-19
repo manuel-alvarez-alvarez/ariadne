@@ -22,6 +22,8 @@ tests:
   - crates/ariadne-cli/src/cli/tests.rs
   - ui/src/features/knowledge/knowledge-screen.test.tsx
   - ui/src/features/knowledge/repositories-graph.test.ts
+  - ui/src/features/knowledge/symbols-graph.test.ts
+  - ui/src/features/knowledge/symbols-tab.test.tsx
   - ui/src/features/knowledge/graph/knowledge-graph.test.tsx
   - ui/src/events/dispatch.test.ts
   - ui/src/features/command-palette/command-palette.test.tsx
@@ -289,6 +291,15 @@ agent to do with the tools (017); and the memory tools beside these (019).
     rests on. The command palette opens the screen on a repository.
     `knowledge_indexed` and `knowledge_failed` refetch what the screen shows
     for their repository and leave every other repository's caches alone.
+    The Symbols tab searches the selected repository and ref by name, kind,
+    and path. Its graph puts the chosen definition at the centre. Callers,
+    callees, implementations, references, and tests surround it in separate
+    colours. Heuristic edges are dashed. Foreign nodes carry an arrow. Each
+    relation gets one node for its hidden count. A node click centres that
+    definition. Back and Forward move through the symbol history. The URL
+    keeps the name in `?symbol=`. Equal names offer a definition picker. The
+    side pane shows the signature, documentation, line range, and numbered
+    source. Find symbol in the palette opens this tab.
 30. Beyond its symbols, a file holds interfaces: what it offers another
     repository and what it takes from one. Each is read off the text at parse
     time, kept per blob like the mentions, and carries the definition it sits
@@ -840,6 +851,16 @@ and by `(kind, name)`.
   (`ui/src/features/knowledge/repositories-graph.test.ts`), and a click on
   an edge lists its ends with their confidence and step
   (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Repositories tab`).
+- The Symbols graph gives each relation its own colour. It includes hidden
+  counts, foreign markers, and dashed heuristic edges
+  (`ui/src/features/knowledge/symbols-graph.test.ts`).
+- The Symbols tab sends the selected repository, ref, kind, and path.
+  It opens results and preserves `?symbol=` through reloads. Node clicks,
+  Back, and Forward change the centre. The pane shows numbered source.
+  Equal names offer a definition picker
+  (`ui/src/features/knowledge/symbols-tab.test.tsx::the Symbols tab`).
+- Find symbol opens the Symbols tab
+  (`ui/src/features/command-palette/command-palette.test.tsx::opens symbol search from the palette`).
 - The shared graph component builds the model it draws and hands node and
   edge clicks back by key
   (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx`).

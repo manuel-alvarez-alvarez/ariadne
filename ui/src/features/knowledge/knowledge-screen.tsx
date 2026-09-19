@@ -82,6 +82,7 @@ export function KnowledgeScreen() {
   }
 
   const gitRef = search.get("ref") ?? repository.base_branch
+  const symbolName = search.get("symbol") ?? ""
   const tab = KNOWLEDGE_TABS.find((entry) => entry.id === search.get("tab")) ?? KNOWLEDGE_TABS[0]
 
   /** Writes the picks into the URL, leaving every other param where it was. */
@@ -99,6 +100,8 @@ export function KnowledgeScreen() {
     )
   // A ref belongs to one repository: another repository starts at its own base.
   const pickRepository = (id: string) => pick({ repository: id, ref: null })
+  const pickSymbol = (name: string, repositoryId: string, ref: string) =>
+    pick({ symbol: name, repository: repositoryId, ref })
 
   const repositoryOptions = list.map((row) => ({ value: row.id, label: folderName(row.path) }))
 
@@ -141,7 +144,14 @@ export function KnowledgeScreen() {
         </TabsList>
         {tab ? (
           <TabsContent value={tab.id} className="pt-3">
-            {tab.render({ repositories: list, repository, gitRef, pickRepository })}
+            {tab.render({
+              repositories: list,
+              repository,
+              gitRef,
+              symbolName,
+              pickRepository,
+              pickSymbol,
+            })}
           </TabsContent>
         ) : null}
       </Tabs>

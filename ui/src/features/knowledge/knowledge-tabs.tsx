@@ -12,13 +12,16 @@ import { EmptyState } from "@/components/empty-state"
 
 import { OverviewTab } from "./overview-tab"
 import { RepositoriesTab } from "./repositories-tab"
+import { SymbolsTab } from "./symbols-tab"
 
 /** What the pickers above the tabs picked, and the way to pick again. */
 interface KnowledgeTabContext {
   repositories: RepositoryDto[]
   repository: RepositoryDto
   gitRef: string
+  symbolName: string
   pickRepository: (repositoryId: string) => void
+  pickSymbol: (name: string, repositoryId: string, gitRef: string) => void
 }
 
 interface KnowledgeTab {
@@ -45,7 +48,19 @@ export const KNOWLEDGE_TABS: readonly KnowledgeTab[] = [
       />
     ),
   },
-  { id: "symbols", label: "Symbols", render: () => <Coming /> },
+  {
+    id: "symbols",
+    label: "Symbols",
+    render: ({ repositories, repository, gitRef, symbolName, pickSymbol }) => (
+      <SymbolsTab
+        repositories={repositories}
+        repositoryId={repository.id}
+        gitRef={gitRef}
+        symbolName={symbolName}
+        onNavigateSymbol={pickSymbol}
+      />
+    ),
+  },
   { id: "impact", label: "Impact & path", render: () => <Coming /> },
   { id: "files", label: "Files", render: () => <Coming /> },
 ]

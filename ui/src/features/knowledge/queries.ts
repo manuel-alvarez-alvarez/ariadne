@@ -10,7 +10,7 @@
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 
-import { api, type KnowledgeStatusDto, qk, unwrap } from "@/api"
+import { api, type KnowledgeDetail, type KnowledgeStatusDto, qk, unwrap } from "@/api"
 
 /** `GET /v1/repositories/{id}/knowledge`. */
 export function knowledgeStatusQueryOptions(repositoryId: string) {
@@ -41,6 +41,41 @@ export function useReindexKnowledge(repositoryId: string) {
           status ? { ...status, state: "indexing" as const, error: null } : status,
       )
     },
+  })
+}
+
+/** `GET /v1/knowledge/search`, scoped by the screen's repository and ref. */
+export function knowledgeSearchQueryOptions(
+  repositoryId: string,
+  gitRef: string,
+  filters: { q: string; kind?: string; path?: string },
+) {
+  const query = {
+    repository: repositoryId,
+    git_ref: gitRef,
+    q: filters.q,
+    ...(filters.kind ? { kind: filters.kind } : {}),
+    ...(filters.path ? { path: filters.path } : {}),
+  }
+  return queryOptions({
+    queryKey: qk.repositories.knowledgeSearch(repositoryId, query),
+    queryFn: () => unwrap(api().GET("/v1/knowledge/search", { params: { query } })),
+    enabled: filters.q.length > 0,
+  })
+}
+
+/** One name's definitions, either with its neighbourhood or with its source. */
+export function knowledgeSymbolQueryOptions(
+  repositoryId: string,
+  gitRef: string,
+  name: string,
+  detail: Extract<KnowledgeDetail, "context" | "source">,
+) {
+  const query = { repository: repositoryId, git_ref: gitRef, name, detail }
+  return queryOptions({
+    queryKey: qk.repositories.knowledgeSymbol(repositoryId, query),
+    queryFn: () => unwrap(api().GET("/v1/knowledge/symbol", { params: { query } })),
+    enabled: name.length > 0,
   })
 }
 

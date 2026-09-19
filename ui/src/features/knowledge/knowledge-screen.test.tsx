@@ -166,7 +166,7 @@ describe("the pickers and the tab", () => {
 
     await user.click(screen.getByRole("tab", { name: "Symbols" }))
     expect(new URLSearchParams(location.url.split("?")[1]).get("tab")).toBe("symbols")
-    expect(screen.getByText("This tab is coming.")).toBeDefined()
+    expect(screen.getByRole("textbox", { name: "Search symbols" })).toBeDefined()
 
     await user.click(screen.getByRole("combobox", { name: "Repository" }))
     await user.click(await screen.findByRole("option", { name: "api" }))

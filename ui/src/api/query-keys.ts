@@ -75,6 +75,14 @@ interface KnowledgeInteractionFilters {
   git_ref?: string
 }
 
+/** One name from `GET /v1/knowledge/symbol`, at one level of detail (022). */
+interface KnowledgeSymbolFilters {
+  repository: string
+  git_ref: string
+  name: string
+  detail: "context" | "source"
+}
+
 export const qk = {
   goals: {
     all: () => ["goals"] as const,
@@ -133,6 +141,8 @@ export const qk = {
     /** Search over one repository's knowledge base, `q`/`kind`/`path` included. */
     knowledgeSearch: (id: string, filters?: KnowledgeSearchFilters) =>
       ["repositories", "detail", id, "knowledge-search", filters ?? { repository: id }] as const,
+    knowledgeSymbol: (id: string, filters: KnowledgeSymbolFilters) =>
+      ["repositories", "detail", id, "knowledge-symbol", filters] as const,
     /**
      * Every filtered interactions list for one repository. Shorter than
      * {@link knowledgeInteractions}'s own key on purpose — invalidating this

@@ -1,0 +1,197 @@
+// @vitest-environment jsdom
+
+/** The Symbols tab against the public knowledge HTTP surface (022). */
+
+import { screen, waitFor, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+
+import type { KnowledgeHitDto, KnowledgeStatusDto, KnowledgeSymbolDto, RepositoryDto } from "@/api"
+import { aRepository } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+
+import { KnowledgeScreen } from "./knowledge-screen"
+
+vi.mock("@/features/knowledge/graph/sigma-canvas", () => import("@/test/sigma-canvas"))
+
+const WEB: RepositoryDto = aRepository({
+  id: "01JREPO000000000000000WEB",
+  path: "/home/me/dev/web",
+  base_branch: "main",
+})
+const API: RepositoryDto = aRepository({
+  id: "01JREPO000000000000000API",
+  path: "/home/me/dev/api",
+  base_branch: "trunk",
+})
+const STATUS: KnowledgeStatusDto = {
+  repository_id: WEB.id,
+  state: "idle",
+  refs: [],
+  files: 4,
+  symbols: 8,
+  languages: [],
+  error: null,
+}
+const HIT: KnowledgeHitDto = {
+  repository_id: WEB.id,
+  path: "src/render.ts",
+  line: 10,
+  kind: "function",
+  name: "render",
+  signature: "function render()",
+}
+
+function definition(name: string, overrides: Partial<KnowledgeSymbolDto> = {}): KnowledgeSymbolDto {
+  return {
+    repository_id: WEB.id,
+    path: `src/${name}.ts`,
+    start_line: 10,
+    end_line: 12,
+    kind: "function",
+    name,
+    signature: `function ${name}()`,
+    doc: `Documents ${name}.`,
+    ...overrides,
+  }
+}
+
+const RENDER = definition("render", {
+  path: "src/render.ts",
+  context: {
+    callers: [
+      {
+        repository_id: API.id,
+        path: "src/call-render.ts",
+        line: 20,
+        name: "callRender",
+        confidence: "heuristic",
+        step: "name",
+        candidates: 2,
+      },
+    ],
+    callees: [],
+    implementations: [],
+    references: [],
+    tests: [],
+    more: { callers: 0, callees: 0, implementations: 0, references: 0, tests: 0 },
+  },
+})
+const RENDER_ALTERNATE = definition("render", {
+  path: "src/alternate.ts",
+  start_line: 30,
+  end_line: 33,
+  signature: "function render(input: string)",
+  doc: "Documents the alternate.",
+  context: { callers: [], callees: [], implementations: [], references: [], tests: [] },
+})
+const CALL_RENDER = definition("callRender", {
+  repository_id: API.id,
+  path: "src/call-render.ts",
+  start_line: 20,
+  end_line: 22,
+  context: { callers: [], callees: [], implementations: [], references: [], tests: [] },
+})
+
+let requests: URL[] = []
+
+function withSource(symbol: KnowledgeSymbolDto): KnowledgeSymbolDto {
+  return { ...symbol, context: undefined, source: `${symbol.signature} {\n  return true\n}` }
+}
+
+beforeEach(() => {
+  requests = []
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(typeof input === "string" ? input : (input as Request).url)
+    requests.push(url)
+    if (url.pathname === "/v1/repositories") return Promise.resolve(jsonResponse([WEB, API]))
+    if (url.pathname.endsWith("/knowledge")) {
+      return Promise.resolve(jsonResponse({ ...STATUS, repository_id: url.pathname.split("/")[3] }))
+    }
+    if (url.pathname === "/v1/knowledge/search") return Promise.resolve(jsonResponse([HIT]))
+    if (url.pathname === "/v1/knowledge/symbol") {
+      const found =
+        url.searchParams.get("name") === "callRender" ? [CALL_RENDER] : [RENDER, RENDER_ALTERNATE]
+      return Promise.resolve(
+        jsonResponse(url.searchParams.get("detail") === "source" ? found.map(withSource) : found),
+      )
+    }
+    return Promise.resolve(jsonResponse([]))
+  })
+})
+
+describe("the Symbols tab", () => {
+  it("searches by the selected kind and path, then opens a compact result", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=symbols" })
+
+    await user.type(await screen.findByRole("textbox", { name: "Search symbols" }), "ren")
+    await user.click(screen.getByRole("combobox", { name: "Kind" }))
+    await user.click(await screen.findByRole("option", { name: "Function" }))
+    await user.type(screen.getByRole("textbox", { name: "Path" }), "src/")
+    await user.click(screen.getByRole("button", { name: "Search" }))
+
+    const results = await screen.findByRole("list", { name: "Symbol search results" })
+    expect(within(results).getByText("render")).toBeDefined()
+    expect(within(results).getByText("function")).toBeDefined()
+    expect(within(results).getByText("src/render.ts:10")).toBeDefined()
+    const search = requests.find((url) => url.pathname === "/v1/knowledge/search")
+    expect(Object.fromEntries(search?.searchParams ?? [])).toMatchObject({
+      q: "ren",
+      repository: WEB.id,
+      git_ref: "main",
+      kind: "function",
+      path: "src/",
+    })
+
+    await user.click(within(results).getByRole("button"))
+    expect(new URLSearchParams(location.url.split("?")[1]).get("symbol")).toBe("render")
+    expect(await screen.findByRole("button", { name: "callRender ↗" })).toBeDefined()
+  })
+
+  it("opens the URL symbol, re-centres on a node, and moves backward and forward", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<KnowledgeScreen />, {
+      route: "/knowledge?tab=symbols&symbol=render",
+    })
+
+    await user.click(await screen.findByRole("button", { name: "callRender ↗" }))
+    await waitFor(() => expect(screen.getByText("function callRender()")).toBeDefined())
+    expect(new URLSearchParams(location.url.split("?")[1]).get("symbol")).toBe("callRender")
+    expect(new URLSearchParams(location.url.split("?")[1]).get("repository")).toBe(API.id)
+
+    await user.click(screen.getByRole("button", { name: "Back symbol" }))
+    await waitFor(() => expect(screen.getByText("function render()")).toBeDefined())
+    expect(new URLSearchParams(location.url.split("?")[1]).get("symbol")).toBe("render")
+
+    await user.click(screen.getByRole("button", { name: "Forward symbol" }))
+    await waitFor(() => expect(screen.getByText("function callRender()")).toBeDefined())
+  })
+
+  it("shows the centre source with its original line numbers", async () => {
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=symbols&symbol=render" })
+
+    const details = await screen.findByRole("complementary", { name: "Symbol details" })
+    expect(within(details).getByText("src/render.ts:10-12")).toBeDefined()
+    expect(within(details).getByText("Documents render.")).toBeDefined()
+    expect(within(details).getByLabelText("Source").textContent).toContain("10 function render()")
+    expect(
+      requests.some(
+        (url) =>
+          url.pathname === "/v1/knowledge/symbol" && url.searchParams.get("detail") === "source",
+      ),
+    ).toBe(true)
+  })
+
+  it("lets the user pick one of several definitions", async () => {
+    const user = userEvent.setup()
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=symbols&symbol=render" })
+
+    await user.click(await screen.findByRole("combobox", { name: "Definition" }))
+    await user.click(await screen.findByRole("option", { name: "src/alternate.ts:30" }))
+
+    const details = screen.getByRole("complementary", { name: "Symbol details" })
+    expect(within(details).getByText("function render(input: string)")).toBeDefined()
+    expect(within(details).getByText("src/alternate.ts:30-33")).toBeDefined()
+  })
+})
