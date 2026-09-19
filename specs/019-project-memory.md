@@ -12,6 +12,7 @@ tests:
   - crates/ariadne-cli/src/commands/memory.rs
   - crates/ariadne-cli/src/cli/tests.rs
   - ui/src/features/memory/memory-page.test.tsx
+  - ui/src/features/repositories/repositories-page.test.tsx
   - ui/src/events/dispatch.test.ts
 ---
 
@@ -90,15 +91,15 @@ Out: prompt injection. Agents choose when to search.
 11. Memory creation emits the complete entry, and memory deletion emits the
     removed id and its repository, which is null for a global memory, on the
     domain event stream (012).
-12. The desktop app has a top-level memory page and a memory page per
-    repository, and each lists, searches, adds and deletes through the same
-    REST endpoints the CLI uses, matching it (015). The top-level page shows
-    the global memories and every repository's, and names the scope of each
-    row. A scope filter narrows the list. Its add form takes the text, the
-    scope (global or one repository) and an optional expiry. A repository's
-    page shows its own memories and the global ones, and its add form saves
-    for that repository alone. A refused save shows the daemon's message and
-    keeps the typed text. Where no word of a search matched, a line above the
+12. The desktop app has one memory page, `#/memory`, that lists, searches,
+    adds and deletes through the same REST endpoints the CLI uses, matching
+    it (015). It shows the global memories and every repository's, and names
+    the scope of each row. A scope filter narrows the list, and the filter
+    lives in the URL as `?repository=<id>` (`global` for the global set), so a
+    link or a reload keeps it. No repository row and no route of its own
+    opens memory. Its add form takes the text, the scope (global or one
+    repository) and an optional expiry. A refused save shows the daemon's
+    message and keeps the typed text. Where no word of a search matched, a line above the
     list says so, and the newest memories stand in. A creation or deletion event refreshes every open
     memory list, so a global memory reaches each list that holds it.
 
@@ -151,7 +152,8 @@ Out: prompt injection. Agents choose when to search.
   (`defaults.rs::every_skill_that_learns_names_the_memory_tools`).
 - The desktop memory page lists, searches through the daemon's own search
   endpoint, and deletes an entry
-  (`ui/src/features/memory/memory-page.test.tsx`).
+  (`ui/src/features/memory/memory-page.test.tsx::searches through the daemon's own endpoint rather than filtering locally`,
+  `::deletes an entry of either scope`).
 - Two matching facts rank by their FTS5 score
   (`memories.rs::two_word_matches_rank_by_fts5_score`).
 - A nonmatching fact stays out while another fact matches
@@ -166,7 +168,7 @@ Out: prompt injection. Agents choose when to search.
   (`memories.rs::a_taskless_session_saves_two_memories_per_goal`).
 - The FTS index excludes nonmatches and follows text updates and deletes
   (`store.rs::memory_word_search_excludes_nonmatches_and_tracks_text_changes`).
-- The top-level desktop page lists memories of both scopes and names the
+- The desktop page lists memories of both scopes and names the
   scope of each row
   (`memory-page.test.tsx::lists memories of both scopes and names the scope of each row`),
   and its scope filter shows the global set alone
@@ -174,8 +176,15 @@ Out: prompt injection. Agents choose when to search.
 - The desktop add form creates a global memory that the list then shows
   (`memory-page.test.tsx::adds a global memory, and the list shows it`),
   creates a memory for one repository
-  (`::adds a memory for one repository`), and on a repository's page saves
-  for that repository alone (`::adds a memory for its own repository alone`).
+  (`::adds a memory for one repository`).
+- The desktop page opens narrowed to the repository of `?repository=<id>`, and
+  writes the scope filter back to that param, which a change to all scopes
+  clears
+  (`memory-page.test.tsx::opens with the repository of the URL selected, and lists its memories alone`,
+  `::writes the picked scope back to the URL, and clears it for all scopes`,
+  `::keeps other params of the URL when the scope changes`).
+- A repository row on the repositories screen has no Memory button
+  (`repositories-page.test.tsx::offers no Memory button on a row, which is managed from its own screen`).
 - A refused desktop save shows the daemon's message and keeps the typed text
   (`memory-page.test.tsx::shows the daemon's refusal and keeps the typed text`).
 - The desktop page says so where no search word matched

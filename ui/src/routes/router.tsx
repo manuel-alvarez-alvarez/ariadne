@@ -44,11 +44,6 @@ function TaskPanelRedirect() {
   return <Navigate to={`${paths.goals()}?task=${taskId}`} replace />
 }
 
-function MemoryPageRoute() {
-  const { repositoryId = "" } = useParams<{ repositoryId: string }>()
-  return <MemoryPage repositoryId={repositoryId} />
-}
-
 function KnowledgePageRoute() {
   const { repositoryId = "" } = useParams<{ repositoryId: string }>()
   return <KnowledgePage repositoryId={repositoryId} />
@@ -72,11 +67,6 @@ const routes: RouteObject[] = [
   { path: "models", element: <Navigate to={paths.agents()} replace /> },
   { path: "repositories", element: <RepositoriesPage />, handle: { title: "Repositories" } },
   { path: "memory", element: <MemoryPage />, handle: { title: "Memory" } },
-  {
-    path: "repositories/:repositoryId/memory",
-    element: <MemoryPageRoute />,
-    handle: { title: "Memory" },
-  },
   {
     path: "repositories/:repositoryId/knowledge",
     element: <KnowledgePageRoute />,

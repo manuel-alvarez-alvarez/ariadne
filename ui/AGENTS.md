@@ -229,13 +229,9 @@ a task's panel), which `src/components/detail-panels.tsx` reads. The old
 board with the panel open.
 
 Memory (019) has a sidebar screen of its own at `#/memory`, over the global
-memories and every repository's. A repository's memory is the one screen that
-is neither: it is a full page rather than a panel, because there is no list
-beside it worth keeping on screen, reached from a row on `#/repositories`
-rather than the sidebar at `#/repositories/:repositoryId/memory`. Both are
-`MemoryPage`; its route reads the id with a small wrapper (`MemoryPageRoute`,
-next to `GoalPanelRedirect` and `TaskPanelRedirect`) so the page itself takes
-`repositoryId` as a prop and stays easy to test.
+memories and every repository's. Its scope filter is the `?repository=<id>`
+param (`?repository=global` for the global set), so a link or a reload opens
+it narrowed to one repository.
 
 **The sessions screen is the one exception**, and the only place a param means
 two things: there `?goal=` and `?task=` are what the *list* is narrowed to — the

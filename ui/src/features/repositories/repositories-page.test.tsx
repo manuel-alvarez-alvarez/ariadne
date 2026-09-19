@@ -83,6 +83,13 @@ describe("RepositoriesPage", () => {
     expect(screen.getByText("2 repositories")).toBeDefined()
   })
 
+  it("offers no Memory button on a row, which is managed from its own screen", async () => {
+    renderScreen(<RepositoriesPage />)
+    await screen.findByTitle(ARIADNE.path)
+
+    expect(screen.queryByRole("button", { name: `Memory for ${ARIADNE.path}` })).toBeNull()
+  })
+
   it("says nothing about how work ends, which is the task's own", async () => {
     renderScreen(<RepositoriesPage />)
     await screen.findByTitle(ARIADNE.path)

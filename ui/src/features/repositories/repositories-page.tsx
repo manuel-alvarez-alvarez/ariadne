@@ -13,7 +13,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { BrainIcon, DatabaseIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
+import { DatabaseIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 
@@ -145,11 +145,6 @@ function RepositoryRow({
           icon={<DatabaseIcon />}
           label={`Knowledge for ${repository.path}`}
           onClick={() => navigate(paths.repositoryKnowledge(repository.id))}
-        />
-        <RowAction
-          icon={<BrainIcon />}
-          label={`Memory for ${repository.path}`}
-          onClick={() => navigate(paths.repositoryMemory(repository.id))}
         />
         <RowAction icon={<PencilIcon />} label={`Edit ${repository.path}`} onClick={onEdit} />
         <RowAction icon={<Trash2Icon />} label={`Remove ${repository.path}`} onClick={onDelete} />

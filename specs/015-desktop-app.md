@@ -33,8 +33,8 @@ Out: the daemon endpoints themselves (012).
 3. Screens: the goals board (swimlanes plus an attention strip), the task
    panel (facts, diff, messages, history), sessions, each shown in its
    console, outside sessions that a ready task can adopt as its author,
-   skills, repositories, one repository's memory (list, search, delete), one
-   repository's knowledge base (status, reindex, search, interactions), the
+   skills, repositories, memory (list, search, add, delete, narrowed to one
+   repository by `?repository=<id>`), one repository's knowledge base (status, reindex, search, interactions), the
    agents of the daemon's ACP registry with their launch flags and the models
    each may be staffed on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
@@ -192,10 +192,17 @@ Out: the daemon endpoints themselves (012).
   `::lists what each reviewer picked, oldest first`,
   `::keeps the singular Author fact and shows no pick on a one-author task`)
   — parity with `ariadne task inspect`'s own author and picks lines (004).
-- One repository's memory lists, searches through the daemon's own search
-  endpoint, and deletes an entry
-  (`ui/src/features/memory/memory-page.test.tsx`) — parity with `ariadne
-  memory ls|search|delete` (019).
+- The memory screen `#/memory` lists, searches through the daemon's own
+  search endpoint, and deletes an entry, and it opens narrowed to the
+  repository of `?repository=<id>` and writes the scope filter back to that
+  param
+  (`ui/src/features/memory/memory-page.test.tsx::opens with the repository of the URL selected, and lists its memories alone`,
+  `::writes the picked scope back to the URL, and clears it for all scopes`,
+  `::searches through the daemon's own endpoint rather than filtering locally`,
+  `::keeps the daemon's delete refusal on screen instead of toasting it away`)
+  — parity with `ariadne memory ls|search|delete` (019). A repository row
+  has no Memory button
+  (`ui/src/features/repositories/repositories-page.test.tsx::offers no Memory button on a row, which is managed from its own screen`).
 - One repository's knowledge page shows its status card in every state the
   daemon can answer with, posts a reindex and shows the indexing state at
   once, refetches once the daemon says indexing finished or failed, searches

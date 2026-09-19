@@ -58,8 +58,6 @@ export const paths = {
   repositories: () => "/repositories",
   /** Every saved memory, global and every repository's: list, search, add and delete (019). */
   memory: () => "/memory",
-  /** One repository's saved memory and the global ones (019). */
-  repositoryMemory: (repositoryId: string) => `/repositories/${repositoryId}/memory`,
   /** One repository's knowledge base: status, reindex, search and interactions (022). */
   repositoryKnowledge: (repositoryId: string) => `/repositories/${repositoryId}/knowledge`,
   /**

@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
 /**
- * The memory screens against a stubbed daemon: the top-level page over every
- * scope, and one repository's page over its own memories and the global ones.
- * Each lists, filters by scope, searches through the daemon's own search
- * endpoint rather than a client-side filter, adds and deletes — the actions
- * `ariadne memory ls|search|add|delete` offers, per the parity rule of spec 015.
+ * The memory screen against a stubbed daemon: over every scope, and narrowed
+ * to one repository by `?repository=<id>`. It lists, filters by scope,
+ * searches through the daemon's own search endpoint rather than a client-side
+ * filter, adds and deletes — the actions `ariadne memory ls|search|add|delete`
+ * offers, per the parity rule of spec 015.
  */
 
 import { screen, waitFor, within } from "@testing-library/react"
@@ -253,16 +253,63 @@ describe("the memory page of every scope", () => {
   })
 })
 
-describe("a repository's memory page", () => {
-  it("lists its own memories and the global ones, with text, source and expiry", async () => {
-    renderScreen(<MemoryPage repositoryId={REPOSITORY.id} />)
+describe("the scope filter in the URL", () => {
+  const OWN = `/memory?repository=${REPOSITORY.id}`
+
+  it("opens with the repository of the URL selected, and lists its memories alone", async () => {
+    renderScreen(<MemoryPage />, { route: OWN })
 
     expect(await screen.findByText(LINT_NOTE.text)).toBeDefined()
     expect(screen.getByText(MIGRATION_NOTE.text)).toBeDefined()
-    expect(screen.getByText(GLOBAL_NOTE.text)).toBeDefined()
-    expect(screen.getByText("3 memories")).toBeDefined()
+    expect(screen.queryByText(GLOBAL_NOTE.text)).toBeNull()
+    expect(screen.getByText("2 memories")).toBeDefined()
+    expect(screen.getByRole("combobox", { name: "Filter by scope" }).textContent).toContain(
+      "ariadne",
+    )
+
+    const list = requests.find((call) => call.url.startsWith("/v1/memories"))
+    expect(list?.url).toBe(`/v1/memories?repository=${REPOSITORY.id}&scope=repository`)
+  })
+
+  it("writes the picked scope back to the URL, and clears it for all scopes", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<MemoryPage />, { route: "/memory" })
+    await screen.findByText(GLOBAL_NOTE.text)
+
+    await pick(user, "Filter by scope", "ariadne")
+    await waitFor(() => {
+      expect(screen.queryByText(GLOBAL_NOTE.text)).toBeNull()
+    })
+    expect(location.url).toBe(OWN)
+
+    await pick(user, "Filter by scope", "Global")
+    await waitFor(() => {
+      expect(screen.queryByText(LINT_NOTE.text)).toBeNull()
+    })
+    expect(location.url).toBe("/memory?repository=global")
+
+    await pick(user, "Filter by scope", "All scopes")
+    expect(await screen.findByText(LINT_NOTE.text)).toBeDefined()
+    expect(location.url).toBe("/memory")
+  })
+
+  it("keeps other params of the URL when the scope changes", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<MemoryPage />, { route: "/memory?task=01JTASK" })
+    await screen.findByText(LINT_NOTE.text)
+
+    await pick(user, "Filter by scope", "ariadne")
+
+    await waitFor(() => {
+      expect(location.url).toBe(`/memory?task=01JTASK&repository=${REPOSITORY.id}`)
+    })
+  })
+
+  it("lists text, source and expiry", async () => {
+    renderScreen(<MemoryPage />, { route: OWN })
 
     // Expiry: the exact stamp rides on the `<time>` the hint hangs off.
+    await screen.findByText(LINT_NOTE.text)
     expect(document.querySelector(`time[datetime="${LINT_NOTE.expires_at}"]`)).not.toBeNull()
 
     // Source: the session and goal that saved the note, and a dash where the
@@ -272,30 +319,11 @@ describe("a repository's memory page", () => {
     expect(lint.textContent).toContain("goal")
     const migration = await row(MIGRATION_NOTE.text)
     expect(migration.textContent).toContain("task —")
-    const global = await row(GLOBAL_NOTE.text)
-    expect(global.textContent).toContain("you")
-    expect(global.textContent).toContain("never")
-
-    const list = requests.find((call) => call.url.startsWith("/v1/memories"))
-    expect(list?.url).toBe(`/v1/memories?repository=${REPOSITORY.id}`)
-  })
-
-  it("narrows to its own memories under its own scope filter", async () => {
-    const user = userEvent.setup()
-    renderScreen(<MemoryPage repositoryId={REPOSITORY.id} />)
-    await screen.findByText(GLOBAL_NOTE.text)
-
-    await pick(user, "Filter by scope", "ariadne")
-
-    await waitFor(() => {
-      expect(screen.queryByText(GLOBAL_NOTE.text)).toBeNull()
-    })
-    expect(screen.getByText(LINT_NOTE.text)).toBeDefined()
   })
 
   it("searches through the daemon's own endpoint rather than filtering locally", async () => {
     const user = userEvent.setup()
-    renderScreen(<MemoryPage repositoryId={REPOSITORY.id} />)
+    renderScreen(<MemoryPage />, { route: OWN })
     await screen.findByText(LINT_NOTE.text)
 
     await user.type(screen.getByLabelText("Search memory"), "migrations")
@@ -310,34 +338,20 @@ describe("a repository's memory page", () => {
     // the user actually meant.
     const searchCalls = requests.filter((call) => call.url.startsWith("/v1/memories/search?"))
     expect(searchCalls.at(-1)?.url).toBe(
-      `/v1/memories/search?q=migrations&repository=${REPOSITORY.id}`,
+      `/v1/memories/search?q=migrations&repository=${REPOSITORY.id}&scope=repository`,
     )
-  })
-
-  it("adds a memory for its own repository alone", async () => {
-    const user = userEvent.setup()
-    renderScreen(<MemoryPage repositoryId={REPOSITORY.id} />)
-    await screen.findByText(LINT_NOTE.text)
-
-    await user.click(screen.getByRole("button", { name: "Add memory" }))
-    await user.type(await screen.findByLabelText("Text"), "Seed data lives in defaults.rs.")
-    await user.click(screen.getByRole("button", { name: "Save memory" }))
-
-    expect(await screen.findByText("Seed data lives in defaults.rs.")).toBeDefined()
-    expect(screen.queryByRole("combobox", { name: "Scope" })).toBeNull()
-    expect(posts()[0]?.body).toMatchObject({ repository_id: REPOSITORY.id })
   })
 
   it("says there is nothing active, before anything is saved", async () => {
     stubDaemon([])
-    renderScreen(<MemoryPage repositoryId={REPOSITORY.id} />)
+    renderScreen(<MemoryPage />, { route: OWN })
 
-    expect(await screen.findByText("No active memories for this repository.")).toBeDefined()
+    expect(await screen.findByText("No active memories.")).toBeDefined()
   })
 
   it("says no word matched, where the newest memories stand in", async () => {
     const user = userEvent.setup()
-    renderScreen(<MemoryPage repositoryId={REPOSITORY.id} />)
+    renderScreen(<MemoryPage />, { route: OWN })
     await screen.findByText(LINT_NOTE.text)
 
     await user.type(screen.getByLabelText("Search memory"), "zebra")
@@ -348,25 +362,9 @@ describe("a repository's memory page", () => {
     expect(screen.getByText(LINT_NOTE.text)).toBeDefined()
   })
 
-  it("removes the row once the daemon confirms the delete", async () => {
-    const user = userEvent.setup()
-    renderScreen(<MemoryPage repositoryId={REPOSITORY.id} />)
-    await screen.findByText(LINT_NOTE.text)
-
-    await deleteRow(user, LINT_NOTE)
-
-    await waitFor(() => {
-      expect(screen.queryByText(LINT_NOTE.text)).toBeNull()
-    })
-    expect(screen.getByText(MIGRATION_NOTE.text)).toBeDefined()
-
-    const deleteCall = requests.find((call) => call.method === "DELETE")
-    expect(deleteCall?.url).toBe(`/v1/memories/${LINT_NOTE.id}`)
-  })
-
   it("keeps the daemon's delete refusal on screen instead of toasting it away", async () => {
     const user = userEvent.setup()
-    renderScreen(<MemoryPage repositoryId={REPOSITORY.id} />)
+    renderScreen(<MemoryPage />, { route: OWN })
     await screen.findByText(LINT_NOTE.text)
     deleteFailure = { status: 404, code: "not_found", message: "memory not found" }
 

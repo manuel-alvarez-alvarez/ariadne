@@ -3,8 +3,7 @@
  *
  * A memory is its text, its scope — global, or one repository — and an
  * optional expiry; one saved without an expiry never expires. A user write
- * records no source. Opened from a repository's memory page, the scope is that
- * repository and cannot be changed.
+ * records no source.
  *
  * The daemon alone decides whether a memory may be saved, so the client checks
  * only that there is text. A refusal stays above the buttons with the form as
@@ -49,30 +48,21 @@ export function AddMemoryDialog({
   open,
   onOpenChange,
   repositories,
-  repositoryId,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** What the scope select offers beside global. */
   repositories: RepositoryDto[]
-  /** Fixes the scope to this repository. */
-  repositoryId?: string
 }) {
   const createMemory = useCreateMemory()
   const form = useForm<MemoryFormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: { text: "", scope: repositoryId ?? GLOBAL_SCOPE, expires: "" },
+    defaultValues: { text: "", scope: GLOBAL_SCOPE, expires: "" },
   })
   const { formState, handleSubmit, register, control } = form
-  useResetOnOpen(
-    open,
-    form,
-    { text: "", scope: repositoryId ?? GLOBAL_SCOPE, expires: "" },
-    createMemory,
-  )
+  useResetOnOpen(open, form, { text: "", scope: GLOBAL_SCOPE, expires: "" }, createMemory)
   useClearErrorOnEdit(form, createMemory)
 
-  const fixed = repositories.find((repository) => repository.id === repositoryId)
   const scopes = [
     { label: "Global", value: GLOBAL_SCOPE },
     ...repositories.map((repository) => ({
@@ -127,16 +117,8 @@ export function AddMemoryDialog({
 
           <Field>
             <FieldLabel htmlFor="memory-scope">Scope</FieldLabel>
-            {repositoryId ? (
-              <p id="memory-scope" className="text-sm">
-                {fixed ? folderName(fixed.path) : repositoryId}
-              </p>
-            ) : (
-              <FormSelect control={control} name="scope" id="memory-scope" options={scopes} />
-            )}
-            {repositoryId ? null : (
-              <FieldDescription>A global memory is found from every repository.</FieldDescription>
-            )}
+            <FormSelect control={control} name="scope" id="memory-scope" options={scopes} />
+            <FieldDescription>A global memory is found from every repository.</FieldDescription>
           </Field>
 
           <Field>
