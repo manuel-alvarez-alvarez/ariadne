@@ -6,9 +6,9 @@ use clap::Subcommand;
 use ariadne_api::knowledge::{
     KnowledgeDetail, KnowledgeEdgeDto, KnowledgeEndpointDto, KnowledgeHitDto,
     KnowledgeImpactCallerDto, KnowledgeImpactDto, KnowledgeImpactQuery,
-    KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeOutlineEntryDto,
-    KnowledgeOutlineQuery, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState,
-    KnowledgeStatusDto, KnowledgeSymbolDto, KnowledgeSymbolQuery,
+    KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeMapDto, KnowledgeMapQuery,
+    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeRelatedDto, KnowledgeSearchQuery,
+    KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_client::Client;
 
@@ -160,6 +160,25 @@ pub enum KnowledgeCommand {
         /// Repository id or path
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
         repo: String,
+        /// The branch to read (default: the base branch)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+    },
+    /// Rank the files of a repository and name the definitions in them
+    ///
+    /// The ranking is a PageRank over the references between the files, so
+    /// the files most of the repository names come first. `--path` ranks
+    /// the neighbors of one file first instead.
+    Map {
+        /// Repository id or path
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
+        repo: String,
+        /// Rank the files around this one first
+        #[arg(long)]
+        path: Option<String>,
+        /// How long the map may be, in tokens (default 1000, max 4000)
+        #[arg(long)]
+        budget: Option<i64>,
         /// The branch to read (default: the base branch)
         #[arg(long = "ref", value_name = "REF")]
         git_ref: Option<String>,
@@ -345,6 +364,29 @@ pub async fn run(client: &Client, command: KnowledgeCommand, format: Format) -> 
                 },
                 empty_state("No interaction with another repository.", None),
             )?;
+        }
+        KnowledgeCommand::Map {
+            repo,
+            path,
+            budget,
+            git_ref,
+        } => {
+            let repository = resolve::id(client, Kind::Repo, &repo).await?;
+            let request = KnowledgeMapQuery {
+                repository,
+                git_ref,
+                path,
+                budget,
+            };
+            let map: KnowledgeMapDto = client
+                .get_json(&query_path("/v1/knowledge/map", &request)?)
+                .await?;
+            // The map is one text, so it is printed as it came: a file per
+            // heading, its definitions under it.
+            print(format, &map, || match map.text.is_empty() {
+                true => println!("The repository holds nothing the index read."),
+                false => print!("{}", map.text),
+            })?;
         }
         KnowledgeCommand::Outline {
             repo,

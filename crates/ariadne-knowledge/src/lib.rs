@@ -11,6 +11,8 @@
 //!   environment variables it sets or reads.
 //! - [`resolve`]: a name to the definition behind it, nearest first, and an
 //!   interface to its counterpart in another repository.
+//! - [`map`]: which files of a ref carry it, ranked over the graph, under a
+//!   token budget.
 //! - [`store`]: the SQLite file that holds them, keyed by blob, with an FTS5
 //!   table over their identifiers and the edges between them.
 //! - [`index`]: how a git ref is walked into the store, parsing only what
@@ -22,6 +24,7 @@
 pub mod index;
 pub mod interfaces;
 pub mod languages;
+pub mod map;
 pub mod parser;
 pub mod resolve;
 pub mod store;
@@ -29,6 +32,7 @@ pub mod store;
 pub use index::Indexed;
 pub use interfaces::{Interface, InterfaceKind};
 pub use languages::Language;
+pub use map::RepoMap;
 pub use parser::{EdgeKind, Symbol};
 pub use store::{
     Definition, Hit, ImpactCaller, Interaction, InteractionEnd, KnowledgeStore, LanguageCount,

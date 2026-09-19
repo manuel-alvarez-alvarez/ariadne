@@ -10,8 +10,12 @@ Implement the task you were given, and nothing else. The task is one commit.
 ## Steps
 
 1. Read the task, its acceptance criteria and the spec it names.
-2. Read the code around the change. Match its style, its naming and its
-   structure.
+2. Find the code before you read a file. Call `search_code` for a name,
+   `outline` for the shape of a file, `symbol` for one definition. Read a
+   file by the line range `symbol` gives. Call `impact` on each definition
+   you change, before you change it. Match the style, the naming and the
+   structure around the change.
+   Done when a tool named every file you opened.
 3. Read the repository's conventions: `AGENTS.md`, `CLAUDE.md`,
    `CONTRIBUTING.md`.
 4. State your assumptions before work that is not trivial. Write them where

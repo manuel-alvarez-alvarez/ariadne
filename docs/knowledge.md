@@ -128,7 +128,7 @@ per kind.
 
 ## The tools agents get
 
-Every seat has four tools, beside the memory tools:
+Every seat has five tools, beside the memory tools:
 
 - `search_code` finds definitions by name. Words, camelCase parts and
   snake_case parts all match, each as a prefix: `add_worktree`, `addWork` and
@@ -151,6 +151,20 @@ Every seat has four tools, beside the memory tools:
   passes neither reads the diff of its own task. `depth` walks further, 2 by
   default and 4 at most. A definition with more than 200 callers is not walked
   past, and the answer says so.
+- `repo_map` reads a whole repository at once: the files that carry it,
+  ranked, each with the definitions most of the repository points at. It is
+  what an agent calls to learn a repository it has not seen. With no
+  `repository` it maps every repository of the goal, each under a heading of
+  its own. `path` ranks the neighbours of one file first, and `budget` says
+  how long the map runs — 1000 tokens by default, 4000 at most.
+
+The ranking is a PageRank over the references between the files, the same
+idea as Aider's repo map: a file that much of the repository names collects
+the rank of everything that names it, and a file nothing names keeps its
+own. With `path` the walk restarts at that file instead, so its callers and
+its callees come out on top. Each file's own definitions are the ones most
+of the repository points at, ten a file at most, in line order, and the text
+stops at the last whole line the budget holds.
 
 `search_code` and `outline` answer plain text, one line per result, in the
 form `path:line kind name signature` (`path:start-end` for an outline).
@@ -174,6 +188,8 @@ ariadne knowledge symbol add_worktree --detail context
 ariadne knowledge impact --repository ~/projects/api --symbol add_worktree
 ariadne knowledge impact --repository ~/projects/api --diff main..feat-parser
 ariadne knowledge interactions ~/projects/web     # what joins web to the others
+ariadne knowledge map ~/projects/api              # the files that carry it
+ariadne knowledge map ~/projects/api --path src/lib.rs --budget 2000
 ariadne knowledge reindex ~/projects/api          # drop it and build it again
 ```
 
@@ -188,12 +204,15 @@ branch unless `--ref` names another. `symbol` prints a block per definition,
 with the lists `--detail context` asked for; `impact` prints one row per
 caller, led by its location, with how far away it is, names every definition
 it stopped at in a note, and answers the daemon's own objects under
-`--format json`.
+`--format json`. `map` prints the one text the daemon rendered, as it came,
+and `--format json` adds the ref, the token count and how many files it
+names.
 
 The same is on the API: `GET /v1/repositories/{id}/knowledge`, `POST
 /v1/repositories/{id}/knowledge/reindex`, `GET /v1/knowledge/search`, `GET
 /v1/knowledge/outline`, `GET /v1/knowledge/symbol`, `GET
-/v1/knowledge/impact` and `GET /v1/knowledge/interactions`, and the domain
+/v1/knowledge/impact`, `GET /v1/knowledge/interactions` and `GET
+/v1/knowledge/map`, and the domain
 events `knowledge_indexed` and `knowledge_failed` on the event stream
 (`ariadne events` prints them).
 

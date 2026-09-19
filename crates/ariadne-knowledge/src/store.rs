@@ -15,6 +15,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Pool, QueryBuilder, Sqlite};
 
 use crate::interfaces::Interface;
+use crate::map::{self, MapFile, RepoMap};
 use crate::parser::{Import, Reference, Symbol};
 use crate::resolve::{
     Candidate, Edge, INTERFACE_KINDS, InterfaceRow, MIN_FOREIGN_NAME, Mention, Names,
@@ -27,6 +28,18 @@ pub const SCHEMA_VERSION: i64 = 5;
 /// The edge kinds a walk of the callers follows: a call, and a request of
 /// a route the definition handles.
 const CALL_KINDS: &[&str] = &["calls", "calls_route"];
+
+/// The edge kinds a map ranks over: the symbol edges of one name resolved to
+/// one definition (022, rule 9), and no interface edge.
+///
+/// The link pass derives the interface edges of a ref against itself (rule
+/// 31), so a repository whose crates depend on each other by path holds
+/// `depends_on` edges between its own manifests, and a `.env` file holds
+/// `sets_env` edges to every file that reads the variable. Both ends of
+/// those are lines rather than definitions, and counting them would rank a
+/// manifest by how many crates depend on it, beside the files the call graph
+/// ranks. A map is of the code.
+const SYMBOL_KINDS: &[&str] = &["calls", "references", "implements", "extends", "imports"];
 
 const SCHEMA: &str = include_str!("schema.sql");
 
@@ -245,6 +258,14 @@ pub const MAX_FANOUT: i64 = 200;
 
 /// How many entries each list of a symbol's context holds.
 pub const CONTEXT_LIMIT: i64 = 20;
+
+/// How many files a map ranks and names at most, whatever its budget. The
+/// rendering cuts at the budget; this is what the queries under it carry.
+const MAP_FILES: usize = 100;
+
+/// How many definitions one file of a map names at most: the ones most of
+/// the repository points at.
+const MAP_SYMBOLS: usize = 10;
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -926,6 +947,159 @@ impl KnowledgeStore {
         };
         found.sort_by_key(|interaction| rank(&interaction.kind));
         Ok(found)
+    }
+
+    /// The map of one ref: its files ranked by PageRank over the references
+    /// between them, each with the definitions most of the ref points at,
+    /// rendered as plain text under `budget` tokens.
+    ///
+    /// `toward` restarts the walk at one file, so a map asked for around a
+    /// path names that file's neighbors first. A file that defines nothing
+    /// is left out: a heading with no definition under it says nothing.
+    pub async fn map(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+        toward: Option<&str>,
+        budget: usize,
+    ) -> Result<RepoMap> {
+        let paths: Vec<String> = sqlx::query_scalar(
+            "SELECT path FROM files WHERE repository_id = ? AND git_ref = ? ORDER BY path",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .fetch_all(&self.read)
+        .await?;
+        if paths.is_empty() {
+            return Ok(RepoMap::default());
+        }
+        let at: HashMap<&str, usize> = paths
+            .iter()
+            .enumerate()
+            .map(|(at, path)| (path.as_str(), at))
+            .collect();
+        // One row per pair of files, however many references join them. The
+        // map is of one ref of one repository, so an edge to another one is
+        // no edge of this graph, and of the symbol edges alone.
+        let mut sql = QueryBuilder::<Sqlite>::new(
+            "SELECT ff.path, ft.path, COUNT(*)
+             FROM edges e
+             JOIN files ff ON ff.blob = e.from_blob AND ff.repository_id = e.from_repository
+                          AND ff.git_ref = e.git_ref
+             JOIN files ft ON ft.blob = e.to_blob AND ft.repository_id = e.to_repository
+                          AND ft.git_ref = e.to_ref
+             WHERE e.from_repository = ",
+        );
+        sql.push_bind(repository_id)
+            .push(" AND e.git_ref = ")
+            .push_bind(git_ref)
+            .push(" AND e.to_repository = ")
+            .push_bind(repository_id)
+            .push(" AND e.to_ref = ")
+            .push_bind(git_ref)
+            .push(" AND ff.path <> ft.path AND ");
+        push_kinds(&mut sql, "e.", SYMBOL_KINDS);
+        sql.push(" GROUP BY ff.path, ft.path");
+        let joined: Vec<(String, String, i64)> = sql.build_query_as().fetch_all(&self.read).await?;
+        let edges: Vec<(usize, usize, f64)> = joined
+            .iter()
+            .filter_map(|(from, to, count)| {
+                Some(map::both_ways(
+                    *at.get(from.as_str())?,
+                    *at.get(to.as_str())?,
+                    *count as f64,
+                ))
+            })
+            .flatten()
+            .collect();
+        let rank = map::page_rank(
+            paths.len(),
+            &edges,
+            toward.and_then(|path| at.get(path).copied()),
+        );
+        let mut ranked: Vec<usize> = (0..paths.len()).collect();
+        ranked.sort_by(|a, b| {
+            rank[*b]
+                .partial_cmp(&rank[*a])
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| paths[*a].cmp(&paths[*b]))
+        });
+        ranked.truncate(MAP_FILES);
+        let wanted: Vec<&str> = ranked.iter().map(|at| paths[*at].as_str()).collect();
+        let mut named = self.map_symbols(repository_id, git_ref, &wanted).await?;
+        let files: Vec<MapFile> = ranked
+            .into_iter()
+            .filter_map(|at| {
+                let symbols = named.remove(paths[at].as_str())?;
+                Some(MapFile {
+                    path: paths[at].clone(),
+                    rank: rank[at],
+                    symbols,
+                })
+            })
+            .collect();
+        Ok(map::render(&files, budget))
+    }
+
+    /// The definitions a map names per file: the ones most of the ref points
+    /// at over [`SYMBOL_KINDS`], in line order, [`MAP_SYMBOLS`] at most. A
+    /// file that defines nothing is absent.
+    async fn map_symbols(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+        paths: &[&str],
+    ) -> Result<HashMap<String, Vec<OutlineEntry>>> {
+        let mut found: HashMap<String, Vec<(i64, OutlineEntry)>> = HashMap::new();
+        for chunk in paths.chunks(CHUNK) {
+            let mut sql = QueryBuilder::<Sqlite>::new(
+                "SELECT f.path, s.kind, s.name, s.start_line, s.end_line, s.signature,
+                        (SELECT COUNT(*) FROM edges e
+                          WHERE e.to_repository = f.repository_id AND e.to_ref = f.git_ref
+                            AND e.to_symbol = s.id AND ",
+            );
+            push_kinds(&mut sql, "e.", SYMBOL_KINDS);
+            sql.push(
+                ") AS uses
+                 FROM files f JOIN symbols s ON s.blob = f.blob
+                 WHERE f.repository_id = ",
+            );
+            sql.push_bind(repository_id)
+                .push(" AND f.git_ref = ")
+                .push_bind(git_ref)
+                .push(" AND f.path IN (");
+            let mut values = sql.separated(", ");
+            for path in chunk {
+                values.push_bind(*path);
+            }
+            sql.push(")");
+            let rows: Vec<(String, String, String, i64, i64, String, i64)> =
+                sql.build_query_as().fetch_all(&self.read).await?;
+            for (path, kind, name, start_line, end_line, signature, uses) in rows {
+                found.entry(path).or_default().push((
+                    uses,
+                    OutlineEntry {
+                        kind,
+                        name,
+                        start_line,
+                        end_line,
+                        signature,
+                    },
+                ));
+            }
+        }
+        Ok(found
+            .into_iter()
+            .map(|(path, mut symbols)| {
+                symbols.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.start_line.cmp(&b.1.start_line)));
+                symbols.truncate(MAP_SYMBOLS);
+                symbols.sort_by_key(|(_, symbol)| symbol.start_line);
+                (
+                    path,
+                    symbols.into_iter().map(|(_, symbol)| symbol).collect(),
+                )
+            })
+            .collect())
     }
 
     /// The name of one symbol, or `?` for one that is gone.

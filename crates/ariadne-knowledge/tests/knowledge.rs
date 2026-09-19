@@ -1173,3 +1173,113 @@ async fn an_implementation_is_listed_under_the_trait_it_is_of() {
         ["src/widget.rs:3 Widget exact"]
     );
 }
+
+/// The map ranks the files of a ref by what names them, and a map asked for
+/// around one path ranks that file's neighbors first. Both hold to the
+/// budget: the text is cut at the tokens the caller allowed, four characters
+/// a token.
+///
+/// Every call sits in `src/`, so each name resolves at the directory step
+/// and no file needs an import to reach another.
+#[tokio::test]
+async fn a_repo_map_ranks_the_files_and_holds_to_its_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            // What two files call, which is what the map names first.
+            ("src/core.rs", "pub fn core_thing() {}\n"),
+            ("src/a.rs", "pub fn a_thing() {\n    core_thing();\n}\n"),
+            ("src/b.rs", "pub fn b_thing() {\n    core_thing();\n}\n"),
+            // A pair of its own, and a file nothing joins to.
+            (
+                "src/near.rs",
+                "pub fn near_thing() {\n    side_thing();\n}\n",
+            ),
+            ("src/side.rs", "pub fn side_thing() {}\n"),
+            ("src/far.rs", "pub fn far_thing() {\n    let _ = 1;\n}\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let whole = store.map("repo", "main", None, 1000).await.unwrap();
+    assert_eq!(whole.files, 6, "{}", whole.text);
+    assert!(whole.text.starts_with("src/core.rs\n"), "{}", whole.text);
+    assert!(
+        whole
+            .text
+            .contains(" function core_thing pub fn core_thing()"),
+        "{}",
+        whole.text
+    );
+
+    // Toward one file: its neighbors before a file it reaches nowhere.
+    let near = store
+        .map("repo", "main", Some("src/near.rs"), 1000)
+        .await
+        .unwrap();
+    let at = |path: &str| {
+        near.text
+            .find(path)
+            .unwrap_or_else(|| panic!("no {path} in the map: {}", near.text))
+    };
+    assert!(at("src/near.rs") < at("src/side.rs"), "{}", near.text);
+    assert!(at("src/side.rs") < at("src/far.rs"), "{}", near.text);
+
+    // And the budget cuts the text, whole lines only.
+    let short = store.map("repo", "main", None, 20).await.unwrap();
+    assert!(
+        short.tokens() <= 20,
+        "{} tokens: {}",
+        short.tokens(),
+        short.text
+    );
+    assert!(short.files < whole.files, "{}", short.text);
+    assert!(short.text.ends_with('\n'), "{}", short.text);
+}
+
+/// A map ranks over the symbol edges and no other kind. The link pass
+/// derives the interface edges of a ref against itself (022, rule 31), so a
+/// repository whose crates depend on each other by path holds `depends_on`
+/// edges between its own manifests. Three of them point at one `Cargo.toml`
+/// here, and one call points at `src/core.rs`: the manifest must still rank
+/// under the file the code calls.
+#[tokio::test]
+async fn a_map_ranks_over_the_symbol_edges_and_not_the_manifests() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/core.rs", "pub fn core_thing() {}\n"),
+            ("src/a.rs", "pub fn a_thing() {\n    core_thing();\n}\n"),
+            ("crates/dep/Cargo.toml", "[package]\nname = \"dep\"\n"),
+            (
+                "crates/one/Cargo.toml",
+                "[package]\nname = \"one\"\n\n[dependencies]\ndep = { path = \"../dep\" }\n",
+            ),
+            (
+                "crates/two/Cargo.toml",
+                "[package]\nname = \"two\"\n\n[dependencies]\ndep = { path = \"../dep\" }\n",
+            ),
+            (
+                "crates/three/Cargo.toml",
+                "[package]\nname = \"three\"\n\n[dependencies]\ndep = { path = \"../dep\" }\n",
+            ),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let map = store.map("repo", "main", None, 1000).await.unwrap();
+    let at = |path: &str| {
+        map.text
+            .find(path)
+            .unwrap_or_else(|| panic!("no {path} in the map: {}", map.text))
+    };
+    assert!(
+        at("src/core.rs") < at("crates/dep/Cargo.toml"),
+        "the dependency fan-in ranked a manifest over the call graph: {}",
+        map.text
+    );
+}

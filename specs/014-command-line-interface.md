@@ -175,14 +175,17 @@ same binary also serves (013).
     permission answers. `--tail`, `--since` and repeatable `--kind` narrow the
     snapshot. Their `-f` forms follow the console stream and print agent chunks
     as they arrive, while JSON keeps the daemon's event objects unchanged.
-29. `ariadne knowledge status|reindex|search|outline|symbol|impact|interactions`
+29. `ariadne knowledge status|reindex|search|outline|symbol|impact|interactions|map`
     read the knowledge base (022). `status`, `reindex` and `interactions`
     name a repository by id or path, `interactions` taking `--ref` too;
     `search <query>` takes `--repository`, `--ref`, `--kind`, `--path` and
     `--limit`; `outline <repo> <path>` takes `--ref`; `symbol <name>` takes
     `--repository`, `--ref` and `--detail` (`outline`, `source` or
-    `context`, `outline` by default); and `impact` takes a required
-    `--repository`, one of `--symbol` and `--diff`, `--ref` and `--depth`.
+    `context`, `outline` by default); `impact` takes a required
+    `--repository`, one of `--symbol` and `--diff`, `--ref` and `--depth`;
+    and `map <repo>` takes `--path`, the file to rank around, `--budget`,
+    how many tokens the map runs to, and `--ref`. `map` prints the one text
+    the daemon rendered, as it came.
     `search`, `outline`, `impact` and `interactions` are listings like every
     other, whose subject column is `title`, and whose `-q` prints the
     location (`path:line`, `repository:path:line` for an interaction's from
@@ -350,7 +353,8 @@ same binary also serves (013).
   `::knowledge_outline_takes_the_repository_and_the_path`,
   `::knowledge_symbol_takes_its_name_and_detail`,
   `::knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth`,
-  `::knowledge_interactions_takes_the_repository_and_the_ref`), and a search
+  `::knowledge_interactions_takes_the_repository_and_the_ref`,
+  `::knowledge_map_takes_the_path_and_the_budget`), and a search
   row, an impact row and an interaction row each lead with their location
   (`commands/knowledge.rs::a_search_row_leads_with_its_location_and_titles_the_symbol`,
   `::an_impact_row_leads_with_its_location_and_says_how_far_away_it_is`,

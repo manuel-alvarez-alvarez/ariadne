@@ -112,6 +112,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal rm", true),
     ("knowledge impact", true),
     ("knowledge interactions", true),
+    ("knowledge map", true),
     ("knowledge outline", true),
     ("knowledge reindex", true),
     ("knowledge search", true),
@@ -786,6 +787,49 @@ fn knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth() {
         .is_err(),
         "a symbol and a diff at once name two questions"
     );
+}
+
+/// `knowledge map` takes the repository, the file to rank around, how long
+/// the map runs and the ref.
+#[test]
+fn knowledge_map_takes_the_path_and_the_budget() {
+    let Command::Knowledge {
+        command:
+            KnowledgeCommand::Map {
+                repo,
+                path,
+                budget,
+                git_ref,
+            },
+    } = parse(&[
+        "ariadne",
+        "knowledge",
+        "map",
+        "01REPO",
+        "--path",
+        "crates/ariadne-daemon/src/gitwt.rs",
+        "--budget",
+        "2000",
+        "--ref",
+        "next",
+    ])
+    .command
+    else {
+        panic!("knowledge map");
+    };
+    assert_eq!(repo, "01REPO");
+    assert_eq!(path.as_deref(), Some("crates/ariadne-daemon/src/gitwt.rs"));
+    assert_eq!(budget, Some(2000));
+    assert_eq!(git_ref.as_deref(), Some("next"));
+
+    let Command::Knowledge {
+        command: KnowledgeCommand::Map { path, budget, .. },
+    } = parse(&["ariadne", "knowledge", "map", "01REPO"]).command
+    else {
+        panic!("knowledge map");
+    };
+    assert_eq!(path, None, "the whole repository by default");
+    assert_eq!(budget, None, "the daemon's own budget by default");
 }
 
 /// `knowledge interactions` takes the repository and the ref.

@@ -1697,6 +1697,57 @@ mod tests {
         }
     }
 
+    /// The knowledge base serves five tools to every seat (022), and a skill
+    /// that says nothing about them is a seat that grepped and read whole
+    /// files instead. Each of the five skills that reads code names the tool
+    /// its own step needs, at that step:
+    ///
+    /// - `coding` finds the code with `search_code`, `outline` and `symbol`
+    ///   before it opens a file, and asks `impact` what a change reaches;
+    /// - `code-review` asks `impact` for the callers of the task diff, and
+    ///   `symbol --detail context` for the tests of each changed definition,
+    ///   and reads the last verdict with `read_messages` and `all: true`;
+    /// - `debugging` ranks its hypotheses by what `symbol --detail context`
+    ///   and `impact` say each one touches;
+    /// - `refactoring` reads the callers and tests of what it moves;
+    /// - `orchestration` explores a goal with `repo_map`, and with
+    ///   `interactions` where the goal names several repositories.
+    ///
+    /// The session rules carry the one line that holds for every seat alike
+    /// — find code before you read a file — and the tool of a step is the
+    /// skill's to name, the way spec 006 holds every rule to one place.
+    #[test]
+    fn every_skill_that_reads_code_names_the_knowledge_tools() {
+        for (name, tools) in [
+            (
+                "coding",
+                &["`search_code`", "`outline`", "`symbol`", "`impact`"][..],
+            ),
+            (
+                "code-review",
+                &[
+                    "`impact`",
+                    "`symbol --detail context`",
+                    "`read_messages`",
+                    "`all: true`",
+                ][..],
+            ),
+            ("debugging", &["`symbol --detail context`", "`impact`"][..]),
+            ("refactoring", &["`symbol --detail context`"][..]),
+            // `interactions` is a CLI command and no tool, so the skill
+            // names it the way it is run.
+            (
+                "orchestration",
+                &["`repo_map`", "knowledge interactions"][..],
+            ),
+        ] {
+            let doc = unwrapped(default_skill_document(name).unwrap());
+            for tool in tools {
+                assert!(doc.contains(tool), "the {name} skill does not name {tool}");
+            }
+        }
+    }
+
     /// A skill is read on demand rather than on every launch, so it is capped
     /// on its own rather than against the briefings' total. The caps are still
     /// what a rewrite fits in: moving one is a decision, not a way round a
@@ -1735,6 +1786,15 @@ mod tests {
     /// `cargo nextest` was the largest single waste a measurement of this
     /// week's sessions found, and the fix costs each of the four skills a
     /// paragraph.
+    ///
+    /// The knowledge tools then cost each skill that reads code the tool of
+    /// one step: `orchestration` rises from 3900 to 4100, `code-review` from
+    /// 4000 to 4300 and `debugging` from 3400 to 3500. `coding` and
+    /// `refactoring` hold their tiers. An agent that grepped a repository
+    /// and read whole files paid for every line it opened; a step that names
+    /// the tool it needs pays for the line range instead. Each of the five
+    /// names the tool at the step that uses it, and none of them explains
+    /// the tool — the tool's own description does that.
     #[test]
     fn skill_size_caps_hold() {
         const TOTAL: usize = 50_000;
@@ -1743,9 +1803,9 @@ mod tests {
             // for most tasks, several where the reviewers pick a winner —
             // and the contract rule that keeps a frontend task and its
             // backend task off a false `depends_on`.
-            ORCHESTRATION_SKILL => 3900,
-            "debugging" => 3400,
-            "code-review" => 4000,
+            ORCHESTRATION_SKILL => 4100,
+            "debugging" => 3500,
+            "code-review" => 4300,
             "coding" | "testing" => 3000,
             _ => 2400,
         };

@@ -243,6 +243,46 @@ pub struct KnowledgeImpactDto {
     pub stopped: Vec<String>,
 }
 
+/// Query of `GET /v1/knowledge/map`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeMapQuery {
+    /// One repository id.
+    pub repository: String,
+    /// The branch to read. Omit it for the caller's own.
+    pub git_ref: Option<String>,
+    /// Rank the files around this one first, and the rest after them.
+    pub path: Option<String>,
+    /// How long the map may be, in tokens (default 1000, max 4000). One
+    /// token is four characters.
+    pub budget: Option<i64>,
+}
+
+impl KnowledgeMapQuery {
+    pub const DEFAULT_BUDGET: i64 = 1000;
+    pub const MAX_BUDGET: i64 = 4000;
+
+    pub fn budget(&self) -> i64 {
+        self.budget
+            .unwrap_or(Self::DEFAULT_BUDGET)
+            .clamp(1, Self::MAX_BUDGET)
+    }
+}
+
+/// The map of one ref: the files that carry it, ranked, with the definitions
+/// most of the ref points at.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeMapDto {
+    pub repository_id: String,
+    pub git_ref: String,
+    /// The map itself, plain text and under the budget.
+    pub text: String,
+    /// How long the text is, in tokens.
+    pub tokens: i64,
+    /// How many files the text names.
+    pub files: i64,
+}
+
 /// Query of `GET /v1/knowledge/interactions`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 #[serde(deny_unknown_fields)]

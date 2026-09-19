@@ -13,7 +13,8 @@ use axum::http::{Request, StatusCode};
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::knowledge::{
     KnowledgeHitDto, KnowledgeImpactDto, KnowledgeIndexedDto, KnowledgeInteractionGroupDto,
-    KnowledgeOutlineEntryDto, KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
+    KnowledgeMapDto, KnowledgeOutlineEntryDto, KnowledgeState, KnowledgeStatusDto,
+    KnowledgeSymbolDto,
 };
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{Actor, SessionStatus, TaskStatus};
@@ -156,6 +157,22 @@ async fn registering_a_repository_indexes_its_base_branch() {
     assert_eq!(outline.len(), 1, "{outline:?}");
     assert_eq!(outline[0].name, "add");
     assert_eq!((outline[0].start_line, outline[0].end_line), (2, 4));
+
+    // And the map of the one file, under the budget it was asked for.
+    let map: KnowledgeMapDto = h
+        .get(&format!(
+            "/v1/knowledge/map?repository={}&budget=200",
+            repo.id
+        ))
+        .await;
+    assert_eq!(map.repository_id, repo.id);
+    assert_eq!(map.git_ref, "main");
+    assert_eq!(map.files, 1);
+    assert!(map.tokens <= 200, "{map:?}");
+    assert_eq!(
+        map.text,
+        "lib.rs\n  2-4 function add pub fn add(a: i32, b: i32) -> i32\n"
+    );
 
     // A file that is not there is said to be not there.
     h.error(
@@ -485,6 +502,7 @@ async fn every_knowledge_endpoint_is_in_the_openapi_document() {
         "/v1/knowledge/symbol",
         "/v1/knowledge/impact",
         "/v1/knowledge/interactions",
+        "/v1/knowledge/map",
     ] {
         assert!(document["paths"].get(path).is_some(), "no {path}");
     }

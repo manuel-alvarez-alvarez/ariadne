@@ -9,9 +9,9 @@ use ariadne_api::knowledge::{
     KnowledgeContextDto, KnowledgeDetail, KnowledgeEdgeDto, KnowledgeEndpointDto, KnowledgeHitDto,
     KnowledgeImpactCallerDto, KnowledgeImpactDto, KnowledgeImpactQuery,
     KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeLanguageDto,
-    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeRefDto, KnowledgeRelatedDto,
-    KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
-    KnowledgeSymbolQuery,
+    KnowledgeMapDto, KnowledgeMapQuery, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery,
+    KnowledgeRefDto, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
+    KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_knowledge::store::{CONTEXT_LIMIT, INTERACTION_KINDS};
 use ariadne_knowledge::{InteractionEnd, KnowledgeStore, Related, SearchQuery, index};
@@ -361,6 +361,45 @@ pub async fn impact(
         });
     }
     Ok(Json(answers))
+}
+
+#[utoipa::path(get, path = "/v1/knowledge/map", tag = "knowledge",
+    params(KnowledgeMapQuery),
+    responses((status = 200, body = KnowledgeMapDto), (status = 404),
+              (status = 409, description = "the knowledge base is disabled")))]
+pub async fn map(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<KnowledgeMapQuery>,
+) -> ApiResult<Json<KnowledgeMapDto>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    let knowledge = enabled(&state)?;
+    let repository = state.store.get_repository(&query.repository).await?;
+    let git_ref = ref_for(
+        &state,
+        knowledge,
+        &ctx,
+        &repository,
+        query.git_ref.as_deref(),
+    )
+    .await?;
+    let toward = query.path.as_deref().filter(|path| !path.trim().is_empty());
+    let map = knowledge
+        .map(
+            &repository.id,
+            &git_ref,
+            toward,
+            query.budget().max(1) as usize,
+        )
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    Ok(Json(KnowledgeMapDto {
+        repository_id: repository.id,
+        git_ref,
+        tokens: map.tokens(),
+        files: map.files,
+        text: map.text,
+    }))
 }
 
 #[utoipa::path(get, path = "/v1/knowledge/interactions", tag = "knowledge",

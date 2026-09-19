@@ -21,7 +21,8 @@ Judge two axes apart. One axis covers repository conventions. The other axis cov
    For another runner: `| tail -n 40`.
    Done when every required check has ended and printed its failures.
 2. Pin the review scope. For a second review, read the last verdict SHA with
-   `read_messages`. Run `git merge-base --is-ancestor <sha> HEAD`.
+   `read_messages` and `all: true`.
+   Run `git merge-base --is-ancestor <sha> HEAD`.
    If HEAD is not after that SHA, use `get_diff`.
    Otherwise, run `git log <sha>..HEAD` and `git diff <sha>..HEAD`.
    Read only those new commits. With no SHA, use `get_diff` and name the base
@@ -31,8 +32,11 @@ Judge two axes apart. One axis covers repository conventions. The other axis cov
    axis.
    Done when each axis has an authoritative source or a recorded absence.
 4. Read the scoped diff and the surrounding code. Map each changed hunk to
-   its purpose.
-   Done when every hunk has a stated purpose.
+   its purpose. Call `impact` with no argument for the callers this task
+   diff reaches. Call `symbol --detail context` on each changed definition,
+   and read the tests it lists.
+   Done when every hunk has a stated purpose, and you know the callers and
+   the tests of every changed definition.
 5. Record each build, test and lint result from its log. Read the log
    only for the detail of a failure. Do not run a check again before
    this verdict.

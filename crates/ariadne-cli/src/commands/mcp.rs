@@ -56,6 +56,7 @@ impl McpSeat {
                 "outline",
                 "symbol",
                 "impact",
+                "repo_map",
             ],
             McpSeat::Author => &[
                 "get_task",
@@ -71,6 +72,7 @@ impl McpSeat {
                 "outline",
                 "symbol",
                 "impact",
+                "repo_map",
             ],
             McpSeat::Reviewer => &[
                 "get_task",
@@ -85,6 +87,7 @@ impl McpSeat {
                 "outline",
                 "symbol",
                 "impact",
+                "repo_map",
             ],
         }
     }
@@ -92,7 +95,7 @@ impl McpSeat {
 
 /// The tools of the knowledge base (022): every seat has them, and none has
 /// them while the daemon runs with `knowledge_enabled = false`.
-const KNOWLEDGE_TOOLS: &[&str] = &["search_code", "outline", "symbol", "impact"];
+const KNOWLEDGE_TOOLS: &[&str] = &["search_code", "outline", "symbol", "impact", "repo_map"];
 
 #[derive(Clone)]
 pub struct AriadneMcp {
@@ -211,6 +214,26 @@ impl AriadneMcp {
         }
     }
 
+    /// Every repository of this session's goal, which is what `repo_map`
+    /// reads when the call names none. A map is of one repository, and an
+    /// orchestrator exploring a goal wants each of them.
+    async fn goal_repositories(&self) -> Result<Vec<String>, McpError> {
+        let goal: serde_json::Value = self.get(&format!("/v1/goals/{}", self.goal_id)).await?;
+        let repositories: Vec<String> = goal["repos"]
+            .as_array()
+            .ok_or_else(|| McpError::internal_error("the goal names no repository list", None))?
+            .iter()
+            .filter_map(|repository| repository["id"].as_str().map(str::to_string))
+            .collect();
+        match repositories.is_empty() {
+            true => Err(McpError::invalid_params(
+                "pass repository because this goal names none",
+                None,
+            )),
+            false => Ok(repositories),
+        }
+    }
+
     /// This task's repository, and the range of its own change: the base
     /// branch to the task branch. What a reviewer reads when it asks for the
     /// impact of the change it is judging.
@@ -306,7 +329,7 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
 /// playbook names the texts of its own seat again, in its own layer.
 fn session_rules(seat: &McpSeat) -> String {
     format!(
-        r#"Reach Ariadne only through these tools. A backticked name is a tool. {} Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
+        r#"Reach Ariadne only through these tools. A backticked name is a tool. {} Find code with `search_code` and `symbol` before you read a file. Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
 
 Write all text in ASD-STE100 Simplified Technical English (STE):
 - Write one instruction in one sentence.
@@ -449,6 +472,7 @@ pub(crate) mod tests {
                     "outline",
                     "symbol",
                     "impact",
+                    "repo_map",
                 ][..],
             ),
             (
@@ -467,6 +491,7 @@ pub(crate) mod tests {
                     "outline",
                     "symbol",
                     "impact",
+                    "repo_map",
                 ][..],
             ),
             (
@@ -484,6 +509,7 @@ pub(crate) mod tests {
                     "outline",
                     "symbol",
                     "impact",
+                    "repo_map",
                 ][..],
             ),
         ] {
@@ -509,6 +535,7 @@ pub(crate) mod tests {
             "pick_winner",
             "read_messages",
             "record_pull_request",
+            "repo_map",
             "request_review",
             "retry_task",
             "save_memory",
@@ -688,9 +715,16 @@ pub(crate) mod tests {
     /// It holds for every seat the way the others here do, even though
     /// only an author or a reviewer runs a check, because it is the one
     /// place all three are told the same thing at once.
+    ///
+    /// The cap rises to 850 for one more rule of the same shape: find code
+    /// with `search_code` and `symbol` before you read a file. The knowledge
+    /// tools are served to every seat (022), and a seat that reads a file it
+    /// could have asked for by name pays for the whole file. Each skill
+    /// names the tool its own step needs; this is the one line that holds
+    /// wherever a seat reaches for a file.
     #[test]
     fn the_shared_rules_stay_small() {
-        const CAP: usize = 800;
+        const CAP: usize = 850;
         for seat in SEATS {
             let rules = session_rules(&seat);
             assert!(

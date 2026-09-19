@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-09-18
+updated: 2026-09-19
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -87,7 +87,16 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `code-review` each state one more rule, in their own words and place:
     run a check in the foreground and never poll a background one, and send
     its full output to a log file outside the worktree, so only the summary
-    and the failures reach the agent.
+    and the failures reach the agent. Every skill that reads code names the
+    knowledge tool of its own step (022): `coding` finds code with
+    `search_code`, `outline` and `symbol` before it opens a file and asks
+    `impact` what a change reaches; `code-review` asks `impact` for the
+    callers of the task diff and `symbol --detail context` for the tests of
+    each changed definition; `debugging` ranks its hypotheses by what those
+    two say each one touches; `refactoring` reads the callers and the tests
+    of what it moves; and `orchestration` explores a goal with `repo_map`
+    and, where the goal names several repositories, with
+    `ariadne knowledge interactions`.
 11. The orchestrator staffs each task: it names the skills of each agent and
     the model each runs on (011), may size the effort beside it, and may add
     a brief that the task itself does not carry. How the task ends is agreed
@@ -136,6 +145,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   foreground and send its output to a log file outside the worktree, rather
   than poll a background run
   (`defaults.rs::checks_run_in_the_foreground_and_print_only_failures`).
+- `coding`, `code-review`, `debugging`, `refactoring` and `orchestration`
+  each name the knowledge tool of the step that needs it
+  (`defaults.rs::every_skill_that_reads_code_names_the_knowledge_tools`).
 - No shipped skill divides a task, and `coding` and `refactoring` each name
   one commit
   (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).

@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-knowledge/src/parser.rs
   - crates/ariadne-knowledge/src/interfaces.rs
   - crates/ariadne-knowledge/src/resolve.rs
+  - crates/ariadne-knowledge/src/map.rs
   - crates/ariadne-knowledge/src/store.rs
   - crates/ariadne-knowledge/src/index.rs
   - crates/ariadne-daemon/tests/it/knowledge.rs
@@ -37,7 +38,7 @@ In: the language registry, the parser, the resolution pass that turns a
 reference into an edge, the interfaces a file holds beyond its symbols and
 the link pass that matches them between repositories, the store and its
 schema, when the daemon indexes what, the REST surface and its events, the
-four MCP tools, the `ariadne knowledge` commands, the `knowledge_enabled`
+five MCP tools, the `ariadne knowledge` commands, the `knowledge_enabled`
 key, and the desktop knowledge page over the same routes (015).
 
 Out: languages beyond the registry here; what the skill documents tell an
@@ -203,7 +204,8 @@ agent to do with the tools (017); and the memory tools beside these (019).
     `git_ref`, `commit`, `files`, `symbols`) on the domain stream, and a
     failed run `knowledge_failed` (`repository_id`, `error`) (012). Neither
     belongs to a goal or a task.
-25. Every seat has `search_code`, `outline`, `symbol` and `impact` (013).
+25. Every seat has `search_code`, `outline`, `symbol`, `impact` and
+    `repo_map` (013).
     `search_code` passes `query`, `repository`, `all`, `git_ref`, `kind`,
     `path` and `limit` through to the search; the daemon applies the defaults
     of rules 19 and 20. `outline`, `symbol` and `impact` take the repository
@@ -211,7 +213,9 @@ agent to do with the tools (017); and the memory tools beside these (019).
     with an instruction where the goal has several. `impact` with neither
     `symbol` nor `diff` is the task's own diff, the base branch to the task
     branch, for a reviewer, and a refusal naming both arguments for any other
-    seat.
+    seat. `repo_map` with no `repository` maps every repository of the
+    session's goal, each on its own share of the budget and under a heading
+    of its own, and refuses a goal that names none.
 26. `search_code` and `outline` answer plain text, one line per result:
     `path:line kind name signature` for a search (each line led by its
     repository id where the answer spans several), `path:start-end kind name
@@ -227,13 +231,14 @@ agent to do with the tools (017); and the memory tools beside these (019).
     (`symbol`), or its callers alone (`impact`). An answer is cut at 8 KiB,
     with a last line naming how many results were left and saying to narrow
     the query.
-27. `ariadne knowledge status|reindex|search|outline|symbol|impact|interactions`
+27. `ariadne knowledge status|reindex|search|outline|symbol|impact|interactions|map`
     (014) read the same endpoints. `search` takes `--repository`, `--ref`,
     `--kind`, `--path` and `--limit`; `outline` takes the repository, the path
     and `--ref`; `symbol` takes the name, `--repository`, `--ref` and
     `--detail`; `impact` takes `--repository`, one of `--symbol` and
     `--diff`, `--ref` and `--depth`; `interactions` takes the repository and
-    `--ref`. `search`, `outline`, `impact` and `interactions` are listings,
+    `--ref`; `map` takes the repository, `--path`, `--budget` and `--ref`,
+    and prints the map's text as it came. `search`, `outline`, `impact` and `interactions` are listings,
     whose `-q` prints `path:line` and the line range — an interaction row
     leads with its from end as `repository:path:line`, and names its kind,
     its to end and its confidence; `--format json` prints the daemon's
@@ -244,7 +249,7 @@ agent to do with the tools (017); and the memory tools beside these (019).
     search, an outline or a reindex is refused with a line naming the key,
     and every launch tells the session's MCP server
     (`ARIADNE_KNOWLEDGE_ENABLED=false`), which then lists and serves none of
-    the four tools.
+    the five tools.
 29. The desktop app's knowledge page (015) shows the status card, a Reindex
     button that posts the reindex and shows `indexing` at once, a search box
     over `q`, `kind` and `path`, and the interactions of the repository
@@ -352,6 +357,24 @@ agent to do with the tools (017); and the memory tools beside these (019).
     (the package, the route template, the variable, the referenced name)
     where the end sits in no definition. The edges of a kind come in the
     order of their from end, then their to end.
+
+33. `GET /v1/knowledge/map` takes `repository` and optionally `git_ref` (the
+    caller's own by default, rule 20), `path` and `budget` (tokens, 1000 by
+    default, 4000 at most, a token counted as four characters). It ranks the
+    files of that ref by PageRank over the symbol edges between them —
+    `calls`, `references`, `implements`, `extends` and `imports` (rule 9),
+    and no interface edge of rule 31, whose ends are manifest lines rather
+    than definitions — the walk restarting at `path` where the call names one
+    and at the whole ref where it does not, and answers a `KnowledgeMapDto`:
+    `repository_id`, `git_ref`, `text`, `tokens` and `files`. A reference
+    joins two files the way it points, and back at a quarter of that, so a
+    map of the whole ref names what the ref depends on, and a map toward one
+    path names that file's neighbours whichever way the reference points.
+    The text is a line per file — its path — and under it a line per
+    definition, `<start>-<end> <kind> <name> <signature>`, indented by two
+    spaces: the definitions most of the ref points at, 10 a file, in line
+    order. A file that defines nothing is left out, 100 files are ranked at
+    most, and the text stops at the last whole line the budget holds.
 
 ## Languages
 
@@ -641,9 +664,23 @@ and by `(kind, name)`.
   and `impact` the callers of a change; a diff with no ref is read at its own
   head; one of `symbol` and `diff` is required and both are refused
   (`tests/it/knowledge.rs::the_symbol_and_impact_endpoints_answer_from_the_derived_graph`).
+- A map ranks the files of a fixture and holds to its budget, and a map
+  toward one path ranks that file's neighbours first
+  (`knowledge.rs::a_repo_map_ranks_the_files_and_holds_to_its_budget`); the
+  ranking puts what every file names first and reaches a caller as well as a
+  callee (`map.rs::the_file_every_other_file_names_ranks_first`,
+  `::a_map_toward_one_file_ranks_what_that_file_joins_to`), and the text
+  stops at the budget on a whole line
+  (`map.rs::the_text_stops_at_the_budget`).
+- A map ranks over the symbol edges alone: a repository whose crates depend
+  on each other by path does not rank a manifest over the file its code calls
+  (`knowledge.rs::a_map_ranks_over_the_symbol_edges_and_not_the_manifests`).
+- Registering a repository answers its map under the budget asked for
+  (`tests/it/knowledge.rs::registering_a_repository_indexes_its_base_branch`).
 - Every endpoint is in the OpenAPI document
   (`tests/it/knowledge.rs::every_knowledge_endpoint_is_in_the_openapi_document`).
-- Every seat lists `search_code`, `outline`, `symbol` and `impact`
+- Every seat lists `search_code`, `outline`, `symbol`, `impact` and
+  `repo_map`
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`), and
   their descriptions are Simplified Technical English
   (`mcp.rs::every_text_the_server_hands_an_agent_is_simplified_technical_english`).
@@ -666,13 +703,18 @@ and by `(kind, name)`.
   (`tools.rs::impact_reads_the_task_diff_for_a_reviewer_that_names_nothing`),
   and a refusal for any other seat
   (`::impact_needs_a_symbol_or_a_diff_from_a_seat_that_is_no_reviewer`).
+- `repo_map` maps every repository of the goal on a share of the budget, each
+  under its own heading, and maps one repository with the path to rank around
+  (`tools.rs::repo_map_maps_every_repository_of_the_goal_on_a_share_of_the_budget`,
+  `::repo_map_takes_one_repository_with_the_path_to_rank_around`).
 - The CLI commands are classified and parse their flags
   (`cli/tests.rs::every_command_in_the_tree_is_classified`,
   `::knowledge_search_takes_its_filters`,
   `::knowledge_outline_takes_the_repository_and_the_path`,
   `::knowledge_symbol_takes_its_name_and_detail`,
   `::knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth`,
-  `::knowledge_interactions_takes_the_repository_and_the_ref`), and a search
+  `::knowledge_interactions_takes_the_repository_and_the_ref`,
+  `::knowledge_map_takes_the_path_and_the_budget`), and a search
   row, an impact row and an interaction row each lead with their location
   (`commands/knowledge.rs::a_search_row_leads_with_its_location_and_titles_the_symbol`,
   `::an_impact_row_leads_with_its_location_and_says_how_far_away_it_is`,
@@ -728,5 +770,6 @@ over the served listing regenerates it.
 `crates/ariadne-daemon/src/http/knowledge.rs`,
 `crates/ariadne-api/src/knowledge.rs`,
 `crates/ariadne-cli/src/commands/knowledge.rs`,
+`crates/ariadne-knowledge/src/map.rs`,
 `crates/ariadne-cli/src/commands/mcp/tools.rs`, `docs/knowledge.md`,
 `ui/src/features/knowledge/`.

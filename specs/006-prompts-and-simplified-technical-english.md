@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-09-15
+updated: 2026-09-19
 areas: [prompts, store, core, mcp]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -33,7 +33,9 @@ they describe (003, 004, 005) — and what a skill is (017).
    - the **MCP session rules**, which every session receives before its first
      prompt, whatever its seat: that Ariadne is reached only through its
      tools, whether a session works alone or waits on the user, when it may
-     ask anyway, how few turns to take, and the English to write in (013);
+     ask anyway, that code is found with `search_code` and `symbol` before a
+     file is read (022), how few turns to take, and the English to write in
+     (013);
    - the **system prompt**, which states what a seat owes from its first read
      to the call that ends its turn, and then indexes the skills this agent
      was staffed with (017) — for the orchestrator, the one skill its seat
@@ -158,7 +160,9 @@ they describe (003, 004, 005) — and what a skill is (017).
 - The index adds one line per skill, and the path it names holds the document
   (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
 - Every shipped skill document is within its cap
-  (`defaults.rs::skill_size_caps_hold`).
+  (`defaults.rs::skill_size_caps_hold`), and every skill that reads code
+  names the knowledge tool of its own step
+  (`defaults.rs::every_skill_that_reads_code_names_the_knowledge_tools`).
 
 ## Sources
 

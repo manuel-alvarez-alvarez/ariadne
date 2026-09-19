@@ -18,8 +18,9 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 use ariadne_api::goals::{CompleteGoalRequest, FinalizePlanRequest};
 use ariadne_api::knowledge::{
     KnowledgeDetail, KnowledgeHitDto, KnowledgeImpactCallerDto, KnowledgeImpactDto,
-    KnowledgeImpactQuery, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgeRelatedDto,
-    KnowledgeSearchQuery, KnowledgeSymbolDto, KnowledgeSymbolQuery,
+    KnowledgeImpactQuery, KnowledgeMapDto, KnowledgeMapQuery, KnowledgeOutlineEntryDto,
+    KnowledgeOutlineQuery, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeSymbolDto,
+    KnowledgeSymbolQuery,
 };
 use ariadne_api::memories::{CreateMemoryRequest, MemoryDto};
 use ariadne_api::messages::SendMessageRequest;
@@ -391,6 +392,20 @@ pub struct ImpactReq {
     pub git_ref: Option<String>,
     /// How far to walk the callers: 2 by default, 4 at most.
     pub depth: Option<u32>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct RepoMapReq {
+    /// Repository id. Omit it for every repository of your goal.
+    pub repository: Option<String>,
+    /// Rank the files around this one first. Give it the path of a file you
+    /// work on.
+    pub path: Option<String>,
+    /// The branch to read. Omit it for your own branch.
+    pub git_ref: Option<String>,
+    /// How long the map runs, in tokens: 1000 by default, 4000 at most.
+    pub budget: Option<u32>,
 }
 
 // ---------- helpers ----------
@@ -892,6 +907,52 @@ impl AriadneMcp {
                     }
                 }
                 repository = other.to_string();
+            }
+        }
+        text_result(cut_answer(lines, ANSWER_CAP))
+    }
+
+    #[tool(
+        description = "Read a map of a repository: the files that carry it, ranked, with the definitions of each. Call it to learn a repository you do not know yet. `path` ranks the neighbors of one file first. `budget` is how long the map runs, in tokens."
+    )]
+    async fn repo_map(
+        &self,
+        Parameters(req): Parameters<RepoMapReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let repositories = match req.repository {
+            Some(repository) => vec![repository],
+            None => self.goal_repositories().await?,
+        };
+        let budget = req
+            .budget
+            .map(i64::from)
+            .unwrap_or(KnowledgeMapQuery::DEFAULT_BUDGET)
+            .clamp(1, KnowledgeMapQuery::MAX_BUDGET);
+        // The budget is the whole answer's, so each repository of a goal
+        // gets a share of it rather than all of it.
+        let share = (budget / repositories.len() as i64).max(1);
+        let several = repositories.len() > 1;
+        let paths = match several {
+            true => self.repository_paths().await?,
+            false => HashMap::new(),
+        };
+        let mut lines = Vec::new();
+        for repository in &repositories {
+            let query = KnowledgeMapQuery {
+                repository: repository.clone(),
+                git_ref: req.git_ref.clone(),
+                path: req.path.clone(),
+                budget: Some(share),
+            };
+            let map: KnowledgeMapDto = self
+                .get(&knowledge_path("/v1/knowledge/map", &query)?)
+                .await?;
+            if several {
+                lines.push(repository_heading(&paths, repository));
+            }
+            match map.text.is_empty() {
+                true => lines.push("No file is indexed.".into()),
+                false => lines.extend(map.text.lines().map(str::to_string)),
             }
         }
         text_result(cut_answer(lines, ANSWER_CAP))
@@ -1850,6 +1911,91 @@ mod tests {
             "crates/ariadne-daemon/src/gitwt.rs:17-18 class GitManager pub struct GitManager\n\
              crates/ariadne-daemon/src/gitwt.rs:44-63 method add_worktree pub async fn add_worktree(&self)\n"
         );
+    }
+
+    /// `repo_map` with no repository maps every repository of the goal, each
+    /// under a heading of its own path, and each on its share of the budget.
+    /// That is what an orchestrator exploring a goal asks for.
+    #[tokio::test]
+    async fn repo_map_maps_every_repository_of_the_goal_on_a_share_of_the_budget() {
+        let (endpoint, seen) = recording_daemon_answering_in_order(&[
+            r#"{"repos":[{"id":"01API"},{"id":"01WEB"}]}"#,
+            r#"[{"id":"01API","path":"/w/api"},{"id":"01WEB","path":"/w/web"}]"#,
+            r#"{"repository_id":"01API","git_ref":"main","text":"src/lib.rs\n  1-2 function get_item pub fn get_item()\n","tokens":12,"files":1}"#,
+            r#"{"repository_id":"01WEB","git_ref":"main","text":"src/client.ts\n  4-6 function fetchItem function fetchItem()\n","tokens":13,"files":1}"#,
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Orchestrator,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .repo_map(Parameters(RepoMapReq {
+                repository: None,
+                path: None,
+                git_ref: None,
+                budget: None,
+            }))
+            .await
+            .expect("repo_map");
+
+        let seen = seen.lock().expect("lock").clone();
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/v1/goals/01GOAL",
+                "/v1/repositories",
+                "/v1/knowledge/map?repository=01API&budget=500",
+                "/v1/knowledge/map?repository=01WEB&budget=500",
+            ]
+        );
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(
+            text.text,
+            "# /w/api\n\
+             src/lib.rs\n\
+             \x20 1-2 function get_item pub fn get_item()\n\
+             # /w/web\n\
+             src/client.ts\n\
+             \x20 4-6 function fetchItem function fetchItem()\n"
+        );
+    }
+
+    /// `repo_map` for one repository asks for that repository alone, with the
+    /// file to rank around and the whole budget, and heads nothing.
+    #[tokio::test]
+    async fn repo_map_takes_one_repository_with_the_path_to_rank_around() {
+        let (endpoint, seen) = recording_daemon_answering(
+            r#"{"repository_id":"01REPO","git_ref":"main","text":"src/a.rs\n","tokens":2,"files":1}"#,
+        )
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .repo_map(Parameters(RepoMapReq {
+                repository: Some("01REPO".into()),
+                path: Some("src/a.rs".into()),
+                git_ref: None,
+                budget: Some(2000),
+            }))
+            .await
+            .expect("repo_map");
+
+        let seen = seen.lock().expect("lock").clone();
+        let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            ["/v1/knowledge/map?repository=01REPO&path=src%2Fa.rs&budget=2000"]
+        );
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert_eq!(text.text, "src/a.rs\n");
     }
 
     /// `symbol` asks the daemon for the detail it was given, and groups its
