@@ -334,7 +334,6 @@ mod tests {
     use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
     use futures_util::StreamExt;
     use ratatui::backend::TestBackend;
-    use ratatui::{Terminal, TerminalOptions, Viewport};
     use serde_json::json;
 
     use ariadne_api::events::AgentEventDto;
@@ -612,13 +611,7 @@ mod tests {
         let ctrl_c = TermEvent::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         {
             let _held = Held::take(interrupted.clone()).unwrap();
-            let mut terminal = Terminal::with_options(
-                TestBackend::new(72, 40),
-                TerminalOptions {
-                    viewport: Viewport::Inline(12),
-                },
-            )
-            .unwrap();
+            let mut terminal = super::open(|| TestBackend::new(72, 40)).unwrap();
             let mut console = Console::new(Header::default());
             let keys = stream::iter(vec![Ok(ctrl_c.clone()), Ok(ctrl_c)]).chain(stream::pending());
             drive(

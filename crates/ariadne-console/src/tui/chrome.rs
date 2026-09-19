@@ -117,17 +117,19 @@ impl Console {
         self.draw_footer(frame, footer);
     }
 
-    /// Every line of the live area, `width` columns wide: the blocks not yet
-    /// in the scrollback, and the picker of a question waiting for its
-    /// answer, folded to `height` rows. One blank line separates two blocks,
-    /// as in the scrollback. The head of a long block is in it too: the area
-    /// draws the tail.
-    pub fn live_lines(&self, width: u16, height: u16) -> Vec<Line<'static>> {
+    /// Every line of the live area, `width` columns wide: the blocks from
+    /// `from` on — the ones not yet in the scrollback — and the picker of a
+    /// question waiting for its answer, folded to `height` rows. One blank
+    /// line separates two blocks, as in the scrollback. The head of a long
+    /// block is in it too: the area draws the tail. The pane is as tall as
+    /// these lines (008), so what is drawn and what is counted are the one
+    /// list.
+    pub fn live_lines(&self, from: usize, width: u16, height: u16) -> Vec<Line<'static>> {
         let width = usize::from(width);
         let height = usize::from(height);
         let asking = self.question();
         let mut blocks = Vec::new();
-        for (at, item) in self.items.iter().enumerate().skip(self.committed) {
+        for (at, item) in self.items.iter().enumerate().skip(from) {
             if Some(at) == asking {
                 continue;
             }
@@ -157,7 +159,7 @@ impl Console {
     /// The blocks not yet in the scrollback, and the picker of a question
     /// waiting for its answer.
     fn draw_live(&self, frame: &mut Draw, area: Rect) {
-        let lines = self.live_lines(area.width, area.height);
+        let lines = self.live_lines(self.committed, area.width, area.height);
         // The tail is what is happening now; the head of a long block has
         // scrolled past, exactly as it would have in the scrollback.
         let skip = lines.len().saturating_sub(usize::from(area.height));
@@ -666,7 +668,7 @@ mod tests {
         assert!(live.contains("● first\n\n● second"), "{live}");
         assert!(committed.contains("● first\n\n● second"), "{committed}");
         assert_eq!(
-            console.live_lines(72, 30).len(),
+            console.live_lines(console.committed, 72, 30).len(),
             1,
             "only the open block is live"
         );

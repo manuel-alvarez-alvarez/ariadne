@@ -179,8 +179,29 @@ goal id to a seat (014).
 23. `ariadne attach` on a terminal is an inline pane, never the alternate
     screen. A finished block goes into the terminal's own buffer above the
     pane, so it stays in the scrollback; the pane holds the block still being
-    written, a status row, the input box and a footer. The status row names
-    the seat, the model and the session's status — the row's at attach, then what the
+    written, a status row, the input box and a footer. While a turn runs the last
+    block is the one being written; between turns none is, and the last one
+    is committed too — but a run of chunks no stored whole has closed, which
+    the next chunk would continue. The pane is as tall as what it
+    holds — the lines of the blocks not yet in the scrollback, and the pinned
+    rows under them: the status row, the input box and the footer — and the terminal's
+    height at the most, where it shows the last lines of the block. It grows
+    as the block being written grows and shrinks as blocks leave for the
+    scrollback, so between turns the pane is its pinned rows alone, and no
+    blank row lies between the last line of the scrollback and the pane but
+    the one that separates blocks. ratatui
+    fixes an inline viewport's height as it opens it, so a pane whose height
+    changes is opened again over the same backend, from the row it began on:
+    a taller one scrolls the terminal for the room it lacks, and a shorter
+    one frees the rows its finished blocks were written on, which are then
+    inserted onto them. No committed line is deleted or said again by
+    either, and the pane is wiped and drawn whole only then — every other
+    draw writes the cells that changed. ratatui drops the backend where
+    opening the pane again fails: the console ends on that error, and the
+    close that follows writes nothing and does not panic. A pending permission question has
+    the terminal's height less the pinned rows to fold into (rule 27). The
+    status row names the seat,
+    the model and the session's status — the row's at attach, then what the
     stored events move it to, as the daemon moves the row on them (021):
     `running` on the session's start, a prompt, a tool event or an answered
     permission, `idle` on a stop or a compaction, `exited` on the session's
@@ -220,12 +241,16 @@ goal id to a seat (014).
     input box wrap and cut by display width, so a wide character or an emoji
     takes the two columns it draws on, and a cut falls between grapheme
     clusters, so an emoji of several characters is never split. A resize of
-    the terminal redraws the pane at the new size. The pane opens from the
+    the terminal redraws the pane at the new size, by the same height rule:
+    a pane that ran off the bottom of a shorter terminal is opened again as
+    many rows further up, so the whole of it is on the screen. The pane
+    opens from the
     cursor, which the terminal is asked for once, at the open; a terminal that
     does not answer within crossterm's timeout gets the same pane opened from
     the bottom row instead. On both paths every later cursor query — the one
-    ratatui makes after each block it inserts above the pane, and on a resize
-    — is answered by the backend itself, from where it last put the cursor,
+    ratatui makes after each block it inserts above the pane, on a resize,
+    and each time the pane is opened again at another height — is answered
+    by the backend itself, from where it last put the cursor,
     and never sent to the terminal: once the key stream reads the terminal, a
     query's answer would come through the reader the stream holds, and time
     out. There is no alternate-screen fallback.
@@ -661,6 +686,38 @@ goal id to a seat (014).
   terminal once the key stream reads it — is never asked again, and a
   finished block still reaches the scrollback
   (`::a_finished_block_reaches_the_scrollback_when_only_the_first_cursor_query_is_answered`).
+- The pane is as tall as what it holds. Idle — before the first block, and
+  after a turn whose every block, the stop included, is committed — it is
+  its pinned rows
+  (`ariadne-console/tui/viewport.rs::an_idle_pane_is_as_tall_as_its_pinned_rows`),
+  and no blank row lies between the scrollback and the pane but the block
+  separator
+  (`::no_blank_row_lies_between_the_scrollback_and_the_pane_but_the_block_separator`).
+  Each of the 30 lines of a block in work shows while it is written on a
+  terminal of 40 rows
+  (`::each_line_of_a_block_in_work_shows_while_it_is_written`). A block of
+  100 lines takes the 40 rows and shows its tail, and once committed is in
+  the scrollback once, in order, with every line committed before it
+  (`::a_block_longer_than_the_terminal_takes_every_row_and_reaches_the_scrollback_once`),
+  and the pane shrinks back to the idle height
+  (`::the_pane_shrinks_back_once_its_long_block_is_committed`). A pane that
+  cannot be opened again ends the console on the terminal's error, and the
+  close after it does not panic
+  (`::a_pane_that_cannot_be_opened_again_ends_on_the_error_and_closes_without_a_panic`),
+  and the loop returns that error to its host
+  (`::the_loop_returns_the_error_of_a_pane_that_cannot_be_opened_again`).
+  A backend
+  that answers one cursor query is asked no other through a grow, a shrink
+  and a resize
+  (`::no_cursor_query_follows_the_open_through_a_grow_a_shrink_and_a_resize`),
+  a resize to a shorter terminal keeps the whole pane on the screen
+  (`::a_resize_to_a_shorter_terminal_keeps_the_whole_pane_on_the_screen`),
+  and a terminal that reads the daemon backend's bytes shows the rows the
+  test backend shows after a grow and after a shrink
+  (`::the_ansi_backend_shows_the_rows_the_test_backend_shows_after_a_grow_and_a_shrink`).
+  A pending permission question on a terminal of 24 rows shows its question
+  and every option
+  (`::a_pending_question_on_a_terminal_of_24_rows_shows_its_question_and_every_option`).
 - Streamed chunks append to the block already open
   (`ariadne-console/tui/mod.rs::streamed_chunks_append_to_the_agent_block_that_is_already_open`),
   a chunk that arrives after the whole of its turn is not drawn again

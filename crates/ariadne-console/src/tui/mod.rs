@@ -3,8 +3,9 @@
 //!
 //! The shape is the one a person expects of a chat with an agent, and the one
 //! the Codex CLI has: the transcript scrolls in the terminal's own buffer, and
-//! a small viewport pinned under it holds a status line and the box being
-//! typed into. Finished blocks leave the viewport with
+//! a viewport pinned under it, as tall as what it holds, has the blocks still
+//! being written, a status line and the box being typed into. Finished blocks
+//! leave the viewport with
 //! [`Terminal::insert_before`], so what the agent said is still in the
 //! scrollback after the console is closed — which is why the viewport is
 //! [`ratatui::Viewport::Inline`] and never the alternate screen.
@@ -20,7 +21,7 @@
 //! [`drive`] takes the source, the sink and the key stream as arguments, so
 //! an in-memory source and a scripted key stream drive it. And [`open`]
 //! takes the backend as an argument, so one that answers no cursor query
-//! proves the viewport still opens.
+//! proves the viewport still opens, and still grows and shrinks.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
@@ -30,7 +31,6 @@ use anyhow::Result;
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures_util::{Stream, StreamExt};
 use ratatui::Terminal;
-use ratatui::layout::Rect;
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Paragraph, Widget};
 use tokio::time::{Instant, interval};
@@ -558,8 +558,11 @@ impl Console {
 
     /// How many leading items are finished with and may leave the viewport.
     ///
-    /// The last item is never one of them — it is what is still being written
-    /// — and neither is an unanswered question, which is the picker, nor a
+    /// While a turn runs the last item is never one of them — it is what is
+    /// still being written. Between turns it is one too, so the idle pane is
+    /// its pinned rows alone — unless it is a run of chunks no whole has
+    /// closed, which the next chunk would write into. Neither is an
+    /// unanswered question, which is the picker, nor a
     /// prompt still waiting to be confirmed, nor a tool call that has not
     /// ended: the question about a call comes after the call, and the event
     /// that ends the call comes after the answer, so a call committed while
@@ -568,7 +571,12 @@ impl Console {
     /// It never goes backwards: what is in the scrollback is in the
     /// scrollback, whatever a fresh snapshot makes of the items around it.
     fn settled(&self) -> usize {
-        let mut end = self.items.len().saturating_sub(1);
+        let writing = self.turn.running()
+            || self
+                .items
+                .last()
+                .is_some_and(|last| is_open(last, true) || is_open(last, false));
+        let mut end = self.items.len().saturating_sub(usize::from(writing));
         if let Some(pending) = self.pending.front() {
             // The turn a queued prompt waits behind is still writing the
             // block before the prompt, chunk by chunk: that block is the one
@@ -597,10 +605,37 @@ impl Console {
         self.emit(terminal, end)
     }
 
+    /// One turn of the screen: the pane made as tall as what it will hold,
+    /// every finished block moved above it, and the pane drawn.
+    ///
+    /// The height comes first, and is the one the pane has once the finished
+    /// blocks have left it: a pane made shorter leaves blank the rows those
+    /// blocks were written on, and they are inserted onto them, so nothing
+    /// scrolls and no blank row is left between the scrollback and the pane.
+    pub fn show<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
+        if terminal.backend().lost() {
+            return Ok(());
+        }
+        let end = self.settled();
+        viewport::fit(terminal, self.rows(end, terminal.size()?))?;
+        self.emit(terminal, end)?;
+        terminal.draw(|frame| self.render(frame))?;
+        Ok(())
+    }
+
     /// The way out: everything left goes to the scrollback, and the viewport
-    /// is wiped so the shell comes back to a clean line.
-    pub fn close<B: Screen>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+    /// is wiped so the shell comes back to a clean line. The pane is made as
+    /// short as it gets first, so what is left lands where it was written and
+    /// the shell comes back right under it.
+    ///
+    /// A terminal whose backend a failed fit lost has nothing to write to:
+    /// the error that ended the loop is the one to report, and this is `Ok`.
+    pub fn close<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
+        if terminal.backend().lost() {
+            return Ok(());
+        }
         let end = self.items.len();
+        viewport::fit(terminal, self.rows(end, terminal.size()?))?;
         self.emit(terminal, end)?;
         terminal.clear()?;
         Ok(())
@@ -823,7 +858,7 @@ enum Step {
 /// daemon and the process terminal, so that a test scripts all three; the
 /// terminal is whatever backend is under it.
 pub async fn drive<B, S, W, K>(
-    terminal: &mut Terminal<B>,
+    terminal: &mut Terminal<Anchored<B>>,
     source: S,
     sink: &mut W,
     keys: K,
@@ -855,8 +890,7 @@ where
     }
 
     loop {
-        console.commit(terminal)?;
-        terminal.draw(|frame| console.render(frame))?;
+        console.show(terminal)?;
 
         let step = tokio::select! {
             biased;
@@ -892,11 +926,8 @@ where
                 Action::Cancel => sink.cancel().await,
             },
             Step::Key(TermEvent::Paste(text)) => console.paste(&text),
-            // The loop redraws on its way round; the resize is what makes
-            // the viewport the new size before it does.
-            Step::Key(TermEvent::Resize(width, height)) => {
-                terminal.resize(Rect::new(0, 0, width, height))?;
-            }
+            // A resize is a turn of the loop and no more: the loop fits the
+            // pane to the terminal's size on its way round, before it draws.
             Step::Key(_) => {}
             Step::Ended | Step::Closed => return Ok(()),
             Step::Tick => console.tick(),
@@ -979,7 +1010,7 @@ mod tests {
             "a completed call is ticked, and its head is its command: {shown}"
         );
         assert!(
-            shown.contains("… 2 more lines") && shown.contains("    six\n\n"),
+            shown.contains("… 2 more lines") && shown.contains("    six\n author"),
             "the output is folded to its last lines, the blank ones trimmed: {shown}"
         );
         assert!(
@@ -1301,9 +1332,9 @@ mod tests {
     async fn a_resize_redraws_the_viewport_at_the_new_size() {
         let mut stub = Stub::new(Vec::new());
         let source = stub.source();
-        let mut terminal = terminal();
+        let mut terminal = pane();
         let mut console = Console::new(header());
-        terminal.backend_mut().resize(40, 20);
+        terminal.backend_mut().under_mut().resize(40, 20);
         let ctrl_c = TermEvent::Key(ctrl('c'));
         let keys = stream::iter(vec![
             Ok(TermEvent::Resize(40, 20)),
@@ -1322,7 +1353,7 @@ mod tests {
         .await
         .unwrap();
 
-        let shown = screen(&terminal);
+        let shown = shown(&terminal);
         assert!(
             shown
                 .lines()
@@ -1673,7 +1704,7 @@ mod tests {
             ended(),
         ]);
         let source = stub.source();
-        let mut terminal = terminal();
+        let mut terminal = pane();
         let mut console = Console::new(header());
         let keys = stream::pending();
 
@@ -1693,9 +1724,9 @@ mod tests {
         outcome.unwrap().unwrap();
         console.close(&mut terminal).unwrap();
         assert!(
-            screen(&terminal).contains("all done"),
+            shown(&terminal).contains("all done"),
             "{}",
-            screen(&terminal)
+            shown(&terminal)
         );
     }
 

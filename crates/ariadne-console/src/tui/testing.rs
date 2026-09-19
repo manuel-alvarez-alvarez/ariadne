@@ -136,6 +136,17 @@ pub(super) fn terminal() -> Terminal<TestBackend> {
     .unwrap()
 }
 
+/// The terminal the loop draws on: the viewport as [`open`] makes it, on the
+/// top row of an empty screen, which [`Console::show`] then fits.
+pub(super) fn pane() -> Terminal<Anchored<TestBackend>> {
+    open(|| TestBackend::new(72, 40)).unwrap()
+}
+
+/// What [`screen`] reads, of the terminal [`pane`] makes.
+pub(super) fn shown(terminal: &Terminal<Anchored<TestBackend>>) -> String {
+    rows(terminal.backend().under().buffer())
+}
+
 /// Everything the terminal shows: the scrollback above the viewport and
 /// the viewport itself, as one block of text.
 pub(super) fn screen(terminal: &Terminal<TestBackend>) -> String {
@@ -191,7 +202,7 @@ pub(super) fn typed(text: &str) -> Vec<TermEvent> {
 /// the screen. No server anywhere: the stub is the source and the sink.
 pub(super) async fn console(mut stub: Stub, keys: Vec<TermEvent>) -> (String, Vec<String>, usize) {
     let source = stub.source();
-    let mut terminal = terminal();
+    let mut terminal = pane();
     let mut console = Console::new(header());
     let keys = stream::iter(keys.into_iter().map(Ok)).chain(stream::pending());
 
@@ -205,7 +216,7 @@ pub(super) async fn console(mut stub: Stub, keys: Vec<TermEvent>) -> (String, Ve
     .await
     .unwrap();
 
-    (screen(&terminal), stub.prompts, stub.cancels)
+    (shown(&terminal), stub.prompts, stub.cancels)
 }
 
 pub(super) fn event(kind: &str, summary: &str, payload: serde_json::Value) -> AgentEventDto {

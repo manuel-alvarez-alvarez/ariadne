@@ -1,5 +1,6 @@
-//! The inline viewport: how it opens, and the backend that makes it open
-//! where the terminal cannot say where the cursor is.
+//! The inline viewport: how it opens, how it stays as tall as what it holds,
+//! and the backend that makes both work where the terminal cannot say where
+//! the cursor is.
 
 use anyhow::Result;
 use ratatui::backend::{Backend, ClearType, WindowSize};
@@ -7,10 +8,15 @@ use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
-/// How tall the inline viewport is. The bottom [`super::Console::pinned_rows`]
-/// rows are the status row, the input box and the footer; the rest shows the
-/// block still being written, which moves into the scrollback the moment it
-/// is finished.
+use super::Console;
+
+/// How tall the viewport opens: one row, since nothing is known of what it
+/// will hold. The first [`fit`] makes it the height of the pane.
+const OPENING: u16 = 1;
+
+/// How tall the viewport of a test's own terminal is: a fixed one, for a test
+/// that draws the console and never runs the loop that fits the pane.
+#[cfg(test)]
 pub(super) const VIEWPORT: u16 = 13;
 
 /// A ratatui backend whose failures `anyhow` can carry: the real terminal's
@@ -38,8 +44,9 @@ where
 ///
 /// The terminal is asked once, here, and never again: on both paths the
 /// backend answers every later query itself, from where the cursor was last
-/// put. ratatui asks after every block it inserts above the viewport and on
-/// every resize, and by then the key stream is reading the terminal — and
+/// put. ratatui asks after every block it inserts above the viewport, on
+/// every resize and each time [`fit`] opens the viewport again at another
+/// height, and by then the key stream is reading the terminal — and
 /// crossterm's answer to a cursor query comes through the same reader the
 /// key stream holds, so a query made while keys are read times out and would
 /// end the console on its first finished block.
@@ -47,15 +54,7 @@ where
 /// `fresh` makes a backend, and makes another for the second attempt: the
 /// one the failed attempt took cannot be had back.
 pub fn open<B: Screen>(fresh: impl Fn() -> B) -> Result<Terminal<Anchored<B>>> {
-    let inline = |backend| {
-        Terminal::with_options(
-            backend,
-            TerminalOptions {
-                viewport: Viewport::Inline(VIEWPORT),
-            },
-        )
-    };
-    if let Ok(terminal) = inline(Anchored::asking(fresh())) {
+    if let Ok(terminal) = inline(Anchored::asking(fresh()), OPENING) {
         return Ok(terminal);
     }
     let mut backend = fresh();
@@ -64,7 +63,90 @@ pub fn open<B: Screen>(fresh: impl Fn() -> B) -> Result<Terminal<Anchored<B>>> {
         y: backend.size()?.height.saturating_sub(1),
     };
     backend.set_cursor_position(bottom)?;
-    Ok(inline(Anchored::at(backend, bottom))?)
+    Ok(inline(Anchored::at(backend, bottom), OPENING)?)
+}
+
+fn inline<B: Backend>(backend: B, height: u16) -> Result<Terminal<B>, B::Error> {
+    Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Inline(height),
+        },
+    )
+}
+
+impl Console {
+    /// How tall the pane is on a terminal of `size`, once the blocks before
+    /// `from` are in the scrollback: the lines of the blocks still in it,
+    /// and the pinned rows under them. The terminal's height is the most it
+    /// takes, and a pending picker has all of that but the pinned rows to
+    /// fold into.
+    pub(super) fn rows(&self, from: usize, size: Size) -> u16 {
+        let pinned = self.pinned_rows(size.width);
+        let room = size.height.saturating_sub(pinned);
+        let live = self.live_lines(from, size.width, room).len();
+        pinned
+            .saturating_add(u16::try_from(live).unwrap_or(u16::MAX))
+            .min(size.height)
+            .max(1)
+    }
+}
+
+/// Make the viewport `wanted` rows tall, where it is not: taller as the block
+/// being written grows, shorter as blocks leave for the scrollback.
+///
+/// ratatui fixes the height of an inline viewport when it opens it, and has
+/// nothing that changes it after. So the viewport is opened again, over the
+/// same backend, from the row the old one began on: ratatui makes the room a
+/// taller one lacks by scrolling the terminal, which moves what is above it
+/// into the scrollback and deletes none of it, and a shorter one leaves the
+/// rows under it blank for the blocks [`Console::commit`] inserts next, so
+/// they land where they were being written. The old viewport is wiped first
+/// and the next draw paints the new one whole. That happens only here, where
+/// the height changes, and no other draw repaints more than the cells that
+/// changed.
+///
+/// A terminal resized is the same case. A viewport that ran off the bottom of
+/// a shorter terminal is opened again as many rows further up, and one on a
+/// narrower terminal at the top of a cleared screen, as ratatui's own resize
+/// has it: the terminal has wrapped every line it held.
+///
+/// The backend is [`Anchored`], so opening the viewport again asks the
+/// terminal nothing.
+///
+/// ratatui takes the backend to open a viewport and drops it where the open
+/// fails, so a failure here leaves the terminal with none
+/// ([`Anchored::lost`]). The error is the terminal's own and ends the loop;
+/// the terminal left behind does nothing, and is fitted no more.
+pub(super) fn fit<B: Screen>(terminal: &mut Terminal<Anchored<B>>, wanted: u16) -> Result<()> {
+    if terminal.backend().lost() {
+        return Ok(());
+    }
+    let size = terminal.size()?;
+    let area = terminal.get_frame().area();
+    let wanted = wanted.min(size.height);
+    if area.height == wanted && area.width == size.width && area.bottom() <= size.height {
+        return Ok(());
+    }
+    let backend = terminal.backend_mut();
+    let top = if size.width < area.width {
+        backend.clear_region(ClearType::All)?;
+        0
+    } else {
+        // A terminal made shorter keeps its bottom rows, the cursor's among
+        // them, so the viewport is as many rows further up as ran off.
+        area.y
+            .saturating_sub(area.bottom().saturating_sub(size.height))
+    };
+    let at = Position { x: 0, y: top };
+    backend.set_cursor_position(at)?;
+    backend.clear_region(ClearType::AfterCursor)?;
+    let backend = Anchored {
+        inner: backend.inner.take(),
+        known: Some(at),
+    };
+    *terminal = inline(backend, wanted)?;
+    Ok(())
 }
 
 /// A backend whose cursor position is known without asking the terminal.
@@ -77,23 +159,51 @@ pub fn open<B: Screen>(fresh: impl Fn() -> B) -> Result<Terminal<Anchored<B>>> {
 /// the one query it is made through to the terminal, and is anchored to the
 /// answer from then on.
 pub struct Anchored<B> {
-    inner: B,
+    /// `None` in the terminal [`fit`] took the backend from: one dropped at
+    /// once, or the one left behind where the open that followed failed.
+    inner: Option<B>,
     known: Option<Position>,
 }
 
 impl<B> Anchored<B> {
     fn asking(inner: B) -> Self {
-        Self { inner, known: None }
+        Self {
+            inner: Some(inner),
+            known: None,
+        }
     }
 
     fn at(inner: B, at: Position) -> Self {
         Self {
-            inner,
+            inner: Some(inner),
             known: Some(at),
         }
     }
+
+    /// Whether the backend is gone: [`fit`] took it to open the viewport
+    /// again, and the open failed and dropped it with its error. Nothing
+    /// more can be written, so what is left to do is nothing, not a panic.
+    pub(super) fn lost(&self) -> bool {
+        self.inner.is_none()
+    }
+
+    /// The backend under this one, for a test to read its screen.
+    #[cfg(test)]
+    pub(super) fn under(&self) -> &B {
+        self.inner.as_ref().expect("the test's backend is there")
+    }
+
+    /// The backend under this one, for a test to resize it.
+    #[cfg(test)]
+    pub(super) fn under_mut(&mut self) -> &mut B {
+        self.inner.as_mut().expect("the test's backend is there")
+    }
 }
 
+/// Every call goes to the backend under this one but the cursor query. With
+/// the backend [`Anchored::lost`], every call does nothing and says so: the
+/// terminal [`fit`] took it from shows its cursor as it is dropped, and a
+/// host closes the console whatever ended it.
 impl<B: Backend> Backend for Anchored<B> {
     type Error = B::Error;
 
@@ -101,69 +211,89 @@ impl<B: Backend> Backend for Anchored<B> {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
-        self.inner.draw(content)
+        self.inner
+            .as_mut()
+            .map_or(Ok(()), |inner| inner.draw(content))
     }
 
     fn append_lines(&mut self, n: u16) -> Result<(), B::Error> {
-        self.inner.append_lines(n)
+        self.inner
+            .as_mut()
+            .map_or(Ok(()), |inner| inner.append_lines(n))
     }
 
     fn hide_cursor(&mut self) -> Result<(), B::Error> {
-        self.inner.hide_cursor()
+        self.inner.as_mut().map_or(Ok(()), Backend::hide_cursor)
     }
 
     fn show_cursor(&mut self) -> Result<(), B::Error> {
-        self.inner.show_cursor()
+        self.inner.as_mut().map_or(Ok(()), Backend::show_cursor)
     }
 
     fn get_cursor_position(&mut self) -> Result<Position, B::Error> {
-        match self.known {
-            Some(at) => Ok(at),
-            None => {
-                let at = self.inner.get_cursor_position()?;
+        match (self.known, self.inner.as_mut()) {
+            (Some(at), _) => Ok(at),
+            (None, Some(inner)) => {
+                let at = inner.get_cursor_position()?;
                 self.known = Some(at);
                 Ok(at)
             }
+            (None, None) => Ok(Position::ORIGIN),
         }
     }
 
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), B::Error> {
         let at = position.into();
-        self.inner.set_cursor_position(at)?;
+        if let Some(inner) = self.inner.as_mut() {
+            inner.set_cursor_position(at)?;
+        }
         self.known = Some(at);
         Ok(())
     }
 
     fn clear(&mut self) -> Result<(), B::Error> {
-        self.inner.clear()
+        self.inner.as_mut().map_or(Ok(()), Backend::clear)
     }
 
     fn clear_region(&mut self, clear_type: ClearType) -> Result<(), B::Error> {
-        self.inner.clear_region(clear_type)
+        self.inner
+            .as_mut()
+            .map_or(Ok(()), |inner| inner.clear_region(clear_type))
     }
 
     fn size(&self) -> Result<Size, B::Error> {
-        self.inner.size()
+        self.inner
+            .as_ref()
+            .map_or(Ok(Size::default()), Backend::size)
     }
 
     fn window_size(&mut self) -> Result<WindowSize, B::Error> {
-        self.inner.window_size()
+        self.inner.as_mut().map_or(
+            Ok(WindowSize {
+                columns_rows: Size::default(),
+                pixels: Size::default(),
+            }),
+            Backend::window_size,
+        )
     }
 
     fn flush(&mut self) -> Result<(), B::Error> {
-        self.inner.flush()
+        self.inner.as_mut().map_or(Ok(()), Backend::flush)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
+    use std::sync::{Arc, Mutex};
 
     use futures_util::stream;
     use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
     use ratatui::buffer::Cell;
-    use ratatui::layout::{Position, Size};
+    use ratatui::layout::{Position, Rect, Size};
     use serde_json::json;
+
+    use crate::ansi::{AnsiBackend, Window};
 
     use crate::tui::testing::*;
     use crate::tui::*;
@@ -176,12 +306,14 @@ mod tests {
 
     /// A screen that says where its cursor is `answers` times and never
     /// again: the terminal that answers no query, as ratatui sees it, and the
-    /// one that answers the first and none after it.
-    struct Mute(TestBackend, usize);
+    /// one that answers the first and none after it. The flag is a terminal
+    /// that went away: it takes no more line feeds, which is what ratatui
+    /// makes room for a viewport with.
+    struct Mute(TestBackend, usize, bool);
 
     impl Mute {
         fn new() -> Self {
-            Self(TestBackend::new(72, 40), 0)
+            Self(TestBackend::new(72, 40), 0, false)
         }
 
         /// The terminal once the key stream is reading it: crossterm's
@@ -189,7 +321,7 @@ mod tests {
         /// holds, so the query made at the open is answered and every later
         /// one times out.
         fn answering_once() -> Self {
-            Self(TestBackend::new(72, 40), 1)
+            Self(TestBackend::new(72, 40), 1, false)
         }
     }
 
@@ -212,6 +344,9 @@ mod tests {
         }
 
         fn append_lines(&mut self, n: u16) -> std::io::Result<()> {
+            if self.2 {
+                return Err(std::io::Error::other("the terminal went away"));
+            }
             sure(self.0.append_lines(n))
         }
 
@@ -258,14 +393,385 @@ mod tests {
         }
     }
 
+    /// A prompt, as the daemon confirms one typed at the console.
+    fn prompt(text: &str) -> AgentEventDto {
+        event(
+            "user_prompt_submit",
+            text,
+            json!({"text": text, "source": "console"}),
+        )
+    }
+
+    /// One chunk of the agent's text: a list item, which is one line of the
+    /// block however the chunks before it ended. The numbers are padded, so
+    /// no row's name is part of another's.
+    fn row(n: usize) -> AgentEventDto {
+        let text = format!("- row-{n:03}\n");
+        event(
+            "agent_message_chunk",
+            &format!("row-{n:03}"),
+            json!({"text": text}),
+        )
+    }
+
+    /// A console on a screen that a first turn has filled, so the pane is on
+    /// the bottom rows as it is in a session under way: a block of `filler`
+    /// lines in the scrollback, and the prompt of the next turn.
+    fn under_way<B: Screen>(terminal: &mut Terminal<Anchored<B>>) -> Console {
+        let filler: String = (1..=60).map(|n| format!("- filler-{n:03}\n")).collect();
+        let mut console = Console::new(header());
+        console.snapshot(&[
+            event("agent_message", "filler", json!({"text": filler})),
+            prompt("go"),
+        ]);
+        console.show(terminal).unwrap();
+        console
+    }
+
+    /// The rows the pane is on.
+    fn pane_of<B: Backend>(terminal: &mut Terminal<B>) -> Rect {
+        terminal.get_frame().area()
+    }
+
+    /// Everything the terminal has shown: its scrollback, then its screen.
+    fn history(terminal: &Terminal<Anchored<TestBackend>>) -> String {
+        let backend = terminal.backend().under();
+        format!("{}\n{}", rows(backend.scrollback()), rows(backend.buffer()))
+    }
+
+    /// Between turns every block is in the scrollback, the agent's last and
+    /// the stop under it too: nothing is being written into either.
+    #[test]
+    fn an_idle_pane_is_as_tall_as_its_pinned_rows() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        console.show(&mut terminal).unwrap();
+        assert_eq!(pane_of(&mut terminal).height, PINNED, "with no block yet");
+
+        console.apply(&prompt("go"));
+        console.apply(&event("agent_message", "done", json!({"text": "done"})));
+        console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
+        console.show(&mut terminal).unwrap();
+
+        assert_eq!(pane_of(&mut terminal).height, PINNED, "after a turn");
+        let shown = shown(&terminal);
+        let top: Vec<&str> = shown.lines().take(5).collect();
+        assert_eq!(
+            top[..4],
+            ["▌❯ go", "", "● done", ""],
+            "each block of the turn is committed, a separator under each: {shown}"
+        );
+        assert!(
+            top[4].starts_with(" author · claude:opus · idle"),
+            "and the status row is right under the last separator: {shown}"
+        );
+    }
+
+    #[test]
+    fn no_blank_row_lies_between_the_scrollback_and_the_pane_but_the_block_separator() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        console.snapshot(&[
+            prompt("first"),
+            event("agent_message", "second", json!({"text": "second"})),
+        ]);
+
+        console.show(&mut terminal).unwrap();
+
+        let shown = shown(&terminal);
+        let top: Vec<&str> = shown.lines().take(4).collect();
+        assert_eq!(
+            top[..3],
+            ["▌❯ first", "", "● second"],
+            "the committed prompt, the separator, the block in the pane: {shown}"
+        );
+        assert!(
+            top[3].starts_with(" author · claude:opus"),
+            "and the status line right under it: {shown}"
+        );
+    }
+
+    #[test]
+    fn each_line_of_a_block_in_work_shows_while_it_is_written() {
+        let mut terminal = pane();
+        let mut console = under_way(&mut terminal);
+
+        for written in 1..=30 {
+            console.apply(&row(written));
+            console.show(&mut terminal).unwrap();
+
+            let shown = shown(&terminal);
+            let missing: Vec<usize> = (1..=written)
+                .filter(|n| !shown.contains(&format!("row-{n:03}")))
+                .collect();
+            assert!(
+                missing.is_empty(),
+                "with {written} lines written, lines {missing:?} are off the pane: {shown}"
+            );
+        }
+        assert_eq!(pane_of(&mut terminal).height, 30 + PINNED);
+    }
+
+    /// The end of the turn that wrote `rows` lines: the whole the daemon
+    /// stores for the run of chunks (021), which closes the block, then the
+    /// stop.
+    fn turn_ends(console: &mut Console, rows: usize) {
+        let whole: String = (1..=rows).map(|n| format!("- row-{n:03}\n")).collect();
+        console.apply(&event("agent_message", "whole", json!({"text": whole})));
+        console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
+    }
+
+    /// A block of 100 lines in work, each line shown as it is written.
+    fn a_long_block(terminal: &mut Terminal<Anchored<TestBackend>>) -> Console {
+        let mut console = under_way(terminal);
+        for written in 1..=100 {
+            console.apply(&row(written));
+            console.show(terminal).unwrap();
+        }
+        console
+    }
+
+    #[test]
+    fn a_block_longer_than_the_terminal_takes_every_row_and_reaches_the_scrollback_once() {
+        let mut terminal = pane();
+        let mut console = a_long_block(&mut terminal);
+
+        let tail = shown(&terminal);
+        assert_eq!(pane_of(&mut terminal), Rect::new(0, 0, 72, 40));
+        assert!(
+            tail.contains("row-100") && !tail.contains("row-065"),
+            "the pane shows the last lines of the block: {tail}"
+        );
+
+        turn_ends(&mut console, 100);
+        console.show(&mut terminal).unwrap();
+
+        let history = history(&terminal);
+        let found: Vec<&str> = history
+            .lines()
+            .filter_map(|line| line.find("row-").map(|at| &line[at..]))
+            .collect();
+        let expected: Vec<String> = (1..=100).map(|n| format!("row-{n:03}")).collect();
+        assert_eq!(found, expected, "each line once, in order: {history}");
+        assert_eq!(
+            history.matches("filler-").count(),
+            60,
+            "and the lines committed before it are neither lost nor said again: {history}"
+        );
+    }
+
+    #[test]
+    fn the_pane_shrinks_back_once_its_long_block_is_committed() {
+        let mut terminal = pane();
+        let mut console = a_long_block(&mut terminal);
+
+        turn_ends(&mut console, 100);
+        console.show(&mut terminal).unwrap();
+
+        assert_eq!(
+            pane_of(&mut terminal),
+            Rect::new(0, 40 - PINNED, 72, PINNED),
+            "the idle height: the pinned rows, on the bottom rows"
+        );
+        let shown = shown(&terminal);
+        let above: Vec<&str> = shown
+            .lines()
+            .skip(40 - usize::from(PINNED) - 2)
+            .take(2)
+            .collect();
+        assert_eq!(
+            above,
+            ["  • row-100", ""],
+            "the block ends one separator row above the pane: {shown}"
+        );
+    }
+
+    /// The terminal answered where its cursor was at the open, and answers
+    /// nothing after. The pane grows, shrinks and follows a resize without
+    /// asking again: each of them opens the viewport again, and ratatui asks
+    /// the backend where the cursor is every time it does.
+    #[test]
+    fn no_cursor_query_follows_the_open_through_a_grow_a_shrink_and_a_resize() {
+        let mut terminal = super::open(Mute::answering_once).unwrap();
+        let mut console = under_way(&mut terminal);
+
+        for written in 1..=50 {
+            console.apply(&row(written));
+            console.show(&mut terminal).expect("the pane grows");
+        }
+        console.apply(&prompt("next"));
+        console.show(&mut terminal).expect("the pane shrinks");
+        assert_eq!(pane_of(&mut terminal).height, 1 + PINNED);
+
+        for (width, height) in [(72, 20), (72, 50), (40, 50), (90, 30)] {
+            terminal.backend_mut().under_mut().0.resize(width, height);
+            console.show(&mut terminal).expect("the pane is resized");
+            console.apply(&row(50 + usize::from(height)));
+            console.show(&mut terminal).expect("and grows after it");
+        }
+        assert!(
+            console.close(&mut terminal).is_ok(),
+            "and closing, which asks where the cursor is again, still works"
+        );
+    }
+
+    #[test]
+    fn a_resize_to_a_shorter_terminal_keeps_the_whole_pane_on_the_screen() {
+        let mut terminal = pane();
+        let mut console = under_way(&mut terminal);
+        for written in 1..=10 {
+            console.apply(&row(written));
+        }
+        console.show(&mut terminal).unwrap();
+        assert_eq!(
+            pane_of(&mut terminal).bottom(),
+            40,
+            "the pane is on the bottom rows"
+        );
+
+        terminal.backend_mut().under_mut().resize(72, 20);
+        console.show(&mut terminal).unwrap();
+
+        let shown = shown(&terminal);
+        let bottom = shown.lines().last().unwrap_or_default();
+        assert!(
+            bottom.starts_with(" enter send"),
+            "the footer is on the last row of the shorter terminal: {shown}"
+        );
+        assert!(
+            (1..=10).all(|n| shown.contains(&format!("row-{n:03}"))),
+            "with the whole block in work over it: {shown}"
+        );
+
+        // A terminal shorter than the pane gets the pane's bottom rows.
+        terminal.backend_mut().under_mut().resize(72, 8);
+        console.show(&mut terminal).unwrap();
+
+        let shown = rows(terminal.backend().under().buffer());
+        assert_eq!(pane_of(&mut terminal), Rect::new(0, 0, 72, 8));
+        assert!(
+            shown.contains("row-010") && shown.contains("author · claude:opus"),
+            "{shown}"
+        );
+        assert!(
+            shown
+                .lines()
+                .last()
+                .unwrap_or_default()
+                .starts_with(" enter send"),
+            "{shown}"
+        );
+    }
+
+    /// The bytes [`AnsiBackend`] wrote, readable while the terminal owns it.
+    #[derive(Clone, Default)]
+    struct Tap(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Tap {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Tap {
+        /// What a terminal of 72 by 40 shows once it has read the bytes.
+        fn screen(&self) -> String {
+            let mut parser = vt100::Parser::new(40, 72, 0);
+            parser.process(&self.0.lock().unwrap());
+            let shown = parser.screen().contents();
+            let shown: Vec<&str> = shown.lines().map(str::trim_end).collect();
+            shown.join("\n")
+        }
+    }
+
+    /// The daemon's host draws the pane as the CLI's does: a terminal that
+    /// reads the bytes shows the rows ratatui's own test backend holds. The
+    /// clock is stopped, so both status lines count the same turn the same.
+    #[tokio::test(start_paused = true)]
+    async fn the_ansi_backend_shows_the_rows_the_test_backend_shows_after_a_grow_and_a_shrink() {
+        let tap = Tap::default();
+        let window = Window::new(72, 40);
+        let mut ansi = super::open(|| AnsiBackend::new(tap.clone(), window.clone())).unwrap();
+        let mut test = pane();
+        let mut on_ansi = under_way(&mut ansi);
+        let mut on_test = under_way(&mut test);
+
+        for written in 1..=50 {
+            on_ansi.apply(&row(written));
+            on_ansi.show(&mut ansi).unwrap();
+            on_test.apply(&row(written));
+            on_test.show(&mut test).unwrap();
+        }
+        let grown = shown(&test);
+        assert!(
+            grown.starts_with("  • row-016"),
+            "the pane grew to every row: {grown}"
+        );
+        assert_eq!(tap.screen(), grown.trim_end(), "after the grow");
+
+        on_ansi.apply(&prompt("next"));
+        on_ansi.show(&mut ansi).unwrap();
+        on_test.apply(&prompt("next"));
+        on_test.show(&mut test).unwrap();
+        let shrunk = shown(&test);
+        assert_eq!(
+            pane_of(&mut test).height,
+            1 + PINNED,
+            "the pane shrank: {shrunk}"
+        );
+        assert_eq!(tap.screen(), shrunk.trim_end(), "after the shrink");
+    }
+
+    /// The picker folds its diff to the room it is given (rule 27), and the
+    /// room is the terminal's height less the pinned rows, not a fixed pane's.
+    #[test]
+    fn a_pending_question_on_a_terminal_of_24_rows_shows_its_question_and_every_option() {
+        let mut terminal = super::open(|| TestBackend::new(72, 24)).unwrap();
+        let mut console = Console::new(header());
+        let old: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+        let new: String = (1..=30).map(|n| format!("row {n}\n")).collect();
+        console.apply(&event(
+            "permission_request",
+            "Permission requested for Edit",
+            json!({"tool_name": "Edit",
+                   "acp": {"toolCallId": "edit", "kind": "edit",
+                           "rawInput": {"file_path": "src/lib.rs"},
+                           "content": [{"type": "diff", "path": "src/lib.rs",
+                                        "oldText": old, "newText": new}]},
+                   "options": [{"optionId": "once", "name": "Allow once"},
+                               {"optionId": "always", "name": "Allow always"},
+                               {"optionId": "no", "name": "Reject"}]}),
+        ));
+
+        console.show(&mut terminal).unwrap();
+
+        let shown = shown(&terminal);
+        assert!(
+            shown.starts_with("─ permission ─") && shown.contains("\nEdit\n○ ✎ src/lib.rs\n"),
+            "the question is the first row of the terminal: {shown}"
+        );
+        for option in ["❯ 1. Allow once", "2. Allow always", "3. Reject"] {
+            assert!(shown.contains(option), "{option} is on the screen: {shown}");
+        }
+        assert!(
+            shown.contains("-line 9\n") && shown.contains("more lines"),
+            "the diff has the rows a fixed pane had not: {shown}"
+        );
+    }
+
     #[test]
     fn the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read() {
         let mut terminal = super::open(Mute::new).unwrap();
         let mut console = Console::new(header());
 
-        terminal.draw(|frame| console.render(frame)).unwrap();
+        console.show(&mut terminal).unwrap();
 
-        let shown = rows(terminal.backend().inner.0.buffer());
+        let shown = rows(terminal.backend().under().0.buffer());
         assert_eq!(
             row_of(&shown, " author · claude:opus · running"),
             Some(40 - usize::from(PINNED)),
@@ -282,22 +788,18 @@ mod tests {
         let mut terminal = super::open(Mute::new).unwrap();
         let mut console = Console::new(header());
         console.snapshot(&[
-            event(
-                "user_prompt_submit",
-                "first",
-                json!({"text": "first", "source": "console"}),
-            ),
+            prompt("first"),
             event("agent_message", "second", json!({"text": "second"})),
         ]);
 
-        console.commit(&mut terminal).unwrap();
-        terminal.draw(|frame| console.render(frame)).unwrap();
+        console.show(&mut terminal).unwrap();
 
-        let shown = rows(terminal.backend().inner.0.buffer());
-        let prompt = row_of(&shown, "❯ first").expect(&shown);
-        assert!(
-            prompt < 40 - usize::from(VIEWPORT),
-            "the finished prompt is above the pane, in the scrollback: {shown}"
+        let shown = rows(terminal.backend().under().0.buffer());
+        let first = row_of(&shown, "❯ first").expect(&shown);
+        assert_eq!(
+            first,
+            40 - usize::from(PINNED) - 3,
+            "the finished prompt is above the pane, its separator and the block in work: {shown}"
         );
     }
 
@@ -310,29 +812,81 @@ mod tests {
         let mut terminal = super::open(Mute::answering_once).unwrap();
         let mut console = Console::new(header());
         console.snapshot(&[
-            event(
-                "user_prompt_submit",
-                "first",
-                json!({"text": "first", "source": "console"}),
-            ),
+            prompt("first"),
             event("agent_message", "second", json!({"text": "second"})),
         ]);
 
         console
-            .commit(&mut terminal)
+            .show(&mut terminal)
             .expect("the block is inserted without asking the terminal again");
-        terminal.draw(|frame| console.render(frame)).unwrap();
 
-        let shown = rows(terminal.backend().inner.0.buffer());
-        let prompt = row_of(&shown, "❯ first").expect(&shown);
-        assert!(
-            prompt < 40 - usize::from(VIEWPORT),
+        let shown = rows(terminal.backend().under().0.buffer());
+        assert_eq!(
+            row_of(&shown, "❯ first"),
+            Some(0),
             "the finished prompt is above the pane, in the scrollback: {shown}"
         );
         assert!(
             console.close(&mut terminal).is_ok(),
             "and closing, which asks where the cursor is again, still works"
         );
+    }
+
+    /// ratatui takes the backend to open the viewport again and drops it where
+    /// that fails. The loop ends on the terminal's own error, and the close
+    /// both hosts make after it, whatever ended the loop, does nothing.
+    #[test]
+    fn a_pane_that_cannot_be_opened_again_ends_on_the_error_and_closes_without_a_panic() {
+        let mut terminal = super::open(Mute::answering_once).unwrap();
+        let mut console = under_way(&mut terminal);
+
+        terminal.backend_mut().under_mut().2 = true;
+        console.apply(&row(1));
+        console.apply(&row(2));
+        let error = console
+            .show(&mut terminal)
+            .expect_err("the pane cannot grow on a terminal that went away");
+
+        assert!(
+            error.to_string().contains("the terminal went away"),
+            "{error}"
+        );
+        assert!(
+            console.show(&mut terminal).is_ok(),
+            "a later turn does nothing"
+        );
+        assert!(
+            console.close(&mut terminal).is_ok(),
+            "and neither does the close"
+        );
+        drop(terminal);
+    }
+
+    /// The loop hands that error to the host, which closes the console after
+    /// it as after any other end.
+    #[tokio::test]
+    async fn the_loop_returns_the_error_of_a_pane_that_cannot_be_opened_again() {
+        let mut stub = Stub::new(Vec::new());
+        let source = stub.source();
+        let mut terminal = super::open(Mute::answering_once).unwrap();
+        let mut console = Console::new(header());
+        terminal.backend_mut().under_mut().2 = true;
+
+        let outcome = drive(
+            &mut terminal,
+            source,
+            &mut stub,
+            Box::pin(stream::pending()),
+            &mut console,
+        )
+        .await;
+
+        let error = outcome.expect_err("the first fit of the pane fails");
+        assert!(
+            error.to_string().contains("the terminal went away"),
+            "{error}"
+        );
+        assert!(console.close(&mut terminal).is_ok());
     }
 
     /// The fallback viewport — the terminal that answers no cursor query —

@@ -35,10 +35,13 @@ ariadne attach <task-id> --seat reviewer # that task's reviewer
 ariadne attach <session-id>              # one specific session
 ```
 
-In a terminal the console is a small inline pane. The transcript scrolls in
+In a terminal the console is an inline pane. The transcript scrolls in
 the terminal's own buffer, so it is still there in your scrollback after you
 leave. Three things stay pinned under it: a status row, the input box, and a
-footer.
+footer. The pane is as tall as what it holds: between turns it sits right
+under the transcript, and it grows with the block the agent is writing — up to
+the whole terminal, where it shows the block's last lines — and shrinks back
+once the block has moved into the scrollback.
 
 ```
  author · claude:opus · running   ⠹ thinking 12s
@@ -67,7 +70,7 @@ items, the least important first: the status row drops the model, then the
 seat, the clock, and what the turn is doing, and keeps the session's status to
 the last; the footer drops its later key hints, then the tokens, and keeps the
 first hint to the last. Resizing the terminal redraws the pane at the new
-size.
+size, and a shorter terminal still shows the whole of it.
 
 The input box has a dim rule above and below it, without side borders. Its
 prompt is `❯ `, and continued rows align under the text:
@@ -94,7 +97,8 @@ it, as `script` gives a process with no terminal of its own — keeps the
 console waiting a few seconds, and then the same pane opens from the bottom
 row of the screen. Nothing else changes: the transcript still scrolls into
 your scrollback, and the console never switches to the alternate screen. The
-terminal is not asked again after that, however many blocks scroll past.
+terminal is not asked again after that, however many blocks scroll past and
+however often the pane grows or shrinks.
 
 The agent's text streams in as it is written and renders as markdown:
 headings, bold, code spans, fenced code and lists. A thought is dimmed and
