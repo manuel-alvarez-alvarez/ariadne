@@ -38,6 +38,7 @@ use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
 use crate::scheduler::SchedEvent;
 use crate::timeouts::Timeouts;
+use crate::transcript::{LaunchTranscript, TranscriptHomes};
 
 /// Live console events buffered per subscriber before it is told to resync.
 const CONSOLE_CAPACITY: usize = 1024;
@@ -120,6 +121,8 @@ pub struct AcpRuntime {
 struct Inner {
     store: Store,
     timeouts: Timeouts,
+    /// Where the agents write the transcripts a launch reads its usage from.
+    transcripts: TranscriptHomes,
     /// Live agents by Ariadne session id.
     running: Mutex<HashMap<String, RunningAgent>>,
     /// Agents taken down whose driver has not reaped them yet, by Ariadne
@@ -281,10 +284,21 @@ impl AcpRuntime {
 
     /// A runtime that waits on its agents as long as `timeouts` says.
     pub fn with_timeouts(store: Store, timeouts: Timeouts) -> Self {
+        Self::with_transcripts(store, timeouts, TranscriptHomes::from_env())
+    }
+
+    /// A runtime that also reads its agents' transcripts under `transcripts`
+    /// rather than where the daemon's environment puts them.
+    pub fn with_transcripts(
+        store: Store,
+        timeouts: Timeouts,
+        transcripts: TranscriptHomes,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 store,
                 timeouts,
+                transcripts,
                 running: Mutex::new(HashMap::new()),
                 ending: Mutex::new(HashMap::new()),
                 scheduler: OnceLock::new(),
@@ -923,6 +937,17 @@ impl EventSink {
         }
     }
 
+    /// Record what this launch has spent so far, as its `stop` would.
+    async fn record_usage(&self, usage: TokenUsage) {
+        let store = &self.runtime.inner.store;
+        if let Err(e) = store
+            .upsert_session_usage(&self.session_id, &self.launch_id, usage)
+            .await
+        {
+            tracing::warn!(session = %self.session_id, error = %e, "recording a transcript's usage failed");
+        }
+    }
+
     /// The ACP session id as a payload value: the one setup learned, else the
     /// one a resume was asked for, else null.
     fn agent_session_id(&self, config: &LaunchConfig) -> Value {
@@ -943,7 +968,11 @@ struct Rpc {
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     /// What this launch's turns have spent so far: each prompt response
     /// reports one turn (ACP), and the `stop` carries their running sum.
+    /// Reported only where the launch has no transcript.
     launch_usage: TokenUsage,
+    /// The session's transcript, read for what this launch spent: from
+    /// session setup on, until a turn ends with none found.
+    transcript: Option<Arc<Mutex<LaunchTranscript>>>,
     /// Set once the agent is being killed: no queued prompt starts after it.
     closing: Arc<AtomicBool>,
     /// Told each time a turn's `stop` has been recorded.
@@ -969,6 +998,7 @@ impl Rpc {
             permission_mode: launch.permission_mode,
             pending_permission,
             launch_usage: TokenUsage::default(),
+            transcript: None,
             closing: Arc::new(AtomicBool::new(false)),
             turn_ended: Arc::new(Notify::new()),
             reports,
@@ -1271,6 +1301,18 @@ async fn run_protocol(
         .ok_or_else(|| anyhow!("ACP session setup returned no session id"))?
         .to_string();
     let _ = rpc.sink.agent_session.set(session_id.clone());
+    let (homes, internal, cwd_owned) = (
+        rpc.sink.runtime.inner.transcripts.clone(),
+        session_id.clone(),
+        cwd.to_path_buf(),
+    );
+    let resumed = config.resume_session_id.is_some();
+    rpc.transcript = tokio::task::spawn_blocking(move || {
+        LaunchTranscript::open(homes, &internal, &cwd_owned, resumed)
+    })
+    .await
+    .ok()
+    .map(|transcript| Arc::new(Mutex::new(transcript)));
     let options = setup
         .get("configOptions")
         .and_then(Value::as_array)
@@ -1481,15 +1523,32 @@ async fn prompt_once(
             }),
         )
         .await;
-    let response = rpc
-        .request(
+    // The transcript is read again while the turn runs, so a long turn's
+    // figure moves before its `stop`.
+    let (reading, sink) = (rpc.transcript.clone(), rpc.sink.clone());
+    let every = sink.runtime.inner.timeouts.transcript_poll;
+    let response = {
+        let request = rpc.request(
             "session/prompt",
             json!({
                 "sessionId": session_id,
                 "prompt": [{"type": "text", "text": full}],
             }),
-        )
-        .await;
+        );
+        tokio::pin!(request);
+        let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                response = &mut request => break response,
+                _ = ticks.tick(), if reading.is_some() => {
+                    if let Some(usage) = transcript_usage(reading.as_ref()).await {
+                        sink.record_usage(usage).await;
+                    }
+                }
+            }
+        }
+    };
     {
         let mut turn = rpc.turn.lock().await;
         if let Some((kind, payload)) = turn.end_text() {
@@ -1502,19 +1561,38 @@ async fn prompt_once(
         "session_id": session_id,
         "stop_reason": response.get("stopReason"),
     });
-    if let Some(usage) = usage_for_prompt_response(&response) {
+    // The transcript's figure where there is one, else the prompt
+    // responses': both report under this launch, so only one of them may.
+    let from_transcript = transcript_usage(rpc.transcript.as_ref()).await;
+    if from_transcript.is_none() {
+        rpc.transcript = None;
+    }
+    let from_response = usage_for_prompt_response(&response).map(|usage| {
         rpc.launch_usage += usage;
+        rpc.launch_usage
+    });
+    if let Some(usage) = from_transcript.or(from_response) {
         stop["ariadne_usage"] = json!({
             "source": rpc.sink.launch_id,
-            "input_tokens": rpc.launch_usage.input_tokens,
-            "cached_input_tokens": rpc.launch_usage.cached_input_tokens,
-            "output_tokens": rpc.launch_usage.output_tokens,
+            "input_tokens": usage.input_tokens,
+            "cached_input_tokens": usage.cached_input_tokens,
+            "output_tokens": usage.output_tokens,
         });
     }
     rpc.sink.emit("stop", stop).await;
     rpc.turn_ended.notify_waiters();
     report(&rpc.reports, TurnReport::TurnEnded);
     Ok(())
+}
+
+/// What the launch has spent by its transcript, read off the runtime's
+/// threads; `None` where it has no transcript, or none is found.
+async fn transcript_usage(transcript: Option<&Arc<Mutex<LaunchTranscript>>>) -> Option<TokenUsage> {
+    let transcript = transcript?.clone();
+    tokio::task::spawn_blocking(move || transcript.lock().expect("transcript lock").usage())
+        .await
+        .ok()
+        .flatten()
 }
 
 /// What one turn spent, as its ACP prompt response reports it — a cancelled

@@ -49,6 +49,7 @@ use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::log::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::timeouts::Timeouts;
+use ariadne_daemon::transcript::TranscriptHomes;
 use ariadne_store::{
     AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewMessage, NewRepository, NewSession,
     NewTask, NewTaskAgent, Repository, SessionFilter, Store, Task, TaskAgent,
@@ -252,7 +253,11 @@ impl HarnessBuilder {
             cfg: Arc::new(config),
             store: store.clone(),
             git: GitManager,
-            acp: ariadne_daemon::acp::AcpRuntime::with_timeouts(store.clone(), self.timeouts),
+            acp: ariadne_daemon::acp::AcpRuntime::with_transcripts(
+                store.clone(),
+                self.timeouts,
+                transcript_homes(dir.path()),
+            ),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
         });
@@ -307,6 +312,15 @@ impl HarnessBuilder {
             h.agent.clear_messages();
         }
         h
+    }
+}
+
+/// Where a harness's agents keep their transcripts: under its own
+/// directory, so no test reads the transcripts of the machine it runs on.
+fn transcript_homes(dir: &Path) -> TranscriptHomes {
+    TranscriptHomes {
+        codex: dir.join("codex"),
+        claude: dir.join("claude"),
     }
 }
 
@@ -399,6 +413,11 @@ fn shared_script(script: &str) -> PathBuf {
 // -- the stub agent, from the test's side -------------------------------------
 
 impl Harness {
+    /// Where this harness's agents keep their transcripts.
+    pub fn transcript_homes(&self) -> TranscriptHomes {
+        transcript_homes(self.dir.path())
+    }
+
     pub fn at(&self, name: &str) -> PathBuf {
         self.dir.path().join(name)
     }

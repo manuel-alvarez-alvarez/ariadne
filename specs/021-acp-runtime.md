@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-09-17
+updated: 2026-09-19
 areas: [daemon]
 commits: []
 tests:
@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/acp.rs
+  - crates/ariadne-daemon/tests/it/transcript_usage.rs
 ---
 
 # ACP runtime
@@ -68,9 +69,15 @@ gone (009).
    `permission.replied`, `session.error`, and `session_end`. Every event
    carries the launch id (007), and the agent's session id is recorded on
    the row.
-   The `stop` event carries `ariadne_usage` from a well-formed prompt response:
-   quota totals before standard usage, read as what that turn spent and added
-   to the launch's earlier turns, with the launch id as its source.
+   The `stop` event carries `ariadne_usage` with the launch id as its
+   source: the launch's totals read from the agent's own transcript, a Codex
+   rollout or a Claude Code transcript (012 rule 16). While a turn runs, the
+   runtime reads the transcript again every `Timeouts::transcript_poll` and
+   writes the totals to the store, so a long turn's figure moves. Where no
+   transcript is found by the end of a turn, the launch uses the prompt
+   responses instead: quota totals before standard usage, read as what that
+   turn spent and added to the launch's earlier turns. A launch never
+   reports both.
    A `usage_update` keeps its latest `used` and `size` on the session while
    the turn runs. Its `cost`, when present, is ignored.
 6. A turn's text is stored run by run, where the agent wrote it. A run is
@@ -229,6 +236,13 @@ gone (009).
 - Context updates keep a session's current used and size figures before its
   turn ends, and ignore a reported cost
   (`acp_console.rs::context_updates_keep_the_sessions_window_current_while_it_runs`).
+- A transcript's figure wins over the prompt response, moves while a turn
+  runs, and adds up across launches
+  (`transcript_usage.rs::a_codex_session_stores_its_rollouts_total_not_its_prompt_response`,
+  `::a_claude_session_counts_each_request_once_with_its_subagents`,
+  `::a_running_turns_figure_moves_before_its_stop`,
+  `::two_launches_of_one_codex_session_add_up`,
+  `::a_session_without_a_transcript_keeps_its_prompt_responses_figure`).
 - An option is found by its category, or by its id or name where no option
   has the category — the lookup the runtime shares with discovery
   (`acp_discovery.rs::model_and_effort_name_fallbacks_enter_the_discovered_catalog`).
@@ -244,6 +258,7 @@ agent (011), so no test launches one.
 
 `crates/ariadne-daemon/src/acp.rs` (the runtime),
 `crates/ariadne-daemon/src/acp_rpc.rs` (the JSON-RPC transport),
+`crates/ariadne-daemon/src/transcript.rs` (the transcript reader),
 `crates/ariadne-daemon/src/launcher.rs` (the launch, liveness and kill),
 `crates/ariadne-daemon/src/scheduler/mod.rs` (the prompt delivery),
 `crates/ariadne-daemon/tests/it/common/acp.rs` (the scriptable stub agent).

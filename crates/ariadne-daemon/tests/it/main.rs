@@ -41,5 +41,6 @@ mod scheduler_dependencies;
 mod skill_documents;
 mod task_branches;
 mod task_failure;
+mod transcript_usage;
 mod unknown_fields;
 mod unreviewed_tasks;

@@ -18,6 +18,8 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
   - crates/ariadne-daemon/tests/it/knowledge.rs
+  - crates/ariadne-daemon/tests/it/transcript_usage.rs
+  - crates/ariadne-daemon/src/transcript.rs
 ---
 
 # HTTP API, event stream and usage
@@ -120,7 +122,9 @@ and the ACP runtime that reports the agent events (021).
 14. An event may carry an `ariadne_usage`: the cumulative totals of one
     transcript, named by its `source`. A report with a missing, fractional or
     negative counter, or an empty source, is dropped, and its event still
-    lands.
+    lands. The ACP runtime also writes a launch's totals straight to the
+    store while a turn runs (rule 16), under the same source its `stop`
+    uses.
 15. Token usage is kept per session and per source, and a source replaces
     its own totals rather than adding to them. Usage rolls up to the task and
     the goal; every session of one reviewer groups together; a session that
@@ -128,15 +132,38 @@ and the ACP runtime that reports the agent events (021).
     does. A session also carries its latest context-window `used` and `size`
     pair from an ACP `usage_update`; both stay null when no update arrived,
     and a reported `cost` is neither stored nor exposed.
-16. The ACP runtime reads a prompt response's well-formed
+16. The ACP runtime takes a launch's usage from the transcript its agent
+    writes, found by the session's ACP session id
+    (`internal_session_id`), and names the running launch as the source:
+    - A Codex rollout, `$CODEX_HOME` (else `~/.codex`)
+      `/sessions/**/rollout-*<id>.jsonl`: the last `token_count` line's
+      `payload.info.total_token_usage`. Its `input_tokens` already holds the
+      cache reads (`cached_input_tokens`) and any cache writes, and its
+      `output_tokens` the reasoning, so nothing is added to either. A resume
+      starts the running total again in the same file, so a launch sums the
+      last total of each segment it wrote.
+    - A Claude Code transcript, `$CLAUDE_CONFIG_DIR` (else `~/.claude`)
+      `/projects/<slug>/<id>.jsonl` and its subagents'
+      `<slug>/<id>/subagents/agent-*.jsonl`, where the slug is the worktree's
+      real path with every character but an ASCII letter or digit made a
+      `-`: each `assistant` request once by `message.id`, input as
+      `input_tokens` + `cache_read_input_tokens` +
+      `cache_creation_input_tokens`, and cached input as the cache reads.
+    A launch that resumes a conversation counts only what the file gains
+    after the launch starts: the rest is an earlier launch's, under its own
+    source. The transcript is read again every `Timeouts::transcript_poll`
+    while a turn runs, and written to the store at once, and once more at
+    the turn's end, onto its `stop` event.
+    Where no transcript is found by the end of a turn, the launch falls back
+    to the prompt response for the rest of its life: its well-formed
     `_meta.quota.token_count`, or its `usage` where quota is absent or
     malformed, as what that one turn spent (ACP). It adds cache reads and
     cache writes to input, records only the cache reads as cached input (a
     cache write is a token the model read for the first time, not a cache
-    hit), adds the turn to the launch's earlier turns, names the running
-    launch as the source, and attaches the launch's totals only to the turn's
-    `stop` event. The cached share that the web and the CLI show is cached
-    input over input, to one decimal place, and the two spell it alike
+    hit), adds the turn to the launch's earlier turns, and attaches the
+    launch's totals to the turn's `stop` event. A launch never reports both.
+    The cached share that the web and the CLI show is cached input over
+    input, to one decimal place, and the two spell it alike
     (`ui/src/lib/format.test.ts`,
     `output.rs::the_cached_share_is_a_percent_to_one_decimal_between_zero_and_a_hundred`).
 17. `GET /v1/agents` lists every registry agent's flags, in registry order,
@@ -265,6 +292,27 @@ and the ACP runtime that reports the agent events (021).
   `::a_prompt_without_usage_keeps_zero_totals_and_records_stop`,
   `::resumed_prompt_usage_adds_a_new_launch_total`,
   `acp.rs::prompt_usage_maps_each_adapter_shape_and_prefers_quota`).
+- A Codex session stores its rollout's `total_token_usage`, not its prompt
+  response (`transcript_usage.rs::a_codex_session_stores_its_rollouts_total_not_its_prompt_response`);
+  a Claude session counts each request once, its subagents' included
+  (`::a_claude_session_counts_each_request_once_with_its_subagents`); a
+  running turn's figure moves before its `stop`
+  (`::a_running_turns_figure_moves_before_its_stop`); two launches of one
+  session add up (`::two_launches_of_one_codex_session_add_up`); and a
+  session with no transcript keeps its prompt response's figure
+  (`::a_session_without_a_transcript_keeps_its_prompt_responses_figure`).
+  A restart inside one launch adds its segments, a resumed launch counts
+  only what it appends, a file that first appears after a resumed launch
+  starts is all new, a resumed Claude launch counts only the requests it
+  adds, a line still being written waits for its end, no
+  file reads as no figure, and the Claude project is named after the real path
+  (`transcript.rs::a_codex_restart_inside_one_launch_adds_its_segments`,
+  `::a_resumed_launch_counts_only_what_it_appends`,
+  `::a_rollout_that_first_appears_after_a_resumed_launch_starts_is_all_new`,
+  `::a_resumed_claude_launch_counts_only_the_requests_it_adds`,
+  `::a_line_still_being_written_waits_for_its_end`,
+  `::no_transcript_reads_as_none`,
+  `::a_claude_project_is_named_after_the_real_path`).
 - Every registry agent is listed with its flags
   (`agents.rs::every_registry_agent_is_listed_with_its_flags_and_its_defaults`),
   flags are replaced whole
@@ -315,19 +363,21 @@ and the ACP runtime that reports the agent events (021).
 
 ## Known gap
 
-ACP prompt responses now report token usage through the runtime's normal
-ingestion path. An adapter that reports neither supported usage shape leaves
-its session, task and goal usage at zero.
+An agent with no transcript found falls back to its prompt responses. An
+adapter that reports neither supported usage shape then leaves its session,
+task and goal usage at zero, and that fallback is only as whole as the
+adapter makes it: codex-acp answers a prompt with the usage of the turn's
+last model request, not of the turn.
 
-An adapter's report is only as whole as the adapter makes it. codex-acp 1.11.0
-answers a prompt with the usage of the turn's last model request, not of the
-turn, in both `usage` and `_meta.quota.token_count`: a Codex session reads as
-the sum of each turn's last request, far below what it spent. Its running
-totals are not on the protocol, and nothing here reads a transcript.
+Claude Code shortens a project slug longer than 200 characters and adds a
+hash; such a worktree's transcript is not found, and the launch falls back.
+A Claude Code resume that writes a new file under a new id is not followed
+either.
 
 ## Sources
 
 `crates/ariadne-api/`, `crates/ariadne-daemon/src/http/`,
 `crates/ariadne-daemon/src/http/classify.rs`,
 `crates/ariadne-daemon/src/http/events.rs`,
-`crates/ariadne-daemon/src/bus.rs`, `crates/ariadne-store/src/usage.rs`.
+`crates/ariadne-daemon/src/bus.rs`, `crates/ariadne-store/src/usage.rs`,
+`crates/ariadne-daemon/src/transcript.rs`.

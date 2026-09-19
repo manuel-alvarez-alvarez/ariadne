@@ -22,6 +22,9 @@ pub struct Timeouts {
     /// How long one discovery probe of an agent may take, and how long one
     /// agent's `session/list` pages may take together.
     pub probe: Duration,
+    /// How often a running turn's transcript is read again for what the
+    /// launch has spent, so a long turn's figure moves before it ends.
+    pub transcript_poll: Duration,
 }
 
 impl Default for Timeouts {
@@ -29,6 +32,7 @@ impl Default for Timeouts {
         Self {
             cancel_grace: Duration::from_secs(5),
             probe: Duration::from_secs(5),
+            transcript_poll: Duration::from_secs(15),
         }
     }
 }
