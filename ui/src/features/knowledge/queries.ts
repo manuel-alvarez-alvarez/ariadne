@@ -1,6 +1,7 @@
 /**
  * The knowledge screen's reads and writes (022): a repository's status, a
- * reindex, and the interactions of one ref.
+ * reindex, the interactions of one ref, and the symbol reads the Impact and
+ * path tab makes.
  *
  * Reindex answers 202 with no body — the rebuild runs in the background — so
  * the mutation flips the cached status to `indexing` itself rather than
@@ -96,5 +97,55 @@ export function knowledgeInteractionsQueryOptions(repositoryId: string, gitRef?:
           params: { query: { repository: repositoryId, ...(gitRef ? { git_ref: gitRef } : {}) } },
         }),
       ),
+  })
+}
+
+/** `GET /v1/knowledge/impact`: every definition of `symbol`, and the callers each one reaches. */
+export function knowledgeImpactQueryOptions(
+  repositoryId: string,
+  gitRef: string,
+  symbol: string,
+  depth: number,
+) {
+  return queryOptions({
+    queryKey: qk.repositories.knowledgeImpact(repositoryId, {
+      repository: repositoryId,
+      git_ref: gitRef,
+      symbol,
+      depth,
+    }),
+    queryFn: () =>
+      unwrap(
+        api().GET("/v1/knowledge/impact", {
+          params: { query: { repository: repositoryId, git_ref: gitRef, symbol, depth } },
+        }),
+      ),
+    enabled: symbol.length > 0,
+  })
+}
+
+/** `GET /v1/knowledge/path`: the shortest directed path between two symbol names. */
+export function knowledgePathQueryOptions(
+  repositoryId: string,
+  gitRef: string,
+  from: string,
+  to: string,
+  depth: number,
+) {
+  return queryOptions({
+    queryKey: qk.repositories.knowledgePath(repositoryId, {
+      repository: repositoryId,
+      git_ref: gitRef,
+      from,
+      to,
+      depth,
+    }),
+    queryFn: () =>
+      unwrap(
+        api().GET("/v1/knowledge/path", {
+          params: { query: { repository: repositoryId, git_ref: gitRef, from, to, depth } },
+        }),
+      ),
+    enabled: from.length > 0 && to.length > 0,
   })
 }

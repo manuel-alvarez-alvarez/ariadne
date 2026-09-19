@@ -143,6 +143,9 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({
         queryKey: qk.repositories.knowledgeInteractionsAll(repository_id),
       })
+      void queryClient.invalidateQueries({
+        queryKey: qk.repositories.knowledgeWalksAll(repository_id),
+      })
       break
     }
     case "knowledge_failed": {
@@ -152,6 +155,9 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       })
       void queryClient.invalidateQueries({
         queryKey: qk.repositories.knowledgeInteractionsAll(repository_id),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: qk.repositories.knowledgeWalksAll(repository_id),
       })
       break
     }

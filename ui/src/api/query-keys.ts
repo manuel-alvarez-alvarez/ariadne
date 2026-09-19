@@ -83,6 +83,23 @@ interface KnowledgeSymbolFilters {
   detail: "context" | "source"
 }
 
+/** `GET /v1/knowledge/impact`, for one changed symbol of one repository (022). */
+interface KnowledgeImpactFilters {
+  repository: string
+  git_ref: string
+  symbol: string
+  depth: number
+}
+
+/** `GET /v1/knowledge/path`, between two symbols of one repository (022). */
+interface KnowledgePathFilters {
+  repository: string
+  git_ref: string
+  from: string
+  to: string
+  depth: number
+}
+
 export const qk = {
   goals: {
     all: () => ["goals"] as const,
@@ -151,6 +168,15 @@ export const qk = {
      */
     knowledgeInteractionsAll: (id: string) =>
       ["repositories", "detail", id, "knowledge-interactions"] as const,
+    /**
+     * Every impact and path walk for one repository, under any ref and
+     * symbols: what an indexing run makes stale.
+     */
+    knowledgeWalksAll: (id: string) => ["repositories", "detail", id, "knowledge-walk"] as const,
+    knowledgeImpact: (id: string, filters: KnowledgeImpactFilters) =>
+      ["repositories", "detail", id, "knowledge-walk", "impact", filters] as const,
+    knowledgePath: (id: string, filters: KnowledgePathFilters) =>
+      ["repositories", "detail", id, "knowledge-walk", "path", filters] as const,
     knowledgeInteractions: (id: string, filters?: KnowledgeInteractionFilters) =>
       [
         "repositories",

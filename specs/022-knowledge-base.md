@@ -24,6 +24,10 @@ tests:
   - ui/src/features/knowledge/repositories-graph.test.ts
   - ui/src/features/knowledge/symbols-graph.test.ts
   - ui/src/features/knowledge/symbols-tab.test.tsx
+  - ui/src/features/knowledge/impact-graph.test.ts
+  - ui/src/features/knowledge/path-graph.test.ts
+  - ui/src/features/knowledge/impact-tab.test.tsx
+  - ui/src/features/knowledge/graph/layered-layout.test.ts
   - ui/src/features/knowledge/graph/knowledge-graph.test.tsx
   - ui/src/events/dispatch.test.ts
   - ui/src/features/command-palette/command-palette.test.tsx
@@ -288,9 +292,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
     interactions between repositories as a graph: a node per repository, an
     edge per pair and kind with its count, dashed where it is heuristic only,
     and a click on an edge lists its file-level ends with the step each
-    rests on. The command palette opens the screen on a repository.
-    `knowledge_indexed` and `knowledge_failed` refetch what the screen shows
-    for their repository and leave every other repository's caches alone.
+    rests on. The Impact & path tab draws a symbol's callers and the path
+    between two symbols in layers (015). The command palette opens the
+    screen on a repository. `knowledge_indexed` and `knowledge_failed`
+    refetch what the screen shows for their repository and leave every other
+    repository's caches alone.
     The Symbols tab searches the selected repository and ref by name, kind,
     and path. Its graph puts the chosen definition at the centre. Callers,
     callees, implementations, references, and tests surround it in separate
@@ -864,9 +870,21 @@ and by `(kind, name)`.
 - The shared graph component builds the model it draws and hands node and
   edge clicks back by key
   (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx`).
+- The Impact graph puts the changed definition in the first layer and each
+  caller in the layer of its depth, dashes a heuristic call, and marks a
+  stopped definition as a node that says the walk stopped
+  (`ui/src/features/knowledge/impact-graph.test.ts`); the Path graph is the
+  hops as a chain with each edge named by its kind
+  (`ui/src/features/knowledge/path-graph.test.ts`); ELK places the layers
+  left to right (`ui/src/features/knowledge/graph/layered-layout.test.ts`).
+  On screen, both modes draw from the daemon's answer, say so where a path
+  is empty, keep the mode and its inputs in the URL, and open the Symbols
+  tab on a clicked node
+  (`ui/src/features/knowledge/impact-tab.test.tsx`) — parity with
+  `ariadne knowledge impact|path` (rules 23, 34).
 - `knowledge_indexed` and `knowledge_failed` invalidate a repository's
-  knowledge status and every interactions list under it, and leave another
-  repository's caches alone
+  knowledge status, every interactions list and every impact and path walk
+  under it, and leave another repository's caches alone
   (`ui/src/events/dispatch.test.ts::knowledge events (022)`).
 - The command palette opens the knowledge screen on a repository
   (`ui/src/features/command-palette/command-palette.test.tsx::opens the

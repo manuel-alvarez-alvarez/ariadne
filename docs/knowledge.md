@@ -228,7 +228,13 @@ repository and a ref at the top. The **Overview** tab shows each
 repository's status with a Reindex button. The **Repositories** tab draws
 how the repositories use each other: one node per repository, one edge per
 pair and kind, with the count on it. A dashed edge is a guess only. Click an
-edge to list the files at its ends.
+edge to list the files at its ends. The **Impact & path** tab draws what a
+change to a symbol reaches: name a symbol, pick a depth from 1 to 4, and the
+callers show in layers left to right, each in the layer of its depth. A dashed
+edge is a guess, and a definition marked as stopped has more than 200 callers,
+so the walk went no further. Switch the mode to **Path**, name two symbols and
+a depth up to 10, and the shortest path shows as a chain, each edge named by
+its kind. Click a symbol to open it on the Symbols tab.
 
 ## Turning it off
 

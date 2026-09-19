@@ -10,6 +10,7 @@ import type { ReactNode } from "react"
 import type { RepositoryDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 
+import { ImpactTab } from "./impact-tab"
 import { OverviewTab } from "./overview-tab"
 import { RepositoriesTab } from "./repositories-tab"
 import { SymbolsTab } from "./symbols-tab"
@@ -61,7 +62,11 @@ export const KNOWLEDGE_TABS: readonly KnowledgeTab[] = [
       />
     ),
   },
-  { id: "impact", label: "Impact & path", render: () => <Coming /> },
+  {
+    id: "impact",
+    label: "Impact & path",
+    render: ({ repository, gitRef }) => <ImpactTab repositoryId={repository.id} gitRef={gitRef} />,
+  },
   { id: "files", label: "Files", render: () => <Coming /> },
 ]
 

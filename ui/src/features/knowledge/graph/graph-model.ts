@@ -27,6 +27,11 @@ export interface GraphNodeAttributes {
   tone: GraphTone
   /** The radius on screen, in pixels. */
   size?: number
+  /**
+   * The layer a layered layout puts it in, counted from the first. Without
+   * one, the layout takes the layer from the edges.
+   */
+  layer?: number
   /** Where the layout put it; the component places a node that has none. */
   x?: number
   y?: number
@@ -44,8 +49,12 @@ export interface GraphEdgeAttributes {
 
 export type KnowledgeGraphModel = Graph<GraphNodeAttributes, GraphEdgeAttributes>
 
-/** How the component places the nodes: a force layout, or a ring. */
-export type GraphLayout = "force" | "circle"
+/**
+ * How the component places the nodes: a force layout, a ring, or where the
+ * model already put them (`fixed`, from a layered layout: see
+ * `layered-layout.ts`).
+ */
+export type GraphLayout = "force" | "circle" | "fixed"
 
 /** One row of the legend under a graph. */
 export interface LegendEntry {

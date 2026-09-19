@@ -188,7 +188,7 @@ Out: the daemon endpoints themselves (012).
     Overview tab. The refs offered are the ones
     `GET /v1/repositories/{id}/knowledge` lists, and the base branch. The
     tabs are one list in `ui/src/features/knowledge/knowledge-tabs.tsx`, one
-    entry per tab. `impact` and `files` say only that they are coming.
+    entry per tab. `files` says only that it is coming.
 32. The Overview tab shows one card per registered repository: its state,
     its files and symbols, its languages, its indexed refs and a Reindex
     button. Reindex posts the reindex and shows `indexing` at once; it is off
@@ -227,6 +227,31 @@ Out: the daemon endpoints themselves (012).
     separates equal names. The side pane shows the signature, documentation,
     line range, and numbered source. The palette's Find symbol action opens
     `#/knowledge?tab=symbols`.
+37. The Impact & path tab (`ui/src/features/knowledge/impact-tab.tsx`) has
+    two modes, kept in the URL as `?mode=impact|path` with the inputs
+    `?symbol=`, `?from=`, `?to=` and `?depth=`. A typed symbol is written on
+    submit, and a depth as soon as it is picked; a depth the mode does not
+    allow reads as its default. A symbol field suggests names from
+    `GET /v1/knowledge/search` in the picked repository and ref.
+    - Impact reads `GET /v1/knowledge/impact` for a symbol and a depth from
+      1 to 4 (2 by default). Each changed definition is in the first layer
+      and each caller in the layer of its depth, left to right. The daemon
+      names a caller's depth and not its callee, so an edge is drawn only
+      where it is certain: from a definition to its direct callers, and
+      from the one node of a layer to the callers of the next. An edge is
+      dashed where the call is `heuristic`. A definition in `stopped` is a
+      node that says the walk stopped there, with more than 200 callers.
+    - Path reads `GET /v1/knowledge/path` for a from symbol, a to symbol and
+      a depth from 1 to 10 (6 by default). The hops are a chain, each edge
+      labelled by its `edge_kind` and dashed where it is `heuristic`. With
+      no hop, the tab says there is no path within the depth.
+    - The layers are laid out by ELK (`elkjs`) in its web worker, and given
+      to the shared graph component as `layout="fixed"`, which draws the
+      positions the model holds. A click on a node opens the Symbols tab on
+      that symbol, as `?tab=symbols&symbol=<name>` at the same repository
+      and ref.
+    - `knowledge_indexed` and `knowledge_failed` refetch the walks of their
+      repository.
 
 ## Acceptance criteria
 
@@ -291,6 +316,18 @@ Out: the daemon endpoints themselves (012).
   and a tab with no interaction says so
   (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Repositories tab`)
   — parity with `ariadne knowledge interactions` (022).
+- The Impact graph puts the changed definition in the first layer and each
+  caller in the layer of its depth, dashes a heuristic call and marks a
+  stopped definition; the Path graph is the hops as a chain with each edge
+  named by its kind; ELK lays the layers out left to right
+  (`ui/src/features/knowledge/impact-graph.test.ts`,
+  `ui/src/features/knowledge/path-graph.test.ts`,
+  `ui/src/features/knowledge/graph/layered-layout.test.ts`). On screen, each
+  mode draws the daemon's answer, an empty path says so, the mode and its
+  inputs survive a reload, a depth outside the mode's range reads as its
+  default, and a click on a node opens the Symbols tab on it
+  (`ui/src/features/knowledge/impact-tab.test.tsx`) — parity with
+  `ariadne knowledge impact|path` (022).
 - `#/repositories/:id/knowledge` leads nowhere, a repository row has no
   Knowledge button, and the palette opens `#/knowledge?repository=<id>`
   (`ui/src/routes/router.test.tsx::leads nowhere from a repository's old knowledge page`,

@@ -22,7 +22,10 @@ writes — jsdom lays nothing out, so the grid keeps xterm's default 80 by 24
 and what it drew is read back off its rows. jsdom has no WebGL either, so a
 knowledge graph is drawn by `src/test/sigma-canvas.tsx`: it lists each node and
 edge as the app's reducers describe them, and fires the same clicks. Each test
-file that draws a graph mocks `graph/sigma-canvas` with it. Do not put that
+file that draws a graph mocks `graph/sigma-canvas` with it. jsdom has no
+`Worker` either, so a test file that lays a graph out in layers mocks
+`elkjs/lib/elk-worker.min.js?worker` with `src/test/elk-worker.ts`: ELK
+itself, on the calling thread. Do not put either
 mock in `src/test/setup.ts`: a mock there slows every file, and the dialog
 tests then time out.
 
@@ -102,6 +105,10 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["agent-events", "list", filters]   ["memories", "list", filters]
 ```
 
+The knowledge reads are sub-resources of a repository's detail key, and the
+impact and path walks share one prefix, `qk.repositories.knowledgeWalksAll(id)`,
+so an indexing run refetches them all.
+
 The outside-sessions list is the one key with no detail beside it, and the one
 list the daemon pages: its cursor stays out of the key, because the pages of
 one filter are the pages of one infinite query.
@@ -146,7 +153,7 @@ the query cache and it stays live.
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
 | `memory_created`, `memory_deleted` | invalidate `memories.lists` — a memory carries no id worth a detail key, and a global one sits in the global list, the every-scope list and each repository's, so, like `agent_event`, this simply refetches |
-| `knowledge_indexed`, `knowledge_failed` | invalidate that repository's `knowledgeStatus` and every `knowledgeInteractions` list under it (022) |
+| `knowledge_indexed`, `knowledge_failed` | invalidate that repository's `knowledgeStatus`, every `knowledgeInteractions` list and every impact and path walk under it (022) |
 
 The daemon has **no replay**: anything that happened while the stream was down
 is simply gone. So both a reconnect and the daemon's `resync` control event

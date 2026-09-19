@@ -35,6 +35,8 @@ export function SigmaCanvas({
                 data-color={drawn.color}
                 data-label={drawn.label}
                 data-highlighted={drawn.highlighted}
+                data-x={attributes.x}
+                data-y={attributes.y}
                 onMouseEnter={() => onEnterNode(node)}
                 onMouseLeave={onLeaveNode}
                 onClick={() => onClickNode(node)}

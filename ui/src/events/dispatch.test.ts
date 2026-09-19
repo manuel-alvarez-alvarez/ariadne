@@ -180,7 +180,34 @@ describe("knowledge events (022)", () => {
       qk.repositories.knowledgeInteractions(REPOSITORY.id, { repository: REPOSITORY.id }),
       [],
     )
+    queryClient.setQueryData(
+      qk.repositories.knowledgeImpact(REPOSITORY.id, {
+        repository: REPOSITORY.id,
+        git_ref: "main",
+        symbol: "parse",
+        depth: 2,
+      }),
+      [],
+    )
+    queryClient.setQueryData(
+      qk.repositories.knowledgePath(REPOSITORY.id, {
+        repository: REPOSITORY.id,
+        git_ref: "main",
+        from: "a",
+        to: "b",
+        depth: 6,
+      }),
+      { hops: [] },
+    )
     return queryClient
+  }
+
+  /** Every impact and path walk `withKnowledge` seeded. */
+  function walksAreStale(queryClient: QueryClient): boolean {
+    return queryClient
+      .getQueryCache()
+      .findAll({ queryKey: qk.repositories.knowledgeWalksAll(REPOSITORY.id) })
+      .every((query) => query.state.isInvalidated)
   }
 
   it("refetches the status and every interactions list once indexing finishes", () => {
@@ -204,6 +231,34 @@ describe("knowledge events (022)", () => {
         qk.repositories.knowledgeInteractions(REPOSITORY.id, { repository: REPOSITORY.id }),
       ),
     ).toBe(true)
+  })
+
+  it("refetches every impact and path walk once indexing finishes, and when it fails", () => {
+    const finished = withKnowledge()
+    const failed = withKnowledge()
+
+    dispatch(finished, {
+      event: "knowledge_indexed",
+      data: {
+        repository_id: REPOSITORY.id,
+        git_ref: "main",
+        commit: "abc1230000000000000000000000000000000000",
+        files: 12,
+        symbols: 34,
+      },
+    })
+    dispatch(failed, {
+      event: "knowledge_failed",
+      data: { repository_id: REPOSITORY.id, error: "git clone failed: permission denied" },
+    })
+
+    expect(
+      finished
+        .getQueryCache()
+        .findAll({ queryKey: qk.repositories.knowledgeWalksAll(REPOSITORY.id) }),
+    ).toHaveLength(2)
+    expect(walksAreStale(finished)).toBe(true)
+    expect(walksAreStale(failed)).toBe(true)
   })
 
   it("refetches the status and every interactions list when indexing fails", () => {
