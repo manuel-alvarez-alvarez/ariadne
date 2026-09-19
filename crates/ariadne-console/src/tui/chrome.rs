@@ -253,7 +253,7 @@ impl Console {
     fn hints(&self) -> Vec<Part> {
         let hints: &[&str] = match (self.armed, self.question().is_some(), self.turn.running()) {
             (true, _, _) => &["ctrl-c again to leave"],
-            (_, true, _) => &["↑↓ or 1-9 choose", "enter answer"],
+            (_, true, _) => &["up/down or 1-9 choose", "enter answer"],
             (_, _, true) => &[
                 "enter send",
                 "shift+enter newline",
@@ -705,6 +705,20 @@ mod tests {
         )
     }
 
+    /// The footer's arrows count the tokens read and written; the keys of a
+    /// question are named in words, so no arrow means a key there too.
+    #[test]
+    fn the_footer_uses_its_arrows_for_the_tokens_alone() {
+        let mut console = Console::new(spent(12_400, 3_100));
+        console.apply(&asked());
+
+        let (_, footer) = rows_of(&mut wide(120), &console);
+
+        assert!(footer.contains("or 1-9 choose"), "{footer:?}");
+        assert_eq!(footer.matches('↑').count(), 1, "{footer:?}");
+        assert_eq!(footer.matches('↓').count(), 1, "{footer:?}");
+    }
+
     fn wide(width: u16) -> Terminal<TestBackend> {
         Terminal::with_options(
             TestBackend::new(width, 40),
@@ -840,7 +854,7 @@ mod tests {
                 name: "pending question",
                 console: asking,
                 status: [seat("running"), turn("⠋ thinking".into()).to_vec()].concat(),
-                hints: vec!["↑↓ or 1-9 choose", "enter answer"],
+                hints: vec!["up/down or 1-9 choose", "enter answer"],
             },
         ]
     }

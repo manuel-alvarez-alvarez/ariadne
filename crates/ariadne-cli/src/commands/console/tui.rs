@@ -73,10 +73,19 @@ pub async fn attach(client: &Client, id: &str) -> Result<()> {
     drop(terminal);
     drop(held);
 
-    note(&format!(
-        "left the console — the session is still running; attach again with: ariadne attach {id}"
-    ));
+    note(&farewell(&console, id));
     outcome
+}
+
+/// What is said as the console closes: that the session is still running,
+/// or that it has ended.
+fn farewell(console: &Console, id: &str) -> String {
+    match console.has_ended() {
+        true => format!("the session has ended; revive it with: ariadne session resume {id}"),
+        false => format!(
+            "left the console — the session is still running; attach again with: ariadne attach {id}"
+        ),
+    }
 }
 
 /// Read the context the session row does not carry. A missing description
@@ -642,6 +651,26 @@ mod tests {
                 .any(|bytes| bytes == PASTE_OFF),
             "{:?}",
             String::from_utf8_lossy(&raw.out)
+        );
+    }
+
+    #[test]
+    fn the_console_closing_on_the_session_end_does_not_say_the_session_still_runs() {
+        let mut left = Console::new(Header::of(None));
+        left.apply(&event("stop", "stopped"));
+        let mut ended = Console::new(Header::of(None));
+        ended.apply(&event("session_end", "session ended"));
+
+        assert!(
+            farewell(&left, "s1").contains("still running"),
+            "{}",
+            farewell(&left, "s1")
+        );
+        assert!(
+            !farewell(&ended, "s1").contains("still running")
+                && farewell(&ended, "s1").contains("has ended"),
+            "{}",
+            farewell(&ended, "s1")
         );
     }
 

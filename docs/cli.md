@@ -48,18 +48,19 @@ once the block has moved into the scrollback.
 ────────────────────────────────────────────────────────
 ❯ the input box
 ────────────────────────────────────────────────────────
- enter send · shift+enter newline · esc cancel    ↑ 12.4k ↓ 3.1k
+ enter send · shift+enter newline · esc cancel · ctrl-c quit    ↑ 12.4k ↓ 3.1k
 ```
 
 The status row names the seat, the model and the session's status — `running`
 while the agent works, `idle` between turns, `exited` once it has gone, moving
 as the session does — and a spinner says "thinking" or "running &lt;tool&gt;"
 while a turn runs, with how long the turn has been running next to it: `12s`,
-or `1m 04s` past a minute. The count starts again with each turn and is not
+or `1m 04s` past a minute. A prompt you type while a turn runs does not change
+what the row says. The count starts again with each turn and is not
 shown between turns; attaching in the middle of a turn counts from its prompt.
 
 The footer shows the keys you can press now on the left — to send, to answer
-a permission question (`↑↓ or 1-9 choose · enter answer`), or to confirm that
+a permission question (`up/down or 1-9 choose · enter answer`), or to confirm that
 you want to leave after one Ctrl-C — and on the right the tokens the session
 has spent, read (`↑`) and written (`↓`), such as `↑ 12.4k ↓ 3.1k`. The counts
 are the whole session's, every launch of it included, and they move each time
@@ -70,7 +71,20 @@ items, the least important first: the status row drops the model, then the
 seat, the clock, and what the turn is doing, and keeps the session's status to
 the last; the footer drops its later key hints, then the tokens, and keeps the
 first hint to the last. Resizing the terminal redraws the pane at the new
-size, and a shorter terminal still shows the whole of it.
+size, and a shorter terminal still shows the whole of it. A narrower terminal
+gets the pane on its top row, and what was on the screen above the pane moves
+into the scrollback.
+
+A resize has two limits, because the terminal moves its rows before the
+console hears of the resize, and the console does not ask the terminal where
+they went:
+
+- In tmux, a taller window pulls rows of the history down onto the screen.
+  The pane is drawn again where it was, over some of those rows, so they are
+  gone from the scrollback. Attach again to see the whole transcript.
+- On a narrower window, the terminal rewraps the pane before it is drawn
+  again. Rows of the old pane that the rewrap moved above it can stay in the
+  scrollback.
 
 The input box has a dim rule above and below it, without side borders. Its
 prompt is `❯ `, and continued rows align under the text:
@@ -87,7 +101,8 @@ part of the prompt. The box grows to four text rows, then scrolls with the
 cursor.
 
 Before the transcript, the scrollback gets a short welcome banner naming the
-seat, task (or orchestrator goal), model and effort, repository, and session.
+seat, task (or orchestrator goal), model and effort, repository, and session,
+and one blank line under it.
 On a narrow terminal it uses the same lines without a box; long titles are
 shortened to fit.
 
@@ -101,8 +116,9 @@ terminal is not asked again after that, however many blocks scroll past and
 however often the pane grows or shrinks.
 
 The agent's text streams in as it is written and renders as markdown:
-headings, bold, code spans, fenced code and lists. A thought is dimmed and
-folded to a few lines. A plan is a checklist that counts what is done
+headings, bold, code spans, fenced code under its language, lists and task
+lists, quotes, tables, and links with their URL in plain text. A thought is
+dimmed and folded to a few lines. A plan is a checklist that counts what is done
 (`plan 2/5`): `☐` pending, `◐` in progress, `☑` done and dimmed. A briefing
 or a nudge from the daemon shows under `» daemon`, folded to its first six
 lines. An error shows whole after `✗`. A note says what happened in words,
@@ -110,10 +126,13 @@ such as `turn cancelled`; a turn that simply ends adds nothing. One blank line
 separates two blocks.
 
 A tool call is one block. Its head line says what the call did and on what:
-a status mark (`○` pending, `●` running, `✓` done, `✗` failed), a glyph for
+a status mark (`○` pending, `◐` running, `✓` done, `✗` failed), a glyph for
 the kind of call (`$` a command, `≡` a read, `✎` an edit, `⌫` a delete, `→` a
-move, `⌕` a search, `↓` a fetch), then the command, the path and line, the
-pattern, or the URL. Once the call has ended, the head says how long it took.
+move, `⌕` a search, `⇣` a fetch, `∴` a thought, `⇄` a mode switch, `◇` any
+other kind), then the command, the path and line, the pattern, or the URL.
+Once the call has ended, the head says how long it took. A call that a
+cancelled turn left running keeps its `◐`, and goes to the scrollback with
+the rest of the turn.
 Its output is folded to its last lines under the head, with a count of the
 lines left out, and hangs from the head by `⎿`. A file change is a diff: the
 file's name, then the hunks with added and removed lines in colour, folded
@@ -136,7 +155,7 @@ past a page with a count.
 | Key | What it does |
 | --- | --- |
 | Enter | Sends what you typed, or answers the permission question on screen |
-| Shift+Enter, Alt+Enter, Ctrl-J | Starts a new line without sending |
+| Shift+Enter, Alt+Enter, Ctrl-J | Starts a new line without sending. Shift+Enter needs a terminal that reports it through the kitty keyboard protocol; Alt+Enter and Ctrl-J work in every terminal |
 | `\` then Enter | Removes the final backslash and starts a new line without sending |
 | ↑, ↓ | Moves by a wrapped row; at the first or last row, moves through prompt history |
 | Ctrl-A, Ctrl-E | Moves to the start or the end of the line |
@@ -145,7 +164,7 @@ past a page with a count.
 | Alt+←, Alt+→ | Moves back or forward one word (Alt-B and Alt-F do the same) |
 | ↑, ↓, or 1 to 9 during a question | Chooses a permission option instead of moving through input or history |
 | Escape | Cancels the running turn |
-| Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running |
+| Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running, and the console says how to attach again |
 
 Pasting puts the text into the input box where the cursor is, line breaks
 and all; nothing is sent until you press Enter. Wide characters and emoji
@@ -156,7 +175,10 @@ sent by the daemon.
 
 A typed prompt shows as `❯ text` straight away, with a coloured bar down its
 left edge. Until the daemon takes it, it carries a dim `queued` tag: a prompt
-typed while a turn runs waits for that turn to end. If the daemon's stream
+typed while a turn runs waits for that turn to end. A prompt the daemon
+refuses loses its tag, and the reason shows under it after `✗`. When the
+session ends, the console closes and says how to revive the session with
+`ariadne session resume`. If the daemon's stream
 drops, the status row says "reconnecting" until it is back, and nothing
 already on screen is printed twice.
 
@@ -200,7 +222,7 @@ Bash
 ```
 
 Two rules frame the question. Once you answer, the console keeps only the
-question, the call's head line and `→` with the option you chose.
+question, the call's head line and `↳` with the option you chose.
 
 The desktop app shows the same console in a session's detail view, in a
 terminal emulator. The daemon draws the pane above into it, so everything on

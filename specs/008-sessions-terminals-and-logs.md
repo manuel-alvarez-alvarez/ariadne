@@ -23,6 +23,8 @@ tests:
   - crates/ariadne-console/src/tui/input.rs
   - crates/ariadne-console/src/tui/picker.rs
   - crates/ariadne-console/src/tui/viewport.rs
+  - crates/ariadne-console/src/tui/scenario.rs
+  - crates/ariadne-console/src/theme.rs
 ---
 
 # Sessions and the console
@@ -217,9 +219,10 @@ goal id to a seat (014).
     has run — `12s`, or `1m 04s` past a minute — counted from the event that
     began it, so a turn already running at attach counts from its prompt;
     the count starts again with each turn, survives a reconnect's replay,
-    and is absent between turns. The footer holds, on the left, the key
+    and is absent between turns. A prompt typed while a turn runs leaves the
+    row as it was. The footer holds, on the left, the key
     hints of the state the console is in — a Ctrl-C armed to leave: `ctrl-c
-    again to leave`; a pending question: `↑↓ or 1-9 choose · enter answer`;
+    again to leave`; a pending question: `up/down or 1-9 choose · enter answer`;
     a running turn: `enter send · shift+enter newline · esc cancel · ctrl-c
     quit`; idle: `enter send · shift+enter newline · ctrl-c quit` — and on the
     right the tokens the session has spent, `↑ <input> ↓ <output>` in
@@ -243,7 +246,14 @@ goal id to a seat (014).
     clusters, so an emoji of several characters is never split. A resize of
     the terminal redraws the pane at the new size, by the same height rule:
     a pane that ran off the bottom of a shorter terminal is opened again as
-    many rows further up, so the whole of it is on the screen. The pane
+    many rows further up, so the whole of it is on the screen.
+    A narrower terminal has the pane opened again on its top row: the
+    pane's rows are erased, and the rows above it are scrolled into the
+    scrollback, never erased. An erase from the top-left corner to the end
+    of the screen is made one row at a time, since tmux keeps a copy of what
+    that erase removes in its scrollback. The blank end of each row is
+    erased, not written as spaces, so a terminal made narrower does not wrap
+    blank cells into rows of their own. The pane
     opens from the
     cursor, which the terminal is asked for once, at the open; a terminal that
     does not answer within crossterm's timeout gets the same pane opened from
@@ -255,7 +265,8 @@ goal id to a seat (014).
     query's answer would come through the reader the stream holds, and time
     out. There is no alternate-screen fallback.
     Each attach puts one welcome banner into scrollback before its first
-    transcript block: seat, task title (or `orchestrator` with the goal title),
+    transcript block, with one blank line under it: seat, task title (or
+    `orchestrator` with the goal title),
     model and effort, repository name, and the session id cut to 12 columns.
     The frame fits its contents but no more than the pane; a long title cuts
     at a grapheme boundary with `…`, and a pane narrower than 40 columns uses
@@ -279,12 +290,14 @@ goal id to a seat (014).
     from what was typed. Agent text is markdown chunk by chunk under one
     marker, a thought dimmed and folded, a tool call the block of the next
     rule, and a permission question a picker. Markdown tables align their
-    display-width cells under bold headers and wrap in a cell, or become
+    display-width cells under bold headers and wrap in a cell, a code span
+    keeping its backticks there as in text, or become
     `header: value` lines where the pane is too narrow. Fenced code has a dim
     language label, a two-column code indent and a dim `↪` on continued lines,
     never a fence. Links retain their plain URL, lists use `•`, `◦` and `▪` by
     depth with task markers, and every wrapped quote line keeps its `│ ` bar.
-    The renderer is pure, uses no syntax colour or OSC 8 link, and accepts
+    Each mark of the transcript has one meaning over the whole pane. The
+    renderer is pure, uses no syntax colour or OSC 8 link, and accepts
     each incomplete markdown prefix without a panic. A plan is a checklist
     under a head that counts the completed entries, `plan 1/3`: `☐` pending,
     `◐` in progress in the plan colour, `☑` completed and dimmed, a long entry
@@ -298,9 +311,10 @@ goal id to a seat (014).
     logs` alike. An event of a kind the pane has no block for draws dimmed
     as `<kind> · <summary>`, from the event's summary.
 25. A tool call reads as a coding agent's. Its head line is a status glyph —
-    `○` pending, `●` in progress, `✓` completed, `✗` failed — then a glyph
+    `○` pending, `◐` in progress (the plan's mark for it), `✓` completed,
+    `✗` failed — then a glyph
     for the ACP `kind` (`$` execute, `≡` read, `✎` edit, `⌫` delete, `→`
-    move, `⌕` search, `↓` fetch, `∴` think, `⇄` switch mode, `•` otherwise)
+    move, `⌕` search, `⇣` fetch, `∴` think, `⇄` switch mode, `◇` otherwise)
     and what the call is about, taken from its input: the command for
     `execute`, the path and line for `read`, `edit`, `delete` and `move`, the
     pattern and where it is looked for for `search`, the URL for `fetch`, and
@@ -309,10 +323,13 @@ goal id to a seat (014).
     name follow it. Once the call has ended, the head carries the time from
     the event that opened it to the one that ended it. A live
     `tool_call_update` merges into the open call with the same `toolCallId`:
-    one block per call, however many updates arrive. A call that has not
-    ended stays in the pane, and so does everything after it: the question
+    one block per call, however many updates arrive. While the turn runs, a
+    call that has not ended stays in the pane, and so does everything after
+    it: the question
     about a call comes after the call and the event that ends it after the
     answer, so the scrollback gets the call as it ended, never as pending.
+    A call the turn left open when it stopped — a cancelled turn leaves
+    one — holds nothing back.
     The output is the
     call's `rawOutput` where that is text or a stdout and stderr pair, the
     text of its `content` entries otherwise, and the structure as JSON only
@@ -339,7 +356,7 @@ goal id to a seat (014).
     dimmed. A question or an option name wider than the pane wraps and is
     cut nowhere, between grapheme clusters where a word is wider than the
     row. Once answered, the block is the question, the head line of the call
-    and `→ ` and the name of the option chosen: no option list and no frame.
+    and `↳ ` and the name of the option chosen: no option list and no frame.
 26. A chunk continues the block last written, and starts a block of its own
     where anything else came between: a turn that speaks around a tool call
     reads as two blocks with the call between them. The daemon stores each
@@ -364,8 +381,10 @@ goal id to a seat (014).
     visual row. From the first or last visual row they move through prompts
     this console sent and console-sourced prompts in its snapshot; moving past
     the newest restores the draft. Daemon-sourced prompts never enter this
-    history. Enter posts the input box to console input. Shift+Enter,
-    Alt+Enter and Ctrl-J add a line and post nothing. Enter after a backslash
+    history. Enter posts the input box to console input. Shift+Enter —
+    where the terminal reports it, through the keyboard protocol the CLI
+    asks for — Alt+Enter and Ctrl-J add a line and post nothing. Enter
+    after a backslash
     at the end of the line removes it and adds a line; any other backslash
     stays and Enter posts the prompt. Each prompt typed shows at once and is
     replaced by its own `user_prompt_submit`, in the order they were posted. A prompt typed
@@ -391,12 +410,16 @@ goal id to a seat (014).
     mid-turn ends on the text so far (rule 13), which comes after the
     question in it — and its command or diff is folded to the room its
     question, options and two rules leave, so the question and every option
-    are on the screen together. A post the daemon refuses is said on the transcript, and
-    the console stays open.
+    are on the screen together. A post the daemon refuses is said on the
+    transcript, and the console stays open; a refused prompt is no longer
+    queued, and holds nothing after it out of the scrollback.
 28. Escape during a running turn posts to console cancel. Ctrl-C twice, or
     Ctrl-D, leaves the console, and the session stays alive. Every way out
     puts the terminal back: raw mode off, bracketed paste off and the cursor
-    shown.
+    shown. The pane is wiped, and the cursor is left on its top row, under
+    the last block, where the shell comes back. The CLI then says that the session still
+    runs and how to attach again, or, where the session has ended, how to
+    revive it.
 29. A dropped stream says "reconnecting" and is dialled again on the backoff
     every other follow uses. The fresh snapshot redraws what was open and does
     not repeat what is already in the scrollback.
@@ -832,6 +855,40 @@ goal id to a seat (014).
   (`ariadne-console/tui/banner.rs::a_narrow_pane_has_no_frame`).
 - Missing task and repository context omits those lines
   (`ariadne-console/tui/banner.rs::missing_context_omits_its_lines`).
+- One blank line separates the banner from the first block
+  (`ariadne-console/tui/mod.rs::one_blank_line_separates_the_banner_from_the_first_block`).
+- The whole pane — every block, the picker, a queued prompt, a resize both
+  ways, a refused post, a reconnect, a cancelled turn and the session's end —
+  draws at 60×20, 80×24 and 120×40: each block once in the scrollback, in
+  order, one blank line before it, every row at a mark or two columns in, no
+  cell of the pane left behind, and the emulator reading the ANSI backend's
+  bytes shows the pane and the cursor the test backend holds
+  (`ariadne-console/tui/scenario.rs::the_whole_pane_draws_at_60_by_20`,
+  `::the_whole_pane_draws_at_80_by_24`, `::the_whole_pane_draws_at_120_by_40`).
+- Each mark of the transcript has one meaning
+  (`ariadne-console/theme.rs::one_glyph_has_one_meaning_over_the_whole_transcript`).
+- The footer's arrows count the tokens alone; the keys of a question are
+  words (`ariadne-console/tui/chrome.rs::the_footer_uses_its_arrows_for_the_tokens_alone`).
+- The picker's frame fits a pane of 8 and of 12 columns
+  (`ariadne-console/tui/picker.rs::the_frame_of_a_picker_fits_a_pane_of_8_and_of_12_columns`).
+- A code span keeps its backticks in a table cell
+  (`ariadne-console/markdown.rs::a_code_span_in_a_table_cell_keeps_its_backticks_as_in_text`).
+- A call a stopped turn left open holds nothing back from the scrollback
+  (`ariadne-console/tui/mod.rs::a_call_a_stopped_turn_left_open_holds_nothing_back_from_the_scrollback`).
+- A prompt typed while a tool runs leaves the tool on the status row
+  (`ariadne-console/tui/mod.rs::a_prompt_typed_while_a_tool_runs_leaves_the_tool_on_the_status_row`).
+- A refused prompt is no longer queued and holds nothing back
+  (`ariadne-console/tui/mod.rs::a_refused_prompt_is_no_longer_queued_and_holds_nothing_back`).
+- The blank end of a row is erased, not written as spaces
+  (`ariadne-console/tui/viewport.rs::the_blank_end_of_a_row_is_erased_and_not_written_as_spaces`).
+- A narrower terminal keeps the blocks that were on the screen
+  (`ariadne-console/tui/viewport.rs::a_narrower_terminal_keeps_the_blocks_that_were_on_the_screen`),
+  and a pane on the top row is erased row by row
+  (`::a_pane_on_the_top_row_is_erased_row_by_row_and_never_from_the_corner`).
+- The shell comes back on the row under the last block
+  (`ariadne-console/tui/viewport.rs::the_shell_comes_back_on_the_row_under_the_last_block`),
+  and the CLI says the session has ended where it has
+  (`ariadne-cli/commands/console/tui.rs::the_console_closing_on_the_session_end_does_not_say_the_session_still_runs`).
 - The daemon terminal socket includes the task title
   (`ariadne-daemon/tests/it/acp_terminal.rs::the_terminal_draws_the_transcript_and_the_status_line_at_the_client_size`).
 - The CLI reads a task title from its daemon
@@ -856,6 +913,15 @@ goal id to a seat (014).
 - The launcher refuses a second live session on one seat, and no test pins
   that refusal on its own.
 - No test pins the `409` a finished session gives to console input.
+- A resize is a terminal limitation for the pane. The terminal moves its
+  rows before the console hears of the resize, and the console makes no
+  cursor query after the open (rule 23), so it cannot know where they went.
+  In tmux, a taller window pulls history rows down onto the screen, and the
+  pane drawn again on its old row covers them: they leave the scrollback.
+  xterm.js does not pull them, and loses nothing. On a narrower window, a
+  terminal that rewraps the old pane can leave the rows it moved above the
+  pane in the scrollback. The console keeps one path for every host and
+  guesses no terminal.
 
 ## Sources
 

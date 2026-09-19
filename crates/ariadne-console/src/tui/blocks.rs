@@ -719,7 +719,7 @@ mod tests {
         assert!(shown.contains("✓ $ cargo nextest run"), "{shown}");
         assert!(shown.contains("✓ ≡ src/main.rs:12"), "{shown}");
         assert!(shown.contains("✓ ⌕ fn main in src"), "{shown}");
-        assert!(shown.contains("✗ ↓ https://example.com/spec"), "{shown}");
+        assert!(shown.contains("✗ ⇣ https://example.com/spec"), "{shown}");
         assert!(
             !shown.contains('{'),
             "no raw JSON where a field names the subject: {shown}"

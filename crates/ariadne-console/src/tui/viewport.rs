@@ -6,6 +6,7 @@ use anyhow::Result;
 use ratatui::backend::{Backend, ClearType, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
+use ratatui::style::Color;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
 use super::Console;
@@ -108,8 +109,8 @@ impl Console {
 ///
 /// A terminal resized is the same case. A viewport that ran off the bottom of
 /// a shorter terminal is opened again as many rows further up, and one on a
-/// narrower terminal at the top of a cleared screen, as ratatui's own resize
-/// has it: the terminal has wrapped every line it held.
+/// narrower terminal on the top row, the rows above it scrolled into the
+/// scrollback: the terminal has wrapped every line it held.
 ///
 /// The backend is [`Anchored`], so opening the viewport again asks the
 /// terminal nothing.
@@ -130,7 +131,18 @@ pub(super) fn fit<B: Screen>(terminal: &mut Terminal<Anchored<B>>, wanted: u16) 
     }
     let backend = terminal.backend_mut();
     let top = if size.width < area.width {
-        backend.clear_region(ClearType::All)?;
+        // An erase of the whole screen would take the blocks above the pane
+        // with it, where the terminal keeps no copy of what it erases. The
+        // pane's rows are erased, and the rows above it are scrolled into
+        // the scrollback.
+        let above = area.y.min(size.height);
+        backend.set_cursor_position(Position { x: 0, y: above })?;
+        backend.clear_region(ClearType::AfterCursor)?;
+        backend.set_cursor_position(Position {
+            x: 0,
+            y: size.height.saturating_sub(1),
+        })?;
+        backend.append_lines(above)?;
         0
     } else {
         // A terminal made shorter keeps its bottom rows, the cursor's among
@@ -207,13 +219,41 @@ impl<B> Anchored<B> {
 impl<B: Backend> Backend for Anchored<B> {
     type Error = B::Error;
 
+    /// The blank cells that end a row are erased, not written as spaces. A
+    /// terminal keeps a written space as text, so a terminal made narrower
+    /// would wrap each row of the scrollback into a second row of spaces.
     fn draw<'a, I>(&mut self, content: I) -> Result<(), B::Error>
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
-        self.inner
-            .as_mut()
-            .map_or(Ok(()), |inner| inner.draw(content))
+        let Some(inner) = self.inner.as_mut() else {
+            return Ok(());
+        };
+        let width = inner.size()?.width;
+        let cells: Vec<_> = content.collect();
+        let mut written = Vec::with_capacity(cells.len());
+        let mut erased = Vec::new();
+        for row in cells.chunk_by(|a, b| a.1 == b.1) {
+            // The blank cells, one after the other, up to the last column:
+            // the cells the diff leaves out are unchanged, so only a run that
+            // reaches the edge can be erased to the end of the row.
+            let mut start = row.len();
+            let mut edge = width;
+            while start > 0 && row[start - 1].0 + 1 == edge && blank(row[start - 1].2) {
+                start -= 1;
+                edge = row[start].0;
+            }
+            written.extend_from_slice(&row[..start]);
+            if let Some(&(x, y, _)) = row.get(start) {
+                erased.push(Position { x, y });
+            }
+        }
+        inner.draw(written.into_iter())?;
+        for at in erased {
+            inner.set_cursor_position(at)?;
+            inner.clear_region(ClearType::UntilNewLine)?;
+        }
+        Ok(())
     }
 
     fn append_lines(&mut self, n: u16) -> Result<(), B::Error> {
@@ -255,10 +295,21 @@ impl<B: Backend> Backend for Anchored<B> {
         self.inner.as_mut().map_or(Ok(()), Backend::clear)
     }
 
+    /// An erase from the top-left corner to the end of the screen is made
+    /// one row at a time: tmux takes that erase for a clear of the whole
+    /// screen, and keeps a copy of the rows it erased in its scrollback.
     fn clear_region(&mut self, clear_type: ClearType) -> Result<(), B::Error> {
-        self.inner
-            .as_mut()
-            .map_or(Ok(()), |inner| inner.clear_region(clear_type))
+        let Some(inner) = self.inner.as_mut() else {
+            return Ok(());
+        };
+        if clear_type == ClearType::AfterCursor && self.known == Some(Position::ORIGIN) {
+            for y in 0..inner.size()?.height {
+                inner.set_cursor_position(Position { x: 0, y })?;
+                inner.clear_region(ClearType::UntilNewLine)?;
+            }
+            return inner.set_cursor_position(Position::ORIGIN);
+        }
+        inner.clear_region(clear_type)
     }
 
     fn size(&self) -> Result<Size, B::Error> {
@@ -280,6 +331,14 @@ impl<B: Backend> Backend for Anchored<B> {
     fn flush(&mut self) -> Result<(), B::Error> {
         self.inner.as_mut().map_or(Ok(()), Backend::flush)
     }
+}
+
+/// A cell an erase leaves as it is: a space in no colour and no style.
+fn blank(cell: &Cell) -> bool {
+    cell.symbol() == " "
+        && cell.fg == Color::Reset
+        && cell.bg == Color::Reset
+        && cell.modifier.is_empty()
 }
 
 #[cfg(test)]
@@ -725,6 +784,132 @@ mod tests {
             "the pane shrank: {shrunk}"
         );
         assert_eq!(tap.screen(), shrunk.trim_end(), "after the shrink");
+    }
+
+    /// A terminal keeps a space it was sent as text: a row that ends in
+    /// written spaces wraps into a second row of blanks where the terminal
+    /// is made narrower, so every row of the scrollback would be doubled.
+    #[test]
+    fn the_blank_end_of_a_row_is_erased_and_not_written_as_spaces() {
+        let tap = Tap::default();
+        let window = Window::new(72, 40);
+        let mut terminal = super::open(|| AnsiBackend::new(tap.clone(), window.clone())).unwrap();
+        let mut console = Console::new(header());
+        console.snapshot(&[
+            prompt("go"),
+            event("agent_message", "done", json!({"text": "done"})),
+            event("stop", "stop", json!({"stop_reason": "end_turn"})),
+        ]);
+
+        console.show(&mut terminal).unwrap();
+
+        let written = String::from_utf8_lossy(&tap.0.lock().unwrap()).to_string();
+        assert!(
+            !written.contains(&" ".repeat(20)),
+            "no row is padded with spaces: {written:?}"
+        );
+        let shown = tap.screen();
+        assert!(
+            shown.starts_with("▌❯ go\n\n● done\n\n author · claude:opus · idle"),
+            "and the screen is what it was: {shown}"
+        );
+    }
+
+    /// A narrower terminal opens the pane again at the top of the screen.
+    /// The blocks that were on the screen above it go to the scrollback, not
+    /// out of the terminal.
+    #[test]
+    fn a_narrower_terminal_keeps_the_blocks_that_were_on_the_screen() {
+        let tap = Tap::default();
+        let window = Window::new(72, 40);
+        let mut terminal = super::open(|| AnsiBackend::new(tap.clone(), window.clone())).unwrap();
+        let mut console = Console::new(header());
+        console.snapshot(&[
+            prompt("go"),
+            event("agent_message", "done", json!({"text": "done"})),
+            event("stop", "stop", json!({"stop_reason": "end_turn"})),
+        ]);
+        console.show(&mut terminal).unwrap();
+        let mut emulator = vt100::Parser::new(40, 72, 100);
+        emulator.process(&std::mem::take(&mut *tap.0.lock().unwrap()));
+
+        window.set(60, 40);
+        emulator.screen_mut().set_size(40, 60);
+        console.show(&mut terminal).unwrap();
+        emulator.process(&tap.0.lock().unwrap());
+
+        emulator.screen_mut().set_scrollback(usize::MAX);
+        let shown: Vec<String> = emulator
+            .screen()
+            .rows(0, 60)
+            .map(|row| row.trim_end().to_string())
+            .collect();
+        assert_eq!(
+            shown[..5],
+            ["▌❯ go", "", "● done", "", " author · claude:opus · idle"],
+            "the blocks, then the pane at the new width: {shown:#?}"
+        );
+    }
+
+    /// tmux takes an erase from the top-left corner to the end of the screen
+    /// for a clear of the whole screen, and keeps a copy of what it erased
+    /// in its scrollback: the pane, each time it is opened again on the top
+    /// row, which is where a narrower terminal puts it.
+    #[test]
+    fn a_pane_on_the_top_row_is_erased_row_by_row_and_never_from_the_corner() {
+        let tap = Tap::default();
+        let window = Window::new(72, 24);
+        let mut terminal = super::open(|| AnsiBackend::new(tap.clone(), window.clone())).unwrap();
+        let mut console = under_way(&mut terminal);
+        window.set(60, 24);
+        console.show(&mut terminal).unwrap();
+        assert_eq!(pane_of(&mut terminal).y, 0);
+        tap.0.lock().unwrap().clear();
+
+        for text in ["a", "b", "c"] {
+            type_into(&mut console, text);
+            console.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+            console.show(&mut terminal).unwrap();
+        }
+
+        let written = String::from_utf8_lossy(&tap.0.lock().unwrap()).to_string();
+        assert!(
+            !written.contains("\x1b[1;1H\x1b[J"),
+            "no erase starts at the corner: {written:?}"
+        );
+        assert_eq!(
+            pane_of(&mut terminal).y,
+            0,
+            "the pane is still on the top row"
+        );
+    }
+
+    /// The way out wipes the pane, and the shell comes back on its top row,
+    /// under the last block: not on the row the input box had the cursor on.
+    #[test]
+    fn the_shell_comes_back_on_the_row_under_the_last_block() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        console.snapshot(&[
+            prompt("go"),
+            event("agent_message", "done", json!({"text": "done"})),
+            event("stop", "stop", json!({"stop_reason": "end_turn"})),
+        ]);
+        console.show(&mut terminal).unwrap();
+
+        console.close(&mut terminal).unwrap();
+
+        let shown = shown(&terminal);
+        assert_eq!(shown.trim_end(), "▌❯ go\n\n● done", "{shown}");
+        assert_eq!(
+            terminal
+                .backend_mut()
+                .under_mut()
+                .get_cursor_position()
+                .unwrap(),
+            Position { x: 0, y: 4 },
+            "the cursor is under the separator of the last block: {shown}"
+        );
     }
 
     /// The picker folds its diff to the room it is given (rule 27), and the

@@ -91,13 +91,23 @@ fn frame(
     picked: Option<usize>,
     width: usize,
 ) -> (Vec<Line<'static>>, Vec<Line<'static>>) {
+    // A pane too narrow for the label has the rule alone, so no row of the
+    // frame is wider than the pane.
     let lead = format!("{} ", theme::RULE);
-    let fill = width.saturating_sub(lead.width() + theme::ASK_LABEL.width() + 1);
-    let mut above = vec![Line::from(vec![
-        Span::styled(lead, FRAME),
-        Span::styled(theme::ASK_LABEL, ASK),
-        Span::styled(format!(" {}", theme::RULE.repeat(fill)), FRAME),
-    ])];
+    let labelled = lead.width() + theme::ASK_LABEL.width();
+    let top = match width.checked_sub(labelled) {
+        None => vec![Span::styled(theme::RULE.repeat(width), FRAME)],
+        Some(0) => vec![
+            Span::styled(lead, FRAME),
+            Span::styled(theme::ASK_LABEL, ASK),
+        ],
+        Some(rest) => vec![
+            Span::styled(lead, FRAME),
+            Span::styled(theme::ASK_LABEL, ASK),
+            Span::styled(format!(" {}", theme::RULE.repeat(rest - 1)), FRAME),
+        ],
+    };
+    let mut above = vec![Line::from(top)];
     above.extend(asked(
         question,
         tool,
@@ -370,6 +380,32 @@ mod tests {
     }
 
     #[test]
+    fn the_frame_of_a_picker_fits_a_pane_of_8_and_of_12_columns() {
+        for width in [8, 12] {
+            let lines = super::picker(
+                &crate::transcript::fold(&[asked_with(
+                    "Allow this edit?",
+                    &["Allow once", "Reject"],
+                    json!({"toolCallId": "edit", "kind": "edit",
+                           "rawInput": {"file_path": "src/main.rs"}}),
+                )])[0],
+                0,
+                width,
+                usize::MAX,
+            );
+
+            assert!(
+                lines.iter().all(|line| line.width() <= width),
+                "no row is wider than {width} columns: {lines:?}"
+            );
+            assert!(
+                lines[0].to_string().starts_with('─'),
+                "the top rule is still drawn: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_permission_question_renders_as_a_picker_the_arrows_move() {
         let mut console = Console::new(header());
         console.apply(&asked());
@@ -452,7 +488,7 @@ mod tests {
         let shown = screen(&terminal);
 
         assert!(
-            shown.contains("Allow this edit?\n  ✎ src/main.rs\n→ Allow once\n"),
+            shown.contains("Allow this edit?\n  ✎ src/main.rs\n↳ Allow once\n"),
             "{shown}"
         );
         assert!(!shown.contains("Allow always"), "{shown}");

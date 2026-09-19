@@ -95,7 +95,8 @@ impl Writer {
                 }
             }
             Event::Code(code) => {
-                if self.in_table_cell(&code) {
+                // A code span keeps its backticks in a table cell as in text.
+                if self.in_table_cell(&format!("`{code}`")) {
                     return;
                 }
                 if let Some(link) = self.links.last_mut() {
@@ -616,6 +617,23 @@ mod tests {
 
     fn text(lines: &[Line<'static>]) -> Vec<String> {
         lines.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn a_code_span_in_a_table_cell_keeps_its_backticks_as_in_text() {
+        let lines = text(&render(
+            "Run `cargo test`.\n\n| Key | Does |\n|---|---|\n| `enter` | send |\n",
+            60,
+        ));
+
+        assert!(
+            lines.iter().any(|line| line.contains("`cargo test`")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("`enter`")),
+            "{lines:?}"
+        );
     }
     fn styles(lines: &[Line<'static>], wanted: &str) -> Option<Style> {
         lines

@@ -70,10 +70,11 @@ pub const INPUT_PROMPT: &str = "❯ ";
 pub const INPUT_CONTINUATION: &str = "  ";
 pub const INPUT_PLACEHOLDER: &str = "Tell the agent what to do";
 
-/// How a call stands, at the head of its line.
+/// How a call stands, at the head of its line. A call in progress has the
+/// mark of a plan entry in progress; the agent's marker is another.
 pub const CALL_DONE: &str = "✓";
 pub const CALL_FAILED: &str = "✗";
-pub const CALL_RUNNING: &str = "●";
+pub const CALL_RUNNING: &str = "◐";
 pub const CALL_PENDING: &str = "○";
 
 /// One glyph per ACP kind of call, so the eye tells a command from a read from
@@ -86,11 +87,11 @@ pub const KINDS: &[(&str, &str)] = &[
     ("delete", "⌫"),
     ("move", "→"),
     ("search", "⌕"),
-    ("fetch", "↓"),
+    ("fetch", "⇣"),
     ("think", "∴"),
     ("switch_mode", "⇄"),
 ];
-pub const KIND_OTHER: &str = "•";
+pub const KIND_OTHER: &str = "◇";
 /// What ties a call's output to its head: the first row of the output
 /// starts with it, two columns in.
 pub const OUTPUT_MARKER: &str = "  ⎿ ";
@@ -106,7 +107,7 @@ pub const PLAN_DONE: &str = "  ☑ ";
 pub const ASK_LABEL: &str = "permission";
 pub const OPTION_PICKED: &str = "❯ ";
 pub const OPTION_IDLE: &str = "  ";
-pub const ANSWER_MARKER: &str = "→ ";
+pub const ANSWER_MARKER: &str = "↳ ";
 
 /// Markdown marks, kept with the pane's other visible vocabulary.
 pub const RULE: &str = "─";
@@ -123,3 +124,61 @@ pub const BANNER_BOTTOM_LEFT: &str = "╰";
 pub const BANNER_BOTTOM_RIGHT: &str = "╯";
 pub const BANNER_HORIZONTAL: &str = "─";
 pub const BANNER_VERTICAL: &str = "│";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every mark the transcript draws, with what it means there. Two marks
+    /// of one glyph must mean one thing: a done entry of a plan and of a
+    /// task list are both done, and a failed call and an error both failed.
+    #[test]
+    fn one_glyph_has_one_meaning_over_the_whole_transcript() {
+        let mut marks = vec![
+            (USER_MARKER, "the user's"),
+            (INPUT_PROMPT, "the user's"),
+            (OPTION_PICKED, "the user's"),
+            (AGENT_MARKER, "the agent speaks"),
+            (THOUGHT_MARKER, "the agent thinks"),
+            (DAEMON_MARKER, "the daemon speaks"),
+            (ERROR_MARKER, "failed"),
+            (CALL_FAILED, "failed"),
+            (CALL_DONE, "done"),
+            (CALL_RUNNING, "in progress"),
+            (CALL_PENDING, "pending"),
+            (KIND_OTHER, "a call of another kind"),
+            (OUTPUT_MARKER, "output"),
+            (PLAN_TODO, "to do"),
+            (PLAN_DOING, "in progress"),
+            (PLAN_DONE, "done"),
+            (TASK_TODO, "to do"),
+            (TASK_DONE, "done"),
+            (ANSWER_MARKER, "the answer"),
+            (CODE_CONTINUATION, "a line goes on"),
+            (QUOTE_BAR, "a quote"),
+        ];
+        marks.extend(LIST_BULLETS.iter().map(|bullet| (*bullet, "a list item")));
+        marks.extend(KINDS.iter().map(|(kind, glyph)| (*glyph, *kind)));
+        // The footer's tokens are part of the pane too.
+        marks.push((TOKENS_IN, "tokens read"));
+        marks.push((TOKENS_OUT, "tokens written"));
+        // A move names the old place and the new, as a renamed file does.
+        let rename = "→";
+
+        for (glyph, meaning) in &marks {
+            for (other, said) in &marks {
+                let (glyph, other) = (glyph.trim(), other.trim());
+                assert!(
+                    glyph != other || meaning == said,
+                    "{glyph} means both {meaning} and {said}"
+                );
+            }
+        }
+        assert!(
+            marks
+                .iter()
+                .all(|(glyph, meaning)| glyph.trim() != rename || *meaning == "move"),
+            "{rename} is a move: {marks:?}"
+        );
+    }
+}

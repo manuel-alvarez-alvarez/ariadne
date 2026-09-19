@@ -49,6 +49,8 @@ mod picker;
 mod viewport;
 
 #[cfg(test)]
+mod scenario;
+#[cfg(test)]
 mod testing;
 
 pub use viewport::{Anchored, Screen, open};
@@ -203,7 +205,9 @@ impl Console {
     /// Put the attach identity into the terminal's scrollback before its first block.
     pub fn banner<B: Screen>(&self, terminal: &mut Terminal<B>) -> Result<()> {
         let width = usize::from(terminal.size()?.width);
-        let lines = banner::draw(&self.header, width);
+        // One blank line after it, as after every block.
+        let mut lines = banner::draw(&self.header, width);
+        lines.push(Line::default());
         let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
         terminal.insert_before(height, |buffer| {
             Paragraph::new(Text::from(lines)).render(buffer.area, buffer);
@@ -392,6 +396,15 @@ impl Console {
     /// The turn goes back to idle with it: nothing was asked of the agent, so
     /// a spinner saying it is thinking would be a spinner over nothing.
     pub fn failed(&mut self, text: &str) {
+        // A typed prompt the daemon refused is never confirmed: it is no
+        // longer queued, and holds nothing after it out of the scrollback.
+        if self
+            .pending
+            .back()
+            .is_some_and(|at| at + 1 == self.items.len())
+        {
+            self.pending.pop_back();
+        }
         self.items.push(TranscriptItem::Error {
             meta: transcript::ItemMeta {
                 created_at: chrono::Utc::now().to_rfc3339(),
@@ -405,6 +418,11 @@ impl Console {
 
     pub fn live(&mut self) {
         self.link = Link::Live;
+    }
+
+    /// Whether the session had ended as the console last heard of it.
+    pub fn has_ended(&self) -> bool {
+        matches!(self.header.status.as_str(), "exited" | "failed")
     }
 
     pub fn tick(&mut self) {
@@ -546,7 +564,11 @@ impl Console {
             text: text.to_string(),
             source: Some("console".into()),
         });
-        self.set_turn(Turn::Thinking, Instant::now());
+        // A prompt typed while a turn runs is queued behind it: the status
+        // row still says what that turn is doing.
+        if !self.turn.running() {
+            self.set_turn(Turn::Thinking, Instant::now());
+        }
     }
 
     /// Text the terminal pasted as one: into the box at the cursor, line
@@ -584,10 +606,12 @@ impl Console {
             end = end.min(pending.saturating_sub(1));
         }
         for (at, item) in self.items.iter().enumerate().take(end).skip(self.committed) {
+            // A call the turn left open when it stopped — a cancelled turn
+            // leaves one — will never end: it holds nothing back after that.
             let open = match item {
                 TranscriptItem::PermissionQuestion { answer, .. } => answer.is_none(),
                 TranscriptItem::ToolCall { tool, .. } => {
-                    !transcript::tool_is_terminal(tool.status.as_deref())
+                    self.turn.running() && !transcript::tool_is_terminal(tool.status.as_deref())
                 }
                 _ => false,
             };
@@ -637,7 +661,11 @@ impl Console {
         let end = self.items.len();
         viewport::fit(terminal, self.rows(end, terminal.size()?))?;
         self.emit(terminal, end)?;
+        // ratatui's clear puts the cursor back where the box had it, inside
+        // the wiped rows: the shell comes back at their top instead.
         terminal.clear()?;
+        let top = terminal.get_frame().area().as_position();
+        terminal.set_cursor_position(top)?;
         Ok(())
     }
 
@@ -1019,6 +1047,96 @@ mod tests {
         );
     }
 
+    /// A cancelled turn leaves its call as it was, and nothing will end it:
+    /// the blocks after it still go to the scrollback.
+    #[test]
+    fn a_call_a_stopped_turn_left_open_holds_nothing_back_from_the_scrollback() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        let typed = |text: &str| {
+            event(
+                "user_prompt_submit",
+                text,
+                json!({"text": text, "source": "console"}),
+            )
+        };
+        console.snapshot(&[
+            typed("go"),
+            updated("run", "in_progress", ""),
+            event("stop", "cancelled", json!({"stop_reason": "cancelled"})),
+            typed("next"),
+            event("agent_message", "answered", json!({"text": "answered"})),
+            event("stop", "stop", json!({"stop_reason": "end_turn"})),
+        ]);
+
+        console.show(&mut terminal).unwrap();
+
+        let shown = shown(&terminal);
+        assert_eq!(
+            terminal.get_frame().area().height,
+            console.pinned_rows(72),
+            "the pane is its pinned rows alone: {shown}"
+        );
+        assert!(
+            shown.contains("● answered\n\n author"),
+            "the last block is in the scrollback: {shown}"
+        );
+    }
+
+    #[test]
+    fn a_refused_prompt_is_no_longer_queued_and_holds_nothing_back() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        type_into(&mut console, "hello");
+        assert_eq!(enter(&mut console), Action::Send("hello".into()));
+
+        console.failed("409 Conflict: the session takes no more input");
+        console.show(&mut terminal).unwrap();
+
+        let shown = shown(&terminal);
+        assert!(!shown.contains("queued"), "{shown}");
+        assert!(
+            shown.starts_with("▌❯ hello\n\n✗ 409 Conflict"),
+            "the prompt and why it was refused are in the scrollback: {shown}"
+        );
+        assert_eq!(
+            terminal.get_frame().area().height,
+            console.pinned_rows(72),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn a_prompt_typed_while_a_tool_runs_leaves_the_tool_on_the_status_row() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&updated("run", "in_progress", ""));
+
+        type_into(&mut console, "next");
+        enter(&mut console);
+        terminal.draw(|frame| console.render(frame)).unwrap();
+
+        let shown = screen(&terminal);
+        assert!(shown.contains("running Bash"), "{shown}");
+    }
+
+    #[tokio::test]
+    async fn one_blank_line_separates_the_banner_from_the_first_block() {
+        let (shown, _, _) = console(
+            Stub::new(vec![event("agent_message", "hi", json!({"text": "hi"}))])
+                .deltas(vec![ended()]),
+            Vec::new(),
+        )
+        .await;
+
+        let rows: Vec<&str> = shown.lines().collect();
+        let bottom = rows
+            .iter()
+            .position(|row| row.starts_with('╰'))
+            .expect("a framed banner");
+        assert_eq!(rows[bottom + 1..bottom + 3], ["", "● hi"], "{shown}");
+    }
+
     #[tokio::test]
     async fn streamed_chunks_append_to_the_agent_block_that_is_already_open() {
         let (shown, _, _) = console(
@@ -1099,8 +1217,8 @@ mod tests {
             "and the text after it is said once, not lost: {shown}"
         );
         assert!(
-            shown.find("Let me run the tests.") < shown.find("✓ • Bash")
-                && shown.find("✓ • Bash") < shown.find("The tests pass."),
+            shown.find("Let me run the tests.") < shown.find("✓ ◇ Bash")
+                && shown.find("✓ ◇ Bash") < shown.find("The tests pass."),
             "in the order the turn happened: {shown}"
         );
     }
