@@ -40,13 +40,15 @@ const OUTLINE: &[Column] = &[
 ];
 
 /// Columns of `knowledge impact`: where the caller is, then how far away it
-/// is and what it is. The location leads, as it does on a search, so `-q`
-/// prints `path:line`.
+/// is, what it is, and how sure the call is — the confidence and the step
+/// that answered the name. The location leads, as it does on a search, so
+/// `-q` prints `path:line`.
 const IMPACT: &[Column] = &[
     col("location", UNCAPPED),
     col("depth", UNCAPPED),
     col("title", 40).title(),
     col("confidence", UNCAPPED).rank(1),
+    col("step", UNCAPPED).rank(1),
     col("changed", 40).rank(2),
     col("repo", UNCAPPED).id().rank(3),
 ];
@@ -63,14 +65,15 @@ const PATH: &[Column] = &[
 ];
 
 /// Columns of `knowledge interactions`: where the edge starts, its kind,
-/// what the two ends are, and how sure the match is. The from end leads,
-/// so `-q` prints `path:line`.
+/// what the two ends are, how sure the match is and what joined them. The
+/// from end leads, so `-q` prints `path:line`.
 const INTERACTIONS: &[Column] = &[
     col("from", UNCAPPED),
     col("kind", UNCAPPED).rank(2),
     col("title", 40).title(),
     col("to", UNCAPPED),
     col("confidence", UNCAPPED).rank(1),
+    col("step", UNCAPPED).rank(1),
 ];
 
 /// How much `knowledge symbol` shows. A local spelling of
@@ -346,6 +349,7 @@ pub async fn run(client: &Client, command: KnowledgeCommand, format: Format) -> 
                         caller.depth.to_string(),
                         caller.name.clone(),
                         caller.confidence.clone(),
+                        caller.step.clone(),
                         impact.symbol.name.clone(),
                         caller.repository_id.clone(),
                     ]
@@ -426,6 +430,7 @@ pub async fn run(client: &Client, command: KnowledgeCommand, format: Format) -> 
                         edge.from.symbol.clone(),
                         format!("{} {}", end_location(&edge.to), edge.to.symbol),
                         edge.confidence.clone(),
+                        edge.step.clone(),
                     ]
                 },
                 empty_state("No interaction with another repository.", None),
@@ -535,8 +540,10 @@ fn print_symbols(found: &[KnowledgeSymbolDto]) {
 }
 
 /// One line for a list of edge ends, or `-` for an empty one. An end in
-/// another repository than `repository_id` is led by that repository's id.
-/// `left` past 0 ends the line with how many more matched the cap.
+/// another repository than `repository_id` is led by that repository's id,
+/// and each carries what the edge rests on: its confidence, the step that
+/// answered the name, and how many definitions matched there. `left` past 0
+/// ends the line with how many more matched the cap.
 fn ends_line(ends: &[KnowledgeRelatedDto], repository_id: &str, left: i64) -> String {
     let mut parts: Vec<String> = ends
         .iter()
@@ -546,7 +553,12 @@ fn ends_line(ends: &[KnowledgeRelatedDto], repository_id: &str, left: i64) -> St
                 true => location,
                 false => format!("{}:{location}", end.repository_id),
             };
-            format!("{location} {} ({})", end.name, end.confidence)
+            let resolution = match (&end.step, end.candidates) {
+                (None, _) => String::new(),
+                (Some(step), 2..) => format!(" via {step}, {} candidates", end.candidates),
+                (Some(step), _) => format!(" via {step}"),
+            };
+            format!("{location} {} ({}{resolution})", end.name, end.confidence)
         })
         .collect();
     if left > 0 {
@@ -657,7 +669,8 @@ mod tests {
     }
 
     /// An impact row leads with the location too, so `-q` prints
-    /// `path:line`, and it carries how far away the caller is.
+    /// `path:line`, and it carries how far away the caller is and the step
+    /// that resolved the call.
     #[test]
     fn an_impact_row_leads_with_its_location_and_says_how_far_away_it_is() {
         let table = crate::output::render_table(
@@ -667,6 +680,7 @@ mod tests {
                 "1".into(),
                 "a".into(),
                 "exact".into(),
+                "file".into(),
                 "b".into(),
                 "01REPO".into(),
             ]],
@@ -676,10 +690,12 @@ mod tests {
         let header = table.lines().next().expect("header");
         assert!(header.starts_with("LOCATION"), "{table}");
         assert!(header.contains("DEPTH"), "{table}");
+        assert!(header.contains("STEP"), "{table}");
     }
 
     /// An interaction row leads with its from end, so `-q` prints where the
-    /// edge starts, and names its kind and its to end.
+    /// edge starts, and names its kind, its to end and the step that joined
+    /// them.
     #[test]
     fn an_interaction_row_leads_with_its_from_end_and_names_its_kind() {
         let table = crate::output::render_table(
@@ -690,6 +706,7 @@ mod tests {
                 "fetchItem".into(),
                 "01API:src/lib.rs:12 get_item".into(),
                 "heuristic".into(),
+                "route".into(),
             ]],
             &crate::output::View::plain(),
         )
@@ -698,6 +715,32 @@ mod tests {
         assert!(header.starts_with("FROM"), "{table}");
         assert!(header.contains("KIND"), "{table}");
         assert!(header.contains("TO"), "{table}");
+        assert!(header.contains("STEP"), "{table}");
+    }
+
+    /// An end of a `knowledge symbol` block says what its edge rests on: the
+    /// step that answered the name, and how many definitions matched there
+    /// where the step held several.
+    #[test]
+    fn an_end_row_names_the_step_that_resolved_it() {
+        let end = |name: &str, confidence: &str, step: &str, candidates: i64| KnowledgeRelatedDto {
+            repository_id: "01REPO".into(),
+            path: "src/a.rs".into(),
+            line: 3,
+            name: name.into(),
+            confidence: confidence.into(),
+            step: Some(step.into()),
+            candidates,
+        };
+        let ends = [
+            end("a", "exact", "file", 1),
+            end("c", "heuristic", "repository", 2),
+        ];
+        assert_eq!(
+            ends_line(&ends, "01REPO", 0),
+            "src/a.rs:3 a (exact via file); \
+             src/a.rs:3 c (heuristic via repository, 2 candidates)"
+        );
     }
 
     /// A capped list ends with how many more matched the cap; a whole list
@@ -710,12 +753,17 @@ mod tests {
             line: 3,
             name: "a".into(),
             confidence: "exact".into(),
+            step: Some("file".into()),
+            candidates: 1,
         }];
         assert_eq!(
             ends_line(&ends, "01REPO", 5),
-            "src/a.rs:3 a (exact); 5 more. Narrow the query."
+            "src/a.rs:3 a (exact via file); 5 more. Narrow the query."
         );
-        assert_eq!(ends_line(&ends, "01REPO", 0), "src/a.rs:3 a (exact)");
+        assert_eq!(
+            ends_line(&ends, "01REPO", 0),
+            "src/a.rs:3 a (exact via file)"
+        );
     }
 
     /// A budget too small to hold even the files-left line still names how

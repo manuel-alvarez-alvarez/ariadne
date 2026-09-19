@@ -445,9 +445,30 @@ fn cut_answer(lines: Vec<String>, cap: usize) -> String {
     answer
 }
 
-/// One end of an edge, as a knowledge answer prints it.
+/// One end of an edge, as a knowledge answer prints it: where it is, what it
+/// is, and what the edge rests on.
 fn related_line(end: &KnowledgeRelatedDto) -> String {
-    format!("{}:{} {} {}", end.path, end.line, end.name, end.confidence)
+    format!(
+        "{}:{} {} {}{}",
+        end.path,
+        end.line,
+        end.name,
+        end.confidence,
+        resolution(end.step.as_deref(), end.candidates)
+    )
+}
+
+/// How an edge was resolved, after its confidence: the step that answered the
+/// name, and how many definitions matched there where more than one did. An
+/// agent that reads `heuristic` reads why.
+fn resolution(step: Option<&str>, candidates: i64) -> String {
+    let Some(step) = step else {
+        return String::new();
+    };
+    match candidates > 1 {
+        true => format!(" via {step}, {candidates} candidates"),
+        false => format!(" via {step}"),
+    }
 }
 
 /// The heading a repository's hits sit under: its path, or its id for a
@@ -897,8 +918,13 @@ impl AriadneMcp {
             ));
             let caller_line = |caller: &KnowledgeImpactCallerDto| {
                 format!(
-                    "{} {}:{} {} {}",
-                    caller.depth, caller.path, caller.line, caller.name, caller.confidence
+                    "{} {}:{} {} {}{}",
+                    caller.depth,
+                    caller.path,
+                    caller.line,
+                    caller.name,
+                    caller.confidence,
+                    resolution(Some(&caller.step), caller.candidates)
                 )
             };
             for caller in &impact.callers {
@@ -2108,12 +2134,12 @@ mod tests {
                 {"repository_id":"01REPO","path":"src/inner/m.rs","start_line":2,"end_line":2,
                  "kind":"function","name":"b","signature":"pub fn b()","doc":"Adds.",
                  "source":null,
-                 "context":{"callers":[{"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"},
-                                       {"repository_id":"01WEB","path":"src/client.ts","line":5,"name":"fetchItem","confidence":"heuristic"}],
+                 "context":{"callers":[{"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact","step":"file","candidates":1},
+                                       {"repository_id":"01WEB","path":"src/client.ts","line":5,"name":"fetchItem","confidence":"heuristic","step":"name","candidates":2}],
                             "callees":[],
                             "implementations":[],
-                            "references":[{"repository_id":"01WEB","path":"src/types.ts","line":9,"name":"Item","confidence":"heuristic"}],
-                            "tests":[{"repository_id":"01REPO","path":"src/proof.rs","line":4,"name":"a_proof","confidence":"exact"}]}}
+                            "references":[{"repository_id":"01WEB","path":"src/types.ts","line":9,"name":"Item","confidence":"heuristic","step":"name","candidates":2}],
+                            "tests":[{"repository_id":"01REPO","path":"src/proof.rs","line":4,"name":"a_proof","confidence":"exact","step":"import","candidates":1}]}}
             ]"#,
             r#"[{"id":"01REPO","path":"/repos/api"},{"id":"01WEB","path":"/repos/web"}]"#,
         ])
@@ -2151,7 +2177,7 @@ mod tests {
              pub fn b()\n\
              Adds.\n\
              ### callers\n\
-             src/a.rs:3 a exact\n\
+             src/a.rs:3 a exact via file\n\
              ### callees\n\
              (none)\n\
              ### implementations\n\
@@ -2159,12 +2185,63 @@ mod tests {
              ### references\n\
              (none)\n\
              ### tests\n\
-             src/proof.rs:4 a_proof exact\n\
+             src/proof.rs:4 a_proof exact via import\n\
              # /repos/web\n\
              ### callers\n\
-             src/client.ts:5 fetchItem heuristic\n\
+             src/client.ts:5 fetchItem heuristic via name, 2 candidates\n\
              ### references\n\
-             src/types.ts:9 Item heuristic\n"
+             src/types.ts:9 Item heuristic via name, 2 candidates\n"
+        );
+    }
+
+    /// Each end of a context says how its edge was resolved: the step of the
+    /// four that answered the name, and how many definitions matched there
+    /// where the step held several. A guess with no reason tells an agent
+    /// nothing it can act on.
+    #[tokio::test]
+    async fn symbol_prints_the_step_and_the_candidate_count_of_each_end() {
+        let (endpoint, _) = recording_daemon_answering_in_order(&[
+            r#"[
+                {"repository_id":"01REPO","path":"src/inner/m.rs","start_line":2,"end_line":2,
+                 "kind":"function","name":"b","signature":"pub fn b()","doc":null,
+                 "source":null,
+                 "context":{"callers":[{"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact","step":"file","candidates":1},
+                                       {"repository_id":"01REPO","path":"src/c.rs","line":7,"name":"c","confidence":"heuristic","step":"directory","candidates":3}],
+                            "callees":[],
+                            "implementations":[],
+                            "references":[],
+                            "tests":[]}}
+            ]"#,
+            r#"[{"id":"01REPO","path":"/repos/api"}]"#,
+        ])
+        .await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .symbol(Parameters(SymbolReq {
+                name: "b".into(),
+                repository: Some("01REPO".into()),
+                git_ref: None,
+                detail: Some(DetailReq::Context),
+            }))
+            .await
+            .expect("symbol");
+
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        let lines: Vec<&str> = text.text.lines().collect();
+        assert!(
+            lines.contains(&"src/a.rs:3 a exact via file"),
+            "one candidate names no count: {}",
+            text.text
+        );
+        assert!(
+            lines.contains(&"src/c.rs:7 c heuristic via directory, 3 candidates"),
+            "a guess names its step and its count: {}",
+            text.text
         );
     }
 
@@ -2177,7 +2254,7 @@ mod tests {
                 {"repository_id":"01REPO","path":"src/inner/m.rs","start_line":2,"end_line":2,
                  "kind":"function","name":"b","signature":"pub fn b()","doc":null,
                  "source":null,
-                 "context":{"callers":[{"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"}],
+                 "context":{"callers":[{"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact","step":"file","candidates":1}],
                             "callees":[],
                             "implementations":[],
                             "references":[],
@@ -2210,7 +2287,7 @@ mod tests {
              ## src/inner/m.rs:2-2 function b\n\
              pub fn b()\n\
              ### callers\n\
-             src/a.rs:3 a exact\n\
+             src/a.rs:3 a exact via file\n\
              5 more. Narrow the query.\n\
              ### callees\n\
              (none)\n\
@@ -2266,9 +2343,9 @@ mod tests {
         let (endpoint, seen) = recording_daemon_answering_in_order(&[
             r#"{"repo_id":"01REPO","branch":"feat-task-abc"}"#,
             r#"{"id":"01REPO","base_branch":"main"}"#,
-            r#"[{"symbol":{"repository_id":"01REPO","path":"src/inner/m.rs","line":2,"name":"b","confidence":"exact"},
-                 "callers":[{"depth":1,"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact"},
-                            {"depth":1,"repository_id":"01WEB","path":"src/client.ts","line":5,"name":"fetchItem","confidence":"heuristic"}],
+            r#"[{"symbol":{"repository_id":"01REPO","path":"src/inner/m.rs","line":2,"name":"b","confidence":"exact","step":null,"candidates":1},
+                 "callers":[{"depth":1,"repository_id":"01REPO","path":"src/a.rs","line":3,"name":"a","confidence":"exact","step":"file","candidates":1},
+                            {"depth":1,"repository_id":"01WEB","path":"src/client.ts","line":5,"name":"fetchItem","confidence":"heuristic","step":"route","candidates":3}],
                  "stopped":["hot"]}]"#,
             r#"[{"id":"01REPO","path":"/repos/api"},{"id":"01WEB","path":"/repos/web"}]"#,
         ])
@@ -2306,10 +2383,10 @@ mod tests {
             text.text,
             "# /repos/api\n\
              ## src/inner/m.rs:2 b — callers: 2\n\
-             1 src/a.rs:3 a exact\n\
+             1 src/a.rs:3 a exact via file\n\
              hot has more than 200 callers: the walk stopped there.\n\
              # /repos/web\n\
-             1 src/client.ts:5 fetchItem heuristic\n"
+             1 src/client.ts:5 fetchItem heuristic via route, 3 candidates\n"
         );
     }
 

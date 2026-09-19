@@ -44,7 +44,12 @@ import {
   knowledgeStatusQueryOptions,
   useReindexKnowledge,
 } from "./queries"
-import { CONFIDENCE_LABELS, INTERACTION_KIND_LABELS, KNOWLEDGE_STATE_META } from "./status"
+import {
+  CONFIDENCE_LABELS,
+  INTERACTION_KIND_LABELS,
+  KNOWLEDGE_STATE_META,
+  STEP_LABELS,
+} from "./status"
 import type {
   KnowledgeEndpointDto,
   KnowledgeInteractionGroupDto,
@@ -355,6 +360,8 @@ function InteractionGroup({ group }: { group: KnowledgeInteractionGroupDto }) {
             <Badge variant={edge.confidence === "exact" ? "secondary" : "outline"}>
               {CONFIDENCE_LABELS[edge.confidence]}
             </Badge>
+            {/* What the confidence rests on: the step that joined the ends. */}
+            <span className="text-muted-foreground">via {STEP_LABELS[edge.step]}</span>
           </li>
         ))}
       </ul>

@@ -9,10 +9,11 @@
 //! 3. the modules the file imports,
 //! 4. any definition of that name in the repository.
 //!
-//! The first of those that holds a definition is the one that answers. One
-//! definition there is `exact`; several are `heuristic`, the count is kept,
-//! and an edge is written to each — an author asking who calls a name is
-//! better served by a list that holds the answer than by a guess.
+//! The first of those that holds a definition is the one that answers, and
+//! the edge says which one did. One definition there is `exact`; several are
+//! `heuristic`, the count is kept, and an edge is written to each — an author
+//! asking who calls a name is better served by a list that holds the answer
+//! than by a guess.
 //!
 //! The second half is what joins two repositories, or two files of one: the
 //! interfaces of [`crate::interfaces`], matched by name and by route, in
@@ -90,7 +91,19 @@ pub(crate) struct Edge {
     /// named. `None` on a symbol edge within one repository.
     pub name: Option<String>,
     pub confidence: &'static str,
+    /// Which step answered the name: one of the four of rule 9 for a symbol
+    /// edge, and what joined the two ends for an interface edge.
+    pub step: &'static str,
     pub candidates: i64,
+}
+
+/// What a name resolved to: the definitions of the step that answered, which
+/// step that was, and whether one of them matched or several.
+#[derive(Clone, Debug)]
+pub(crate) struct Resolved<'a> {
+    pub candidates: Vec<&'a Candidate>,
+    pub step: &'static str,
+    pub confidence: &'static str,
 }
 
 /// The kinds an interface edge can be: the edges [`interface_edges`]
@@ -117,6 +130,7 @@ pub(crate) fn interface_edges(
                     to_line: i64,
                     name: &str,
                     confidence: &'static str,
+                    step: &'static str,
                     candidates: i64| {
         let key = (
             kind.to_string(),
@@ -137,6 +151,7 @@ pub(crate) fn interface_edges(
                 to_line,
                 name: Some(name.to_string()),
                 confidence,
+                step,
                 candidates,
             });
         }
@@ -152,9 +167,9 @@ pub(crate) fn interface_edges(
         .iter()
         .filter(|row| row.kind == "dependency" || row.kind == "path_dependency")
     {
-        let confidence = match dependency.kind.as_str() {
-            "path_dependency" => "exact",
-            _ => "heuristic",
+        let (confidence, step) = match dependency.kind.as_str() {
+            "path_dependency" => ("exact", "path"),
+            _ => ("heuristic", "name"),
         };
         for package in packages.iter().filter(|p| p.name == dependency.name) {
             push(
@@ -165,6 +180,7 @@ pub(crate) fn interface_edges(
                 package.line,
                 &package.name,
                 confidence,
+                step,
                 1,
             );
         }
@@ -185,7 +201,7 @@ pub(crate) fn interface_edges(
                 .split_whitespace()
                 .filter_map(|name| handlers.get(name))
                 .filter_map(|matched| narrow(matched, &template.blob, &template.path, &[]))
-                .flat_map(|(step, _)| step)
+                .flat_map(|resolved| resolved.candidates)
                 .collect();
             match resolved.is_empty() {
                 true => push(
@@ -196,6 +212,7 @@ pub(crate) fn interface_edges(
                     template.line,
                     &template.name,
                     confidence,
+                    "route",
                     1,
                 ),
                 false => {
@@ -209,6 +226,7 @@ pub(crate) fn interface_edges(
                             handler.start_line,
                             &template.name,
                             confidence,
+                            "route",
                             count,
                         );
                     }
@@ -228,6 +246,7 @@ pub(crate) fn interface_edges(
                 read.line,
                 &read.name,
                 "exact",
+                "name",
                 1,
             );
         }
@@ -262,21 +281,21 @@ pub(crate) fn edges_of(
             })
         });
         // A name resolves the same way wherever in the file it is named.
-        let mut narrowed: HashMap<String, Option<(Vec<&Candidate>, &'static str)>> = HashMap::new();
+        let mut narrowed: HashMap<String, Option<Resolved>> = HashMap::new();
         // One edge per pair, within this blob. Per blob and not per run: a
         // mention at file scope has no definition to be from, so two files
         // that import the same name would share a key across the run and only
         // the first would get its edge.
         let mut seen: HashSet<(String, Option<i64>, i64)> = HashSet::new();
         for mention in names.mentions.iter().cloned().chain(imported) {
-            let step = narrowed.entry(mention.name.clone()).or_insert_with(|| {
+            let resolved = narrowed.entry(mention.name.clone()).or_insert_with(|| {
                 let matched = candidates.get(&mention.name)?;
                 narrow(matched, blob, &names.path, &modules)
             });
-            let Some((step, confidence)) = step else {
+            let Some(resolved) = resolved else {
                 continue;
             };
-            for candidate in step.iter() {
+            for candidate in resolved.candidates.iter() {
                 if Some(candidate.id) == mention.from_symbol {
                     continue;
                 }
@@ -293,8 +312,9 @@ pub(crate) fn edges_of(
                     to_symbol: Some(candidate.id),
                     to_line: candidate.start_line,
                     name: None,
-                    confidence,
-                    candidates: step.len() as i64,
+                    confidence: resolved.confidence,
+                    step: resolved.step,
+                    candidates: resolved.candidates.len() as i64,
                 });
             }
         }
@@ -343,6 +363,7 @@ pub(crate) fn foreign_edges(
                     to_line: candidate.start_line,
                     name: Some(name.clone()),
                     confidence: "heuristic",
+                    step: "name",
                     candidates: candidates.len() as i64,
                 });
             }
@@ -351,21 +372,25 @@ pub(crate) fn foreign_edges(
     edges
 }
 
-/// The definitions a name resolves to, and how sure that is: the nearest
-/// step that holds any, unless it holds more than [`MAX_CANDIDATES`].
+/// The definitions a name resolves to, which step answered and how sure that
+/// is: the nearest step that holds any, unless it holds more than
+/// [`MAX_CANDIDATES`].
 fn narrow<'a>(
     matched: &'a [Candidate],
     blob: &str,
     path: &str,
     modules: &[Vec<&str>],
-) -> Option<(Vec<&'a Candidate>, &'static str)> {
+) -> Option<Resolved<'a>> {
     let directory = directory_of(path);
-    let held = |step: Vec<&'a Candidate>| (!step.is_empty()).then_some(step);
+    let held = |step: &'static str, found: Vec<&'a Candidate>| {
+        (!found.is_empty()).then_some((step, found))
+    };
     let matched: Vec<&Candidate> = matched
         .iter()
         .filter(|candidate| !is_outline_only(candidate))
         .collect();
-    let step = held(
+    let (step, candidates) = held(
+        "file",
         matched
             .iter()
             .copied()
@@ -375,6 +400,7 @@ fn narrow<'a>(
     // The same module or directory.
     .or_else(|| {
         held(
+            "directory",
             matched
                 .iter()
                 .copied()
@@ -385,6 +411,7 @@ fn narrow<'a>(
     // What the file imports.
     .or_else(|| {
         held(
+            "import",
             matched
                 .iter()
                 .copied()
@@ -393,15 +420,19 @@ fn narrow<'a>(
         )
     })
     // Anywhere in the repository.
-    .or_else(|| held(matched))?;
-    if step.len() > MAX_CANDIDATES {
+    .or_else(|| held("repository", matched))?;
+    if candidates.len() > MAX_CANDIDATES {
         return None;
     }
-    let confidence = match step.len() {
+    let confidence = match candidates.len() {
         1 => "exact",
         _ => "heuristic",
     };
-    Some((step, confidence))
+    Some(Resolved {
+        candidates,
+        step,
+        confidence,
+    })
 }
 
 /// Whether a candidate is a definition from an outline-only format.
@@ -499,7 +530,7 @@ mod tests {
     /// A dependency joins the package it names, exactly by path and as a
     /// guess by name; a route use joins the template it fits, at the handler
     /// the registration named where the ref defines it; a set variable joins
-    /// every read of it.
+    /// every read of it. Each edge names the step that joined its two ends.
     #[test]
     fn interface_edges_join_a_dependency_a_route_use_and_a_set_variable() {
         let from = [
@@ -537,7 +568,7 @@ mod tests {
             .iter()
             .map(|e| {
                 format!(
-                    "{} {}:{} -> {}:{}{} {} {}",
+                    "{} {}:{} -> {}:{}{} {} {} via {}",
                     e.kind,
                     e.from_blob,
                     e.from_line,
@@ -545,18 +576,19 @@ mod tests {
                     e.to_line,
                     e.to_symbol.map(|id| format!("#{id}")).unwrap_or_default(),
                     e.name.as_deref().unwrap_or("-"),
-                    e.confidence
+                    e.confidence,
+                    e.step
                 )
             })
             .collect();
         assert_eq!(
             summary,
             [
-                "depends_on manifest:3 -> cargo:2 api-types heuristic",
-                "depends_on manifest:4 -> other:1 shared exact",
-                "calls_route client:8 -> handler:18#42 /v1/items/{id} heuristic",
-                "calls_route client:9 -> routes:13#70 /v1/items exact",
-                "sets_env env:1 -> handler:20 API_TOKEN exact",
+                "depends_on manifest:3 -> cargo:2 api-types heuristic via name",
+                "depends_on manifest:4 -> other:1 shared exact via path",
+                "calls_route client:8 -> handler:18#42 /v1/items/{id} heuristic via route",
+                "calls_route client:9 -> routes:13#70 /v1/items exact via route",
+                "sets_env env:1 -> handler:20 API_TOKEN exact via name",
             ]
         );
     }
@@ -603,17 +635,22 @@ mod tests {
 
         let mut edges = foreign_edges(&mentions, &defined);
         edges.sort_by_key(|e| (e.from_symbol, e.to_symbol));
-        let summary: Vec<(Option<i64>, Option<i64>, &str, i64)> = edges
+        let summary: Vec<String> = edges
             .iter()
-            .map(|e| (e.from_symbol, e.to_symbol, e.confidence, e.candidates))
+            .map(|e| {
+                format!(
+                    "{:?} -> {:?} {} via {}, {}",
+                    e.from_symbol, e.to_symbol, e.confidence, e.step, e.candidates
+                )
+            })
             .collect();
         assert_eq!(
             summary,
             [
-                (None, Some(10), "heuristic", 2),
-                (None, Some(11), "heuristic", 2),
-                (Some(1), Some(10), "heuristic", 2),
-                (Some(1), Some(11), "heuristic", 2),
+                "None -> Some(10) heuristic via name, 2",
+                "None -> Some(11) heuristic via name, 2",
+                "Some(1) -> Some(10) heuristic via name, 2",
+                "Some(1) -> Some(11) heuristic via name, 2",
             ]
         );
         assert!(edges.iter().all(|e| e.kind == "references"));
@@ -699,7 +736,8 @@ mod tests {
     }
 
     /// The four steps, in order: the same file beats the same directory,
-    /// which beats an import, which beats anywhere in the repository.
+    /// which beats an import, which beats anywhere in the repository. Each
+    /// answer names the step that gave it.
     #[test]
     fn a_name_resolves_at_the_nearest_step_that_holds_a_definition() {
         let matched = [
@@ -711,24 +749,35 @@ mod tests {
         let imports = [module_segments("other::m")];
         let elsewhere = [module_segments("nowhere")];
 
-        let (step, confidence) = narrow(&matched, "here", "src/a.rs", &imports).unwrap();
-        assert_eq!(step[0].id, 1, "the same file first");
-        assert_eq!(confidence, "exact");
+        let resolved = narrow(&matched, "here", "src/a.rs", &imports).unwrap();
+        assert_eq!(resolved.candidates[0].id, 1, "the same file first");
+        assert_eq!(resolved.step, "file");
+        assert_eq!(resolved.confidence, "exact");
 
-        let (step, confidence) = narrow(&matched, "nothing", "src/a.rs", &imports).unwrap();
-        let ids: Vec<i64> = step.iter().map(|c| c.id).collect();
+        let resolved = narrow(&matched, "nothing", "src/a.rs", &imports).unwrap();
+        let ids: Vec<i64> = resolved.candidates.iter().map(|c| c.id).collect();
         assert_eq!(ids, [1, 2], "then the same directory");
-        assert_eq!(confidence, "heuristic", "two definitions is a guess");
-
-        let (step, _) = narrow(&matched, "nothing", "far/away.rs", &imports).unwrap();
+        assert_eq!(resolved.step, "directory");
         assert_eq!(
-            step.iter().map(|c| c.id).collect::<Vec<_>>(),
+            resolved.confidence, "heuristic",
+            "two definitions is a guess"
+        );
+
+        let resolved = narrow(&matched, "nothing", "far/away.rs", &imports).unwrap();
+        assert_eq!(
+            resolved.candidates.iter().map(|c| c.id).collect::<Vec<_>>(),
             [3],
             "then what the file imports"
         );
+        assert_eq!(resolved.step, "import");
 
-        let (step, _) = narrow(&matched, "nothing", "far/away.rs", &elsewhere).unwrap();
-        assert_eq!(step.len(), 4, "then anywhere in the repository");
+        let resolved = narrow(&matched, "nothing", "far/away.rs", &elsewhere).unwrap();
+        assert_eq!(
+            resolved.candidates.len(),
+            4,
+            "then anywhere in the repository"
+        );
+        assert_eq!(resolved.step, "repository");
     }
 
     /// A name that matches more definitions than the cap says nothing about

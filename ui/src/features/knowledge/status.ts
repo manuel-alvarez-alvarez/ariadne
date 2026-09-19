@@ -4,7 +4,12 @@
  * feature's status module is (see `@/features/tasks/status.ts`).
  */
 
-import type { KnowledgeConfidence, KnowledgeInteractionKind, KnowledgeState } from "./types"
+import type {
+  KnowledgeConfidence,
+  KnowledgeInteractionKind,
+  KnowledgeState,
+  KnowledgeStep,
+} from "./types"
 
 interface StateMeta {
   label: string
@@ -43,4 +48,15 @@ export const INTERACTION_KIND_LABELS: Record<KnowledgeInteractionKind, string> =
 export const CONFIDENCE_LABELS: Record<KnowledgeConfidence, string> = {
   exact: "Exact",
   heuristic: "Heuristic",
+}
+
+/** What answered the name, read beside the confidence: "via same directory". */
+export const STEP_LABELS: Record<KnowledgeStep, string> = {
+  file: "same file",
+  directory: "same directory",
+  import: "import",
+  repository: "repository",
+  path: "path",
+  route: "route",
+  name: "name",
 }

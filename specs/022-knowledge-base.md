@@ -95,17 +95,19 @@ agent to do with the tools (017); and the memory tools beside these (019).
    language names no import, and its references resolve on the three steps
    that are left.
 9. A mention becomes edges by looking for the definitions of its name in
-   four places, nearest first: the same file, the same directory, the modules
-   the file imports, and then anywhere in the repository at that ref. The
-   first of those that holds a definition answers. One definition there is
-   one edge marked `exact`; several are one edge to each, marked `heuristic`,
-   and every edge carries how many matched. A step that holds more than 20
-   definitions says nothing about which one was meant, and the mention is left
-   unresolved. At every step, definitions from outline-only formats do not
-   hold a candidate; a step with only those definitions is empty and the
-   search continues. A module is what an import named where the definition's path,
-   or its qualified name, carries the module's segments, past `crate`, `self`,
-   `super` and a leading `.` or `/`.
+   four places, nearest first: the same file, the same directory, the
+   modules the file imports, and then anywhere in the repository at that
+   ref. The first of those that holds a definition answers. One definition
+   there is one edge marked `exact`; several are one edge to each, marked
+   `heuristic`, and every edge carries the step that answered — `file`,
+   `directory`, `import` or `repository` — and how many definitions matched
+   there. A step that holds more than 20 definitions says nothing about
+   which one was meant, and the mention is left unresolved. At every step,
+   definitions from outline-only formats do not hold a candidate; a step
+   with only those definitions is empty and the search continues. A module
+   is what an import named where the definition's path, or its qualified
+   name, carries the module's segments, past `crate`, `self`, `super` and a
+   leading `.` or `/`.
 10. An edge joins two ends, each a blob at one ref of one repository, a line,
     and the definition there where there is one. A symbol edge (rule 9) is
     keyed by the referencing blob at one ref of one repository, so deriving
@@ -175,35 +177,38 @@ agent to do with the tools (017); and the memory tools beside these (019).
     that ref is a 404.
 22. `GET /v1/knowledge/symbol` takes `name`, and optionally `repository`,
     `git_ref` and `detail` (`outline`, `source` or `context`; `outline` by
-    default). It answers one `KnowledgeSymbolDto` per definition of the name,
-    in path order: `repository_id`, `path`, `start_line`, `end_line`, `kind`,
-    `name`, `signature` and `doc`. `source` adds `source`, the text of the
-    definition, read from the blob it was parsed from. `context` adds
+    default). It answers one `KnowledgeSymbolDto` per definition of the
+    name, in path order: `repository_id`, `path`, `start_line`, `end_line`,
+    `kind`, `name`, `signature` and `doc`. `source` adds `source`, the text
+    of the definition, read from the blob it was parsed from. `context` adds
     `callers` (the `calls` and `calls_route` edges into it), `callees`,
     `implementations`, `references` (the `references` and `imports` edges
     into it, which is where a reference from another repository is listed)
-    and `tests`, each a list of `repository_id`, `path`, `line`, `name` and
-    `confidence`, each capped at 20 entries, and each listing the
-    definition's own repository first and every other repository's ends
-    after it. `context` also adds `more`: `callers`, `callees`,
-    `implementations`, `references` and `tests`, each how many entries the
-    matching list held back past its cap, 0 where the list is whole. Without
-    `repository` a user reads every repository, and an agent session the
-    repositories of its goal; the ref is the caller's own (rule 20).
+    and `tests`, each a list of `repository_id`, `path`, `line`, `name`,
+    `confidence`, `step` and `candidates`, each capped at 20 entries, and
+    each listing the definition's own repository first and every other
+    repository's ends after it. `context` also adds `more`: `callers`,
+    `callees`, `implementations`, `references` and `tests`, each how many
+    entries the matching list held back past its cap, 0 where the list is
+    whole. Without `repository` a user reads every repository, and an agent
+    session the repositories of its goal; the ref is the caller's own (rule
+    20).
 23. `GET /v1/knowledge/impact` takes `repository`, optionally `git_ref` and
     `depth` (default 2, max 4), and exactly one of `symbol` and `diff`
     (`<base>..<head>`) — neither and both are refused. `symbol` names every
-    definition of that name; `diff` names every definition whose lines a hunk
-    of `git diff --unified=0 <base>..<head>` touched. A value that could read
-    as a git flag is refused rather than run. For each changed definition it
-    answers a `KnowledgeImpactDto`: the `symbol` itself, its `callers` by
-    depth (`depth`, `repository_id`, `path`, `line`, `name`, `confidence`,
-    each caller once and at its shortest depth), and `stopped`, the
-    definitions the walk did not go past because each has more than 200
-    callers. The walk follows `calls` and `calls_route` edges alike, so a
-    request in another repository is a caller of the handler it reaches, and
-    the walk goes on in that repository at the ref the edge names. Within one
-    depth the changed definition's own repository comes first.
+    definition of that name; `diff` names every definition whose lines a
+    hunk of `git diff --unified=0 <base>..<head>` touched. A value that
+    could read as a git flag is refused rather than run. For each changed
+    definition it answers a `KnowledgeImpactDto`: the `symbol` itself, whose
+    `step` is null because it is a definition and no end of an edge, its
+    `callers` by depth (`depth`, `repository_id`, `path`, `line`, `name`,
+    `confidence`, `step`, `candidates`, each caller once and at its shortest
+    depth), and `stopped`, the definitions the walk did not go past because
+    each has more than 200 callers. The walk follows `calls` and
+    `calls_route` edges alike, so a request in another repository is a
+    caller of the handler it reaches, and the walk goes on in that
+    repository at the ref the edge names. Within one depth the changed
+    definition's own repository comes first.
 24. Every index run publishes `knowledge_indexed` (`repository_id`,
     `git_ref`, `commit`, `files`, `symbols`) on the domain stream, and a
     failed run `knowledge_failed` (`repository_id`, `error`) (012). Neither
@@ -224,22 +229,24 @@ agent to do with the tools (017); and the memory tools beside these (019).
     `path:line kind name signature` for a search (each line led by its
     repository id where the answer spans several), `path:start-end kind name
     signature` for an outline. `symbol`, `path` and `impact` group their
-    answer under
-    headings: `# <repository path>` per repository — the path the repository
-    is registered at, read once per call from `GET /v1/repositories`, which
-    is what an agent knows a repository by; its id where it is no longer
-    listed — `## <location> …` per definition, and `###
-    callers|callees|implementations|references|tests` per list of a context,
-    an empty list reading `(none)`, and a list past its cap ending with a
-    line naming how many more matched and saying to narrow the query. The
-    lists under a definition hold its own repository's ends; every other
-    repository's ends follow under a `#`
+    answer under headings: `# <repository path>` per repository — the path
+    the repository is registered at, read once per call from `GET
+    /v1/repositories`, which is what an agent knows a repository by; its id
+    where it is no longer listed — `## <location> …` per definition, and
+    `### callers|callees|implementations|references|tests` per list of a
+    context, an empty list reading `(none)`, and a list past its cap ending
+    with a line naming how many more matched and saying to narrow the query.
+    An end of a list reads `path:line name <confidence> via <step>`, and `,
+    <n> candidates` where the step held more than one — `heuristic via
+    directory, 3 candidates`, `exact via file` — and an impact's caller
+    reads the same after its depth. The lists under a definition hold its
+    own repository's ends; every other repository's ends follow under a `#`
     heading of that repository's own, with only the lists it has an end in
-    (`symbol`), its ordered hops (`path`), or its callers alone (`impact`). A
-    path hop is `path:line kind name <- edge_kind confidence`, with no edge on
-    the first hop; an empty path is `(no path within N)`. An answer is cut at
-    8 KiB, with a last line naming how many results were left and saying to
-    narrow the query.
+    (`symbol`), its ordered hops (`path`), or its callers alone (`impact`).
+    A path hop is `path:line kind name <- edge_kind confidence`, with no
+    edge on the first hop; an empty path is `(no path within N)`. An answer
+    is cut at 8 KiB, with a last line naming how many results were left and
+    saying to narrow the query.
 27. `ariadne knowledge status|reindex|search|outline|symbol|path|impact|interactions|map`
     (014) read the same endpoints. `search` takes `--repository`, `--ref`,
     `--kind`, `--path` and `--limit`; `outline` takes the repository, the path
@@ -252,9 +259,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
     `impact` and `interactions` are listings,
     whose `-q` prints `path:line` and the line range — an interaction row
     leads with its from end as `repository:path:line`, and names its kind,
-    its to end and its confidence; `--format json` prints the daemon's
-    groups; `symbol` prints a block per definition, an end in another
-    repository led by that repository's id.
+    its to end, its confidence and the step that joined them, which an
+    impact row names too; `--format json` prints the daemon's groups;
+    `symbol` prints a block per definition, an end in another repository led
+    by that repository's id and followed by its confidence, its step and its
+    candidate count.
 28. `knowledge_enabled` in `config.toml` defaults to true. False, the daemon
     indexes nothing and opens no store, the status says `disabled`, a
     search, an outline or a reindex is refused with a line naming the key,
@@ -264,8 +273,9 @@ agent to do with the tools (017); and the memory tools beside these (019).
 29. The desktop app's knowledge page (015) shows the status card, a Reindex
     button that posts the reindex and shows `indexing` at once, a search box
     over `q`, `kind` and `path`, and the interactions of the repository
-    grouped by kind — reached from a row on the repositories screen and from
-    the command palette, the way the memory page (019) is reached from its
+    grouped by kind, each edge naming the step beside its confidence —
+    reached from a row on the repositories screen and from the command
+    palette, the way the memory page (019) is reached from its
     row. `knowledge_indexed` and `knowledge_failed` refetch what the page
     shows for their repository and leave every other repository's caches
     alone.
@@ -333,10 +343,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
     the base branch the daemon records before it reads it, and the first ref
     indexed until it does; a repository whose base ref is not indexed is
     left out. Three edges come off the interfaces, marked `exact` or
-    `heuristic`:
+    `heuristic`, each naming the step that joined its two ends:
     - `depends_on`, from a dependency to every package of the same name the
-      other ref defines: `exact` for a path dependency, `heuristic` for one
-      by name. Both ends are manifest lines and no definition.
+      other ref defines: `exact` at step `path` for a path dependency,
+      `heuristic` at step `name` for one by name. Both ends are manifest
+      lines and no definition.
     - `calls_route`, from a route use to every template it fits segment by
       segment, a segment that starts with `:`, `{`, `<`, `*` or `$` or holds
       `$` or `{` standing for any value on either side: `exact` where every
@@ -345,25 +356,28 @@ agent to do with the tools (017); and the memory tools beside these (019).
       the definition of a handler name the template carries, in the
       template's own file first, then its directory, then anywhere in the
       ref under the candidate cap, one edge to each; and at the registration
-      itself, with the definition it sits in, where none resolves. A definition
-      of an outline-only format does not answer a handler name.
-    - `sets_env`, from a set to every read of the same variable, `exact`.
+      itself, with the definition it sits in, where none resolves. A
+      definition of an outline-only format does not answer a handler name.
+      Its step is `route`.
+    - `sets_env`, from a set to every read of the same variable, `exact` at
+      step `name`.
     Then, between two repositories only, `references`: every mention or
     named import of a name at least 4 characters long that the ref defines
     nowhere, pointed at every non-outline definition of that name the other
-    ref holds under the candidate cap, `heuristic`, carrying how many matched, and
-    keyed by the name. Where the ref's manifests depend on some registered
-    repository but not on this one, and one it depends on also defines the
-    name at its base ref, the name is taken to mean that one's definition and
-    makes no edge here. The interface edges of a pair are derived before its
-    references, which is what that reads.
+    ref holds under the candidate cap, `heuristic` at step `name`, carrying
+    how many matched, and keyed by the name. Where the ref's manifests
+    depend on some registered repository but not on this one, and one it
+    depends on also defines the name at its base ref, the name is taken to
+    mean that one's definition and makes no edge here. The interface edges
+    of a pair are derived before its references, which is what that reads.
 32. `GET /v1/knowledge/interactions` takes `repository` and optionally
     `git_ref` (the caller's own by default, rule 20), and answers the edges
     whose from end or to end is that ref and whose other end is another
     repository — the edges of rule 31 and no edge within one repository —
     as `KnowledgeInteractionGroupDto`s, one per kind that has an edge, in
     the order `depends_on`, `references`, `calls_route`, `sets_env`, each
-    holding `kind` and `edges`. An edge is `from`, `to` and `confidence`;
+    holding `kind` and `edges`. An edge is `from`, `to`, `confidence`,
+    `step` and `candidates`;
     each end is a `KnowledgeEndpointDto` — `repository_id`, `path`, `line`
     and `symbol`, the definition at that end, or what the edge is about
     (the package, the route template, the variable, the referenced name)
@@ -492,7 +506,7 @@ scan of its lines.
 
 ## Schema
 
-`crates/ariadne-knowledge/src/schema.sql`, version 5:
+`crates/ariadne-knowledge/src/schema.sql`, version 6:
 
 | Table | Columns | Holds |
 | --- | --- | --- |
@@ -505,7 +519,7 @@ scan of its lines.
 | `mentions` | `blob`, `kind`, `name`, `line`, `from_symbol` | the names one blob names, before they are resolved |
 | `imports` | `blob`, `module`, `name`, `line` | the import statements of one blob |
 | `interfaces` | `blob`, `kind`, `name`, `line`, `symbol`, `handlers` | the packages, routes and variables of one blob (rule 30), before they are linked |
-| `edges` | `from_repository`, `git_ref`, `from_blob`, `kind`, `from_symbol`, `from_line`, `to_repository`, `to_ref`, `to_blob`, `to_symbol`, `to_line`, `name`, `confidence`, `candidates` | the relations the resolution and link passes derived, each end a blob at a ref of a repository, a line and a definition where there is one |
+| `edges` | `from_repository`, `git_ref`, `from_blob`, `kind`, `from_symbol`, `from_line`, `to_repository`, `to_ref`, `to_blob`, `to_symbol`, `to_line`, `name`, `confidence`, `step`, `candidates` | the relations the resolution and link passes derived, each end a blob at a ref of a repository, a line and a definition where there is one, each naming the step that answered and how many definitions matched there |
 
 `refs` cascade from `repositories`, `files` from `refs`, and `symbols`,
 `mentions`, `imports`, `interfaces` and `edges` from `blobs` and `symbols`.
@@ -516,9 +530,11 @@ it.
 
 `edges` is indexed in both directions, `(from_repository, git_ref, kind,
 from_symbol, to_symbol, confidence)` and `(to_repository, to_ref, kind,
-to_symbol, from_symbol, confidence)`, so a walk over the graph reads an
-index and no rows of the table, and the edges into a definition are found
-under its own repository and ref whichever repository they come from; and by
+to_symbol, from_symbol, confidence)`, so counting the callers of a level
+reads an index and no rows of the table, the listing then reading one row per
+edge it answers with, for its step and its candidate count; the edges into a
+definition are found under its own repository and ref whichever repository
+they come from; and by
 `(from_repository, git_ref, from_blob)`, which is what deriving a blob's edges
 again deletes by. `files` is indexed by `(blob, repository_id, git_ref)`,
 which is what reading an end's path back joins by. `symbols` is indexed by
@@ -571,6 +587,10 @@ and by `(kind, name)`.
   (`knowledge.rs::a_call_through_an_import_resolves_to_the_definition_it_named`);
   a name two files define, imported by neither, is a guess, and both are
   listed (`::a_name_defined_twice_resolves_to_both_as_a_guess`).
+- An edge names the step that resolved it: a same-file call reads `exact`,
+  step `file`, 1 candidate, and a name two files define, imported by neither,
+  reads `heuristic`, step `repository`, 2 candidates
+  (`knowledge.rs::an_edge_names_the_step_that_resolved_it`).
 - Two files that import the same name each get an edge of their own
   (`resolve.rs::two_files_that_import_the_same_name_each_get_an_edge`).
 - Edges belong to the ref they were resolved at: two refs share the blob of an
@@ -657,17 +677,17 @@ and by `(kind, name)`.
   `/v1/items/{id}` and a read of `API_TOKEN`) and `web` (TypeScript: a
   dependency on `api-types`, a `new Item()`, a request to `/v1/items/42`
   and a `.env` that sets `API_TOKEN`) registered, `interactions` for `web`
-  lists one edge of each kind with its ends and confidence — the
-  dependency, the reference and the wildcard route as guesses, the variable
-  exact — `api` lists the same edges from its side, and removing the
-  dependency from `web` and reading it again removes the `depends_on` edge
-  and no other
+  lists one edge of each kind with its ends, its confidence and its step —
+  the dependency, the reference and the wildcard route as guesses, by
+  `name`, by `name` and by `route`, and the variable exact by `name` — `api`
+  lists the same edges from its side, and removing the dependency from `web`
+  and reading it again removes the `depends_on` edge and no other
   (`tests/it/knowledge.rs::interactions_between_two_repositories_are_listed_by_kind`).
 - `impact --diff` for a change to the route handler in `api` lists the `web`
-  call site, under `web`
+  call site, under `web`, at step `route`
   (`tests/it/knowledge.rs::a_route_handler_change_reaches_the_call_site_in_the_other_repository`).
 - `symbol Item --detail context` from `api` lists the `web` reference under
-  `web` with confidence `heuristic`
+  `web` with confidence `heuristic` at step `name`
   (`tests/it/knowledge.rs::a_type_named_in_the_other_repository_lists_that_reference_as_a_guess`).
 - A ref that does not resolve fails the run, and the status says why
   (`knowledge.rs::a_ref_that_does_not_resolve_fails_the_run`,
@@ -741,6 +761,9 @@ and by `(kind, name)`.
   (`tools.rs::symbol_groups_its_answer_under_a_heading_for_each_repository`),
   and takes the task's repository by default
   (`::symbol_defaults_to_the_task_repository`).
+- Each end of a `symbol` answer names the step that resolved it, and the
+  candidate count where the step held several
+  (`tools.rs::symbol_prints_the_step_and_the_candidate_count_of_each_end`).
 - `impact` with no argument is the task's own diff for a reviewer, and the
   callers in another repository sit under that repository's path
   (`tools.rs::impact_reads_the_task_diff_for_a_reviewer_that_names_nothing`),
@@ -764,11 +787,14 @@ and by `(kind, name)`.
   row, an impact row and an interaction row each lead with their location
   (`commands/knowledge.rs::a_search_row_leads_with_its_location_and_titles_the_symbol`,
   `::an_impact_row_leads_with_its_location_and_says_how_far_away_it_is`,
-  `::an_interaction_row_leads_with_its_from_end_and_names_its_kind`).
+  `::an_interaction_row_leads_with_its_from_end_and_names_its_kind`), and an
+  end of a `symbol` block names its step and its candidate count
+  (`::an_end_row_names_the_step_that_resolved_it`).
 - The desktop knowledge page renders the status card in every state, posts a
   reindex and shows `indexing` at once, refetches once `knowledge_indexed` or
   `knowledge_failed` arrives, searches with `q`, `kind` and `path`, and groups
-  interactions by kind with both ends and their confidence
+  interactions by kind with both ends, their confidence and the step each
+  rests on
   (`ui/src/features/knowledge/knowledge-page.test.tsx`).
 - `knowledge_indexed` and `knowledge_failed` invalidate a repository's
   knowledge status and every interactions list under it, and leave another

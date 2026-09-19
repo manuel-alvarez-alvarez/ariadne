@@ -23,7 +23,7 @@ use crate::resolve::{
 
 /// The schema this build writes. Bump it with every change to `schema.sql`:
 /// a store at another version is thrown away and indexed again.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// The edge kinds a walk of the callers follows: a call, and a request of
 /// a route the definition handles.
@@ -210,6 +210,11 @@ pub struct Related {
     pub name: String,
     /// `exact` or `heuristic`.
     pub confidence: String,
+    /// Which step answered the name, or `None` where the end is a definition
+    /// itself rather than the other end of an edge.
+    pub step: Option<String>,
+    /// How many definitions matched at that step.
+    pub candidates: i64,
 }
 
 /// What one definition is joined to.
@@ -258,6 +263,11 @@ pub struct Interaction {
     pub from: InteractionEnd,
     pub to: InteractionEnd,
     pub confidence: String,
+    /// Which step joined the two ends: `path` or `name` for a dependency,
+    /// `route` for a route use, `name` for a variable and for a reference.
+    pub step: String,
+    /// How many definitions matched at that step.
+    pub candidates: i64,
 }
 
 /// The order the interaction kinds are listed in.
@@ -273,6 +283,10 @@ pub struct ImpactCaller {
     pub line: i64,
     pub name: String,
     pub confidence: String,
+    /// Which step answered the name the call was resolved by.
+    pub step: String,
+    /// How many definitions matched at that step.
+    pub candidates: i64,
 }
 
 /// One definition on a shortest directed path. The edge fields name the
@@ -813,7 +827,8 @@ impl KnowledgeStore {
 
         let limit = limit.max(1);
         let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT DISTINCT f.repository_id, f.path, s.start_line AS line, s.name, e.confidence
+            "SELECT DISTINCT f.repository_id, f.path, s.start_line AS line, s.name, e.confidence,
+                    e.step, e.candidates
              FROM edges e JOIN symbols s ON s.id = e.",
         );
         where_clause(&mut sql);
@@ -898,7 +913,7 @@ impl KnowledgeStore {
                 for chunk in wanted.chunks(CHUNK) {
                     let mut sql = QueryBuilder::<Sqlite>::new(
                         "SELECT DISTINCT s.id, f.repository_id, f.git_ref, f.path, s.start_line,
-                                s.name, e.confidence
+                                s.name, e.confidence, e.step, e.candidates
                          FROM edges e
                          JOIN symbols s ON s.id = e.from_symbol
                          JOIN files f ON f.blob = s.blob AND f.repository_id = e.from_repository
@@ -916,20 +931,21 @@ impl KnowledgeStore {
                         values.push_bind(id);
                     }
                     sql.push(")");
-                    let rows: Vec<(i64, String, String, String, i64, String, String)> =
-                        sql.build_query_as().fetch_all(&self.read).await?;
-                    for (id, repository, git_ref, path, line, name, confidence) in rows {
-                        if !seen.insert(id) {
+                    let rows: Vec<CallerRow> = sql.build_query_as().fetch_all(&self.read).await?;
+                    for row in rows {
+                        if !seen.insert(row.id) {
                             continue;
                         }
-                        next.push((id, repository.clone(), git_ref));
+                        next.push((row.id, row.repository_id.clone(), row.git_ref));
                         callers.push(ImpactCaller {
                             depth: at,
-                            repository_id: repository,
-                            path,
-                            line,
-                            name,
-                            confidence,
+                            repository_id: row.repository_id,
+                            path: row.path,
+                            line: row.start_line,
+                            name: row.name,
+                            confidence: row.confidence,
+                            step: row.step,
+                            candidates: row.candidates,
                         });
                     }
                 }
@@ -1151,7 +1167,7 @@ impl KnowledgeStore {
                     COALESCE(sf.name, e.name, '') AS from_symbol,
                     e.to_repository, ft.path AS to_path, e.to_line,
                     COALESCE(st.name, e.name, '') AS to_symbol,
-                    e.confidence
+                    e.confidence, e.step, e.candidates
              FROM edges e
              JOIN files ff ON ff.blob = e.from_blob AND ff.repository_id = e.from_repository
                           AND ff.git_ref = e.git_ref
@@ -1185,6 +1201,8 @@ impl KnowledgeStore {
                     symbol: row.to_symbol,
                 },
                 confidence: row.confidence,
+                step: row.step,
+                candidates: row.candidates,
             })
             .collect();
         let rank = |kind: &str| {
@@ -1406,6 +1424,9 @@ impl KnowledgeStore {
                         line,
                         name,
                         confidence: "exact".into(),
+                        // The definition itself, which no step resolved.
+                        step: None,
+                        candidates: 1,
                     },
                 ));
             }
@@ -2229,6 +2250,21 @@ fn join_path(
     answer
 }
 
+/// One caller of one level of a walk, as the query reads it: the symbol, the
+/// ref its file is read at, and what the edge into it rests on.
+#[derive(sqlx::FromRow)]
+struct CallerRow {
+    id: i64,
+    repository_id: String,
+    git_ref: String,
+    path: String,
+    start_line: i64,
+    name: String,
+    confidence: String,
+    step: String,
+    candidates: i64,
+}
+
 /// One interaction as the query reads it, both ends flat.
 #[derive(sqlx::FromRow)]
 struct InteractionRow {
@@ -2242,6 +2278,8 @@ struct InteractionRow {
     to_line: i64,
     to_symbol: String,
     confidence: String,
+    step: String,
+    candidates: i64,
 }
 
 /// Which end of an edge a listing names.
@@ -2273,8 +2311,8 @@ fn push_kinds(sql: &mut QueryBuilder<Sqlite>, table: &str, kinds: &[&str]) {
     sql.push(")");
 }
 
-/// Insert `edges` from one ref to another, ten values a row so a chunk stays
-/// well under SQLite's bind limit.
+/// Insert `edges` from one ref to another, fifteen values a row so a chunk
+/// stays well under SQLite's bind limit.
 async fn insert_edges(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     from_repository: &str,
@@ -2283,11 +2321,11 @@ async fn insert_edges(
     to_ref: &str,
     edges: &[Edge],
 ) -> Result<()> {
-    for chunk in edges.chunks(CHUNK / 14) {
+    for chunk in edges.chunks(CHUNK / 15) {
         let mut sql = QueryBuilder::<Sqlite>::new(
             "INSERT INTO edges (from_repository, git_ref, from_blob, kind, from_symbol, from_line,
                                 to_repository, to_ref, to_blob, to_symbol, to_line, name,
-                                confidence, candidates) ",
+                                confidence, step, candidates) ",
         );
         sql.push_values(chunk, |mut row, edge| {
             row.push_bind(from_repository)
@@ -2303,6 +2341,7 @@ async fn insert_edges(
                 .push_bind(edge.to_line)
                 .push_bind(&edge.name)
                 .push_bind(edge.confidence)
+                .push_bind(edge.step)
                 .push_bind(edge.candidates);
         });
         sql.build().execute(&mut **tx).await?;
@@ -2570,6 +2609,7 @@ mod tests {
                         to_line: 1,
                         name: None,
                         confidence: "exact",
+                        step: "file",
                         candidates: 1,
                     })
                 })
@@ -2655,6 +2695,7 @@ mod tests {
             to_line: to.start_line,
             name: None,
             confidence: "exact",
+            step: "file",
             candidates: 1,
         };
         store

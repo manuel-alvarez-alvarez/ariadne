@@ -225,6 +225,8 @@ describe("interactions", () => {
             from: { repository_id: REPOSITORY.id, path: "src/main.rs", line: 10, symbol: "main" },
             to: { repository_id: REPOSITORY.id, path: "src/lib.rs", line: 1, symbol: "run" },
             confidence: "exact",
+            step: "path",
+            candidates: 1,
           },
         ],
       },
@@ -245,6 +247,8 @@ describe("interactions", () => {
               symbol: "get_goal",
             },
             confidence: "heuristic",
+            step: "route",
+            candidates: 3,
           },
         ],
       },
@@ -257,6 +261,36 @@ describe("interactions", () => {
     expect(screen.getByText(`${REPOSITORY.id}:src/lib.rs:1 run`)).toBeDefined()
     expect(screen.getByText("Exact")).toBeDefined()
     expect(screen.getByText("Heuristic")).toBeDefined()
+  })
+
+  it("names the step each edge rests on beside its confidence", async () => {
+    interactionGroups = [
+      {
+        kind: "calls_route",
+        edges: [
+          {
+            from: {
+              repository_id: REPOSITORY.id,
+              path: "src/client.ts",
+              line: 5,
+              symbol: "fetchGoal",
+            },
+            to: {
+              repository_id: "01JREPO0000000000000OTHER",
+              path: "src/routes.rs",
+              line: 88,
+              symbol: "get_goal",
+            },
+            confidence: "heuristic",
+            step: "route",
+            candidates: 3,
+          },
+        ],
+      },
+    ]
+    renderScreen(<KnowledgePage repositoryId={REPOSITORY.id} />)
+
+    expect(await screen.findByText("via route")).toBeDefined()
   })
 
   it("says there is nothing to show before any interaction is found", async () => {

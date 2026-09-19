@@ -320,6 +320,9 @@ pub async fn impact(
                         line: definition.start_line,
                         name: definition.name,
                         confidence: "exact".into(),
+                        // The definition itself, which no step resolved.
+                        step: None,
+                        candidates: 1,
                     },
                 )
             })
@@ -353,6 +356,8 @@ pub async fn impact(
                 line: symbol.line,
                 name: symbol.name,
                 confidence: symbol.confidence,
+                step: symbol.step,
+                candidates: symbol.candidates,
             },
             callers: callers
                 .into_iter()
@@ -363,6 +368,8 @@ pub async fn impact(
                     line: caller.line,
                     name: caller.name,
                     confidence: caller.confidence,
+                    step: caller.step,
+                    candidates: caller.candidates,
                 })
                 .collect(),
             stopped,
@@ -512,6 +519,8 @@ pub async fn interactions(
                 from: endpoint(&interaction.from),
                 to: endpoint(&interaction.to),
                 confidence: interaction.confidence.clone(),
+                step: interaction.step.clone(),
+                candidates: interaction.candidates,
             })
             .collect();
         if !edges.is_empty() {
@@ -541,6 +550,8 @@ fn related(ends: Vec<Related>) -> Vec<KnowledgeRelatedDto> {
             line: end.line,
             name: end.name,
             confidence: end.confidence,
+            step: end.step,
+            candidates: end.candidates,
         })
         .collect()
 }

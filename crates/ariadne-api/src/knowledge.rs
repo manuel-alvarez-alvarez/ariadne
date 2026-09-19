@@ -157,6 +157,12 @@ pub struct KnowledgeRelatedDto {
     /// `exact` where one definition matched the name, `heuristic` where
     /// several did.
     pub confidence: String,
+    /// Which step answered the name: `file`, `directory`, `import` or
+    /// `repository` within one repository, and `name` across two. Null where
+    /// the end is a definition itself rather than the other end of an edge.
+    pub step: Option<String>,
+    /// How many definitions matched at that step.
+    pub candidates: i64,
 }
 
 /// What one definition is joined to, on `detail=context`. Each list holds
@@ -246,6 +252,10 @@ pub struct KnowledgeImpactCallerDto {
     pub line: i64,
     pub name: String,
     pub confidence: String,
+    /// Which step answered the name the call was resolved by.
+    pub step: String,
+    /// How many definitions matched at that step.
+    pub candidates: i64,
 }
 
 /// What one changed definition reaches.
@@ -379,6 +389,11 @@ pub struct KnowledgeEdgeDto {
     pub to: KnowledgeEndpointDto,
     /// `exact` or `heuristic`.
     pub confidence: String,
+    /// Which step joined the two ends: `path` or `name` for a dependency,
+    /// `route` for a route use, `name` for a variable and for a reference.
+    pub step: String,
+    /// How many definitions matched at that step.
+    pub candidates: i64,
 }
 
 /// The interactions of one kind: `depends_on`, `references`, `calls_route`

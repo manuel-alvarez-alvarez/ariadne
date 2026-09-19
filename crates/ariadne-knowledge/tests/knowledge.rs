@@ -673,6 +673,24 @@ fn ends(list: &[ariadne_knowledge::Related]) -> Vec<String> {
         .collect()
 }
 
+/// [`ends`], and what the edge rests on: the step that answered the name and
+/// how many definitions matched there.
+fn steps(list: &[ariadne_knowledge::Related]) -> Vec<String> {
+    list.iter()
+        .map(|end| {
+            format!(
+                "{}:{} {} {} {} {}",
+                end.path,
+                end.line,
+                end.name,
+                end.confidence,
+                end.step.as_deref().unwrap_or("-"),
+                end.candidates
+            )
+        })
+        .collect()
+}
+
 /// A Rust file that calls a definition it brought in with `use` names that
 /// definition exactly, and the caller is listed as one.
 ///
@@ -814,6 +832,45 @@ async fn a_name_defined_twice_resolves_to_both_as_a_guess() {
             ["src/a.rs:1 a heuristic"],
             "{}",
             definition.path
+        );
+    }
+}
+
+/// Every edge names the step of the four that answered the name, and how
+/// many definitions matched there: a call inside one file is answered by the
+/// file, and a name two files define, imported by neither, by the repository.
+#[tokio::test]
+async fn an_edge_names_the_step_that_resolved_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            (
+                "src/same.rs",
+                "pub fn near() {}\n\npub fn a() {\n    near();\n}\n",
+            ),
+            // Two definitions of one name, in neither the caller's file nor
+            // its directory. Each says something of its own: two files of the
+            // same text are one blob and so one definition.
+            ("src/one/m.rs", "pub fn far() {}\n"),
+            ("src/two/m.rs", "pub fn far() {\n    let _ = 1;\n}\n"),
+            ("src/caller.rs", "pub fn c() {\n    far();\n}\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let near = only(&store, "near").await;
+    let context = store.context(near.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(steps(&context.callers), ["src/same.rs:3 a exact file 1"]);
+
+    for path in ["src/one/m.rs", "src/two/m.rs"] {
+        let far = definition_at(&store, "far", path).await;
+        let context = store.context(far.id, "repo", "main", 20).await.unwrap();
+        assert_eq!(
+            steps(&context.callers),
+            ["src/caller.rs:1 c heuristic repository 2"],
+            "{path}"
         );
     }
 }

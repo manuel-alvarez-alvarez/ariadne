@@ -54,10 +54,23 @@ export interface KnowledgeEndpointDto {
   symbol: string
 }
 
+/** Which step joined an edge's two ends: what the confidence rests on. */
+export type KnowledgeStep =
+  | "file"
+  | "directory"
+  | "import"
+  | "repository"
+  | "path"
+  | "route"
+  | "name"
+
 interface KnowledgeEdgeDto {
   from: KnowledgeEndpointDto
   to: KnowledgeEndpointDto
   confidence: KnowledgeConfidence
+  step: KnowledgeStep
+  /** How many definitions matched at that step. */
+  candidates: number
 }
 
 /** One group of `GET /v1/knowledge/interactions`, grouped by kind on the wire. */

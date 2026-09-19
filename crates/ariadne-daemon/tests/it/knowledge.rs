@@ -583,7 +583,7 @@ async fn api_and_web(h: &Harness, rx: &mut Receiver<BusEvent>) -> (Repository, R
     (api, web)
 }
 
-/// `kind from -> to confidence` per edge, each end as `repo:path:line
+/// `kind from -> to confidence step` per edge, each end as `repo:path:line
 /// symbol` with the repository named rather than its id.
 fn interaction_lines(
     groups: &[KnowledgeInteractionGroupDto],
@@ -600,7 +600,7 @@ fn interaction_lines(
         .flat_map(|group| {
             group.edges.iter().map(move |edge| {
                 format!(
-                    "{} {}:{}:{} {} -> {}:{}:{} {} {}",
+                    "{} {}:{}:{} {} -> {}:{}:{} {} {} {}",
                     group.kind,
                     name(&edge.from.repository_id),
                     edge.from.path,
@@ -610,17 +610,19 @@ fn interaction_lines(
                     edge.to.path,
                     edge.to.line,
                     edge.to.symbol,
-                    edge.confidence
+                    edge.confidence,
+                    edge.step
                 )
             })
         })
         .collect()
 }
 
-/// `interactions` for `web` lists one edge of each kind with its two ends
-/// and its confidence: the dependency by name is a guess, the reference is
-/// a guess, the route use with a wildcard segment is a guess, and the
-/// variable is exact. `api` lists the same edges from its side. Removing
+/// `interactions` for `web` lists one edge of each kind with its two ends,
+/// its confidence and the step that joined them: the dependency by name is a
+/// guess, the reference is a guess, the route use with a wildcard segment is
+/// a guess, and the variable is exact. `api` lists the same edges from its
+/// side. Removing
 /// the dependency and reading `web` again removes the `depends_on` edge and
 /// no other.
 #[tokio::test]
@@ -630,10 +632,10 @@ async fn interactions_between_two_repositories_are_listed_by_kind() {
     let (api, web) = api_and_web(&h, &mut rx).await;
 
     let expected = [
-        "depends_on web:package.json:4 api-types -> api:Cargo.toml:2 api-types heuristic",
-        "references web:src/client.ts:2 fetchItem -> api:src/lib.rs:2 Item heuristic",
-        "calls_route web:src/client.ts:3 fetchItem -> api:src/lib.rs:10 get_item heuristic",
-        "sets_env web:.env:1 API_TOKEN -> api:src/lib.rs:11 get_item exact",
+        "depends_on web:package.json:4 api-types -> api:Cargo.toml:2 api-types heuristic name",
+        "references web:src/client.ts:2 fetchItem -> api:src/lib.rs:2 Item heuristic name",
+        "calls_route web:src/client.ts:3 fetchItem -> api:src/lib.rs:10 get_item heuristic route",
+        "sets_env web:.env:1 API_TOKEN -> api:src/lib.rs:11 get_item exact name",
     ];
     let groups: Vec<KnowledgeInteractionGroupDto> = h
         .get(&format!("/v1/knowledge/interactions?repository={}", web.id))
@@ -670,7 +672,7 @@ async fn interactions_between_two_repositories_are_listed_by_kind() {
 }
 
 /// `impact --diff` for a change to the route handler in `api` lists the
-/// call site in `web`, under `web`.
+/// call site in `web`, under `web`, and says the route joined them.
 #[tokio::test]
 async fn a_route_handler_change_reaches_the_call_site_in_the_other_repository() {
     let h = harness().knowledge().await;
@@ -702,7 +704,7 @@ async fn a_route_handler_change_reaches_the_call_site_in_the_other_repository() 
         ["get_item"],
         "{impact:?}"
     );
-    let callers: Vec<(i64, &str, &str, i64, &str, &str)> = impact[0]
+    let callers: Vec<(i64, &str, &str, i64, &str, &str, &str)> = impact[0]
         .callers
         .iter()
         .map(|caller| {
@@ -713,6 +715,7 @@ async fn a_route_handler_change_reaches_the_call_site_in_the_other_repository() 
                 caller.line,
                 caller.name.as_str(),
                 caller.confidence.as_str(),
+                caller.step.as_str(),
             )
         })
         .collect();
@@ -724,7 +727,8 @@ async fn a_route_handler_change_reaches_the_call_site_in_the_other_repository() 
             "src/client.ts",
             1,
             "fetchItem",
-            "heuristic"
+            "heuristic",
+            "route"
         )]
     );
 }
@@ -754,7 +758,7 @@ async fn a_path_crosses_a_route_into_the_other_repository() {
 }
 
 /// `symbol Item --detail context` from `api` lists the `web` reference under
-/// `web`, as a guess.
+/// `web`, as a guess the name alone answered.
 #[tokio::test]
 async fn a_type_named_in_the_other_repository_lists_that_reference_as_a_guess() {
     let h = harness().knowledge().await;
@@ -770,27 +774,26 @@ async fn a_type_named_in_the_other_repository_lists_that_reference_as_a_guess() 
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].repository_id, api.id);
     let context = found[0].context.as_ref().expect("a context");
-    let references: Vec<(&str, &str, i64, &str, &str)> = context
+    let references: Vec<String> = context
         .references
         .iter()
         .map(|end| {
-            (
-                end.repository_id.as_str(),
-                end.path.as_str(),
+            format!(
+                "{}:{}:{} {} {} via {}",
+                end.repository_id,
+                end.path,
                 end.line,
-                end.name.as_str(),
-                end.confidence.as_str(),
+                end.name,
+                end.confidence,
+                end.step.as_deref().unwrap_or("-")
             )
         })
         .collect();
     assert_eq!(
         references,
-        [(
-            web.id.as_str(),
-            "src/client.ts",
-            1,
-            "fetchItem",
-            "heuristic"
+        [format!(
+            "{}:src/client.ts:1 fetchItem heuristic via name",
+            web.id
         )]
     );
     assert!(context.callers.is_empty(), "{:?}", context.callers);

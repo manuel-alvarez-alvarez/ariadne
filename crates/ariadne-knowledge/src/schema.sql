@@ -162,12 +162,19 @@ CREATE TABLE edges (
     name            TEXT,
     -- exact | heuristic
     confidence      TEXT NOT NULL,
+    -- Which step answered: `file`, `directory`, `import` or `repository` for
+    -- a symbol edge (rule 9), `name` for a foreign reference and for a
+    -- variable or a dependency matched by name, `path` for a path
+    -- dependency, `route` for a route the request fits.
+    step            TEXT NOT NULL,
     -- How many definitions the name matched at the step that resolved it.
     candidates      INTEGER NOT NULL
 );
--- Covering, in both directions, under the ref the walk reads: a walk over the
--- graph reads the index alone. The callers of a definition are the edges into
--- it at its own repository and ref, whichever repository they come from.
+-- Covering, in both directions, under the ref the walk reads: counting the
+-- callers of a level reads the index alone, which is what keeps a hub cheap
+-- to find. The callers of a definition are the edges into it at its own
+-- repository and ref, whichever repository they come from; listing them
+-- reads the row of each edge it answers with, for the step and the count.
 CREATE INDEX edges_from ON edges(from_repository, git_ref, kind, from_symbol, to_symbol, confidence);
 CREATE INDEX edges_to ON edges(to_repository, to_ref, kind, to_symbol, from_symbol, confidence);
 -- What deriving one blob's edges again deletes by, and what a dropped ref
