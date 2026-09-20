@@ -1524,25 +1524,53 @@ async fn set_pinned_option(
         .get("id")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("ACP {label} configuration option has no id"))?;
-    // Not built from `v1::SetSessionConfigOptionRequest`: its
-    // `SessionConfigOptionValue` is an untagged struct variant, so the SDK
-    // writes `"value": {"value": "..."}` where every agent Ariadne drives is
-    // sent — and answers — a bare string. Typing this one is a wire change,
-    // and waits for the spec to be read against a live agent.
+    // The value rides flattened into the request, which is what puts a
+    // select option's id at `value` and a boolean's `type` beside it. Both
+    // pins Ariadne sets are select options, so this is the same string on
+    // the wire as before — and the arm that is not is now right rather than
+    // absent.
+    let request = v1::SetSessionConfigOptionRequest::new(
+        session_id.to_string(),
+        config_id.to_string(),
+        v1::SessionConfigOptionValue::value_id(value.to_string()),
+    );
     let response = rpc
         .call(
             "session/set_config_option",
-            SetConfigOption(json!({
-                "sessionId": session_id, "configId": config_id, "value": value
-            })),
+            SetConfigOption(to_params(&request)?),
         )
         .await
         .with_context(|| format!("setting ACP {label} to `{value}`"))?;
-    Ok(response
+    let options = response
         .get("configOptions")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or(options))
+        .unwrap_or(options);
+    // An agent that took the option answers with it set. One that did not —
+    // it read the value and made nothing of it — answers `200` all the same,
+    // and the session would run on the agent's own model at the agent's own
+    // effort while Ariadne believed it was pinned. The launch fails instead,
+    // so a pin that does not land is heard about rather than paid for.
+    let settled = find_config_option(&options, categories, names)
+        .and_then(|option| option.get("currentValue"))
+        .map(current_value);
+    match settled {
+        Some(settled) if settled == value => Ok(options),
+        Some(settled) => bail!("ACP agent kept {label} on `{settled}` when asked for `{value}`"),
+        // Nothing to check against: an agent that reports no current value
+        // is taken at its word, as it was before this was checked at all.
+        None => Ok(options),
+    }
+}
+
+/// What an option is set to, whichever shape the agent answers in: the
+/// protocol's `{"value": "<id>"}`, or the bare string agents also send.
+fn current_value(current: &Value) -> &str {
+    current
+        .get("value")
+        .and_then(Value::as_str)
+        .or_else(|| current.as_str())
+        .unwrap_or_default()
 }
 
 /// Find a session configuration option by its ACP category, then by the
@@ -1925,31 +1953,37 @@ mod tests {
         );
     }
 
-    /// The value a `session/set_config_option` carries is an object in the
-    /// protocol — `{"value": "<id>"}` — and the daemon sends a bare string.
+    /// What a `session/set_config_option` puts on the wire.
     ///
-    /// Every agent Ariadne drives takes the bare string, which is why the
-    /// model and effort pins work; none of them has been asked for the
-    /// object. The two are not interchangeable, as this proves, so the day
-    /// an agent parses its input strictly the pins stop landing — and
-    /// silently, since a refused option only means the session runs on the
-    /// agent's own default.
-    ///
-    /// Left as it is until it can be tried against the three agent CLIs:
-    /// sending the object to an agent that wants the string breaks pinning
-    /// the same way, and this is not a change to make untested.
+    /// The value is flattened into the request, so a select option's id is
+    /// `value` itself and a boolean carries a `type` beside it. Read off the
+    /// value type alone it looks like an object, `{"value": "<id>"}`, and it
+    /// is not: an agent sent that answers `Invalid params` and refuses the
+    /// option, as claude-agent-acp and codex-acp both did when asked on
+    /// 2026-09-20. The shapes are asserted here so the difference is a
+    /// failing test rather than a launch that pins nothing.
     #[test]
-    fn a_config_option_value_is_an_object_in_the_protocol_and_a_string_on_the_wire() {
-        use agent_client_protocol::schema::v1::SessionConfigOptionValue as Value;
+    fn a_config_option_is_set_by_its_value_flattened_into_the_request() {
+        use agent_client_protocol::schema::v1::{
+            SessionConfigOptionValue as Value, SetSessionConfigOptionRequest as Request,
+        };
 
-        let protocol = serde_json::to_value(Value::value_id("gpt-5.6")).unwrap();
-        assert_eq!(protocol, json!({"value": "gpt-5.6"}));
-
-        assert!(
-            serde_json::from_value::<Value>(json!("gpt-5.6")).is_err(),
-            "a bare string is not a config value the protocol can read"
+        let select = Request::new("sess", "model", Value::value_id("gpt-5.6"));
+        assert_eq!(
+            super::to_params(&select).unwrap(),
+            json!({"sessionId": "sess", "configId": "model", "value": "gpt-5.6"}),
+            "a select option's value is the id itself"
         );
-        assert!(serde_json::from_value::<Value>(json!({"value": "gpt-5.6"})).is_ok());
+
+        let boolean = Request::new("sess", "brave_mode", Value::boolean(true));
+        assert_eq!(
+            super::to_params(&boolean).unwrap(),
+            json!({
+                "sessionId": "sess", "configId": "brave_mode",
+                "type": "boolean", "value": true
+            }),
+            "a boolean option carries its type beside the value"
+        );
     }
 
     #[test]
