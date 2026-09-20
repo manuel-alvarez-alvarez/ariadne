@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-09-19
+updated: 2026-09-20
 areas: [daemon]
 commits: []
 tests:
@@ -18,11 +18,25 @@ How the daemon runs an agent: as its own child process, driven over the Agent
 Client Protocol.
 
 `ariadned` spawns the agent executable with piped standard input and output,
-speaks ACP version 1 over newline-delimited JSON-RPC, and reports what the
-agent does through the daemon's one event ingestion path. Every seat of every
-session runs this way — orchestrator, author and reviewer. The runtime is
+speaks ACP version 1 over those pipes, and reports what the agent does through
+the daemon's one event ingestion path. Every seat of every session runs this
+way — orchestrator, author and reviewer. The runtime is
 `crates/ariadne-daemon/src/acp.rs`; the launch it consumes — the command and
 the launch file — is described in 007.
+
+The wire is the `agent-client-protocol` crate's, the protocol's own Rust SDK.
+The daemon owns the process — it spawns it, signals its process group and
+reaps it — and hands the SDK the two pipes and nothing else
+(`acp_transport`). Every request it sends is built from the SDK's typed v1
+schema (`acp_calls`, `acp_schema`), so a field the protocol renames is a
+compile error rather than a payload an agent ignores.
+
+Both messages an agent sends are read as the JSON it sent, not as the SDK's
+typed enums. `SessionUpdate` is a closed set, and the runtime has always
+handled the update kinds it knows and let the rest by, which is what keeps a
+kind added to the protocol from failing a live session; and a tool call is
+stored as the agent wrote it, so whatever an adapter attaches to one reaches
+the console.
 
 ## Scope
 
@@ -257,7 +271,10 @@ agent (011), so no test launches one.
 ## Sources
 
 `crates/ariadne-daemon/src/acp.rs` (the runtime),
-`crates/ariadne-daemon/src/acp_rpc.rs` (the JSON-RPC transport),
+`crates/ariadne-daemon/src/acp_transport.rs` (the agent's pipes as the SDK's
+transport), `crates/ariadne-daemon/src/acp_calls.rs` (the methods it calls),
+`crates/ariadne-daemon/src/acp_schema.rs` (Ariadne's launch types as the
+SDK's),
 `crates/ariadne-daemon/src/transcript.rs` (the transcript reader),
 `crates/ariadne-daemon/src/launcher.rs` (the launch, liveness and kill),
 `crates/ariadne-daemon/src/scheduler/mod.rs` (the prompt delivery),

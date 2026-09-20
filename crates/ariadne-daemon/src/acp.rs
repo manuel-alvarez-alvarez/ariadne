@@ -2,8 +2,12 @@
 //! Client Protocol.
 //!
 //! Every session is a child process of the daemon itself: spawned with piped
-//! standard input and output, driven over newline-delimited JSON-RPC (ACP
-//! version 1), reaped when it exits, and killed when its session is killed.
+//! standard input and output, driven over ACP version 1, reaped when it
+//! exits, and killed when its session is killed.
+//!
+//! The wire is the protocol's own Rust SDK (`agent-client-protocol`). The
+//! daemon keeps the process — it spawns, signals and reaps it — and the SDK
+//! only ever sees its two pipes (`crate::acp_transport`).
 //!
 //! What the agent does is reported through the one ingestion path
 //! (`crate::http::events::ingest_event`), in the runtime's own event
@@ -1919,6 +1923,33 @@ mod tests {
             capabilities["session"]["configOptions"].is_object(),
             "config options carry the model and effort pins: {capabilities}"
         );
+    }
+
+    /// The value a `session/set_config_option` carries is an object in the
+    /// protocol — `{"value": "<id>"}` — and the daemon sends a bare string.
+    ///
+    /// Every agent Ariadne drives takes the bare string, which is why the
+    /// model and effort pins work; none of them has been asked for the
+    /// object. The two are not interchangeable, as this proves, so the day
+    /// an agent parses its input strictly the pins stop landing — and
+    /// silently, since a refused option only means the session runs on the
+    /// agent's own default.
+    ///
+    /// Left as it is until it can be tried against the three agent CLIs:
+    /// sending the object to an agent that wants the string breaks pinning
+    /// the same way, and this is not a change to make untested.
+    #[test]
+    fn a_config_option_value_is_an_object_in_the_protocol_and_a_string_on_the_wire() {
+        use agent_client_protocol::schema::v1::SessionConfigOptionValue as Value;
+
+        let protocol = serde_json::to_value(Value::value_id("gpt-5.6")).unwrap();
+        assert_eq!(protocol, json!({"value": "gpt-5.6"}));
+
+        assert!(
+            serde_json::from_value::<Value>(json!("gpt-5.6")).is_err(),
+            "a bare string is not a config value the protocol can read"
+        );
+        assert!(serde_json::from_value::<Value>(json!({"value": "gpt-5.6"})).is_ok());
     }
 
     #[test]

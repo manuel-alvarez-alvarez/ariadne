@@ -2,7 +2,7 @@
 //!
 //! - Command: the registry command of the agent the pin names, with the
 //!   agent's configured flags behind it
-//! - Transport: stable ACP v1 over newline-delimited JSON-RPC on stdio
+//! - Transport: stable ACP v1 on stdio, spoken by the protocol's Rust SDK
 //! - Model and effort: session configuration options with the `model` and
 //!   `thought_level` categories
 //! - System prompt and skills: prepended to every prompt the agent is sent
