@@ -43,7 +43,11 @@ async fn two_model_harness(dir: &std::path::Path) -> Harness {
         {
             "id": "effort-id", "name": "Effort", "category": "thought_level", "type": "select",
             "currentValue": "medium",
-            "options": [{"value": "low"}, {"value": "medium"}, {"value": "high"}],
+            "options": [
+                {"value": "low", "name": "Low"},
+                {"value": "medium", "name": "Medium"},
+                {"value": "high", "name": "High"},
+            ],
         },
     ]);
     let stub = stub_acp_agent(dir, offer);

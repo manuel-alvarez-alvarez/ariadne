@@ -11,7 +11,6 @@ use agent_client_protocol::{Agent, Client, ConnectionTo};
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 
@@ -21,8 +20,8 @@ use ariadne_api::sessions::OutsideSessionDto;
 use ariadne_client::endpoint::AcpAgentConfig;
 use ariadne_store::Store;
 
-use crate::acp::{apply_agent_launch_environment, find_config_option, to_params};
-use crate::acp_calls::{self, CloseSession, Initialize, ListSessions, NewSession};
+use crate::acp::{apply_agent_launch_environment, find_config_option};
+use crate::acp_calls::call;
 use crate::acp_transport::pipes;
 use crate::timeouts::Timeouts;
 
@@ -487,25 +486,22 @@ async fn probe_protocol(
     cached: Option<CachedCatalog>,
     capabilities: &mut AcpCapabilitiesDto,
 ) -> Result<Discovery> {
-    let initialized = acp_calls::call(cx, "initialize", Initialize(to_params(&initialize())?))
+    let initialized = call(cx, "initialize", initialize())
         .await
         .context("initialize failed")?;
-    capabilities.protocol_v1 =
-        initialized.get("protocolVersion").and_then(Value::as_u64) == Some(1);
+    capabilities.protocol_v1 = initialized.protocol_version == ProtocolVersion::V1;
     if !capabilities.protocol_v1 {
         bail!("agent did not negotiate ACP version 1");
     }
 
-    let advertised = &initialized["agentCapabilities"];
-    capabilities.session_list = capability(advertised, "listSessions")
-        || capability(&advertised["sessionCapabilities"], "list");
-    capabilities.session_load =
-        advertised.get("loadSession").and_then(Value::as_bool) == Some(true);
+    let advertised = &initialized.agent_capabilities;
+    capabilities.session_list = advertised.session_capabilities.list.is_some();
+    capabilities.session_load = advertised.load_session;
 
     let version = initialized
-        .pointer("/agentInfo/version")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+        .agent_info
+        .as_ref()
+        .map(|info| info.version.clone());
     let catalog = match cached.filter(|cached| version.as_deref() == Some(&cached.version)) {
         // `session/new` answered for this command at this version already.
         Some(cached) => {
@@ -515,7 +511,7 @@ async fn probe_protocol(
             cached.catalog
         }
         None => {
-            let closes = capability(&advertised["sessionCapabilities"], "close");
+            let closes = advertised.session_capabilities.close.is_some();
             read_catalog(cx, cwd, closes, capabilities).await?
         }
     };
@@ -556,35 +552,22 @@ async fn read_catalog(
     closes: bool,
     capabilities: &mut AcpCapabilitiesDto,
 ) -> Result<Catalog> {
-    let setup = acp_calls::call(
-        cx,
-        "session/new",
-        NewSession(to_params(&v1::NewSessionRequest::new(cwd))?),
-    )
-    .await
-    .context("session/new failed")?;
-    let session_id = setup
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("session/new returned no session id"))?;
+    let setup = call(cx, "session/new", v1::NewSessionRequest::new(cwd))
+        .await
+        .context("session/new failed")?;
+    let session_id = setup.session_id.clone();
     capabilities.session_new = true;
     if closes {
         // Best effort: the catalog is read either way, and the process is
         // gone as soon as the probe ends.
-        let _ = acp_calls::call(
+        let _ = call(
             cx,
             "session/close",
-            CloseSession(to_params(&v1::CloseSessionRequest::new(
-                session_id.to_string(),
-            ))?),
+            v1::CloseSessionRequest::new(session_id.to_string()),
         )
         .await;
     }
-    let options = setup
-        .get("configOptions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let options = setup.config_options.unwrap_or_default();
     let model = find_config_option(&options, &["model"], &["model"]);
     capabilities.model = model.is_some();
     let Some(model) = model else {
@@ -605,8 +588,7 @@ async fn read_catalog(
         thought_level: thought.is_some(),
         efforts: thought.map(choices).unwrap_or_default(),
         default_effort: thought
-            .and_then(|option| option.get("currentValue"))
-            .and_then(Value::as_str)
+            .and_then(crate::acp::current_value)
             .map(str::to_string),
     })
 }
@@ -682,27 +664,22 @@ async fn sessions_over_rpc(
     cx: &ConnectionTo<Agent>,
     sessions: &mut Vec<OutsideSessionDto>,
 ) -> Result<()> {
-    acp_calls::call(cx, "initialize", Initialize(to_params(&initialize())?))
+    call(cx, "initialize", initialize())
         .await
         .context("initialize failed")?;
     let mut cursor: Option<String> = None;
     loop {
-        let params = to_params(&v1::ListSessionsRequest::new().cursor(cursor.clone()))?;
-        let listed = acp_calls::call(cx, "session/list", ListSessions(params))
+        let request = v1::ListSessionsRequest::new().cursor(cursor.clone());
+        let listed = call(cx, "session/list", request)
             .await
             .context("session/list failed")?;
         sessions.extend(
             listed
-                .get("sessions")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|session| stored_session(agent, session)),
+                .sessions
+                .iter()
+                .map(|session| stored_session(agent, session)),
         );
-        cursor = listed
-            .get("nextCursor")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        cursor = listed.next_cursor;
         if cursor.is_none() {
             return Ok(());
         }
@@ -711,68 +688,45 @@ async fn sessions_over_rpc(
 
 /// One `session/list` entry as an outside session, or `None` where it names
 /// no session id — the one field there is nothing to show without.
-fn stored_session(agent: &AcpAgentDto, session: &Value) -> Option<OutsideSessionDto> {
-    let internal_session_id = session
-        .get("sessionId")
-        .and_then(Value::as_str)?
-        .to_string();
-    Some(OutsideSessionDto {
+fn stored_session(agent: &AcpAgentDto, session: &v1::SessionInfo) -> OutsideSessionDto {
+    OutsideSessionDto {
         agent_id: agent.id.clone(),
-        internal_session_id,
-        working_directory: session
-            .get("cwd")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        last_activity_at: session
-            .get("updatedAt")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        first_prompt: session
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-    })
+        internal_session_id: session.session_id.0.to_string(),
+        working_directory: session.cwd.display().to_string(),
+        last_activity_at: session.updated_at.clone().unwrap_or_default(),
+        first_prompt: session.title.clone().unwrap_or_default(),
+    }
 }
 
-fn capability(value: &Value, name: &str) -> bool {
-    value
-        .get(name)
-        .is_some_and(|value| value.as_bool() == Some(true) || value.is_object())
-}
-
-fn choices(option: &Value) -> Vec<Choice> {
-    let mut choices = option
-        .get("options")
-        .and_then(Value::as_array)
+/// Every value a select option offers, grouped or not, and its current value
+/// where it offers no list at all.
+fn choices(option: &v1::SessionConfigOption) -> Vec<Choice> {
+    let v1::SessionConfigKind::Select(select) = &option.kind else {
+        return Vec::new();
+    };
+    let listed: Vec<&v1::SessionConfigSelectOption> = match &select.options {
+        v1::SessionConfigSelectOptions::Ungrouped(options) => options.iter().collect(),
+        // A grouped list is the same values under headings the agent draws
+        // with; Ariadne pins by value, so the headings are dropped.
+        v1::SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut choices: Vec<Choice> = listed
         .into_iter()
-        .flatten()
-        .filter_map(|choice| match choice {
-            Value::String(value) => Some(Choice {
-                value: value.clone(),
-                description: None,
-            }),
-            Value::Object(_) => choice
-                .get("value")
-                .and_then(Value::as_str)
-                .map(|value| Choice {
-                    value: value.to_string(),
-                    description: choice
-                        .get("description")
-                        .or_else(|| choice.get("name"))
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                }),
-            _ => None,
+        .map(|choice| Choice {
+            value: choice.value.0.to_string(),
+            description: choice
+                .description
+                .clone()
+                .or_else(|| Some(choice.name.clone())),
         })
-        .collect::<Vec<_>>();
-    if choices.is_empty()
-        && let Some(current) = option.get("currentValue").and_then(Value::as_str)
-    {
+        .collect();
+    if choices.is_empty() {
         choices.push(Choice {
-            value: current.to_string(),
+            value: select.current_value.0.to_string(),
             description: None,
         });
     }

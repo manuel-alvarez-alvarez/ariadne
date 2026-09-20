@@ -77,8 +77,8 @@ fn agent(task: &TaskDto, seat: Seat) -> &ariadne_api::tasks::TaskAgentDto {
 async fn two_model_harness(dir: &std::path::Path) -> Harness {
     let mut two_models = script();
     two_models["config_options"][0]["options"] = serde_json::json!([
-        {"value": "old-model"},
-        {"value": "new-model"},
+        {"value": "old-model", "name": "The old one"},
+        {"value": "new-model", "name": "The new one"},
     ]);
     let stub = stub_acp_agent(dir, two_models);
     let h = harness().home(registry_home(&stub)).discover_agents().await;

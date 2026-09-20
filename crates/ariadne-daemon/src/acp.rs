@@ -39,9 +39,7 @@ use ariadne_core::id::new_id;
 use ariadne_core::{PermissionMode, TokenUsage};
 use ariadne_store::Store;
 
-use crate::acp_calls::{
-    Initialize, LoadSession, NewSession, PromptTurn, ResumeSession, SetConfigOption,
-};
+use crate::acp_calls::PromptTurn;
 use crate::acp_transport::pipes;
 use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
@@ -1106,11 +1104,15 @@ impl Rpc {
     /// Send one call to the agent and wait for its answer. Whatever the
     /// agent says meanwhile — an update, a permission request — is handled
     /// by the connection's own handlers, not here.
-    async fn call<R>(&self, method: &str, request: R) -> Result<Value>
+    async fn call<R>(&self, method: &str, request: R) -> Result<R::Response>
     where
-        R: agent_client_protocol::JsonRpcRequest<Response = Value> + Send,
+        R: JsonRpcRequest + Send,
     {
-        crate::acp_calls::call(&self.connection, method, request).await
+        self.connection
+            .send_request(request)
+            .block_task()
+            .await
+            .with_context(|| format!("ACP {method} failed"))
     }
 }
 
@@ -1339,20 +1341,13 @@ async fn run_protocol(
     config: &LaunchConfig,
     prompts: mpsc::UnboundedReceiver<Prompt>,
 ) -> Result<()> {
-    let initialized = rpc
-        .call("initialize", Initialize(to_params(&initialize())?))
-        .await?;
-    if initialized.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
+    let initialized = rpc.call("initialize", initialize()).await?;
+    if initialized.protocol_version != ProtocolVersion::V1 {
         bail!("ACP agent did not negotiate protocol version 1");
     }
 
     let setup = session_setup(rpc, cwd, config, &initialized).await?;
-    let session_id = setup
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .or(config.resume_session_id.as_deref())
-        .ok_or_else(|| anyhow!("ACP session setup returned no session id"))?
-        .to_string();
+    let session_id = setup.session_id;
     let _ = rpc.sink.agent_session.set(session_id.clone());
     let (homes, internal, cwd_owned) = (
         rpc.sink.runtime.inner.transcripts.clone(),
@@ -1366,15 +1361,10 @@ async fn run_protocol(
     .await
     .ok()
     .map(|transcript| Arc::new(Mutex::new(transcript)));
-    let options = setup
-        .get("configOptions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
     let options = set_pinned_option(
         rpc,
         &session_id,
-        options,
+        setup.config_options,
         &["model"],
         &["model"],
         "model",
@@ -1470,90 +1460,86 @@ pub(crate) fn to_params<T: serde::Serialize>(request: &T) -> Result<Value> {
     serde_json::to_value(request).context("building an ACP request")
 }
 
+/// A session the agent opened, however it was opened: the id it runs under
+/// and the options it offers, which is all a launch reads off the answer.
+struct OpenedSession {
+    session_id: String,
+    config_options: Vec<v1::SessionConfigOption>,
+}
+
 async fn session_setup(
     rpc: &mut Rpc,
     cwd: &Path,
     config: &LaunchConfig,
-    initialized: &Value,
-) -> Result<Value> {
+    initialized: &v1::InitializeResponse,
+) -> Result<OpenedSession> {
     let mcp_servers = crate::acp_schema::mcp_servers(config);
     let Some(session_id) = &config.resume_session_id else {
         let request = v1::NewSessionRequest::new(cwd).mcp_servers(mcp_servers);
-        return rpc
-            .call("session/new", NewSession(to_params(&request)?))
-            .await;
+        let opened = rpc.call("session/new", request).await?;
+        return Ok(OpenedSession {
+            session_id: opened.session_id.to_string(),
+            config_options: opened.config_options.unwrap_or_default(),
+        });
     };
     // A resumed conversation is reopened the way the agent says it can be.
     // `session/resume` is the one to ask for: it puts the agent back at its
     // prompt. `session/load` replays the whole conversation on the way in,
     // which every update of costs an event, so it is the fallback and not
     // the choice.
-    let capabilities = &initialized["agentCapabilities"];
-    let resume = &capabilities["sessionCapabilities"]["resume"];
-    let params = if resume.is_object() || resume.as_bool() == Some(true) {
+    let capabilities = &initialized.agent_capabilities;
+    // Neither answer carries the id it reopened: it is the one that was
+    // asked for, and every caller reads one off the result.
+    let config_options = if capabilities.session_capabilities.resume.is_some() {
         let request =
             v1::ResumeSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
-        rpc.call("session/resume", ResumeSession(to_params(&request)?))
-            .await
-    } else if capabilities.get("loadSession").and_then(Value::as_bool) == Some(true) {
+        rpc.call("session/resume", request).await?.config_options
+    } else if capabilities.load_session {
         let request = v1::LoadSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
-        rpc.call("session/load", LoadSession(to_params(&request)?))
-            .await
+        rpc.call("session/load", request).await?.config_options
     } else {
         bail!("ACP agent supports neither session/resume nor session/load")
     };
-    // Neither answers with the id it reopened, and every caller reads one off
-    // the result.
-    let mut result = params?;
-    result["sessionId"] = Value::String(session_id.clone());
-    Ok(result)
+    Ok(OpenedSession {
+        session_id: session_id.clone(),
+        config_options: config_options.unwrap_or_default(),
+    })
 }
 
 async fn set_pinned_option(
     rpc: &mut Rpc,
     session_id: &str,
-    options: Vec<Value>,
+    options: Vec<v1::SessionConfigOption>,
     categories: &[&str],
     names: &[&str],
     label: &str,
     value: &str,
-) -> Result<Vec<Value>> {
-    let option = find_config_option(&options, categories, names)
-        .ok_or_else(|| anyhow!("ACP agent did not offer a {label} configuration option"))?;
-    let config_id = option
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("ACP {label} configuration option has no id"))?;
+) -> Result<Vec<v1::SessionConfigOption>> {
+    let config_id = find_config_option(&options, categories, names)
+        .ok_or_else(|| anyhow!("ACP agent did not offer a {label} configuration option"))?
+        .id
+        .clone();
     // The value rides flattened into the request, which is what puts a
-    // select option's id at `value` and a boolean's `type` beside it. Both
-    // pins Ariadne sets are select options, so this is the same string on
-    // the wire as before — and the arm that is not is now right rather than
-    // absent.
+    // select option's id at `value` and a boolean's `type` beside it.
     let request = v1::SetSessionConfigOptionRequest::new(
         session_id.to_string(),
-        config_id.to_string(),
+        config_id,
         v1::SessionConfigOptionValue::value_id(value.to_string()),
     );
     let response = rpc
-        .call(
-            "session/set_config_option",
-            SetConfigOption(to_params(&request)?),
-        )
+        .call("session/set_config_option", request)
         .await
         .with_context(|| format!("setting ACP {label} to `{value}`"))?;
-    let options = response
-        .get("configOptions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or(options);
+    let options = match response.config_options.is_empty() {
+        true => options,
+        false => response.config_options,
+    };
     // An agent that took the option answers with it set. One that did not —
-    // it read the value and made nothing of it — answers `200` all the same,
-    // and the session would run on the agent's own model at the agent's own
+    // it read the value and made nothing of it — answers the same way, and
+    // the session would run on the agent's own model at the agent's own
     // effort while Ariadne believed it was pinned. The launch fails instead,
     // so a pin that does not land is heard about rather than paid for.
-    let settled = find_config_option(&options, categories, names)
-        .and_then(|option| option.get("currentValue"))
-        .map(current_value);
+    let settled = find_config_option(&options, categories, names).and_then(current_value);
     match settled {
         Some(settled) if settled == value => Ok(options),
         Some(settled) => bail!("ACP agent kept {label} on `{settled}` when asked for `{value}`"),
@@ -1563,37 +1549,34 @@ async fn set_pinned_option(
     }
 }
 
-/// What an option is set to, whichever shape the agent answers in: the
-/// protocol's `{"value": "<id>"}`, or the bare string agents also send.
-fn current_value(current: &Value) -> &str {
-    current
-        .get("value")
-        .and_then(Value::as_str)
-        .or_else(|| current.as_str())
-        .unwrap_or_default()
+/// What a select option is set to. A boolean one has no id to compare, and
+/// neither pin Ariadne sets is one.
+pub(crate) fn current_value(option: &v1::SessionConfigOption) -> Option<&str> {
+    match &option.kind {
+        v1::SessionConfigKind::Select(select) => Some(select.current_value.0.as_ref()),
+        _ => None,
+    }
 }
 
 /// Find a session configuration option by its ACP category, then by the
 /// identifying names agents used before categories were consistently set.
 pub(crate) fn find_config_option<'a>(
-    options: &'a [Value],
+    options: &'a [v1::SessionConfigOption],
     categories: &[&str],
     names: &[&str],
-) -> Option<&'a Value> {
+) -> Option<&'a v1::SessionConfigOption> {
     options
         .iter()
         .find(|option| {
             option
-                .get("category")
-                .and_then(Value::as_str)
-                .is_some_and(|category| categories.contains(&category))
+                .category
+                .as_ref()
+                .is_some_and(|category| categories.contains(&category_name(category)))
         })
         .or_else(|| {
             options.iter().find(|option| {
-                [option.get("id"), option.get("name")]
+                [option.id.0.as_ref(), option.name.as_str()]
                     .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
                     .any(|candidate| {
                         names
                             .iter()
@@ -1601,6 +1584,21 @@ pub(crate) fn find_config_option<'a>(
                     })
             })
         })
+}
+
+/// A category as the protocol spells it. One the SDK does not name is an
+/// `Other` carrying the agent's own word for it, which is compared as it
+/// came.
+fn category_name(category: &v1::SessionConfigOptionCategory) -> &str {
+    use v1::SessionConfigOptionCategory as C;
+    match category {
+        C::Mode => "mode",
+        C::Model => "model",
+        C::ModelConfig => "model_config",
+        C::ThoughtLevel => "thought_level",
+        C::Other(name) => name,
+        _ => "",
+    }
 }
 
 /// One turn: the prompt out, the turn's chunks as they come — each run of
