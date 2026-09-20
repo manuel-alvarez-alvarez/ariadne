@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use ariadne_core::Seat;
 use ariadne_core::acp::LaunchConfig;
 
-pub use acp::{compaction_done, plan_resume, plan_spawn};
+pub use acp::{plan_resume, plan_spawn};
 
 /// Everything an adapter needs to plan a spawn. Prompt assembly happens in
 /// the launcher; adapters only deal with delivery mechanics.

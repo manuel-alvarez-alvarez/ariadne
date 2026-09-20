@@ -1218,14 +1218,6 @@ impl RuntimeIncoming {
                         .await;
                 }
             }
-            Some("compaction_update")
-                if update.get("status").and_then(Value::as_str) == Some("completed") =>
-            {
-                self.end_text().await;
-                let mut payload = update;
-                payload["session_id"] = session_id;
-                self.sink.emit("compaction_update", payload).await;
-            }
             Some("usage_update") => {
                 if let Some((used, size)) = update
                     .get("used")
@@ -1435,13 +1427,16 @@ async fn serve_with_input(
 /// What the daemon tells an agent it is, on `initialize`.
 ///
 /// It reads and writes the worktree itself rather than through the agent, and
-/// runs no terminal for it. The two session extensions are the ones it uses:
-/// the config options that carry the model and effort pins, and the
-/// compaction it reports as an event.
+/// runs no terminal for it. The one session extension it uses is the config
+/// options that carry the model and effort pins.
+///
+/// Compaction is not among them. An agent compacts its own conversation near
+/// the context limit and carries on, and the daemon asks for none — so there
+/// is nothing it would do with the report that the agent's own next event
+/// does not already do.
 fn initialize() -> v1::InitializeRequest {
     let capabilities = v1::ClientCapabilities::new().terminal(false).session(
         v1::ClientSessionCapabilities::new()
-            .compaction(v1::CompactionCapabilities::new())
             .config_options(v1::SessionConfigOptionsCapabilities::new()),
     );
     v1::InitializeRequest::new(ProtocolVersion::V1)
@@ -1942,12 +1937,12 @@ mod tests {
         );
         assert_eq!(capabilities["terminal"], json!(false));
         assert!(
-            capabilities["session"]["compaction"].is_object(),
-            "compaction is advertised, and the runtime reports it: {capabilities}"
-        );
-        assert!(
             capabilities["session"]["configOptions"].is_object(),
             "config options carry the model and effort pins: {capabilities}"
+        );
+        assert!(
+            capabilities["session"]["compaction"].is_null(),
+            "compaction is not advertised: the daemon asks for none and reads none"
         );
     }
 

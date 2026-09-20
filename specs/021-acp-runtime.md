@@ -31,6 +31,13 @@ reaps it — and hands the SDK the two pipes and nothing else
 schema (`acp_calls`, `acp_schema`), so a field the protocol renames is a
 compile error rather than a payload an agent ignores.
 
+The daemon advertises no compaction. An agent compacts its own conversation
+near the context limit and carries on, and the daemon asks for none — the
+report said only that the agent was back at its prompt, which whatever it
+does next says anyway. It was read when the daemon typed the compaction
+itself and had to know when to let the agent go; that has not been true
+since (007, rule 17).
+
 Both messages an agent sends are read as the JSON it sent, not as the SDK's
 typed enums. `SessionUpdate` is a closed set, and the runtime has always
 handled the update kinds it knows and let the rest by, which is what keeps a
@@ -79,7 +86,7 @@ gone (009).
    `session_start` with the agent's own session id, `user_prompt_submit`,
    tool calls as `pre_tool_use` and `post_tool_use`, `plan` with the entries
    of each ACP plan update, the turn's text (rule 6), `stop` with the stop
-   reason, a completed `compaction_update`, `permission_request` and
+   reason, `permission_request` and
    `permission.replied`, `session.error`, and `session_end`. Every event
    carries the launch id (007), and the agent's session id is recorded on
    the row.
@@ -98,7 +105,7 @@ gone (009).
    the chunks of one kind in a row, and of one message where the chunks
    carry an ACP `messageId`; it ends at a chunk of the other kind, a chunk
    that names another `messageId` than the run's, a plan, a tool call or its
-   update, a completed compaction, a permission request, or the end of the
+   update, a permission request, or the end of the
    turn, and it is stored then, once, whole —
    `agent_thought` or `agent_message` `{session_id, text}` — before whatever
    ended it. A turn that speaks around a tool call stores its text before the

@@ -123,17 +123,9 @@ pub async fn ingest_event(store: &Store, req: &IngestEventRequest) -> Result<(),
             .await?;
     }
 
-    // A compaction that has just finished. Whoever ran it — the user, or the
-    // agent itself near the context limit; the daemon asks for none — the
-    // agent is back at its prompt afterwards.
-    let compacted = crate::agents::compaction_done(&req.kind, &req.payload);
-
     // Track liveness from lifecycle events (never resurrect ended sessions).
     // Read here, written last: see the end of this function.
-    let status = match compacted {
-        true => Some(ariadne_core::SessionStatus::Idle),
-        false => status_for_event(&req.kind),
-    };
+    let status = status_for_event(&req.kind);
 
     // Attention follows the event too: an agent that reported an error or
     // asked for a permission needs the user, and one that is working again

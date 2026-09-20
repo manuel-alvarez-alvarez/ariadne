@@ -49,9 +49,10 @@ utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 # agent client protocol
 # The official ACP SDK: typed schema and JSON-RPC connection for every
-# `session/*` method the daemon speaks. `unstable_session_compaction` is
-# needed for `compaction_update`, which the runtime reports.
-agent-client-protocol = { version = "2.2", features = ["unstable_session_compaction"] }
+# `session/*` method the daemon speaks. Stable features only — nothing the
+# daemon needs is behind an `unstable_` flag, so an SDK release cannot take
+# one out from under it.
+agent-client-protocol = "2.2"
 
 # database
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate"] }

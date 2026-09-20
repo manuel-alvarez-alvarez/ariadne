@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-19
+updated: 2026-09-20
 areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
@@ -206,7 +206,7 @@ goal id to a seat (014).
     the model and the session's status — the row's at attach, then what the
     stored events move it to, as the daemon moves the row on them (021):
     `running` on the session's start, a prompt, a tool event or an answered
-    permission, `idle` on a stop or a compaction, `exited` on the session's
+    permission, `idle` on a stop, `exited` on the session's
     end. A row that had ended when the console attached — `exited` or
     `failed` — stays so whatever the events replayed under it say, since the
     daemon moves a live row only and a row its sweep ended has no

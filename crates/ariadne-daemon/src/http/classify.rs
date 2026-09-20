@@ -266,10 +266,10 @@ mod tests {
             let acted_on = status_for_event(kind).is_some() || attention_for_event(kind).is_some();
             assert!(acted_on, "{kind} is reported but ingested as a no-op");
         }
-        assert!(crate::agents::compaction_done(
-            "compaction_update",
-            &json!({"status": "completed"})
-        ));
+        // Not among them: a compaction the agent ran by itself, which the
+        // daemon neither asks for nor advertises (007, rule 17).
+        assert!(status_for_event("compaction_update").is_none());
+        assert!(attention_for_event("compaction_update").is_none());
     }
 
     /// The lifecycle events, and nothing about them raises attention.

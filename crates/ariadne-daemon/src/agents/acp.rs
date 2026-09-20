@@ -12,7 +12,6 @@
 //!   vocabulary the daemon ingests
 //! - Session id: returned by `session/new` and captured from `session_start`
 //! - Resume: `session/resume`, with `session/load` as the protocol fallback
-//! - Compaction: a completed `compaction_update`
 
 use anyhow::{Context, Result};
 use ariadne_core::acp::{self, EnvVariable, LaunchConfig, McpServer};
@@ -33,15 +32,6 @@ pub fn plan_resume(ctx: &SpawnCtx, internal_id: &str, instruction: &str) -> Resu
         Some(internal_id),
         (!instruction.is_empty()).then_some(instruction),
     )
-}
-
-/// Whether an event the runtime reported — `kind` with its payload — says a
-/// compaction has just finished, so the agent is back at its prompt rather
-/// than mid-turn. Started by the user, or by the agent itself near the
-/// context limit: the daemon asks for none.
-pub fn compaction_done(kind: &str, payload: &serde_json::Value) -> bool {
-    kind == "compaction_update"
-        && payload.get("status").and_then(|value| value.as_str()) == Some("completed")
 }
 
 fn plan(
@@ -84,29 +74,4 @@ fn write_config(ctx: &SpawnCtx, config: &LaunchConfig) -> Result<()> {
     let path = ctx.run_dir.join("acp.json");
     std::fs::write(&path, serde_json::to_string_pretty(config)?)
         .with_context(|| format!("writing {}", path.display()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::compaction_done;
-
-    use serde_json::json;
-
-    /// A compaction is over when the runtime reports a completed one, and
-    /// nothing else it reports is mistaken for it.
-    #[test]
-    fn a_compaction_is_done_when_the_agent_says_so_and_not_before() {
-        assert!(compaction_done(
-            "compaction_update",
-            &json!({"status": "completed"})
-        ));
-        for (kind, payload) in [
-            ("compaction_update", json!({"status": "in_progress"})),
-            ("compaction_update", json!({"status": "failed"})),
-            ("session_update", json!({"status": "completed"})),
-            ("session_start", json!({})),
-        ] {
-            assert!(!compaction_done(kind, &payload), "{kind} {payload}");
-        }
-    }
 }

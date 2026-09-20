@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-09-15
+updated: 2026-09-20
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -111,8 +111,9 @@ skill says (017).
     its seat is a fresh spawn. A session of a finished goal is not revived at
     all. A revive brings back the very row it names, on the same agent and
     model.
-17. The daemon asks no agent to compact. A completed `compaction_update`
-    reads as the agent back at its prompt, and no other event does.
+17. The daemon asks no agent to compact, and does not listen for one. An
+    agent that compacts near its context limit carries on afterwards, and
+    what it does next moves its session as any other work does.
 
 ## Acceptance criteria
 
@@ -182,8 +183,8 @@ skill says (017).
   finished goal is not revived
   (`::a_session_of_a_finished_goal_is_not_revived`), and a revive brings back
   the row it names (`::reviving_a_session_revives_it_in_place`).
-- Only a completed `compaction_update` reads as a finished compaction
-  (`agents/acp.rs::a_compaction_is_done_when_the_agent_says_so_and_not_before`).
+- The daemon advertises no compaction support on `initialize`
+  (`acp.rs::initialize_tells_the_agent_what_the_daemon_supports`).
 
 ## Known gap
 
