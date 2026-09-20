@@ -1471,6 +1471,42 @@ async fn an_implementation_is_listed_under_the_trait_it_is_of() {
     );
 }
 
+/// A Dart client that calls `users/$id/role` reaches the Rust handler of
+/// the route the backend mounts at `/api/users/{id}/role`: the prefix the
+/// client holds is not in the path, so the match is a guess by route.
+#[tokio::test]
+async fn a_dart_call_reaches_the_rust_handler_of_the_route_below_the_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            (
+                "src/api.rs",
+                "pub fn router() -> Router {\n    Router::new().route(\"/api/users/{id}/role\", put(set_role))\n}\n\npub async fn set_role() {}\n",
+            ),
+            (
+                "lib/users.dart",
+                "class UsersRepository {\n  Future<void> setRole(String id, String role) async {\n    await _api.put('users/$id/role', {'role': role});\n  }\n}\n",
+            ),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let handler = only(&store, "set_role").await;
+    let context = store.context(handler.id, "repo", "main", 20).await.unwrap();
+    let from_dart: Vec<String> = steps(&context.callers)
+        .into_iter()
+        .filter(|end| end.starts_with("lib/users.dart"))
+        .collect();
+    assert_eq!(
+        from_dart,
+        ["lib/users.dart:1 UsersRepository heuristic route 1"],
+        "{:#?}",
+        context.callers
+    );
+}
+
 /// A file graph groups the symbol edges between each pair of files and kind.
 /// It keeps a group exact only when every edge in that group is exact, and
 /// it removes edges whose ends are the same file.

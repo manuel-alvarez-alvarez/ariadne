@@ -116,7 +116,10 @@ CREATE TABLE interfaces (
     symbol   INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
     -- The handler names a route registration passes, space-separated. NULL
     -- on everything else.
-    handlers TEXT
+    handlers TEXT,
+    -- The HTTP method a route call names, uppercased. NULL where the call
+    -- names none.
+    method   TEXT
 );
 CREATE INDEX interfaces_by_blob ON interfaces(blob);
 CREATE INDEX interfaces_by_name ON interfaces(kind, name);

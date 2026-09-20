@@ -376,10 +376,25 @@ agent to do with the tools (017); and the memory tools beside these (019).
       a call named `fetch`, `request`, `Request`, `NewRequest`,
       `NewRequestWithContext`, `open`, `ajax`, `getJSON`, `apiFetch`,
       `daemonFetch` or `$http`. A query string and a trailing `/` are
-      dropped. A template carries the identifiers the registration passes
-      after the literal, up to a closure's body and past the verbs and the
-      routing words, as its handler names, and sits in the definition a
-      decorator or an attribute is on, else the definition around it.
+      dropped. A route read off a verb carries that verb, uppercased, as its
+      method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or `OPTIONS`,
+      and no method for `all`, `any` and `use`. A template carries the
+      identifiers the registration passes after the literal, up to a
+      closure's body and past the verbs and the routing words, as its
+      handler names, and sits in the definition a decorator or an attribute
+      is on, else the definition around it.
+    - In Dart, a `get`, `post`, `put`, `patch` or `delete` call that requests
+      a route — a verb on a receiver that is no router — takes its first
+      string literal as the route, which needs no leading `/`: the client
+      holds the prefix the path hangs under
+      (`_api.put('users/$id/role', …)`). Each `$name` in it is written
+      `${name}` and each `${expr}` is kept, which is the form a template
+      literal gives, so an interpolation is one path parameter. The literal
+      is a route where every character outside an interpolation is a letter,
+      a digit, `-`, `_`, `.` or `/`, and one segment is enough. An
+      interpolation holds a Dart expression, which is any text
+      (`'teams/${team.id.toString()}/members'`), and a `?` in it starts no
+      query string (`'members/${user?.id}/cards'`).
     - An environment variable is read by `env::var(`, `env::var_os(`,
       `option_env!(`, `env!(`, `process.env.X`, `process.env[`,
       `import.meta.env.X`, `Deno.env.get(`, `os.environ[`, `os.environ.get(`,
@@ -407,7 +422,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
       segment, a segment that starts with `:`, `{`, `<`, `*` or `$` or holds
       `$` or `{` standing for any value on either side: `exact` where every
       segment is the same, `heuristic` where a wildcard stood in for one,
-      and no edge where the counts differ. The edge points at the handler:
+      and no edge where the counts differ. A use with no leading `/` is a
+      path below a prefix the client holds, so it is matched against the
+      last segments of the template — `users/${id}/role` fits
+      `/api/users/{id}/role` — and such a match is `heuristic`, the prefix
+      being unread. The edge points at the handler:
       the definition of a handler name the template carries, in the
       template's own file first, then its directory, then anywhere in the
       ref under the candidate cap, one edge to each; and at the registration
@@ -587,7 +606,7 @@ scan of its lines.
 | `symbols_fts` | `terms`, rowid = `symbols.id` | FTS5 over each symbol's identifier parts |
 | `mentions` | `blob`, `kind`, `name`, `line`, `from_symbol` | the names one blob names, before they are resolved |
 | `imports` | `blob`, `module`, `name`, `line` | the import statements of one blob |
-| `interfaces` | `blob`, `kind`, `name`, `line`, `symbol`, `handlers` | the packages, routes and variables of one blob (rule 30), before they are linked |
+| `interfaces` | `blob`, `kind`, `name`, `line`, `symbol`, `handlers`, `method` | the packages, routes and variables of one blob (rule 30), before they are linked |
 | `edges` | `from_repository`, `git_ref`, `from_blob`, `kind`, `from_symbol`, `from_line`, `to_repository`, `to_ref`, `to_blob`, `to_symbol`, `to_line`, `name`, `confidence`, `step`, `candidates` | the relations the resolution and link passes derived, each end a blob at a ref of a repository, a line and a definition where there is one, each naming the step that answered and how many definitions matched there |
 
 `refs` cascade from `repositories`, `files` from `refs`, and `symbols`,
@@ -740,6 +759,17 @@ and by `(kind, name)`.
 - A route use with a wildcard segment matches its template and is marked
   `heuristic`, a full match is `exact`, and a different segment count is no
   match (`interfaces.rs::a_route_use_fits_a_template_segment_by_segment`).
+- Each of the five methods a Dart client calls is a route use with its
+  method, its path and its line, and an interpolation in the path — `$id`,
+  `${user.id}`, `${team.id.toString()}` or `${user?.id}` — is one path
+  parameter
+  (`interfaces.rs::a_dart_call_of_each_method_is_a_route_use_with_its_method_and_line`,
+  `::a_dart_interpolation_is_one_path_parameter`).
+- A route use with no leading `/` fits the last segments of a template, as a
+  guess (`interfaces.rs::a_route_use_below_a_prefix_fits_the_end_of_a_template`),
+  and a Dart `put('users/$id/role')` reaches the Rust handler of
+  `/api/users/{id}/role` at step `route`
+  (`knowledge.rs::a_dart_call_reaches_the_rust_handler_of_the_route_below_the_prefix`).
 - A dependency joins the package it names, exactly by path and as a guess by
   name; a route use joins the template it fits, at the handler the
   registration named where the ref defines it; a set variable joins every

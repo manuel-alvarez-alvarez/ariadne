@@ -65,6 +65,9 @@ pub struct Interface {
     /// The names a route registration passes as its handlers, for the
     /// resolution pass to find. Empty on everything else.
     pub handlers: Vec<String>,
+    /// The HTTP method a route call names, uppercased: `GET` for
+    /// `client.get("/v1/items")`. `None` where the call names none.
+    pub method: Option<String>,
 }
 
 /// The manifests read by their file name.
@@ -141,7 +144,7 @@ pub fn read(path: &str, language: Language, source: &str, symbols: &[Symbol]) ->
     }
     if language.tags_query().is_some() {
         env_in_code(source, &lines, symbols, &mut found);
-        routes(source, &lines, symbols, &mut found);
+        routes(source, &lines, symbols, language, &mut found);
     }
     // One interface per kind, name and line: a pattern that is the tail of
     // another finds the same literal twice.
@@ -159,6 +162,7 @@ fn push(found: &mut Vec<Interface>, kind: InterfaceKind, name: &str, line: u32) 
             line,
             symbol: None,
             handlers: Vec::new(),
+            method: None,
         });
     }
 }
@@ -706,6 +710,7 @@ fn env_in_code(source: &str, lines: &Lines, symbols: &[Symbol], found: &mut Vec<
                     line,
                     symbol: enclosing(symbols, line),
                     handlers: Vec::new(),
+                    method: None,
                 });
             }
         }
@@ -753,6 +758,13 @@ const VERBS: &[&str] = &[
 const ROUTERS: &[&str] = &[
     "app", "router", "routes", "r", "mux", "server", "srv", "group", "g", "route", "sub",
 ];
+
+/// The verbs that name an HTTP method, in lowercase: `all`, `any` and `use`
+/// name none.
+const METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options"];
+
+/// The methods a Dart client calls a route with.
+const DART_METHODS: &[&str] = &["get", "post", "put", "patch", "delete"];
 
 /// The calls that request a route, by name.
 const REQUEST: &[&str] = &[
@@ -812,7 +824,13 @@ enum Role {
 }
 
 /// Every route literal a registration or a request call holds.
-fn routes(source: &str, lines: &Lines, symbols: &[Symbol], found: &mut Vec<Interface>) {
+fn routes(
+    source: &str,
+    lines: &Lines,
+    symbols: &[Symbol],
+    language: Language,
+    found: &mut Vec<Interface>,
+) {
     for (open, _) in source.match_indices('(') {
         let head = &source[..open];
         // A generic between the callee and the paren: `get<T>(`.
@@ -858,7 +876,16 @@ fn routes(source: &str, lines: &Lines, symbols: &[Symbol], found: &mut Vec<Inter
         let rest = &source[open + 1..];
         let end = crate::parser::statement_end(rest, ')').min(600);
         let args = &rest[..end];
-        let Some((literal, after)) = route_literal(args) else {
+        // A Dart client is handed the path below the prefix its base URL
+        // holds, so its first argument is a route with or without a leading
+        // `/`, and an interpolation in it stands for a segment.
+        let dart_request =
+            language == Language::Dart && role == Role::Request && DART_METHODS.contains(&callee);
+        let found_literal = match dart_request {
+            true => dart_route_use(args).map(|path| (path, 0)),
+            false => route_literal(args),
+        };
+        let Some((literal, after)) = found_literal else {
             continue;
         };
         let line = lines.line_of(open);
@@ -882,8 +909,116 @@ fn routes(source: &str, lines: &Lines, symbols: &[Symbol], found: &mut Vec<Inter
             line,
             symbol,
             handlers,
+            method: http_method(callee),
         });
     }
+}
+
+/// The HTTP method a callee names, uppercased: `Get` and `get` are both
+/// `GET`, and a call named `route` or `use` names none.
+fn http_method(callee: &str) -> Option<String> {
+    let lowercase = callee.to_ascii_lowercase();
+    METHODS
+        .contains(&lowercase.as_str())
+        .then(|| lowercase.to_ascii_uppercase())
+}
+
+/// The route a Dart request call takes as its first argument, with every
+/// interpolation in the form a template literal gives. The leading `/` is
+/// optional: the client holds the prefix the path hangs under.
+fn dart_route_use(args: &str) -> Option<String> {
+    let literal = quoted(args)?;
+    let path = without_query(&literal).trim_end_matches('/');
+    let template = dart_parameters(path);
+    if route_segments(&template).is_empty() || !is_route_template(&template) {
+        return None;
+    }
+    Some(template)
+}
+
+/// A Dart literal up to its query string. A `?` inside an interpolation is
+/// part of a Dart expression, such as `${user?.id}`, and starts no query.
+fn without_query(literal: &str) -> &str {
+    let mut at = 0;
+    while let Some(next) = literal[at..].find(['?', '$']) {
+        let next = at + next;
+        if literal.as_bytes()[next] == b'?' {
+            return &literal[..next];
+        }
+        at = next + 1;
+        // Past `$` an interpolation is `{…}` or a name; a name holds no `?`,
+        // so only a braced one is stepped over.
+        let Some(inner) = literal[at..].strip_prefix('{') else {
+            continue;
+        };
+        match inner.find('}') {
+            Some(close) => at += 1 + close + 1,
+            // An interpolation nothing closes is text like any other.
+            None => break,
+        }
+    }
+    literal
+}
+
+/// Whether a template reads as a path. An interpolation holds a Dart
+/// expression, which is any text, so only what is outside one is a path.
+fn is_route_template(template: &str) -> bool {
+    let is_path = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '/');
+    let mut rest = template;
+    while let Some(at) = rest.find('$') {
+        if !rest[..at].chars().all(is_path) {
+            return false;
+        }
+        // Past `$` stands `{expression}`: `dart_parameters` writes every
+        // interpolation in that form, and a `$` on its own is not a path.
+        let Some((_, left)) = rest[at + 1..]
+            .strip_prefix('{')
+            .and_then(|inner| inner.split_once('}'))
+        else {
+            return false;
+        };
+        rest = left;
+    }
+    rest.chars().all(is_path)
+}
+
+/// Every `$name` of a Dart string written as `${name}`, which is the form a
+/// template literal gives and the form a wildcard segment is read in. A
+/// `${expr}` is already in that form.
+fn dart_parameters(path: &str) -> String {
+    let mut template = String::with_capacity(path.len());
+    let mut rest = path;
+    while let Some(at) = rest.find('$') {
+        template.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let (parameter, left) = match after.strip_prefix('{') {
+            Some(inner) => match inner.split_once('}') {
+                Some((parameter, left)) => (parameter, left),
+                // An interpolation nothing closes is text like any other.
+                None => {
+                    template.push_str(&rest[at..]);
+                    return template;
+                }
+            },
+            None => {
+                let end = after
+                    .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .unwrap_or(after.len());
+                (&after[..end], &after[end..])
+            }
+        };
+        if parameter.is_empty() {
+            template.push('$');
+            rest = after;
+            continue;
+        }
+        template.push_str("${");
+        template.push_str(parameter);
+        template.push('}');
+        rest = left;
+    }
+    template.push_str(rest);
+    template
 }
 
 /// The first string literal of a call's arguments that reads as a route: it
@@ -955,14 +1090,23 @@ pub fn is_wildcard(segment: &str) -> bool {
 
 /// Whether a route use fits a template, and how well: `exact` where every
 /// segment is the same, `heuristic` where a wildcard stood in for one.
+///
+/// A use with no leading `/` is a path below a prefix the client holds —
+/// `users/1` under `/api` — so it fits the last segments of a template, and
+/// the prefix it does not name makes the match `heuristic`.
 pub fn route_match(used: &str, template: &str) -> Option<&'static str> {
+    let below_a_prefix = !used.trim_start().starts_with('/');
     let used = route_segments(used);
-    let template = route_segments(template);
+    let all = route_segments(template);
+    let template = match below_a_prefix && used.len() < all.len() {
+        true => &all[all.len() - used.len()..],
+        false => &all[..],
+    };
     if used.is_empty() || used.len() != template.len() {
         return None;
     }
-    let mut exact = true;
-    for (a, b) in used.iter().zip(&template) {
+    let mut exact = !below_a_prefix;
+    for (a, b) in used.iter().zip(template) {
         if a == b {
             continue;
         }
@@ -1240,6 +1384,66 @@ mod tests {
         assert_eq!(found[0].symbol, Some(0));
     }
 
+    /// Each of the five methods a Dart client calls is a route use: the
+    /// method it names, the path it asks for, and the line of the call.
+    #[test]
+    fn a_dart_call_of_each_method_is_a_route_use_with_its_method_and_line() {
+        let dart = "class Repositories {\n  Future<void> load(String id) async {\n    await _api.get('auth/me');\n    await _api.post('users', {'name': 'x'});\n    await _api.put('users/$id/role', {'role': 'admin'});\n    await _api.patch('members/$id/active', {'active': true});\n    await _api.delete('teams/$id');\n  }\n}\n";
+        let found = read("lib/api.dart", Language::Dart, dart, &[]);
+        let calls: Vec<String> = found
+            .iter()
+            .map(|i| {
+                format!(
+                    "{} {} {} {}",
+                    i.kind.as_str(),
+                    i.method.as_deref().unwrap_or("-"),
+                    i.name,
+                    i.line
+                )
+            })
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                "route_use GET auth/me 3",
+                "route_use POST users 4",
+                "route_use PUT users/${id}/role 5",
+                "route_use PATCH members/${id}/active 6",
+                "route_use DELETE teams/${id} 7",
+            ]
+        );
+    }
+
+    /// An interpolation of a Dart string is one path parameter, written the
+    /// way a template literal gives it.
+    #[test]
+    fn a_dart_interpolation_is_one_path_parameter() {
+        let dart = "Future<void> f(String id) async {\n  await _api.put('users/$id/role', body);\n  await _api.get('members/${user.id}');\n  await _api.get('teams/${team.id.toString()}/members');\n  await _api.get('members/${user?.id}/cards');\n  await _api.get('users?page=1');\n}\n";
+        let found = read("lib/api.dart", Language::Dart, dart, &[]);
+        assert_eq!(
+            kinds(&found),
+            [
+                (InterfaceKind::RouteUse, "users/${id}/role", 2),
+                (InterfaceKind::RouteUse, "members/${user.id}", 3),
+                (
+                    InterfaceKind::RouteUse,
+                    "teams/${team.id.toString()}/members",
+                    4
+                ),
+                (InterfaceKind::RouteUse, "members/${user?.id}/cards", 5),
+                (InterfaceKind::RouteUse, "users", 6),
+            ]
+        );
+        for use_of in found.iter().filter(|i| i.name.contains('$')) {
+            assert_eq!(
+                use_of.name.matches("${").count(),
+                1,
+                "one parameter in {}",
+                use_of.name
+            );
+        }
+    }
+
     /// A use fits a template segment by segment: the same segments are an
     /// exact match, a wildcard on either side a heuristic one, and a
     /// different count no match.
@@ -1259,6 +1463,24 @@ mod tests {
         assert_eq!(
             route_match("/v1/items/42?x=1", "/v1/items/42/"),
             Some("exact")
+        );
+    }
+
+    /// A use with no leading `/` names the path below a prefix the client
+    /// holds, so it fits the last segments of a template, as a guess.
+    #[test]
+    fn a_route_use_below_a_prefix_fits_the_end_of_a_template() {
+        assert_eq!(
+            route_match("users/${id}/role", "/api/users/{id}/role"),
+            Some("heuristic")
+        );
+        assert_eq!(route_match("users", "/api/v1/users"), Some("heuristic"));
+        assert_eq!(route_match("auth/me", "/api/auth/me"), Some("heuristic"));
+        assert_eq!(route_match("users/1", "/api/teams/1"), None);
+        assert_eq!(
+            route_match("/users/1", "/api/users/1"),
+            None,
+            "a path that starts at the root names the whole route"
         );
     }
 }

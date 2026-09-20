@@ -23,7 +23,7 @@ use crate::resolve::{
 
 /// The schema this build writes. Bump it with every change to `schema.sql`:
 /// a store at another version is thrown away and indexed again.
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// The edge kinds a walk of the callers follows: a call, and a request of
 /// a route the definition handles.
@@ -1712,9 +1712,9 @@ impl KnowledgeStore {
             .iter()
             .flat_map(|blob| blob.interfaces.iter().map(move |i| (*blob, i)))
             .collect();
-        for chunk in interfaces.chunks(CHUNK / 6) {
+        for chunk in interfaces.chunks(CHUNK / 7) {
             let mut sql = QueryBuilder::<Sqlite>::new(
-                "INSERT INTO interfaces (blob, kind, name, line, symbol, handlers) ",
+                "INSERT INTO interfaces (blob, kind, name, line, symbol, handlers, method) ",
             );
             sql.push_values(chunk, |mut row, (blob, interface)| {
                 row.push_bind(&blob.blob)
@@ -1729,7 +1729,8 @@ impl KnowledgeStore {
                     .push_bind(match interface.handlers.is_empty() {
                         true => None,
                         false => Some(interface.handlers.join(" ")),
-                    });
+                    })
+                    .push_bind(interface.method.clone());
             });
             sql.build().execute(&mut *tx).await?;
         }
