@@ -1006,41 +1006,43 @@ impl Rpc {
         }
     }
 
-    async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
-        let mut incoming = RuntimeIncoming {
-            sink: &self.sink,
-            turn: &self.turn,
-            repository_id: &self.repository_id,
+    /// What this launch hands the handling of an incoming message.
+    fn incoming(&self) -> RuntimeIncoming {
+        RuntimeIncoming {
+            sink: self.sink.clone(),
+            turn: self.turn.clone(),
+            repository_id: self.repository_id.clone(),
             permission_mode: self.permission_mode,
-            pending_permission: &self.pending_permission,
-            reports: &self.reports,
-        };
+            pending_permission: self.pending_permission.clone(),
+            reports: self.reports.clone(),
+        }
+    }
+
+    async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
+        let mut incoming = self.incoming();
         self.transport.request(method, params, &mut incoming).await
     }
 
     async fn receive(&mut self) -> Result<bool> {
-        let mut incoming = RuntimeIncoming {
-            sink: &self.sink,
-            turn: &self.turn,
-            repository_id: &self.repository_id,
-            permission_mode: self.permission_mode,
-            pending_permission: &self.pending_permission,
-            reports: &self.reports,
-        };
+        let mut incoming = self.incoming();
         self.transport.receive(&mut incoming).await
     }
 }
 
-struct RuntimeIncoming<'a> {
-    sink: &'a EventSink,
-    turn: &'a Arc<tokio::sync::Mutex<Turn>>,
-    repository_id: &'a str,
+/// Everything the handling of one incoming ACP message needs, owned rather
+/// than borrowed: the SDK's handlers outlive any one call, so this is cloned
+/// into them once and shares what it holds with the driver.
+#[derive(Clone)]
+struct RuntimeIncoming {
+    sink: EventSink,
+    turn: Arc<tokio::sync::Mutex<Turn>>,
+    repository_id: String,
     permission_mode: PermissionMode,
-    pending_permission: &'a Arc<Mutex<Option<oneshot::Sender<String>>>>,
-    reports: &'a Followers,
+    pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+    reports: Followers,
 }
 
-impl Incoming for RuntimeIncoming<'_> {
+impl Incoming for RuntimeIncoming {
     async fn handle(&mut self, message: Value) -> Result<Option<Value>> {
         match message.get("method").and_then(Value::as_str) {
             Some("session/update") => {
@@ -1060,7 +1062,7 @@ impl Incoming for RuntimeIncoming<'_> {
     }
 }
 
-impl RuntimeIncoming<'_> {
+impl RuntimeIncoming {
     async fn handle_update(&mut self, params: &Value) -> Result<()> {
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let update = params.get("update").cloned().unwrap_or_default();
@@ -1139,7 +1141,7 @@ impl RuntimeIncoming<'_> {
                         .unwrap_or_default()
                         .to_string();
                     self.sink.emit("post_tool_use", payload).await;
-                    report(self.reports, TurnReport::ToolEnded(name));
+                    report(&self.reports, TurnReport::ToolEnded(name));
                 } else {
                     self.sink
                         .emit_live(
@@ -1200,7 +1202,7 @@ impl RuntimeIncoming<'_> {
                 .runtime
                 .inner
                 .store
-                .has_learned_permission(self.repository_id, &signature.tool_name, &signature.kind)
+                .has_learned_permission(&self.repository_id, &signature.tool_name, &signature.kind)
                 .await
                 .unwrap_or(false);
         // The input path must see a waiting receiver as soon as the request
@@ -1224,7 +1226,7 @@ impl RuntimeIncoming<'_> {
                 .runtime
                 .inner
                 .store
-                .learn_permission(self.repository_id, &signature.tool_name, &signature.kind)
+                .learn_permission(&self.repository_id, &signature.tool_name, &signature.kind)
                 .await
                 .map_err(|error| anyhow!("remembering ACP permission approval: {error}"))?;
         }
