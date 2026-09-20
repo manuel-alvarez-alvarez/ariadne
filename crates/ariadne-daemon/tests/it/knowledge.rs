@@ -667,9 +667,8 @@ fn interaction_lines(
 /// its confidence and the step that joined them: the dependency by name is a
 /// guess, the reference is a guess, the route use with a wildcard segment is
 /// a guess, and the variable is exact. `api` lists the same edges from its
-/// side. Removing
-/// the dependency and reading `web` again removes the `depends_on` edge and
-/// no other.
+/// side. Removing the dependency and reading `web` again removes the
+/// `depends_on` and `references` edges, but keeps the route and variable.
 #[tokio::test]
 async fn interactions_between_two_repositories_are_listed_by_kind() {
     let h = harness().knowledge().await;
@@ -701,7 +700,7 @@ async fn interactions_between_two_repositories_are_listed_by_kind() {
         "the same edges, seen from the other end"
     );
 
-    // The dependency goes, and the edge with it.
+    // The manifest link and its name reference go, but the other edges stay.
     std::fs::write(
         Path::new(&web.path).join("package.json"),
         "{\n  \"name\": \"web\"\n}\n",
@@ -713,7 +712,42 @@ async fn interactions_between_two_repositories_are_listed_by_kind() {
     let groups: Vec<KnowledgeInteractionGroupDto> = h
         .get(&format!("/v1/knowledge/interactions?repository={}", web.id))
         .await;
-    assert_eq!(interaction_lines(&groups, &api, &web), expected[1..]);
+    assert_eq!(interaction_lines(&groups, &api, &web), expected[2..]);
+}
+
+/// `interactions` is empty when two repositories only share a symbol name
+/// and no manifest, route or variable joins them.
+#[tokio::test]
+async fn interactions_are_empty_without_a_true_repository_relation() {
+    let h = harness().knowledge().await;
+    let mut rx = h.bus.subscribe();
+    let caller_path = h.git_repo("caller");
+    write_all(
+        &caller_path,
+        &[(
+            "src/client.ts",
+            "export function useSharedThing() { return new SharedThing(); }\n",
+        )],
+    );
+    commit(&caller_path, "caller");
+    let definitions_path = h.git_repo("definitions");
+    write_all(
+        &definitions_path,
+        &[("src/lib.rs", "pub struct SharedThing;\n")],
+    );
+    commit(&definitions_path, "definitions");
+    let caller = h.repository(&caller_path).await;
+    indexed(&mut rx, &caller.id, "main", None).await;
+    let definitions = h.repository(&definitions_path).await;
+    indexed(&mut rx, &definitions.id, "main", None).await;
+
+    let groups: Vec<KnowledgeInteractionGroupDto> = h
+        .get(&format!(
+            "/v1/knowledge/interactions?repository={}",
+            caller.id
+        ))
+        .await;
+    assert!(groups.is_empty(), "{groups:#?}");
 }
 
 /// `impact --diff` for a change to the route handler in `api` lists the

@@ -402,15 +402,13 @@ agent to do with the tools (017); and the memory tools beside these (019).
       Its step is `route`.
     - `sets_env`, from a set to every read of the same variable, `exact` at
       step `name`.
-    Then, between two repositories only, `references`: every mention or
-    named import of a name at least 4 characters long that the ref defines
-    nowhere, pointed at every non-outline definition of that name the other
-    ref holds under the candidate cap, `heuristic` at step `name`, carrying
-    how many matched, and keyed by the name. Where the ref's manifests
-    depend on some registered repository but not on this one, and one it
-    depends on also defines the name at its base ref, the name is taken to
-    mean that one's definition and makes no edge here. The interface edges
-    of a pair are derived before its references, which is what that reads.
+    Then, between two repositories joined by a `depends_on` edge in either
+    direction only, `references`: every mention or named import of a name at
+    least 4 characters long that the ref defines nowhere, pointed at every
+    non-outline definition of that name the other ref holds under the
+    candidate cap, `heuristic` at step `name`, carrying how many matched, and
+    keyed by the name. The interface edges of every pair are derived before
+    its references, so the manifest relationship is available first.
 32. `GET /v1/knowledge/interactions` takes `repository` and optionally
     `git_ref` (the caller's own by default, rule 20), and answers the edges
     whose from end or to end is that ref and whose other end is another
@@ -563,7 +561,7 @@ scan of its lines.
 
 ## Schema
 
-`crates/ariadne-knowledge/src/schema.sql`, version 6:
+`crates/ariadne-knowledge/src/schema.sql`, version 7:
 
 | Table | Columns | Holds |
 | --- | --- | --- |
@@ -730,6 +728,11 @@ and by `(kind, name)`.
   makes no foreign reference
   (`resolve.rs::a_foreign_reference_is_a_guess_at_every_definition_of_its_name`,
   `::a_foreign_reference_skips_outline_definitions`).
+- Two repositories that share a symbol name but have no manifest link make no
+  `references` edge
+  (`knowledge.rs::repositories_without_a_manifest_link_do_not_share_references`);
+  a dependency in the direction opposite the reference keeps the guessed edge
+  (`knowledge.rs::a_reverse_manifest_link_keeps_references_between_repositories`).
 - With `api` (Rust: the package `api-types`, a type `Item`, an axum route
   `/v1/items/{id}` and a read of `API_TOKEN`) and `web` (TypeScript: a
   dependency on `api-types`, a `new Item()`, a request to `/v1/items/42`
@@ -738,8 +741,12 @@ and by `(kind, name)`.
   the dependency, the reference and the wildcard route as guesses, by
   `name`, by `name` and by `route`, and the variable exact by `name` — `api`
   lists the same edges from its side, and removing the dependency from `web`
-  and reading it again removes the `depends_on` edge and no other
+  and reading it again removes the `depends_on` and `references` edges but
+  keeps the route and variable edges
   (`tests/it/knowledge.rs::interactions_between_two_repositories_are_listed_by_kind`).
+- `interactions` is empty for two repositories that only share a symbol name
+  and have no manifest, route or variable relation
+  (`tests/it/knowledge.rs::interactions_are_empty_without_a_true_repository_relation`).
 - `impact --diff` for a change to the route handler in `api` lists the `web`
   call site, under `web`, at step `route`
   (`tests/it/knowledge.rs::a_route_handler_change_reaches_the_call_site_in_the_other_repository`).
@@ -925,14 +932,15 @@ they name move.
 Another repository is read at its base ref only: a task branch of `web` is
 linked against `main` of `api`, and a task branch of `api` is what `main` of
 `web` is linked against, so a route added on an `api` branch reaches `web`
-once it lands. A reference across repositories is joined by its name alone
-and is always a guess; a call across repositories is a `references` edge,
-not a `calls` one, so `impact` reaches another repository through a route
-and not through a name. A route registered at file scope with no handler the
-ref defines points at nothing but its own line. A manifest or a `.env` file
-is read by the first path its blob was seen at, like every blob's language.
-The link pass derives a whole pair of refs at a time, which is one scan of
-the interfaces and the unresolved names of each side per run.
+once it lands. A reference across repositories exists only where a manifest
+dependency joins them in either direction; within that pair, the name alone
+joins the reference and it is always a guess. A call across repositories is
+a `references` edge, not a `calls` one, so `impact` reaches another repository
+through a route and not through a name. A route registered at file scope with
+no handler the ref defines points at nothing but its own line. A manifest or
+a `.env` file is read by the first path its blob was seen at, like every blob's
+language. The link pass derives a whole pair of refs at a time, which is one
+scan of the interfaces and the unresolved names of each side per run.
 
 A reviewer on a task staffed with several authors reads the task's first
 branch by default and names another with `git_ref`. A blob is parsed as the

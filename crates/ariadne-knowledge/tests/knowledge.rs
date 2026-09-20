@@ -691,6 +691,84 @@ fn steps(list: &[ariadne_knowledge::Related]) -> Vec<String> {
         .collect()
 }
 
+/// Two repositories that only share a symbol name get no reference between
+/// them when neither manifest depends on the other repository.
+#[tokio::test]
+async fn repositories_without_a_manifest_link_do_not_share_references() {
+    let dir = tempfile::tempdir().unwrap();
+    let caller = graph_repo(
+        &dir.path().join("caller"),
+        &[(
+            "src/client.ts",
+            "export function useItem() { return new Item(); }\n",
+        )],
+    );
+    let definitions = graph_repo(
+        &dir.path().join("definitions"),
+        &[("src/lib.rs", "pub struct Item;\n")],
+    );
+    let store = store(dir.path()).await;
+    store.index("caller", &caller, "main").await.unwrap();
+    store
+        .index("definitions", &definitions, "main")
+        .await
+        .unwrap();
+
+    let interactions = store.interactions("caller", "main").await.unwrap();
+    assert!(
+        interactions.iter().all(|edge| edge.kind != "references"),
+        "repositories joined only by a name: {interactions:#?}"
+    );
+}
+
+/// A dependency in the direction opposite the reference still joins the two
+/// repositories, so the shared symbol name makes a guessed reference.
+#[tokio::test]
+async fn a_reverse_manifest_link_keeps_references_between_repositories() {
+    let dir = tempfile::tempdir().unwrap();
+    let caller = graph_repo(
+        &dir.path().join("caller"),
+        &[
+            ("Cargo.toml", "[package]\nname = \"caller-package\"\n"),
+            (
+                "src/client.ts",
+                "export function useItem() { return new Item(); }\n",
+            ),
+        ],
+    );
+    let definitions = graph_repo(
+        &dir.path().join("definitions"),
+        &[
+            (
+                "package.json",
+                "{\n  \"name\": \"definitions\",\n  \"dependencies\": {\n    \"caller-package\": \"^1.0.0\"\n  }\n}\n",
+            ),
+            ("src/lib.rs", "pub struct Item;\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("caller", &caller, "main").await.unwrap();
+    store
+        .index("definitions", &definitions, "main")
+        .await
+        .unwrap();
+
+    let interactions = store.interactions("caller", "main").await.unwrap();
+    let dependency = interactions
+        .iter()
+        .find(|edge| edge.kind == "depends_on")
+        .expect("the reverse dependency");
+    assert_eq!(dependency.from.repository_id, "definitions");
+    assert_eq!(dependency.to.repository_id, "caller");
+    let reference = interactions
+        .iter()
+        .find(|edge| edge.kind == "references")
+        .expect("the reference allowed by that dependency");
+    assert_eq!(reference.from.repository_id, "caller");
+    assert_eq!(reference.to.repository_id, "definitions");
+    assert_eq!(reference.confidence, "heuristic");
+}
+
 /// A Rust file that calls a definition it brought in with `use` names that
 /// definition exactly, and the caller is listed as one.
 ///

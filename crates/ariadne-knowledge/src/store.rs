@@ -23,7 +23,7 @@ use crate::resolve::{
 
 /// The schema this build writes. Bump it with every change to `schema.sql`:
 /// a store at another version is thrown away and indexed again.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// The edge kinds a walk of the callers follows: a call, and a request of
 /// a route the definition handles.
@@ -2034,26 +2034,24 @@ impl KnowledgeStore {
             if from_repository == to_repository {
                 continue;
             }
+            let linked = self.linked_repositories(from_repository, from_ref).await?;
+            if !linked.contains(to_repository) {
+                self.commit_links(
+                    (from_repository, from_ref),
+                    (to_repository, to_ref),
+                    &["references"],
+                    &[],
+                )
+                .await?;
+                continue;
+            }
             let key = scope(from_repository, from_ref);
             if !unresolved.contains_key(&key) {
                 let names = self.unresolved_names(from_repository, from_ref).await?;
                 unresolved.insert(key.clone(), names);
             }
             let names = &unresolved[&key];
-            let mut defined = self.candidates(to_repository, to_ref, names).await?;
-            // A repository the manifest depends on is preferred: where the
-            // name is also defined in one this repository depends on, and
-            // this one is not, the name means that one's definition.
-            let linked = self.linked_repositories(from_repository, from_ref).await?;
-            if !linked.contains(to_repository) && !linked.is_empty() {
-                let names: Vec<String> = defined.keys().cloned().collect();
-                let elsewhere = self.defining_repositories(&names).await?;
-                defined.retain(|name, _| {
-                    !elsewhere
-                        .get(name)
-                        .is_some_and(|repositories| repositories.iter().any(|r| linked.contains(r)))
-                });
-            }
+            let defined = self.candidates(to_repository, to_ref, names).await?;
             let names: Vec<String> = defined.keys().cloned().collect();
             let mentions = self
                 .mentions_named(from_repository, from_ref, &names)
@@ -2171,48 +2169,26 @@ impl KnowledgeStore {
         Ok(found)
     }
 
-    /// The repositories one ref depends on, by its manifests.
+    /// The repositories joined to one ref by a manifest dependency in either
+    /// direction.
     async fn linked_repositories(
         &self,
         repository_id: &str,
         git_ref: &str,
     ) -> Result<HashSet<String>> {
         let found: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT to_repository FROM edges
-             WHERE from_repository = ?1 AND git_ref = ?2 AND kind = 'depends_on'
-               AND to_repository <> ?1",
+            "SELECT DISTINCT CASE WHEN from_repository = ?1
+                                  THEN to_repository ELSE from_repository END
+             FROM edges
+             WHERE kind = 'depends_on' AND from_repository <> to_repository
+               AND ((from_repository = ?1 AND git_ref = ?2)
+                    OR (to_repository = ?1 AND to_ref = ?2))",
         )
         .bind(repository_id)
         .bind(git_ref)
         .fetch_all(&self.read)
         .await?;
         Ok(found.into_iter().collect())
-    }
-
-    /// The repositories that define each of `names` at their base ref.
-    async fn defining_repositories(
-        &self,
-        names: &[String],
-    ) -> Result<HashMap<String, HashSet<String>>> {
-        let mut found: HashMap<String, HashSet<String>> = HashMap::new();
-        for chunk in names.chunks(CHUNK) {
-            let mut sql = QueryBuilder::<Sqlite>::new(
-                "SELECT DISTINCT s.name, f.repository_id
-                 FROM symbols s JOIN files f ON f.blob = s.blob
-                 JOIN repositories r ON r.id = f.repository_id AND r.base_ref = f.git_ref
-                 WHERE s.name IN (",
-            );
-            let mut values = sql.separated(", ");
-            for name in chunk {
-                values.push_bind(name);
-            }
-            sql.push(")");
-            let rows: Vec<(String, String)> = sql.build_query_as().fetch_all(&self.read).await?;
-            for (name, repository) in rows {
-                found.entry(name).or_default().insert(repository);
-            }
-        }
-        Ok(found)
     }
 
     /// Record the files of a ref at a commit, once their blobs are stored.
