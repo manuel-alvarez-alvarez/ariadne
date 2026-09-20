@@ -77,7 +77,12 @@ impl World {
 
     /// The scheduler, started over everything seeded so far.
     fn scheduler(&self) -> tokio::sync::mpsc::UnboundedSender<SchedEvent> {
-        scheduler::start(self.store.clone(), self.launcher.clone(), false)
+        scheduler::start(
+            self.store.clone(),
+            self.launcher.clone(),
+            false,
+            self.timeouts,
+        )
     }
 
     /// End the dependency where the daemon's own spawn budget or the user

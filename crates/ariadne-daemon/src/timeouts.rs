@@ -25,6 +25,30 @@ pub struct Timeouts {
     /// How often a running turn's transcript is read again for what the
     /// launch has spent, so a long turn's figure moves before it ends.
     pub transcript_poll: Duration,
+    /// How long one session's wakes are folded together before the scheduler
+    /// reconciles the task behind them again (`crate::scheduler::coalesce`).
+    ///
+    /// The first wake of a burst is reconciled at once, so this is not a
+    /// delay on anything the user waits for: it is the shortest gap between
+    /// two reconciles of one session. Short enough that a turn which ends in
+    /// the middle of a burst is acted on in a quarter of a second, long
+    /// enough that an agent reporting a tool call every few milliseconds does
+    /// not read the store out of connections.
+    pub session_wake: Duration,
+    /// How often the scheduler reconciles everything, whatever it has been
+    /// woken about (`crate::scheduler`).
+    ///
+    /// Not how long a hand-off waits: everything a write can report — a task
+    /// moving on, a plan finalized, a verdict, an agent's own event — arrives
+    /// as a `SchedEvent` and is acted on as it lands. What is left for the
+    /// tick is the state nothing reports, and the one that costs an agent its
+    /// turn is an agent that died before it could say so. This period is the
+    /// ceiling on how long the successor of such an agent sits unstarted, so
+    /// it is short — the pass costs a handful of indexed reads, which is
+    /// cheap enough to make five seconds the wait rather than fifteen. A test
+    /// about what a wake alone does lengthens it, so the tick cannot do the
+    /// work the wake is being watched for.
+    pub full_reconcile: Duration,
     /// How often the write-ahead log is folded back into the database
     /// (`crate::checkpoint`). Nothing waits on it: it is the period of a
     /// clock, and a tick that finds readers in the way costs the next one
@@ -38,6 +62,8 @@ impl Default for Timeouts {
             cancel_grace: Duration::from_secs(5),
             probe: Duration::from_secs(5),
             transcript_poll: Duration::from_secs(15),
+            session_wake: Duration::from_millis(250),
+            full_reconcile: Duration::from_secs(5),
             checkpoint: Duration::from_secs(30),
         }
     }

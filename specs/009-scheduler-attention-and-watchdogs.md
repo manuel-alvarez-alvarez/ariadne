@@ -6,6 +6,7 @@ areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
   - crates/ariadne-daemon/tests/it/scheduler_attention.rs
+  - crates/ariadne-daemon/src/scheduler/coalesce.rs
   - crates/ariadne-daemon/tests/it/agent_messages.rs
   - crates/ariadne-daemon/tests/it/events.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
@@ -31,8 +32,9 @@ the ACP runtime that takes a prompt (021).
 ## Behavior
 
 1. The scheduler is an event-driven reconciliation loop. HTTP handlers send
-   events after writes, and a tick every 5 s (`TICK_SECS`) reconciles
-   everything, so crashes, missed events and dead agent processes self-heal.
+   events after writes, and a tick every 5 s (`Timeouts::full_reconcile`)
+   reconciles everything, so crashes, missed events and dead agent processes
+   self-heal.
 2. Every rule is idempotent — read the state, compare it with what is wanted,
    act — so a pass that arrives late does what the state says now, never a
    replay of what it missed.
@@ -142,6 +144,19 @@ the ACP runtime that takes a prompt (021).
     and never flagged stalled for sitting idle. A turn that never ends is the
     one silence a planning orchestrator can have, and that is still flagged
     and relaunched as any other agent's is.
+32. An agent reports far more often than its task changes — one tool call is
+    a start and an end — so the wakes its events send are folded per session
+    over a window of 250 ms (`Timeouts::session_wake`). The first wake of a
+    burst is reconciled where it lands, so nothing a user waits for waits for
+    a window; the wakes inside the window cost one more reconcile, at the end
+    of it. A burst of 100 events for one session therefore costs 2
+    reconciles rather than 100, and no wake is lost: the last one of a burst
+    is what the reconcile that closes the window is for.
+33. A window runs from the end of a pass, not from the wake that asked for
+    it. A pass is at its slowest under the load this folding is for, and a
+    window measured from the wake is already over when a slow pass returns:
+    the wakes that queued behind it would each run a pass of their own, which
+    is the pass per event this removes.
 
 ## Acceptance criteria
 
@@ -238,6 +253,30 @@ the ACP runtime that takes a prompt (021).
 - An orchestrator whose agent went away is resumed in its own row, on its
   conversation, with no new row beside it
   (`::an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row`).
+- A burst of 100 events for one session costs a fixed 2 reconciles, whatever
+  the size of the burst, and one event on its own is reconciled where it
+  lands (`scheduler/coalesce.rs::a_burst_of_a_hundred_events_costs_two_reconciles`,
+  `::the_number_of_reconciles_does_not_grow_with_the_burst`,
+  `::a_single_event_is_reconciled_at_once`). Measured over the scheduler
+  itself, the same burst fell from 106 reconciles to 4.
+- The last wake of a burst is reconciled when the window ends
+  (`::the_last_wake_of_a_burst_is_reconciled_when_the_window_ends`,
+  `scheduler_attention.rs::the_wake_a_burst_of_events_ends_on_is_still_acted_on`),
+  a session that keeps reporting is reconciled every window
+  (`coalesce.rs::a_session_that_keeps_reporting_is_reconciled_every_window`),
+  and one session's burst does not delay another session's first wake
+  (`::each_session_has_a_window_of_its_own`).
+- A turn that ends once the burst before it has settled is reconciled where
+  it lands (`::a_wake_after_a_burst_has_settled_is_reconciled_at_once`), and
+  a wake still folded into an open window is taken by a flush
+  (`::a_flush_takes_every_wake_still_owed`,
+  `scheduler_attention.rs::a_wake_folded_into_a_window_is_taken_by_a_flush`).
+- A burst waiting behind a pass slower than a window still costs 2
+  reconciles, where a window measured from the wake costs 100
+  (`coalesce.rs::a_burst_behind_passes_slower_than_a_window_still_costs_two_reconciles`),
+  and the same holds of the scheduler itself over the pass that starts a
+  task's author
+  (`scheduler_attention.rs::a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles`).
 
 ## Known gap
 

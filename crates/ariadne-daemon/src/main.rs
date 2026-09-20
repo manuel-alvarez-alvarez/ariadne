@@ -138,8 +138,12 @@ async fn main() -> Result<()> {
         store.clone(),
         ariadne_daemon::timeouts::Timeouts::default().checkpoint,
     );
-    let sched_tx =
-        ariadne_daemon::scheduler::start(store.clone(), launcher.clone(), config.prevent_sleep);
+    let sched_tx = ariadne_daemon::scheduler::start(
+        store.clone(),
+        launcher.clone(),
+        config.prevent_sleep,
+        ariadne_daemon::timeouts::Timeouts::default(),
+    );
     let state = AppState {
         store,
         started_at: Instant::now(),

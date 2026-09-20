@@ -92,6 +92,9 @@ pub struct Harness {
     /// and the one [`Harness::agent_runs`] starts.
     pub agent: acp::StubAcpAgent,
     pub dir: tempfile::TempDir,
+    /// How long this harness waits on an agent, as the builder was given it:
+    /// what a test starting a scheduler of its own hands that scheduler.
+    pub timeouts: Timeouts,
     /// One connection of this test's own to the database the store is on, for
     /// the columns a test writes behind the store's back. One, and kept: a
     /// pool per write would be a handful of file descriptors opened and closed
@@ -263,7 +266,7 @@ impl HarnessBuilder {
         });
         let sched = self
             .scheduler
-            .then(|| scheduler::start(store.clone(), launcher.clone(), false));
+            .then(|| scheduler::start(store.clone(), launcher.clone(), false, self.timeouts));
         let logs = self.logs.unwrap_or_default();
         let state = AppState {
             store: store.clone(),
@@ -294,6 +297,7 @@ impl HarnessBuilder {
             sched,
             agent,
             dir,
+            timeouts: self.timeouts,
             db,
         };
         // A probe under full-suite load can run out its timeout: probe again

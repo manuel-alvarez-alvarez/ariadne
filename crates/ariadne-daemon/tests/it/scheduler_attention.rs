@@ -29,6 +29,7 @@ use std::ops::Deref;
 use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
+use tracing_subscriber::layer::SubscriberExt;
 
 use ariadne_core::{
     Actor, AttentionReason, GoalStatus, MessageKind, Seat, SessionStatus, TaskStatus,
@@ -41,6 +42,7 @@ use ariadne_daemon::scheduler::{
     self, QUIET_FLAG_SECS as FLAG_SECS, QUIET_NUDGE_SECS as NUDGE_SECS,
     QUIET_RELAUNCH_SECS as RELAUNCH_SECS, START_GRACE_SECS, SchedEvent,
 };
+use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
 use common::{Harness, eventually, harness, test_pin};
@@ -53,6 +55,41 @@ const SPAWN_RETRY_BUDGET: usize = ariadne_daemon::scheduler::SPAWN_RETRY_BUDGET 
 /// is a process to start and talk to, and every test here runs beside the
 /// others.
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// A full reconciliation tick no test ever reaches: what a test about one
+/// wake gives the scheduler, so that the tick cannot do the work the wake is
+/// being watched for. Nothing waits for it, so its length costs nothing.
+const NO_TICK: Duration = Duration::from_secs(3_600);
+/// A window over one session's wakes long enough that a wake the test sends
+/// after a burst lands inside it whatever the machine is doing. The test
+/// waits for the reconcile the window ends with, rather than for the window,
+/// so its length only costs the two seconds nothing else was waiting on.
+const LONG_WINDOW: Duration = Duration::from_secs(2);
+/// And a window shorter than the slowest thing a reconcile does, for the
+/// test about a pass that outlives its own window: launching an agent starts
+/// a process, which no machine does in ten milliseconds.
+const BRIEF_WINDOW: Duration = Duration::from_millis(10);
+
+/// The daemon's own log, captured for this thread while the guard lives, as
+/// the daemon captures it behind `/v1/logs`. A `#[tokio::test]` runs its
+/// tasks on the thread it is on, so the scheduler's lines land here too.
+fn capture(h: &Harness) -> tracing::subscriber::DefaultGuard {
+    tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()))
+}
+
+/// How many passes the scheduler has run over what this session's wakes are
+/// about: what the folding of those wakes is measured by, read from the line
+/// `Scheduler::reconcile_session` logs.
+fn reconciles_of(h: &Harness, session: &AgentSession) -> usize {
+    h.logs
+        .snapshot()
+        .iter()
+        .filter(|line| {
+            line.message
+                .starts_with("reconciling what a session's wake is about")
+                && line.message.contains(&session.id)
+        })
+        .count()
+}
 
 /// One daemon, one goal, and the agents a test puts under it.
 ///
@@ -84,6 +121,22 @@ impl World {
     /// close is where a reviewer sits with its work done.
     async fn reviewed_by(reviewers: usize) -> World {
         World::build(harness().await, reviewers).await
+    }
+
+    /// An active goal whose scheduler reconciles everything once, at the
+    /// start, and then only what it is woken about: a test about what one
+    /// wake does reads the wake's own pass, never the tick's. Its window over
+    /// a session's wakes is a long one, so a wake the test sends after a
+    /// burst is folded into that window however loaded the machine is.
+    async fn woken_only() -> World {
+        let h = harness()
+            .timeouts(Timeouts {
+                full_reconcile: NO_TICK,
+                session_wake: LONG_WINDOW,
+                ..Timeouts::default()
+            })
+            .await;
+        World::build(h, 1).await
     }
 
     /// A daemon that cannot start anything: the registry's agent names no
@@ -154,6 +207,7 @@ impl World {
             self.store.clone(),
             self.launcher.clone(),
             false,
+            self.timeouts,
         ))
     }
 }
@@ -172,6 +226,14 @@ impl Sched {
     fn goal(&self, goal: &Goal) {
         self.0
             .send(SchedEvent::GoalChanged(goal.id.clone()))
+            .unwrap();
+    }
+
+    /// One wake about a session, as the ACP runtime sends for every event an
+    /// agent reports.
+    fn session(&self, session: &AgentSession) {
+        self.0
+            .send(SchedEvent::SessionEvent(session.id.clone()))
             .unwrap();
     }
 
@@ -207,7 +269,12 @@ async fn an_idle_planning_orchestrator_is_never_nudged_or_flagged() {
     h.agent_runs(&control).await;
     h.launched_ago(&control, FLAG_SECS + 60).await;
 
-    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
     sched.goal(&goal);
     eventually(
         TIMEOUT,
@@ -467,7 +534,12 @@ async fn a_vanished_agent_with_work_still_active_is_flagged_disconnected() {
         .await;
 
     // The sweep runs on the tick, and the first tick is immediate.
-    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
     for vanished in [&session, &on_a_prompt] {
         eventually(TIMEOUT, "the vanished session to be swept", async || {
             h.attention(vanished).await == Some(AttentionReason::Disconnected)
@@ -594,7 +666,12 @@ async fn a_superseded_session_drops_its_attention_when_the_replacement_starts() 
     h.raise(&session, AttentionReason::Disconnected).await;
 
     // Nothing live for the goal, so reconciliation starts a new orchestrator.
-    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
     sched.goal(&goal);
     eventually(
         TIMEOUT,
@@ -637,7 +714,12 @@ async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
     h.set_status(&session, SessionStatus::Exited).await;
     h.raise(&session, AttentionReason::Disconnected).await;
 
-    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
     sched.goal(&goal);
     eventually(
         TIMEOUT,
@@ -808,7 +890,7 @@ async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
     }
 
     // The sweep runs on the tick, and the first tick is immediate.
-    let _sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let _sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     eventually(TIMEOUT, "the stale prompt flag to be dropped", async || {
         h.attention(&sessions[0]).await.is_none()
     })
@@ -896,7 +978,12 @@ async fn a_session_that_outlived_its_completed_goal_is_killed() {
     let session = h.orchestrator_session(&goal).await;
     h.agent_runs(&session).await;
 
-    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
     sched.goal(&goal);
     eventually(
         TIMEOUT,
@@ -1020,7 +1107,12 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
     // too.
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
 
-    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
     for _ in 0..SPAWN_RETRY_BUDGET + 2 {
         sched.goal(&goal);
     }
@@ -1096,7 +1188,12 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
     // The cwd of a launch has to exist for the launch to be performed at all.
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
 
-    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
     sched.goal(&goal);
     // Every death is flagged by the sweep and cleared by the launch that
     // replaces it, so the flag alone says nothing: what is waited for is the
@@ -1162,7 +1259,12 @@ async fn a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_i
     let cast = h.cast().await;
     let goal = h.activate(&cast.goal).await;
 
-    let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
     sched.goal(&goal);
     sched.task(&cast.task);
     eventually(
@@ -1801,5 +1903,132 @@ async fn a_goal_whose_tasks_are_running_leaves_its_orchestrator_alone() {
         !w.prompted(&orchestrator).contains("`list_tasks`"),
         "{:?}",
         w.prompted(&orchestrator)
+    );
+}
+
+// -- the wakes an agent's own events send -----------------------------------
+
+/// An agent reports far more often than its task changes — one tool call is a
+/// start and an end — so its wakes are folded into one reconcile per window
+/// (`Timeouts::session_wake`). A burst of a hundred costs two passes, and the
+/// wake the burst ends on is not one of the hundred that were folded away:
+/// the pass that closes the window is what it is for.
+#[tokio::test]
+async fn the_wake_a_burst_of_events_ends_on_is_still_acted_on() {
+    let w = World::woken_only().await;
+    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+
+    // Everything the scheduler logs from here is this test's to count.
+    let _capture = capture(&w);
+    let sched = w.scheduler();
+    for _ in 0..100 {
+        sched.session(&session);
+    }
+    sched.flush().await;
+    assert_eq!(
+        reconciles_of(&w, &session),
+        2,
+        "a hundred wakes cost the pass the first one ran and one more"
+    );
+
+    // One wake more, folded into the window the burst left open. Only the
+    // pass that window ends with can answer it: this scheduler has no tick.
+    sched.session(&session);
+    eventually(
+        TIMEOUT,
+        "the last wake of the burst to be reconciled",
+        async || reconciles_of(&w, &session) == 3,
+    )
+    .await;
+}
+
+/// A wake folded into an open window is owed a reconcile, and a flush is owed
+/// every pass asked for before it. What this holds is the contract every test
+/// waiting on `flush` rests on, now that a wake can sit in a window rather
+/// than run where it landed.
+#[tokio::test]
+async fn a_wake_folded_into_a_window_is_taken_by_a_flush() {
+    let w = World::woken_only().await;
+    let session = w.author_on(&w.task, TaskStatus::InProgress).await;
+
+    let _capture = capture(&w);
+    let sched = w.scheduler();
+    sched.session(&session);
+    sched.flush().await;
+    assert_eq!(
+        reconciles_of(&w, &session),
+        1,
+        "the first wake of a burst runs where it lands"
+    );
+
+    // The second wake is folded into the window the first one opened, and
+    // the flush is owed it before it answers.
+    sched.session(&session);
+    sched.flush().await;
+    assert_eq!(
+        reconciles_of(&w, &session),
+        2,
+        "the folded wake was reconciled before the flush answered"
+    );
+}
+
+/// A reconcile is at its slowest exactly when the wakes come fastest: the
+/// load this folding is for is the load that makes a pass slow. So a window
+/// runs from the end of a reconcile, not from the wake that asked for it. A
+/// window measured from the wake is already over when a slow pass returns,
+/// and every wake that queued behind it would then run a pass of its own —
+/// the pass-per-event this is here to stop.
+///
+/// The slow pass here is the one that starts the task's author: a git
+/// worktree and a process, far longer than this window. The other 99 wakes
+/// of the burst wait in the channel while it runs.
+#[tokio::test]
+async fn a_burst_that_queues_behind_a_slow_reconcile_still_costs_two_reconciles() {
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            session_wake: BRIEF_WINDOW,
+            ..Timeouts::default()
+        })
+        .await;
+    // A real repository: the author started by the slow pass is started in a
+    // worktree of it.
+    h.git_repo("repo");
+    let cast = h.cast().await;
+    let goal = h.activate(&cast.goal).await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
+    let author = h
+        .session(&goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+
+    // Everything the scheduler logs from here is this test's to count.
+    let _capture = capture(&h);
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+        h.timeouts,
+    ));
+    // The one tick this scheduler has is the immediate one. The orchestrator
+    // it starts is what says that pass is over, so nothing but the wakes
+    // below reconciles the task.
+    eventually(TIMEOUT, "the goal's own pass to be over", async || {
+        h.sessions_of_goal(&goal.id).await.len() > 1
+    })
+    .await;
+    sched.flush().await;
+
+    // A task with no author live: the first wake is the pass that starts one.
+    h.set_status(&author, SessionStatus::Exited).await;
+    for _ in 0..100 {
+        sched.session(&author);
+    }
+    sched.flush().await;
+
+    assert_eq!(
+        reconciles_of(&h, &author),
+        2,
+        "the burst costs the pass it arrived during and one more, whatever \
+         the pass cost"
     );
 }

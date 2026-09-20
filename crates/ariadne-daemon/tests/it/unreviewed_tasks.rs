@@ -31,7 +31,7 @@ async fn a_task_with_no_reviewer_is_approved_as_soon_as_its_author_asks() {
     h.activate(&goal).await;
     h.advance(&task, TaskStatus::UnderReview).await;
 
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))
         .unwrap();
@@ -78,7 +78,7 @@ async fn a_task_needs_no_more_approvals_than_it_has_reviewers_to_give() {
     h.verdict(&task, &reviewer.id, MessageKind::Approve, "looks right")
         .await;
 
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))
         .unwrap();

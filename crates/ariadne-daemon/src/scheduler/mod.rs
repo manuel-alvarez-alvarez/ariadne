@@ -12,6 +12,7 @@
 //! reporting. What the scheduler says to an agent goes out through
 //! [`Scheduler::hand_prompt`].
 
+mod coalesce;
 mod goals;
 mod messages;
 mod quiet;
@@ -20,17 +21,18 @@ mod tasks;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use ariadne_core::{GoalStatus, Seat};
 use ariadne_store::{AgentSession, SessionFilter, Store, TaskFilter};
 
 use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
+use crate::timeouts::Timeouts;
 
+use coalesce::Coalesced;
 use quiet::Quiet;
 
 /// Events that wake the scheduler for a scoped reconciliation.
@@ -44,9 +46,10 @@ pub enum SchedEvent {
     /// Test support: answered the moment this event is dequeued, which is
     /// only once every event sent before it has been reconciled to
     /// completion — the loop below awaits each one fully before it asks the
-    /// channel for the next. A test racing a fixed sleep against the
-    /// scheduler's own pace can wait on this instead: sent right after the
-    /// event under test, its answer proves that one already ran.
+    /// channel for the next, and takes every session wake still folded into
+    /// an open window before it answers. A test racing a fixed sleep against
+    /// the scheduler's own pace can wait on this instead: sent right after
+    /// the event under test, its answer proves that one already ran.
     Flush(tokio::sync::oneshot::Sender<()>),
 }
 
@@ -59,17 +62,6 @@ pub async fn flush_for_test(tx: &mpsc::UnboundedSender<SchedEvent>) {
     wait.await.expect("the scheduler answered the flush");
 }
 
-/// How often the full reconciliation tick runs.
-///
-/// Not how long a hand-off waits: everything a write can report — a task
-/// moving on, a plan finalized, a verdict, an agent's own event — arrives as a
-/// [`SchedEvent`] and is acted on as it lands, in milliseconds. What is left
-/// for the tick is the state nothing reports, and the one that costs an agent
-/// its turn is an agent that died before it could say so. This period is the
-/// ceiling on how long the successor of such an agent sits unstarted, so it
-/// is short — the pass costs a handful of indexed reads, which is cheap
-/// enough to make five seconds the wait rather than fifteen.
-pub const TICK_SECS: u64 = 5;
 /// How long a session that is starting is given to get an agent process
 /// before the liveness sweep concludes there is none.
 ///
@@ -196,6 +188,7 @@ pub fn start(
     store: Store,
     launcher: Arc<Launcher>,
     prevent_sleep: bool,
+    timeouts: Timeouts,
 ) -> mpsc::UnboundedSender<SchedEvent> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     // The ACP runtime reports agent events itself; give it the waker the
@@ -216,24 +209,52 @@ pub fn start(
         prevent_sleep,
     };
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(TICK_SECS));
+        let mut tick = tokio::time::interval(timeouts.full_reconcile);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // An agent reports far more often than its task changes, so its wakes
+        // are folded per session rather than acted on one by one.
+        let mut wakes = Coalesced::new(timeouts.session_wake);
         loop {
             tokio::select! {
                 event = rx.recv() => match event {
                     Some(SchedEvent::TaskChanged(id)) => scheduler.reconcile(Target::Task(&id)).await,
                     Some(SchedEvent::GoalChanged(id)) => scheduler.reconcile(Target::Goal(&id)).await,
-                    Some(SchedEvent::SessionEvent(id)) => scheduler.reconcile_session(&id).await,
+                    Some(SchedEvent::SessionEvent(id)) => {
+                        if wakes.wake(&id, tokio::time::Instant::now()) {
+                            scheduler.reconcile_session(&id).await;
+                            wakes.reconciled(&id, tokio::time::Instant::now());
+                        }
+                    }
                     Some(SchedEvent::Flush(done)) => {
+                        for id in wakes.take_all() {
+                            scheduler.reconcile_session(&id).await;
+                            wakes.reconciled(&id, tokio::time::Instant::now());
+                        }
                         let _ = done.send(());
                     }
                     None => break, // daemon shutting down
                 },
+                _ = window_end(wakes.next_window_end()) => {
+                    for id in wakes.due(tokio::time::Instant::now()) {
+                        scheduler.reconcile_session(&id).await;
+                        wakes.reconciled(&id, tokio::time::Instant::now());
+                    }
+                }
                 _ = tick.tick() => scheduler.reconcile_all().await,
             }
         }
     });
     tx
+}
+
+/// Wait for the earliest open window to end, or for ever where no session is
+/// inside one: a loop with nothing folded waits only on its channel and its
+/// tick.
+async fn window_end(at: Option<tokio::time::Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
 }
 
 /// What one pass of reconciliation is about.
@@ -390,7 +411,15 @@ impl Scheduler {
         }
     }
 
+    /// One pass over what the session's own wakes are about: its task, or its
+    /// goal where it belongs to no task.
+    ///
+    /// The line it logs is how often that pass runs, which is what the
+    /// coalescing of the wakes (`coalesce`) is measured by: an agent's events
+    /// are the busiest thing the daemon hears, and a pass per event is what
+    /// read the store out of connections.
     async fn reconcile_session(&mut self, session_id: &str) {
+        debug!(session = %session_id, "reconciling what a session's wake is about");
         let Ok(session) = self.store.get_session(session_id).await else {
             return;
         };

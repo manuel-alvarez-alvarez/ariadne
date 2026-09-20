@@ -883,7 +883,7 @@ async fn a_restart_finishes_a_settlement_the_daemon_died_in() {
 
     // The daemon that comes back: its first pass over the task finds the
     // half-finished settlement and completes it.
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     sched
         .send(SchedEvent::TaskChanged(c.task.id.clone()))
         .unwrap();

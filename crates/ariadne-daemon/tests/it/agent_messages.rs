@@ -153,7 +153,7 @@ async fn a_message_is_handed_to_the_agent_it_was_sent_to() {
         )
         .await;
 
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     sched
         .send(SchedEvent::TaskChanged(cast.task.id.clone()))
         .unwrap();
@@ -307,7 +307,7 @@ async fn an_agent_writes_to_the_orchestrator_and_it_reaches_its_agent() {
     assert_eq!(sent.to_actor, Actor::Orchestrator);
     assert_eq!(sent.to_agent_id, None);
 
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     sched
         .send(SchedEvent::TaskChanged(cast.task.id.clone()))
         .unwrap();
@@ -1338,7 +1338,7 @@ async fn a_message_handed_over_as_a_prompt_is_absent_from_a_default_read() {
         )
         .await;
 
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     sched
         .send(SchedEvent::TaskChanged(cast.task.id.clone()))
         .unwrap();
@@ -1432,7 +1432,7 @@ async fn a_message_a_read_hands_over_is_never_handed_over_as_a_prompt() {
         .await;
     h.agent_runs(&resumed).await;
     h.set_status(&resumed, SessionStatus::Idle).await;
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false, h.timeouts);
     let after = write("AFTER: and the inner one stays.").await;
     sched
         .send(SchedEvent::TaskChanged(cast.task.id.clone()))
