@@ -4,6 +4,7 @@
 pub mod acp;
 pub mod acp_discovery;
 mod acp_rpc;
+mod acp_schema;
 pub mod acp_sessions;
 pub mod agents;
 pub mod attention;

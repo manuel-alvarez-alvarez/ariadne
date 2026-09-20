@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use agent_client_protocol::schema::v1;
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::FutureExt;
 use futures_util::future::Shared;
@@ -1393,45 +1394,47 @@ async fn serve_with_input(
     }
 }
 
+/// One typed ACP request as the `params` object the transport sends.
+///
+/// The SDK's request types serialize to exactly the protocol's shape, so this
+/// is where a typed value becomes wire JSON and the only place the two meet.
+fn to_params<T: serde::Serialize>(request: &T) -> Result<Value> {
+    serde_json::to_value(request).context("building an ACP request")
+}
+
 async fn session_setup(
     rpc: &mut Rpc,
     cwd: &Path,
     config: &LaunchConfig,
     initialized: &Value,
 ) -> Result<Value> {
-    let cwd = cwd.display().to_string();
-    let mcp_servers = serde_json::to_value(&config.mcp_servers)?;
+    let mcp_servers = crate::acp_schema::mcp_servers(config);
     let Some(session_id) = &config.resume_session_id else {
-        return rpc
-            .request(
-                "session/new",
-                json!({"cwd": cwd, "mcpServers": mcp_servers}),
-            )
-            .await;
+        let request = v1::NewSessionRequest::new(cwd).mcp_servers(mcp_servers);
+        return rpc.request("session/new", to_params(&request)?).await;
     };
+    // A resumed conversation is reopened the way the agent says it can be.
+    // `session/resume` is the one to ask for: it puts the agent back at its
+    // prompt. `session/load` replays the whole conversation on the way in,
+    // which every update of costs an event, so it is the fallback and not
+    // the choice.
     let capabilities = &initialized["agentCapabilities"];
     let resume = &capabilities["sessionCapabilities"]["resume"];
-    if resume.is_object() || resume.as_bool() == Some(true) {
-        let mut result = rpc
-            .request(
-                "session/resume",
-                json!({"sessionId": session_id, "cwd": cwd, "mcpServers": mcp_servers}),
-            )
-            .await?;
-        result["sessionId"] = Value::String(session_id.clone());
-        return Ok(result);
-    }
-    if capabilities.get("loadSession").and_then(Value::as_bool) == Some(true) {
-        let mut result = rpc
-            .request(
-                "session/load",
-                json!({"sessionId": session_id, "cwd": cwd, "mcpServers": mcp_servers}),
-            )
-            .await?;
-        result["sessionId"] = Value::String(session_id.clone());
-        return Ok(result);
-    }
-    bail!("ACP agent supports neither session/resume nor session/load")
+    let params = if resume.is_object() || resume.as_bool() == Some(true) {
+        let request =
+            v1::ResumeSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
+        rpc.request("session/resume", to_params(&request)?).await
+    } else if capabilities.get("loadSession").and_then(Value::as_bool) == Some(true) {
+        let request = v1::LoadSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
+        rpc.request("session/load", to_params(&request)?).await
+    } else {
+        bail!("ACP agent supports neither session/resume nor session/load")
+    };
+    // Neither answers with the id it reopened, and every caller reads one off
+    // the result.
+    let mut result = params?;
+    result["sessionId"] = Value::String(session_id.clone());
+    Ok(result)
 }
 
 async fn set_pinned_option(
