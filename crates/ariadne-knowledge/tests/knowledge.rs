@@ -1507,6 +1507,40 @@ async fn a_dart_call_reaches_the_rust_handler_of_the_route_below_the_prefix() {
     );
 }
 
+/// A type alias is a definition of kind `type`: `search` with that kind
+/// finds it, and a file that names it in an annotation has a `references`
+/// edge to it.
+#[tokio::test]
+async fn a_type_alias_is_searched_by_its_kind_and_referenced_from_an_annotation() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/types.ts", "export type Item = { id: number }\n"),
+            (
+                "src/use.ts",
+                "import type { Item } from \"./types\"\n\nexport function show(item: Item) {\n  return item.id\n}\n",
+            ),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let mut by_kind = query("Item", &[("repo", "main")]);
+    by_kind.kind = Some("type".into());
+    let hits = store.search(&by_kind).await.unwrap();
+    assert_eq!(
+        hits.iter()
+            .map(|hit| format!("{}:{} {} {}", hit.path, hit.line, hit.kind, hit.name))
+            .collect::<Vec<_>>(),
+        ["src/types.ts:1 type Item"]
+    );
+
+    let item = only(&store, "Item").await;
+    let context = store.context(item.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(ends(&context.references), ["src/use.ts:3 show exact"]);
+}
+
 /// A file graph groups the symbol edges between each pair of files and kind.
 /// It keeps a group exact only when every edge in that group is exact, and
 /// it removes edges whose ends are the same file.

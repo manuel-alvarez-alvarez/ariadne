@@ -39,6 +39,7 @@ const SYMBOL_KINDS = [
   "class",
   "module",
   "interface",
+  "type",
   "macro",
   "constant",
   "test",

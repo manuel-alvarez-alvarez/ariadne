@@ -18,6 +18,12 @@ use tree_sitter_tags::TagsConfiguration;
 const JS_EXTENDS: &str =
     "(class_declaration (class_heritage (identifier) @name)) @reference.extends";
 
+/// A `type X = …` alias and an `enum`, which the shipped TypeScript query
+/// tags neither of. An enum is a `class`, as it is in the Rust and Dart
+/// queries.
+const TS_TYPES: &str = "(type_alias_declaration name: (type_identifier) @name) @definition.type\n\
+     (enum_declaration name: (identifier) @name) @definition.class";
+
 /// One language the index reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Language {
@@ -296,9 +302,11 @@ impl Language {
             // The TypeScript query holds only what TypeScript adds over
             // JavaScript, whose node names the two grammars share. A base
             // class is the exception: it sits in an `extends_clause` here
-            // and in a bare `class_heritage` there.
+            // and in a bare `class_heritage` there. A type in an annotation
+            // is already a `@reference.type` upstream.
             Language::TypeScript | Language::Tsx => format!(
-                "{}\n{}\n(extends_clause value: (identifier) @name) @reference.extends\n",
+                "{}\n{}\n(extends_clause value: (identifier) @name) @reference.extends\n\
+                 {TS_TYPES}\n",
                 tree_sitter_javascript::TAGS_QUERY,
                 tree_sitter_typescript::TAGS_QUERY
             ),

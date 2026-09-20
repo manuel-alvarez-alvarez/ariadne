@@ -322,7 +322,7 @@ pub struct SearchCodeReq {
     /// The branch to read. Omit it for your own branch.
     pub git_ref: Option<String>,
     /// Only this kind: `function`, `method`, `class`, `module`,
-    /// `interface`, `macro`, `constant`, `test` or `heading`.
+    /// `interface`, `type`, `macro`, `constant`, `test` or `heading`.
     pub kind: Option<String>,
     /// Only paths that contain this text.
     pub path: Option<String>,

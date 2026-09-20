@@ -65,7 +65,7 @@ pub struct KnowledgeSearchQuery {
     /// branch, else the base branch of each repository.
     pub git_ref: Option<String>,
     /// Only symbols of this kind: `function`, `method`, `class`, `module`,
-    /// `interface`, `macro`, `constant`, `test`, `heading`.
+    /// `interface`, `type`, `macro`, `constant`, `test`, `heading`.
     pub kind: Option<String>,
     /// Only paths that contain this text.
     pub path: Option<String>,

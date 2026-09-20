@@ -3509,7 +3509,7 @@ export interface operations {
                 git_ref?: string | null;
                 /**
                  * @description Only symbols of this kind: `function`, `method`, `class`, `module`,
-                 *     `interface`, `macro`, `constant`, `test`, `heading`.
+                 *     `interface`, `type`, `macro`, `constant`, `test`, `heading`.
                  */
                 kind?: string | null;
                 /** @description Only paths that contain this text. */

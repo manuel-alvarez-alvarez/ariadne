@@ -24,7 +24,7 @@ The languages, by extension:
 | Language | Extensions | Definitions |
 | --- | --- | --- |
 | Rust | `rs` | functions, methods, structs, enums, unions, type aliases, traits, modules, macros |
-| TypeScript, TSX | `ts`, `mts`, `cts`, `tsx` | functions, methods, classes, interfaces, modules, constants, `it(`/`test(` calls |
+| TypeScript, TSX | `ts`, `mts`, `cts`, `tsx` | functions, methods, classes, enums, interfaces, type aliases, modules, constants, `it(`/`test(` calls |
 | JavaScript, JSX | `js`, `mjs`, `cjs`, `jsx` | the same |
 | C# | `cs` | classes, interfaces, methods, namespaces |
 | Python | `py`, `pyi` | functions, classes, module-level constants |
@@ -54,7 +54,7 @@ structure — headings, keys, elements, selectors, statements — stands in for
 definitions, with no doc comment and no test marker.
 
 Each definition carries its kind (`function`, `method`, `class`, `module`,
-`interface`, `macro`, `constant`, `test`, `heading`, and more for the newer
+`interface`, `type`, `macro`, `constant`, `test`, `heading`, and more for the newer
 languages: `object`, `key`, `table`, `element`, `selector`), its qualified
 name (`GitManager::add_worktree`), its first and last line, its signature,
 its doc comment, and whether it is a test: an attribute or annotation

@@ -64,9 +64,12 @@ agent to do with the tools (017); and the memory tools beside these (019).
    (rule 30). Any other file is skipped.
 2. A code file is parsed with tree-sitter and the tags query its grammar
    ships. Every definition the query captures is a symbol, of the query's
-   own kind: `function`, `method`, `class`, `module`, `interface`, `macro`
-   or `constant`. The Rust query gets one pattern more, naming every `impl`
-   block by its type; the C# query loses its one bare `@module` capture,
+   own kind: `function`, `method`, `class`, `module`, `interface`, `type`,
+   `macro` or `constant`. The Rust query gets one pattern more, naming every
+   `impl` block by its type; the TypeScript and TSX query gets two more, a
+   `type X = …` alias as a `type` and an `enum` as a `class`, which the
+   shipped query tags neither of, and a type in an annotation is the
+   `references` mention the shipped query already tags; the C# query loses its one bare `@module` capture,
    which is no tags capture; and each language that has base classes gets a
    `@reference.extends` pattern, because no upstream query tells a base apart
    from any other class reference. No query is vendored from elsewhere.
@@ -613,7 +616,7 @@ scan of its lines.
 
 ## Schema
 
-`crates/ariadne-knowledge/src/schema.sql`, version 7:
+`crates/ariadne-knowledge/src/schema.sql`, version 11:
 
 | Table | Columns | Holds |
 | --- | --- | --- |
@@ -723,6 +726,13 @@ and by `(kind, name)`.
   (`knowledge.rs::the_callers_are_walked_by_depth_and_a_test_two_edges_away_is_a_test`).
 - A Rust `impl Trait for Type` is listed under the trait
   (`knowledge.rs::an_implementation_is_listed_under_the_trait_it_is_of`).
+- A TypeScript or TSX `export type A = …` is a definition of kind `type` and
+  an `export enum B { … }` one of kind `class`, each with its line range and
+  signature
+  (`parser.rs::a_type_alias_and_an_enum_are_definitions_in_typescript_and_tsx`).
+- `search` with kind `type` returns the alias, and a file that names it in an
+  annotation has a `references` edge to it
+  (`knowledge.rs::a_type_alias_is_searched_by_its_kind_and_referenced_from_an_annotation`).
 - A diff names the definitions it changed and no others, their callers are
   what the change reaches, and a range that is no range is refused
   (`knowledge.rs::a_diff_names_the_definitions_it_changed_and_their_callers`);

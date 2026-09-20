@@ -130,7 +130,7 @@ pub enum KnowledgeCommand {
         #[arg(long = "ref", value_name = "REF")]
         git_ref: Option<String>,
         /// Only this kind: function, method, class, module, interface,
-        /// macro, constant, test, heading
+        /// type, macro, constant, test, heading
         #[arg(long)]
         kind: Option<String>,
         /// Only paths that contain this text

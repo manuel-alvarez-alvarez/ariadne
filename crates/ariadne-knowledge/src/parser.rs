@@ -22,7 +22,7 @@ use crate::languages::{DocSyntax, Language, TestRule};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Symbol {
     /// The tags vocabulary: `function`, `method`, `class`, `module`,
-    /// `interface`, `macro`, `constant`; `test` for a test the language
+    /// `interface`, `type`, `macro`, `constant`; `test` for a test the language
     /// marks by a call; `heading` in Markdown.
     pub kind: String,
     pub name: String,
@@ -1839,6 +1839,42 @@ pub async fn add_worktree(
             assert!(
                 found.contains(&(EdgeKind::Extends, base.into(), Some("Button".into()))),
                 "{}: {found:?}",
+                language.name()
+            );
+        }
+    }
+
+    /// A type alias is a definition of kind `type` and an enum one of kind
+    /// `class`, in TypeScript and in TSX alike.
+    #[test]
+    fn a_type_alias_and_an_enum_are_definitions_in_typescript_and_tsx() {
+        for language in [Language::TypeScript, Language::Tsx] {
+            let symbols = parse(
+                language,
+                "export type A = { x: number }\nexport enum B {\n  One,\n}\n",
+            );
+            let alias = find(&symbols, "A");
+            assert_eq!(
+                (
+                    alias.kind.as_str(),
+                    alias.start_line,
+                    alias.end_line,
+                    alias.signature.as_str()
+                ),
+                ("type", 1, 1, "type A ="),
+                "{}",
+                language.name()
+            );
+            let enumeration = find(&symbols, "B");
+            assert_eq!(
+                (
+                    enumeration.kind.as_str(),
+                    enumeration.start_line,
+                    enumeration.end_line,
+                    enumeration.signature.as_str()
+                ),
+                ("class", 2, 4, "enum B"),
+                "{}",
                 language.name()
             );
         }

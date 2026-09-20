@@ -1245,7 +1245,7 @@
           {
             "name": "kind",
             "in": "query",
-            "description": "Only symbols of this kind: `function`, `method`, `class`, `module`,\n`interface`, `macro`, `constant`, `test`, `heading`.",
+            "description": "Only symbols of this kind: `function`, `method`, `class`, `module`,\n`interface`, `type`, `macro`, `constant`, `test`, `heading`.",
             "required": false,
             "schema": {
               "type": [
