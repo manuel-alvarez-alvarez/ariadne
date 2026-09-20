@@ -3240,3 +3240,39 @@ async fn events_written_at_once_are_published_in_id_order() {
         "published in id order: {published:?}"
     );
 }
+
+/// The commit path no longer checkpoints — `Store::open` turns SQLite's
+/// automatic one off, because it runs on the connection that committed and
+/// cannot reset the log while a reader is on an older snapshot. What keeps
+/// the log from growing without end is `checkpoint`, so it has to actually
+/// fold it back in.
+#[tokio::test]
+async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ariadne.db");
+    let store = Store::open(&path).await.unwrap();
+    let wal = path.with_extension("db-wal");
+
+    // Enough writes to put pages in the log. Nothing has folded them in:
+    // the commit path does not, and nothing has asked yet.
+    for n in 0..200 {
+        store
+            .create_repository(ariadne_store::NewRepository {
+                path: dir.path().join(format!("repo-{n}")).display().to_string(),
+                base_branch: "main".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
+    }
+    let before = std::fs::metadata(&wal).map(|f| f.len()).unwrap_or(0);
+    assert!(before > 0, "the writes went to the log, not the database");
+
+    store.checkpoint().await.unwrap();
+
+    let after = std::fs::metadata(&wal).map(|f| f.len()).unwrap_or(0);
+    assert!(
+        after < before,
+        "the log was folded back in: {before} bytes before, {after} after"
+    );
+}

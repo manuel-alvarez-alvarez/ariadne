@@ -11,6 +11,7 @@ pub mod agents;
 pub mod attention;
 pub mod branch;
 pub mod bus;
+pub mod checkpoint;
 pub mod config;
 pub mod gitwt;
 pub mod http;

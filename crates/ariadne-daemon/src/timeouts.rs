@@ -25,6 +25,11 @@ pub struct Timeouts {
     /// How often a running turn's transcript is read again for what the
     /// launch has spent, so a long turn's figure moves before it ends.
     pub transcript_poll: Duration,
+    /// How often the write-ahead log is folded back into the database
+    /// (`crate::checkpoint`). Nothing waits on it: it is the period of a
+    /// clock, and a tick that finds readers in the way costs the next one
+    /// nothing.
+    pub checkpoint: Duration,
 }
 
 impl Default for Timeouts {
@@ -33,6 +38,7 @@ impl Default for Timeouts {
             cancel_grace: Duration::from_secs(5),
             probe: Duration::from_secs(5),
             transcript_poll: Duration::from_secs(15),
+            checkpoint: Duration::from_secs(30),
         }
     }
 }

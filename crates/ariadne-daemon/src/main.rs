@@ -134,6 +134,10 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    ariadne_daemon::checkpoint::start(
+        store.clone(),
+        ariadne_daemon::timeouts::Timeouts::default().checkpoint,
+    );
     let sched_tx =
         ariadne_daemon::scheduler::start(store.clone(), launcher.clone(), config.prevent_sleep);
     let state = AppState {

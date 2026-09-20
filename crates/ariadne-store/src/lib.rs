@@ -175,7 +175,21 @@ impl Store {
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_secs(5))
-            .foreign_keys(true);
+            .foreign_keys(true)
+            // No checkpoint on the commit path. SQLite's default runs one
+            // every 1000 pages of WAL, on the connection that committed —
+            // and a checkpoint cannot reset the WAL while any reader is on
+            // an older snapshot. Something always is: the scheduler reads
+            // every five seconds, and a console or the desktop app reads
+            // constantly. So the WAL sits above the threshold, every commit
+            // pays for a checkpoint that can never finish, and the one write
+            // connection is the whole daemon's. `checkpoint` below does it
+            // off the commit path instead.
+            .pragma("wal_autocheckpoint", "0")
+            // 64 MB rather than SQLite's 2 MB, against a database that is
+            // hundreds of megabytes: the pages a read walks are mostly ones
+            // another read just walked.
+            .pragma("cache_size", format!("-{}", 64 * 1024));
 
         let write = SqlitePoolOptions::new()
             .max_connections(1)
@@ -230,6 +244,23 @@ impl Store {
     /// event is published before one with a lower id.
     pub fn event_order(&self) -> &tokio::sync::Mutex<()> {
         &self.event_order
+    }
+
+    /// Fold the write-ahead log back into the database and start it again.
+    ///
+    /// The commit path no longer does this (`wal_autocheckpoint` is off), so
+    /// this is what keeps the WAL from growing without end. `TRUNCATE` waits
+    /// for the readers on older snapshots to finish and gives up after
+    /// `busy_timeout` where they do not, which is a checkpoint missed and
+    /// not a failure: the next one folds in what this one could not.
+    ///
+    /// Answers the error where SQLite refused, so a caller can say so once
+    /// rather than every time.
+    pub async fn checkpoint(&self) -> Result<()> {
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(self.w())
+            .await?;
+        Ok(())
     }
 
     /// Close the store: every query after this fails, on every clone. What a
