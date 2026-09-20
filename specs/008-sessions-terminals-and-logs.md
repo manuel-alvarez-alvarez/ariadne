@@ -5,6 +5,8 @@ updated: 2026-09-20
 areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
+  - crates/ariadne-daemon/src/bus.rs
+  - crates/ariadne-daemon/src/http/console.rs
   - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
@@ -82,8 +84,16 @@ goal id to a seat (014).
 12. A session with no agent id to resume from is not revived. A session whose
     goal is finished is not revived either, and it stays as it ended.
 13. A session's console snapshot (`GET /v1/sessions/{id}/console`) is the
-    session's events so far, in order. Every event the runtime reported
-    passes through as the runtime named it, with no fixed list of kinds.
+    newest page of the session's events, in order: at most two hundred of
+    them, the recent past rather than every turn the session ever ran. A
+    session that has worked for hours holds thousands of events and a tool
+    end averages ten kilobytes, so the whole of one is tens of megabytes to
+    read and to send; a client that wants what is below the page walks back
+    from it with `GET /v1/events` (012). Every event the runtime reported
+    passes through as the runtime named it, with no fixed list of kinds. A
+    tool call is two stored events and the page keeps the two together: an
+    end whose start the page cut off is dropped, because the input the call
+    was made with is on its start alone (021).
     While a turn runs, the snapshot holds the text so far: the run of text
     the agent is still writing (021), as one `agent_thought_chunk` or
     `agent_message_chunk`, and only where there is one. The runs before it
@@ -113,13 +123,27 @@ goal id to a seat (014).
     they go out, so a stored whole never passes the live chunk that preceded
     it and a live chunk never passes the stored prompt that began its turn.
     A client that connects mid-turn reads the text so far in its snapshot and
-    every later chunk on the stream, none of them twice. A stream that cannot
-    read the store for the stored events a live event overtook does not send
-    the live event out of its place: the client is told to resync, as when
-    it fell behind (rule 15), with no count of events missed.
+    every later chunk on the stream, none of them twice. A stored event
+    reaches the stream a moment after it is committed, because the bus loads
+    what the event carries before it publishes it, so a live event can be in
+    hand while a stored event below it is not. The stream does not read the
+    store for it: it waits for the bus to publish everything it held when
+    the live event arrived, which the bus answers for, and sends what that
+    gives it in id order. So a console costs the store one read, for the
+    page it opened on, and following a turn of streamed text costs none.
+    An event whose payload the bus cannot load is dropped there and reaches
+    no stream (012), and no later event brings it: the bus counts what it
+    dropped under the session the event belonged to, and a console of that
+    session says resync (rule 15) rather than send a live event over the
+    hole. It reads the count once the bus has answered for what it held and
+    before it sends anything, because the answer is what publishes the
+    events below the live one, and so where one of them is dropped. A
+    console of any other session reads its own count, and goes on.
 15. The console stream has no replay. A client that falls too far behind is
     told how many events it missed, and the connection closes, the same as
-    `/v1/events/stream` (012). A reconnect starts again from a fresh snapshot.
+    `/v1/events/stream` (012). A client the bus dropped an event for is told
+    the same way, with the count of what was dropped. A reconnect starts
+    again from a fresh snapshot, read from the store, which holds them.
 16. Console input (`POST /v1/sessions/{id}/console/input`) becomes a
     `session/prompt`. An agent runs one turn at a time, so input posted while
     a turn runs is queued and sent the moment the turn ends, in the order it
@@ -175,9 +199,10 @@ goal id to a seat (014).
     `ariadne session logs` and `ariadne task logs` print the snapshot as typed
     transcript blocks. Paired tool and permission events form one block;
     agent text stays whole, and diffs retain their line colouring. `--tail`,
-    `--since` and `--kind` filter the snapshot. With `--follow`, chunks stream
-    under one item header and `--kind` also filters later events. JSON output
-    keeps each event object unchanged.
+    `--since` and `--kind` filter the snapshot, which is the page of rule 13
+    and no more. With `--follow`, chunks stream under one item header and
+    `--kind` also filters later events. JSON output keeps each event object
+    unchanged.
 23. `ariadne attach` on a terminal is an inline pane, never the alternate
     screen. A finished block goes into the terminal's own buffer above the
     pane, so it stays in the scrollback; the pane holds the block still being
@@ -477,6 +502,15 @@ goal id to a seat (014).
   (`::a_session_of_a_finished_goal_is_not_revived`).
 - The console stream gives the snapshot, then deltas
   (`acp_console.rs::the_console_stream_gives_the_snapshot_then_deltas`).
+- A console opens on a page: a session of thousands of events gives its
+  newest two hundred, in order
+  (`http/console.rs::opening_a_console_on_a_long_session_reads_a_page_of_the_newest_events`),
+  and the page keeps a tool call whole — the end of a call whose start it cut
+  off is dropped, and the call it holds whole still shows its input
+  (`::a_page_that_cut_a_calls_start_off_drops_its_end_and_keeps_a_whole_call`),
+  each start taken by the first end that matches it, so an end the bound cut
+  off cannot live on a later call of the same tool
+  (`::an_end_cut_off_from_its_start_does_not_take_the_start_of_a_later_call`).
 - A permission request and its reply appear in the console stream
   (`acp_console.rs::a_permission_request_appears_in_the_console_stream`).
 - Posted input reaches the agent as a prompt, and input posted while a turn
@@ -499,14 +533,30 @@ goal id to a seat (014).
   takes its id and goes out under the same lock
   (`acp.rs::a_live_event_that_waits_for_the_event_lock_takes_its_id_after_the_one_that_held_it`).
   A stored event reaches the bus only after the bus has loaded what its
-  event carries, so a live event can still reach the merge first; the store
-  holds every stored event with a lower id by then, and the merge reads
-  those it has not sent before the live event goes out, and drops their
-  later copies off the bus
-  (`http/console.rs::a_live_event_waits_for_the_stored_events_below_it_that_the_bus_has_not_delivered`).
-  A merge that cannot read the store holds the live event back and says
-  resync
-  (`::a_merge_that_cannot_read_the_store_says_resync_instead_of_sending_a_live_event`),
+  event carries, so a live event can still reach the merge first; the merge
+  waits for the bus to publish what it was handed before the live event took
+  its id, which it answers for once it has
+  (`bus.rs::a_drain_answers_once_the_pump_has_published_what_it_was_handed`,
+  `::a_bus_with_no_pump_answers_its_own_drain`), and the events below the
+  live one then go out ahead of it, each of them once
+  (`http/console.rs::a_live_event_waits_for_the_commits_the_pump_has_not_published_yet`).
+  Following a turn reads the store not at all: the turn goes out whole —
+  its chunks, its call and its stop — with the store shut behind the open
+  (`::a_turn_follows_with_the_store_shut`).
+  An event whose payload the bus cannot load is counted there, under its own
+  session, where another change that fails is not
+  (`bus.rs::an_agent_event_the_pump_could_not_load_is_counted_under_its_own_session`),
+  and a console whose count has grown says resync before it sends a live
+  event over the hole
+  (`http/console.rs::an_event_the_bus_dropped_is_a_resync_rather_than_a_hole`),
+  including one dropped while it waits for the bus to answer, which is when
+  the events below a live one are published
+  (`::an_event_dropped_while_the_console_waits_for_the_drain_is_a_resync_too`).
+  A console of another session keeps its stream and its own count
+  (`::a_drop_in_another_session_leaves_this_console_alone`).
+  A merge whose stored channel dropped events says resync with the count of
+  what it missed
+  (`::a_console_that_fell_behind_on_the_stored_events_is_told_what_it_missed`),
   and one whose live channel dropped events while the console opened says
   resync before anything else
   (`::a_live_channel_that_lagged_while_the_console_opened_is_told_to_resync_first`);

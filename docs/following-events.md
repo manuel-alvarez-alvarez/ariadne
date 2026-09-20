@@ -27,9 +27,9 @@ Every filter narrows the snapshot too, `--goal` included.
 
 Session and task logs print full transcript blocks. Agent message and thought
 chunks stream as the agent writes them, under one header per item. `--tail`
-and `--since` narrow the opening snapshot. Repeat `--kind` to select several
-event kinds; it also filters new events during `-f`. JSON mode keeps each
-event object unchanged.
+and `--since` narrow the opening snapshot, which is the session's 200 newest
+events. Repeat `--kind` to select several event kinds; it also filters new
+events during `-f`. JSON mode keeps each event object unchanged.
 
 `-f` prints as it goes; `--watch` redraws the whole table, `watch(1)`-style,
 when an event says it has changed. `ariadne daemon logs` reads the daemon's own

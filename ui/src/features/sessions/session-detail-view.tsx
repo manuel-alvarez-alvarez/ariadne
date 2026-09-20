@@ -13,7 +13,7 @@
  *
  * Switching tabs unmounts the console, which closes its socket. That is the
  * same trade `task-sessions.tsx` already takes for the selection itself:
- * every connection draws the whole transcript afresh, so coming back costs a
+ * every connection draws the newest page of the transcript afresh, so coming back costs a
  * reconnect and shows the same thing, where keeping it mounted would hold a
  * console open for nobody.
  *

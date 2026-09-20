@@ -750,9 +750,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The session's events so far, in order: the whole transcript a console
-         *     opens on. While a turn runs, one `agent_thought_chunk` and one
-         *     `agent_message_chunk` holding the text so far follow the stored events.
+         * The session's newest events, in order: the transcript a console opens on.
+         *     It is a page of at most two hundred, the recent past rather than every
+         *     turn a session ever ran; `GET /v1/events` walks back from it. While a
+         *     turn runs, one `agent_thought_chunk` or `agent_message_chunk` holding the
+         *     text so far follows the stored events.
          */
         get: operations["sessions_snapshot"];
         put?: never;
@@ -830,12 +832,12 @@ export interface paths {
         /**
          * Follow a session's console.
          * @description Opens with a `snapshot` event carrying what `GET /console` would return —
-         *     every event recorded so far, oldest first, then the running turn's text so
-         *     far — then an `event` per later one, each an `AgentEventDto`. Subscribing
-         *     happens before the snapshot is read and every later stored event is
-         *     compared against the snapshot's last id, so nothing committed in between
-         *     is ever missed or delivered twice; the live events are read under the
-         *     runtime's own turn lock for the same guarantee.
+         *     the newest page of stored events, oldest first, then the running turn's
+         *     text so far — then an `event` per later one, each an `AgentEventDto`.
+         *     Subscribing happens before the snapshot is read and every later stored
+         *     event is compared against the snapshot's last id, so nothing committed in
+         *     between is ever missed or delivered twice; the live events are read under
+         *     the runtime's own turn lock for the same guarantee.
          *
          *     There is no replay and no `Last-Event-ID`: reconnecting starts again from a
          *     fresh snapshot. A client that falls too far behind gets a final `resync`
@@ -4364,7 +4366,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying every event recorded so far (`[AgentEventDto]`) and the running turn's text so far, then an `event` per new one (`AgentEventDto`) — message and thought chunks, tool call progress, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. The chunks and the progress are live only: they are never stored and never reach `/v1/events`. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
+            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying the newest page of recorded events (`[AgentEventDto]`) and the running turn's text so far, then an `event` per new one (`AgentEventDto`) — message and thought chunks, tool call progress, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. The chunks and the progress are live only: they are never stored and never reach `/v1/events`. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
             200: {
                 headers: {
                     [name: string]: unknown;

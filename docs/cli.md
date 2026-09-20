@@ -200,7 +200,8 @@ ariadne task logs <task-id> --seat reviewer --follow
 
 `--tail N` keeps the last N blocks. `--since` accepts RFC 3339 or a duration
 such as `10m`. Repeat `--kind` to include several event kinds. These filters
-narrow the snapshot; during `--follow`, `--kind` also narrows new events.
+narrow the snapshot, which is the session's 200 newest events rather than
+every turn it ever ran; during `--follow`, `--kind` also narrows new events.
 `--format json` keeps each daemon event object unchanged for scripts.
 
 Use `ariadne session send <session-id> "Please explain the failure"`

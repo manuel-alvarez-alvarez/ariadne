@@ -20,7 +20,7 @@
  *
  * The console only exists while a session is the selected one — going back to
  * the list unmounts it, which drops its stream. That is the default and it
- * is kept: the stream replays the whole transcript on connect, so coming back costs a
+ * is kept: the stream opens on the transcript's newest page, so coming back costs a
  * reconnect and shows the same thing, where keeping it mounted would hold a
  * stream open for a session nobody is looking at.
  */
