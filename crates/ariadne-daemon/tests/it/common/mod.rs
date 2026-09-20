@@ -583,12 +583,23 @@ impl Harness {
     /// sent for it since — whichever way a briefing travelled, a relaunch or
     /// a prompt to an agent already up.
     pub fn told(&self, session_id: &str) -> String {
+        let prompts = self.agent.prompts_for(session_id);
         let mut told = Vec::new();
         if let Some(launch) = self.launch_file(session_id) {
             told.push(launch.system_prompt);
-            told.extend(launch.initial_prompt);
+            // The launch file's instruction and the first `session/prompt`
+            // are one delivery, not two: the runtime sends the instruction
+            // as the turn that opens the session. Counted from both, a
+            // briefing reads as having reached the agent twice — and only
+            // once the agent has got as far as recording it, which is a race
+            // on the agent rather than on what it was told.
+            if let Some(initial) = launch.initial_prompt
+                && !prompts.iter().any(|prompt| prompt.contains(&initial))
+            {
+                told.push(initial);
+            }
         }
-        told.extend(self.agent.prompts_for(session_id));
+        told.extend(prompts);
         told.join("\n\n")
     }
 
