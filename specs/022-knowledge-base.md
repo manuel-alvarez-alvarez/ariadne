@@ -324,6 +324,16 @@ agent to do with the tools (017); and the memory tools beside these (019).
     filter it; a truncated response says how many of `total_nodes` files it
     shows and offers a higher `limit`; and a click on a file shows its outline,
     its edges both ways and a link per symbol to the Symbols tab.
+    Every free-text filter of the screen suggests its values under what is
+    typed, in one list below the field. The three Impact & path fields and
+    Search symbols suggest the symbols `search` finds, each row with its
+    name, its kind and its path. Path and Filter by path suggest the
+    directories and the files of the ref that hold the text, directories
+    first, twenty rows at most, from the file graph the Files tab reads.
+    Down and Up move through the rows. Enter takes the active row into the
+    field, which then applies as typed text does. Escape closes the list and
+    keeps the text. Free text stays valid: a field takes a value no row
+    offers.
 30. Beyond its symbols, a file holds interfaces: what it offers another
     repository and what it takes from one. Each is read off the text at parse
     time, kept per blob like the mentions, and carries the definition it sits
@@ -916,6 +926,15 @@ and by `(kind, name)`.
   tab on a clicked node
   (`ui/src/features/knowledge/impact-tab.test.tsx`) — parity with
   `ariadne knowledge impact|path` (rules 23, 34).
+- Each free-text filter of the screen suggests its values as they are typed:
+  the symbol fields from `search`, with the kind and the path of each hit,
+  and the path fields from the file graph, directories before files
+  (`ui/src/features/knowledge/impact-tab.test.tsx::the Impact mode`,
+  `ui/src/features/knowledge/symbols-tab.test.tsx::the Symbols tab`,
+  `ui/src/features/knowledge/knowledge-screen.test.tsx::the Files tab`).
+  Down then Enter takes the active row into the field, which applies as
+  typed text does, and Escape closes the list and keeps the text
+  (`ui/src/features/knowledge/impact-tab.test.tsx::the Impact mode`).
 - The Files graph sizes, colours and weights its model, opens at depth-two
   directory level, expands one directory into files while summing its edges,
   filters by path, kind and unlinked files without a rebuild, and builds 5000

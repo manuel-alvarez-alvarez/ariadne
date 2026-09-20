@@ -11,13 +11,12 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { type FormEvent, useDeferredValue, useId, useMemo, useState } from "react"
+import { type FormEvent, useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import type { KnowledgeImpactDto, KnowledgePathDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -33,11 +32,8 @@ import { KnowledgeGraph } from "./graph/knowledge-graph"
 import { useLayeredLayout } from "./graph/layered-layout"
 import { impactGraph, STOP_CALLERS } from "./impact-graph"
 import { pathGraph } from "./path-graph"
-import {
-  knowledgeImpactQueryOptions,
-  knowledgePathQueryOptions,
-  knowledgeSearchQueryOptions,
-} from "./queries"
+import { knowledgeImpactQueryOptions, knowledgePathQueryOptions } from "./queries"
+import { SymbolField } from "./suggestion-field"
 
 type Mode = "impact" | "path"
 
@@ -191,28 +187,34 @@ function QueryForm({
   return (
     <form className="flex flex-wrap items-center gap-2" onSubmit={submit}>
       {mode === "impact" ? (
-        <SymbolInput
+        <SymbolField
           label="Symbol"
           repositoryId={repositoryId}
           gitRef={gitRef}
           value={symbol}
           onChange={setSymbol}
+          className="w-56"
+          inputClassName="font-mono"
         />
       ) : (
         <>
-          <SymbolInput
+          <SymbolField
             label="From symbol"
             repositoryId={repositoryId}
             gitRef={gitRef}
             value={from}
             onChange={setFrom}
+            className="w-56"
+            inputClassName="font-mono"
           />
-          <SymbolInput
+          <SymbolField
             label="To symbol"
             repositoryId={repositoryId}
             gitRef={gitRef}
             value={to}
             onChange={setTo}
+            className="w-56"
+            inputClassName="font-mono"
           />
         </>
       )}
@@ -236,46 +238,6 @@ function QueryForm({
         {mode === "impact" ? "Show impact" : "Find path"}
       </Button>
     </form>
-  )
-}
-
-/** A text field that suggests the symbols the knowledge base has under what is typed. */
-function SymbolInput({
-  label,
-  repositoryId,
-  gitRef,
-  value,
-  onChange,
-}: {
-  label: string
-  repositoryId: string
-  gitRef: string
-  value: string
-  onChange: (value: string) => void
-}) {
-  const listId = useId()
-  const typed = useDeferredValue(value.trim())
-  const suggestions = useQuery(knowledgeSearchQueryOptions(repositoryId, gitRef, { q: typed }))
-  const names = [...new Set(suggestions.data?.map((hit) => hit.name))]
-
-  return (
-    <>
-      <Input
-        aria-label={label}
-        placeholder={label}
-        className="w-56 font-mono"
-        list={listId}
-        autoComplete="off"
-        spellCheck={false}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      <datalist id={listId}>
-        {names.map((name) => (
-          <option key={name} value={name} />
-        ))}
-      </datalist>
-    </>
   )
 }
 

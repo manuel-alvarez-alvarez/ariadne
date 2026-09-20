@@ -21,7 +21,6 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -36,6 +35,7 @@ import { type FilesLevel, filesGraph, filesVisibility } from "./files-graph"
 import { KnowledgeGraph } from "./graph/knowledge-graph"
 import { knowledgeGraphQueryOptions, knowledgeOutlineQueryOptions } from "./queries"
 import { confidenceLabel } from "./status"
+import { PathField } from "./suggestion-field"
 
 /** What the daemon keeps without a limit, and the most it keeps with one. */
 const DEFAULT_LIMIT = 2000
@@ -201,12 +201,14 @@ export function FilesTab({ repositoryId, gitRef }: { repositoryId: string; gitRe
             Collapse
           </Button>
         ) : null}
-        <Input
-          aria-label="Filter by path"
-          placeholder="Filter by path"
-          className="w-56"
+        <PathField
+          label="Filter by path"
+          repositoryId={repositoryId}
+          gitRef={gitRef}
+          limit={limit}
           value={text}
-          onChange={(event) => pick({ filter: event.target.value })}
+          onChange={(value) => pick({ filter: value })}
+          className="w-56"
         />
         {built.kinds.map((kind) => {
           const on = !hiddenKinds.has(kind)

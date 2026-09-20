@@ -12,7 +12,6 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -26,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import type { LegendEntry } from "./graph/graph-model"
 import { KnowledgeGraph } from "./graph/knowledge-graph"
 import { knowledgeSearchQueryOptions, knowledgeSymbolQueryOptions } from "./queries"
+import { PathField, SymbolField } from "./suggestion-field"
 import {
   SYMBOL_RELATION_META,
   SYMBOL_RELATIONS,
@@ -232,11 +232,14 @@ function SymbolSearch({
       <form className="flex flex-wrap items-end gap-2" onSubmit={submit}>
         <Label className="min-w-56 flex-1 flex-col items-start gap-1">
           Search symbols
-          <Input
-            aria-label="Search symbols"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
+          <SymbolField
+            label="Search symbols"
             placeholder="Name or identifier"
+            repositoryId={repositoryId}
+            gitRef={gitRef}
+            value={query}
+            onChange={setQuery}
+            className="w-full"
           />
         </Label>
         <Label className="w-44 flex-col items-start gap-1">
@@ -260,11 +263,14 @@ function SymbolSearch({
         </Label>
         <Label className="min-w-48 flex-1 flex-col items-start gap-1">
           Path
-          <Input
-            aria-label="Path"
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
+          <PathField
+            label="Path"
             placeholder="src/"
+            repositoryId={repositoryId}
+            gitRef={gitRef}
+            value={path}
+            onChange={setPath}
+            className="w-full"
           />
         </Label>
         <Button type="submit" size="sm" disabled={!query.trim()}>

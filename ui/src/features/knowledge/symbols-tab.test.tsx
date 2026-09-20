@@ -6,7 +6,13 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { KnowledgeHitDto, KnowledgeStatusDto, KnowledgeSymbolDto, RepositoryDto } from "@/api"
+import type {
+  KnowledgeGraphDto,
+  KnowledgeHitDto,
+  KnowledgeStatusDto,
+  KnowledgeSymbolDto,
+  RepositoryDto,
+} from "@/api"
 import { aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 
@@ -40,6 +46,20 @@ const HIT: KnowledgeHitDto = {
   kind: "function",
   name: "render",
   signature: "function render()",
+}
+
+/** What the Path field suggests from: the file graph of the ref. */
+const FILES: KnowledgeGraphDto = {
+  repository_id: WEB.id,
+  git_ref: "main",
+  nodes: [
+    { path: "src/render.ts", language: "typescript", symbols: 3 },
+    { path: "src/ui/panel.ts", language: "typescript", symbols: 2 },
+    { path: "lib/log.ts", language: "typescript", symbols: 1 },
+  ],
+  edges: [],
+  truncated: false,
+  total_nodes: 3,
 }
 
 function definition(name: string, overrides: Partial<KnowledgeSymbolDto> = {}): KnowledgeSymbolDto {
@@ -109,6 +129,7 @@ beforeEach(() => {
       return Promise.resolve(jsonResponse({ ...STATUS, repository_id: url.pathname.split("/")[3] }))
     }
     if (url.pathname === "/v1/knowledge/search") return Promise.resolve(jsonResponse([HIT]))
+    if (url.pathname === "/v1/knowledge/graph") return Promise.resolve(jsonResponse(FILES))
     if (url.pathname === "/v1/knowledge/symbol") {
       const found =
         url.searchParams.get("name") === "callRender" ? [CALL_RENDER] : [RENDER, RENDER_ALTERNATE]
@@ -125,17 +146,19 @@ describe("the Symbols tab", () => {
     const user = userEvent.setup()
     const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=symbols" })
 
-    await user.type(await screen.findByRole("textbox", { name: "Search symbols" }), "ren")
+    await user.type(await screen.findByRole("combobox", { name: "Search symbols" }), "ren")
     await user.click(screen.getByRole("combobox", { name: "Kind" }))
     await user.click(await screen.findByRole("option", { name: "Function" }))
-    await user.type(screen.getByRole("textbox", { name: "Path" }), "src/")
+    await user.type(screen.getByRole("combobox", { name: "Path" }), "src/")
     await user.click(screen.getByRole("button", { name: "Search" }))
 
     const results = await screen.findByRole("list", { name: "Symbol search results" })
     expect(within(results).getByText("render")).toBeDefined()
     expect(within(results).getByText("function")).toBeDefined()
     expect(within(results).getByText("src/render.ts:10")).toBeDefined()
-    const search = requests.find((url) => url.pathname === "/v1/knowledge/search")
+    // The last search is the one the button sent: the ones before it are the
+    // suggestions the name field asked for as it was typed into.
+    const search = requests.filter((url) => url.pathname === "/v1/knowledge/search").at(-1)
     expect(Object.fromEntries(search?.searchParams ?? [])).toMatchObject({
       q: "ren",
       repository: WEB.id,
@@ -147,7 +170,9 @@ describe("the Symbols tab", () => {
     await user.click(within(results).getByRole("button"))
     expect(new URLSearchParams(location.url.split("?")[1]).get("symbol")).toBe("render")
     expect(await screen.findByRole("button", { name: "callRender ↗" })).toBeDefined()
-  })
+    // Two fields typed into, each answering every keystroke with its
+    // suggestions: more than the default five seconds under a loaded suite.
+  }, 15_000)
 
   it("opens the URL symbol, re-centres on a node, and moves backward and forward", async () => {
     const user = userEvent.setup()
@@ -181,6 +206,35 @@ describe("the Symbols tab", () => {
           url.pathname === "/v1/knowledge/symbol" && url.searchParams.get("detail") === "source",
       ),
     ).toBe(true)
+  })
+
+  it("suggests the symbols the search finds under what is typed", async () => {
+    const user = userEvent.setup()
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=symbols" })
+
+    await user.type(await screen.findByRole("combobox", { name: "Search symbols" }), "ren")
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual([
+        "renderfunctionsrc/render.ts",
+      ]),
+    )
+  })
+
+  it("suggests the directories of the ref before its files in the path field", async () => {
+    const user = userEvent.setup()
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=symbols" })
+
+    await user.type(await screen.findByRole("combobox", { name: "Path" }), "src")
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual([
+        "src/directory",
+        "src/ui/directory",
+        "src/render.tsfile",
+        "src/ui/panel.tsfile",
+      ]),
+    )
   })
 
   it("lets the user pick one of several definitions", async () => {

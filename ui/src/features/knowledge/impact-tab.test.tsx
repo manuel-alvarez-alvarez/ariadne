@@ -100,6 +100,13 @@ function graphDrawn(): Promise<HTMLElement> {
   return screen.findByRole("list", { name: "Graph nodes" }, { timeout: 10_000 })
 }
 
+/**
+ * What a test gets when it both types a name and waits for a layout: the
+ * suggestion list answers every keystroke, and ELK is slower than the
+ * default five seconds under a loaded suite either way.
+ */
+const SLOW = 15_000
+
 function node(name: string): HTMLElement {
   return within(screen.getByRole("list", { name: "Graph nodes" })).getByRole("button", { name })
 }
@@ -121,22 +128,26 @@ function asked(pathname: string): URLSearchParams[] {
 }
 
 describe("the Impact mode", () => {
-  it("draws the callers in layers by depth, from the changed symbol out", async () => {
-    renderScreen(<KnowledgeScreen />, { route: `${BASE}&symbol=parse&depth=3` })
+  it(
+    "draws the callers in layers by depth, from the changed symbol out",
+    async () => {
+      renderScreen(<KnowledgeScreen />, { route: `${BASE}&symbol=parse&depth=3` })
 
-    await graphDrawn()
-    expect(x("parse")).toBeLessThan(x("load"))
-    expect(x("guess")).toBeGreaterThan(x("parse"))
-    expect(x("hub (walk stopped: over 200 callers)")).toBeGreaterThan(x("load"))
-    expect(x("hub (walk stopped: over 200 callers)")).toBeGreaterThan(x("guess"))
-    expect(asked("/v1/knowledge/impact")).toHaveLength(1)
-    expect(Object.fromEntries(asked("/v1/knowledge/impact")[0] ?? [])).toEqual({
-      repository: WEB.id,
-      git_ref: "main",
-      symbol: "parse",
-      depth: "3",
-    })
-  })
+      await graphDrawn()
+      expect(x("parse")).toBeLessThan(x("load"))
+      expect(x("guess")).toBeGreaterThan(x("parse"))
+      expect(x("hub (walk stopped: over 200 callers)")).toBeGreaterThan(x("load"))
+      expect(x("hub (walk stopped: over 200 callers)")).toBeGreaterThan(x("guess"))
+      expect(asked("/v1/knowledge/impact")).toHaveLength(1)
+      expect(Object.fromEntries(asked("/v1/knowledge/impact")[0] ?? [])).toEqual({
+        repository: WEB.id,
+        git_ref: "main",
+        symbol: "parse",
+        depth: "3",
+      })
+    },
+    SLOW,
+  )
 
   it("draws a heuristic call dashed and an exact one as a line", async () => {
     renderScreen(<KnowledgeScreen />, { route: `${BASE}&symbol=parse` })
@@ -188,21 +199,47 @@ describe("the Impact mode", () => {
     ])
   })
 
-  it("suggests the symbols the search finds under what is typed", async () => {
+  it("suggests the symbols the search finds under what is typed, with their kind and path", async () => {
     const user = userEvent.setup()
     renderScreen(<KnowledgeScreen />, { route: BASE })
 
     await user.type(await screen.findByRole("combobox", { name: "Symbol" }), "pa")
 
     await waitFor(() =>
-      expect(
-        [...document.querySelectorAll("datalist option")].map((option) =>
-          option.getAttribute("value"),
-        ),
-      ).toEqual(["parse", "parse_all"]),
+      expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual([
+        "parsefunctionsrc/parse.rs",
+        "parse_allfunctionsrc/parse_all.rs",
+      ]),
     )
     expect(asked("/v1/knowledge/search").at(-1)?.get("q")).toBe("pa")
     expect(asked("/v1/knowledge/search").at(-1)?.get("repository")).toBe(WEB.id)
+  })
+
+  it("puts the suggestion the arrow keys reach into the field, and applies it as typed text is", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<KnowledgeScreen />, { route: BASE })
+    const field = await screen.findByRole("combobox", { name: "Symbol" })
+
+    await user.type(field, "pa")
+    await screen.findAllByRole("option")
+    await user.keyboard("{ArrowDown}{Enter}")
+
+    expect((field as HTMLInputElement).value).toBe("parse")
+    await user.click(screen.getByRole("button", { name: "Show impact" }))
+    expect(params(location.url).get("symbol")).toBe("parse")
+  })
+
+  it("closes the list on Escape and keeps what was typed", async () => {
+    const user = userEvent.setup()
+    renderScreen(<KnowledgeScreen />, { route: BASE })
+    const field = await screen.findByRole("combobox", { name: "Symbol" })
+
+    await user.type(field, "pa")
+    await screen.findAllByRole("option")
+    await user.keyboard("{Escape}")
+
+    await waitFor(() => expect(screen.queryAllByRole("option")).toHaveLength(0))
+    expect((field as HTMLInputElement).value).toBe("pa")
   })
 })
 
@@ -260,48 +297,56 @@ describe("the Path mode", () => {
 })
 
 describe("the URL", () => {
-  it("keeps the mode and its inputs, so a reload draws the same graph", async () => {
-    const user = userEvent.setup()
-    const first = renderScreen(<KnowledgeScreen />, { route: BASE })
-    await user.click(await screen.findByRole("button", { name: "Path" }))
-    await user.type(screen.getByRole("combobox", { name: "From symbol" }), "fetchGoal")
-    await user.type(screen.getByRole("combobox", { name: "To symbol" }), "load_goal")
-    await user.click(screen.getByRole("button", { name: "Find path" }))
-    await user.click(screen.getByRole("combobox", { name: "Depth" }))
-    await user.click(await screen.findByRole("option", { name: "Depth 3" }))
-    const kept = first.location.url
-    expect(params(kept).get("mode")).toBe("path")
-    expect(params(kept).get("from")).toBe("fetchGoal")
-    expect(params(kept).get("to")).toBe("load_goal")
-    expect(params(kept).get("depth")).toBe("3")
-    expect(params(kept).get("tab")).toBe("impact")
+  it(
+    "keeps the mode and its inputs, so a reload draws the same graph",
+    async () => {
+      const user = userEvent.setup()
+      const first = renderScreen(<KnowledgeScreen />, { route: BASE })
+      await user.click(await screen.findByRole("button", { name: "Path" }))
+      await user.type(screen.getByRole("combobox", { name: "From symbol" }), "fetchGoal")
+      await user.type(screen.getByRole("combobox", { name: "To symbol" }), "load_goal")
+      await user.click(screen.getByRole("button", { name: "Find path" }))
+      await user.click(screen.getByRole("combobox", { name: "Depth" }))
+      await user.click(await screen.findByRole("option", { name: "Depth 3" }))
+      const kept = first.location.url
+      expect(params(kept).get("mode")).toBe("path")
+      expect(params(kept).get("from")).toBe("fetchGoal")
+      expect(params(kept).get("to")).toBe("load_goal")
+      expect(params(kept).get("depth")).toBe("3")
+      expect(params(kept).get("tab")).toBe("impact")
 
-    cleanup()
-    requests = []
-    renderScreen(<KnowledgeScreen />, { route: kept })
+      cleanup()
+      requests = []
+      renderScreen(<KnowledgeScreen />, { route: kept })
 
-    expect(await screen.findByRole("button", { name: "Path", pressed: true })).toBeDefined()
-    expect((screen.getByRole("combobox", { name: "From symbol" }) as HTMLInputElement).value).toBe(
-      "fetchGoal",
-    )
-    expect((screen.getByRole("combobox", { name: "To symbol" }) as HTMLInputElement).value).toBe(
-      "load_goal",
-    )
-    expect(screen.getByRole("combobox", { name: "Depth" }).textContent).toContain("Depth 3")
-    await graphDrawn()
-    expect(asked("/v1/knowledge/path")[0]?.get("depth")).toBe("3")
-  })
+      expect(await screen.findByRole("button", { name: "Path", pressed: true })).toBeDefined()
+      expect(
+        (screen.getByRole("combobox", { name: "From symbol" }) as HTMLInputElement).value,
+      ).toBe("fetchGoal")
+      expect((screen.getByRole("combobox", { name: "To symbol" }) as HTMLInputElement).value).toBe(
+        "load_goal",
+      )
+      expect(screen.getByRole("combobox", { name: "Depth" }).textContent).toContain("Depth 3")
+      await graphDrawn()
+      expect(asked("/v1/knowledge/path")[0]?.get("depth")).toBe("3")
+    },
+    SLOW,
+  )
 
-  it("keeps the symbol of the impact mode", async () => {
-    const user = userEvent.setup()
-    const { location } = renderScreen(<KnowledgeScreen />, { route: BASE })
+  it(
+    "keeps the symbol of the impact mode",
+    async () => {
+      const user = userEvent.setup()
+      const { location } = renderScreen(<KnowledgeScreen />, { route: BASE })
 
-    await user.type(await screen.findByRole("combobox", { name: "Symbol" }), "parse")
-    await user.click(screen.getByRole("button", { name: "Show impact" }))
+      await user.type(await screen.findByRole("combobox", { name: "Symbol" }), "parse")
+      await user.click(screen.getByRole("button", { name: "Show impact" }))
 
-    expect(params(location.url).get("symbol")).toBe("parse")
-    await graphDrawn()
-  })
+      expect(params(location.url).get("symbol")).toBe("parse")
+      await graphDrawn()
+    },
+    SLOW,
+  )
 
   it("falls back to the default depth where the URL holds one the mode does not allow", async () => {
     renderScreen(<KnowledgeScreen />, { route: `${BASE}&symbol=parse&depth=7` })

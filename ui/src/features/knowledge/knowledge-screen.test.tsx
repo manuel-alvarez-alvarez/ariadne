@@ -200,7 +200,7 @@ describe("the pickers and the tab", () => {
 
     await user.click(screen.getByRole("tab", { name: "Symbols" }))
     expect(new URLSearchParams(location.url.split("?")[1]).get("tab")).toBe("symbols")
-    expect(screen.getByRole("textbox", { name: "Search symbols" })).toBeDefined()
+    expect(screen.getByRole("combobox", { name: "Search symbols" })).toBeDefined()
 
     await user.click(screen.getByRole("combobox", { name: "Repository" }))
     await user.click(await screen.findByRole("option", { name: "api" }))
@@ -434,13 +434,29 @@ describe("the Files tab", () => {
     })
     await screen.findByRole("list", { name: "Graph nodes" })
 
-    await user.type(screen.getByRole("textbox", { name: "Filter by path" }), "src/")
+    await user.type(screen.getByRole("combobox", { name: "Filter by path" }), "src/")
     await waitFor(() => expect(shownNodes()).toEqual(["app.ts", "api.ts"]))
     expect(params(location.url).get("filter")).toBe("src/")
 
     await user.click(screen.getByRole("button", { name: "calls", pressed: true }))
     expect(screen.queryByRole("button", { name: "app.ts → api.ts" })).toBeNull()
     expect(params(location.url).get("hidden_kinds")).toBe("calls")
+  })
+
+  it("suggests the directories and the files the typed path is part of", async () => {
+    const user = userEvent.setup()
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+    await screen.findByRole("list", { name: "Graph nodes" })
+
+    await user.type(screen.getByRole("combobox", { name: "Filter by path" }), "src")
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual([
+        "src/directory",
+        "src/api.tsfile",
+        "src/app.tsfile",
+      ]),
+    )
   })
 
   it("hides a file with no edge when unlinked files are hidden", async () => {
