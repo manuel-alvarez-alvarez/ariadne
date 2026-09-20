@@ -1380,10 +1380,6 @@ async fn serve_with_input(
     }
 }
 
-/// One typed ACP request as the `params` object the transport sends.
-///
-/// The SDK's request types serialize to exactly the protocol's shape, so this
-/// is where a typed value becomes wire JSON and the only place the two meet.
 /// What the daemon tells an agent it is, on `initialize`.
 ///
 /// It reads and writes the worktree itself rather than through the agent, and
@@ -1404,6 +1400,10 @@ fn initialize() -> v1::InitializeRequest {
         ))
 }
 
+/// One typed ACP request as the `params` object the transport sends.
+///
+/// The SDK's request types serialize to exactly the protocol's shape, so this
+/// is where a typed value becomes wire JSON and the only place the two meet.
 pub(crate) fn to_params<T: serde::Serialize>(request: &T) -> Result<Value> {
     serde_json::to_value(request).context("building an ACP request")
 }
