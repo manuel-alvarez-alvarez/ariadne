@@ -7,10 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_client_protocol::schema::{ProtocolVersion, v1};
+use agent_client_protocol::{Agent, Client, ConnectionTo};
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 
@@ -21,7 +22,8 @@ use ariadne_client::endpoint::AcpAgentConfig;
 use ariadne_store::Store;
 
 use crate::acp::{apply_agent_launch_environment, find_config_option, to_params};
-use crate::acp_rpc::{Incoming, RpcTransport};
+use crate::acp_calls::{self, CloseSession, Initialize, ListSessions, NewSession};
+use crate::acp_transport::pipes;
 use crate::timeouts::Timeouts;
 
 /// The ACP commands Ariadne knows without configuration.
@@ -446,23 +448,30 @@ async fn probe(
         return rejected(&entry, "agent did not open stdio".into());
     };
     capabilities.stdio = true;
-    let mut rpc = RpcTransport::new(stdout, stdin);
-    let mut incoming = ProbeIncoming;
+    // A probe answers nothing: the SDK rejects a request it has no handler
+    // for and ignores a notification, which is what `ProbeIncoming` did.
+    //
     // The timeout sits inside the probe so a slow agent is still reported
     // with every capability it showed before it stopped answering.
+    let mut discovered = None;
     let result = tokio::time::timeout(
         timeout,
-        probe_protocol(
-            &entry,
-            &mut rpc,
-            &mut incoming,
-            cwd,
-            cached,
-            &mut capabilities,
-        ),
+        Client
+            .builder()
+            .name("ariadne-discovery")
+            .connect_with(pipes(stdin, stdout), async |cx| {
+                discovered =
+                    Some(probe_protocol(&entry, &cx, cwd, cached, &mut capabilities).await);
+                Ok(())
+            }),
     )
-    .await
-    .unwrap_or_else(|_| Err(anyhow!("discovery timed out")));
+    .await;
+    let result = match (result, discovered) {
+        (_, Some(discovery)) => discovery,
+        (Ok(Err(error)), None) => Err(anyhow!("ACP connection failed: {error}")),
+        (Ok(Ok(())), None) => Err(anyhow!("the agent closed its stdio during discovery")),
+        (Err(_), None) => Err(anyhow!("discovery timed out")),
+    };
     let _ = child.start_kill();
     let _ = child.wait().await;
     match result {
@@ -473,14 +482,12 @@ async fn probe(
 
 async fn probe_protocol(
     entry: &RegistryEntry,
-    rpc: &mut RpcTransport,
-    incoming: &mut ProbeIncoming,
+    cx: &ConnectionTo<Agent>,
     cwd: &Path,
     cached: Option<CachedCatalog>,
     capabilities: &mut AcpCapabilitiesDto,
 ) -> Result<Discovery> {
-    let initialized = rpc
-        .request("initialize", to_params(&initialize())?, incoming)
+    let initialized = acp_calls::call(cx, "initialize", Initialize(to_params(&initialize())?))
         .await
         .context("initialize failed")?;
     capabilities.protocol_v1 =
@@ -509,7 +516,7 @@ async fn probe_protocol(
         }
         None => {
             let closes = capability(&advertised["sessionCapabilities"], "close");
-            read_catalog(rpc, incoming, cwd, closes, capabilities).await?
+            read_catalog(cx, cwd, closes, capabilities).await?
         }
     };
 
@@ -544,20 +551,18 @@ async fn probe_protocol(
 /// where the agent can (`closes`), so it holds nothing for a session nobody
 /// will prompt.
 async fn read_catalog(
-    rpc: &mut RpcTransport,
-    incoming: &mut ProbeIncoming,
+    cx: &ConnectionTo<Agent>,
     cwd: &Path,
     closes: bool,
     capabilities: &mut AcpCapabilitiesDto,
 ) -> Result<Catalog> {
-    let setup = rpc
-        .request(
-            "session/new",
-            to_params(&v1::NewSessionRequest::new(cwd))?,
-            incoming,
-        )
-        .await
-        .context("session/new failed")?;
+    let setup = acp_calls::call(
+        cx,
+        "session/new",
+        NewSession(to_params(&v1::NewSessionRequest::new(cwd))?),
+    )
+    .await
+    .context("session/new failed")?;
     let session_id = setup
         .get("sessionId")
         .and_then(Value::as_str)
@@ -566,13 +571,14 @@ async fn read_catalog(
     if closes {
         // Best effort: the catalog is read either way, and the process is
         // gone as soon as the probe ends.
-        let _ = rpc
-            .request(
-                "session/close",
-                to_params(&v1::CloseSessionRequest::new(session_id.to_string()))?,
-                incoming,
-            )
-            .await;
+        let _ = acp_calls::call(
+            cx,
+            "session/close",
+            CloseSession(to_params(&v1::CloseSessionRequest::new(
+                session_id.to_string(),
+            ))?),
+        )
+        .await;
     }
     let options = setup
         .get("configOptions")
@@ -651,30 +657,38 @@ async fn list_stored_sessions(
     let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
         bail!("agent did not open stdio");
     };
-    let mut rpc = RpcTransport::new(stdout, stdin);
-    let mut incoming = ProbeIncoming;
-    let result = sessions_over_rpc(agent, &mut rpc, &mut incoming, sessions).await;
+    let mut listed = None;
+    let connected = Client
+        .builder()
+        .name("ariadne-discovery")
+        .connect_with(pipes(stdin, stdout), async |cx| {
+            listed = Some(sessions_over_rpc(agent, &cx, sessions).await);
+            Ok(())
+        })
+        .await;
     let _ = child.start_kill();
     let _ = child.wait().await;
-    result
+    match (connected, listed) {
+        (_, Some(result)) => result,
+        (Err(error), None) => Err(anyhow!("ACP connection failed: {error}")),
+        (Ok(()), None) => Err(anyhow!("the agent closed its stdio while listing sessions")),
+    }
 }
 
 /// `initialize`, then `session/list` with each `nextCursor` the agent answers
 /// with, until a reply carries none.
 async fn sessions_over_rpc(
     agent: &AcpAgentDto,
-    rpc: &mut RpcTransport,
-    incoming: &mut ProbeIncoming,
+    cx: &ConnectionTo<Agent>,
     sessions: &mut Vec<OutsideSessionDto>,
 ) -> Result<()> {
-    rpc.request("initialize", to_params(&initialize())?, incoming)
+    acp_calls::call(cx, "initialize", Initialize(to_params(&initialize())?))
         .await
         .context("initialize failed")?;
     let mut cursor: Option<String> = None;
     loop {
         let params = to_params(&v1::ListSessionsRequest::new().cursor(cursor.clone()))?;
-        let listed = rpc
-            .request("session/list", params, incoming)
+        let listed = acp_calls::call(cx, "session/list", ListSessions(params))
             .await
             .context("session/list failed")?;
         sessions.extend(
@@ -763,18 +777,4 @@ fn choices(option: &Value) -> Vec<Choice> {
         });
     }
     choices
-}
-
-struct ProbeIncoming;
-
-impl Incoming for ProbeIncoming {
-    async fn handle(&mut self, message: Value) -> Result<Option<Value>> {
-        Ok(message.get("id").map(|id| {
-            json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": {"code": -32601, "message": "method not supported"},
-            })
-        }))
-    }
 }

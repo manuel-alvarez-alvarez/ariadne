@@ -44,6 +44,9 @@ tower-http = { version = "0.6", features = ["cors"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 
+# Turns tokio's child pipes into the `futures` streams the ACP SDK's
+# transport takes, so the daemon keeps owning the process.
+tokio-util = { version = "0.7", features = ["compat"] }
 # agent client protocol
 # The official ACP SDK: typed schema and JSON-RPC connection for every
 # `session/*` method the daemon speaks. `unstable_session_compaction` is
