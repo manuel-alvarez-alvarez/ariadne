@@ -1,5 +1,85 @@
 # Changelog
 
+## [0.8.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.7.0...v0.8.0) (2026-09-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **daemon:** `GET /v1/sessions/{id}/console` answers the newest 200 events, not every event of the session. `ariadne session logs` prints that page.
+* **prompts:** cut the skill catalog from eighteen to thirteen
+* **store:** `agent_events` changes shape, so an older database does not open. Delete the database file and start again.
+* **api:** the `agent_event` frame of GET /v1/events/stream has no `payload` field. Read the payload from GET /v1/events.
+* **daemon:** the daemon no longer advertises compaction support on `initialize`, and records no `compaction_update` event.
+* **daemon:** `memories.repository_id`, `expires_at` and the source columns are nullable. Carry a live database with the migration script. The routes under `/v1/repositories/{id}/memories` are gone.
+
+### Features
+
+* **api:** drop the agent-event payload from the domain stream ([4f197ac](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4f197acdf2c8916cd5daa0ddcdf49b5361afad9c))
+* **cli:** frame the permission picker and shorten an answered question ([9a45a28](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9a45a28e2a06e4ba234264b3176e7808f53d2d3c))
+* **cli:** improve the console input box ([9d9f12e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9d9f12ec04905d4f15d3e963e37cbb7263d07028))
+* **cli:** make each console block read clearly ([437d006](https://github.com/manuel-alvarez-alvarez/ariadne/commit/437d006c4ab7db866c85e5664976512ad10edcf1))
+* **cli:** make the console pane as tall as its content ([ea6de0d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ea6de0d5a9c393bee1bb1a41dbe9c832574e3bd8))
+* **cli:** render streamed markdown tables and code ([b011c5b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b011c5b7c40d91829ae4282b8e2589df1406d995))
+* **cli:** show key hints and tokens spent in a console footer that never crops ([078b296](https://github.com/manuel-alvarez-alvarez/ariadne/commit/078b2961594352c67738dab003785ddd21efe550))
+* **cli:** show session context when attaching ([4c2f165](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4c2f1659944cce39f458888c7cf6dfdd3351db02))
+* **cli:** write a memory from the CLI, name its scope, and document it ([c101bec](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c101becbe073d2f071ab6fbe951410285c7ef54f))
+* **daemon:** add repository file graph ([07f1ade](https://github.com/manuel-alvarez-alvarez/ariadne/commit/07f1ade71555ce970947bb966617fc42a1963e2f))
+* **daemon:** answer the shortest path between two symbols ([c1f5ecd](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c1f5ecdddd7fc5989b67c204805561e388786688))
+* **daemon:** explain every knowledge edge by its resolution step ([81ff1be](https://github.com/manuel-alvarez-alvarez/ariadne/commit/81ff1beb33515d8147cad603a5f7fa4e2865439a))
+* **daemon:** find interactions between repositories ([4a48a29](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4a48a290b9c56d95ecde2b3b0f6ddd06e41dbb94))
+* **daemon:** give memory a global scope, a user write path and an optional expiry ([3007e7c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3007e7ca4d7d6f7756be085bffea3d939ec51387))
+* **daemon:** index every registered repository and serve search_code and outline ([53663ff](https://github.com/manuel-alvarez-alvarez/ariadne/commit/53663ff5494b68e66810c995883ae69c444c7a54))
+* **daemon:** index the remaining languages and outline formats ([1e28357](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1e28357b346b34466dea2baad1054dff8f65ee01))
+* **daemon:** match memory by words ([4a67fa4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4a67fa488e4c76f9c5c3a0a6be077152dd60ad52))
+* **daemon:** resolve references into a symbol graph and serve symbol and impact ([5dabbb2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5dabbb2ae57e18bd28a2dc58c1eb4136b4b69ffd))
+* **daemon:** say how many results a capped knowledge answer left out ([041f006](https://github.com/manuel-alvarez-alvarez/ariadne/commit/041f006e667fafd9d16373a6d6f8a087dbf81397))
+* **daemon:** show session context window usage ([2ad0b18](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2ad0b185a44446a599f70e610f75594afb772e56))
+* **daemon:** stop listening for a compaction ([21a4d42](https://github.com/manuel-alvarez-alvarez/ariadne/commit/21a4d426f349ea023fcb57601201f15b6d27651f))
+* **knowledge:** index TypeScript type aliases and enums as definitions ([82c8511](https://github.com/manuel-alvarez-alvarez/ariadne/commit/82c85114e07f2a5f7331e74da470e5570e92e19b))
+* **knowledge:** read Dart imports ([789aa8b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/789aa8b442203817d248ee4ad91011e2a3c6736d))
+* **knowledge:** read the routes a Dart client calls ([bd1f4d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bd1f4d91252cfa0cdc2d243457420657ec4571b0))
+* **prompts:** add repo_map, and teach the skills the knowledge tools ([a955bfc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a955bfc118a41ce4bd3f4901be055b3fc6713332))
+* **prompts:** cut the skill catalog from eighteen to thirteen ([cc5f782](https://github.com/manuel-alvarez-alvarez/ariadne/commit/cc5f782f8e052acb63777db31483311a1c93d9e3))
+* **prompts:** teach every seat to read memory and to save only what is worth keeping ([17dd88f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/17dd88f70bff1faf31e9d287c6a647c44b9959b4))
+* **store:** store an agent event once, compressed ([9040055](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9040055cdf376cc5126b0d574db79244f178dc1f))
+* **ui:** add symbol neighbourhood graph ([d5968de](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d5968dea9ca0d5b6baa1f888bec7712fd61da1a5))
+* **ui:** add the Files tab with a file dependency graph ([de00d09](https://github.com/manuel-alvarez-alvarez/ariadne/commit/de00d09567d779c20eeb2e8f0633043700875203))
+* **ui:** add the impact and path tab with layered graphs ([98dbed0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/98dbed07d481fceeb38f33d3b9057dcdd99d4566))
+* **ui:** add the knowledge screen with a graph of the repositories ([dac525e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dac525ed55b2604ccd904d704f174cb08762b108))
+* **ui:** manage memory from its own screen only ([dec135f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dec135f5cddae37222686969220a60438ed754ed))
+* **ui:** open files by directory ([05b9846](https://github.com/manuel-alvarez-alvarez/ariadne/commit/05b984656d77d9176d29ba17ab99d3138c282fb3))
+* **ui:** show and write memories of both scopes in the desktop app ([326cfb6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/326cfb6f80bba469c8a78ac00229787644c05b14))
+* **ui:** show knowledge status, reindex, search and interactions on the repository page ([7cad156](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7cad156dd957e9d431799b915f72844d24bf6cde))
+* **ui:** suggest values in each knowledge filter ([c4df16c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c4df16c4cb78164715f2dbbb60e2e8711fba6d14))
+
+
+### Bug Fixes
+
+* **cli:** lay out wide markdown tables by what each column holds ([06f1a24](https://github.com/manuel-alvarez-alvarez/ariadne/commit/06f1a240e377df432f34c7e608c98f19da620f5d))
+* **cli:** make the console pane fit together on a real terminal ([0bc3f09](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0bc3f0936c3ab205bd6bb538bce3f20785770e04))
+* **core:** drop the guessed call edges of a name many definitions share ([1d6c6a9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1d6c6a9b3c2dc10b65f6ef514c006b3694aaceb1))
+* **daemon:** count only cache reads as cached input ([51b2ab8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/51b2ab84a24218aca04010139aefa7d2b995acad))
+* **daemon:** fail a launch whose model or effort pin did not land ([21176b0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/21176b00d491cb01eb12366cf460c8afb1d803e0))
+* **daemon:** read token usage from the agent's own transcript ([45a56af](https://github.com/manuel-alvarez-alvarez/ariadne/commit/45a56afd3c0601c2dd428ee06626714439513020))
+* **daemon:** redraw the app's console whole after a resize ([562362d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/562362d958ade1fd507c6c7c9725f56881424f0b))
+* **daemon:** resolve a call to a code definition only ([b7afaca](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b7afaca613424c99cd358f1b5e426366d904000b))
+* **daemon:** stop failing tasks a busy database could not answer for ([6468b41](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6468b411fb0839552d7e1ea39eff3798495e0a24))
+* **install:** skip the dmg when building the desktop app on macOS ([c9a4ed6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c9a4ed6a103ba4302891eb24640f40d2f64438d5))
+* **mcp:** deliver each message once, and cut what the message and skill tools return ([ab4faf3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ab4faf34401478d5ab895447799160b8b8ab7173))
+* **prompts:** run checks in the foreground and read only their failures ([ed5c71b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ed5c71bb6e8399baaf100b0ce7730af1bece2707))
+* restrict cross-repository references to dependencies ([e8b8ca3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e8b8ca35a798bfda265ec0365ff1566910f1cd08))
+* **ui:** draw console rules and table headers as single lines ([66d61c6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/66d61c64d24c08d7c560d2a7aa08bccd35a671b2))
+* **ui:** draw each knowledge graph settled and still ([6710a2b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6710a2b4c1cd492106da5db1d233619f2c03f603))
+* **ui:** stub symbol endpoint in impact test ([8f81df7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8f81df75b02bd20ea1f4b81d6f9c3abf9949d532))
+
+
+### Performance Improvements
+
+* **daemon:** open a console on a page, and follow it with no read ([94e926c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/94e926cf8d05db84a4d16252e5361abf6a831c17))
+* **daemon:** reconcile a session once per burst of its events ([7c9c772](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7c9c772a945928f953a89a470ce45b02e57b3fb1))
+* **daemon:** store finished tool text once ([52a87a8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/52a87a8c971cfa5db2594aecb09df60b4e2c4c15))
+* **store:** keep the write-ahead log off the commit path ([dc1d9a8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dc1d9a86d21d93962b7ad1e0dd084f9fcd15ed52))
+
 ## [0.7.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.6.0...v0.7.0) (2026-09-18)
 
 
