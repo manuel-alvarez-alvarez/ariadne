@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-17
+updated: 2026-09-20
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -110,6 +110,12 @@ the ACP runtime that takes a prompt (021).
 26. A task that could never be started fails with the reason on it after the
     spawn-retry budget. An orchestrator that can never be started gives up
     with exactly one alarm, and taking the alarm down starts the count again.
+    The budget is spent on the agent, never on the store: a reconciliation
+    that fails because the database would not answer is waited out for the
+    next tick, since it says nothing about whether an agent can be started.
+    Under load the write pool hands out a timeout rather than a connection
+    and every task's reconciliation fails together, which counted as spawn
+    attempts fails a task whose agent was never asked for.
 27. A launch that works and an agent that runs are not the same thing. A
     launch that ends before its agent was ever heard from died on arrival,
     and it spends an attempt like a launch that never came up.

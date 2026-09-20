@@ -288,8 +288,17 @@ impl Scheduler {
             }
             Target::Task(id) => {
                 warn!(task = %id, error = %format!("{e:#}"), "task reconciliation failed");
-                self.record_spawn_failure(id, "the agent could not be started")
-                    .await;
+                // A store that would not answer says nothing about whether an
+                // agent can be started, so it is waited out rather than
+                // counted. Under load the write pool hands out a timeout
+                // instead of a connection, and every task's reconciliation
+                // fails together for as long as that lasts: counted as spawn
+                // attempts, three ticks of it fail a task whose agent was
+                // never asked for.
+                if !unanswered(&e) {
+                    self.record_spawn_failure(id, "the agent could not be started")
+                        .await;
+                }
             }
         }
     }
@@ -437,5 +446,59 @@ impl Scheduler {
         }
         self.dead_launch.insert(seat.to_string(), launch);
         true
+    }
+}
+
+/// Whether an error is the store failing to answer rather than the work
+/// failing: a pool that timed out, a statement that could not run.
+///
+/// Every other [`ariadne_store::StoreError`] is about the data — a row that
+/// is not there, a transition the state machine refuses — and is a real
+/// answer to the question it was read for.
+fn unanswered(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<ariadne_store::StoreError>(),
+        Some(ariadne_store::StoreError::Db(_))
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use ariadne_core::{TaskStatus, TransitionError};
+    use ariadne_store::StoreError;
+
+    use super::unanswered;
+
+    /// The spawn-retry budget is for a task whose agent will not start. A
+    /// store that would not answer is the daemon failing to read, not the
+    /// agent failing to run, and three ticks of it must not fail a task —
+    /// which is how a pool timeout under load failed two tasks whose authors
+    /// had already committed.
+    #[test]
+    fn only_a_store_that_would_not_answer_is_waited_out() {
+        let timed_out = anyhow::Error::from(StoreError::Db(sqlx::Error::PoolTimedOut));
+        assert!(unanswered(&timed_out), "a pool timeout is not an answer");
+
+        for real in [
+            StoreError::NotFound {
+                entity: "task",
+                id: "gone".into(),
+            },
+            StoreError::Conflict("already landed".into()),
+            StoreError::Invalid("no author".into()),
+            StoreError::Transition(TransitionError::IllegalTransition {
+                from: TaskStatus::Failed,
+                to: TaskStatus::InProgress,
+            }),
+        ] {
+            let error = anyhow::Error::from(real);
+            assert!(
+                !unanswered(&error),
+                "the store answered, and the answer counts: {error}"
+            );
+        }
+
+        let other = anyhow::anyhow!("git would not spawn");
+        assert!(!unanswered(&other), "not a store error at all: {other}");
     }
 }
