@@ -83,6 +83,7 @@ beforeEach(() => {
     const url = new URL(request.url)
     requests.push(url)
     if (url.pathname === "/v1/repositories") return jsonResponse([WEB])
+    if (url.pathname === "/v1/knowledge/symbol") return jsonResponse([])
     if (url.pathname === "/v1/knowledge/impact") return jsonResponse(impact)
     if (url.pathname === "/v1/knowledge/path") return jsonResponse(path)
     if (url.pathname === "/v1/knowledge/search") return jsonResponse(HITS)

@@ -995,7 +995,9 @@ and by `(kind, name)`.
   is empty, keep the mode and its inputs in the URL, and open the Symbols
   tab on a clicked node
   (`ui/src/features/knowledge/impact-tab.test.tsx`) — parity with
-  `ariadne knowledge impact|path` (rules 23, 34).
+  `ariadne knowledge impact|path` (rules 23, 34). The impact-tab test stub
+  answers the Symbols tab's definition requests with the endpoint's array
+  response shape.
 - Each free-text filter of the screen suggests its values as they are typed:
   the symbol fields from `search`, with the kind and the path of each hit,
   and the path fields from the file graph, directories before files
