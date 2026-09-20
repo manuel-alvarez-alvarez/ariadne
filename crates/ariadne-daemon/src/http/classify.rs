@@ -115,11 +115,18 @@ const TOOL_INPUT_FIELDS: [&str; 7] = [
 /// where nothing here can be read.
 ///
 /// Built once, when the DTO is built, from the vocabulary the runtime
-/// reports in (this module's own docs): `tool_name`/`tool_input` on every
-/// tool event. `cwd` is read only to relativize a path already read off one
-/// of those — it is never a summary of its own, and it never appears in one.
+/// reports in (this module's own docs): `tool_name`/`tool_input` on a call
+/// that opened. A finished call without its input names the tool alone.
+/// `cwd` is read only to relativize a path already read off one of those — it
+/// is never a summary of its own, and it never appears in one.
 pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
-    let text = tool_call_summary(payload).or_else(|| agent_text(kind, payload));
+    let text = tool_call_summary(payload)
+        .or_else(|| {
+            (kind == "post_tool_use")
+                .then(|| tool_call_name(payload).map(str::to_string))
+                .flatten()
+        })
+        .or_else(|| agent_text(kind, payload));
     finish(&text.unwrap_or_else(|| "…".to_string()))
 }
 
@@ -136,10 +143,15 @@ fn non_empty_str(value: Option<&serde_json::Value>) -> Option<&str> {
 /// covers it: it is a tool event too, just one whose outcome is not known
 /// yet. A live `tool_call_update` carries only the call itself under `acp`,
 /// whose `title` and `rawInput` are the same two things.
-fn tool_call_summary(payload: &serde_json::Value) -> Option<String> {
+fn tool_call_name(payload: &serde_json::Value) -> Option<&str> {
     let acp = payload.get("acp");
-    let tool = non_empty_str(payload.get("tool_name"))
-        .or_else(|| non_empty_str(acp.and_then(|call| call.get("title"))))?;
+    non_empty_str(payload.get("tool_name"))
+        .or_else(|| non_empty_str(acp.and_then(|call| call.get("title"))))
+}
+
+fn tool_call_summary(payload: &serde_json::Value) -> Option<String> {
+    let tool = tool_call_name(payload)?;
+    let acp = payload.get("acp");
     let input = payload
         .get("tool_input")
         .or_else(|| acp.and_then(|call| call.get("rawInput")))?;

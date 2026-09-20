@@ -496,10 +496,22 @@ fn error_text(event: &AgentEventDto) -> String {
         .unwrap_or_else(|| event.summary.clone())
 }
 
-/// What a call gave back, in words: its `rawOutput` where that is text or a
-/// stdout and stderr pair, the text of its `content` entries otherwise, and
+/// What a call gave back, in words: the text of its stored `content` entries,
+/// then its `rawOutput` where that is text or a stdout and stderr pair, and
 /// the structure as JSON only where there is neither.
 fn tool_output(acp: &Value) -> Option<String> {
+    let text: Vec<_> = acp
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|content| content.get("type").and_then(Value::as_str) == Some("content"))
+        .filter_map(|content| string_at(content, "/content/text"))
+        .filter(|text| !text.is_empty())
+        .collect();
+    if !text.is_empty() {
+        return Some(text.join("\n"));
+    }
     let raw = acp.get("rawOutput").filter(|value| !value.is_null());
     if let Some(text) = raw.and_then(Value::as_str) {
         return Some(text.to_string());
@@ -513,17 +525,6 @@ fn tool_output(acp: &Value) -> Option<String> {
         if !streams.is_empty() {
             return Some(streams.join("\n"));
         }
-    }
-    let text: Vec<_> = acp
-        .get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|content| content.get("type").and_then(Value::as_str) == Some("content"))
-        .filter_map(|content| string_at(content, "/content/text"))
-        .collect();
-    if !text.is_empty() {
-        return Some(text.join("\n"));
     }
     raw.and_then(|raw| serde_json::to_string(raw).ok())
 }
@@ -720,11 +721,10 @@ mod tests {
         assert_eq!(tool.ended_at.as_deref(), Some("2026-09-11T12:35:00Z"));
     }
 
-    /// A call whose `rawOutput` is a structure rather than text — a tool
-    /// search's references, for one — says what it found in its `content`
-    /// entries, and that is what is drawn, not the structure as JSON.
+    /// A finished structured call keeps the text the person reads in its
+    /// `content` entries, not its discarded raw structure.
     #[test]
-    fn a_structured_raw_output_gives_way_to_the_content_text() {
+    fn a_finished_structured_call_reads_its_content_text() {
         let events = [event(
             "tool",
             "post_tool_use",
@@ -733,8 +733,7 @@ mod tests {
                         "status": "completed",
                         "content": [
                             {"type": "content", "content": {"type": "text", "text": "Tool: list_tasks"}},
-                            {"type": "content", "content": {"type": "text", "text": "Tool: finalize_plan"}}],
-                        "rawOutput": [{"tool_name": "list_tasks", "type": "tool_reference"}]}
+                            {"type": "content", "content": {"type": "text", "text": "Tool: finalize_plan"}}]}
             }),
         )];
 
@@ -747,6 +746,80 @@ mod tests {
             tool.output.as_deref(),
             Some("Tool: list_tasks\nTool: finalize_plan")
         );
+    }
+
+    /// A finished call keeps its text in `content`, which takes precedence
+    /// over the raw output that an old stored event can still carry.
+    #[test]
+    fn content_text_takes_precedence_over_raw_output() {
+        let events = [event(
+            "tool",
+            "post_tool_use",
+            json!({
+                "acp": {"toolCallId": "shell", "title": "Bash", "kind": "execute",
+                        "status": "completed", "rawOutput": {"stdout": "old output"},
+                        "content": [{"type": "content", "content": {
+                            "type": "text", "text": "stored output"}}]}
+            }),
+        )];
+
+        let items = fold(&events);
+        let TranscriptItem::ToolCall { tool, .. } = &items[0] else {
+            panic!("{items:?}");
+        };
+
+        assert_eq!(tool.output.as_deref(), Some("stored output"));
+    }
+
+    /// Empty content does not hide the raw output that a finished call kept.
+    #[test]
+    fn empty_content_text_gives_way_to_raw_output() {
+        let events = [event(
+            "tool",
+            "post_tool_use",
+            json!({
+                "acp": {"toolCallId": "shell", "title": "Bash", "kind": "execute",
+                        "status": "completed", "rawOutput": {"stdout": "raw output"},
+                        "content": [{"type": "content", "content": {
+                            "type": "text", "text": ""}}]}
+            }),
+        )];
+
+        let items = fold(&events);
+        let TranscriptItem::ToolCall { tool, .. } = &items[0] else {
+            panic!("{items:?}");
+        };
+
+        assert_eq!(tool.output.as_deref(), Some("raw output"));
+    }
+
+    /// The opener holds the input of a finished call after its terminal event
+    /// has dropped `rawInput`.
+    #[test]
+    fn a_finished_call_reads_its_input_from_its_opener() {
+        let events = [
+            event(
+                "pre",
+                "pre_tool_use",
+                json!({"tool_name": "Bash", "tool_input": {"command": "make"},
+                       "acp": {"toolCallId": "call-1", "status": "pending"}}),
+            ),
+            event(
+                "post",
+                "post_tool_use",
+                json!({"tool_name": "Bash", "acp": {"toolCallId": "call-1",
+                       "status": "completed", "content": [{"type": "content",
+                       "content": {"type": "text", "text": "built"}}]}}),
+            ),
+        ];
+
+        let items = fold(&events);
+        let TranscriptItem::ToolCall { tool, .. } = &items[0] else {
+            panic!("{items:?}");
+        };
+
+        assert_eq!(tool.input, json!({"command": "make"}));
+        assert_eq!(tool.output.as_deref(), Some("built"));
     }
 
     #[test]

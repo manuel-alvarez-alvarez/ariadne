@@ -119,11 +119,13 @@ gone (009).
    three is stored, and none reaches `/v1/events` or `/v1/events/stream`.
 7. Tool call updates are merged per `toolCallId`: every field an update sets
    replaces the one on record, `content` included. `pre_tool_use` carries
-   the call as it opened; `post_tool_use`, on a `completed` or `failed`
-   update, carries the merged call under `acp` — `title`, `kind`, `status`,
-   `content`, `locations`, `rawInput`, `rawOutput` — beside the same
-   `tool_name` and `tool_input` as before. A live `tool_call_update` carries
-   the call merged so far.
+   the call as it opened, including its input. `post_tool_use`, on a
+   `completed` or `failed` update, carries the compact merged call under
+   `acp` — `title`, `kind`, `status`, `content`, and `locations` — beside its
+   `tool_name`. It drops `rawInput` and `tool_input`. Where a `content` entry
+   has text, it is the stored output and `rawOutput` is dropped; otherwise
+   `rawOutput` remains. A `content` diff and locations remain. A live
+   `tool_call_update` carries the call merged so far.
 8. A running turn is cancelled with ACP `session/cancel`, sent while the
    `session/prompt` it interrupts is still in flight. The response then ends
    the turn as any other: the text so far stored, and `stop` with
@@ -230,8 +232,9 @@ gone (009).
   (`acp_runtime.rs::an_agent_that_dies_mid_turn_keeps_the_text_it_was_writing`);
   neither `GET /v1/events` nor `/v1/events/stream` carries a chunk
   (`::the_events_listing_and_the_domain_stream_carry_no_chunk`).
-- `post_tool_use` carries the call merged from every update
-  (`acp_console.rs::post_tool_use_carries_the_tool_call_merged_from_every_update`).
+- `post_tool_use` stores its output once, keeps the opening input on
+  `pre_tool_use`, and is smaller than its uncompact form
+  (`acp_console.rs::post_tool_use_stores_text_once_and_keeps_the_opening_input`).
 - `user_prompt_submit` carries the typed text and its source
   (`acp_console.rs::console_input_is_reported_as_its_text_from_the_console`).
 - A cancel ends the running turn as `cancelled`

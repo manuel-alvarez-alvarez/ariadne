@@ -1202,7 +1202,7 @@ impl RuntimeIncoming {
                     }
                 };
                 if terminal {
-                    let payload = tool_payload(session_id, &merged);
+                    let payload = completed_tool_payload(session_id, &merged);
                     let name = payload["tool_name"]
                         .as_str()
                         .unwrap_or_default()
@@ -1783,6 +1783,35 @@ fn tool_payload(session_id: Value, call: &Value) -> Value {
     })
 }
 
+/// The terminal event follows its opener in storage, so it keeps only the
+/// output a transcript reads. The opener already has the input.
+fn completed_tool_payload(session_id: Value, call: &Value) -> Value {
+    let mut payload = tool_payload(session_id, call);
+    if let Some(payload) = payload.as_object_mut() {
+        payload.remove("tool_input");
+    }
+    let Some(call) = payload.get_mut("acp").and_then(Value::as_object_mut) else {
+        return payload;
+    };
+    call.remove("rawInput");
+    if call
+        .get("content")
+        .and_then(Value::as_array)
+        .is_some_and(|content| {
+            content.iter().any(|entry| {
+                entry.get("type").and_then(Value::as_str) == Some("content")
+                    && entry
+                        .pointer("/content/text")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.is_empty())
+            })
+        })
+    {
+        call.remove("rawOutput");
+    }
+    payload
+}
+
 fn terminal_tool_status(update: &Value) -> bool {
     matches!(
         update.get("status").and_then(Value::as_str),
@@ -1870,10 +1899,25 @@ fn allowing_option(params: &Value, option_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{approved_option, usage_for_prompt_response};
+    use super::{approved_option, completed_tool_payload, usage_for_prompt_response};
 
     use ariadne_core::TokenUsage;
     use serde_json::json;
+
+    /// Empty content does not replace the raw output a finished call needs.
+    #[test]
+    fn empty_content_text_keeps_the_raw_output() {
+        let payload = completed_tool_payload(
+            json!("session"),
+            &json!({
+                "title": "Bash", "rawInput": {"command": "make"},
+                "content": [{"type": "content", "content": {"type": "text", "text": ""}}],
+                "rawOutput": {"stdout": "built"},
+            }),
+        );
+
+        assert_eq!(payload["acp"]["rawOutput"], json!({"stdout": "built"}));
+    }
 
     /// Every permission request is approved: the allowing option wins
     /// wherever the agent put it, an unmarked list falls back to its first

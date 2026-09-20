@@ -1136,7 +1136,10 @@ fn streaming_script(wait_for: &std::path::Path) -> serde_json::Value {
                  "kind": "execute", "status": "pending", "rawInput": {"command": "ls"}},
                 {"sessionUpdate": "tool_call_update", "toolCallId": "call-2", "status": "in_progress"},
                 {"sessionUpdate": "tool_call_update", "toolCallId": "call-2", "status": "completed",
-                 "content": [{"type": "content", "content": {"type": "text", "text": "README.md"}}],
+                 "content": [{"type": "content", "content": {"type": "text", "text": "README.md"}},
+                             {"type": "diff", "path": "README.md", "patch": {
+                                 "format": "git_patch", "text": "@@ -1 +1 @@\n-old\n+new\n"}}],
+                 "locations": [{"path": "README.md", "line": 1}],
                  "rawOutput": {"stdout": "README.md\n"}},
                 {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Half "}},
                 {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "done."}},
@@ -1397,29 +1400,55 @@ async fn the_events_listing_and_the_domain_stream_carry_no_chunk() {
     );
 }
 
-/// `post_tool_use` carries the call as every update left it: the title and
-/// input the call opened with, and the status, content and output its last
-/// update set.
+/// A finished call keeps its text once and leaves its opening input on the
+/// `pre_tool_use` that carries it.
 #[tokio::test]
-async fn post_tool_use_carries_the_tool_call_merged_from_every_update() {
+async fn post_tool_use_stores_text_once_and_keeps_the_opening_input() {
     let t = Streaming::start().await;
     t.begin_turn().await;
     t.end_turn().await;
 
     let events = t.snapshot().await;
+    let opened = events
+        .iter()
+        .find(|e| e["kind"] == "pre_tool_use" && e["payload"]["acp"]["toolCallId"] == "call-2")
+        .expect("the streaming turn's tool call opened");
+    assert_eq!(opened["payload"]["tool_input"], json!({"command": "ls"}));
+
     let done = events
         .iter()
         .find(|e| e["kind"] == "post_tool_use" && e["payload"]["acp"]["toolCallId"] == "call-2")
         .expect("the streaming turn's tool call ended");
     assert_eq!(done["payload"]["tool_name"], "Bash");
-    assert_eq!(done["payload"]["tool_input"], json!({"command": "ls"}));
+    assert_eq!(done["summary"], "Bash");
+    assert!(done["payload"].get("tool_input").is_none(), "{done}");
     let call = &done["payload"]["acp"];
     assert_eq!(call["title"], "Bash");
     assert_eq!(call["kind"], "execute");
     assert_eq!(call["status"], "completed");
-    assert_eq!(call["rawInput"], json!({"command": "ls"}));
-    assert_eq!(call["rawOutput"], json!({"stdout": "README.md\n"}));
+    assert!(call.get("rawInput").is_none(), "{call}");
+    assert!(call.get("rawOutput").is_none(), "{call}");
     assert_eq!(call["content"][0]["content"]["text"], "README.md");
+    assert_eq!(call["content"][1]["type"], "diff");
+    assert_eq!(call["locations"][0]["path"], "README.md");
+    assert!(
+        serde_json::to_vec(&done["payload"]).unwrap().len() < serde_json::to_vec(&json!({
+            "session_id": done["payload"]["session_id"],
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "acp": {
+                "toolCallId": "call-2", "title": "Bash", "kind": "execute",
+                "status": "completed", "rawInput": {"command": "ls"},
+                "rawOutput": {"stdout": "README.md\n"},
+                "content": [{"type": "content", "content": {"type": "text", "text": "README.md"}},
+                            {"type": "diff", "path": "README.md", "patch": {
+                                "format": "git_patch", "text": "@@ -1 +1 @@\n-old\n+new\n"}}],
+                "locations": [{"path": "README.md", "line": 1}],
+            },
+        }))
+        .unwrap()
+        .len()
+    );
     assert!(call.get("sessionUpdate").is_none(), "{call}");
 }
 
