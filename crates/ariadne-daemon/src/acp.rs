@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1;
+use agent_client_protocol::schema::{ProtocolVersion, v1};
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::FutureExt;
 use futures_util::future::Shared;
@@ -1275,21 +1275,7 @@ async fn run_protocol(
     config: &LaunchConfig,
     prompts: mpsc::UnboundedReceiver<Prompt>,
 ) -> Result<()> {
-    let initialized = rpc
-        .request(
-            "initialize",
-            json!({
-                "protocolVersion": 1,
-                "clientCapabilities": {
-                    "fs": {"readTextFile": false, "writeTextFile": false},
-                    "terminal": false,
-                    "session": {"configOptions": {}, "compaction": {}},
-                    "auth": {},
-                },
-                "clientInfo": {"name": "ariadne", "version": env!("CARGO_PKG_VERSION")},
-            }),
-        )
-        .await?;
+    let initialized = rpc.request("initialize", to_params(&initialize())?).await?;
     if initialized.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
         bail!("ACP agent did not negotiate protocol version 1");
     }
@@ -1398,6 +1384,26 @@ async fn serve_with_input(
 ///
 /// The SDK's request types serialize to exactly the protocol's shape, so this
 /// is where a typed value becomes wire JSON and the only place the two meet.
+/// What the daemon tells an agent it is, on `initialize`.
+///
+/// It reads and writes the worktree itself rather than through the agent, and
+/// runs no terminal for it. The two session extensions are the ones it uses:
+/// the config options that carry the model and effort pins, and the
+/// compaction it reports as an event.
+fn initialize() -> v1::InitializeRequest {
+    let capabilities = v1::ClientCapabilities::new().terminal(false).session(
+        v1::ClientSessionCapabilities::new()
+            .compaction(v1::CompactionCapabilities::new())
+            .config_options(v1::SessionConfigOptionsCapabilities::new()),
+    );
+    v1::InitializeRequest::new(ProtocolVersion::V1)
+        .client_capabilities(capabilities)
+        .client_info(v1::Implementation::new(
+            "ariadne",
+            env!("CARGO_PKG_VERSION"),
+        ))
+}
+
 fn to_params<T: serde::Serialize>(request: &T) -> Result<Value> {
     serde_json::to_value(request).context("building an ACP request")
 }
@@ -1812,6 +1818,34 @@ mod tests {
             event.id > meanwhile,
             "the waiting live event took its id after the lock was released: {} > {meanwhile}",
             event.id
+        );
+    }
+
+    /// The SDK builds `initialize`, so what goes on the pipe is the SDK's
+    /// shape and not one this crate writes. An agent reads it once, and what
+    /// it reads decides whether the session can be pinned or compacted at
+    /// all — so the shape is asserted here rather than left to the stub,
+    /// which echoes whatever it is sent.
+    #[test]
+    fn initialize_tells_the_agent_what_the_daemon_supports() {
+        let params = super::to_params(&super::initialize()).unwrap();
+        assert_eq!(params["protocolVersion"], json!(1));
+        assert_eq!(params["clientInfo"]["name"], json!("ariadne"));
+
+        let capabilities = &params["clientCapabilities"];
+        assert_eq!(
+            capabilities["fs"],
+            json!({"readTextFile": false, "writeTextFile": false}),
+            "the daemon reads and writes the worktree itself: {capabilities}"
+        );
+        assert_eq!(capabilities["terminal"], json!(false));
+        assert!(
+            capabilities["session"]["compaction"].is_object(),
+            "compaction is advertised, and the runtime reports it: {capabilities}"
+        );
+        assert!(
+            capabilities["session"]["configOptions"].is_object(),
+            "config options carry the model and effort pins: {capabilities}"
         );
     }
 
