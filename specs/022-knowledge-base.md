@@ -1,7 +1,7 @@
 ---
 id: knowledge-base
 status: current
-updated: 2026-09-19
+updated: 2026-09-20
 areas: [daemon, api, mcp, cli, ui]
 commits: []
 tests:
@@ -28,6 +28,7 @@ tests:
   - ui/src/features/knowledge/path-graph.test.ts
   - ui/src/features/knowledge/impact-tab.test.tsx
   - ui/src/features/knowledge/graph/layered-layout.test.ts
+  - ui/src/features/knowledge/graph/force-layout.test.ts
   - ui/src/features/knowledge/files-graph.test.ts
   - ui/src/features/knowledge/graph/knowledge-graph.test.tsx
   - ui/src/events/dispatch.test.ts
@@ -324,6 +325,24 @@ agent to do with the tools (017); and the memory tools beside these (019).
     filter it; a truncated response says how many of `total_nodes` files it
     shows and offers a higher `limit`; and a click on a file shows its outline,
     its edges both ways and a link per symbol to the Symbols tab.
+    Every graph is drawn settled and still. A force graph is placed before
+    its first frame: ForceAtlas2 runs a fixed number of iterations on the
+    client, and an edge pulls with `1 + log2(count)` rather than with its
+    count. A second pass then pushes apart every pair of nodes that cover
+    each other, counted at the size each node is drawn and at the narrowest
+    canvas the app draws a graph on — the window at the width the side pane
+    opens beside it — so no node is drawn on top of another at any supported
+    window size: a wider window only spreads the same graph further. A graph
+    whose nodes cover more of that canvas than any arrangement of them fits
+    in — the Files tab of a large repository — is drawn with smaller nodes
+    instead: one share comes off every node, down to a floor that keeps a
+    node visible, so the biggest node is still the biggest and the user reads
+    the names by zooming in. The same graph gives the same places, and no
+    node moves after that frame unless the user drags it. The names are
+    picked by density, so the labels that
+    are drawn are far enough apart to read; a hovered node and its
+    neighbours are named whatever the density, and an edge is named only
+    while the pointer is on one of its ends.
     Every free-text filter of the screen suggests its values under what is
     typed, in one list below the field. The three Impact & path fields and
     Search symbols suggest the symbols `search` finds, each row with its
@@ -944,6 +963,17 @@ and by `(kind, name)`.
 - The shared graph component builds the model it draws, hides what it is
   told to hide, and hands node and edge clicks back by key
   (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx`).
+- The force layout places every node before the first frame, gives finite
+  places, gives the same places on a second run, holds what the edges join
+  together, draws no node on top of another in the pixels the narrowest
+  desktop draws them at, draws the nodes of a graph too crowded for it smaller
+  rather than covered, leaves no timer running, and damps an edge of 2467
+  counts to under 13 and one of 1 to 1
+  (`ui/src/features/knowledge/graph/force-layout.test.ts`). The view is
+  handed those places and nothing moves them after; it keeps the label of a
+  hovered node and of its neighbours, and names an edge only while the
+  pointer is on one of its ends
+  (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx::the view`).
 - The Impact graph puts the changed definition in the first layer and each
   caller in the layer of its depth, dashes a heuristic call, and marks a
   stopped definition as a node that says the walk stopped

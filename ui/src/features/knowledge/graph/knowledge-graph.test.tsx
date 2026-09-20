@@ -17,14 +17,30 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { renderScreen } from "@/test/harness"
 
-import { emphasis, emptyGraph, type KnowledgeGraphModel, placed, settled } from "./graph-model"
+import { forceLayout } from "./force-layout"
+import { emphasis, emptyGraph, type KnowledgeGraphModel, placed } from "./graph-model"
 import { KnowledgeGraph } from "./knowledge-graph"
+import type { SigmaCanvasProps } from "./sigma-canvas"
+
+/**
+ * The very graph the view was last handed, kept as it is: its nodes are
+ * where the view has them now, and not where they were when it drew.
+ */
+const handed = vi.hoisted(() => ({ graph: null as KnowledgeGraphModel | null }))
 
 // jsdom has no WebGL, and sigma.js reads `WebGLRenderingContext` as its module
 // loads: the graph is drawn by the stand-in in `@/test/sigma-canvas.tsx`. It is
 // mocked here, in the files that draw a graph, and not in `@/test/setup`: a
 // mock in the setup file slows every test file in the suite.
-vi.mock("@/features/knowledge/graph/sigma-canvas", () => import("@/test/sigma-canvas"))
+vi.mock("@/features/knowledge/graph/sigma-canvas", async () => {
+  const standIn = await import("@/test/sigma-canvas")
+  return {
+    SigmaCanvas: (props: SigmaCanvasProps) => {
+      handed.graph = props.graph
+      return standIn.SigmaCanvas(props)
+    },
+  }
+})
 
 /** a → b → c, and d on its own. */
 function aChain(): KnowledgeGraphModel {
@@ -46,6 +62,15 @@ function edge(key: string): HTMLElement {
   const found = document.querySelector<HTMLElement>(`[data-edge="${key}"]`)
   if (!found) throw new Error(`no edge ${key}`)
   return found
+}
+
+/** Where a model has each of its nodes now, by key. */
+function places(graph: KnowledgeGraphModel): Record<string, [number, number]> {
+  const out: Record<string, [number, number]> = {}
+  graph.forEachNode((node, attributes) => {
+    out[node] = [attributes.x ?? Number.NaN, attributes.y ?? Number.NaN]
+  })
+  return out
 }
 
 afterEach(() => {
@@ -84,14 +109,6 @@ describe("the model", () => {
     expect(hover.edge("b-c")).toEqual({ highlighted: false, faded: true })
   })
 
-  it("calls a layout settled once its nodes barely move, and not while they still travel", () => {
-    // Two nodes, ten units apart.
-    const before = new Float64Array([0, 0, 10, 0])
-
-    expect(settled(before, new Float64Array([0.001, 0, 10, 0]))).toBe(true)
-    expect(settled(before, new Float64Array([1, 0, 10, 0]))).toBe(false)
-  })
-
   it("neither keeps nor fades anything while nothing is hovered", () => {
     const hover = emphasis(aChain(), null)
 
@@ -107,8 +124,37 @@ describe("the view", () => {
     const nodes = within(screen.getByRole("list", { name: "Graph nodes" })).getAllByRole("button")
     expect(nodes.map((button) => button.textContent)).toEqual(["alpha", "beta", "gamma", "delta"])
     expect(edge("a-b").textContent).toBe("alpha → beta")
-    expect(edge("a-b").dataset.label).toBe("2")
     expect(screen.getByTestId("graph-canvas").dataset.layout).toBe("force")
+  })
+
+  it("hands the view the settled places, and lets nothing move them after", () => {
+    vi.useFakeTimers()
+    try {
+      const graph = aChain()
+      const laid = forceLayout(graph)
+      renderScreen(<KnowledgeGraph graph={graph} layout="force" legend={[]} label="Chain" />)
+      const drawn = handed.graph
+      if (!drawn) throw new Error("the view was handed no graph")
+
+      expect(places(drawn)).toEqual(places(laid))
+
+      // Longer than the ten seconds the layout worker used to run for. The
+      // model the view holds is read again, and not what it drew once, so a
+      // timer or a worker that moved a node would show here.
+      vi.advanceTimersByTime(30_000)
+      fireEvent.mouseEnter(node("alpha"))
+      fireEvent.mouseLeave(node("alpha"))
+
+      expect(places(drawn)).toEqual(places(laid))
+      expect(places(drawn)).toEqual({
+        a: [Number(node("alpha").dataset.x), Number(node("alpha").dataset.y)],
+        b: [Number(node("beta").dataset.x), Number(node("beta").dataset.y)],
+        c: [Number(node("gamma").dataset.x), Number(node("gamma").dataset.y)],
+        d: [Number(node("delta").dataset.x), Number(node("delta").dataset.y)],
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("draws a dashed edge as dashed and the rest as lines", () => {
@@ -155,6 +201,36 @@ describe("the view", () => {
 
     expect(node("delta").dataset.label).toBe("delta")
     expect(node("delta").dataset.color).toBe(unfaded)
+  })
+
+  it("keeps the label of a hovered node and of its neighbours whatever the density", () => {
+    renderScreen(<KnowledgeGraph graph={aChain()} layout="force" legend={[]} label="Chain" />)
+
+    expect(node("alpha").dataset.forceLabel).toBe("false")
+
+    fireEvent.mouseEnter(node("beta"))
+
+    expect(node("beta").dataset.forceLabel).toBe("true")
+    expect(node("alpha").dataset.forceLabel).toBe("true")
+    expect(node("gamma").dataset.forceLabel).toBe("true")
+    expect(node("delta").dataset.forceLabel).toBe("false")
+  })
+
+  it("names an edge only while the pointer is on one of its ends", () => {
+    renderScreen(<KnowledgeGraph graph={aChain()} layout="force" legend={[]} label="Chain" />)
+
+    expect(edge("a-b").dataset.label).toBe("")
+    expect(edge("a-b").dataset.forceLabel).toBe("false")
+
+    fireEvent.mouseEnter(node("alpha"))
+
+    expect(edge("a-b").dataset.label).toBe("2")
+    expect(edge("a-b").dataset.forceLabel).toBe("true")
+    expect(edge("b-c").dataset.label).toBe("")
+
+    fireEvent.mouseLeave(node("alpha"))
+
+    expect(edge("a-b").dataset.label).toBe("")
   })
 
   it("leaves out the nodes and edges it is told to hide, and draws the rest", () => {

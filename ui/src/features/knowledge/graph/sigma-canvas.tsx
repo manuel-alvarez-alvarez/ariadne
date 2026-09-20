@@ -1,24 +1,24 @@
 /**
  * The one place a knowledge graph meets sigma.js: the WebGL renderer, its
- * pointer events, the camera buttons, and the force layout.
+ * pointer events, the camera buttons, and the drag of a node.
  *
  * Everything that decides *what* is drawn — colours, emphasis, labels — is
  * `KnowledgeGraph`'s, handed down here as reducers, so this file only draws.
  * jsdom has no WebGL, so a test that draws a graph swaps this module for a stand-in that
  * lists the nodes and edges the reducers give (`@/test/sigma-canvas.tsx`).
  *
- * sigma.js fits the graph to the view on its own; pan and zoom are its mouse
- * and trackpad gestures, and the buttons zoom and fit again.
+ * The graph arrives placed and settled — a force layout is a function that
+ * ran before the first frame (`force-layout.ts`) — so this file starts no
+ * worker and no timer, and a node moves only under the pointer that drags
+ * it. sigma.js fits the graph to the view on its own; pan and zoom are its
+ * mouse and trackpad gestures, and the buttons zoom and fit again.
  */
 
 import "@react-sigma/core/lib/style.css"
 
 import { SigmaContainer, useCamera, useRegisterEvents, useSigma } from "@react-sigma/core"
-import type Graph from "graphology"
-import forceAtlas2 from "graphology-layout-forceatlas2"
-import FA2Layout from "graphology-layout-forceatlas2/worker"
 import { MaximizeIcon, ZoomInIcon, ZoomOutIcon } from "lucide-react"
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { drawDiscNodeLabel, EdgeRectangleProgram } from "sigma/rendering"
 import type { Settings } from "sigma/settings"
 import type { NodeDisplayData, PartialButFor } from "sigma/types"
@@ -26,12 +26,11 @@ import type { NodeDisplayData, PartialButFor } from "sigma/types"
 import { Button } from "@/components/ui/button"
 
 import { DashedEdgeProgram } from "./dashed-edge-program"
-import {
-  type GraphEdgeAttributes,
-  type GraphLayout,
-  type GraphNodeAttributes,
-  type KnowledgeGraphModel,
-  settled,
+import type {
+  GraphEdgeAttributes,
+  GraphLayout,
+  GraphNodeAttributes,
+  KnowledgeGraphModel,
 } from "./graph-model"
 import type { GraphPalette } from "./graph-palette"
 
@@ -40,8 +39,10 @@ export interface NodeDisplay {
   label: string
   color: string
   size: number
-  /** Drawn above the rest, with its label whatever the density. */
+  /** Drawn above the rest, on the hover renderer. */
   highlighted: boolean
+  /** Its label is drawn whatever the density of the labels around it. */
+  forceLabel: boolean
   /** Not drawn, and its edges with it. */
   hidden: boolean
   zIndex: number
@@ -53,13 +54,19 @@ export interface EdgeDisplay {
   color: string
   size: number
   type: "line" | "dashed"
+  /** Its label is drawn even where the labels of its ends are not. */
+  forceLabel: boolean
   hidden: boolean
   zIndex: number
 }
 
 export interface SigmaCanvasProps {
-  /** Every node already placed: see `placed` in `graph-model.ts`. */
+  /**
+   * Every node already placed and settled: see `placed` in `graph-model.ts`
+   * and `forceLayout` in `force-layout.ts`.
+   */
   graph: KnowledgeGraphModel
+  /** What placed it, for whatever reads the view; the places are in the graph. */
   layout: GraphLayout
   palette: GraphPalette
   nodeReducer: (node: string, attributes: GraphNodeAttributes) => NodeDisplay
@@ -70,12 +77,18 @@ export interface SigmaCanvasProps {
   onClickEdge: (edge: string) => void
 }
 
-/** How often the force layout is checked for whether it has settled. */
-const SETTLE_CHECK_MS = 250
-/** How long the force layout may run at most, settled or not. */
-const FORCE_LAYOUT_MS = 10_000
-/** From this many nodes, the layout approximates far nodes in groups: exact is quadratic. */
-const BARNES_HUT_NODES = 500
+/**
+ * How thinly sigma.js picks the node labels it draws: at most one to a cell
+ * of this many pixels, and none on a node drawn smaller than this.
+ *
+ * A graph of six hundred files has no room for six hundred names: what is
+ * left is a grid of names far enough apart to read, more of them as the
+ * camera zooms in. A hovered node, its neighbours and the edges between them
+ * carry their labels whatever the density (`forceLabel`).
+ */
+const LABEL_DENSITY = 0.5
+const LABEL_GRID_CELL_PX = 120
+const LABEL_MIN_NODE_PX = 7
 
 export function SigmaCanvas({ graph, palette, ...rest }: SigmaCanvasProps) {
   const settings = useMemo(
@@ -84,9 +97,9 @@ export function SigmaCanvas({ graph, palette, ...rest }: SigmaCanvasProps) {
       enableEdgeEvents: true,
       renderEdgeLabels: true,
       zIndex: true,
-      // Every label, however small the node: the graphs here are small, and a
-      // node with no name says nothing.
-      labelRenderedSizeThreshold: 0,
+      labelDensity: LABEL_DENSITY,
+      labelGridCellSize: LABEL_GRID_CELL_PX,
+      labelRenderedSizeThreshold: LABEL_MIN_NODE_PX,
       labelFont: palette.font,
       labelSize: 12,
       labelWeight: "500",
@@ -116,34 +129,61 @@ export function SigmaCanvas({ graph, palette, ...rest }: SigmaCanvasProps) {
 }
 
 function Behaviour({
-  layout,
   nodeReducer,
   edgeReducer,
   onEnterNode,
   onLeaveNode,
   onClickNode,
   onClickEdge,
-}: Omit<SigmaCanvasProps, "graph" | "palette">) {
+}: Omit<SigmaCanvasProps, "graph" | "palette" | "layout">) {
   const sigma = useSigma()
   const registerEvents = useRegisterEvents()
+  /** The node under a pressed pointer, which every move writes a place to. */
+  const dragged = useRef<string | null>(null)
 
   useEffect(() => {
     const pointer = (cursor: string) => {
       sigma.getContainer().style.cursor = cursor
     }
+    const drop = () => {
+      dragged.current = null
+      pointer("")
+    }
+    // One call registers the lot: it replaces the handlers rather than adding
+    // to them.
     registerEvents({
       enterNode: (event) => {
         pointer("pointer")
         onEnterNode(event.node)
       },
       leaveNode: () => {
-        pointer("")
+        if (dragged.current === null) pointer("")
         onLeaveNode()
       },
       enterEdge: () => pointer("pointer"),
       leaveEdge: () => pointer(""),
       clickNode: (event) => onClickNode(event.node),
       clickEdge: (event) => onClickEdge(event.edge),
+      downNode: (event) => {
+        dragged.current = event.node
+        pointer("grabbing")
+        // The view would otherwise fit itself to the graph again at every
+        // move, and the whole graph would slide under the dragged node.
+        if (!sigma.getCustomBBox()) sigma.setCustomBBox(sigma.getBBox())
+      },
+      moveBody: ({ event }) => {
+        const node = dragged.current
+        if (node === null) return
+        const place = sigma.viewportToGraph(event)
+        sigma.getGraph().setNodeAttribute(node, "x", place.x)
+        sigma.getGraph().setNodeAttribute(node, "y", place.y)
+        // Without this the camera pans with the pointer as well.
+        event.preventSigmaDefault()
+        event.original.preventDefault()
+        event.original.stopPropagation()
+      },
+      upNode: drop,
+      upStage: drop,
     })
   }, [sigma, registerEvents, onEnterNode, onLeaveNode, onClickNode, onClickEdge])
 
@@ -158,50 +198,7 @@ function Behaviour({
     }))
   }, [sigma, nodeReducer, edgeReducer])
 
-  useEffect(() => {
-    if (layout !== "force") return
-    const graph = sigma.getGraph()
-    if (graph.order < 2) return
-    const worker = new FA2Layout(graph, {
-      getEdgeWeight: "weight",
-      settings: {
-        ...forceAtlas2.inferSettings(graph),
-        gravity: 1,
-        barnesHutOptimize: graph.order >= BARNES_HUT_NODES,
-        edgeWeightInfluence: 1,
-      },
-    })
-    worker.start()
-    let last = positions(graph)
-    const check = window.setInterval(() => {
-      const next = positions(graph)
-      if (settled(last, next)) stop()
-      last = next
-    }, SETTLE_CHECK_MS)
-    const cap = window.setTimeout(() => stop(), FORCE_LAYOUT_MS)
-    function stop() {
-      window.clearInterval(check)
-      window.clearTimeout(cap)
-      worker.stop()
-    }
-    return () => {
-      stop()
-      worker.kill()
-    }
-  }, [sigma, layout])
-
   return null
-}
-
-/** Every node's place, as `x, y` pairs in node order. */
-function positions(graph: Graph): Float64Array {
-  const out = new Float64Array(graph.order * 2)
-  let index = 0
-  graph.forEachNode((_node, attributes) => {
-    out[index++] = attributes.x ?? 0
-    out[index++] = attributes.y ?? 0
-  })
-  return out
 }
 
 function CameraButtons() {

@@ -12,6 +12,9 @@
  * a node or an edge goes to the caller, by its key in the graph. What
  * `hidden` names is left out of the drawing, and out of the model's layout
  * never: a filter redraws, and does not place the nodes again.
+ *
+ * The places are decided here, once, before the view draws: a force graph by
+ * `forceLayout` and the rest by `placed`. The view draws them still.
  */
 
 import { useTheme } from "next-themes"
@@ -19,6 +22,7 @@ import { useCallback, useMemo, useState } from "react"
 
 import { cn } from "@/lib/format"
 
+import { forceLayout } from "./force-layout"
 import {
   emphasis,
   type GraphEdgeAttributes,
@@ -27,12 +31,12 @@ import {
   type GraphVisibility,
   type KnowledgeGraphModel,
   type LegendEntry,
+  NODE_SIZE,
   placed,
 } from "./graph-model"
 import { type GraphPalette, graphPalette } from "./graph-palette"
 import { type EdgeDisplay, type NodeDisplay, SigmaCanvas } from "./sigma-canvas"
 
-const NODE_SIZE = 10
 const EDGE_SIZE = 2
 const NOTHING_HIDDEN: GraphVisibility = { nodes: new Set(), edges: new Set() }
 
@@ -59,7 +63,12 @@ export function KnowledgeGraph({
   const { resolvedTheme } = useTheme()
   // biome-ignore lint/correctness/useExhaustiveDependencies: the tokens change with the theme, which is not an argument
   const palette = useMemo(() => graphPalette(), [resolvedTheme])
-  const shown = useMemo(() => placed(graph), [graph])
+  // The whole layout, before the first frame: what is drawn afterwards never
+  // moves on its own.
+  const shown = useMemo(
+    () => (layout === "force" ? forceLayout(graph) : placed(graph)),
+    [graph, layout],
+  )
   const [hovered, setHovered] = useState<string | null>(null)
   const emphasised = useMemo(() => emphasis(shown, hovered), [shown, hovered])
 
@@ -71,6 +80,8 @@ export function KnowledgeGraph({
         color: faded ? palette.faded : palette.tones[attributes.tone],
         size: attributes.size ?? NODE_SIZE,
         highlighted,
+        // The hovered node and its neighbours are named whatever the density.
+        forceLabel: highlighted,
         hidden: hidden.nodes.has(node),
         zIndex: highlighted ? 1 : 0,
       }
@@ -81,10 +92,13 @@ export function KnowledgeGraph({
     (edge: string, attributes: GraphEdgeAttributes): EdgeDisplay => {
       const { highlighted, faded } = emphasised.edge(edge)
       return {
-        label: faded ? "" : (attributes.label ?? ""),
+        // Only while one of its ends is hovered: ten thousand edge labels at
+        // once cover the graph and say nothing.
+        label: highlighted ? (attributes.label ?? "") : "",
         color: faded ? palette.faded : palette.tones[attributes.tone],
         size: attributes.size ?? EDGE_SIZE,
         type: attributes.dashed ? "dashed" : "line",
+        forceLabel: highlighted,
         hidden: hidden.edges.has(edge),
         zIndex: highlighted ? 1 : 0,
       }

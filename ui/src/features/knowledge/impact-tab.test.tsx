@@ -11,7 +11,7 @@
  * (`@/test/elk-worker.ts`): a node's `data-x` is where ELK put it.
  */
 
-import { cleanup, screen, waitFor, within } from "@testing-library/react"
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -252,6 +252,9 @@ describe("the Path mode", () => {
     await graphDrawn()
     expect(x("fetchGoal")).toBeLessThan(x("get_goal"))
     expect(x("get_goal")).toBeLessThan(x("load_goal"))
+    // An edge is named only while the pointer is on one of its ends (022),
+    // and the middle hop is an end of both.
+    fireEvent.mouseEnter(node("get_goal"))
     expect(
       edges().map((edge) => [edge.textContent, edge.dataset.label, edge.dataset.type]),
     ).toEqual([

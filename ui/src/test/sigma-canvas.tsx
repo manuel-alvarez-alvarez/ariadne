@@ -8,7 +8,8 @@
  * reducers said about it, and it fires the same callbacks sigma's pointer
  * events would. The model and the reducers are the app's own; only the
  * pixels are left out. A node or an edge the reducers hide is `hidden`, so a
- * role query does not find it.
+ * role query does not find it, and `data-x` and `data-y` are where the
+ * layout put a node before the first frame.
  */
 
 import type { SigmaCanvasProps } from "@/features/knowledge/graph/sigma-canvas"
@@ -36,6 +37,7 @@ export function SigmaCanvas({
                 data-color={drawn.color}
                 data-label={drawn.label}
                 data-highlighted={drawn.highlighted}
+                data-force-label={drawn.forceLabel}
                 data-x={attributes.x}
                 data-y={attributes.y}
                 onMouseEnter={() => onEnterNode(node)}
@@ -58,6 +60,7 @@ export function SigmaCanvas({
                 data-edge={edge}
                 data-color={drawn.color}
                 data-label={drawn.label}
+                data-force-label={drawn.forceLabel}
                 data-type={drawn.type}
                 onClick={() => onClickEdge(edge)}
               >

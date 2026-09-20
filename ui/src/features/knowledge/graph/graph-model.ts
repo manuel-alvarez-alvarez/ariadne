@@ -11,6 +11,9 @@
 
 import Graph from "graphology"
 
+/** The radius a node is drawn with, and laid out with, where it names none. */
+export const NODE_SIZE = 10
+
 /** A step of the status ramp: `--status-<tone>` in `index.css`. */
 export type GraphTone =
   | "pending"
@@ -88,7 +91,7 @@ function neighbourhood(graph: KnowledgeGraphModel, node: string): Set<string> {
 /**
  * A copy of the graph with every node placed: a node the model already
  * placed keeps its place, and the rest go round a ring. A force layout
- * starts from the ring too, as it needs somewhere to start from.
+ * places its own nodes instead (`force-layout.ts`).
  */
 export function placed(graph: KnowledgeGraphModel): KnowledgeGraphModel {
   const copy = graph.copy()
@@ -129,30 +132,4 @@ export function emphasis(graph: KnowledgeGraphModel, hovered: string | null) {
       return { highlighted: touches, faded: !touches }
     },
   }
-}
-
-/**
- * The force layout has settled once a check finds the nodes moved, on
- * average, less than this share of the graph's width since the last one.
- */
-const SETTLED_SHARE = 0.002
-
-/**
- * Whether the nodes moved, on average, less than {@link SETTLED_SHARE} of
- * the graph's width between two reads of their places: `x, y` pairs in node
- * order.
- */
-export function settled(before: Float64Array, after: Float64Array): boolean {
-  if (before.length !== after.length || after.length === 0) return false
-  let moved = 0
-  let min = Number.POSITIVE_INFINITY
-  let max = Number.NEGATIVE_INFINITY
-  for (let index = 0; index < after.length; index++) {
-    const value = after[index] ?? 0
-    moved += Math.abs(value - (before[index] ?? 0))
-    min = Math.min(min, value)
-    max = Math.max(max, value)
-  }
-  const width = Math.max(max - min, Number.EPSILON)
-  return moved / (after.length / 2) < SETTLED_SHARE * width
 }
