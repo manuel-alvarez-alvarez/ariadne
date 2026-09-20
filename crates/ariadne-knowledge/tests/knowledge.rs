@@ -6,6 +6,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use ariadne_knowledge::{KnowledgeStore, SearchQuery, State};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 /// Where the fixture files live: one per language, each holding a
 /// definition, a reference to it and a doc comment.
@@ -808,6 +809,66 @@ async fn a_call_through_an_import_resolves_to_the_definition_it_named() {
     let a = only(&store, "a").await;
     let context = store.context(a.id, "repo", "main", 20).await.unwrap();
     assert_eq!(ends(&context.callees), ["src/inner/m.rs:2 b exact"]);
+}
+
+/// A Dart package import names a definition exactly, and a call through it
+/// resolves at the import step.
+#[tokio::test]
+async fn a_dart_import_names_a_definition_and_resolves_a_call_at_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("lib/src/target.dart", "void dartTarget() {}\n"),
+            (
+                "lib/caller.dart",
+                "import 'package:app/src/target.dart' show dartTarget;\n\nvoid callTarget() {\n  dartTarget();\n}\n",
+            ),
+        ],
+    );
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(dir.path().join("knowledge.db"))
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+    let imports: Vec<(String, i64, String, String, String, i64)> = sqlx::query_as(
+        "SELECT f.path, e.from_line, t.path, e.confidence, e.step, e.candidates
+         FROM edges e
+         JOIN files f ON f.blob = e.from_blob AND f.repository_id = e.from_repository
+             AND f.git_ref = e.git_ref
+         JOIN files t ON t.blob = e.to_blob AND t.repository_id = e.to_repository
+             AND t.git_ref = e.to_ref
+         WHERE e.kind = 'imports'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        imports,
+        [(
+            "lib/caller.dart".into(),
+            1,
+            "lib/src/target.dart".into(),
+            "exact".into(),
+            "import".into(),
+            1,
+        )]
+    );
+    pool.close().await;
+
+    let target = only(&store, "dartTarget").await;
+    let context = store.context(target.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(
+        steps(&context.callers),
+        ["lib/caller.dart:3 callTarget exact import 1"]
+    );
 }
 
 /// A call skips an outline key in its directory and resolves to the code

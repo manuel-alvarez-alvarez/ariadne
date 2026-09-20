@@ -701,6 +701,11 @@ pub fn imports_of(language: Language, source: &str) -> Vec<Import> {
                 }
             }
         }
+        Language::Dart => {
+            for (at, statement) in statements(source, &["import ", "export "], ';') {
+                dart_import(&mut imports, statement, lines.line_of(at));
+            }
+        }
         _ => {}
     }
     imports
@@ -877,6 +882,39 @@ fn javascript_import(imports: &mut Vec<Import>, statement: &str, line: u32) {
         imports.push(Import {
             module: module.clone(),
             name: Some(name),
+            line,
+        });
+    }
+}
+
+/// `import 'package:app/m.dart' show x, y`, `export './m.dart'`, and their
+/// `as` and `hide` variants. A prefix is local to the importing file and a
+/// hidden name is unavailable, so neither names a definition here.
+fn dart_import(imports: &mut Vec<Import>, statement: &str, line: u32) {
+    let Some(module) = quoted(statement) else {
+        return;
+    };
+    // The Dart SDK is outside the repository.
+    if module.starts_with("dart:") {
+        return;
+    }
+    let Some((_, shown)) = statement.split_once(" show ") else {
+        imports.push(Import {
+            module,
+            name: None,
+            line,
+        });
+        return;
+    };
+    let shown = shown.split_once(" hide ").map_or(shown, |(shown, _)| shown);
+    for name in shown
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        imports.push(Import {
+            module: module.clone(),
+            name: Some(name.to_string()),
             line,
         });
     }
@@ -1702,6 +1740,48 @@ pub async fn add_worktree(
                 ("System.Text".into(), String::new()),
                 ("Lib.Helper".into(), String::new()),
                 ("Lib.Deep".into(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dart_directive_reads_its_module_names_and_line() {
+        assert_eq!(
+            imports_of(
+                Language::Dart,
+                "import 'package:app/src/x.dart';\nimport '../lib/y.dart' as y;\nimport 'package:app/src/shown.dart' show One, Two;\nexport './reexport.dart' hide Hidden;\nexport 'package:app/src/public.dart' show Exported;\nimport 'dart:async' show Future;\n",
+            ),
+            [
+                Import {
+                    module: "package:app/src/x.dart".into(),
+                    name: None,
+                    line: 1,
+                },
+                Import {
+                    module: "../lib/y.dart".into(),
+                    name: None,
+                    line: 2,
+                },
+                Import {
+                    module: "package:app/src/shown.dart".into(),
+                    name: Some("One".into()),
+                    line: 3,
+                },
+                Import {
+                    module: "package:app/src/shown.dart".into(),
+                    name: Some("Two".into()),
+                    line: 3,
+                },
+                Import {
+                    module: "./reexport.dart".into(),
+                    name: None,
+                    line: 4,
+                },
+                Import {
+                    module: "package:app/src/public.dart".into(),
+                    name: Some("Exported".into()),
+                    line: 5,
+                },
             ]
         );
     }

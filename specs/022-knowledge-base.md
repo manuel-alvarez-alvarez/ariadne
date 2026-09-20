@@ -96,13 +96,15 @@ agent to do with the tools (017); and the memory tools beside these (019).
    definition naming another names it once, at the first line it does.
 8. The import statements of a file are read off its text, by the syntax of
    its language: `use` in Rust, `import` and `from … import` in Python,
-   `import` and `require` in TypeScript and JavaScript, `using` in C#. Each
-   one names a module, and a name in it where the statement names one — a
-   glob, a whole-module import and every C# directive name only the module.
-   An alias keeps the original name, which is what a definition is called.
-   A named import is a mention of kind `imports`, at file scope. Every other
-   language names no import, and its references resolve on the three steps
-   that are left.
+   `import` and `require` in TypeScript and JavaScript, `using` in C#, and
+   `import` and `export` in Dart. Each one names a module, and a name in it
+   where the statement names one — a glob, a whole-module import and every
+   C# directive name only the module. A Dart `show` clause names each shown
+   definition; its `as` and `hide` clauses name none, and its `dart:` SDK
+   directives are ignored. An alias keeps the original name, which is what a
+   definition is called. A named import is a mention of kind `imports`, at
+   file scope. Every other language names no import, and its references
+   resolve on the three steps that are left.
 9. A mention becomes edges by looking for the definitions of its name in
    four places, nearest first: the same file, the same directory, the
    modules the file imports, and then anywhere in the repository at that
@@ -497,7 +499,7 @@ syntax the resolver reads:
 | PHP | `php` | a `test` name (PHPUnit) | `use Namespace\Class;` |
 | Kotlin | `kt`, `kts` | `@Test` | `import package.Class` |
 | Swift | `swift` | `@Test`, or a name starting with `test` | `import Module` |
-| Dart | `dart` | `test(` | `import 'package:pkg/file.dart';` |
+| Dart | `dart` | `test(` | `import` or `export` a `package:` or relative URI; `show` names definitions |
 | Scala | `scala`, `sc` | `test(` | `import package.Class` |
 | Bash | `sh`, `bash`, `bats` | a bats `@test` block | `source file.sh`, `. file.sh` |
 | Lua | `lua` | none | `require("module")` |
@@ -626,6 +628,7 @@ and by `(kind, name)`.
   the definition it sits in — a Rust `impl Trait for Type` to the type, a base
   class to the class that names it
   (`parser.rs::an_import_is_read_by_the_syntax_of_its_language`,
+  `::a_dart_directive_reads_its_module_names_and_line`,
   `::a_reference_belongs_to_the_definition_it_sits_in`).
 - A name resolves at the nearest step that holds a definition, a name past the
   candidate cap resolves nowhere, and a module is matched by the path or the
@@ -640,6 +643,9 @@ and by `(kind, name)`.
   exactly, and the caller and the callee each list the other, while a second
   definition of the same name that nothing imports is called by nobody
   (`knowledge.rs::a_call_through_an_import_resolves_to_the_definition_it_named`);
+  a Dart package import names its definition exactly, and its call resolves
+  at the import step
+  (`knowledge.rs::a_dart_import_names_a_definition_and_resolves_a_call_at_import`);
   a name two files define, imported by neither, is a guess, and both are
   listed (`::a_name_defined_twice_resolves_to_both_as_a_guess`).
 - An edge names the step that resolved it: a same-file call reads `exact`,

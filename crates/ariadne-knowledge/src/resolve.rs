@@ -472,8 +472,14 @@ fn holds(segments: &[&str], wanted: &[&str]) -> bool {
 }
 
 /// The segments a module path names, without what says only where to start:
-/// `crate::m` and `./m` and `.m` are all `m`.
+/// `crate::m`, `./m` and `.m` are all `m`; a Dart package URI loses its
+/// package name and `.dart` extension.
 fn module_segments(module: &str) -> Vec<&str> {
+    let module = module
+        .strip_prefix("package:")
+        .and_then(|module| module.split_once('/').map(|(_, path)| path))
+        .unwrap_or(module);
+    let module = module.strip_suffix(".dart").unwrap_or(module);
     module
         .split(['.', ':', '/'])
         .map(str::trim)
@@ -807,5 +813,9 @@ mod tests {
 
         let csharp = candidate(4, "b", "Lib/Helper.cs", "Lib.Helper.Run");
         assert!(holds("Lib", &csharp), "a namespace, not a path");
+
+        let dart = candidate(5, "b", "lib/src/x.dart", "dartTarget");
+        assert!(holds("package:app/src/x.dart", &dart));
+        assert!(holds("../src/x.dart", &dart));
     }
 }
