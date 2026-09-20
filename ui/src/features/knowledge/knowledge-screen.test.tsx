@@ -363,7 +363,7 @@ describe("the Files tab", () => {
   }
 
   it("draws a node per file from the graph route, with a legend colour per directory", async () => {
-    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files&ref=feature" })
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files&level=file&ref=feature" })
 
     await screen.findByRole("list", { name: "Graph nodes" })
     expect(shownNodes()).toEqual(["app.ts", "api.ts", "log.ts"])
@@ -375,9 +375,34 @@ describe("the Files tab", () => {
     expect(params(asked?.url ?? "").get("git_ref")).toBe("feature")
   })
 
+  it("uses depth-two directories when the URL has no level", async () => {
+    fileGraph = aFileGraph({
+      nodes: [
+        { path: "src/app.ts", language: "typescript", symbols: 12 },
+        { path: "src/lib/api.ts", language: "typescript", symbols: 3 },
+        { path: "docs/guide.md", language: "markdown", symbols: 1 },
+      ],
+      edges: [
+        { from: "src/app.ts", to: "src/lib/api.ts", kind: "calls", count: 2, confidence: "exact" },
+      ],
+    })
+
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+
+    await screen.findByRole("list", { name: "Graph nodes" })
+    expect(shownNodes().sort()).toEqual(["docs", "src", "src/lib"])
+    expect(
+      screen.getByText(
+        (_, element) => element?.textContent === "Showing 3 of 3 nodes and 1 of 1 edge.",
+      ),
+    ).toBeDefined()
+  })
+
   it("merges the files into directories at directory level, and keeps the level in the URL", async () => {
     const user = userEvent.setup()
-    const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+    const { location } = renderScreen(<KnowledgeScreen />, {
+      route: "/knowledge?tab=files&level=file",
+    })
     await screen.findByRole("list", { name: "Graph nodes" })
 
     await user.click(screen.getByRole("button", { name: "Directories", pressed: false }))
@@ -386,9 +411,27 @@ describe("the Files tab", () => {
     expect(shownNodes()).toEqual(["src", "lib"])
   })
 
-  it("hides the files the path text and the kinds leave out, and keeps both in the URL", async () => {
+  it("keeps an expanded directory in the URL and collapses it on request", async () => {
     const user = userEvent.setup()
     const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+    const nodes = await screen.findByRole("list", { name: "Graph nodes" })
+
+    await user.click(within(nodes).getByRole("button", { name: "src" }))
+
+    expect(params(location.url).get("open")).toBe("src")
+    expect(shownNodes().sort()).toEqual(["api.ts", "app.ts", "lib"])
+
+    await user.click(screen.getByRole("button", { name: "Collapse" }))
+
+    expect(params(location.url).has("open")).toBe(false)
+    expect(shownNodes()).toEqual(["src", "lib"])
+  })
+
+  it("hides the files the path text and the kinds leave out, and keeps both in the URL", async () => {
+    const user = userEvent.setup()
+    const { location } = renderScreen(<KnowledgeScreen />, {
+      route: "/knowledge?tab=files&level=file",
+    })
     await screen.findByRole("list", { name: "Graph nodes" })
 
     await user.type(screen.getByRole("textbox", { name: "Filter by path" }), "src/")
@@ -402,7 +445,9 @@ describe("the Files tab", () => {
 
   it("hides a file with no edge when unlinked files are hidden", async () => {
     const user = userEvent.setup()
-    const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+    const { location } = renderScreen(<KnowledgeScreen />, {
+      route: "/knowledge?tab=files&level=file",
+    })
     await screen.findByRole("list", { name: "Graph nodes" })
 
     await user.click(screen.getByRole("button", { name: "Hide unlinked", pressed: false }))
@@ -413,7 +458,7 @@ describe("the Files tab", () => {
 
   it("reads the level and the filters back from the URL", async () => {
     renderScreen(<KnowledgeScreen />, {
-      route: "/knowledge?tab=files&level=directory&filter=lib",
+      route: "/knowledge?tab=files&level=directory&depth=2&filter=lib",
     })
 
     await screen.findByRole("list", { name: "Graph nodes" })
@@ -424,7 +469,7 @@ describe("the Files tab", () => {
   it("opens a clicked file's outline and edges, with a link per symbol to the Symbols tab", async () => {
     const user = userEvent.setup()
     const { location } = renderScreen(<KnowledgeScreen />, {
-      route: "/knowledge?tab=files&ref=feature",
+      route: "/knowledge?tab=files&level=file&ref=feature",
     })
     const nodes = await screen.findByRole("list", { name: "Graph nodes" })
 
@@ -449,7 +494,9 @@ describe("the Files tab", () => {
   it("says how many files it shows when the graph is cut, and raises the limit on request", async () => {
     fileGraph = aFileGraph({ truncated: true, total_nodes: 4500 })
     const user = userEvent.setup()
-    const { location } = renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+    const { location } = renderScreen(<KnowledgeScreen />, {
+      route: "/knowledge?tab=files&level=file",
+    })
 
     expect(await screen.findByText("Showing 3 of 4500 files.")).toBeDefined()
     await user.click(screen.getByRole("button", { name: "Show up to 4000" }))
@@ -467,9 +514,9 @@ describe("the Files tab", () => {
   })
 
   it("shows no notice when the graph holds every file", async () => {
-    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files" })
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge?tab=files&level=file" })
 
     await screen.findByRole("list", { name: "Graph nodes" })
-    expect(screen.queryByText(/^Showing/)).toBeNull()
+    expect(screen.queryByText(/^Showing .* files\.$/)).toBeNull()
   })
 })

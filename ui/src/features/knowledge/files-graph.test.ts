@@ -199,6 +199,22 @@ describe("the directory level", () => {
       confidence: "heuristic",
     })
   })
+
+  it("expands one directory into its files and retains every file edge count", () => {
+    const dto = aRepository()
+    const built = filesGraph(dto, "directory", 2, "src/app")
+
+    expect(built.graph.nodes().sort()).toEqual([
+      "(root)",
+      "src",
+      "src/app/config.rs",
+      "src/app/main.rs",
+      "tests",
+    ])
+    expect([...built.edges.values()].reduce((total, edge) => total + edge.count, 0)).toBe(
+      dto.edges.reduce((total, edge) => total + edge.count, 0),
+    )
+  })
 })
 
 describe("the filters", () => {

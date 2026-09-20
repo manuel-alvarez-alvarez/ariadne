@@ -8,7 +8,7 @@
  * graph, with a link per symbol to the Symbols tab.
  *
  * Everything the user picks lives in the URL, beside the screen's own
- * params: `?level=`, `?depth=`, `?filter=`, `?hidden_kinds=`,
+ * params: `?level=`, `?depth=`, `?open=`, `?filter=`, `?hidden_kinds=`,
  * `?isolated=hide`, `?limit=` and `?file=`.
  */
 
@@ -47,7 +47,16 @@ const DEPTH_OPTIONS = [1, 2, 3, 4].map((depth) => ({
 }))
 
 /** The params this tab owns: the screen's own are left alone. */
-const PARAMS = ["level", "depth", "filter", "hidden_kinds", "isolated", "limit", "file"] as const
+const PARAMS = [
+  "level",
+  "depth",
+  "open",
+  "filter",
+  "hidden_kinds",
+  "isolated",
+  "limit",
+  "file",
+] as const
 type Param = (typeof PARAMS)[number]
 
 function readLimit(value: string | null): number | undefined {
@@ -57,8 +66,9 @@ function readLimit(value: string | null): number | undefined {
 
 export function FilesTab({ repositoryId, gitRef }: { repositoryId: string; gitRef: string }) {
   const [search, setSearch] = useSearchParams()
-  const level: FilesLevel = search.get("level") === "directory" ? "directory" : "file"
-  const depth = Math.max(1, Number(search.get("depth")) || 1)
+  const level: FilesLevel = search.get("level") === "file" ? "file" : "directory"
+  const depth = Math.max(1, Number(search.get("depth")) || 2)
+  const open = level === "directory" ? search.get("open") : null
   const text = search.get("filter") ?? ""
   const hiddenKindsParam = search.get("hidden_kinds") ?? ""
   const hiddenKinds = useMemo(
@@ -85,8 +95,8 @@ export function FilesTab({ repositoryId, gitRef }: { repositoryId: string; gitRe
 
   const answer = useQuery(knowledgeGraphQueryOptions(repositoryId, gitRef, limit))
   const built = useMemo(
-    () => (answer.data ? filesGraph(answer.data, level, depth) : null),
-    [answer.data, level, depth],
+    () => (answer.data ? filesGraph(answer.data, level, depth, open) : null),
+    [answer.data, level, depth, open],
   )
   // Typing keeps its pace on a big graph: the hiding follows a beat behind.
   const deferredText = useDeferredValue(text)
@@ -125,6 +135,24 @@ export function FilesTab({ repositoryId, gitRef }: { repositoryId: string; gitRe
   }
   const shownLimit = limit ?? DEFAULT_LIMIT
   const selected = file && data.nodes.some((node) => node.path === file) ? file : null
+  const shownNodes = built.graph.order - (hidden?.nodes.size ?? 0)
+  const shownEdges = built.graph.size - (hidden?.edges.size ?? 0)
+
+  const onNodeClick = (node: string) => {
+    if (level === "file") {
+      pick({ file: node })
+      return
+    }
+    if (node === open) {
+      pick({ open: null, file: null })
+      return
+    }
+    if (open && data.nodes.some((file) => file.path === node)) {
+      pick({ file: node })
+      return
+    }
+    pick({ open: node, file: null })
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -136,7 +164,13 @@ export function FilesTab({ repositoryId, gitRef }: { repositoryId: string; gitRe
               variant={level === value ? "secondary" : "outline"}
               size="sm"
               aria-pressed={level === value}
-              onClick={() => pick({ level: value === "file" ? null : value })}
+              onClick={() =>
+                pick(
+                  value === "file"
+                    ? { level: "file", open: null, file: null }
+                    : { level: "directory", file: null },
+                )
+              }
             >
               {value === "file" ? "Files" : "Directories"}
             </Button>
@@ -145,7 +179,9 @@ export function FilesTab({ repositoryId, gitRef }: { repositoryId: string; gitRe
         {level === "directory" ? (
           <Select
             value={String(depth)}
-            onValueChange={(value) => pick({ depth: value === "1" ? null : String(value) })}
+            onValueChange={(value) =>
+              pick({ depth: value === "2" ? null : value, open: null, file: null })
+            }
             items={DEPTH_OPTIONS}
           >
             <SelectTrigger aria-label="Directory depth" className="w-36">
@@ -159,6 +195,11 @@ export function FilesTab({ repositoryId, gitRef }: { repositoryId: string; gitRe
               ))}
             </SelectContent>
           </Select>
+        ) : null}
+        {open ? (
+          <Button variant="outline" size="sm" onClick={() => pick({ open: null, file: null })}>
+            Collapse
+          </Button>
         ) : null}
         <Input
           aria-label="Filter by path"
@@ -208,6 +249,11 @@ export function FilesTab({ repositoryId, gitRef }: { repositoryId: string; gitRe
         </div>
       ) : null}
 
+      <p className="text-sm text-muted-foreground">
+        Showing {shownNodes} of {plural(built.graph.order, "node")} and {shownEdges} of{" "}
+        {plural(built.graph.size, "edge")}.
+      </p>
+
       <div className="flex flex-col gap-3 lg:flex-row">
         <KnowledgeGraph
           className="h-[32rem] flex-1"
@@ -218,8 +264,7 @@ export function FilesTab({ repositoryId, gitRef }: { repositoryId: string; gitRe
             level === "file" ? "Dependencies between files" : "Dependencies between directories"
           }
           hidden={hidden}
-          // A directory has no outline: only a file opens the pane.
-          onNodeClick={level === "file" ? (node) => pick({ file: node }) : undefined}
+          onNodeClick={onNodeClick}
         />
         {selected ? (
           <FilePane

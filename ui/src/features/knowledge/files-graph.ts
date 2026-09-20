@@ -4,9 +4,10 @@
  *
  * The model is built once per response and level. At file level a node is a
  * file; at directory level the files of one directory, cut to `depth` path
- * segments, are one node, and their edges are summed. A node is sized by its
- * symbols and coloured by its top-level directory; an edge carries its count
- * as the weight the force layout pulls with.
+ * segments, are one node, and their edges are summed. One open directory
+ * instead keeps its files as nodes. A node is sized by its symbols and
+ * coloured by its top-level directory; an edge carries its count as the
+ * weight the force layout pulls with.
  *
  * The filters never rebuild the model: {@link filesVisibility} names what to
  * hide, and the graph component hides it.
@@ -114,21 +115,43 @@ function directoryTones(dto: KnowledgeGraphDto): {
   return { tones, legend }
 }
 
-export function filesGraph(dto: KnowledgeGraphDto, level: FilesLevel, depth: number): FilesGraph {
+export function filesGraph(
+  dto: KnowledgeGraphDto,
+  level: FilesLevel,
+  depth: number,
+  open?: string | null,
+): FilesGraph {
   const { tones, legend } = directoryTones(dto)
   const graph = emptyGraph()
-  const nodeOf = (path: string) => (level === "file" ? path : directoryOf(path, depth))
+  const nodeOf =
+    level === "file"
+      ? (path: string) => path
+      : (() => {
+          const nodeKeys = new Map<string, string>()
+          return (path: string) => {
+            const known = nodeKeys.get(path)
+            if (known) return known
+            const directory = directoryOf(path, depth)
+            const key = directory === open ? path : directory
+            nodeKeys.set(path, key)
+            return key
+          }
+        })()
 
   // Every file of one node shares its top-level directory, and so its tone.
-  const symbols = new Map<string, { count: number; tone: GraphTone }>()
+  const symbols = new Map<string, { count: number; tone: GraphTone; file: boolean }>()
   for (const node of dto.nodes) {
     const key = nodeOf(node.path)
     const tone = tones.get(topDirectory(node.path)) ?? OTHER_TONE
-    symbols.set(key, { count: (symbols.get(key)?.count ?? 0) + node.symbols, tone })
+    symbols.set(key, {
+      count: (symbols.get(key)?.count ?? 0) + node.symbols,
+      tone,
+      file: key === node.path,
+    })
   }
-  for (const [key, { count, tone }] of symbols) {
+  for (const [key, { count, tone, file }] of symbols) {
     graph.addNode(key, {
-      label: level === "file" ? lastSegment(key) : key,
+      label: file ? lastSegment(key) : key,
       tone,
       size: nodeSize(count),
     })

@@ -309,14 +309,17 @@ agent to do with the tools (017); and the memory tools beside these (019).
     side pane shows the signature, documentation, line range, and numbered
     source. Find symbol in the palette opens this tab.
     The Files tab draws `GET /v1/knowledge/graph` for the picked
-    repository and ref: a node per file, sized by its symbols and coloured
-    by its top-level directory, and an edge per file pair and kind weighted
-    by its count. A level switch merges the files of each directory, to a
-    depth of path segments, and sums their edges on the client. Path text,
-    edge kinds and Hide unlinked filter it; a truncated response says how
-    many of `total_nodes` files it shows and offers a higher `limit`; and a
-    click on a file shows its outline, its edges both ways and a link per
-    symbol to the Symbols tab.
+    repository and ref. It opens with one depth-two directory node per group,
+    sized by its symbols and coloured by its top-level directory, and an edge
+    per node pair and kind weighted by its count. `?level=file` shows files.
+    The level switch merges files by directory to a depth of path segments and
+    sums their edges on the client. A directory click expands its files while
+    the other directories stay grouped; `?open=` keeps that expansion through
+    reloads, and a second click or Collapse closes it. The tab shows the shown
+    and total node and edge counts. Path text, edge kinds and Hide unlinked
+    filter it; a truncated response says how many of `total_nodes` files it
+    shows and offers a higher `limit`; and a click on a file shows its outline,
+    its edges both ways and a link per symbol to the Symbols tab.
 30. Beyond its symbols, a file holds interfaces: what it offers another
     repository and what it takes from one. Each is read off the text at parse
     time, kept per blob like the mentions, and carries the definition it sits
@@ -893,12 +896,13 @@ and by `(kind, name)`.
   tab on a clicked node
   (`ui/src/features/knowledge/impact-tab.test.tsx`) — parity with
   `ariadne knowledge impact|path` (rules 23, 34).
-- The Files graph sizes, colours and weights its model, merges it by
-  directory at a depth and sums the edges, filters by path, kind and
-  unlinked files without a rebuild, and builds 5000 files within a second
-  (`ui/src/features/knowledge/files-graph.test.ts`); on screen, a click on
-  a file shows its outline and edges, and a truncated response shows its
-  notice and raises the limit
+- The Files graph sizes, colours and weights its model, opens at depth-two
+  directory level, expands one directory into files while summing its edges,
+  filters by path, kind and unlinked files without a rebuild, and builds 5000
+  files within a second (`ui/src/features/knowledge/files-graph.test.ts`); on
+  screen, a directory click keeps `?open=` and Collapse clears it, a click on
+  a file shows its outline and edges, and a truncated response shows its notice
+  and raises the limit
   (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Files tab`).
 - `knowledge_indexed` and `knowledge_failed` invalidate a repository's
   knowledge status, every interactions list, every impact and path walk,

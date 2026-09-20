@@ -234,7 +234,11 @@ callers show in layers left to right, each in the layer of its depth. A dashed
 edge is a guess, and a definition marked as stopped has more than 200 callers,
 so the walk went no further. Switch the mode to **Path**, name two symbols and
 a depth up to 10, and the shortest path shows as a chain, each edge named by
-its kind. Click a symbol to open it on the Symbols tab.
+its kind. Click a symbol to open it on the Symbols tab. The **Files** tab opens
+with directories grouped at two path segments. Click one directory to expand
+its files while the other directories stay grouped, and use **Collapse** to
+close it. The URL keeps the expansion, and `?level=file` shows every file.
+The tab shows the displayed and total node and edge counts.
 
 ## Turning it off
 
