@@ -13,7 +13,8 @@
 //! the edge says which one did. One definition there is `exact`; several are
 //! `heuristic`, the count is kept, and an edge is written to each — an author
 //! asking who calls a name is better served by a list that holds the answer
-//! than by a guess.
+//! than by a guess. The last step is held to three definitions: past that the
+//! name says nothing, and the edges are noise.
 //!
 //! The second half is what joins two repositories, or two files of one: the
 //! interfaces of [`crate::interfaces`], matched by name and by route, in
@@ -29,6 +30,13 @@ use crate::parser::{EdgeKind, Import};
 /// the name says nothing about which definition was meant — `new` in a large
 /// repository — and the edges would be noise measured in thousands.
 pub const MAX_CANDIDATES: usize = 20;
+
+/// How many definitions a name may match at step `repository` and still be
+/// resolved. The three nearer steps stand on where the definition is, and a
+/// few candidates there are a short list worth reading; the repository holds
+/// every definition of the name, so `new` or `get` joins files that have no
+/// relation, in the thousands.
+pub const MAX_REPOSITORY_CANDIDATES: usize = 3;
 
 /// The shortest name a reference across repositories is looked up by: a
 /// shorter one — `get`, `run`, `new` — is defined everywhere and means
@@ -373,8 +381,9 @@ pub(crate) fn foreign_edges(
 }
 
 /// The definitions a name resolves to, which step answered and how sure that
-/// is: the nearest step that holds any, unless it holds more than
-/// [`MAX_CANDIDATES`].
+/// is: the nearest step that holds any, unless it holds more than the cap of
+/// that step — [`MAX_REPOSITORY_CANDIDATES`] at step `repository`, and
+/// [`MAX_CANDIDATES`] at the three nearer ones.
 fn narrow<'a>(
     matched: &'a [Candidate],
     blob: &str,
@@ -421,7 +430,11 @@ fn narrow<'a>(
     })
     // Anywhere in the repository.
     .or_else(|| held("repository", matched))?;
-    if candidates.len() > MAX_CANDIDATES {
+    let cap = match step {
+        "repository" => MAX_REPOSITORY_CANDIDATES,
+        _ => MAX_CANDIDATES,
+    };
+    if candidates.len() > cap {
         return None;
     }
     let confidence = match candidates.len() {
@@ -777,10 +790,10 @@ mod tests {
         );
         assert_eq!(resolved.step, "import");
 
-        let resolved = narrow(&matched, "nothing", "far/away.rs", &elsewhere).unwrap();
+        let resolved = narrow(&matched[..3], "nothing", "far/away.rs", &elsewhere).unwrap();
         assert_eq!(
             resolved.candidates.len(),
-            4,
+            3,
             "then anywhere in the repository"
         );
         assert_eq!(resolved.step, "repository");
@@ -794,6 +807,98 @@ mod tests {
             .map(|id| candidate(id, "blob", &format!("src/{id}/new.rs"), "new"))
             .collect();
         assert!(narrow(&matched, "nothing", "far/away.rs", &[]).is_none());
+    }
+
+    /// A name many definitions share, answered by nothing nearer than the
+    /// repository, makes no edge: four definitions there are a guess worth
+    /// nothing. The three nearer steps keep the larger cap.
+    #[test]
+    fn a_name_many_definitions_share_makes_no_edge_at_the_repository_step() {
+        let repository: Vec<Candidate> = (0..MAX_REPOSITORY_CANDIDATES as i64 + 1)
+            .map(|id| candidate(id, "blob", &format!("src/{id}/new.rs"), "new"))
+            .collect();
+        assert!(narrow(&repository, "nothing", "far/away.rs", &[]).is_none());
+        let named = HashMap::from([(
+            "caller".to_string(),
+            Names {
+                path: "src/caller.rs".into(),
+                mentions: vec![Mention {
+                    kind: "calls".into(),
+                    name: "new".into(),
+                    line: 4,
+                    from_symbol: Some(1),
+                }],
+                imports: Vec::new(),
+            },
+        )]);
+        let candidates = HashMap::from([("new".to_string(), repository.clone())]);
+        assert!(edges_of(&named, &candidates).is_empty());
+
+        let directory: Vec<Candidate> = (0..MAX_CANDIDATES as i64)
+            .map(|id| candidate(id, "blob", "src/a.rs", "new"))
+            .collect();
+        let resolved = narrow(&directory, "nothing", "src/b.rs", &[]).unwrap();
+        assert_eq!(resolved.step, "directory", "a nearer step keeps its cap");
+        assert_eq!(
+            resolved.candidates.len(),
+            MAX_CANDIDATES,
+            "a nearer step holds 20 definitions"
+        );
+
+        let file: Vec<Candidate> = (0..MAX_CANDIDATES as i64)
+            .map(|id| candidate(id, "here", "src/a.rs", "new"))
+            .collect();
+        let resolved = narrow(&file, "here", "src/a.rs", &[]).unwrap();
+        assert_eq!(resolved.step, "file", "the same file keeps its cap too");
+        assert_eq!(resolved.candidates.len(), MAX_CANDIDATES);
+
+        let imports = [module_segments("far::m")];
+        let imported: Vec<Candidate> = (0..MAX_CANDIDATES as i64)
+            .map(|id| candidate(id, "blob", "far/m.rs", "new"))
+            .collect();
+        let resolved = narrow(&imported, "nothing", "other/b.rs", &imports).unwrap();
+        assert_eq!(resolved.step, "import", "an import keeps its cap too");
+        assert_eq!(resolved.candidates.len(), MAX_CANDIDATES);
+    }
+
+    /// Two or three definitions at the repository step are a short list, and
+    /// each one gets its own `heuristic` edge.
+    #[test]
+    fn two_or_three_definitions_at_the_repository_step_make_a_guess_at_each() {
+        for count in 2..=MAX_REPOSITORY_CANDIDATES as i64 {
+            let named = HashMap::from([(
+                "caller".to_string(),
+                Names {
+                    path: "src/caller.rs".into(),
+                    mentions: vec![Mention {
+                        kind: "calls".into(),
+                        name: "build".into(),
+                        line: 4,
+                        from_symbol: Some(1),
+                    }],
+                    imports: Vec::new(),
+                },
+            )]);
+            let matched: Vec<Candidate> = (0..count)
+                .map(|id| candidate(10 + id, "blob", &format!("far/{id}/m.rs"), "build"))
+                .collect();
+            let candidates = HashMap::from([("build".to_string(), matched)]);
+
+            let edges = edges_of(&named, &candidates);
+            let summary: Vec<String> = edges
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{:?} {} via {}, {}",
+                        e.to_symbol, e.confidence, e.step, e.candidates
+                    )
+                })
+                .collect();
+            let wanted: Vec<String> = (0..count)
+                .map(|id| format!("Some({}) heuristic via repository, {count}", 10 + id))
+                .collect();
+            assert_eq!(summary, wanted, "{count} definitions");
+        }
     }
 
     #[test]

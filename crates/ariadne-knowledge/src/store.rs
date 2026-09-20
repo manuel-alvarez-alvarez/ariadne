@@ -23,7 +23,7 @@ use crate::resolve::{
 
 /// The schema this build writes. Bump it with every change to `schema.sql`:
 /// a store at another version is thrown away and indexed again.
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// The edge kinds a walk of the callers follows: a call, and a request of
 /// a route the definition handles.

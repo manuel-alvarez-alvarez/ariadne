@@ -112,13 +112,15 @@ agent to do with the tools (017); and the memory tools beside these (019).
    there is one edge marked `exact`; several are one edge to each, marked
    `heuristic`, and every edge carries the step that answered — `file`,
    `directory`, `import` or `repository` — and how many definitions matched
-   there. A step that holds more than 20 definitions says nothing about
-   which one was meant, and the mention is left unresolved. At every step,
-   definitions from outline-only formats do not hold a candidate; a step
-   with only those definitions is empty and the search continues. A module
-   is what an import named where the definition's path, or its qualified
-   name, carries the module's segments, past `crate`, `self`, `super` and a
-   leading `.` or `/`.
+   there. A step that holds too many definitions says nothing about which
+   one was meant, and the mention is left unresolved: more than 3 at step
+   `repository`, where the name is all that joins the two ends, and more
+   than 20 at the three nearer steps, which stand on where the definition
+   is. At every step, definitions from outline-only formats do not hold a
+   candidate; a step with only those definitions is empty and the search
+   continues. A module is what an import named where the definition's path,
+   or its qualified name, carries the module's segments, past `crate`,
+   `self`, `super` and a leading `.` or `/`.
 10. An edge joins two ends, each a blob at one ref of one repository, a line,
     and the definition there where there is one. A symbol edge (rule 9) is
     keyed by the referencing blob at one ref of one repository, so deriving
@@ -636,6 +638,11 @@ and by `(kind, name)`.
   (`resolve.rs::a_name_resolves_at_the_nearest_step_that_holds_a_definition`,
   `::a_name_past_the_candidate_cap_is_left_unresolved`,
   `::a_module_is_matched_by_the_path_or_the_qualified_name_it_names`).
+- A name 4 definitions share at step `repository` makes no edge, while a nearer
+  step keeps the cap of 20, and 2 or 3 definitions there make one `heuristic`
+  edge to each
+  (`resolve.rs::a_name_many_definitions_share_makes_no_edge_at_the_repository_step`,
+  `::two_or_three_definitions_at_the_repository_step_make_a_guess_at_each`).
 - A call skips a same-directory YAML key and resolves to a Rust function in a
   subdirectory, exactly; the YAML key has no caller
   (`knowledge.rs::a_call_resolves_to_a_code_definition_and_never_to_an_outline_key`).
