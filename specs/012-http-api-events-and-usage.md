@@ -57,7 +57,13 @@ and the ACP runtime that reports the agent events (021).
    dropping events.
 6. CORS allows the preflight and cross-origin calls the desktop app makes.
 7. Session events reach the stream too: launches, ingested agent events,
-   attention raised and cleared, and a task branch's head moving (002).
+   attention raised and cleared, and a task branch's head moving (002). An
+   agent event on the domain stream is the exception to the fat event (rule
+   4): a payload reaches 1 MB, and every client reads every frame, so its
+   frame is an `AgentEventSummaryDto` — the id, the session id, the task id,
+   the kind, the `summary` (rule 13) and the time — and carries no payload.
+   The whole event, payload included, is what `GET /v1/events` answers and
+   what the session's console stream carries (021).
 8. A session is read and driven over HTTP through its row, its kill and
    resume, and its console (`/v1/sessions/{id}/console`, `/console/input`,
    `/console/stream`, `/console/cancel`, 008, 021). The one WebSocket,
@@ -267,6 +273,15 @@ and the ACP runtime that reports the agent events (021).
   `::a_long_summary_is_cut_at_200_characters`), and it reaches both
   `GET /v1/events` and the SSE stream
   (`events.rs::an_events_summary_reaches_the_snapshot_and_the_stream_alike`).
+- A domain stream frame for an agent event carries no payload
+  (`events.rs::a_domain_stream_frame_for_an_agent_event_carries_no_payload`),
+  while `GET /v1/events` and the console stream carry the whole of it
+  (`events.rs::the_events_listing_still_carries_the_whole_payload`,
+  `::the_console_stream_still_carries_the_whole_payload`). `ariadne events`
+  prints an agent event the same read off the listing as off the stream
+  (`commands/events.rs::an_agent_event_reads_the_same_recorded_as_it_does_live`),
+  and the desktop app, which refetches on the frame, still shows a session's
+  activity (`events/dispatch.test.ts::agent events`).
 - A usage report is read whole, and a malformed one is dropped while its
   event still lands
   (`http/classify.rs::an_event_reports_the_totals_of_the_transcript_it_names`,

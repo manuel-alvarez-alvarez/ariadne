@@ -19,6 +19,34 @@ pub struct AgentEventDto {
     pub created_at: String,
 }
 
+/// An agent event as the domain stream carries it: everything of
+/// [`AgentEventDto`] but the payload, which reaches 1 MB. A client that wants
+/// the payload reads `GET /v1/events`, or the console stream.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AgentEventSummaryDto {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub task_id: Option<String>,
+    /// e.g. session_start, post_tool_use, stop
+    pub kind: String,
+    /// The one-line gist of the payload, as [`AgentEventDto::summary`].
+    pub summary: String,
+    pub created_at: String,
+}
+
+impl From<&AgentEventDto> for AgentEventSummaryDto {
+    fn from(e: &AgentEventDto) -> Self {
+        Self {
+            id: e.id.clone(),
+            session_id: e.session_id.clone(),
+            task_id: e.task_id.clone(),
+            kind: e.kind.clone(),
+            summary: e.summary.clone(),
+            created_at: e.created_at.clone(),
+        }
+    }
+}
+
 /// One event the ACP runtime reports for an agent session, on its way into
 /// the store.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -471,3 +471,25 @@ describe("invalidateEverything", () => {
     expect(stale(queryClient, qk.goals.list())).toBe(true)
   })
 })
+
+describe("agent events", () => {
+  it("refetches the session activity lists, since the frame carries no payload to apply", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const activity = qk.agentEvents.list({ session: "01JSESSION0000000000000ARI" })
+    queryClient.setQueryData(activity, [])
+
+    dispatch(queryClient, {
+      event: "agent_event",
+      data: {
+        id: "01JEVENT000000000000000001",
+        session_id: "01JSESSION0000000000000ARI",
+        task_id: TASK.id,
+        kind: "post_tool_use",
+        summary: "Read AGENTS.md",
+        created_at: "2026-09-20T00:00:00.000Z",
+      },
+    })
+
+    expect(stale(queryClient, activity)).toBe(true)
+  })
+})

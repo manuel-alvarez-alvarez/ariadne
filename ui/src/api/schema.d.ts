@@ -1342,6 +1342,21 @@ export interface components {
             task_id?: string | null;
         };
         /**
+         * @description An agent event as the domain stream carries it: everything of
+         *     [`AgentEventDto`] but the payload, which reaches 1 MB. A client that wants
+         *     the payload reads `GET /v1/events`, or the console stream.
+         */
+        AgentEventSummaryDto: {
+            created_at: string;
+            id: string;
+            /** @description e.g. session_start, post_tool_use, stop */
+            kind: string;
+            session_id?: string | null;
+            /** @description The one-line gist of the payload, as [`AgentEventDto::summary`]. */
+            summary: string;
+            task_id?: string | null;
+        };
+        /**
          * @description What one staffed agent spent on a task, named the way a reader addresses
          *     it: an agent has no name of its own, so its skills are what identify it.
          */
@@ -1558,8 +1573,11 @@ export interface components {
             /** @enum {string} */
             event: "session_updated";
         } | {
-            /** @description A raw agent event the ACP runtime recorded. */
-            data: components["schemas"]["AgentEventDto"];
+            /**
+             * @description An agent event the ACP runtime recorded, without its payload: read the
+             *     whole event from `GET /v1/events`.
+             */
+            data: components["schemas"]["AgentEventSummaryDto"];
             /** @enum {string} */
             event: "agent_event";
         } | {

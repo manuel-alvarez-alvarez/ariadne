@@ -17,6 +17,7 @@
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::future::Future;
+use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -28,7 +29,7 @@ use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::ConsoleInputRequest;
-use ariadne_api::stream::{DomainEvent, ResyncDto};
+use ariadne_api::stream::ResyncDto;
 use ariadne_store::{Store, StoreError};
 
 use super::AppState;
@@ -263,15 +264,10 @@ impl Merge {
 
     /// A stored event of this session that has not been sent already.
     fn stored_dto(&self, event: BusEvent) -> Option<Queued> {
-        match event.event {
-            DomainEvent::AgentEvent(dto)
-                if dto.session_id.as_deref() == Some(self.session_id.as_str())
-                    && !self.behind_watermark(&dto.id) =>
-            {
-                Some(Queued::Stored(dto))
-            }
-            _ => None,
-        }
+        let dto = event.recorded?;
+        (dto.session_id.as_deref() == Some(self.session_id.as_str())
+            && !self.behind_watermark(&dto.id))
+        .then(|| Queued::Stored(Arc::unwrap_or_clone(dto)))
     }
 
     fn live_dto(&self, dto: AgentEventDto) -> Option<Queued> {
@@ -558,7 +554,9 @@ mod tests {
     use serde_json::json;
     use tokio::sync::broadcast;
 
-    use ariadne_api::events::AgentEventDto;
+    use std::sync::Arc;
+
+    use ariadne_api::events::{AgentEventDto, AgentEventSummaryDto};
     use ariadne_api::stream::DomainEvent;
 
     use super::{Merge, Resync, Store};
@@ -585,10 +583,15 @@ mod tests {
     }
 
     fn stored(id: &str, kind: &str) -> BusEvent {
+        published(dto(id, kind))
+    }
+
+    fn published(dto: AgentEventDto) -> BusEvent {
         BusEvent {
-            event: DomainEvent::AgentEvent(dto(id, kind)),
+            event: DomainEvent::AgentEvent(AgentEventSummaryDto::from(&dto)),
             goal_id: None,
             task_id: None,
+            recorded: Some(Arc::new(dto)),
         }
     }
 
@@ -757,22 +760,10 @@ mod tests {
         // The bus catches up: the copy is not sent again, the next event is.
         let mut late = dto(&whole.id, "agent_message");
         late.session_id = Some(session.id.clone());
-        stored_tx
-            .send(BusEvent {
-                event: DomainEvent::AgentEvent(late),
-                goal_id: None,
-                task_id: None,
-            })
-            .unwrap();
+        stored_tx.send(published(late)).unwrap();
         let mut stop = dto(&ariadne_core::id::new_id(), "stop");
         stop.session_id = Some(session.id.clone());
-        stored_tx
-            .send(BusEvent {
-                event: DomainEvent::AgentEvent(stop.clone()),
-                goal_id: None,
-                task_id: None,
-            })
-            .unwrap();
+        stored_tx.send(published(stop.clone())).unwrap();
         let third = merge.next().await.unwrap().unwrap();
         assert_eq!(
             third.id, stop.id,

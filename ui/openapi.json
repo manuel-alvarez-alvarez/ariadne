@@ -3579,6 +3579,44 @@
           }
         }
       },
+      "AgentEventSummaryDto": {
+        "type": "object",
+        "description": "An agent event as the domain stream carries it: everything of\n[`AgentEventDto`] but the payload, which reaches 1 MB. A client that wants\nthe payload reads `GET /v1/events`, or the console stream.",
+        "required": [
+          "id",
+          "kind",
+          "summary",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "e.g. session_start, post_tool_use, stop"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "description": "The one-line gist of the payload, as [`AgentEventDto::summary`]."
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "AgentUsageDto": {
         "type": "object",
         "description": "What one staffed agent spent on a task, named the way a reader addresses\nit: an agent has no name of its own, so its skills are what identify it.",
@@ -4078,15 +4116,15 @@
           },
           {
             "type": "object",
-            "description": "A raw agent event the ACP runtime recorded.",
+            "description": "An agent event the ACP runtime recorded, without its payload: read the\nwhole event from `GET /v1/events`.",
             "required": [
               "data",
               "event"
             ],
             "properties": {
               "data": {
-                "$ref": "#/components/schemas/AgentEventDto",
-                "description": "A raw agent event the ACP runtime recorded."
+                "$ref": "#/components/schemas/AgentEventSummaryDto",
+                "description": "An agent event the ACP runtime recorded, without its payload: read the\nwhole event from `GET /v1/events`."
               },
               "event": {
                 "type": "string",

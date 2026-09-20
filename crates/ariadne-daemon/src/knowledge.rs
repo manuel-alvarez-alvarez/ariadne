@@ -375,5 +375,6 @@ fn publish(events: &EventBus, event: DomainEvent) {
         event,
         goal_id: None,
         task_id: None,
+        recorded: None,
     });
 }

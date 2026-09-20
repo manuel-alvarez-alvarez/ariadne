@@ -1574,6 +1574,7 @@ async fn a_lagged_console_client_gets_a_resync_and_the_stream_ends() {
             }),
             goal_id: None,
             task_id: None,
+            recorded: None,
         });
     }
 

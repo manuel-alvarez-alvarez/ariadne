@@ -241,6 +241,7 @@ async fn follow(events: EventBus, git: GitManager, what: Followed) {
         events.publish(BusEvent {
             goal_id: Some(goal_id.clone()),
             task_id: Some(task_id.clone()),
+            recorded: None,
             event: DomainEvent::TaskBranchUpdated(TaskBranchDto {
                 task_id: task_id.clone(),
                 goal_id: goal_id.clone(),

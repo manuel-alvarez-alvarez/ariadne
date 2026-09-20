@@ -20,7 +20,7 @@ use ariadne_core::{
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{EventFilter, NewAgentEvent, Task};
+use ariadne_store::{AgentSession, EventFilter, NewAgentEvent, Task};
 
 use common::{Harness, TIMEOUT, expect_sse, get, harness, next_event, next_sse_message, post_json};
 
@@ -194,6 +194,7 @@ async fn sse_stream_opens_with_a_heartbeat() {
         }),
         goal_id: None,
         task_id: None,
+        recorded: None,
     });
     let payload = expect_sse(&mut body, "skill_deleted").await;
     assert_eq!(payload["id"], "skill-gone");
@@ -301,6 +302,7 @@ async fn sse_stream_signals_resync_and_closes_when_a_client_lags() {
             }),
             goal_id: None,
             task_id: None,
+            recorded: None,
         });
     }
 
@@ -592,6 +594,97 @@ async fn an_events_summary_reaches_the_snapshot_and_the_stream_alike() {
 
     let live = expect_sse(&mut body, "agent_event").await;
     assert_eq!(live["summary"], "Bash: cargo nextest run");
+}
+
+/// The payload of the tool call the next three tests report.
+fn tool_call_payload() -> serde_json::Value {
+    serde_json::json!({
+        "cwd": "/tmp/wt",
+        "tool_name": "Bash",
+        "tool_input": {"command": "cargo nextest run"},
+    })
+}
+
+/// A session of a task, made after the bus has relayed its `session_created`,
+/// so a stream opened next sees nothing of it.
+async fn a_session_to_report_on(h: &Harness) -> AgentSession {
+    let cast = h.active_cast().await;
+    let mut sync = h.bus.subscribe();
+    let session = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
+        .await;
+    next_event(
+        &mut sync,
+        |e| matches!(&e.event, DomainEvent::SessionCreated(s) if s.id == session.id),
+    )
+    .await;
+    session
+}
+
+/// The domain stream's frame for an agent event says what happened and to
+/// whom, and carries no payload: a payload reaches 1 MB, and no client reads
+/// one off this stream.
+#[tokio::test]
+async fn a_domain_stream_frame_for_an_agent_event_carries_no_payload() {
+    let h = harness().await;
+    let session = a_session_to_report_on(&h).await;
+    let mut body = h.stream(get("/v1/events/stream")).await;
+    expect_sse(&mut body, "heartbeat").await;
+
+    h.ingest(&session, "pre_tool_use", tool_call_payload())
+        .await;
+
+    let frame = expect_sse(&mut body, "agent_event").await;
+    let recorded: Vec<AgentEventDto> = h.get(&format!("/v1/events?session={}", session.id)).await;
+    let recorded = recorded.iter().find(|e| e.kind == "pre_tool_use").unwrap();
+    assert_eq!(
+        frame,
+        serde_json::json!({
+            "id": recorded.id,
+            "session_id": session.id,
+            "task_id": recorded.task_id,
+            "kind": "pre_tool_use",
+            "summary": "Bash: cargo nextest run",
+            "created_at": recorded.created_at,
+        })
+    );
+}
+
+/// `GET /v1/events` is where a client reads what an agent event carried.
+#[tokio::test]
+async fn the_events_listing_still_carries_the_whole_payload() {
+    let h = harness().await;
+    let session = a_session_to_report_on(&h).await;
+
+    h.ingest(&session, "pre_tool_use", tool_call_payload())
+        .await;
+
+    let recorded: Vec<serde_json::Value> =
+        h.get(&format!("/v1/events?session={}", session.id)).await;
+    let call = recorded
+        .iter()
+        .find(|e| e["kind"] == "pre_tool_use")
+        .unwrap();
+    assert_eq!(call["payload"], tool_call_payload());
+}
+
+/// The console stream is what draws a session, and draws it from the
+/// payload: it does not follow the domain stream in losing it.
+#[tokio::test]
+async fn the_console_stream_still_carries_the_whole_payload() {
+    let h = harness().await;
+    let session = a_session_to_report_on(&h).await;
+    let mut body = h
+        .stream(get(&format!("/v1/sessions/{}/console/stream", session.id)))
+        .await;
+    expect_sse(&mut body, "snapshot").await;
+
+    h.ingest(&session, "pre_tool_use", tool_call_payload())
+        .await;
+
+    let delta = expect_sse(&mut body, "event").await;
+    assert_eq!(delta["kind"], "pre_tool_use");
+    assert_eq!(delta["payload"], tool_call_payload());
 }
 
 /// One recorded event, and its id. Written straight to the store, which is

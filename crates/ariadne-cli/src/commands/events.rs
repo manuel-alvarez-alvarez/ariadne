@@ -17,7 +17,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use ariadne_api::Page;
-use ariadne_api::events::{AgentEventDto, EventListQuery, EventOrder};
+use ariadne_api::events::{AgentEventSummaryDto, EventListQuery, EventOrder};
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::stream::{
     DeletedDto, DomainEvent, EventStreamQuery, TaskBranchDto, TaskUpdatedDto,
@@ -258,7 +258,7 @@ fn snapshot_path(filters: &Filters) -> Result<String> {
 /// A descending page as the lines it is printed as: turned back into the
 /// order time runs in, since the tail that follows it runs that way too and
 /// the two halves are one list.
-fn snapshot_lines(events: &[AgentEventDto], filters: &Filters) -> Vec<Line> {
+fn snapshot_lines(events: &[AgentEventSummaryDto], filters: &Filters) -> Vec<Line> {
     events
         .iter()
         .rev()
@@ -267,9 +267,10 @@ fn snapshot_lines(events: &[AgentEventDto], filters: &Filters) -> Vec<Line> {
         .collect()
 }
 
-/// The recorded events, filtered as asked.
+/// The recorded events, filtered as asked. The listing answers each with its
+/// payload, which is read past here: a line has no use for it.
 async fn snapshot(client: &Client, filters: &Filters) -> Result<Vec<Line>> {
-    let events: Vec<AgentEventDto> = client.get_json(&snapshot_path(filters)?).await?;
+    let events: Vec<AgentEventSummaryDto> = client.get_json(&snapshot_path(filters)?).await?;
     Ok(snapshot_lines(&events, filters))
 }
 
@@ -307,7 +308,7 @@ fn domain_event(frame: &SseEvent) -> Option<DomainEvent> {
 
 /// One recorded agent event as a line: its own kind, the session that
 /// reported it, and the daemon's own gist of its payload beside it.
-fn agent_line(e: &AgentEventDto) -> Line {
+fn agent_line(e: &AgentEventSummaryDto) -> Line {
     Line {
         at: e.created_at.clone(),
         kind: e.kind.clone(),
@@ -693,27 +694,42 @@ mod tests {
         assert_eq!(rendered(&line), "<time> · goal_deleted · 01GOAL");
     }
 
-    /// A recorded agent event and the same event arriving live read
-    /// identically — kind, session and the daemon's own summary of its
-    /// payload — so the history and the tail are one list and `--kind stop`
-    /// means one thing in both.
+    /// A recorded agent event, which the listing answers with its payload,
+    /// and the same event arriving live, which the stream answers without
+    /// one, read identically — kind, session and the daemon's own summary of
+    /// the payload — so the history and the tail are one list and `--kind
+    /// stop` means one thing in both.
     #[test]
     fn an_agent_event_reads_the_same_recorded_as_it_does_live() {
-        let event = AgentEventDto {
-            id: "01EV".into(),
-            session_id: Some("01SESS".into()),
-            task_id: Some("01TASK".into()),
-            kind: "stop".into(),
-            payload: serde_json::json!({}),
-            summary: "ran cargo nextest run".into(),
-            created_at: AT.into(),
+        let listed = r#"[{
+            "id": "01EV", "session_id": "01SESS", "task_id": "01TASK",
+            "kind": "stop", "payload": {"cwd": "/tmp/wt"},
+            "summary": "ran cargo nextest run", "created_at": "2026-08-18T11:00:00Z"
+        }]"#;
+        let listed: Vec<AgentEventSummaryDto> = serde_json::from_str(listed).unwrap();
+        let none = Filters {
+            goal: None,
+            task: None,
+            session: None,
+            kinds: vec![],
         };
+        let recorded = snapshot_lines(&listed, &none);
+
+        let live = frame_lines(&frame(
+            "agent_event",
+            serde_json::json!({
+                "id": "01EV", "session_id": "01SESS", "task_id": "01TASK",
+                "kind": "stop", "summary": "ran cargo nextest run",
+                "created_at": AT,
+            }),
+        ));
+
         let expected = "<time> · stop · 01SESS · ran cargo nextest run";
-        assert_eq!(rendered(&agent_line(&event)), expected);
         assert_eq!(
-            rendered(&domain_line(&DomainEvent::AgentEvent(event))),
-            expected
+            recorded.iter().map(rendered).collect::<Vec<_>>(),
+            [expected]
         );
+        assert_eq!(live.iter().map(rendered).collect::<Vec<_>>(), [expected]);
     }
 
     /// A paragraph pasted into a description is still one line, cut in
@@ -795,13 +811,12 @@ mod tests {
     }
 
     /// One recorded event, dated as the daemon dates it.
-    fn recorded(id: &str, at: &str) -> AgentEventDto {
-        AgentEventDto {
+    fn recorded(id: &str, at: &str) -> AgentEventSummaryDto {
+        AgentEventSummaryDto {
             id: id.into(),
             session_id: Some("01SESS".into()),
             task_id: Some("01TASK".into()),
             kind: "stop".into(),
-            payload: serde_json::json!({}),
             summary: "ran cargo nextest run".into(),
             created_at: at.into(),
         }

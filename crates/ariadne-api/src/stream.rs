@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::events::AgentEventDto;
+use crate::events::AgentEventSummaryDto;
 use crate::goals::GoalDto;
 use crate::knowledge::{KnowledgeFailedDto, KnowledgeIndexedDto};
 use crate::memories::{MemoryDeletedDto, MemoryDto};
@@ -99,8 +99,9 @@ pub enum DomainEvent {
     SessionCreated(SessionDto),
     /// Covers status changes: kill, resume, exit, activity.
     SessionUpdated(SessionDto),
-    /// A raw agent event the ACP runtime recorded.
-    AgentEvent(AgentEventDto),
+    /// An agent event the ACP runtime recorded, without its payload: read the
+    /// whole event from `GET /v1/events`.
+    AgentEvent(AgentEventSummaryDto),
     SkillCreated(SkillDto),
     SkillUpdated(SkillDto),
     SkillDeleted(DeletedDto),

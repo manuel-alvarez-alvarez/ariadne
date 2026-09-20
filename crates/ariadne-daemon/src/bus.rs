@@ -5,14 +5,19 @@
 //! feed it without knowing it exists — and why no write can reach the database
 //! without reaching a client.
 //!
-//! Each event carries the whole DTO rather than an id to refetch, and delivery
+//! Each event carries the whole DTO rather than an id to refetch — but for an
+//! agent event, whose payload reaches 1 MB, the stream carries a summary of
+//! it — and delivery
 //! is history-free: a subscriber that cannot keep up is lagged by the
 //! broadcast channel, and the stream tells it to resync over REST rather than
 //! leaving it quietly stale (see `http::stream`).
 
+use std::sync::Arc;
+
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, warn};
 
+use ariadne_api::events::{AgentEventDto, AgentEventSummaryDto};
 use ariadne_api::goals::GoalDto;
 use ariadne_api::memories::MemoryDeletedDto;
 use ariadne_api::sessions::SessionDto;
@@ -35,6 +40,11 @@ pub struct BusEvent {
     pub event: DomainEvent,
     pub goal_id: Option<String>,
     pub task_id: Option<String>,
+    /// The whole agent event, payload included, where `event` is an
+    /// [`DomainEvent::AgentEvent`]. The console alone reads it: the domain
+    /// stream sends `event` and never this. Shared, so a subscriber's copy
+    /// costs a count and not the payload.
+    pub recorded: Option<Arc<AgentEventDto>>,
 }
 
 impl BusEvent {
@@ -118,6 +128,7 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         Change::GoalDeleted(id) => BusEvent {
             goal_id: Some(id.clone()),
             task_id: None,
+            recorded: None,
             event: DomainEvent::GoalDeleted(DeletedDto { id }),
         },
         Change::TaskCreated(task) => {
@@ -126,6 +137,7 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
                 event: DomainEvent::TaskCreated(dto),
                 goal_id: Some(keys.0),
                 task_id: Some(keys.1),
+                recorded: None,
             }
         }
         Change::TaskUpdated { task, transition } => {
@@ -137,11 +149,13 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
                 }),
                 goal_id: Some(keys.0),
                 task_id: Some(keys.1),
+                recorded: None,
             }
         }
         Change::MessageSent(message) => BusEvent {
             goal_id: Some(message.goal_id.clone()),
             task_id: message.task_id.clone(),
+            recorded: None,
             event: DomainEvent::MessageSent(message_dto(message)),
         },
         Change::SessionCreated(session) => {
@@ -155,10 +169,13 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
                 Some(id) => Some(store.get_session(id).await?.goal_id),
                 None => None,
             };
+            let task_id = agent_event.task_id.clone();
+            let recorded = event_dto(agent_event);
             BusEvent {
                 goal_id,
-                task_id: agent_event.task_id.clone(),
-                event: DomainEvent::AgentEvent(event_dto(agent_event)),
+                task_id,
+                event: DomainEvent::AgentEvent(AgentEventSummaryDto::from(&recorded)),
+                recorded: Some(Arc::new(recorded)),
             }
         }
         Change::SkillCreated(skill) => unscoped(DomainEvent::SkillCreated(skill_dto(skill))),
@@ -194,6 +211,7 @@ async fn goal_event(
         event: wrap(goal_dto_of(store, goal).await?),
         goal_id: Some(goal_id),
         task_id: None,
+        recorded: None,
     })
 }
 
@@ -215,6 +233,7 @@ async fn session_event(
     Ok(BusEvent {
         goal_id: Some(goal_id),
         task_id,
+        recorded: None,
         event: wrap(session_dto_of(store, session).await?),
     })
 }
@@ -226,5 +245,6 @@ fn unscoped(event: DomainEvent) -> BusEvent {
         event,
         goal_id: None,
         task_id: None,
+        recorded: None,
     }
 }
