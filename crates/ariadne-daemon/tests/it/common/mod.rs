@@ -950,21 +950,37 @@ impl Harness {
 
     /// Walk a fresh task up to the status a test wants to watch it in, from
     /// wherever it stands: a scheduler woken by a live agent may already
-    /// have taken it part of the way.
+    /// have taken it part of the way, and may take a step of the walk
+    /// between this read of the status and this write of it.
     pub async fn advance(&self, task: &Task, to: TaskStatus) {
         let steps = [
             (TaskStatus::Ready, Actor::Daemon),
             (TaskStatus::InProgress, Actor::Daemon),
             (TaskStatus::UnderReview, Actor::Author),
         ];
-        let now = self.status(&task.id).await;
-        let reached = steps.iter().position(|(status, _)| *status == now);
+        // How far up the walk a status stands. A status off the walk,
+        // `pending` included, stands below every step of it.
+        let reached = |status: TaskStatus| {
+            steps
+                .iter()
+                .position(|(step, _)| *step == status)
+                .map_or(0, |at| at + 1)
+        };
         for (at, (status, actor)) in steps.into_iter().enumerate() {
-            if reached.is_none_or(|reached| at > reached) {
-                self.store
+            if reached(self.status(&task.id).await) <= at {
+                let stepped = self
+                    .store
                     .transition_task(&task.id, status, actor, None, None)
-                    .await
-                    .unwrap();
+                    .await;
+                if let Err(refused) = stepped {
+                    // The scheduler took the step first, which is the step
+                    // the test wanted. Anything else is a real failure.
+                    let now = self.status(&task.id).await;
+                    assert!(
+                        reached(now) > at,
+                        "the walk to {to:?} stopped at {now:?}: {refused}"
+                    );
+                }
             }
             if status == to {
                 return;

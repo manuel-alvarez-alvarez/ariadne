@@ -1,7 +1,7 @@
 ---
 id: goal-and-task-lifecycle
 status: current
-updated: 2026-09-12
+updated: 2026-09-20
 areas: [core, store, daemon]
 commits: [e4816cf6, c98b83da, ad268ee0, 7bcb30a0, 94486b02, a69b953f, 29e6d84e, 1b09ac10]
 tests:
@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-daemon/tests/it/task_failure.rs
   - crates/ariadne-daemon/tests/it/goal_delete.rs
   - crates/ariadne-daemon/tests/it/multi_author_tasks.rs
+  - crates/ariadne-daemon/tests/it/agent_messages.rs
 ---
 
 # Goal and task lifecycle
@@ -73,6 +74,10 @@ Out: how each state is *worked* — planning (003), engineering and review
    worked, in the API's own status vocabulary, not with a type name.
 8. The store validates the transition and writes the audit row in one
    transaction: an illegal transition changes nothing and records nothing.
+   No status moves to itself, so two writers that race to the same status
+   leave one of them refused. The refused writer reads the status again and
+   takes a status another writer reached as reached, rather than as an
+   error.
 9. A task ends carrying the reason its ending transition gave —
    `fail_task`'s text, or the cancellation's — and that reason is what
    `ariadne task inspect` shows.
@@ -96,6 +101,10 @@ Out: how each state is *worked* — planning (003), engineering and review
   (`state_machine.rs::exhaustive_transition_table`).
 - An illegal transition leaves no audit row
   (`store.rs::illegal_transitions_are_rejected_and_unaudited`).
+- A walk that shares its task with a live scheduler reaches each status once:
+  the walk of the test harness (`tests/it/common/mod.rs`, `advance`) skips a
+  step the scheduler took, and takes a refusal as that step
+  (`agent_messages.rs::a_change_request_reaches_its_author_once`).
 - A task walks `pending → … → finished` through the store
   (`store.rs::task_happy_path_to_merged`), and a task with no reviewer is
   approved as soon as its author asks
