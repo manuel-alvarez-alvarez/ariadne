@@ -338,6 +338,7 @@ version = "0.7.0"
 dependencies = [
  "ariadne-core",
  "chrono",
+ "flate2",
  "serde_json",
  "sqlx",
  "tempfile",
@@ -1401,6 +1402,7 @@ version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
+ "crc32fast",
  "miniz_oxide",
  "zlib-rs",
 ]

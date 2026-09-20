@@ -459,7 +459,10 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+/// One reported event. `payload` is the JSON it carries, as it was reported:
+/// the row it is read from holds that text packed, and `store::events` is the
+/// one place that packs and unpacks it.
+#[derive(Debug, Clone)]
 pub struct AgentEvent {
     pub id: String,
     pub session_id: Option<String>,

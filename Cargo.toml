@@ -112,6 +112,10 @@ notify = { version = "8", default-features = false, features = ["macos_kqueue"] 
 chrono = { version = "0.4", features = ["serde"] }
 # The opaque page cursor of `GET /v1/outside-sessions`.
 base64 = "0.22"
+# How an agent event's payload is stored: deflate packs the recorded JSON
+# 4.26x, and the tree already carried flate2. zstd packs it 4.80x and faster,
+# and is a C library this build would be the first to want.
+flate2 = "1"
 dirs = "6"
 # Sleep inhibition: keepawake wraps the macOS and Windows power APIs, zbus
 # talks to systemd-logind on Linux.

@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-19
+updated: 2026-09-20
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -14,6 +14,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-store/tests/store.rs
+  - crates/ariadne-store/src/events.rs
   - crates/ariadne-daemon/tests/it/memories.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
@@ -198,9 +199,18 @@ and the ACP runtime that reports the agent events (021).
     its own last row.
 23. The listing narrows by `session`, by `task` and by `goal`. A goal reaches
     an event through the goal of the session that reported it, or through the
-    goal of the task it was on — an event outlives its session, whose id is
-    then null, and is still its goal's.
-24. The knowledge base (022) is served at `GET
+    goal of the task it was on — an event carries a task and no session where
+    nothing reported it, and is still its goal's.
+24. An event goes with what it was reported against: a deleted session takes
+    its events, a deleted task takes its own, and a deleted goal therefore
+    leaves none of either. These rows are most of a database that has
+    recorded for months, so a payload is stored packed, under a codec its own
+    row names (`deflate`, or `none` where packing would not shrink it), and
+    unpacked again in the store alone — every reader gets the JSON its
+    reporter sent. The row is written and read back by one statement, which
+    is all the lock that orders the ids covers: every live console chunk of
+    every session waits behind that lock.
+25. The knowledge base (022) is served at `GET
     /v1/repositories/{id}/knowledge`, `POST
     /v1/repositories/{id}/knowledge/reindex` (202), `GET
     /v1/knowledge/search`, `GET /v1/knowledge/outline`, `GET
@@ -374,7 +384,16 @@ and the ACP runtime that reports the agent events (021).
   `store.rs::a_before_cursor_pages_back_past_the_newest_page`).
 - A goal's events are the ones its sessions and its tasks reported, an event
   with no session included
-  (`events.rs::a_goals_events_are_what_its_sessions_and_its_tasks_reported`).
+  (`events.rs::a_goals_events_are_what_its_sessions_and_its_tasks_reported`),
+  and a deleted goal leaves none of them behind
+  (`store.rs::deleting_a_goal_leaves_no_event_of_its_sessions_or_its_tasks`).
+- A payload reads back word for word however long it is, a payload above a
+  kilobyte is stored smaller than it reads, one too short to shrink is stored
+  as it came, and the row is written and read back by one statement
+  (`store.rs::a_hundred_kilobyte_payload_reads_back_word_for_word`,
+  `::a_payload_above_a_kilobyte_is_stored_smaller_than_it_reads`,
+  `events.rs::an_event_is_written_and_read_back_by_one_statement`,
+  `::a_codec_this_build_does_not_know_is_a_decode_error`).
 
 ## Known gap
 
@@ -394,5 +413,6 @@ either.
 `crates/ariadne-api/`, `crates/ariadne-daemon/src/http/`,
 `crates/ariadne-daemon/src/http/classify.rs`,
 `crates/ariadne-daemon/src/http/events.rs`,
-`crates/ariadne-daemon/src/bus.rs`, `crates/ariadne-store/src/usage.rs`,
+`crates/ariadne-daemon/src/bus.rs`, `crates/ariadne-store/src/events.rs`,
+`crates/ariadne-store/src/usage.rs`,
 `crates/ariadne-daemon/src/transcript.rs`.

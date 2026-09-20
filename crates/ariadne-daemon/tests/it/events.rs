@@ -771,8 +771,8 @@ async fn a_before_page_walks_back_from_the_newest_page() {
 
 /// An event carries no goal of its own, so `goal` reaches it through the
 /// session that reported it or through the task it was on — either alone is
-/// enough, since `agent_events.session_id` is `ON DELETE SET NULL` and an
-/// event outlives the session that made it.
+/// enough, since an event that nothing reported carries its task and no
+/// session at all.
 #[tokio::test]
 async fn a_goals_events_are_what_its_sessions_and_its_tasks_reported() {
     let h = harness().await;

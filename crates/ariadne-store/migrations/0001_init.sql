@@ -375,13 +375,21 @@ CREATE INDEX idx_messages_goal ON messages (goal_id, id);
 -- rather than a column, so the rule is read where a verdict is written
 -- (`http::landing::send`).
 
+-- What an agent reported, as the ACP runtime saw it. The rows are the bulk of
+-- a database that has run for months, so a payload is stored packed and every
+-- row names the codec it was packed with (`store::events`).
+--
+-- A session takes its events with it: an event of a deleted goal is readable
+-- by nobody, and `SET NULL` kept the orchestrator's forever, since an
+-- orchestrator session has no task to cascade from either.
 CREATE TABLE agent_events (
-    id         TEXT PRIMARY KEY,
-    session_id TEXT REFERENCES agent_sessions (id) ON DELETE SET NULL,
-    task_id    TEXT REFERENCES tasks (id) ON DELETE CASCADE,
-    kind       TEXT NOT NULL,                   -- session_start | post_tool_use | stop | ...
-    payload    TEXT NOT NULL,                   -- raw JSON
-    created_at TEXT NOT NULL
+    id            TEXT PRIMARY KEY,
+    session_id    TEXT REFERENCES agent_sessions (id) ON DELETE CASCADE,
+    task_id       TEXT REFERENCES tasks (id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL,                -- session_start | post_tool_use | stop | ...
+    payload       BLOB NOT NULL,                -- the JSON, under payload_codec
+    payload_codec TEXT NOT NULL,                -- deflate | none
+    created_at    TEXT NOT NULL
 );
 CREATE INDEX idx_events_task ON agent_events (task_id, id);
 CREATE INDEX idx_events_session ON agent_events (session_id, id);

@@ -3241,6 +3241,140 @@ async fn events_written_at_once_are_published_in_id_order() {
     );
 }
 
+/// The payload of every event row, as the row holds it: the store answers
+/// the text an agent reported, so only the table itself can say what the
+/// bytes under it are and which codec packed them.
+async fn stored_payloads(dir: &tempfile::TempDir) -> Vec<(Vec<u8>, String)> {
+    let path = dir.path().join("test.db");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    let rows = sqlx::query_as("SELECT payload, payload_codec FROM agent_events ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    rows
+}
+
+/// An event of a deleted goal is readable by nobody, so none of them is
+/// kept. The orchestrator's is the one this turns on: its session carries no
+/// task, so a task cascade never reached it and the row outlived its goal
+/// for good.
+#[tokio::test]
+async fn deleting_a_goal_leaves_no_event_of_its_sessions_or_its_tasks() {
+    let w = World::new().await;
+    let orchestrator = w.session(Seat::Orchestrator, None, None).await;
+    let author = w.author_session().await;
+    for session in [&orchestrator, &author] {
+        w.store
+            .create_event(NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: session.task_id.clone(),
+                kind: "stop".into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+    }
+    // One reported against the task alone, which no session cascade reaches.
+    w.store
+        .create_event(NewAgentEvent {
+            session_id: None,
+            task_id: Some(w.task.id.clone()),
+            kind: "stop".into(),
+            payload: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    assert_eq!(stored_payloads(&w._dir).await.len(), 3);
+
+    w.store.delete_goal(&w.goal.id).await.unwrap();
+
+    assert!(
+        stored_payloads(&w._dir).await.is_empty(),
+        "the goal took every event of its sessions and its tasks with it"
+    );
+}
+
+/// A payload is packed on the way in and unpacked on the way out, so what an
+/// agent reported is what every reader of the event gets back — a long one
+/// included, which is where packing is worth anything at all.
+#[tokio::test]
+async fn a_hundred_kilobyte_payload_reads_back_word_for_word() {
+    let w = World::new().await;
+    let session = w.author_session().await;
+    let long: String = (0..2000)
+        .map(|n| format!("line {n}: the agent read a file and said something about it\n"))
+        .collect();
+    assert!(long.len() > 100 * 1024, "{} bytes", long.len());
+    let payload = serde_json::json!({"tool_name": "Read", "tool_response": long});
+
+    let written = w
+        .store
+        .create_event(NewAgentEvent {
+            session_id: Some(session.id.clone()),
+            task_id: Some(w.task.id.clone()),
+            kind: "post_tool_use".into(),
+            payload: payload.clone(),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(written.payload, payload.to_string());
+    let read_back = w
+        .store
+        .list_session_events(&session.id)
+        .await
+        .unwrap()
+        .pop()
+        .expect("the event that was written");
+    assert_eq!(read_back.payload, payload.to_string());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&read_back.payload).unwrap(),
+        payload
+    );
+}
+
+/// What the row holds is smaller than what it reads, which is the whole
+/// point: an event of any size worth storing packs. A payload too short for
+/// deflate to shrink is stored as it came, under the codec that says so, so
+/// no row is ever bigger for being packed.
+#[tokio::test]
+async fn a_payload_above_a_kilobyte_is_stored_smaller_than_it_reads() {
+    let w = World::new().await;
+    let session = w.author_session().await;
+    let long = "cargo nextest run -p ariadne-store ".repeat(50);
+    let long = serde_json::json!({"tool_name": "Bash", "tool_input": {"command": long}});
+    assert!(long.to_string().len() > 1024, "a payload above a kilobyte");
+    let short = serde_json::json!({});
+
+    for payload in [&long, &short] {
+        w.store
+            .create_event(NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: Some(w.task.id.clone()),
+                kind: "post_tool_use".into(),
+                payload: payload.clone(),
+            })
+            .await
+            .unwrap();
+    }
+
+    let stored = stored_payloads(&w._dir).await;
+    let (packed, codec) = &stored[0];
+    assert_eq!(codec, "deflate");
+    assert!(
+        packed.len() < long.to_string().len(),
+        "{} bytes stored against {} read",
+        packed.len(),
+        long.to_string().len()
+    );
+    let (plain, codec) = &stored[1];
+    assert_eq!(codec, "none");
+    assert_eq!(plain.len(), short.to_string().len());
+}
+
 /// The commit path no longer checkpoints — `Store::open` turns SQLite's
 /// automatic one off, because it runs on the connection that committed and
 /// cannot reset the log while a reader is on an older snapshot. What keeps
