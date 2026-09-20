@@ -1404,7 +1404,7 @@ fn initialize() -> v1::InitializeRequest {
         ))
 }
 
-fn to_params<T: serde::Serialize>(request: &T) -> Result<Value> {
+pub(crate) fn to_params<T: serde::Serialize>(request: &T) -> Result<Value> {
     serde_json::to_value(request).context("building an ACP request")
 }
 

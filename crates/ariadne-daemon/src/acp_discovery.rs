@@ -6,6 +6,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_client_protocol::schema::{ProtocolVersion, v1};
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,7 @@ use ariadne_api::sessions::OutsideSessionDto;
 use ariadne_client::endpoint::AcpAgentConfig;
 use ariadne_store::Store;
 
-use crate::acp::{apply_agent_launch_environment, find_config_option};
+use crate::acp::{apply_agent_launch_environment, find_config_option, to_params};
 use crate::acp_rpc::{Incoming, RpcTransport};
 use crate::timeouts::Timeouts;
 
@@ -479,20 +480,7 @@ async fn probe_protocol(
     capabilities: &mut AcpCapabilitiesDto,
 ) -> Result<Discovery> {
     let initialized = rpc
-        .request(
-            "initialize",
-            json!({
-                "protocolVersion": 1,
-                "clientCapabilities": {
-                    "fs": {"readTextFile": false, "writeTextFile": false},
-                    "terminal": false,
-                    "session": {"configOptions": {}},
-                    "auth": {}
-                },
-                "clientInfo": {"name": "ariadne-discovery", "version": env!("CARGO_PKG_VERSION")}
-            }),
-            incoming,
-        )
+        .request("initialize", to_params(&initialize())?, incoming)
         .await
         .context("initialize failed")?;
     capabilities.protocol_v1 =
@@ -565,7 +553,7 @@ async fn read_catalog(
     let setup = rpc
         .request(
             "session/new",
-            json!({"cwd": cwd.display().to_string(), "mcpServers": []}),
+            to_params(&v1::NewSessionRequest::new(cwd))?,
             incoming,
         )
         .await
@@ -579,7 +567,11 @@ async fn read_catalog(
         // Best effort: the catalog is read either way, and the process is
         // gone as soon as the probe ends.
         let _ = rpc
-            .request("session/close", json!({"sessionId": session_id}), incoming)
+            .request(
+                "session/close",
+                to_params(&v1::CloseSessionRequest::new(session_id.to_string()))?,
+                incoming,
+            )
             .await;
     }
     let options = setup
@@ -611,6 +603,25 @@ async fn read_catalog(
             .and_then(Value::as_str)
             .map(str::to_string),
     })
+}
+
+/// What a probe tells an agent it is, on `initialize`.
+///
+/// A probe reads the catalog and the stored sessions and prompts nothing, so
+/// it advertises less than a live session does: the config options it reads
+/// the model and effort from, and no compaction, which only a running turn
+/// reports.
+fn initialize() -> v1::InitializeRequest {
+    let capabilities = v1::ClientCapabilities::new().terminal(false).session(
+        v1::ClientSessionCapabilities::new()
+            .config_options(v1::SessionConfigOptionsCapabilities::new()),
+    );
+    v1::InitializeRequest::new(ProtocolVersion::V1)
+        .client_capabilities(capabilities)
+        .client_info(v1::Implementation::new(
+            "ariadne-discovery",
+            env!("CARGO_PKG_VERSION"),
+        ))
 }
 
 /// Ask one agent for its stored sessions: spawn it, `initialize`, `session/list`
@@ -656,28 +667,12 @@ async fn sessions_over_rpc(
     incoming: &mut ProbeIncoming,
     sessions: &mut Vec<OutsideSessionDto>,
 ) -> Result<()> {
-    rpc.request(
-        "initialize",
-        json!({
-            "protocolVersion": 1,
-            "clientCapabilities": {
-                "fs": {"readTextFile": false, "writeTextFile": false},
-                "terminal": false,
-                "session": {"configOptions": {}},
-                "auth": {}
-            },
-            "clientInfo": {"name": "ariadne-discovery", "version": env!("CARGO_PKG_VERSION")}
-        }),
-        incoming,
-    )
-    .await
-    .context("initialize failed")?;
+    rpc.request("initialize", to_params(&initialize())?, incoming)
+        .await
+        .context("initialize failed")?;
     let mut cursor: Option<String> = None;
     loop {
-        let params = match &cursor {
-            Some(cursor) => json!({"cursor": cursor}),
-            None => json!({}),
-        };
+        let params = to_params(&v1::ListSessionsRequest::new().cursor(cursor.clone()))?;
         let listed = rpc
             .request("session/list", params, incoming)
             .await
