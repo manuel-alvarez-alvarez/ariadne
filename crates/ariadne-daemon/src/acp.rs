@@ -1452,6 +1452,11 @@ async fn set_pinned_option(
         .get("id")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("ACP {label} configuration option has no id"))?;
+    // Not built from `v1::SetSessionConfigOptionRequest`: its
+    // `SessionConfigOptionValue` is an untagged struct variant, so the SDK
+    // writes `"value": {"value": "..."}` where every agent Ariadne drives is
+    // sent — and answers — a bare string. Typing this one is a wire change,
+    // and waits for the spec to be read against a live agent.
     let response = rpc
         .request(
             "session/set_config_option",
@@ -1531,13 +1536,11 @@ async fn prompt_once(
     let (reading, sink) = (rpc.transcript.clone(), rpc.sink.clone());
     let every = sink.runtime.inner.timeouts.transcript_poll;
     let response = {
-        let request = rpc.request(
-            "session/prompt",
-            json!({
-                "sessionId": session_id,
-                "prompt": [{"type": "text", "text": full}],
-            }),
+        let prompt = v1::PromptRequest::new(
+            session_id.to_string(),
+            vec![v1::ContentBlock::Text(v1::TextContent::new(full.clone()))],
         );
+        let request = rpc.request("session/prompt", to_params(&prompt)?);
         tokio::pin!(request);
         let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
