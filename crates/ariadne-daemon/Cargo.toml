@@ -20,6 +20,7 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
+agent-client-protocol = { workspace = true }
 ariadne-core = { workspace = true }
 ariadne-api = { workspace = true }
 ariadne-store = { workspace = true }

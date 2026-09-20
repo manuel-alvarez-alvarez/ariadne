@@ -44,6 +44,12 @@ tower-http = { version = "0.6", features = ["cors"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 
+# agent client protocol
+# The official ACP SDK: typed schema and JSON-RPC connection for every
+# `session/*` method the daemon speaks. `unstable_session_compaction` is
+# needed for `compaction_update`, which the runtime reports.
+agent-client-protocol = { version = "2.2", features = ["unstable_session_compaction"] }
+
 # database
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate"] }
 
