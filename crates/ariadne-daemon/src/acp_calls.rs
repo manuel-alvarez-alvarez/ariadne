@@ -36,6 +36,22 @@ call!(
     NewSession => "session/new"
 );
 call!(
+    /// A stored conversation, put back at its prompt.
+    ResumeSession => "session/resume"
+);
+call!(
+    /// A stored conversation, replayed on the way in.
+    LoadSession => "session/load"
+);
+call!(
+    /// A turn: everything the agent does until it stops.
+    PromptTurn => "session/prompt"
+);
+call!(
+    /// One session option, which is how a model or an effort is pinned.
+    SetConfigOption => "session/set_config_option"
+);
+call!(
     /// The end of a session a probe opened to read the catalog.
     CloseSession => "session/close"
 );

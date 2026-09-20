@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use agent_client_protocol::schema::{ProtocolVersion, v1};
+use agent_client_protocol::{Agent, Client, ConnectionTo, JsonRpcNotification, JsonRpcRequest};
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::FutureExt;
 use futures_util::future::Shared;
@@ -34,7 +35,10 @@ use ariadne_core::id::new_id;
 use ariadne_core::{PermissionMode, TokenUsage};
 use ariadne_store::Store;
 
-use crate::acp_rpc::{Incoming, Outbound, RpcTransport};
+use crate::acp_calls::{
+    Initialize, LoadSession, NewSession, PromptTurn, ResumeSession, SetConfigOption,
+};
+use crate::acp_transport::pipes;
 use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
 use crate::scheduler::SchedEvent;
@@ -268,10 +272,52 @@ struct RunningAgent {
     ended: Reaped,
 }
 
+/// The way into a running agent for the one notification sent from outside
+/// its driver: `session/cancel`.
+///
+/// The connection is not there when the agent is registered — the driver
+/// makes it — so it arrives in a cell the driver fills, and a cancel before
+/// that simply finds no turn to cancel.
+///
+/// `sending` is what the agent's stdin lock used to be. A cancel must not be
+/// written between the moment a turn is seen running and the moment it goes
+/// out: the turn could end in that gap and a queued prompt start, and the
+/// cancel would then land on a turn nobody asked to cancel. Every
+/// `session/prompt` the driver sends takes the same lock, so no prompt can
+/// start inside a cancel, and no cancel inside a prompt.
+#[derive(Clone, Default)]
+struct Outbound {
+    connection: Arc<tokio::sync::OnceCell<ConnectionTo<Agent>>>,
+    sending: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Outbound {
+    /// Cancel whichever turn `turn` says is running. Answers whether a
+    /// cancel went out, which is false when the agent is not connected yet
+    /// or is between turns.
+    async fn cancel(&self, turn: &tokio::sync::Mutex<Turn>) -> Result<bool> {
+        let _sending = self.sending.lock().await;
+        let Some(connection) = self.connection.get() else {
+            return Ok(false);
+        };
+        let agent_session = {
+            let turn = turn.lock().await;
+            turn.running.then(|| turn.agent_session.clone()).flatten()
+        };
+        let Some(agent_session) = agent_session else {
+            return Ok(false);
+        };
+        connection.send_notification(v1::CancelNotification::new(agent_session))?;
+        Ok(true)
+    }
+}
+
 /// The transport, the permission reply slot, the turn and the report channel
 /// a driver owns for one child.
 struct DriverIo {
-    transport: RpcTransport,
+    stdin: tokio::process::ChildStdin,
+    stdout: tokio::process::ChildStdout,
+    outbound: Outbound,
     permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     turn: Arc<tokio::sync::Mutex<Turn>>,
     task_id: Option<String>,
@@ -456,16 +502,10 @@ impl AcpRuntime {
             }
             (agent.turn.clone(), agent.outbound.clone())
         };
-        let mut pipe = outbound.lock().await;
-        let agent_session = {
-            let turn = turn.lock().await;
-            turn.running.then(|| turn.agent_session.clone()).flatten()
-        };
-        let Some(agent_session) = agent_session else {
-            bail!("no turn is running for session {session_id}");
-        };
-        pipe.notify("session/cancel", json!({"sessionId": agent_session}))
-            .await
+        match outbound.cancel(&turn).await? {
+            true => Ok(()),
+            false => bail!("no turn is running for session {session_id}"),
+        }
     }
 
     /// The running turn's text so far, as the chunk events a console snapshot
@@ -583,7 +623,7 @@ impl AcpRuntime {
             .await
             .ok()
             .and_then(|session| session.task_id);
-        let transport = RpcTransport::new(stdout, stdin);
+        let outbound = Outbound::default();
         self.inner
             .running
             .lock()
@@ -597,7 +637,7 @@ impl AcpRuntime {
                     permission: permission.clone(),
                     turn: turn.clone(),
                     task_id: task_id.clone(),
-                    outbound: transport.outbound(),
+                    outbound: outbound.clone(),
                     reports: reports.clone(),
                     ended: ended.shared(),
                 },
@@ -609,7 +649,9 @@ impl AcpRuntime {
                     launch,
                     child,
                     DriverIo {
-                        transport,
+                        stdin,
+                        stdout,
+                        outbound,
                         permission,
                         turn,
                         task_id,
@@ -722,23 +764,65 @@ impl AcpRuntime {
             agent_session: Arc::new(OnceLock::new()),
             console: self.console_of(&launch.session_id),
         };
-        let outbound = io.transport.outbound();
+        let outbound = io.outbound.clone();
         let (turn, permission) = (io.turn.clone(), io.permission.clone());
-        let mut rpc = Rpc::new(
-            io.transport,
-            sink.clone(),
-            io.permission,
-            io.turn,
-            io.reports,
-            &launch,
+        let closing = Arc::new(AtomicBool::new(false));
+        let turn_ended = Arc::new(Notify::new());
+        // What the connection's handlers need. They run on its dispatch
+        // loop, one message at a time, which is the order the transport's own
+        // loop gave them.
+        let incoming = RuntimeIncoming {
+            sink: sink.clone(),
+            turn: turn.clone(),
+            repository_id: launch.repository_id.clone(),
+            permission_mode: launch.permission_mode,
+            pending_permission: permission.clone(),
+            reports: io.reports.clone(),
+        };
+        // The protocol's own outcome, set inside the connection: the
+        // connection future answers for the link, not for the conversation.
+        let mut protocol_outcome = None;
+        let mut protocol = Box::pin(
+            Client
+                .builder()
+                .name("ariadne")
+                .on_receive_notification(
+                    async |update: RawSessionUpdate, _cx| {
+                        incoming.clone().handle_update(&update.0).await?;
+                        Ok(())
+                    },
+                    agent_client_protocol::on_receive_notification!(),
+                )
+                .on_receive_request(
+                    async |request: RawPermissionRequest, responder, _cx| {
+                        let answer = incoming.clone().handle_permission(&request.0).await?;
+                        responder.respond(answer)
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_with(pipes(io.stdin, io.stdout), async |cx| {
+                    // Everything that sends from outside the driver waits on
+                    // this: a cancel before it simply finds nothing running.
+                    let _ = outbound.connection.set(cx.clone());
+                    let mut rpc = Rpc::new(
+                        cx,
+                        outbound.clone(),
+                        sink.clone(),
+                        turn.clone(),
+                        io.reports.clone(),
+                        closing.clone(),
+                        turn_ended.clone(),
+                    );
+                    protocol_outcome =
+                        Some(run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts).await);
+                    Ok(())
+                }),
         );
-        let (closing, turn_ended) = (rpc.closing.clone(), rpc.turn_ended.clone());
-        let mut protocol = Box::pin(run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts));
-        let mut outcome = tokio::select! {
+        let mut ended = tokio::select! {
             result = &mut protocol => Some(result),
             _ = stopped => None,
         };
-        if outcome.is_none() {
+        if ended.is_none() {
             let ending = TurnEnding {
                 turn: &turn,
                 permission: &permission,
@@ -747,12 +831,20 @@ impl AcpRuntime {
                 turn_ended: &turn_ended,
                 grace: self.inner.timeouts.cancel_grace,
             };
-            outcome = ending.settle(protocol.as_mut()).await;
+            ended = ending.settle(protocol.as_mut()).await;
         }
         // Whatever the protocol was in the middle of goes now, and every lock
         // it held with it — the store's event order among them, which the
         // session's last words below take again.
         drop(protocol);
+        // The conversation's outcome where it reached one; otherwise the
+        // link's, so a connection that failed before the protocol could say
+        // anything is still reported.
+        let outcome = match (protocol_outcome, ended) {
+            (Some(outcome), _) => Some(outcome),
+            (None, Some(Err(error))) => Some(Err(anyhow!("ACP connection failed: {error}"))),
+            (None, _) => None,
+        };
         // Reap on exit, kill on a kill: the signal is a no-op on a child
         // already gone, and the wait is what collects it either way. The
         // signal goes to the agent's whole process group: an adapter that
@@ -804,10 +896,7 @@ impl TurnEnding<'_> {
     /// No queued prompt starts meanwhile, and a turn waiting on a permission
     /// answer is not asked: nobody is left to answer it, and ACP has the
     /// client answer that request before the turn can end.
-    async fn settle(
-        &self,
-        mut protocol: Pin<&mut impl Future<Output = Result<()>>>,
-    ) -> Option<Result<()>> {
+    async fn settle<T>(&self, mut protocol: Pin<&mut impl Future<Output = T>>) -> Option<T> {
         self.closing.store(true, Ordering::SeqCst);
         if self
             .permission
@@ -820,20 +909,7 @@ impl TurnEnding<'_> {
         let ended = self.turn_ended.notified();
         tokio::pin!(ended);
         ended.as_mut().enable();
-        let cancelled = async {
-            let mut pipe = self.outbound.lock().await;
-            let agent_session = {
-                let turn = self.turn.lock().await;
-                turn.running.then(|| turn.agent_session.clone()).flatten()
-            };
-            match agent_session {
-                Some(agent_session) => pipe
-                    .notify("session/cancel", json!({"sessionId": agent_session}))
-                    .await
-                    .is_ok(),
-                None => false,
-            }
-        };
+        let cancelled = async { self.outbound.cancel(self.turn).await.unwrap_or(false) };
         let answered = async {
             if cancelled.await {
                 ended.await;
@@ -846,6 +922,22 @@ impl TurnEnding<'_> {
         }
     }
 }
+
+/// One `session/update`, as the JSON the agent sent.
+///
+/// Not the SDK's typed `SessionUpdate`: that is a closed enum, so a kind it
+/// does not know fails to parse, where the daemon has always read the kinds
+/// it handles and let the rest by. What it stores is this JSON too — a tool
+/// call reaches the console as the agent wrote it, extensions and all.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcNotification)]
+#[notification(method = "session/update")]
+struct RawSessionUpdate(Value);
+
+/// One `session/request_permission`, as the JSON the agent sent, answered
+/// with the JSON the daemon replies.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[request(method = "session/request_permission", response = Value)]
+struct RawPermissionRequest(Value);
 
 /// Where the driver reports what its agent does: the one ingestion path
 /// every event takes into the store, and the live path the chunks take to
@@ -961,12 +1053,14 @@ impl EventSink {
 }
 
 struct Rpc {
-    transport: RpcTransport,
+    /// The live connection to the agent, for everything this launch sends.
+    connection: ConnectionTo<Agent>,
+    /// The lock a `session/prompt` takes while it is written, so that a
+    /// `session/cancel` cannot be sent between a turn being seen running and
+    /// the cancel going out. See [`Outbound`].
+    outbound: Outbound,
     sink: EventSink,
     turn: Arc<tokio::sync::Mutex<Turn>>,
-    repository_id: String,
-    permission_mode: PermissionMode,
-    pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     /// What this launch's turns have spent so far: each prompt response
     /// reports one turn (ACP), and the `stop` carries their running sum.
     /// Reported only where the launch has no transcript.
@@ -984,48 +1078,35 @@ struct Rpc {
 
 impl Rpc {
     fn new(
-        transport: RpcTransport,
+        connection: ConnectionTo<Agent>,
+        outbound: Outbound,
         sink: EventSink,
-        pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
         turn: Arc<tokio::sync::Mutex<Turn>>,
         reports: Followers,
-        launch: &AcpLaunch,
+        closing: Arc<AtomicBool>,
+        turn_ended: Arc<Notify>,
     ) -> Self {
         Self {
-            transport,
+            connection,
+            outbound,
             sink,
             turn,
-            repository_id: launch.repository_id.clone(),
-            permission_mode: launch.permission_mode,
-            pending_permission,
             launch_usage: TokenUsage::default(),
             transcript: None,
-            closing: Arc::new(AtomicBool::new(false)),
-            turn_ended: Arc::new(Notify::new()),
+            closing,
+            turn_ended,
             reports,
         }
     }
 
-    /// What this launch hands the handling of an incoming message.
-    fn incoming(&self) -> RuntimeIncoming {
-        RuntimeIncoming {
-            sink: self.sink.clone(),
-            turn: self.turn.clone(),
-            repository_id: self.repository_id.clone(),
-            permission_mode: self.permission_mode,
-            pending_permission: self.pending_permission.clone(),
-            reports: self.reports.clone(),
-        }
-    }
-
-    async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
-        let mut incoming = self.incoming();
-        self.transport.request(method, params, &mut incoming).await
-    }
-
-    async fn receive(&mut self) -> Result<bool> {
-        let mut incoming = self.incoming();
-        self.transport.receive(&mut incoming).await
+    /// Send one call to the agent and wait for its answer. Whatever the
+    /// agent says meanwhile — an update, a permission request — is handled
+    /// by the connection's own handlers, not here.
+    async fn call<R>(&self, method: &str, request: R) -> Result<Value>
+    where
+        R: agent_client_protocol::JsonRpcRequest<Response = Value> + Send,
+    {
+        crate::acp_calls::call(&self.connection, method, request).await
     }
 }
 
@@ -1040,26 +1121,6 @@ struct RuntimeIncoming {
     permission_mode: PermissionMode,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     reports: Followers,
-}
-
-impl Incoming for RuntimeIncoming {
-    async fn handle(&mut self, message: Value) -> Result<Option<Value>> {
-        match message.get("method").and_then(Value::as_str) {
-            Some("session/update") => {
-                self.handle_update(&message["params"]).await?;
-                Ok(None)
-            }
-            Some("session/request_permission") if message.get("id").is_some() => {
-                self.handle_permission(&message).await.map(Some)
-            }
-            Some(_) if message.get("id").is_some() => Ok(Some(json!({
-                "jsonrpc": "2.0",
-                "id": message["id"],
-                "error": {"code": -32601, "message": "method not supported"},
-            }))),
-            _ => Ok(None),
-        }
-    }
 }
 
 impl RuntimeIncoming {
@@ -1190,8 +1251,9 @@ impl RuntimeIncoming {
         }
     }
 
-    async fn handle_permission(&mut self, message: &Value) -> Result<Value> {
-        let params = &message["params"];
+    /// Answer one `session/request_permission`, with the params the agent
+    /// sent and the result the daemon replies — the connection wraps it.
+    async fn handle_permission(&mut self, params: &Value) -> Result<Value> {
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let mut payload = tool_payload(session_id.clone(), &params["toolCall"]);
         payload["options"] = params.get("options").cloned().unwrap_or_default();
@@ -1240,11 +1302,7 @@ impl RuntimeIncoming {
                 json!({"session_id": session_id, "option_id": selected}),
             )
             .await;
-        Ok(json!({
-            "jsonrpc": "2.0",
-            "id": message["id"],
-            "result": {"outcome": outcome},
-        }))
+        Ok(json!({"outcome": outcome}))
     }
 
     /// Make the input path answer the permission request now visible to the
@@ -1277,7 +1335,9 @@ async fn run_protocol(
     config: &LaunchConfig,
     prompts: mpsc::UnboundedReceiver<Prompt>,
 ) -> Result<()> {
-    let initialized = rpc.request("initialize", to_params(&initialize())?).await?;
+    let initialized = rpc
+        .call("initialize", Initialize(to_params(&initialize())?))
+        .await?;
     if initialized.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
         bail!("ACP agent did not negotiate protocol version 1");
     }
@@ -1373,11 +1433,7 @@ async fn serve_with_input(
                     None => console_open = false,
                 }
             }
-            received = rpc.receive() => {
-                if !received? {
-                    return Ok(());
-                }
-            }
+            () = rpc.connection.incoming_closed() => return Ok(()),
         }
     }
 }
@@ -1419,7 +1475,9 @@ async fn session_setup(
     let mcp_servers = crate::acp_schema::mcp_servers(config);
     let Some(session_id) = &config.resume_session_id else {
         let request = v1::NewSessionRequest::new(cwd).mcp_servers(mcp_servers);
-        return rpc.request("session/new", to_params(&request)?).await;
+        return rpc
+            .call("session/new", NewSession(to_params(&request)?))
+            .await;
     };
     // A resumed conversation is reopened the way the agent says it can be.
     // `session/resume` is the one to ask for: it puts the agent back at its
@@ -1431,10 +1489,12 @@ async fn session_setup(
     let params = if resume.is_object() || resume.as_bool() == Some(true) {
         let request =
             v1::ResumeSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
-        rpc.request("session/resume", to_params(&request)?).await
+        rpc.call("session/resume", ResumeSession(to_params(&request)?))
+            .await
     } else if capabilities.get("loadSession").and_then(Value::as_bool) == Some(true) {
         let request = v1::LoadSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
-        rpc.request("session/load", to_params(&request)?).await
+        rpc.call("session/load", LoadSession(to_params(&request)?))
+            .await
     } else {
         bail!("ACP agent supports neither session/resume nor session/load")
     };
@@ -1466,9 +1526,11 @@ async fn set_pinned_option(
     // sent — and answers — a bare string. Typing this one is a wire change,
     // and waits for the spec to be read against a live agent.
     let response = rpc
-        .request(
+        .call(
             "session/set_config_option",
-            json!({"sessionId": session_id, "configId": config_id, "value": value}),
+            SetConfigOption(json!({
+                "sessionId": session_id, "configId": config_id, "value": value
+            })),
         )
         .await
         .with_context(|| format!("setting ACP {label} to `{value}`"))?;
@@ -1548,7 +1610,15 @@ async fn prompt_once(
             session_id.to_string(),
             vec![v1::ContentBlock::Text(v1::TextContent::new(full.clone()))],
         );
-        let request = rpc.request("session/prompt", to_params(&prompt)?);
+        // The enqueue happens under the lock a cancel also takes, so a
+        // `session/cancel` cannot be written between a turn being seen
+        // running and this prompt starting one. The wait below does not hold
+        // it: a turn runs for minutes, and a cancel has to reach it.
+        let sent = {
+            let _sending = rpc.outbound.sending.lock().await;
+            rpc.connection.send_request(PromptTurn(to_params(&prompt)?))
+        };
+        let request = async { sent.block_task().await.context("ACP session/prompt failed") };
         tokio::pin!(request);
         let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
