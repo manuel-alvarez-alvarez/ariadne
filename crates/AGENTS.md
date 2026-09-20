@@ -70,6 +70,14 @@ requires anyway, and a stub ACP agent that `tests/it/common/acp.rs` writes in
 that stub, so the suite needs no coding-agent CLI installed. A machine missing
 `git` or `python3` gets failures rather than a quiet pass.
 
+The dev profile carries line tables rather than full debug info, and none
+for dependencies (`[profile.dev]` in the root `Cargo.toml`). A panic still
+names its file and line and a backtrace still reads; what goes is stepping
+through a dependency in a debugger. It is there because linking is what the
+edit-test loop waits on and it is single-threaded per binary: rebuilding the
+daemon's tests after one edit went from 7.3s to 2.4s. Switching it back
+rebuilds the world once, so do that in a branch of its own.
+
 `cargo test` still works and does not need nextest installed, but it runs the test
 binaries one at a time where nextest pools tests across all of them, so a full
 run takes around three times as long. It is also the only way to run doctests,

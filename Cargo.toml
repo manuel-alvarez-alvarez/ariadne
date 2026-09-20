@@ -124,6 +124,18 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
+[profile.dev]
+# Line tables rather than full DWARF: a panic still names its file and line,
+# and a backtrace still reads, but there is a fraction of the debug info to
+# generate and for the linker to chew through. Linking is what an edit-test
+# loop waits on, and it is single-threaded per binary.
+debug = "line-tables-only"
+
+# Nothing is ever stepped through in a dependency, and they are most of what
+# is linked.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = "thin"
 strip = "symbols"
