@@ -9,9 +9,10 @@
 //! Ariadne ships, so a reworded skill reaches every database without a
 //! migration, and a reset is a `NULL` rather than a copy of the default. A
 //! skill the catalog gains is seeded into existing databases on their next
+//! open, and a skill the catalog loses is taken out of them on the same
 //! open, the same way.
 
-use crate::defaults::BUILTIN_SKILLS;
+use crate::defaults::{BUILTIN_SKILLS, MERGED_SKILLS};
 use crate::query::Filtered;
 use crate::{Change, Result, Skill, Store, StoreError, now};
 
@@ -26,7 +27,10 @@ pub struct NewSkill {
 impl Store {
     /// Seed the shipped skills, by name: a skill the database lacks is
     /// inserted with a NULL document, and no document the database holds is
-    /// ever touched — an edit stays an edit, a reset stays a reset.
+    /// ever touched — an edit stays an edit, a reset stays a reset. A
+    /// built-in the catalog no longer holds is taken back out, so that
+    /// shrinking the catalog reaches an old database the way growing it
+    /// does.
     ///
     /// Run on every open rather than only into an empty database, which is
     /// what carries an old database across a release that ships a new skill:
@@ -56,7 +60,79 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         }
+        self.apply_skill_merges(&mut tx).await?;
+        self.prune_dropped_builtins(&mut tx, &ts).await?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// Rewrite the staffings of a merged skill to the skill that absorbed it
+    /// ([`MERGED_SKILLS`]), so that the work an old task did still has a name.
+    ///
+    /// An agent staffed on both keeps the one row: the pair is the commonest
+    /// staffing of a skill that merges, and a primary key holds an agent to
+    /// one row per skill. What is left behind is a skill nothing loads, which
+    /// [`Store::prune_dropped_builtins`] takes out on the same open.
+    async fn apply_skill_merges(&self, tx: &mut sqlx::SqliteConnection) -> Result<()> {
+        for (merged, into) in MERGED_SKILLS {
+            sqlx::query(
+                "DELETE FROM task_agent_skills
+                  WHERE skill_name = ?
+                    AND agent_id IN (SELECT agent_id FROM task_agent_skills
+                                      WHERE skill_name = ?)",
+            )
+            .bind(merged)
+            .bind(into)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("UPDATE task_agent_skills SET skill_name = ? WHERE skill_name = ?")
+                .bind(into)
+                .bind(merged)
+                .execute(&mut *tx)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Take out the built-ins the catalog no longer holds, in the two ways a
+    /// row can be one.
+    ///
+    /// A row still on the shipped text holds nothing of anybody's, so it
+    /// goes. A row somebody wrote a document over holds their text, so it
+    /// stays and becomes a skill of their own: theirs to edit and theirs to
+    /// delete, with nothing shipped behind it to reset to.
+    ///
+    /// The one row that stays a built-in is the one a staffed agent still
+    /// loads, which the foreign key holds so that an old task still reads as
+    /// the skills it ran on. It has no text left behind it and
+    /// [`crate::Skill::document_text`] reads it as empty; deleting the tasks
+    /// that name it lets the next open take it out.
+    async fn prune_dropped_builtins(
+        &self,
+        tx: &mut sqlx::SqliteConnection,
+        ts: &str,
+    ) -> Result<()> {
+        let shipped = vec!["?"; BUILTIN_SKILLS.len()].join(", ");
+
+        let mut adopted = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE skills SET builtin = 0, updated_at = ?
+             WHERE builtin = 1 AND document IS NOT NULL AND name NOT IN ({shipped})"
+        )))
+        .bind(ts);
+        for builtin in &BUILTIN_SKILLS {
+            adopted = adopted.bind(builtin.name);
+        }
+        adopted.execute(&mut *tx).await?;
+
+        let mut dropped = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM skills
+             WHERE builtin = 1 AND document IS NULL AND name NOT IN ({shipped})
+               AND name NOT IN (SELECT skill_name FROM task_agent_skills)"
+        )));
+        for builtin in &BUILTIN_SKILLS {
+            dropped = dropped.bind(builtin.name);
+        }
+        dropped.execute(&mut *tx).await?;
         Ok(())
     }
 

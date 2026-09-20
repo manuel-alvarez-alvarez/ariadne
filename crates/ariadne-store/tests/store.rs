@@ -2370,6 +2370,173 @@ async fn a_new_shipped_skill_reaches_an_existing_database_on_reopen() {
     );
 }
 
+/// A release that drops a skill reaches a database seeded before it the way
+/// one that adds a skill does: the catalog is the whole of what an agent can
+/// be, so a name it no longer holds is offered to nobody.
+///
+/// What goes is only what holds nothing of anybody's. A document written over
+/// a dropped built-in is the user's text, so the row stays and becomes theirs
+/// — theirs to delete, and no longer resettable to a default that is gone. A
+/// row a staffed agent still loads stays a built-in, because the foreign key
+/// that keeps an old task readable holds it there.
+#[tokio::test]
+async fn a_dropped_shipped_skill_leaves_an_existing_database_on_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    let (goal, repo) = seed_goal(&store).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    drop(store);
+
+    // The era of a larger catalog, reproduced: three built-ins this release
+    // no longer ships, one of them written over and one of them still loaded
+    // by the task's author.
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    for (name, document) in [
+        ("release", None),
+        (
+            "triage",
+            Some("---\nname: triage\ndescription: mine\n---\n"),
+        ),
+        ("dependency-upgrade", None),
+    ] {
+        sqlx::query(
+            "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+             VALUES (?, ?, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(name)
+        .bind(document)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
+         SELECT id, 'dependency-upgrade', 1 FROM task_agents
+          WHERE task_id = ? AND seat = 'author'",
+    )
+    .bind(&task.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    assert!(
+        matches!(
+            store.get_skill("release").await,
+            Err(StoreError::NotFound { .. })
+        ),
+        "a dropped built-in on the shipped text is taken out"
+    );
+
+    let theirs = store.get_skill("triage").await.unwrap();
+    assert!(
+        !theirs.is_builtin(),
+        "a dropped built-in somebody wrote over becomes a skill of their own"
+    );
+    assert_eq!(theirs.summary(), "mine", "on the text they wrote");
+    assert!(matches!(
+        store.reset_skill("triage").await,
+        Err(StoreError::Conflict(_))
+    ));
+    store.delete_skill("triage").await.unwrap();
+
+    let loaded = store.get_skill("dependency-upgrade").await.unwrap();
+    assert!(
+        loaded.is_builtin(),
+        "a dropped built-in an agent still loads stays, so the task still reads"
+    );
+    let author = store.task_author(&task.id).await.unwrap();
+    let names: Vec<String> = store
+        .agent_skills(&author.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(
+        names,
+        ["coding", "dependency-upgrade"],
+        "and the task still names it"
+    );
+    assert_eq!(
+        store.list_skills().await.unwrap().len(),
+        ariadne_store::defaults::BUILTIN_SKILLS.len() + 1,
+        "the catalog, plus the one row the task holds in place"
+    );
+}
+
+/// A skill that merged into another takes its staffings with it: the rows
+/// that named it name the skill that does its work now, so a task staffed
+/// before the merge still reads as the work it did. An agent staffed on both
+/// keeps one row, not two.
+#[tokio::test]
+async fn a_merged_skill_hands_its_staffings_to_the_skill_that_absorbed_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+
+    let store = Store::open(&path).await.unwrap();
+    let (goal, repo) = seed_goal(&store).await;
+    let both = seed_task(&store, &goal, &repo, vec![]).await;
+    let alone = seed_task(&store, &goal, &repo, vec![]).await;
+    drop(store);
+
+    // The era before the merge, reproduced: `testing` staffed beside `coding`
+    // on one author, and on its own on the other.
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO skills (name, document, builtin, created_at, updated_at)
+         VALUES ('testing', NULL, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO task_agent_skills (agent_id, skill_name, ordinal)
+         SELECT id, 'testing', 1 FROM task_agents WHERE task_id = ? AND seat = 'author'",
+    )
+    .bind(&both.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE task_agent_skills SET skill_name = 'testing'
+          WHERE skill_name = 'coding'
+            AND agent_id IN (SELECT id FROM task_agents WHERE task_id = ?)",
+    )
+    .bind(&alone.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    for task in [&both, &alone] {
+        let author = store.task_author(&task.id).await.unwrap();
+        let names: Vec<String> = store
+            .agent_skills(&author.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, ["coding"], "the staffing reads as the merged skill");
+    }
+    assert!(
+        matches!(
+            store.get_skill("testing").await,
+            Err(StoreError::NotFound { .. })
+        ),
+        "and nothing holds the merged skill's row in place any more"
+    );
+}
+
 /// A database from before a release can hold a skill of the user's own under
 /// the name that release ships. The seed adopts it: the row becomes a
 /// built-in, its text stays on it as the override — so the orchestrator runs
@@ -3011,7 +3178,7 @@ async fn an_edit_replaces_the_whole_author_list() {
             NewTaskAgent::new(Seat::Author, ["coding"], default_pin()),
             NewTaskAgent::new(
                 Seat::Author,
-                ["coding", "testing"],
+                ["coding", "debugging"],
                 pin("codex-acp:gpt-5.6-terra"),
             ),
         ]

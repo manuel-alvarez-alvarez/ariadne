@@ -477,7 +477,7 @@ fn adopt_takes_the_session_the_new_goal_and_the_task_flags() {
         "-d",
         "The brief",
         "--author",
-        "coding,testing=codex-acp:gpt-5.6-sol@xhigh",
+        "coding,documentation=codex-acp:gpt-5.6-sol@xhigh",
         "--reviewer",
         "code-review=claude-agent-acp:claude-opus-5@high",
         "--reviewer",
@@ -503,7 +503,7 @@ fn adopt_takes_the_session_the_new_goal_and_the_task_flags() {
     assert_eq!(repos, ["01REPO", "/work/ui"]);
     assert_eq!(title.as_deref(), Some("Wire the limiter in"));
     assert_eq!(description, "The brief");
-    assert_eq!(author.skills, ["coding", "testing"]);
+    assert_eq!(author.skills, ["coding", "documentation"]);
     assert_eq!(author.model, "codex-acp:gpt-5.6-sol");
     assert_eq!(author.effort.as_deref(), Some("xhigh"));
     assert_eq!(
@@ -1242,7 +1242,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         "--title",
         "Do it",
         "--author",
-        "coding,testing=claude-agent-acp:claude-opus-5",
+        "coding,documentation=claude-agent-acp:claude-opus-5",
         "--reviewer",
         "code-review=codex-acp:o3",
         "--reviewer",
@@ -1253,7 +1253,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         panic!("task create")
     };
     assert_eq!(authors.len(), 1);
-    assert_eq!(authors[0].skills, ["coding", "testing"]);
+    assert_eq!(authors[0].skills, ["coding", "documentation"]);
     assert_eq!(authors[0].model, "claude-agent-acp:claude-opus-5");
     assert_eq!(
         reviewers

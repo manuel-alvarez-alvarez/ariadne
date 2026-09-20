@@ -3505,7 +3505,7 @@
             "description": "The names of the skills this agent loads, in the order they reach it.\nA name no skill answers to is refused.",
             "example": [
               "coding",
-              "testing"
+              "documentation"
             ]
           }
         },
@@ -6049,7 +6049,7 @@
             "description": "The skills this agent loads, in the order they reach it.",
             "example": [
               "coding",
-              "testing"
+              "documentation"
             ]
           }
         }

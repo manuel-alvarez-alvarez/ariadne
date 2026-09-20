@@ -68,7 +68,7 @@ pub const ORCHESTRATION_SKILL: &str = "orchestration";
 /// adding a kind of work Ariadne knows how to staff. One skill is nobody's to
 /// staff: [`ORCHESTRATION_SKILL`] belongs to the orchestrator's seat, and the
 /// store refuses a task agent staffed on it.
-pub const BUILTIN_SKILLS: [BuiltinSkill; 18] = [
+pub const BUILTIN_SKILLS: [BuiltinSkill; 13] = [
     // Orchestrating.
     builtin(
         ORCHESTRATION_SKILL,
@@ -85,7 +85,6 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 18] = [
         "refactoring",
         include_str!("../skills/refactoring/SKILL.md"),
     ),
-    builtin("testing", include_str!("../skills/testing/SKILL.md")),
     builtin(
         "documentation",
         include_str!("../skills/documentation/SKILL.md"),
@@ -101,10 +100,6 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 18] = [
         include_str!("../skills/spec-review/SKILL.md"),
     ),
     builtin(
-        "security-review",
-        include_str!("../skills/security-review/SKILL.md"),
-    ),
-    builtin(
         "performance-review",
         include_str!("../skills/performance-review/SKILL.md"),
     ),
@@ -113,13 +108,7 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 18] = [
         include_str!("../skills/architecture-review/SKILL.md"),
     ),
     // Operating.
-    builtin("release", include_str!("../skills/release/SKILL.md")),
-    builtin(
-        "dependency-upgrade",
-        include_str!("../skills/dependency-upgrade/SKILL.md"),
-    ),
     builtin("migration", include_str!("../skills/migration/SKILL.md")),
-    builtin("triage", include_str!("../skills/triage/SKILL.md")),
     builtin(
         "conflict-resolution",
         include_str!("../skills/conflict-resolution/SKILL.md"),
@@ -129,6 +118,21 @@ pub const BUILTIN_SKILLS: [BuiltinSkill; 18] = [
 const fn builtin(name: &'static str, document: &'static str) -> BuiltinSkill {
     BuiltinSkill { name, document }
 }
+
+/// The skills that merged into another, each with the skill that took over
+/// its work.
+///
+/// A merge is not a drop. The name here is gone from the catalog, but the
+/// work it covered is still done, so the rows that named it are rewritten to
+/// the name that does it now ([`crate::Store`] applies this on every open).
+/// A task staffed before the merge then reads as the work it did, and the
+/// row of the merged skill is left for the prune to take out.
+///
+/// `testing` merged into `coding`: 92 of 96 staffings of it sat beside
+/// `coding` on the same agent, and an author that wrote the code wrote the
+/// tests with it. One document states both, and the orchestrator makes one
+/// decision instead of two.
+pub const MERGED_SKILLS: [(&str, &str); 1] = [("testing", "coding")];
 
 /// The document Ariadne ships under `name`, or `None` where it ships none —
 /// which is every skill the user wrote, and those carry their own text.
@@ -229,7 +233,7 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan one Ariadne goal into tasks
 /// (`REVIEWER_SYSTEM_PROMPT`), and the landing runs it once after the rebase
 /// ([`LANDING_DIRECT`]). How many runs a branch takes is how many verdicts it
 /// takes, plus that one. A skill scopes the step it owns and names neither
-/// run, so the division cannot go stale in eighteen documents.
+/// run, so the division cannot go stale in fourteen documents.
 ///
 /// The commits are counted the same way, and here too. A task is one
 /// responsibility, cut as one tracer by the orchestrator and squashed by the
@@ -1156,22 +1160,20 @@ mod tests {
     /// none of the whole-suite runs: those belong to the author's seat text,
     /// which is the one place the division is stated.
     ///
-    /// The five here are the skills that used to end a step on the suite. The
-    /// two that are left out run nowhere near a task branch: `code-review` is
-    /// the reviewer's, and `release` runs on the base branch.
+    /// The three here are the skills that used to end a step on the suite,
+    /// and `coding` carries two rules of its own since `testing` merged into
+    /// it: the scoped check at the end, and the one test it watches fail. The
+    /// one skill that is left out runs nowhere near a task branch:
+    /// `code-review` is the reviewer's.
     #[test]
     fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
         for (name, step) in [
             ("coding", "run the tests and the lint of what you changed"),
+            ("coding", "Run the one test, never the suite around it."),
             ("debugging", "the tests of the crate you changed are green"),
-            ("testing", "Run the one test, never the suite around it."),
             (
                 "conflict-resolution",
                 "Run the tests and the lint of the files you resolved.",
-            ),
-            (
-                "dependency-upgrade",
-                "Run the tests, the lint and the build of the packages that use the dependency.",
             ),
         ] {
             let document = unwrapped(default_skill_document(name).unwrap());
@@ -1648,8 +1650,8 @@ mod tests {
     /// A background poll of a check was the largest single waste a
     /// measurement of this week's sessions found: an agent started
     /// `cargo nextest` in the background and re-sent its whole context on
-    /// every no-op turn spent waiting for it. `testing`, `coding`,
-    /// `debugging` and `code-review` each carry the fix: a check runs in
+    /// every no-op turn spent waiting for it. `coding`, `debugging` and
+    /// `code-review` each carry the fix: a check runs in
     /// the foreground and is never polled, and its full output goes to a
     /// log file outside the worktree so only the summary and the failures
     /// reach the agent's context.
@@ -1664,7 +1666,7 @@ mod tests {
     /// that is still there read as gone.
     #[test]
     fn checks_run_in_the_foreground_and_print_only_failures() {
-        for name in ["testing", "coding", "debugging", "code-review"] {
+        for name in ["coding", "debugging", "code-review"] {
             let doc = unwrapped(default_skill_document(name).unwrap());
             assert!(
                 doc.contains("in the foreground"),
@@ -1800,9 +1802,8 @@ mod tests {
         for (name, earns) in [
             (
                 "coding",
-                "the trap you hit, or the command that proved the change",
+                "the trap you hit, the seam you had to learn, or the command that proved the change",
             ),
-            ("testing", "the seam or the flake you had to learn"),
             ("debugging", "the cause, once the loop proved it"),
             (
                 "code-review",
@@ -1852,12 +1853,21 @@ mod tests {
     /// and `debugging` get 3200: one runs the ten phases of a whole goal, the
     /// other a feedback loop the agent is talked out of at every step, and
     /// both spend their length on the excuses rather than on the steps.
-    /// `coding`, `testing` and `code-review` get 3000, as the three skills
-    /// almost every task loads and the three whose failure modes are worth
-    /// spelling out. Every other skill gets 2400, which is a template document
-    /// with room for its rules. The total of 50000 is the eighteen at their
-    /// tiers with slack left over, so a skill that grows costs a decision here
-    /// rather than a quiet raid on another skill's share.
+    /// `coding` and `code-review` get the room of the skills almost every
+    /// task loads, and the two whose failure modes are worth spelling out.
+    /// Every other skill gets 2400, which is a template document with room
+    /// for its rules. The total is the thirteen at their tiers, so a skill
+    /// that grows costs a decision here rather than a quiet raid on another
+    /// skill's share. The four skills nothing was ever staffed on —
+    /// `release`, `dependency-upgrade`, `security-review` and `triage` —
+    /// left the catalog, and the total came down with them rather than
+    /// becoming room nobody had argued for.
+    ///
+    /// `coding` gets 5400, because `testing` merged into it. The two ran at
+    /// 3000 each and shared four blocks: the check that ends a step, the
+    /// memory bar, the log rule and half the rationalizations. One document
+    /// states them once and adds the commit form, so the merged cap is the
+    /// two tiers less the overlap the merge took out.
     ///
     /// `code-review` rises from 3000 to 3500 for the new review mechanics. It
     /// starts every check before reading, refreshes a detached worktree and
@@ -1891,7 +1901,7 @@ mod tests {
     /// a paragraph about saving less would have argued against itself.
     #[test]
     fn skill_size_caps_hold() {
-        const TOTAL: usize = 50_000;
+        const TOTAL: usize = 39_000;
         let cap = |name: &str| match name {
             // The orchestration playbook grew a step-4 choice — one author
             // for most tasks, several where the reviewers pick a winner —
@@ -1900,7 +1910,7 @@ mod tests {
             ORCHESTRATION_SKILL => 4100,
             "debugging" => 3500,
             "code-review" => 4300,
-            "coding" | "testing" => 3000,
+            "coding" => 5400,
             _ => 2400,
         };
 

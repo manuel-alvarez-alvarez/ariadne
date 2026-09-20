@@ -1,7 +1,7 @@
 ---
 id: project-memory
 status: current
-updated: 2026-09-19
+updated: 2026-09-20
 areas: [store, api, daemon, mcp, cli, ui, prompts]
 commits: []
 tests:
@@ -66,10 +66,10 @@ Out: prompt injection. Agents choose when to search.
    of the task itself.
 8. No memory is added to a prompt. The MCP session rules tell every seat to
    call `search_memory` before it repeats a discovery, and that read rule is
-   stated there alone (006). Five skills carry a `save_memory` step at the
-   step that earns it: `coding` the trap it hit or the command that proved
-   the change, `testing` the seam or the flake it had to learn, `debugging`
-   the cause once proved, `code-review` a convention breach that repeats
+   stated there alone (006). Four skills carry a `save_memory` step at the
+   step that earns it: `coding` the trap it hit, the seam it had to learn or
+   the command that proved the change, `debugging` the cause once proved,
+   `code-review` a convention breach that repeats
    across tasks, and `research` the finding that answers the question again
    later. `orchestration` searches memory while it explores a goal. Every
    write step carries the same bar: save a trap, a working command or a

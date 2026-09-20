@@ -1301,7 +1301,7 @@ export interface components {
              *     A name no skill answers to is refused.
              * @example [
              *       "coding",
-             *       "testing"
+             *       "documentation"
              *     ]
              */
             skills?: string[];
@@ -2469,7 +2469,7 @@ export interface components {
              * @description The skills this agent loads, in the order they reach it.
              * @example [
              *       "coding",
-             *       "testing"
+             *       "documentation"
              *     ]
              */
             skills: string[];

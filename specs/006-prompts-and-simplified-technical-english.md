@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-09-19
+updated: 2026-09-20
 areas: [prompts, store, core, mcp]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -66,7 +66,7 @@ they describe (003, 004, 005) — and what a skill is (017).
    own — a reviewer runs it once before each verdict it gives (004), and the
    landing runs it once after the rebase and before the fast-forward (005). A
    skill scopes the step it owns to what the change touched and names neither
-   run, so eighteen documents cannot disagree about who runs what. The landing
+   run, so thirteen documents cannot disagree about who runs what. The landing
    briefing carries its own run, as a step of the procedure it belongs to.
    The same text states how the branch is committed: one commit for the task,
    one more commit for each review answer, and no amend (004). A skill carries
@@ -74,8 +74,8 @@ they describe (003, 004, 005) — and what a skill is (017).
    and `refactoring` the moves it made. It repeats neither the review answer
    nor the amend. No skill divides a task into slices or small commits.
    When a memory is written is a skill's step to say, the way the tool of a
-   step is: `coding`, `testing`, `debugging`, `code-review` and `research`
-   each call `save_memory` at the step that earns it, and each carries the
+   step is: `coding`, `debugging`, `code-review` and `research` each call
+   `save_memory` at the step that earns it, and each carries the
    same bar on what is worth keeping (019). `orchestration` calls
    `search_memory` while it explores a goal. No skill repeats the read rule
    the session rules state.

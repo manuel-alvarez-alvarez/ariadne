@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-09-19
+updated: 2026-09-20
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -49,14 +49,24 @@ written into the system prompt (006), and the lifecycle the seats sit in
    unreviewed only when nothing can be tested whole, such as a release or a
    report. That task is approved as soon as its author asks (001). A task
    with several authors needs at least one reviewer, to pick the winner.
-4. Ariadne ships a catalog of eighteen skills, in four scopes:
+4. Ariadne ships a catalog of thirteen skills, in four scopes:
    - **orchestrate** — `orchestration`, the orchestrator's own playbook;
    - **produce** — `spec-writing`, `coding`, `debugging`, `refactoring`,
-     `testing`, `documentation`, `research`;
-   - **review** — `code-review`, `spec-review`, `security-review`,
-     `performance-review`, `architecture-review`;
-   - **operate** — `release`, `dependency-upgrade`, `migration`, `triage`,
-     `conflict-resolution`.
+     `documentation`, `research`;
+   - **review** — `code-review`, `spec-review`, `performance-review`,
+     `architecture-review`;
+   - **operate** — `migration`, `conflict-resolution`.
+
+   The catalog holds what Ariadne is staffed on, so a skill nothing is ever
+   staffed on leaves it. `release`, `dependency-upgrade`, `security-review`
+   and `triage` were staffed on no agent in the first twenty-three goals and
+   were taken out; the work each covered is a task like any other, staffed on
+   the skills that do the work.
+
+   A skill that is always staffed beside another is one skill. `testing`
+   merged into `coding`: 92 of its 96 staffings sat on an agent that held
+   `coding` too. `coding` states both, and the orchestrator makes one
+   decision where it made two.
 5. Each shipped document lives in the code
    (`crates/ariadne-store/skills/<name>/SKILL.md`) and is seeded with a `NULL`
    document. So a reworded skill reaches every database without a migration,
@@ -68,23 +78,34 @@ written into the system prompt (006), and the lifecycle the seats sit in
    catalog gained is adopted: the row becomes a built-in, its text stays as
    the override, and a reset of it goes to the shipped document. That is what
    carries an old database across a release that ships a new skill.
-7. A skill Ariadne ships is reset, never deleted. A skill of the user's own is
+7. The same open takes out a built-in the catalog no longer holds, so that
+   dropping a skill reaches an old database the way adding one does. A skill
+   that merged into another goes first: the staffings that named it name the
+   skill that does its work now, and an agent staffed on both keeps one row.
+   A row
+   still on the shipped text holds nothing of anybody's and goes. A row
+   somebody wrote a document over keeps their text and becomes a skill of
+   their own, theirs to delete and no longer resettable. A row a staffed
+   agent still loads stays a built-in, so an old task still reads as the
+   skills it ran on; it has no text behind it and reads as empty, and it
+   goes on the open after the last task naming it is deleted.
+8. A skill Ariadne ships is reset, never deleted. A skill of the user's own is
    deleted, never reset: nothing ships under its name to go back to.
-8. A skill still loaded by a staffed agent cannot be deleted, and an agent
+9. A skill still loaded by a staffed agent cannot be deleted, and an agent
    cannot be staffed on a skill nothing answers to.
-9. A skill has a seat, read off its name and stored in no column
-   (`Skill::seat`): `orchestration` is the orchestrator's, every other skill
-   a task agent's. The store refuses a task agent staffed on the
-   orchestrator's skill, and the launcher loads that skill from the store for
-   every orchestrator session — indexed and written to disk the way a task
-   agent's skills are (006, 007) — so an edit or a reset of it reaches the
-   next launch.
-10. A skill document obeys the STE rules and the size caps of spec 006, the
+10. A skill has a seat, read off its name and stored in no column
+    (`Skill::seat`): `orchestration` is the orchestrator's, every other skill
+    a task agent's. The store refuses a task agent staffed on the
+    orchestrator's skill, and the launcher loads that skill from the store for
+    every orchestrator session — indexed and written to disk the way a task
+    agent's skills are (006, 007) — so an edit or a reset of it reaches the
+    next launch.
+11. A skill document obeys the STE rules and the size caps of spec 006, the
     same as every other default text. It also obeys the rules the seat texts
     state. No skill divides a task into slices or small commits. `coding`
     builds the whole task and commits it once, and `refactoring` holds every
-    move in one commit (004). `testing`, `coding`, `debugging` and
-    `code-review` each state one more rule, in their own words and place:
+    move in one commit (004). `coding`, `debugging` and `code-review` each
+    state one more rule, in their own words and place:
     run a check in the foreground and never poll a background one, and send
     its full output to a log file outside the worktree, so only the summary
     and the failures reach the agent. Every skill that reads code names the
@@ -97,11 +118,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
     of what it moves; and `orchestration` explores a goal with `repo_map`
     and, where the goal names several repositories, with
     `ariadne knowledge interactions`.
-11. The orchestrator staffs each task: it names the skills of each agent and
+12. The orchestrator staffs each task: it names the skills of each agent and
     the model each runs on (011), may size the effort beside it, and may add
     a brief that the task itself does not carry. How the task ends is agreed
     the same way (005).
-12. Every user-facing skill action exists in both the CLI (`ariadne skill`)
+13. Every user-facing skill action exists in both the CLI (`ariadne skill`)
     and the desktop app, per the parity rule of spec 015.
 
 ## Acceptance criteria
@@ -128,6 +149,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`store.rs::a_new_shipped_skill_reaches_an_existing_database_on_reopen`,
   `::a_reopen_reseeds_no_row_the_database_already_holds`,
   `::a_user_skill_under_a_shipped_name_becomes_a_built_in_on_its_own_text`).
+- A dropped shipped skill leaves an existing database on its next open,
+  except where a document was written over it, which becomes a skill of the
+  user's own, or a staffed agent still loads it, which holds the row in place
+  (`store.rs::a_dropped_shipped_skill_leaves_an_existing_database_on_reopen`).
+- A merged skill hands its staffings to the skill that absorbed it
+  (`store.rs::a_merged_skill_hands_its_staffings_to_the_skill_that_absorbed_it`).
 - An orchestrator session indexes `orchestration` and holds its document in
   the run directory
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`),
@@ -141,7 +168,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - Every shipped skill is named once and describes itself
   (`defaults.rs::every_shipped_skill_is_named_once_and_describes_itself`), and
   every document is within its cap (`defaults.rs::skill_size_caps_hold`).
-- `testing`, `coding`, `debugging` and `code-review` run a check in the
+- `coding`, `debugging` and `code-review` run a check in the
   foreground and send its output to a log file outside the worktree, rather
   than poll a background run
   (`defaults.rs::checks_run_in_the_foreground_and_print_only_failures`).

@@ -91,8 +91,8 @@ Examples:
       --reviewer code-review=claude-agent-acp:claude-opus-5@high
 
   # nothing to review: approved as soon as the author asks
-  ariadne task create <goal-id> --title \"Cut 0.6.0\" \\
-      --author release=claude-agent-acp:claude-sonnet-5 --no-reviewer
+  ariadne task create <goal-id> --title \"Write the 0.6.0 release notes\" \\
+      --author documentation=claude-agent-acp:claude-sonnet-5 --no-reviewer
 ";
 
 /// What `task update --help` ends with.

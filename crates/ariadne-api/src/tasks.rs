@@ -105,7 +105,7 @@ pub struct TaskAgentDto {
     /// which owns no branch.
     pub branch: Option<String>,
     /// The skills this agent loads, in the order they reach it.
-    #[schema(example = json!(["coding", "testing"]))]
+    #[schema(example = json!(["coding", "documentation"]))]
     pub skills: Vec<String>,
     /// What this agent runs on, `<agent>:<model>`.
     #[schema(example = "codex-acp:o3")]
@@ -136,7 +136,7 @@ pub struct AgentAssignment {
     /// The names of the skills this agent loads, in the order they reach it.
     /// A name no skill answers to is refused.
     #[serde(default)]
-    #[schema(example = json!(["coding", "testing"]))]
+    #[schema(example = json!(["coding", "documentation"]))]
     pub skills: Vec<String>,
     /// What this agent runs on, `<agent>:<model>`. Required; the empty
     /// string and the word "default" are refused.

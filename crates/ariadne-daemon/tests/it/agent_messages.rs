@@ -336,11 +336,7 @@ async fn a_review_request_reaches_every_reviewer_as_a_message() {
             ariadne_store::TaskUpdate {
                 reviewers: Some(vec![
                     ariadne_store::NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
-                    ariadne_store::NewTaskAgent::new(
-                        Seat::Reviewer,
-                        ["security-review"],
-                        test_pin(),
-                    ),
+                    ariadne_store::NewTaskAgent::new(Seat::Reviewer, ["spec-review"], test_pin()),
                 ]),
                 ..Default::default()
             },

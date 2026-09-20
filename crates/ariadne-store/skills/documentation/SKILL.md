@@ -17,6 +17,9 @@ code.
    Done when you have run the example yourself.
 4. Say what a thing is for before you say what it takes.
 5. Match the format and the tone of the documents already there.
+6. Link the page where the reader looks for it: the index, the README, or
+   the page above it.
+   Done when a reader reaches the page without a search.
 
 ## Rules
 
@@ -26,6 +29,8 @@ code.
 - Give every option a default and a reason to change it.
 - Name the errors the reader will see, and what each one means.
 - Cut every sentence that carries no information for the reader.
+- Write the page in the same change as the code it describes. A page
+  written later describes what the author remembers, not what landed.
 
 ## Do not tell yourself
 
@@ -38,5 +43,5 @@ code.
 
 ## Done
 
-A reader can do the task from the page alone. Every example runs. Nothing
-on the page is out of date.
+A reader can do the task from the page alone, and reaches it from the
+index. Every example runs. Nothing on the page is out of date.

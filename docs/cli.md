@@ -253,8 +253,8 @@ it starts:
 
 ```sh
 ariadne task update <task-id> --model codex-acp:<model-id> --effort high
-ariadne task create <goal-id> --title "Cut a release" \
-    --author release=codex-acp:<model-id> --no-reviewer --landing none \
+ariadne task create <goal-id> --title "Write the release notes" \
+    --author documentation=codex-acp:<model-id> --no-reviewer --landing none \
     --permission-mode ask
 ```
 
