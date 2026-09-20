@@ -1957,9 +1957,9 @@ mod tests {
     /// `value` itself and a boolean carries a `type` beside it. Read off the
     /// value type alone it looks like an object, `{"value": "<id>"}`, and it
     /// is not: an agent sent that answers `Invalid params` and refuses the
-    /// option, as claude-agent-acp and codex-acp both did when asked on
-    /// 2026-09-20. The shapes are asserted here so the difference is a
-    /// failing test rather than a launch that pins nothing.
+    /// option, as claude-agent-acp, codex-acp and `opencode acp` all three
+    /// did when asked on 2026-09-20. The shapes are asserted here so the
+    /// difference is a failing test rather than a launch that pins nothing.
     #[test]
     fn a_config_option_is_set_by_its_value_flattened_into_the_request() {
         use agent_client_protocol::schema::v1::{
