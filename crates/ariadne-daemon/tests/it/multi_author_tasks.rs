@@ -46,6 +46,19 @@ async fn contest(h: &Harness) -> Contest {
 /// The same, with `reviewers` reviewers on it: what a review announced one
 /// reviewer at a time needs, since one reviewer is one row and no sequence.
 async fn contest_reviewed_by(h: &Harness, reviewers: usize) -> Contest {
+    let mut c = inactive_contest(h, reviewers).await;
+    c.goal = h.activate(&c.goal).await;
+    c
+}
+
+/// The same, on a goal not yet active: the scheduler leaves the task of such
+/// a goal alone, whatever pass reads it. For a test that seeds a state the
+/// scheduler must not act on half-built — its first tick is immediate, so a
+/// pass of its own runs beside the seeding, and one that reads a contested
+/// task before each author's review is open starts that author, which
+/// creates its branch. Such a test seeds everything, and only then calls
+/// `h.activate`.
+async fn inactive_contest(h: &Harness, reviewers: usize) -> Contest {
     h.git_repo("repo");
     let repo = h.repository(&h.at("repo")).await;
     let goal = h.goal_on(&repo, test_pin()).await;
@@ -77,7 +90,6 @@ async fn contest_reviewed_by(h: &Harness, reviewers: usize) -> Contest {
         .await
         .unwrap()
         .remove(0);
-    let goal = h.activate(&goal).await;
     Contest {
         goal,
         repo,
@@ -552,7 +564,11 @@ async fn a_pick_ask_survives_a_failed_hand_off_to_a_live_reviewer() {
 #[tokio::test]
 async fn a_contested_review_survives_a_failed_resume_of_its_first_reviewer() {
     let h = harness().scheduler().await;
-    let c = contest(&h).await;
+    // The goal stays inactive until everything below is seeded: a pass that
+    // read the task before the first author's review was open — the
+    // scheduler's own first tick — would start that author, and the branch
+    // that creates is one the resume can check out.
+    let c = inactive_contest(&h, 1).await;
     // No branch for either author yet: neither has ever spawned to create
     // one. `rouse_reviewer_for`'s worktree setup has nothing to check out.
     h.advance(&c.task, TaskStatus::UnderReview).await;
@@ -571,6 +587,7 @@ async fn a_contested_review_survives_a_failed_resume_of_its_first_reviewer() {
         .await
         .unwrap();
 
+    h.activate(&c.goal).await;
     h.notify(&c.task.id);
     // Waited out rather than slept past: the flush answers only once the
     // notify above's own reconciliation is done, which is the failed resume
@@ -647,7 +664,11 @@ async fn a_contested_review_survives_a_failed_resume_of_its_first_reviewer() {
 #[tokio::test]
 async fn a_pick_ask_survives_a_failed_resume_of_its_reviewer() {
     let h = harness().scheduler().await;
-    let c = contest(&h).await;
+    // The goal stays inactive until everything below is seeded: a pass that
+    // read the task any earlier — the scheduler's own first tick — would
+    // start an author, and the branch that creates is one the resume can
+    // check out.
+    let c = inactive_contest(&h, 1).await;
     // No branch for either author: neither ever spawns to create one, and
     // the pick's fallback resume reads the task's own branch — the first
     // author's own name for it — which is what its worktree setup refuses.
@@ -683,6 +704,7 @@ async fn a_pick_ask_survives_a_failed_resume_of_its_reviewer() {
         .await
         .unwrap();
 
+    h.activate(&c.goal).await;
     h.notify(&c.task.id);
     // Waited out rather than slept past: the flush answers only once the
     // notify above's own reconciliation is done, which is the failed resume
