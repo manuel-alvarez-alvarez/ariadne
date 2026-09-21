@@ -46,7 +46,8 @@ pub enum EdgeKind {
     Calls,
     /// Any other mention: a type annotation, a constructed class.
     References,
-    /// A Rust `impl Trait for Type`.
+    /// A Rust `impl Trait for Type`, or a Java or PHP
+    /// `class A implements I`.
     Implements,
     /// A class or interface that names a base: `class A extends B`,
     /// `class A : B` in C#, `class A(B)` in Python.
@@ -322,10 +323,12 @@ pub fn read(language: Language, source: &str) -> Parsed {
                 doc: doc.map(|doc| cut(&doc, DOC_MAX)),
                 is_test,
             });
-        } else if item.kind == "implementation" {
+        } else if item.kind == "implementation" && language == Language::Rust {
             // `impl Type { … }` in Rust: a scope for the methods in it, and
             // no definition of its own. `impl Trait for Type` is also an
-            // edge from `Type` to `Trait`.
+            // edge from `Type` to `Trait`. Java and PHP tag the interfaces
+            // of an `implements` clause by the same kind: each is a plain
+            // edge from the class it sits in, below.
             let header = &source[item.range.clone()];
             let subject = impl_subject(header);
             if let Some(trait_name) = impl_trait(header) {
@@ -341,6 +344,7 @@ pub fn read(language: Language, source: &str) -> Parsed {
         } else if let TestRule::Call(names) = test_rule
             && item.kind == "call"
             && names.contains(&item.name.as_str())
+            && !has_receiver(source, item.name_range.start)
         {
             let name = first_string_argument(&source[item.range.clone()])
                 .unwrap_or_else(|| item.name.clone());
@@ -521,12 +525,24 @@ fn doc_of(syntax: DocSyntax, source: &str, lines: &Lines, item: &Item) -> Option
             let mut doc_lines: Vec<&str> = Vec::new();
             let mut above = lines_above(source, lines, item.range.start).peekable();
             match above.peek().map(|line| line.trim()) {
+                // The walk up stops at the line that opens the comment, and
+                // that line opens with it: a comment that trails code, or a
+                // second comment closing on the way up, is no doc.
                 Some(line) if line.ends_with("*/") => {
-                    for line in above {
+                    let mut opened = false;
+                    for (at, line) in above.enumerate() {
                         doc_lines.push(line);
-                        if line.trim_start().starts_with("/*") {
+                        let text = line.trim_start();
+                        if let Some(open) = text.find("/*") {
+                            opened = open == 0;
                             break;
                         }
+                        if at > 0 && text.contains("*/") {
+                            break;
+                        }
+                    }
+                    if !opened {
+                        doc_lines.clear();
                     }
                 }
                 _ => doc_lines.extend(above.take_while(|line| line.trim_start().starts_with("//"))),
@@ -556,9 +572,12 @@ fn is_attribute_line(line: &str) -> bool {
 
 /// The docstring of a Python definition: a string literal as the first
 /// statement of the body, which starts after the line the signature ends
-/// on with a colon.
+/// on with a colon, whether that line ends in `\n` or in `\r\n`.
 fn docstring(text: &str, after: usize) -> Option<String> {
-    let body_at = text[after..].find(":\n").map(|at| after + at + 2)?;
+    let body_at = [":\n", ":\r\n"]
+        .into_iter()
+        .filter_map(|end| text[after..].find(end).map(|at| after + at + end.len()))
+        .min()?;
     let body = text[body_at..].trim_start();
     let quote = ["\"\"\"", "'''"]
         .into_iter()
@@ -724,6 +743,12 @@ fn strip_generics_prefix(header: &str) -> &str {
     header
 }
 
+/// Whether the name at byte `at` is called on a receiver: `pattern.test(s)`,
+/// `a?.test(s)`, `Mod.test "x"`. A test call names no receiver.
+fn has_receiver(source: &str, at: usize) -> bool {
+    source[..at].trim_end().ends_with('.')
+}
+
 /// The first string literal in a call's text: the name of an `it(…)`.
 fn first_string_argument(text: &str) -> Option<String> {
     let open = text.find(['\'', '"', '`'])?;
@@ -749,14 +774,14 @@ fn imports_of(language: Language, source: &str) -> Vec<Import> {
     let mut imports = Vec::new();
     match language {
         Language::Rust => {
-            for (at, statement) in statements(source, &["use "], ';') {
+            for (at, statement) in statements(source, &["use "], ';', "//") {
                 for path in expand_braces(statement, "::") {
                     push_import(&mut imports, &path, "::", lines.line_of(at));
                 }
             }
         }
         Language::CSharp => {
-            for (at, statement) in statements(source, &["using "], ';') {
+            for (at, statement) in statements(source, &["using "], ';', "//") {
                 let statement = statement.trim();
                 let statement = statement.strip_prefix("static ").unwrap_or(statement);
                 // `using var file = File.Open(…)` is a statement, not a
@@ -780,12 +805,12 @@ fn imports_of(language: Language, source: &str) -> Vec<Import> {
             }
         }
         Language::Python => {
-            for (at, statement) in statements(source, &["import ", "from "], '\n') {
+            for (at, statement) in statements(source, &["import ", "from "], '\n', "#") {
                 python_import(&mut imports, statement, lines.line_of(at));
             }
         }
         Language::TypeScript | Language::Tsx | Language::JavaScript | Language::Jsx => {
-            for (at, statement) in statements(source, &["import "], '\n') {
+            for (at, statement) in statements(source, &["import "], '\n', "//") {
                 javascript_import(&mut imports, statement, lines.line_of(at));
             }
             // `require` is a call, not a statement: it sits wherever the
@@ -801,7 +826,7 @@ fn imports_of(language: Language, source: &str) -> Vec<Import> {
             }
         }
         Language::Dart => {
-            for (at, statement) in statements(source, &["import ", "export "], ';') {
+            for (at, statement) in statements(source, &["import ", "export "], ';', "//") {
                 dart_import(&mut imports, statement, lines.line_of(at));
             }
         }
@@ -856,7 +881,13 @@ fn call_arguments<'a>(source: &'a str, pattern: &str) -> Vec<(usize, &'a str)> {
 /// Every statement of `source` that opens with one of `keywords` at the
 /// start of a line, each with the byte it opens at and its text past the
 /// keyword, up to `end` — or up to the closing bracket where one is open.
-fn statements<'a>(source: &'a str, keywords: &[&str], end: char) -> Vec<(usize, &'a str)> {
+/// A bracket after the language's `comment` marker opens nothing.
+fn statements<'a>(
+    source: &'a str,
+    keywords: &[&str],
+    end: char,
+    comment: &str,
+) -> Vec<(usize, &'a str)> {
     let lines = Lines::of(source);
     let mut starts = Vec::new();
     for keyword in keywords {
@@ -864,7 +895,7 @@ fn statements<'a>(source: &'a str, keywords: &[&str], end: char) -> Vec<(usize, 
             let line_start = lines.line_start(at);
             // Only a statement of its own, past the visibility it may carry.
             let before = source[line_start..at].trim();
-            if !before.is_empty() && !before.starts_with("pub") && !before.starts_with("export") {
+            if !is_visibility(before) {
                 continue;
             }
             starts.push((at, keyword.len()));
@@ -879,9 +910,18 @@ fn statements<'a>(source: &'a str, keywords: &[&str], end: char) -> Vec<(usize, 
             .get(index + 1)
             .map_or(source.len(), |(next, _)| *next);
         let rest = &source[start..stop];
-        found.push((at, &rest[..import_statement_end(rest, end)]));
+        found.push((at, &rest[..import_statement_end(rest, end, comment)]));
     }
     found
+}
+
+/// Whether the text before an import keyword is no more than a visibility:
+/// nothing, `pub`, `pub(crate)`, `pub(in a::b)` or `export`.
+fn is_visibility(before: &str) -> bool {
+    before.is_empty()
+        || before == "pub"
+        || before == "export"
+        || (before.starts_with("pub(") && before.ends_with(')') && before.matches('(').count() == 1)
 }
 
 /// Where a statement ends: at the first `end` outside a bracket, so a
@@ -894,8 +934,38 @@ pub(crate) fn statement_end(rest: &str, end: char) -> usize {
     balanced_statement_end(&rest[..scan_end], end)
 }
 
-fn import_statement_end(rest: &str, end: char) -> usize {
-    balanced_statement_end(rest, end)
+/// Where an import statement ends: at the first `end` outside a bracket, a
+/// string and a line comment, so a bracket in `# noqa (legacy` opens
+/// nothing.
+fn import_statement_end(rest: &str, end: char, comment: &str) -> usize {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut in_comment = false;
+    for (at, ch) in rest.char_indices() {
+        if in_comment && ch != '\n' {
+            continue;
+        }
+        in_comment = false;
+        if let Some(open) = quote {
+            if ch == open || ch == '\n' {
+                quote = None;
+            }
+            if ch != '\n' {
+                continue;
+            }
+        }
+        if ch == end && depth <= 0 {
+            return at;
+        }
+        match ch {
+            '(' | '{' | '[' => depth += 1,
+            ')' | '}' | ']' => depth -= 1,
+            '\'' | '"' | '`' => quote = Some(ch),
+            _ if rest[at..].starts_with(comment) => in_comment = true,
+            _ => {}
+        }
+    }
+    rest.len()
 }
 
 fn balanced_statement_end(rest: &str, end: char) -> usize {
@@ -979,6 +1049,12 @@ fn push_import(imports: &mut Vec<Import>, path: &str, separator: &str, line: u32
 /// `import a.b`, `import a.b as c`, `from a.b import c, d as e`, and
 /// `from . import x`.
 fn python_import(imports: &mut Vec<Import>, statement: &str, line: u32) {
+    // A `# comment` names nothing, on any line of the statement.
+    let statement = statement
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
     match statement.split_once(" import ") {
         // `from a.b import c, d`: one module, every name in it.
         Some((module, names)) => {
@@ -998,7 +1074,7 @@ fn python_import(imports: &mut Vec<Import>, statement: &str, line: u32) {
         }
         // `import a.b, c`: whole modules, naming nothing in them.
         None => {
-            for module in split_outside_parentheses(statement) {
+            for module in split_outside_parentheses(&statement) {
                 let module = module.trim();
                 let module = module.split(" as ").next().unwrap_or(module).trim();
                 if !module.is_empty() {
@@ -1380,6 +1456,7 @@ fn yaml_pairs(
         if depth < 2
             && let Some(value) = pair.child_by_field_name("value")
             && let Some(nested) = find_block_mapping(value)
+            && !in_sequence(nested, value)
         {
             yaml_pairs(
                 nested,
@@ -1391,6 +1468,21 @@ fn yaml_pairs(
             );
         }
     }
+}
+
+/// Whether `node` sits in a list under `value`: the keys of a list's first
+/// item are no keys of the list.
+fn in_sequence(node: tree_sitter::Node, value: tree_sitter::Node) -> bool {
+    let mut at = node.parent();
+    while let Some(parent) = at
+        && parent != value
+    {
+        if matches!(parent.kind(), "block_sequence" | "flow_sequence") {
+            return true;
+        }
+        at = parent.parent();
+    }
+    false
 }
 
 /// The top-level keys of a TOML document, and the keys of each `[table]`.
@@ -2102,6 +2194,149 @@ pub async fn add_worktree(
                 )
             })
             .collect()
+    }
+
+    /// A method call on a receiver shares its name with a test call, but it
+    /// is no test: `/^a/.test(s)` is a regular expression match.
+    #[test]
+    fn a_method_call_on_a_receiver_is_no_test() {
+        for (language, source) in [
+            (Language::JavaScript, "if (/^a/.test(s)) {}\n"),
+            (Language::TypeScript, "if (/^a/.test(s)) {}\n"),
+            (Language::Dart, "void main() {\n  pattern.test('a');\n}\n"),
+            (Language::Scala, "class T {\n  pattern.test(\"a\")\n}\n"),
+            (
+                Language::Elixir,
+                "defmodule T do\n  def f do\n    Pattern.test(\"a\")\n  end\nend\n",
+            ),
+            (Language::Ruby, "def f\n  spec.it 'a'\nend\n"),
+        ] {
+            let symbols = parse(language, source);
+            assert!(
+                symbols
+                    .iter()
+                    .all(|symbol| !symbol.is_test && symbol.kind != "test"),
+                "{}: {symbols:#?}",
+                language.name()
+            );
+        }
+    }
+
+    /// A Java or PHP `implements` clause is an edge from the class to the
+    /// interface, and the methods of the class stay in the class's scope.
+    #[test]
+    fn an_implements_clause_is_an_edge_from_its_class() {
+        for (language, source) in [
+            (
+                Language::Java,
+                "class A implements Runnable, Closeable {\n    void run() {}\n}\n",
+            ),
+            (
+                Language::Php,
+                "<?php\nclass A implements Runnable, Closeable {\n    public function run() {}\n}\n",
+            ),
+        ] {
+            let found = references_of(language, source);
+            for interface in ["Runnable", "Closeable"] {
+                assert!(
+                    found.contains(&(EdgeKind::Implements, interface.into(), Some("A".into()))),
+                    "{}: {found:?}",
+                    language.name()
+                );
+            }
+            let symbols = parse(language, source);
+            assert_eq!(
+                find(&symbols, "run").qualified_name,
+                "A.run",
+                "{}",
+                language.name()
+            );
+        }
+    }
+
+    /// A block comment that closes at the end of a line of code is no doc of
+    /// the definition below it, and the walk up never reaches another
+    /// comment.
+    #[test]
+    fn a_trailing_block_comment_is_no_doc() {
+        let symbols = parse(
+            Language::C,
+            "/* Licence header. */\n#include <x.h>\nstatic int n; /* count */\nint f(void) { return n; }\n/* Adds. */\nint g(void) { return 1; }\nstatic int m; /* a\n   b */\nint h(void) { return m; }\n",
+        );
+        assert_eq!(find(&symbols, "f").doc, None);
+        assert_eq!(find(&symbols, "g").doc.as_deref(), Some("Adds."));
+        assert_eq!(find(&symbols, "h").doc, None);
+    }
+
+    #[test]
+    fn a_python_docstring_is_read_with_windows_line_endings() {
+        let symbols = parse(
+            Language::Python,
+            "def f():\r\n    \"\"\"Adds.\"\"\"\r\n    return 1\r\n",
+        );
+        assert_eq!(find(&symbols, "f").doc.as_deref(), Some("Adds."));
+    }
+
+    /// A keyword inside a string on a line that starts with `pub` or
+    /// `export` opens no import; a visibility before the keyword does.
+    #[test]
+    fn an_import_keyword_after_other_code_opens_no_import() {
+        let read = |language, source| {
+            imports_of(language, source)
+                .into_iter()
+                .map(|import| (import.module, import.name.unwrap_or_default()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            read(
+                Language::Rust,
+                "pub const H: &str = \"use the --force\";\npub(crate) use a::b;\npub(in crate::m) use c::d;\n",
+            ),
+            [("a".into(), "b".to_string()), ("c".into(), "d".into())]
+        );
+        assert_eq!(
+            read(
+                Language::TypeScript,
+                "export const h = \"import the 'x' file\";\nimport { y } from './y';\n",
+            ),
+            [("./y".into(), "y".to_string())]
+        );
+    }
+
+    /// A bracket in a comment on an import line leaves the statement on its
+    /// line, and the comment is no name.
+    #[test]
+    fn a_comment_on_an_import_line_is_no_part_of_it() {
+        assert_eq!(
+            imports_of(
+                Language::Python,
+                "from x import y  # noqa (legacy\nimport os\n\ndef f():\n    pass\n",
+            ),
+            [
+                Import {
+                    module: "x".into(),
+                    name: Some("y".into()),
+                    line: 1,
+                },
+                Import {
+                    module: "os".into(),
+                    name: None,
+                    line: 2,
+                },
+            ]
+        );
+    }
+
+    /// A key whose value is a list of mappings has no nested keys: the keys
+    /// of the list's first item are no keys of the list.
+    #[test]
+    fn a_yaml_list_of_mappings_gives_no_nested_keys() {
+        let symbols = parse(
+            Language::Yaml,
+            "items:\n  - kind: a\n    name: x\n  - kind: b\nserver:\n  host: h\n",
+        );
+        let names: Vec<&str> = symbols.iter().map(|s| s.qualified_name.as_str()).collect();
+        assert_eq!(names, ["items", "server", "server.host"]);
     }
 
     #[test]

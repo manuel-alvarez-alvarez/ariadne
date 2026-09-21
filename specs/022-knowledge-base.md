@@ -86,18 +86,26 @@ agent to do with the tools (017); and the memory tools beside these (019).
    language's comment syntax finds: the `///` lines right above a Rust or C#
    definition, past its attributes; a `/** … */` block or `//` lines right
    above a JavaScript or TypeScript definition; a Python docstring. Markdown
-   has none. A doc is cut at 1000 characters.
+   has none. A doc is cut at 1000 characters. A block comment is a doc only
+   where its opening `/*` starts a line: a comment that trails code
+   (`static int n; /* count */`) is none, and the walk up stops at the first
+   `/*` or at a second `*/`. A docstring is read after a signature line that
+   ends in `\n` or in `\r\n`.
 6. `is_test` is the language's marker: an attribute naming `test` on a Rust
    definition (`#[test]`, `#[tokio::test]`); a `test_` name in Python;
    `[Fact]`, `[Theory]`, `[Test]` or `[TestMethod]` on a C# method; in
    TypeScript and JavaScript an `it(` or `test(` call, which becomes a symbol
    of kind `test` named by the call's first string argument and scopes what
-   its body names.
+   its body names. A call on a receiver (`/^a/.test(s)`, `x.test(…)`) is no
+   test in any language that marks its tests by a call.
 7. Every reference the tags query captures is a mention of one blob: its
    kind (`call` and `send` are `calls`, `implementation` is `implements`,
    `extends` is `extends`, every other capture is `references`), the name, the
    line, and the definition it sits in — none for a reference at file scope. A
-   Rust `impl Trait for Type` is a mention from `Type` to `Trait`. One
+   Rust `impl Trait for Type` is a mention from `Type` to `Trait`. Java and
+   PHP tag each interface of `class A implements I` by the same kind: it is a
+   mention from `A` to `I`, and no scope. Only a Rust `implementation` is
+   read as an `impl` header. One
    definition naming another names it once, at the first line it does.
 8. The import statements of a file are read off its text, by the syntax of
    its language: `use` in Rust, `import` and `from … import` in Python,
@@ -109,7 +117,10 @@ agent to do with the tools (017); and the memory tools beside these (019).
    directives are ignored. An alias keeps the original name, which is what a
    definition is called. A named import is a mention of kind `imports`, at
    file scope. Every other language names no import, and its references
-   resolve on the three steps that are left.
+   resolve on the three steps that are left. A statement opens at a line
+   start, past no more than a visibility (`pub`, `pub(…)`, `export`): a
+   keyword inside a string opens none. A bracket in a line comment (`#` in
+   Python, `//` elsewhere) opens nothing, and a Python comment is no name.
 9. A mention becomes edges by looking for the definitions of its name in
    four places, nearest first: the same file, the same directory, the
    modules the file imports, and then anywhere in the repository at that
@@ -682,7 +693,8 @@ structure stands in for definitions:
 | SQL | `sql` | the object name of a `CREATE` or `ALTER` statement |
 
 YAML, TOML and JSON stop at one level of nesting; a key deeper than that is
-not a symbol. TOML's `[a.b]` is read as one table named `a.b`, not as `b`
+not a symbol. A YAML key whose value is a list has no nested keys: the keys
+of the list's first item are not the list's. TOML's `[a.b]` is read as one table named `a.b`, not as `b`
 nested under `a`: the grammar does not nest a dotted table under the table
 its prefix names. SQL reads every `CREATE` and `ALTER` statement
 `tree-sitter-sequel` names an object for — a table, a view, an index, a
@@ -782,6 +794,18 @@ the daemon and knowledge WAL files off the commit path.
   (`parser.rs::an_import_is_read_by_the_syntax_of_its_language`,
   `::a_dart_directive_reads_its_module_names_and_line`,
   `::a_reference_belongs_to_the_definition_it_sits_in`).
+- A method call on a receiver is no test; a Java or PHP `implements` clause
+  is an edge from its class; a block comment that trails code is no doc; a
+  docstring is read on CRLF lines; an import keyword after other code opens
+  no import; a comment on an import line is no part of it; a YAML list of
+  mappings gives no nested keys
+  (`parser.rs::a_method_call_on_a_receiver_is_no_test`,
+  `::an_implements_clause_is_an_edge_from_its_class`,
+  `::a_trailing_block_comment_is_no_doc`,
+  `::a_python_docstring_is_read_with_windows_line_endings`,
+  `::an_import_keyword_after_other_code_opens_no_import`,
+  `::a_comment_on_an_import_line_is_no_part_of_it`,
+  `::a_yaml_list_of_mappings_gives_no_nested_keys`).
 - A name resolves at the nearest step that holds a definition, a name past the
   candidate cap resolves nowhere, and a module is matched by the path or the
   qualified name it names
