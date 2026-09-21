@@ -330,6 +330,124 @@ pub(crate) fn edges_of(
     edges
 }
 
+/// The definitions of each name that one batch of blobs can resolve to,
+/// kept as they are read, and no others.
+///
+/// A step answers with every definition it holds up to its cap, and with
+/// nothing past it, so a step never needs more than one definition past its
+/// cap to say what it answers. The keeper holds, for each blob that names a
+/// name, the first `MAX_CANDIDATES + 1` definitions of it in the same file, in
+/// the same directory and in the modules the blob imports, and the first
+/// `MAX_REPOSITORY_CANDIDATES + 1` of the name anywhere. [`edges_of`] answers
+/// the same over what it keeps as over every definition, and what it keeps
+/// grows with the batch, not with the ref: a name every file of the ref
+/// defines is not every file's definition in memory.
+pub(crate) struct Keeper<'a> {
+    wanted: HashMap<&'a str, Wanted<'a>>,
+    kept: HashMap<String, Vec<Candidate>>,
+}
+
+/// One name of the batch: the blobs that name it, and how many of its
+/// definitions were offered at all.
+#[derive(Default)]
+struct Wanted<'a> {
+    seekers: Vec<Seeker<'a>>,
+    anywhere: usize,
+}
+
+/// One blob that names a name, and how many definitions of it each of its
+/// three near steps was offered: the file, the directory, the imports.
+struct Seeker<'a> {
+    blob: &'a str,
+    directory: &'a str,
+    modules: Vec<Vec<&'a str>>,
+    held: [usize; 3],
+}
+
+impl<'a> Keeper<'a> {
+    pub(crate) fn new(named: &'a HashMap<String, Names>) -> Self {
+        let mut wanted: HashMap<&'a str, Wanted<'a>> = HashMap::new();
+        for (blob, names) in named {
+            let modules: Vec<Vec<&str>> = names
+                .imports
+                .iter()
+                .map(|import| module_segments(&import.module))
+                .filter(|segments| !segments.is_empty())
+                .collect();
+            let mut own: Vec<&str> = names
+                .mentions
+                .iter()
+                .map(|mention| mention.name.as_str())
+                .chain(names.imports.iter().filter_map(|i| i.name.as_deref()))
+                .collect();
+            own.sort_unstable();
+            own.dedup();
+            for name in own {
+                wanted.entry(name).or_default().seekers.push(Seeker {
+                    blob,
+                    directory: directory_of(&names.path),
+                    modules: modules.clone(),
+                    held: [0; 3],
+                });
+            }
+        }
+        Keeper {
+            wanted,
+            kept: HashMap::new(),
+        }
+    }
+
+    /// Every name the batch names, once each.
+    pub(crate) fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.wanted.keys().map(|name| name.to_string()).collect();
+        names.sort_unstable();
+        names
+    }
+
+    /// Keep `candidate` where a step of a blob that names `name` still has
+    /// room for one more past its cap.
+    pub(crate) fn offer(&mut self, name: String, candidate: Candidate) {
+        // No step holds these, so they change no answer.
+        if is_outline_only(&candidate) {
+            return;
+        }
+        let Some(wanted) = self.wanted.get_mut(name.as_str()) else {
+            return;
+        };
+        let mut keep = wanted.anywhere <= MAX_REPOSITORY_CANDIDATES;
+        wanted.anywhere += 1;
+        let directory = directory_of(&candidate.path);
+        for seeker in &mut wanted.seekers {
+            let steps = [
+                candidate.blob == seeker.blob,
+                directory == seeker.directory,
+                seeker
+                    .modules
+                    .iter()
+                    .any(|module| module_holds(module, &candidate)),
+            ];
+            for (held, on) in seeker.held.iter_mut().zip(steps) {
+                if on {
+                    keep |= *held <= MAX_CANDIDATES;
+                    *held += 1;
+                }
+            }
+        }
+        if keep {
+            self.kept.entry(name).or_default().push(candidate);
+        }
+    }
+
+    /// How many definitions the keeper holds.
+    pub(crate) fn len(&self) -> usize {
+        self.kept.values().map(Vec::len).sum()
+    }
+
+    pub(crate) fn into_candidates(self) -> HashMap<String, Vec<Candidate>> {
+        self.kept
+    }
+}
+
 /// The foreign references of one ref: every mention of a name the ref
 /// defines nowhere, pointed at the definitions of that name in another
 /// repository. Each is `heuristic` — the name is all that joins them — and
@@ -859,6 +977,82 @@ mod tests {
         let resolved = narrow(&imported, "nothing", "other/b.rs", &imports).unwrap();
         assert_eq!(resolved.step, "import", "an import keeps its cap too");
         assert_eq!(resolved.candidates.len(), MAX_CANDIDATES);
+    }
+
+    /// What the keeper holds resolves every blob as every definition does:
+    /// at each step, below its cap, at it and past it, whichever order the
+    /// definitions are read in, with far definitions of the name on top.
+    #[test]
+    fn the_keeper_resolves_as_every_definition_does_at_each_cap() {
+        let caller = |path: &str, imports: &[&str]| Names {
+            path: path.into(),
+            mentions: vec![Mention {
+                kind: "calls".into(),
+                name: "new".into(),
+                line: 4,
+                from_symbol: None,
+            }],
+            imports: imports
+                .iter()
+                .map(|module| Import {
+                    module: module.to_string(),
+                    name: None,
+                    line: 1,
+                })
+                .collect(),
+        };
+        // Two blobs name `new`: one whose steps are tested, one elsewhere
+        // whose own steps hold room for other definitions.
+        let named = HashMap::from([
+            ("here".to_string(), caller("src/a.rs", &["near::m"])),
+            ("other".to_string(), caller("other/b.rs", &[])),
+        ]);
+        let key = |edges: Vec<Edge>| {
+            let mut keys: Vec<_> = edges
+                .into_iter()
+                .map(|e| (e.from_blob, e.to_symbol, e.step, e.confidence, e.candidates))
+                .collect();
+            keys.sort();
+            keys
+        };
+        let places: [(&str, &str); 4] = [
+            ("here", "src/a.rs"),
+            ("blob", "src/c.rs"),
+            ("blob", "near/m.rs"),
+            ("blob", "far/x.rs"),
+        ];
+        for (step, (blob, path)) in ["file", "directory", "import", "repository"]
+            .into_iter()
+            .zip(places)
+        {
+            for count in 0..=MAX_CANDIDATES as i64 + 2 {
+                let near: Vec<Candidate> = (0..count)
+                    .map(|id| candidate(id, blob, path, "new"))
+                    .collect();
+                let far: Vec<Candidate> = if step == "repository" {
+                    Vec::new()
+                } else {
+                    (0..30)
+                        .map(|id| candidate(100 + id, "far", &format!("far/{id}/m.rs"), "new"))
+                        .collect()
+                };
+                for order in [
+                    far.iter().chain(&near).cloned().collect::<Vec<_>>(),
+                    near.iter().chain(&far).cloned().collect(),
+                ] {
+                    let every = HashMap::from([("new".to_string(), order.clone())]);
+                    let mut keeper = Keeper::new(&named);
+                    for candidate in order {
+                        keeper.offer("new".to_string(), candidate);
+                    }
+                    assert_eq!(
+                        key(edges_of(&named, &keeper.into_candidates())),
+                        key(edges_of(&named, &every)),
+                        "{count} definitions at step {step}"
+                    );
+                }
+            }
+        }
     }
 
     /// Two or three definitions at the repository step are a short list, and

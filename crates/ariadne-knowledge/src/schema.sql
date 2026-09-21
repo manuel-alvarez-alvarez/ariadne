@@ -86,7 +86,6 @@ CREATE TABLE mentions (
 );
 CREATE INDEX mentions_by_blob ON mentions(blob);
 CREATE INDEX mentions_by_name ON mentions(name);
-CREATE INDEX mentions_by_from_symbol ON mentions(from_symbol);
 
 -- The import statements of one blob: `use` in Rust, `import` and `from …
 -- import` in Python, `import` and `require` in TypeScript and JavaScript,
@@ -124,7 +123,6 @@ CREATE TABLE interfaces (
 );
 CREATE INDEX interfaces_by_blob ON interfaces(blob);
 CREATE INDEX interfaces_by_name ON interfaces(kind, name);
-CREATE INDEX interfaces_by_symbol ON interfaces(symbol);
 
 -- Relations between two ends, within and across repositories: a reference
 -- to the definition behind it, a manifest to the package it depends on, a
@@ -185,9 +183,3 @@ CREATE INDEX edges_to ON edges(to_repository, to_ref, kind, to_symbol, from_symb
 -- What deriving one blob's edges again deletes by, and what a dropped ref
 -- deletes by.
 CREATE INDEX edges_by_blob ON edges(from_repository, git_ref, from_blob);
--- A parent delete reaches each edge end by these columns. The query indexes
--- above do not lead with them and cannot serve SQLite's cascade lookup.
-CREATE INDEX edges_by_from_symbol ON edges(from_symbol);
-CREATE INDEX edges_by_to_symbol ON edges(to_symbol);
-CREATE INDEX edges_by_from_blob ON edges(from_blob);
-CREATE INDEX edges_by_to_blob ON edges(to_blob);

@@ -31,6 +31,16 @@ pub const MAX_FILE_SIZE: u64 = 1024 * 1024;
 /// `cat-file` answer holds in memory.
 const BATCH: usize = 200;
 
+/// How many blobs have their edges derived at a time, each batch in a write
+/// transaction of its own. What one batch holds in memory is the mentions and
+/// imports of at most this many files of at most [`MAX_FILE_SIZE`] each, and
+/// the edges they make. Of the definitions of each name they hold, it keeps
+/// what can answer the name ([`resolve::Keeper`]): 4 anywhere, and 21 in the
+/// file, the directory and the imports of each blob that names it. That bound
+/// holds whatever the size of the ref and however many files define one name.
+/// A write waits on one batch at most, not on the whole ref.
+const RESOLVE_BATCH: usize = 500;
+
 /// What one index run did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Indexed {
@@ -234,27 +244,48 @@ impl KnowledgeStore {
     /// Derive the edges of `blobs` again, against the definitions this ref
     /// holds.
     async fn resolve(&self, repository_id: &str, git_ref: &str, blobs: &[String]) -> Result<()> {
-        if blobs.is_empty() {
-            return Ok(());
-        }
-        let named = self.names_of(repository_id, git_ref, blobs).await?;
-        let mut names: Vec<String> = named
-            .values()
-            .flat_map(|names| {
-                names
-                    .mentions
-                    .iter()
-                    .map(|mention| mention.name.clone())
-                    .chain(names.imports.iter().filter_map(|i| i.name.clone()))
-            })
-            .collect();
-        names.sort_unstable();
-        names.dedup();
-        let candidates = self.candidates(repository_id, git_ref, &names).await?;
-        let edges = resolve::edges_of(&named, &candidates);
-        self.commit_edges(repository_id, git_ref, blobs, &edges)
+        self.resolve_in_batches(repository_id, git_ref, blobs, RESOLVE_BATCH)
             .await
+            .map(|_| ())
     }
+
+    /// [`Self::resolve`], `batch` blobs at a time: each batch reads its names
+    /// and their definitions and writes its edges in a transaction of its
+    /// own. A blob's edges depend on its own names and the definitions of the
+    /// ref alone, so the split changes no edge.
+    async fn resolve_in_batches(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+        blobs: &[String],
+        batch: usize,
+    ) -> Result<Batches> {
+        let mut batches = Batches::default();
+        for chunk in blobs.chunks(batch.max(1)) {
+            let named = self.names_of(repository_id, git_ref, chunk).await?;
+            let mut keeper = resolve::Keeper::new(&named);
+            let names = keeper.names();
+            self.each_candidate(repository_id, git_ref, &names, |name, candidate| {
+                keeper.offer(name, candidate)
+            })
+            .await?;
+            batches.most_candidates = batches.most_candidates.max(keeper.len());
+            let edges = resolve::edges_of(&named, &keeper.into_candidates());
+            self.commit_edges(repository_id, git_ref, chunk, &edges)
+                .await?;
+            batches.transactions += 1;
+        }
+        Ok(batches)
+    }
+}
+
+/// What one resolve pass held and wrote.
+#[derive(Debug, Default)]
+struct Batches {
+    /// Write transactions: one per batch.
+    transactions: usize,
+    /// The most definitions one batch held at once.
+    most_candidates: usize,
 }
 
 /// The lines a diff changed, per path on its right-hand side: what
@@ -477,6 +508,147 @@ fn is_binary(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A repository at `dir/repo` holding `files`, in one commit on `main`.
+    fn repo_with(dir: &Path, files: &[(String, String)]) -> std::path::PathBuf {
+        let repo = dir.join("repo");
+        for (path, text) in files {
+            let at = repo.join(path);
+            std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::fs::write(at, text).unwrap();
+        }
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(
+                "git init -q -b main && git add -A && \
+                 git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm files",
+            )
+            .current_dir(&repo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        repo
+    }
+
+    /// Index `repo` at `main`, then derive the edges of every blob of the ref
+    /// again at each of `batches`. Answers the edges of every blob derived
+    /// at once over every definition of every name, as the pass did before
+    /// it was split, and the edges and the counts of each batched run.
+    async fn edges_by_batch(
+        dir: &Path,
+        repo: &Path,
+        batches: &[usize],
+    ) -> (
+        Vec<crate::store::EdgeRow>,
+        Vec<(Batches, Vec<crate::store::EdgeRow>)>,
+    ) {
+        let store = KnowledgeStore::open(dir.join("knowledge.db"))
+            .await
+            .unwrap();
+        store.index("r", repo, "main").await.unwrap();
+        let blobs = store.blobs_at("r", "main").await.unwrap();
+        let named = store.names_of("r", "main", &blobs).await.unwrap();
+        let mut names: Vec<String> = named
+            .values()
+            .flat_map(|names| {
+                names
+                    .mentions
+                    .iter()
+                    .map(|mention| mention.name.clone())
+                    .chain(names.imports.iter().filter_map(|i| i.name.clone()))
+            })
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        let candidates = store.candidates("r", "main", &names).await.unwrap();
+        let edges = resolve::edges_of(&named, &candidates);
+        store
+            .commit_edges("r", "main", &blobs, &edges)
+            .await
+            .unwrap();
+        let whole = store.symbol_edges_at("r", "main").await.unwrap();
+        let mut runs = Vec::new();
+        for &batch in batches {
+            let counts = store
+                .resolve_in_batches("r", "main", &blobs, batch)
+                .await
+                .unwrap();
+            runs.push((counts, store.symbol_edges_at("r", "main").await.unwrap()));
+        }
+        (whole, runs)
+    }
+
+    #[tokio::test]
+    async fn the_fixture_edges_are_the_same_whatever_the_batch_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let files: Vec<(String, String)> = std::fs::read_dir(fixtures)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (
+                    entry.file_name().to_string_lossy().to_string(),
+                    std::fs::read_to_string(entry.path()).unwrap(),
+                )
+            })
+            .collect();
+        let repo = repo_with(dir.path(), &files);
+        let (whole, runs) = edges_by_batch(dir.path(), &repo, &[1, 7, RESOLVE_BATCH]).await;
+        assert!(!whole.is_empty(), "the fixtures make edges");
+        for (at, (_, edges)) in runs.iter().enumerate() {
+            assert_eq!(edges, &whole, "run {at} changed the edges");
+        }
+    }
+
+    /// `files` files, each in a directory of its own. Each calls the file
+    /// before it, a name defined once in the ref, at step `repository`, and
+    /// `shared`, a name every file defines, at step `file`.
+    fn many_files(files: usize) -> Vec<(String, String)> {
+        (0..files)
+            .map(|n| {
+                let before = (n + files - 1) % files;
+                (
+                    format!("src/m{n}/f.rs"),
+                    format!(
+                        "pub fn f{n}() {{\n    f{before}();\n    shared();\n}}\n\npub fn shared() {{}}\n"
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_ref_of_many_blobs_resolves_in_many_transactions_to_the_same_edges() {
+        const FILES: usize = 60;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo_with(dir.path(), &many_files(FILES));
+        let (whole, runs) = edges_by_batch(dir.path(), &repo, &[4]).await;
+        let (counts, edges) = &runs[0];
+        assert_eq!(counts.transactions, FILES.div_ceil(4));
+        assert!(counts.transactions > 1);
+        assert_eq!(whole.len(), FILES * 2, "each file calls two definitions");
+        assert_eq!(edges, &whole);
+    }
+
+    /// Worked example, a batch of 4 of the files of [`many_files`]: the 4
+    /// names `f{before}` have one definition each, and `shared` keeps each
+    /// blob's own definition (its file and its directory) and the first 4 read
+    /// for step `repository`. That is 12 at most, of the `FILES + 4` the
+    /// names have in the ref.
+    #[tokio::test]
+    async fn a_name_every_file_defines_holds_only_what_one_batch_can_resolve_to() {
+        const FILES: usize = 200;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo_with(dir.path(), &many_files(FILES));
+        let (whole, runs) = edges_by_batch(dir.path(), &repo, &[4]).await;
+        let (counts, edges) = &runs[0];
+        assert!(
+            counts.most_candidates <= 12,
+            "a batch held {} definitions",
+            counts.most_candidates
+        );
+        assert_eq!(edges, &whole);
+    }
 
     #[test]
     fn an_ls_tree_record_is_read_for_its_mode_blob_size_and_path() {

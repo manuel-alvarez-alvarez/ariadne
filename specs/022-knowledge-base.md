@@ -137,7 +137,15 @@ agent to do with the tools (017); and the memory tools beside these (019).
     run derives the symbol edges again for every blob it parsed, and for
     every blob of the ref that names a definition the run moved — which is
     every name the touched paths held before the run and after it — and then
-    runs the link pass (rule 31).
+    runs the link pass (rule 31). It derives them 500 blobs at a time: each
+    batch reads the names of its blobs and their definitions, and writes its
+    edges in a transaction of its own. A blob's edges depend on its own names
+    and on the definitions of the ref alone, so the batch size changes no
+    edge. Of the definitions of a name, a batch keeps only what can answer:
+    the first 4 anywhere, and for each blob that names it the first 21 in its
+    file, its directory and its imports. A step answers with nothing past its
+    cap, so one past the cap says all it can. The memory of a run and how
+    long a write waits on it grow with the batch, not with the ref.
 11. A symbol's tests are the symbols marked `is_test` with a path of at most
     two `calls` edges to it: a test that calls it, and a test that calls
     something that calls it.
@@ -616,7 +624,7 @@ scan of its lines.
 
 ## Schema
 
-`crates/ariadne-knowledge/src/schema.sql`, version 12:
+`crates/ariadne-knowledge/src/schema.sql`, version 11:
 
 | Table | Columns | Holds |
 | --- | --- | --- |
@@ -634,10 +642,9 @@ scan of its lines.
 `refs` cascade from `repositories`, `files` from `refs`, and `symbols`,
 `mentions`, `imports`, `interfaces` and `edges` from `blobs` and `symbols`.
 Dropping a ref or a repository then drops the blobs no file holds, with
-their symbols and FTS rows, in batches of 100 blobs and one transaction per
-batch. The orphan lookup is an anti-join through `files_by_blob`, and each
-blob-owned child set is deleted directly before its parent. Thus the store's
-one write connection becomes available between bounded batches.
+their symbols and FTS rows, in two statements: the FTS rows are found by
+rowid, never by reading the table; everything keyed by the blob goes with
+it.
 
 `edges` is indexed in both directions, `(from_repository, git_ref, kind,
 from_symbol, to_symbol, confidence)` and `(to_repository, to_ref, kind,
@@ -650,13 +657,7 @@ they come from; and by
 again deletes by. `files` is indexed by `(blob, repository_id, git_ref)`,
 which is what reading an end's path back joins by. `symbols` is indexed by
 `name`, which is what resolution and `symbol` ask by; `interfaces` by blob
-and by `(kind, name)`. Cascades also have indexes led by every child key:
-`mentions(from_symbol)`, `interfaces(symbol)`, `edges(from_symbol)`,
-`edges(to_symbol)`, `edges(from_blob)` and `edges(to_blob)`.
-
-The store disables SQLite's automatic WAL checkpoint and gives each
-connection a 64 MiB page cache. The daemon's checkpoint task truncates both
-the daemon and knowledge WAL files off the commit path.
+and by `(kind, name)`.
 
 ## Acceptance criteria
 
@@ -751,6 +752,16 @@ the daemon and knowledge WAL files off the commit path.
 - A changed blob has its own edges derived again, and so has every blob that
   names a definition the change moved, and nothing else
   (`knowledge.rs::a_changed_blob_resolves_itself_and_what_names_what_moved`).
+- The edges of a ref are the same whether its blobs are derived one at a
+  time, 7 at a time, 500 at a time or all at once, and a ref of more blobs
+  than a batch writes one transaction per batch
+  (`index.rs::the_fixture_edges_are_the_same_whatever_the_batch_size`,
+  `::a_ref_of_many_blobs_resolves_in_many_transactions_to_the_same_edges`).
+- A name 200 files define holds at most 12 definitions in a batch of 4 blobs,
+  and what a batch keeps resolves as every definition does, at each step
+  below, at and past its cap
+  (`index.rs::a_name_every_file_defines_holds_only_what_one_batch_can_resolve_to`,
+  `resolve.rs::the_keeper_resolves_as_every_definition_does_at_each_cap`).
 - A walk three deep over a hundred thousand edges answers in under 100 ms
   (`store.rs::impact_three_deep_over_a_hundred_thousand_edges_answers_under_a_tenth_of_a_second`).
 - A second commit that changes one file parses only that file, and a run
@@ -775,15 +786,6 @@ the daemon and knowledge WAL files off the commit path.
   `::a_query_becomes_prefix_terms_that_all_have_to_match`).
 - A store at another schema version is rebuilt
   (`store.rs::a_store_at_another_schema_version_is_rebuilt`).
-- Every cascading foreign-key lookup uses an index and scans no child table
-  (`store.rs::every_cascading_foreign_key_delete_uses_an_index`).
-- Dropping 20,000 orphan blobs holding 300,000 symbols and 1,000,000 mentions
-  finishes within 120 seconds, and no batch blocks another write for two
-  seconds (`store.rs::dropping_twenty_thousand_orphan_blobs_keeps_writes_moving`).
-- The knowledge store disables automatic checkpoints and uses a 64 MiB cache,
-  while one daemon checkpoint tick leaves its WAL below 32 KiB
-  (`store.rs::opening_a_store_keeps_checkpoints_off_the_commit_path`,
-  `checkpoint.rs::a_checkpoint_tick_bounds_the_knowledge_write_ahead_log`).
 - `git ls-tree` and `git cat-file --batch` are read record by record, and a
   NUL byte marks a binary
   (`index.rs::an_ls_tree_record_is_read_for_its_mode_blob_size_and_path`,

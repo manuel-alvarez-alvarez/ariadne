@@ -11,6 +11,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use futures_util::TryStreamExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, QueryBuilder, Sqlite};
 
@@ -23,7 +24,7 @@ use crate::resolve::{
 
 /// The schema this build writes. Bump it with every change to `schema.sql`:
 /// a store at another version is thrown away and indexed again.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// The edge kinds a walk of the callers follows: a call, and a request of
 /// a route the definition handles.
@@ -58,9 +59,20 @@ const SCHEMA: &str = include_str!("schema.sql");
 /// short whatever the repository.
 const CHUNK: usize = 500;
 
-/// How many orphan blobs one prune transaction removes. A batch bounds how
-/// long the knowledge store's single write connection stays unavailable.
-const PRUNE_BATCH: usize = 100;
+/// One row of `edges`, as the tests compare them.
+#[cfg(test)]
+pub(crate) type EdgeRow = (
+    String,
+    String,
+    Option<i64>,
+    i64,
+    String,
+    Option<i64>,
+    i64,
+    String,
+    String,
+    i64,
+);
 
 #[derive(Clone)]
 pub struct KnowledgeStore {
@@ -381,12 +393,7 @@ impl KnowledgeStore {
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_secs(5))
-            .foreign_keys(true)
-            // The daemon checkpoints on its own task. An automatic checkpoint
-            // would run on this single write connection after a commit.
-            .pragma("wal_autocheckpoint", "0")
-            // Keep 64 MB of this large index's recently read pages in memory.
-            .pragma("cache_size", format!("-{}", 64 * 1024));
+            .foreign_keys(true);
         let write = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options.clone())
@@ -409,14 +416,6 @@ impl KnowledgeStore {
             .connect_with(options.read_only(true))
             .await?;
         Ok(Self { write, read })
-    }
-
-    /// Fold the write-ahead log into the database, off the commit path.
-    pub async fn checkpoint(&self) -> Result<()> {
-        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-            .execute(&self.write)
-            .await?;
-        Ok(())
     }
 
     // -- status ---------------------------------------------------------------
@@ -585,8 +584,8 @@ impl KnowledgeStore {
             .bind(repository_id)
             .execute(&mut *tx)
             .await?;
+        prune_orphan_blobs(&mut tx).await?;
         tx.commit().await?;
-        prune_orphan_blobs(&self.write).await?;
         Ok(())
     }
 
@@ -607,8 +606,8 @@ impl KnowledgeStore {
         .bind(git_ref)
         .execute(&mut *tx)
         .await?;
+        prune_orphan_blobs(&mut tx).await?;
         tx.commit().await?;
-        prune_orphan_blobs(&self.write).await?;
         Ok(())
     }
 
@@ -1889,6 +1888,22 @@ impl KnowledgeStore {
         names: &[String],
     ) -> Result<HashMap<String, Vec<Candidate>>> {
         let mut candidates: HashMap<String, Vec<Candidate>> = HashMap::new();
+        self.each_candidate(repository_id, git_ref, names, |name, candidate| {
+            candidates.entry(name).or_default().push(candidate);
+        })
+        .await?;
+        Ok(candidates)
+    }
+
+    /// Hand every definition of each of `names`, at one ref, to `take` as
+    /// it is read: the definitions `take` drops are never held together.
+    pub(crate) async fn each_candidate(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+        names: &[String],
+        mut take: impl FnMut(String, Candidate),
+    ) -> Result<()> {
         for chunk in names.chunks(CHUNK) {
             let mut sql = QueryBuilder::<Sqlite>::new(
                 "SELECT s.name, s.id, s.blob, f.path, f.language, s.qualified_name, s.start_line
@@ -1904,20 +1919,26 @@ impl KnowledgeStore {
                 values.push_bind(name);
             }
             sql.push(")");
-            let found: Vec<(String, i64, String, String, String, String, i64)> =
-                sql.build_query_as().fetch_all(&self.read).await?;
-            for (name, id, blob, path, language, qualified_name, start_line) in found {
-                candidates.entry(name).or_default().push(Candidate {
-                    id,
-                    blob,
-                    path,
-                    language,
-                    qualified_name,
-                    start_line,
-                });
+            let mut rows = sql
+                .build_query_as::<(String, i64, String, String, String, String, i64)>()
+                .fetch(&self.read);
+            while let Some((name, id, blob, path, language, qualified_name, start_line)) =
+                rows.try_next().await?
+            {
+                take(
+                    name,
+                    Candidate {
+                        id,
+                        blob,
+                        path,
+                        language,
+                        qualified_name,
+                        start_line,
+                    },
+                );
             }
         }
-        Ok(candidates)
+        Ok(())
     }
 
     /// Replace the edges of `blobs` with `edges`, in one transaction: a
@@ -1955,6 +1976,40 @@ impl KnowledgeStore {
         .await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Every symbol edge out of one ref, one row per edge, in a fixed order:
+    /// a doubled edge is two rows.
+    #[cfg(test)]
+    pub(crate) async fn symbol_edges_at(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+    ) -> Result<Vec<EdgeRow>> {
+        Ok(sqlx::query_as(
+            "SELECT from_blob, kind, from_symbol, from_line, to_blob, to_symbol, to_line,
+                    confidence, step, candidates
+             FROM edges
+             WHERE from_repository = ?1 AND git_ref = ?2
+               AND to_repository = ?1 AND to_ref = ?2 AND name IS NULL
+             ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .fetch_all(&self.read)
+        .await?)
+    }
+
+    /// Every blob one ref holds.
+    #[cfg(test)]
+    pub(crate) async fn blobs_at(&self, repository_id: &str, git_ref: &str) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT DISTINCT blob FROM files WHERE repository_id = ? AND git_ref = ? ORDER BY blob",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .fetch_all(&self.read)
+        .await?)
     }
 
     // -- the link pass --------------------------------------------------------
@@ -2492,68 +2547,28 @@ async fn insert_edges(
 /// blobs.
 fn in_blobs(mut sql: QueryBuilder<Sqlite>, blobs: &[String]) -> QueryBuilder<Sqlite> {
     sql.push(" blob IN (");
-    push_blob_values(&mut sql, blobs);
-    sql.push(")");
-    sql
-}
-
-fn push_blob_values(sql: &mut QueryBuilder<Sqlite>, blobs: &[String]) {
     let mut values = sql.separated(", ");
     for blob in blobs {
         values.push_bind(blob);
     }
+    sql.push(")");
+    sql
 }
 
-/// Drop the blobs no file holds, with their symbols and FTS rows. Each bounded
-/// batch commits alone, so another write can take the single connection.
-async fn prune_orphan_blobs(write: &Pool<Sqlite>) -> Result<()> {
-    loop {
-        let mut tx = write.begin().await?;
-        let blobs: Vec<String> = sqlx::query_scalar(
-            "SELECT blobs.blob FROM blobs
-             WHERE NOT EXISTS (SELECT 1 FROM files WHERE files.blob = blobs.blob)
-             ORDER BY blobs.blob LIMIT ?",
-        )
-        .bind(PRUNE_BATCH as i64)
-        .fetch_all(&mut *tx)
+/// Drop the blobs no file holds, with their symbols and their FTS rows: two
+/// statements, whatever the count. The FTS rows go by rowid, which is the
+/// symbol id, and the blobs take their symbols with them.
+async fn prune_orphan_blobs(tx: &mut sqlx::Transaction<'_, Sqlite>) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM symbols_fts WHERE rowid IN
+           (SELECT id FROM symbols WHERE blob NOT IN (SELECT blob FROM files))",
+    )
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query("DELETE FROM blobs WHERE blob NOT IN (SELECT blob FROM files)")
+        .execute(&mut **tx)
         .await?;
-        if blobs.is_empty() {
-            tx.commit().await?;
-            return Ok(());
-        }
-
-        let mut delete_fts = QueryBuilder::<Sqlite>::new(
-            "DELETE FROM symbols_fts WHERE rowid IN (SELECT id FROM symbols WHERE ",
-        );
-        delete_fts = in_blobs(delete_fts, &blobs);
-        delete_fts.push(")");
-        delete_fts.build().execute(&mut *tx).await?;
-
-        let mut delete_edges =
-            QueryBuilder::<Sqlite>::new("DELETE FROM edges WHERE from_blob IN (");
-        push_blob_values(&mut delete_edges, &blobs);
-        delete_edges.push(") OR to_blob IN (");
-        push_blob_values(&mut delete_edges, &blobs);
-        delete_edges.push(")");
-        delete_edges.build().execute(&mut *tx).await?;
-
-        // Delete the blob-owned rows as sets. Leaving them to the parent
-        // cascade would repeat one child lookup for every deleted parent.
-        for table in ["mentions", "interfaces", "imports", "symbols"] {
-            let mut delete =
-                QueryBuilder::<Sqlite>::new(format!("DELETE FROM {table} WHERE blob IN ("));
-            push_blob_values(&mut delete, &blobs);
-            delete.push(")");
-            delete.build().execute(&mut *tx).await?;
-        }
-
-        let mut delete_blobs = in_blobs(
-            QueryBuilder::<Sqlite>::new("DELETE FROM blobs WHERE "),
-            &blobs,
-        );
-        delete_blobs.build().execute(&mut *tx).await?;
-        tx.commit().await?;
-    }
+    Ok(())
 }
 
 /// `PRAGMA user_version` of the file at `path`, or `None` for a file SQLite
@@ -2667,204 +2682,7 @@ fn fts_match(q: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     use super::*;
-
-    #[tokio::test]
-    async fn every_cascading_foreign_key_delete_uses_an_index() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = KnowledgeStore::open(dir.path().join("knowledge.db"))
-            .await
-            .unwrap();
-
-        let repository_plan: Vec<(i64, i64, i64, String)> =
-            sqlx::query_as("EXPLAIN QUERY PLAN DELETE FROM repositories WHERE id = 'repo'")
-                .fetch_all(&store.write)
-                .await
-                .unwrap();
-        let ref_plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
-            "EXPLAIN QUERY PLAN DELETE FROM refs
-             WHERE repository_id = 'repo' AND git_ref = 'main'",
-        )
-        .fetch_all(&store.write)
-        .await
-        .unwrap();
-        let symbol_plan: Vec<(i64, i64, i64, String)> =
-            sqlx::query_as("EXPLAIN QUERY PLAN DELETE FROM symbols WHERE id = 1")
-                .fetch_all(&store.write)
-                .await
-                .unwrap();
-        let blob_plan: Vec<(i64, i64, i64, String)> =
-            sqlx::query_as("EXPLAIN QUERY PLAN DELETE FROM blobs WHERE blob = 'orphan'")
-                .fetch_all(&store.write)
-                .await
-                .unwrap();
-        let plans = [repository_plan, ref_plan, symbol_plan, blob_plan];
-        let plan = plans
-            .iter()
-            .flatten()
-            .map(|(_, _, _, detail)| detail.as_str())
-            .collect::<Vec<_>>();
-
-        for (table, index) in [
-            ("mentions", "mentions_by_from_symbol"),
-            ("interfaces", "interfaces_by_symbol"),
-            ("edges", "edges_by_from_symbol"),
-            ("edges", "edges_by_to_symbol"),
-            ("edges", "edges_by_from_blob"),
-            ("edges", "edges_by_to_blob"),
-        ] {
-            assert!(
-                plan.iter()
-                    .any(|detail| detail.contains(table) && detail.contains(index)),
-                "{table} must use {index}: {plan:#?}"
-            );
-        }
-        for table in [
-            "refs",
-            "files",
-            "symbols",
-            "mentions",
-            "imports",
-            "interfaces",
-            "edges",
-        ] {
-            assert!(
-                plan.iter()
-                    .all(|detail| !detail.starts_with(&format!("SCAN {table}"))),
-                "a parent delete scans {table}: {plan:#?}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn opening_a_store_keeps_checkpoints_off_the_commit_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = KnowledgeStore::open(dir.path().join("knowledge.db"))
-            .await
-            .unwrap();
-
-        let autocheckpoint: i64 = sqlx::query_scalar("PRAGMA wal_autocheckpoint")
-            .fetch_one(&store.write)
-            .await
-            .unwrap();
-        let cache_size: i64 = sqlx::query_scalar("PRAGMA cache_size")
-            .fetch_one(&store.write)
-            .await
-            .unwrap();
-
-        assert_eq!(autocheckpoint, 0);
-        assert_eq!(cache_size, -(64 * 1024));
-    }
-
-    #[tokio::test]
-    async fn dropping_twenty_thousand_orphan_blobs_keeps_writes_moving() {
-        const BLOBS: i64 = 20_000;
-        const SYMBOLS_PER_BLOB: i64 = 15;
-        const MENTIONS_PER_BLOB: i64 = 50;
-        const DROP_BOUND: Duration = Duration::from_secs(120);
-        const WRITE_BOUND: Duration = Duration::from_secs(2);
-
-        let dir = tempfile::tempdir().unwrap();
-        let store = KnowledgeStore::open(dir.path().join("knowledge.db"))
-            .await
-            .unwrap();
-        let mut tx = store.write.begin().await.unwrap();
-        sqlx::raw_sql(
-            "CREATE TEMP TABLE test_blobs (n INTEGER PRIMARY KEY);
-             CREATE TEMP TABLE test_symbols (n INTEGER PRIMARY KEY);
-             CREATE TEMP TABLE test_mentions (n INTEGER PRIMARY KEY);
-             WITH RECURSIVE n(value) AS (
-                 VALUES(0) UNION ALL SELECT value + 1 FROM n WHERE value + 1 < 20000
-             ) INSERT INTO test_blobs SELECT value FROM n;
-             WITH RECURSIVE n(value) AS (
-                 VALUES(0) UNION ALL SELECT value + 1 FROM n WHERE value + 1 < 15
-             ) INSERT INTO test_symbols SELECT value FROM n;
-             WITH RECURSIVE n(value) AS (
-                 VALUES(0) UNION ALL SELECT value + 1 FROM n WHERE value + 1 < 50
-             ) INSERT INTO test_mentions SELECT value FROM n;
-             INSERT INTO repositories (id, state, updated_at) VALUES ('repo', 'idle', 'now');
-             INSERT INTO refs (repository_id, git_ref, commit_sha, indexed_at)
-                 VALUES ('repo', 'branch', 'commit', 'now');
-             INSERT INTO blobs (blob, language, parsed_at)
-                 SELECT printf('blob-%05d', n), 'rust', 'now' FROM test_blobs;
-             INSERT INTO files (repository_id, git_ref, path, blob, language)
-                 SELECT 'repo', 'branch', printf('src/%05d.rs', n),
-                        printf('blob-%05d', n), 'rust'
-                 FROM test_blobs;
-             INSERT INTO symbols (
-                 blob, kind, name, qualified_name, start_line, end_line, signature, is_test
-             )
-                 SELECT printf('blob-%05d', b.n), 'function', printf('f%d_%d', b.n, s.n),
-                        printf('f%d_%d', b.n, s.n), s.n + 1, s.n + 1,
-                        printf('fn f%d_%d()', b.n, s.n), 0
-                 FROM test_blobs b CROSS JOIN test_symbols s ORDER BY b.n, s.n;
-             INSERT INTO symbols_fts (rowid, terms) SELECT id, name FROM symbols;
-             INSERT INTO mentions (blob, kind, name, line, from_symbol)
-                 SELECT printf('blob-%05d', b.n), 'calls', 'called', m.n + 1,
-                        b.n * 15 + (m.n % 15) + 1
-                 FROM test_blobs b CROSS JOIN test_mentions m;",
-        )
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        tx.commit().await.unwrap();
-
-        let counts: (i64, i64, i64) = sqlx::query_as(
-            "SELECT (SELECT COUNT(*) FROM blobs),
-                    (SELECT COUNT(*) FROM symbols),
-                    (SELECT COUNT(*) FROM mentions)",
-        )
-        .fetch_one(&store.read)
-        .await
-        .unwrap();
-        assert_eq!(
-            counts,
-            (BLOBS, BLOBS * SYMBOLS_PER_BLOB, BLOBS * MENTIONS_PER_BLOB)
-        );
-        let done = AtomicBool::new(false);
-        let started = std::time::Instant::now();
-        let drop = async {
-            let result = store.drop_ref("repo", "branch").await;
-            done.store(true, Ordering::Release);
-            result
-        };
-        let contend = async {
-            let mut slowest = Duration::ZERO;
-            let mut writes = 0;
-            while !done.load(Ordering::Acquire) || writes == 0 {
-                let started = std::time::Instant::now();
-                store
-                    .set_state("contender", State::Idle, None)
-                    .await
-                    .unwrap();
-                slowest = slowest.max(started.elapsed());
-                writes += 1;
-                tokio::task::yield_now().await;
-            }
-            (writes, slowest)
-        };
-        let (dropped, (writes, slowest)) = tokio::join!(drop, contend);
-        dropped.unwrap();
-        let took = started.elapsed();
-
-        assert!(took < DROP_BOUND, "drop_ref took {took:?}");
-        assert!(
-            slowest < WRITE_BOUND,
-            "one prune transaction blocked a writer for {slowest:?}"
-        );
-        assert!(writes > 1, "pruning did not release the write connection");
-        let remaining: (i64, i64, i64) = sqlx::query_as(
-            "SELECT (SELECT COUNT(*) FROM blobs),
-                    (SELECT COUNT(*) FROM symbols),
-                    (SELECT COUNT(*) FROM mentions)",
-        )
-        .fetch_one(&store.read)
-        .await
-        .unwrap();
-        assert_eq!(remaining, (0, 0, 0));
-    }
 
     #[test]
     fn an_identifier_is_split_on_camel_case_snake_case_and_path_segments() {

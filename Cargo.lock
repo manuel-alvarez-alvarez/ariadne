@@ -299,6 +299,7 @@ version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "futures-util",
  "sqlx",
  "tempfile",
  "tokio",
