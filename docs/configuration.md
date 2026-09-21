@@ -22,8 +22,6 @@ permission_mode = "auto"           # auto, ask, or learn; the default for new ta
 knowledge_enabled = true           # index every repository into <home>/knowledge.db and
                                    # serve the search_code and outline tools (default);
                                    # false indexes nothing and lists neither tool
-knowledge_workers = 4              # how many files the knowledge base parses at a
-                                   # time (default: half of the cores, at least 1)
 
 [[acp_agents]]                     # extend the built-in ACP agent registry
 id = "my-agent"                    # stable model-id prefix
@@ -35,8 +33,7 @@ The built-in registry contains the ids `claude-agent-acp`, `codex-acp`, and
 `opencode acp`, respectively. The daemon probes every entry at startup. See
 [Installing Ariadne](install.md) to add an agent, and
 [Permission modes](permissions.md) to choose how it handles tool requests, and
-[The knowledge base](knowledge.md) for what `knowledge_enabled` turns on and
-what `knowledge_workers` limits.
+[The knowledge base](knowledge.md) for what `knowledge_enabled` turns on.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

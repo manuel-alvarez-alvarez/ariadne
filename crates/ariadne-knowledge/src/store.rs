@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -25,7 +24,7 @@ use crate::resolve::{
 
 /// The schema this build writes. Bump it with every change to `schema.sql`:
 /// a store at another version is thrown away and indexed again.
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 12;
 
 /// The edge kinds a walk of the callers follows: a call, and a request of
 /// a route the definition handles.
@@ -84,20 +83,6 @@ pub struct KnowledgeStore {
     /// Single-connection pool: every write serializes here.
     write: Pool<Sqlite>,
     read: Pool<Sqlite>,
-    /// How many files of one batch an index run parses at a time.
-    pub(crate) workers: usize,
-    /// Called with the path of each file before it is parsed. Tests only.
-    pub(crate) before_parse: Option<ParseHook>,
-}
-
-/// What [`KnowledgeStore::before_parse`] takes.
-pub(crate) type ParseHook = Arc<dyn Fn(&str) + Send + Sync>;
-
-/// How many files an index run parses at a time where the configuration does
-/// not say: half of the cores, and one at least. A run shares the machine
-/// with the agents it indexes for.
-pub fn default_workers() -> usize {
-    std::thread::available_parallelism().map_or(1, |cores| (cores.get() / 2).max(1))
 }
 
 /// Where a repository's index stands.
@@ -439,27 +424,7 @@ impl KnowledgeStore {
             .max_connections(4)
             .connect_with(options.read_only(true))
             .await?;
-        Ok(Self {
-            write,
-            read,
-            workers: default_workers(),
-            before_parse: None,
-        })
-    }
-
-    /// Parse `workers` files of one batch at a time, and one at least.
-    pub fn with_workers(mut self, workers: usize) -> Self {
-        self.workers = workers.max(1);
-        self
-    }
-
-    /// Call `hook` with the path of each file, on the thread that parses it
-    /// and before it does. For tests: it is where one makes a parse panic, and
-    /// where one counts the parses that run at a time.
-    #[doc(hidden)]
-    pub fn before_parse(mut self, hook: impl Fn(&str) + Send + Sync + 'static) -> Self {
-        self.before_parse = Some(Arc::new(hook));
-        self
+        Ok(Self { write, read })
     }
 
     /// Fold the write-ahead log into the database, off the commit path.
@@ -589,24 +554,6 @@ impl KnowledgeStore {
         .bind(git_ref)
         .fetch_optional(&self.read)
         .await?)
-    }
-
-    /// The commit whose edges a ref holds: the last one a run got through the
-    /// resolution and link passes of. Behind [`Self::ref_commit`] after a run
-    /// that failed between the files and the edges.
-    pub(crate) async fn edges_commit(
-        &self,
-        repository_id: &str,
-        git_ref: &str,
-    ) -> Result<Option<String>> {
-        let commit: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT edges_commit FROM refs WHERE repository_id = ? AND git_ref = ?",
-        )
-        .bind(repository_id)
-        .bind(git_ref)
-        .fetch_optional(&self.read)
-        .await?;
-        Ok(commit.flatten())
     }
 
     /// The refs indexed for a repository.
@@ -1824,57 +1771,7 @@ impl KnowledgeStore {
         Ok(())
     }
 
-    /// Drop the ones among `blobs` that no file holds, with their symbols,
-    /// their FTS rows and everything else keyed by them: what a run stored
-    /// and, failing before it wrote the files, left to nobody. Only the blobs
-    /// named are looked at, so the cost is the failed run's and not the
-    /// store's, and a blob another ref came to hold in the meantime stays.
-    pub(crate) async fn drop_unheld_blobs(&self, blobs: &[String]) -> Result<()> {
-        // A transaction per chunk: each one leaves the store whole, and none
-        // holds the writer for as long as the whole run's blobs would.
-        for chunk in blobs.chunks(CHUNK) {
-            let mut tx = self.write.begin().await?;
-            // The FTS rows go by rowid, which is the symbol id, and first:
-            // the blobs take their symbols with them.
-            let mut sql = QueryBuilder::<Sqlite>::new(
-                "DELETE FROM symbols_fts WHERE rowid IN (SELECT id FROM symbols WHERE blob IN (",
-            );
-            let mut values = sql.separated(", ");
-            for blob in chunk {
-                values.push_bind(blob);
-            }
-            sql.push(") AND NOT EXISTS (SELECT 1 FROM files WHERE files.blob = symbols.blob))");
-            sql.build().execute(&mut *tx).await?;
-            let mut sql = QueryBuilder::<Sqlite>::new("DELETE FROM blobs WHERE blob IN (");
-            let mut values = sql.separated(", ");
-            for blob in chunk {
-                values.push_bind(blob);
-            }
-            sql.push(") AND NOT EXISTS (SELECT 1 FROM files WHERE files.blob = blobs.blob)");
-            sql.build().execute(&mut *tx).await?;
-            tx.commit().await?;
-        }
-        Ok(())
-    }
-
     // -- the resolution pass --------------------------------------------------
-
-    /// Record that the edges of a ref stand for `commit`: the resolution and
-    /// link passes of the run that read it both succeeded.
-    pub(crate) async fn commit_edges_done(
-        &self,
-        repository_id: &str,
-        git_ref: &str,
-        commit: &str,
-    ) -> Result<()> {
-        sqlx::query("UPDATE refs SET edges_commit = ? WHERE repository_id = ? AND git_ref = ?")
-            .bind(commit)
-            .bind(repository_id)
-            .bind(git_ref)
-            .execute(&self.write)
-            .await?;
-        Ok(())
-    }
 
     /// The names the blobs at `paths` define, at one ref.
     pub(crate) async fn names_at(
@@ -2121,6 +2018,7 @@ impl KnowledgeStore {
     }
 
     /// Every blob one ref holds.
+    #[cfg(test)]
     pub(crate) async fn blobs_at(&self, repository_id: &str, git_ref: &str) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar(
             "SELECT DISTINCT blob FROM files WHERE repository_id = ? AND git_ref = ? ORDER BY blob",
@@ -2384,8 +2282,6 @@ impl KnowledgeStore {
     }
 
     /// Record the files of a ref at a commit, once their blobs are stored.
-    /// The edges of the ref are not at that commit yet, and `edges_commit`
-    /// keeps what it held: [`Self::commit_edges_done`] moves it.
     pub(crate) async fn commit_files(
         &self,
         repository_id: &str,

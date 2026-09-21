@@ -365,15 +365,9 @@ async fn a_start_reads_a_task_branch_that_is_gone_without_failing_the_repository
     h.advance(&cast.task, TaskStatus::InProgress).await;
 
     let mut rx = h.bus.subscribe();
-    let knowledge = Knowledge::start(
-        true,
-        ariadne_knowledge::default_workers(),
-        h.at("knowledge.db"),
-        h.store.clone(),
-        h.bus.clone(),
-    )
-    .await
-    .unwrap();
+    let knowledge = Knowledge::start(true, h.at("knowledge.db"), h.store.clone(), h.bus.clone())
+        .await
+        .unwrap();
     indexed(&mut rx, &cast.repo.id, "main", None).await;
     // The lenient run of the missing branch follows the base branch's run
     // at once, and reports nothing.

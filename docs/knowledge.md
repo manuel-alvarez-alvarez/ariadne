@@ -19,11 +19,6 @@ once: an unchanged file is shared between the base branch, every task branch
 and every repository that holds it, so a commit that changes one file parses
 one file.
 
-A run parses several files at a time: half of the cores by default, and
-`knowledge_workers` in `config.toml` sets another number. A file the parser
-cannot get through is skipped, with a warning in the daemon's log that names
-it, and the run goes on with the rest.
-
 The languages, by extension:
 
 | Language | Extensions | Definitions |

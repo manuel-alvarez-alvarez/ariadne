@@ -70,10 +70,9 @@ impl Knowledge {
 
     /// Open the store at `db_path`, start the worker and the follower, and
     /// queue every base branch and in-flight task branch. `enabled = false`
-    /// is [`Self::disabled`]. An index run parses `workers` files at a time.
+    /// is [`Self::disabled`].
     pub async fn start(
         enabled: bool,
-        workers: usize,
         db_path: PathBuf,
         store: Store,
         events: EventBus,
@@ -83,8 +82,7 @@ impl Knowledge {
         }
         let knowledge = KnowledgeStore::open(&db_path)
             .await
-            .with_context(|| format!("opening the knowledge store {}", db_path.display()))?
-            .with_workers(workers);
+            .with_context(|| format!("opening the knowledge store {}", db_path.display()))?;
         let (jobs, rx) = mpsc::unbounded_channel();
         tokio::spawn(worker(knowledge.clone(), store.clone(), events.clone(), rx));
         tokio::spawn(follow(store.clone(), events.subscribe(), jobs.clone()));

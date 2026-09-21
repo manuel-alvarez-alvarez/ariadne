@@ -241,7 +241,6 @@ impl HarnessBuilder {
         let bus = ariadne_daemon::bus::start(store.clone());
         let knowledge = Knowledge::start(
             self.knowledge,
-            config.knowledge_workers,
             config.knowledge_db_path(),
             store.clone(),
             bus.clone(),

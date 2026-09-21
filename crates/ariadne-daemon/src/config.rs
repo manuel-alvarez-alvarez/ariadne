@@ -31,8 +31,6 @@ pub struct Config {
     /// Whether the knowledge base indexes the repositories and serves its
     /// tools. Off, nothing is indexed and no session lists them.
     pub knowledge_enabled: bool,
-    /// How many files an index run of the knowledge base parses at a time.
-    pub knowledge_workers: usize,
     /// The default for ACP task permission requests. A task may override it.
     pub permission_mode: PermissionMode,
     /// User-defined ACP agent commands appended to the built-in registry.
@@ -82,9 +80,6 @@ impl Config {
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
             knowledge_enabled: file.knowledge_enabled.unwrap_or(true),
-            knowledge_workers: file
-                .knowledge_workers
-                .unwrap_or_else(ariadne_knowledge::default_workers),
             permission_mode: file.permission_mode.unwrap_or(PermissionMode::Auto),
             acp_agents: file.acp_agents,
             root,
@@ -146,12 +141,6 @@ mod tests {
         assert!(config.delete_merged_branches);
         assert!(config.prevent_sleep);
         assert!(config.knowledge_enabled);
-        let cores = std::thread::available_parallelism().map_or(1, |cores| cores.get());
-        assert_eq!(
-            config.knowledge_workers,
-            (cores / 2).max(1),
-            "an index run takes half of the cores, and one at least"
-        );
         assert_eq!(config.permission_mode, PermissionMode::Auto);
         assert_eq!(
             config.knowledge_db_path(),
@@ -167,15 +156,6 @@ mod tests {
         let dir = home_with("knowledge_enabled = false\n");
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
         assert!(!config.knowledge_enabled);
-    }
-
-    /// `knowledge_workers` is read: an index run parses that many files at a
-    /// time.
-    #[test]
-    fn the_workers_of_the_knowledge_base_are_read_from_the_config() {
-        let dir = home_with("knowledge_workers = 3\n");
-        let config = Config::load(Some(dir.path().join("home"))).unwrap();
-        assert_eq!(config.knowledge_workers, 3);
     }
 
     /// The check is the start's own reading, without the start: a file the

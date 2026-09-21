@@ -45,8 +45,6 @@ unknown key stops the daemon rather than being ignored):
   prevent_sleep            hold off system sleep while a session is live (default: true)
   knowledge_enabled        index every repository into <home>/knowledge.db and serve
                            the search_code and outline tools (default: true)
-  knowledge_workers        how many files the knowledge base parses at a time
-                           (default: half of the cores, and one at least)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
 
   ariadned --check-config reads that file and exits.\
@@ -130,7 +128,6 @@ async fn main() -> Result<()> {
     // off the request path; a disabled knowledge base serves its refusal.
     let knowledge = ariadne_daemon::knowledge::Knowledge::start(
         config.knowledge_enabled,
-        config.knowledge_workers,
         config.knowledge_db_path(),
         store.clone(),
         events.clone(),

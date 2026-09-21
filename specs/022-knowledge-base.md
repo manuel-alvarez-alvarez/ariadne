@@ -1,7 +1,7 @@
 ---
 id: knowledge-base
 status: current
-updated: 2026-09-21
+updated: 2026-09-20
 areas: [daemon, api, mcp, cli, ui]
 commits: []
 tests:
@@ -49,8 +49,7 @@ reference into an edge, the interfaces a file holds beyond its symbols and
 the link pass that matches them between repositories, the store and its
 schema, when the daemon indexes what, the REST surface and its events, the
 six MCP tools, the `ariadne knowledge` commands, the `knowledge_enabled`
-and `knowledge_workers` keys, and the desktop knowledge screen over the same
-routes (015).
+key, and the desktop knowledge screen over the same routes (015).
 
 Out: languages beyond the registry here; what the skill documents tell an
 agent to do with the tools (017); and the memory tools beside these (019).
@@ -86,18 +85,26 @@ agent to do with the tools (017); and the memory tools beside these (019).
    language's comment syntax finds: the `///` lines right above a Rust or C#
    definition, past its attributes; a `/** … */` block or `//` lines right
    above a JavaScript or TypeScript definition; a Python docstring. Markdown
-   has none. A doc is cut at 1000 characters.
+   has none. A doc is cut at 1000 characters. A block comment is a doc only
+   where its opening `/*` starts a line: a comment that trails code
+   (`static int n; /* count */`) is none, and the walk up stops at the first
+   `/*` or at a second `*/`. A docstring is read after a signature line that
+   ends in `\n` or in `\r\n`.
 6. `is_test` is the language's marker: an attribute naming `test` on a Rust
    definition (`#[test]`, `#[tokio::test]`); a `test_` name in Python;
    `[Fact]`, `[Theory]`, `[Test]` or `[TestMethod]` on a C# method; in
    TypeScript and JavaScript an `it(` or `test(` call, which becomes a symbol
    of kind `test` named by the call's first string argument and scopes what
-   its body names.
+   its body names. A call on a receiver (`/^a/.test(s)`, `x.test(…)`) is no
+   test in any language that marks its tests by a call.
 7. Every reference the tags query captures is a mention of one blob: its
    kind (`call` and `send` are `calls`, `implementation` is `implements`,
    `extends` is `extends`, every other capture is `references`), the name, the
    line, and the definition it sits in — none for a reference at file scope. A
-   Rust `impl Trait for Type` is a mention from `Type` to `Trait`. One
+   Rust `impl Trait for Type` is a mention from `Type` to `Trait`. Java and
+   PHP tag each interface of `class A implements I` by the same kind: it is a
+   mention from `A` to `I`, and no scope. Only a Rust `implementation` is
+   read as an `impl` header. One
    definition naming another names it once, at the first line it does.
 8. The import statements of a file are read off its text, by the syntax of
    its language: `use` in Rust, `import` and `from … import` in Python,
@@ -109,7 +116,10 @@ agent to do with the tools (017); and the memory tools beside these (019).
    directives are ignored. An alias keeps the original name, which is what a
    definition is called. A named import is a mention of kind `imports`, at
    file scope. Every other language names no import, and its references
-   resolve on the three steps that are left.
+   resolve on the three steps that are left. A statement opens at a line
+   start, past no more than a visibility (`pub`, `pub(…)`, `export`): a
+   keyword inside a string opens none. A bracket in a line comment (`#` in
+   Python, `//` elsewhere) opens nothing, and a Python comment is no name.
 9. A mention becomes edges by looking for the definitions of its name in
    four places, nearest first: the same file, the same directory, the
    modules the file imports, and then anywhere in the repository at that
@@ -174,7 +184,7 @@ agent to do with the tools (017); and the memory tools beside these (019).
     byte in its first 8000 bytes), a symlink and a submodule are skipped,
     and a changed path the run skips loses the row it had. Content is read
     from the commit over `git cat-file --batch`, never from a working tree.
-    The files of one batch are parsed a worker each (rule 39).
+    The files of one batch are parsed a core each.
     A route argument scan examines at most 600 bytes and stops on a character
     boundary. Import scans keep complete valid statements and stop malformed
     ones at the next statement. Recursive import-brace, HTML-element and
@@ -549,31 +559,6 @@ agent to do with the tools (017); and the memory tools beside these (019).
     largest degree, removes edges with an end outside that set, and sets
     `truncated`; degree counts the grouped edges at both ends. `total_nodes`
     is the file count before that cut.
-36. A panic of the parser is one file's. The file is skipped: its blob is
-    stored with no symbol, no mention, no import and no interface, the daemon
-    logs a warning with the path and what the panic said, and the run goes on.
-    `Indexed.skipped` names the paths a run skipped. The blob is known from
-    then on, so a later run does not parse it again until its content changes.
-37. A run that fails leaves no blob that it stored and no file holds. Blobs
-    are stored a batch at a time and the files of the ref once, after the last
-    batch, so a failure between the two would leave blobs, symbols, mentions
-    and FTS rows that nothing drops (rule 13 drops with a ref or a repository
-    only). On a failure the run deletes, among the blobs it stored, the ones
-    no file holds, with every row keyed by them. It reads only its own blobs,
-    never the whole table, and a blob another ref came to hold stays.
-38. A ref is done for a commit once its edges are derived. `refs.commit_sha`
-    is the commit the files are at, and `refs.edges_commit` is the commit the
-    edges are at, written after the resolution pass (rule 9) and the link
-    pass (rule 31) both succeeded. A run returns early only where both are
-    the head. Where `edges_commit` is behind `commit_sha`, an earlier run
-    failed between the files and the edges: the run reads what changed since
-    `commit_sha` as any other, resolves every blob of the ref instead of the
-    ones it invalidated, and runs the link pass again.
-39. A run parses the files of one batch on at most `knowledge_workers`
-    workers at a time. The key is in `config.toml`, and defaults to half of
-    the cores, and 1 at least. A value of 0 is read as 1. Each worker takes
-    the next file of the batch that no worker has, so a few large files hold
-    one worker and not the batch.
 
 ## Languages
 
@@ -635,7 +620,8 @@ structure stands in for definitions:
 | SQL | `sql` | the object name of a `CREATE` or `ALTER` statement |
 
 YAML, TOML and JSON stop at one level of nesting; a key deeper than that is
-not a symbol. TOML's `[a.b]` is read as one table named `a.b`, not as `b`
+not a symbol. A YAML key whose value is a list has no nested keys: the keys
+of the list's first item are not the list's. TOML's `[a.b]` is read as one table named `a.b`, not as `b`
 nested under `a`: the grammar does not nest a dotted table under the table
 its prefix names. SQL reads every `CREATE` and `ALTER` statement
 `tree-sitter-sequel` names an object for — a table, a view, an index, a
@@ -660,12 +646,12 @@ scan of its lines.
 
 ## Schema
 
-`crates/ariadne-knowledge/src/schema.sql`, version 13:
+`crates/ariadne-knowledge/src/schema.sql`, version 12:
 
 | Table | Columns | Holds |
 | --- | --- | --- |
 | `repositories` | `id`, `state`, `error`, `updated_at`, `base_ref` | every repository the index heard of, at `idle`, `indexing` or `failed`, and the ref another repository is linked against |
-| `refs` | `repository_id`, `git_ref`, `commit_sha`, `indexed_at`, `edges_commit` | the refs read per repository, each at the commit its files were last read at, and the commit its edges are at (rule 38) |
+| `refs` | `repository_id`, `git_ref`, `commit_sha`, `indexed_at` | the refs read per repository, each at the commit it was last read at |
 | `files` | `repository_id`, `git_ref`, `path`, `blob`, `language` | the tracked files of a ref, each with the blob it held there |
 | `blobs` | `blob`, `language`, `parsed_at` | every blob parsed so far |
 | `symbols` | `id` (autoincrement), `blob`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, `signature`, `doc`, `is_test` | the definitions of one blob |
@@ -734,6 +720,18 @@ the daemon and knowledge WAL files off the commit path.
   (`parser.rs::an_import_is_read_by_the_syntax_of_its_language`,
   `::a_dart_directive_reads_its_module_names_and_line`,
   `::a_reference_belongs_to_the_definition_it_sits_in`).
+- A method call on a receiver is no test; a Java or PHP `implements` clause
+  is an edge from its class; a block comment that trails code is no doc; a
+  docstring is read on CRLF lines; an import keyword after other code opens
+  no import; a comment on an import line is no part of it; a YAML list of
+  mappings gives no nested keys
+  (`parser.rs::a_method_call_on_a_receiver_is_no_test`,
+  `::an_implements_clause_is_an_edge_from_its_class`,
+  `::a_trailing_block_comment_is_no_doc`,
+  `::a_python_docstring_is_read_with_windows_line_endings`,
+  `::an_import_keyword_after_other_code_opens_no_import`,
+  `::a_comment_on_an_import_line_is_no_part_of_it`,
+  `::a_yaml_list_of_mappings_gives_no_nested_keys`).
 - A name resolves at the nearest step that holds a definition, a name past the
   candidate cap resolves nowhere, and a module is matched by the path or the
   qualified name it names
@@ -1101,27 +1099,6 @@ the daemon and knowledge WAL files off the commit path.
 - The command palette opens the knowledge screen on a repository
   (`ui/src/features/command-palette/command-palette.test.tsx::opens the
   knowledge screen on a repository from the palette`).
-- A file whose parse panics is skipped: the run succeeds and names it, the
-  file is held with no symbol, and the other files are indexed with their
-  edges
-  (`knowledge.rs::a_file_whose_parse_panics_is_skipped_and_the_run_goes_on`).
-- A run that stored its blobs and then failed to write the files leaves no
-  row in `blobs`, `symbols`, `mentions` or `symbols_fts` that no file holds,
-  keeps what the ref held before, and the next run parses the same files
-  again (`knowledge.rs::a_failed_run_leaves_no_row_that_no_file_holds`).
-- A run whose resolution pass failed is not done: the next run of the same
-  commit parses nothing, resolves every blob of the ref and writes the edges
-  (`knowledge.rs::a_run_whose_resolve_step_failed_derives_the_edges_on_the_next_run`).
-- A run with 1 worker parses no two files at the same time, and a run with 4
-  parses several
-  (`knowledge.rs::a_run_parses_on_no_more_workers_than_it_was_given`);
-  `knowledge_workers` is read from `config.toml` and defaults to half of the
-  cores
-  (`config.rs::the_workers_of_the_knowledge_base_are_read_from_the_config`,
-  `::a_config_file_that_says_nothing_keeps_every_default`).
-- While one of 2 workers holds a slow file, the other worker reads every
-  other file of the batch
-  (`knowledge.rs::a_slow_file_holds_one_worker_and_not_the_files_behind_it`).
 
 ## Known gap
 
