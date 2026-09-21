@@ -187,7 +187,7 @@ async fn an_approved_task_is_landed_by_its_own_author() {
     // it would have had to skip.
     let argv = h.told(&author.id);
     assert!(
-        argv.contains("git reset --soft main"),
+        argv.contains("git reset --soft \"$(git merge-base main HEAD)\""),
         "the landing briefing does not carry the squash: {argv}"
     );
     // The forge commands themselves, not a bare "gh": the seat's own prompt
@@ -204,7 +204,7 @@ async fn an_approved_task_is_landed_by_its_own_author() {
     sh(&worktree, "git rebase -q main");
     sh(
         &worktree,
-        "git reset --soft main && \
+        "git reset --soft \"$(git merge-base main HEAD)\" && \
          git -c user.email=t@t -c user.name=t commit -qm 'feat(board): render it'",
     );
     let repo = repo_path(&cast.repo);

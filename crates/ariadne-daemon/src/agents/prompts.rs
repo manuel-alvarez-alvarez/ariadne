@@ -711,7 +711,10 @@ mod tests {
         };
 
         let direct = landing_briefing(merging.landing_prompt_text(), &merging, &repo);
-        assert!(direct.contains("git reset --soft main"), "{direct}");
+        assert!(
+            direct.contains("git reset --soft \"$(git merge-base main HEAD)\""),
+            "{direct}"
+        );
         assert!(!direct.contains("gh pr"), "{direct}");
 
         let published = landing_briefing(publishing.landing_prompt_text(), &publishing, &repo);

@@ -1,7 +1,7 @@
 ---
 id: how-a-task-ends
 status: current
-updated: 2026-09-17
+updated: 2026-09-21
 areas: [daemon, store, prompts]
 commits: [ad268ee0, 305ee064, 45c5e131, 8174c256, 90ac6e67, 524856c7, fdd0c5b6, a69b953f, 29e6d84e, f79c8e15, a4d7da95]
 tests:
@@ -61,6 +61,17 @@ state machine around `approved` and `finished` (001).
    failure is a revert rather than a fix. A check that fails is fixed on the
    task branch and rebased again. The push comes before `finish_task`, because
    that call ends the task and the cleanup behind it takes the worktree.
+   The squash goes onto the merge base of the task branch and the base
+   branch, which is the commit the rebase used. A worktree shares its refs,
+   so the base branch can move while the suite runs; a squash onto its name
+   would then take back what landed in between. Before the fast-forward,
+   `git diff --stat {base_branch} HEAD` must list only files of the task.
+   When it lists more, or the fast-forward fails, the base moved, and the
+   author starts again from the fetch. On that later pass the whole suite runs
+   again only after a conflict, or when a new base commit changes a file of
+   the task. Otherwise the checks of the crates that either side changed run
+   on the rebased tree: each side's own tree was proven whole by its own
+   landing, so the tree that lands is still proven.
 6. `pull_request`: rebase once — the only rebase — push the branch, and open
    the request with `gh` (github.com) or `glab` (GitLab), whichever the
    `origin` remote calls for, following the repository's own templates. The
@@ -111,7 +122,16 @@ state machine around `approved` and `finished` (001).
   (`defaults.rs::nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task`).
 - The `merge` briefing runs the whole suite once, between the rebase and the
   fast-forward
-  (`defaults.rs::the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward`).
+  (`defaults.rs::the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward`),
+  and a later pass reruns it only where the base and the task meet (the
+  same test).
+- A squash that runs after another task landed keeps that landing's work, or
+  its fast-forward is refused and the guard names the moved base; the next
+  pass then lands both. The brief's own commands run on a throwaway
+  repository
+  (`defaults.rs::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`),
+  and the brief names the merge-base squash and the guard
+  (`::each_landing_briefing_is_one_strategy_and_nothing_of_the_other`).
 - How a task ends travels as the three endings there are
   (`edit.rs::how_the_task_ends_travels_as_the_three_endings_there_are`).
 

@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-09-20
+updated: 2026-09-21
 areas: [prompts, store, core, mcp]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -135,6 +135,10 @@ they describe (003, 004, 005) — and what a skill is (017).
   (`defaults.rs::the_author_scopes_its_checks_and_names_who_runs_the_whole_suite`),
   the `merge` landing carries the one run of the whole suite
   (`::the_direct_landing_runs_the_whole_suite_after_the_rebase_and_before_the_fast_forward`),
+  with a later pass that reruns it only after a conflict or a base change to
+  a task file, a squash onto the merge base and a guard before the
+  fast-forward (005,
+  `::a_late_squash_keeps_what_another_landing_put_on_the_base_branch`),
   and no shipped skill sends an author to the whole suite
   (`::a_skill_scopes_its_own_checks_to_what_the_task_changed`).
 - The seat text and the two skills that name a commit make the task one commit

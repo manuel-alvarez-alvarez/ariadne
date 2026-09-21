@@ -408,7 +408,7 @@ async fn exactly_one_branch_lands_and_the_losers_are_gone() {
     sh(&winner_worktree, "git rebase -q main");
     sh(
         &winner_worktree,
-        "git reset --soft main && \
+        "git reset --soft \"$(git merge-base main HEAD)\" && \
          git -c user.email=t@t -c user.name=t commit -qm 'feat: the contested change'",
     );
     sh(&repo, &format!("git merge -q --ff-only {winner_branch}"));

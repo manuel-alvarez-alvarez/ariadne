@@ -410,16 +410,28 @@ Answer every point. Where you disagree, say why the code stays."#;
 /// rebase, before the fast-forward, while failures remain fixable. The commits
 /// before them — the task's one, and one per review answer — were proven by the
 /// checks of what they changed alone ([`AUTHOR_SYSTEM_PROMPT`]).
+///
+/// The squash goes onto the merge base of the branch, never onto the name
+/// `{base_branch}`: a worktree shares its refs, so that name moves while the
+/// suite runs, and a reset onto it takes back what landed in between. The
+/// merge base is the commit the rebase used, and it needs no shell variable
+/// that a later command would lose. A base that moved then fails the guard
+/// and the fast-forward, and the author starts again from the fetch.
+///
+/// A later pass reruns the whole suite only where the new base commits and the
+/// task meet: a conflict, or a file both change. Elsewhere each side's tree was
+/// proven whole by its own landing, and the checks of the crates either side
+/// changed prove them together, so a busy base does not starve the landing.
 const LANDING_DIRECT: &str = r#"# Land task: {task_title}
 
 Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what `git -C {repo_path} remote -v` names, if anything.
 
 1. `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` if on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
 2. `git rebase {base_branch}` in your worktree. Conflicts are yours.
-3. If the rebase changed nothing, keep the reviewer-approved SHA in HEAD. Skip checks. Otherwise, run the whole suite, build and linters once. Fix failures on {branch}; return to step 2.
-4. `git reset --soft {base_branch} && git commit`. Land one commit. Use a Conventional Commits subject and explain what changed and why.
-5. `git -C {repo_path} merge --ff-only {branch}`. If base moved, go to step 1.
-6. `git -C {repo_path} push <remote> {base_branch}`. Push first: `finish_task` ends the task and the cleanup takes your worktree.
+3. If the rebase changed nothing, keep the reviewer-approved SHA in HEAD. Skip checks. Otherwise, run the whole suite, build and linters once. On a later pass, do that only after a conflict or a base change to a task file. Else check the crates either side changed. Fix failures on {branch}; return to step 2.
+4. `git reset --soft "$(git merge-base {base_branch} HEAD)" && git commit`, with a Conventional Commits subject.
+5. If `git diff --stat {base_branch} HEAD` lists only task files, run `git -C {repo_path} merge --ff-only {branch}`. Else, or if it fails, go to step 1.
+6. `git -C {repo_path} push <remote> {base_branch}`. Push first: `finish_task` removes your worktree.
 7. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`."#;
 
 /// What the author of an approved task in a `pull_request` repository is
@@ -727,6 +739,14 @@ mod tests {
     /// 880 to 1000 for the run it gained after the rebase. The landings' total
     /// rises from 2570 to 2700 with it. The grand total rises from 7050 to
     /// 7380 for the added author and landing rules.
+    ///
+    /// Then five landings in one day each took back the work of another. The
+    /// direct landing gained the squash onto the merge base, the guard before
+    /// the fast-forward and the rule that keeps a busy base from rerunning the
+    /// whole suite on each pass. Those are new steps, and the rest of the text
+    /// was cut to hold them, so its cap rises from 1000 to 1150 alone. The
+    /// landings' total rises from 2700 to 2850, and the grand total from 7380
+    /// to 7530, with it.
     #[test]
     fn size_caps_hold() {
         // Raised from 1500 for the reviewer's pick briefing: a kind that did
@@ -736,8 +756,8 @@ mod tests {
         // counted apart, because a repository could rewrite the other two and
         // never that one. Nothing rewrites any of them now, so they are one
         // set, and the total is the two plus the third at its own cap.
-        const LANDING_TOTAL: usize = 2700;
-        const GRAND_TOTAL: usize = 7380;
+        const LANDING_TOTAL: usize = 2850;
+        const GRAND_TOTAL: usize = 7530;
 
         // A cap per seat, not one for the three. The orchestrator's carried
         // its playbook up to 1750; the playbook is the `orchestration` skill
@@ -759,7 +779,7 @@ mod tests {
             _ => 300,
         };
         let landing_cap = |landing: Landing| match landing {
-            Landing::Merge => 1000,
+            Landing::Merge => 1150,
             Landing::PullRequest => 1300,
             Landing::None => 420,
         };
@@ -1196,6 +1216,120 @@ mod tests {
             direct.contains("If the rebase changed nothing, keep the reviewer-approved SHA in HEAD. Skip checks."),
             "the direct landing does not skip checks after an unchanged rebase: {direct}"
         );
+
+        // A base that moves during the run sends the author round again, and
+        // only a pass where the two sides meet pays for the whole run again.
+        assert!(
+            direct.contains(
+                "On a later pass, do that only after a conflict or a base change to a task file."
+            ),
+            "the direct landing does not say when a later pass reruns the suite: {direct}"
+        );
+        assert!(
+            direct.contains("Else check the crates either side changed."),
+            "the direct landing does not scope the checks of a later pass: {direct}"
+        );
+    }
+
+    /// A squash never removes the work of a landing that came in between.
+    ///
+    /// A worktree shares its refs with the repository, so `{base_branch}` is
+    /// a name that moves while the whole suite runs. Squashed onto that name,
+    /// the commit sits on the new tip with the tree of the old rebase, and
+    /// takes back what landed in between; the fast-forward then succeeds,
+    /// because the new tip is its parent. This runs the brief's own commands
+    /// on a throwaway repository, with no remote, for two tasks rebased on the
+    /// same base: the first lands, then the second squashes.
+    #[test]
+    fn a_late_squash_keeps_what_another_landing_put_on_the_base_branch() {
+        use std::path::Path;
+        use std::process::Command;
+
+        let direct = default_landing_prompt(Landing::Merge);
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let editor = dir.path().join("editor.sh");
+        std::fs::write(&editor, "#!/bin/sh\necho 'feat: land a task' > \"$1\"\n").unwrap();
+        let sh = |cwd: &Path, script: &str| {
+            Command::new("sh")
+                .args(["-c", script])
+                .current_dir(cwd)
+                .env("GIT_EDITOR", format!("sh {}", editor.display()))
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap()
+        };
+        let run = |cwd: &Path, script: &str| {
+            let out = sh(cwd, script);
+            assert!(out.status.success(), "{script}: {out:?}");
+            String::from_utf8(out.stdout).unwrap()
+        };
+        // The backticked command of the brief that holds `needle`, rendered
+        // for `branch`.
+        let step = |needle: &str, branch: &str| {
+            let command = direct
+                .split('`')
+                .skip(1)
+                .step_by(2)
+                .find(|command| command.contains(needle))
+                .unwrap_or_else(|| panic!("the direct landing has no {needle}: {direct}"));
+            command
+                .replace("{base_branch}", "main")
+                .replace("{branch}", branch)
+                .replace("{repo_path}", &repo.display().to_string())
+        };
+
+        std::fs::create_dir(&repo).unwrap();
+        run(
+            &repo,
+            "git init -q -b main && echo base > base.txt && git add . && git commit -qm base",
+        );
+        for task in ["first", "second"] {
+            run(
+                &repo,
+                &format!(
+                    "git worktree add -q -b {task} ../{task} && cd ../{task} && echo {task} > {task}.txt && git add . && git commit -qm {task}"
+                ),
+            );
+            run(&dir.path().join(task), &step("git rebase", task));
+        }
+
+        // The first lands while the second runs its suite.
+        let first = dir.path().join("first");
+        run(&first, &step("reset --soft", "first"));
+        run(&first, &step("merge --ff-only {branch}", "first"));
+
+        let second = dir.path().join("second");
+        run(&second, &step("reset --soft", "second"));
+        let landed = sh(&second, &step("merge --ff-only {branch}", "second"));
+        let tree = run(&repo, "git ls-tree --name-only main");
+        if landed.status.success() {
+            assert!(
+                tree.contains("first.txt"),
+                "the second landing removed the first: {tree}"
+            );
+            return;
+        }
+
+        // Refused, and the guard names why: the base moved under the squash.
+        assert!(!tree.contains("second.txt"), "{tree}");
+        let guard = run(&second, &step("git diff --stat", "second"));
+        assert!(guard.contains("first.txt"), "{guard}");
+
+        // So the second goes round again from its rebase, and lands both.
+        run(&second, &step("git rebase", "second"));
+        run(&second, &step("reset --soft", "second"));
+        let guard = run(&second, &step("git diff --stat", "second"));
+        assert!(!guard.contains("first.txt"), "{guard}");
+        run(&second, &step("merge --ff-only {branch}", "second"));
+        let tree = run(&repo, "git ls-tree --name-only main");
+        assert!(
+            tree.contains("first.txt") && tree.contains("second.txt"),
+            "{tree}"
+        );
     }
 
     /// A skill scopes the step it owns to what the task changed, and names
@@ -1304,7 +1438,8 @@ mod tests {
         // Squashed onto the base with git alone.
         for step in [
             "git rebase {base_branch}",
-            "git reset --soft {base_branch}",
+            "git reset --soft \"$(git merge-base {base_branch} HEAD)\"",
+            "git diff --stat {base_branch} HEAD",
             "merge --ff-only {branch}",
             "git -C {repo_path} push <remote> {base_branch}",
             "Conventional Commits",
