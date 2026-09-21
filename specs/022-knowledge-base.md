@@ -915,11 +915,12 @@ the daemon and knowledge WAL files off the commit path.
 - A changed file the run skips loses its symbols
   (`knowledge.rs::a_changed_file_the_run_skips_loses_its_symbols`).
 - A route scan cuts only on a character boundary, and every registered
-  language returns from each hostile input within two seconds. The inputs
+  language returns from each hostile input within two seconds of CPU time
+  on its thread, so that the load of the machine does not count. The inputs
   cover both parser entry points, the 600-byte route scan limit, the
   128-level structural limit and linear scans of a 1 MiB line
   (`interfaces.rs::a_route_scan_cuts_only_at_a_character_boundary`,
-  `parser.rs::hostile_input_returns_for_every_language_within_two_seconds`).
+  `parser.rs::hostile_input_returns_for_every_language_within_two_cpu_seconds`).
 - A valid import longer than the route scan limit keeps every name
   (`parser.rs::a_long_valid_import_keeps_every_name`).
 - Indexing this repository at HEAD completes in under 30 seconds, and

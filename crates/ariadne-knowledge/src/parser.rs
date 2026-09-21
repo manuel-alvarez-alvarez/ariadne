@@ -2376,27 +2376,36 @@ pub async fn add_worktree(
 
     /// Every registered language returns from hostile input within the file
     /// parser's time budget.
+    ///
+    /// The limit is on the CPU time of the calling thread, which is the work
+    /// the readers do. On a loaded machine the thread waits for a core, and
+    /// wall-clock time counts that wait as well.
     #[test]
-    fn hostile_input_returns_for_every_language_within_two_seconds() {
-        use std::time::{Duration, Instant};
+    fn hostile_input_returns_for_every_language_within_two_cpu_seconds() {
+        use std::time::Duration;
 
         const MIB: usize = 1024 * 1024;
         const LIMIT: Duration = Duration::from_secs(2);
 
+        fn thread_cpu_time() -> Duration {
+            let now = rustix::time::clock_gettime(rustix::time::ClockId::ThreadCPUTime);
+            Duration::new(now.tv_sec as u64, now.tv_nsec as u32)
+        }
+
         fn assert_returns(language: Language, name: &str, source: &str) {
-            let started = Instant::now();
+            let started = thread_cpu_time();
             let parsed = read(language, source);
             assert!(
-                started.elapsed() < LIMIT,
-                "{} parser exceeded two seconds on {name}",
+                thread_cpu_time() - started < LIMIT,
+                "{} parser exceeded two CPU seconds on {name}",
                 language.name()
             );
 
-            let started = Instant::now();
+            let started = thread_cpu_time();
             crate::interfaces::read("hostile.txt", language, source, &parsed.symbols);
             assert!(
-                started.elapsed() < LIMIT,
-                "{} interface reader exceeded two seconds on {name}",
+                thread_cpu_time() - started < LIMIT,
+                "{} interface reader exceeded two CPU seconds on {name}",
                 language.name()
             );
         }

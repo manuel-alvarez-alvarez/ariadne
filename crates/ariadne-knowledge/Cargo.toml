@@ -47,6 +47,9 @@ tree-sitter-toml-ng = "0.7.0"
 tree-sitter-yaml = "0.7.2"
 
 [dev-dependencies]
+# The CPU time of the test thread: a work bound that a loaded machine does
+# not stretch, where wall-clock time does.
+rustix = { workspace = true, features = ["time"] }
 tempfile = "3"
 
 [lints]
