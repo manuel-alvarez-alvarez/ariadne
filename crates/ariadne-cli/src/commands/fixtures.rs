@@ -18,9 +18,9 @@ use ariadne_core::{GoalStatus, Landing, Seat, SessionStatus, TaskStatus};
 
 /// A stamp every fixture is created and updated at, so a rendered row is
 /// reproducible.
-pub const NOW: &str = "2026-08-18T10:00:00Z";
+pub(crate) const NOW: &str = "2026-08-18T10:00:00Z";
 
-pub fn goal(id: &str, title: &str) -> GoalDto {
+pub(crate) fn goal(id: &str, title: &str) -> GoalDto {
     GoalDto {
         id: id.into(),
         title: title.into(),
@@ -37,7 +37,7 @@ pub fn goal(id: &str, title: &str) -> GoalDto {
 }
 
 /// A task in progress, titled after its own id.
-pub fn task(id: &str, goal_id: &str) -> TaskDto {
+pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
     TaskDto {
         id: id.into(),
         goal_id: goal_id.into(),
@@ -64,7 +64,7 @@ pub fn task(id: &str, goal_id: &str) -> TaskDto {
 
 /// A running session: an author's when it names a task, an orchestrator's
 /// when it does not, and one the daemon has raised no attention flag for.
-pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
+pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
     SessionDto {
         id: id.into(),
         goal_id: goal_id.into(),
@@ -92,7 +92,7 @@ pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
 
 /// One agent staffed on a task: the seat it sits in, the skills it carries,
 /// and the model it runs on.
-pub fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
+pub(crate) fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
     TaskAgentDto {
         id: id.into(),
         seat,
@@ -105,7 +105,7 @@ pub fn agent(id: &str, seat: Seat, skills: &[&str]) -> TaskAgentDto {
 }
 
 /// A skill on the document Ariadne ships.
-pub fn skill(name: &str, summary: &str) -> SkillDto {
+pub(crate) fn skill(name: &str, summary: &str) -> SkillDto {
     SkillDto {
         name: name.into(),
         seat: SkillSeat::Task,
@@ -118,7 +118,7 @@ pub fn skill(name: &str, summary: &str) -> SkillDto {
     }
 }
 
-pub fn repository(id: &str, path: &str, base_branch: &str) -> RepositoryDto {
+pub(crate) fn repository(id: &str, path: &str, base_branch: &str) -> RepositoryDto {
     RepositoryDto {
         id: id.into(),
         path: path.into(),

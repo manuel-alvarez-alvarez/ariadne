@@ -64,7 +64,11 @@ async fn found<T: serde::de::DeserializeOwned>(client: &Client, path: &str) -> R
 /// Find the live session for a task or goal seat. Its persisted status is
 /// the liveness check: the daemon's runtime owns the agent, and the liveness
 /// sweep keeps the row honest.
-pub async fn resolve_live(client: &Client, id: &str, seat: Option<Seat>) -> Result<SessionDto> {
+pub(crate) async fn resolve_live(
+    client: &Client,
+    id: &str,
+    seat: Option<Seat>,
+) -> Result<SessionDto> {
     let (sessions, wanted) = candidates(client, id, seat).await?;
     sessions
         .into_iter()
@@ -152,7 +156,7 @@ async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
 
 /// Attach to a task or goal id: the live session of the wanted seat, or the
 /// most recent resumable session of that seat revived.
-pub async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
+pub(crate) async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
     let session = match resolve_live(client, id, seat).await {
         Ok(session) => session,
         Err(_) => {
@@ -164,7 +168,7 @@ pub async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Result<()>
 }
 
 /// `ariadne attach <id>`: session, task or goal id.
-pub async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
+pub(crate) async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
     // Which of the three it is decides everything below, so a short id that
     // names one of each is refused here rather than resolved to whichever
     // list happens to be probed first.

@@ -7,7 +7,7 @@
 //! Where a service manager holds that home's daemon it is asked instead of the
 //! process being spawned or signalled — see [`service`].
 
-pub mod service;
+pub(crate) mod service;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -59,7 +59,7 @@ impl Done {
 /// The client is built for `home` rather than taken from the caller:
 /// `--endpoint` / `ARIADNE_ENDPOINT` — never passed to ariadned — would send
 /// both the already-running check and the readiness poll at a different daemon.
-pub async fn start(home: Option<PathBuf>, format: Format) -> Result<()> {
+pub(crate) async fn start(home: Option<PathBuf>, format: Format) -> Result<()> {
     let client = Client::for_home(home.clone());
     if client.health().await.is_ok() {
         let payload = json!({"started": false, "endpoint": client.endpoint()});
@@ -86,7 +86,7 @@ pub async fn start(home: Option<PathBuf>, format: Format) -> Result<()> {
 
 /// `ariadne daemon stop` — stop the daemon of `home` and wait for its socket
 /// to go, so the command is over when the daemon is.
-pub async fn stop(home: Option<PathBuf>, timeout: u64, format: Format) -> Result<()> {
+pub(crate) async fn stop(home: Option<PathBuf>, timeout: u64, format: Format) -> Result<()> {
     let root = ariadne_home(home);
     let socket = endpoint::socket_path(&root);
     let (done, waited) = halt(&root, &socket, timeout).await?;
@@ -105,7 +105,7 @@ pub async fn stop(home: Option<PathBuf>, timeout: u64, format: Format) -> Result
 
 /// `ariadne daemon restart` — the service's own restart where one manages this
 /// home, and a stop followed by a start where none does.
-pub async fn restart(home: Option<PathBuf>, timeout: u64, format: Format) -> Result<()> {
+pub(crate) async fn restart(home: Option<PathBuf>, timeout: u64, format: Format) -> Result<()> {
     let root = ariadne_home(home.clone());
     let client = Client::for_home(home.clone());
     let socket = endpoint::socket_path(&root);
@@ -153,7 +153,7 @@ pub async fn restart(home: Option<PathBuf>, timeout: u64, format: Format) -> Res
 ///
 /// Read-only in every part: the health call, and the one question the service
 /// manager is asked about the service this home was installed with.
-pub async fn status(client: &Client, home: Option<PathBuf>, format: Format) -> Result<()> {
+pub(crate) async fn status(client: &Client, home: Option<PathBuf>, format: Format) -> Result<()> {
     let h = client.health().await?;
     let root = ariadne_home(home);
     let service = Service::detect(&root).await;
@@ -233,7 +233,7 @@ const LOG_TAIL: usize = 200;
 ///
 /// The file is the fallback, for the one case the API cannot serve: a daemon
 /// that is not answering, which is exactly when its last lines are wanted.
-pub async fn logs(client: &Client, home: Option<PathBuf>, follow: bool) -> Result<()> {
+pub(crate) async fn logs(client: &Client, home: Option<PathBuf>, follow: bool) -> Result<()> {
     let served = match follow {
         true => follow_log(client).await,
         false => print_log(client).await,

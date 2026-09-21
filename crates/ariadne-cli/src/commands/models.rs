@@ -37,7 +37,7 @@ const LS: &[Column] = &[
 const SHOW_KEY_WIDTH: usize = "description".len();
 
 #[derive(Subcommand)]
-pub enum ModelsCommand {
+pub(crate) enum ModelsCommand {
     /// List what every agent can be pinned to
     Ls {
         /// Only what one registry agent can be pinned to
@@ -71,7 +71,7 @@ pub enum ModelsCommand {
     },
 }
 
-pub async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<()> {
     match cmd {
         ModelsCommand::Ls { agent } => ls(client, agent.as_deref(), format).await,
         ModelsCommand::Show { model } => show(client, &model, format).await,

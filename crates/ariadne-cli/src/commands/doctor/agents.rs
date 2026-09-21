@@ -17,7 +17,7 @@ use super::checks::{THERE, forge_check, required_tool};
 ///
 /// Only one ready agent is needed to run sessions, so a rejected one is a
 /// warning: it matters only to work pinned to it.
-pub fn acp_agents(agents: &[AcpAgentDto]) -> Vec<Check> {
+pub(super) fn acp_agents(agents: &[AcpAgentDto]) -> Vec<Check> {
     let mut checks: Vec<Check> = agents
         .iter()
         .map(|agent| match agent.status {
@@ -86,7 +86,7 @@ fn acp_capabilities(agent: &AcpAgentDto) -> String {
 }
 
 /// The daemon's own environment, or the absence of one.
-pub fn daemon_environment(daemon: Option<&DaemonReportDto>) -> Vec<Check> {
+pub(super) fn daemon_environment(daemon: Option<&DaemonReportDto>) -> Vec<Check> {
     let Some(daemon) = daemon else {
         return vec![
             Check::fail(

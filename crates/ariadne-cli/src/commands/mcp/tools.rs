@@ -37,17 +37,17 @@ use crate::commands::query_path;
 /// How long a knowledge answer may be, in bytes. Codex cuts a tool result
 /// at 10 KiB, so an answer is cut here first, with a last line that says
 /// what was left out.
-pub const ANSWER_CAP: usize = 8 * 1024;
+pub(super) const ANSWER_CAP: usize = 8 * 1024;
 
 // ---------- tool parameter types ----------
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct Empty {}
+pub(super) struct Empty {}
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct TaskIdOpt {
+pub(super) struct TaskIdOpt {
     /// Task id. Omit it for your own task.
     pub task_id: Option<String>,
 }
@@ -56,7 +56,7 @@ pub struct TaskIdOpt {
 /// model and effort this task is worth.
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct AgentReq {
+pub(super) struct AgentReq {
     /// The names of the skills this agent loads, from `list_skills`. They are
     /// the whole of what it can do.
     pub skills: Vec<String>,
@@ -73,7 +73,7 @@ pub struct AgentReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct CreateTaskReq {
+pub(super) struct CreateTaskReq {
     pub title: String,
     pub description: String,
     /// The agents that write the task, at least one. Most tasks take one.
@@ -103,7 +103,7 @@ pub struct CreateTaskReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct UpdateTaskReq {
+pub(super) struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -130,28 +130,28 @@ pub struct UpdateTaskReq {
 /// The one task a supervising tool acts on, by id.
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct TaskId {
+pub(super) struct TaskId {
     /// Task id, as `list_tasks` gives it.
     pub task_id: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct ListModelsReq {
+pub(super) struct ListModelsReq {
     /// Filter: an `agent_id` as `list_models` gives it.
     pub agent_id: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct RequestReviewReq {
+pub(super) struct RequestReviewReq {
     /// Your summary of the change, for the reviewers.
     pub summary: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct FailTaskReq {
+pub(super) struct FailTaskReq {
     /// Why you cannot do the task as written. Ariadne records it on the
     /// task, and the user reads only this.
     pub reason: String,
@@ -159,7 +159,7 @@ pub struct FailTaskReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct FinishTaskReq {
+pub(super) struct FinishTaskReq {
     /// The sha of the merge commit on the base branch. Omit it only where
     /// the task lands nothing.
     pub merge_commit: Option<String>,
@@ -167,7 +167,7 @@ pub struct FinishTaskReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct RecordPullRequestReq {
+pub(super) struct RecordPullRequestReq {
     /// The URL of the pull request, as `gh pr create` or `glab mr create`
     /// printed it.
     pub url: String,
@@ -228,14 +228,14 @@ impl From<LandingReq> for Landing {
 #[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 #[serde(rename_all = "snake_case")]
-pub enum Verdict {
+pub(super) enum Verdict {
     Approve,
     RequestChanges,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct SubmitVerdictReq {
+pub(super) struct SubmitVerdictReq {
     /// approve | request_changes
     pub verdict: Verdict,
     /// A note on an approval. On a change request, the feedback the author
@@ -249,7 +249,7 @@ pub struct SubmitVerdictReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct GetDiffReq {
+pub(super) struct GetDiffReq {
     /// The id of the author whose branch to read, from `get_task`. Omit it
     /// where the task has one author.
     pub author: Option<String>,
@@ -257,14 +257,14 @@ pub struct GetDiffReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct PickWinnerReq {
+pub(super) struct PickWinnerReq {
     /// The id of the author you pick, from `get_task`.
     pub author: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct SendMessageReq {
+pub(super) struct SendMessageReq {
     /// Who to write to: the id of an agent `get_task` lists, or
     /// `orchestrator`. A seat word works too: `author` or `reviewer` where
     /// the task staffs one.
@@ -281,7 +281,7 @@ pub struct SendMessageReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct ReadMessagesReq {
+pub(super) struct ReadMessagesReq {
     /// The task whose channel to read. Omit it for your own task.
     pub task_id: Option<String>,
     /// Read the whole thread. Omit it to read only what is new for you.
@@ -290,7 +290,7 @@ pub struct ReadMessagesReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct SaveMemoryReq {
+pub(super) struct SaveMemoryReq {
     /// Repository id. Omit it when this session works in one repository.
     pub repository_id: Option<String>,
     /// The useful fact to save.
@@ -302,7 +302,7 @@ pub struct SaveMemoryReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct SearchMemoryReq {
+pub(super) struct SearchMemoryReq {
     /// Repository id. Omit it when this session works in one repository.
     pub repository_id: Option<String>,
     /// The text to find, without case sensitivity.
@@ -311,7 +311,7 @@ pub struct SearchMemoryReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct SearchCodeReq {
+pub(super) struct SearchCodeReq {
     /// The name to find. Words, camelCase parts and snake_case parts match,
     /// each as a prefix.
     pub query: String,
@@ -332,7 +332,7 @@ pub struct SearchCodeReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct OutlineReq {
+pub(super) struct OutlineReq {
     /// The path of the file, relative to the repository root.
     pub path: String,
     /// Repository id. Omit it when this session works in one repository.
@@ -367,7 +367,7 @@ impl From<DetailReq> for KnowledgeDetail {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct SymbolReq {
+pub(super) struct SymbolReq {
     /// The name of the definition, spelled in full.
     pub name: String,
     /// Repository id. Omit it when this session works in one repository.
@@ -380,7 +380,7 @@ pub struct SymbolReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct ImpactReq {
+pub(super) struct ImpactReq {
     /// The name of the definition you changed. Pass this or `diff`, never
     /// both.
     pub symbol: Option<String>,
@@ -397,7 +397,7 @@ pub struct ImpactReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct PathReq {
+pub(super) struct PathReq {
     /// The name of every starting definition.
     pub from: String,
     /// The name of every ending definition.
@@ -412,7 +412,7 @@ pub struct PathReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct RepoMapReq {
+pub(super) struct RepoMapReq {
     /// Repository id. Omit it for every repository of your goal.
     pub repository: Option<String>,
     /// Rank the files around this one first. Give it the path of a file you

@@ -75,12 +75,12 @@ fn parse_agent(seat: Seat, s: &str) -> Result<AgentAssignment, String> {
 }
 
 /// One `--author SKILLS=MODEL[@EFFORT]`.
-pub fn parse_author(s: &str) -> Result<AgentAssignment, String> {
+pub(crate) fn parse_author(s: &str) -> Result<AgentAssignment, String> {
     parse_agent(Seat::Author, s)
 }
 
 /// One `--reviewer SKILLS=MODEL[@EFFORT]`, in review order.
-pub fn parse_reviewer(s: &str) -> Result<AgentAssignment, String> {
+pub(crate) fn parse_reviewer(s: &str) -> Result<AgentAssignment, String> {
     parse_agent(Seat::Reviewer, s)
 }
 
@@ -110,7 +110,7 @@ fn accepted() -> String {
 /// A struct rather than nine positional arguments, because five of them are
 /// an `Option` or a `bool` and a caller that swapped two would still compile.
 #[derive(Debug, Default)]
-pub struct Edits {
+pub(crate) struct Edits {
     pub title: Option<String>,
     pub description: Option<String>,
     pub model: Option<String>,
@@ -129,7 +129,7 @@ pub struct Edits {
 /// name, and each has a flag of its own for the empty list — `--no-reviewer`
 /// and `--clear-depends-on` — since a repeatable flag cannot be given zero
 /// times on purpose.
-pub fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
+pub(crate) fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
     let Edits {
         title,
         description,
@@ -189,7 +189,7 @@ pub fn update_request(edits: Edits) -> Result<UpdateTaskRequest> {
 /// The goal's repositories answer to their id or to their registered path —
 /// the two spellings `goal inspect` prints — because nobody types a ULID they
 /// have not been given.
-pub async fn resolve_repo(client: &Client, goal_id: &str, spec: &str) -> Result<String> {
+pub(crate) async fn resolve_repo(client: &Client, goal_id: &str, spec: &str) -> Result<String> {
     let g: GoalDto = client.get_json(&format!("/v1/goals/{goal_id}")).await?;
     match pick_repo(&g.repos, spec) {
         Some(id) => Ok(id),

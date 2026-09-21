@@ -107,7 +107,7 @@ Examples:
 ";
 
 #[derive(Subcommand)]
-pub enum TaskCommand {
+pub(crate) enum TaskCommand {
     /// Create a task in a goal
     ///
     /// What the orchestrator does through its MCP tools, from the terminal: the
@@ -304,7 +304,7 @@ pub enum TaskCommand {
     },
 }
 
-pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()> {
     match cmd {
         TaskCommand::Create {
             goal,

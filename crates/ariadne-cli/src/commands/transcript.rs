@@ -5,7 +5,7 @@
 //! the inline console shares.
 
 /// Terminal rendering for [`TranscriptItem`].
-pub mod render {
+pub(crate) mod render {
     use std::collections::HashSet;
 
     use anstyle::{AnsiColor, Color, Style};
@@ -30,7 +30,11 @@ pub mod render {
         Style::new().fg_color(Some(Color::Ansi(color)))
     }
 
-    pub fn transcript(items: &[TranscriptItem], width: Option<usize>, color: bool) -> String {
+    pub(crate) fn transcript(
+        items: &[TranscriptItem],
+        width: Option<usize>,
+        color: bool,
+    ) -> String {
         items.iter().map(|item| block(item, width, color)).collect()
     }
 
@@ -248,7 +252,7 @@ pub mod render {
     }
 
     /// Stateful rendering for the console stream.
-    pub struct StreamRenderer {
+    pub(crate) struct StreamRenderer {
         width: Option<usize>,
         color: bool,
         active_agent: Option<&'static str>,
@@ -257,7 +261,7 @@ pub mod render {
     }
 
     impl StreamRenderer {
-        pub fn new(width: Option<usize>, color: bool) -> Self {
+        pub(crate) fn new(width: Option<usize>, color: bool) -> Self {
             Self {
                 width,
                 color,
@@ -267,7 +271,7 @@ pub mod render {
             }
         }
 
-        pub fn snapshot(&mut self, events: &[AgentEventDto], filters: &Filters) -> String {
+        pub(crate) fn snapshot(&mut self, events: &[AgentEventDto], filters: &Filters) -> String {
             let mut items = filters.apply(fold(events));
             self.active_agent = None;
             self.open_tools.clear();
@@ -311,7 +315,7 @@ pub mod render {
             out
         }
 
-        pub fn event(&mut self, event: &AgentEventDto, filters: &Filters) -> String {
+        pub(crate) fn event(&mut self, event: &AgentEventDto, filters: &Filters) -> String {
             match event.kind.as_str() {
                 "agent_message_chunk" => {
                     self.chunk(event, "agent", "AGENT", AGENT, Style::new(), filters)
@@ -343,7 +347,7 @@ pub mod render {
             }
         }
 
-        pub fn finish(&mut self) -> String {
+        pub(crate) fn finish(&mut self) -> String {
             let had_open_block = self.active_agent.take().is_some()
                 || !self.open_tools.is_empty()
                 || self.pending_permission.is_some();

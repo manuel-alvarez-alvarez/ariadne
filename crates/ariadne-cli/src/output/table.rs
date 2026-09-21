@@ -19,11 +19,11 @@ use anyhow::Result;
 use super::{style, width};
 
 /// Width for a column that is never truncated.
-pub const UNCAPPED: usize = 0;
+pub(crate) const UNCAPPED: usize = 0;
 
 /// Importance of a column that is never dropped, whatever the terminal is:
 /// the id and the title of the thing the row is about.
-pub const KEEP: u8 = u8::MAX;
+pub(crate) const KEEP: u8 = u8::MAX;
 
 /// The ellipsis a cut cell ends with.
 const ELLIPSIS: char = '…';
@@ -37,7 +37,7 @@ const MIN_WIDTH: usize = 8;
 
 /// What a cell holds, which is what says how it is coloured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cell {
+pub(crate) enum Cell {
     /// Anything with no meaning of its own: counts, branches, flags.
     Plain,
     /// An id: there to be copied, not read.
@@ -54,7 +54,7 @@ pub enum Cell {
 
 /// One column of a table.
 #[derive(Debug, Clone, Copy)]
-pub struct Column {
+pub(crate) struct Column {
     /// Printed uppercase as the header, and the name `--columns` takes.
     pub header: &'static str,
     /// Width its cells are cut to, or [`UNCAPPED`].
@@ -67,7 +67,7 @@ pub struct Column {
 
 /// A column that is kept whatever the terminal's width: build it, then say
 /// what it holds and how important it is.
-pub const fn col(header: &'static str, cap: usize) -> Column {
+pub(crate) const fn col(header: &'static str, cap: usize) -> Column {
     Column {
         header,
         cap,
@@ -78,39 +78,39 @@ pub const fn col(header: &'static str, cap: usize) -> Column {
 
 impl Column {
     /// How droppable this column is: `0` goes first. Left off, it stays.
-    pub const fn rank(self, rank: u8) -> Self {
+    pub(crate) const fn rank(self, rank: u8) -> Self {
         Self { rank, ..self }
     }
 
-    pub const fn id(self) -> Self {
+    pub(crate) const fn id(self) -> Self {
         Self {
             cell: Cell::Id,
             ..self
         }
     }
 
-    pub const fn title(self) -> Self {
+    pub(crate) const fn title(self) -> Self {
         Self {
             cell: Cell::Title,
             ..self
         }
     }
 
-    pub const fn status(self) -> Self {
+    pub(crate) const fn status(self) -> Self {
         Self {
             cell: Cell::Status,
             ..self
         }
     }
 
-    pub const fn check(self) -> Self {
+    pub(crate) const fn check(self) -> Self {
         Self {
             cell: Cell::Check,
             ..self
         }
     }
 
-    pub const fn attention(self) -> Self {
+    pub(crate) const fn attention(self) -> Self {
         Self {
             cell: Cell::Attention,
             ..self
@@ -124,7 +124,7 @@ impl Column {
 /// Resolved once from the command line and the environment, so every table,
 /// block and diff of one run agrees — see [`super::init`].
 #[derive(Debug, Clone, Default)]
-pub struct View {
+pub(crate) struct View {
     pub color: bool,
     /// Print cells whole, and every column with them.
     pub no_trunc: bool,
@@ -144,13 +144,13 @@ impl View {
     /// A view that fits everything and colours nothing: what a unit test
     /// renders against, and what the CLI falls back to before `init`.
     #[cfg(test)]
-    pub fn plain() -> Self {
+    pub(crate) fn plain() -> Self {
         Self::default()
     }
 
     /// The same, with a terminal of `width` columns behind it.
     #[cfg(test)]
-    pub fn at(width: usize) -> Self {
+    pub(crate) fn at(width: usize) -> Self {
         Self {
             width: Some(width),
             ..Self::default()
@@ -165,7 +165,7 @@ impl View {
 /// the same thing to a reader's eye, so they look the same: the header row
 /// below goes through the same rule, and a command that breaks its output
 /// into sections — `doctor`, `attention` — paints each heading through here.
-pub fn heading(text: &str, color: bool) -> String {
+pub(crate) fn heading(text: &str, color: bool) -> String {
     style::paint(color, style::HEADING, &text.to_uppercase())
 }
 
@@ -174,7 +174,11 @@ pub fn heading(text: &str, color: bool) -> String {
 /// Fails only on a `--columns` naming a column the table does not have —
 /// which is a typo worth refusing, since silently printing a different table
 /// is worse than saying so.
-pub fn render_table(columns: &[Column], rows: &[Vec<String>], view: &View) -> Result<String> {
+pub(crate) fn render_table(
+    columns: &[Column],
+    rows: &[Vec<String>],
+    view: &View,
+) -> Result<String> {
     let mut tables = render_groups(columns, &[rows], view)?;
     Ok(tables.remove(0))
 }
@@ -186,7 +190,7 @@ pub fn render_table(columns: &[Column], rows: &[Vec<String>], view: &View) -> Re
 /// `ariadne attention` prints a section per goal, and fitting each section on
 /// its own is what made its columns jump between two goals of one screen.
 /// The groups come back in the order they were given, one string each.
-pub fn render_groups(
+pub(crate) fn render_groups(
     columns: &[Column],
     groups: &[&[Vec<String>]],
     view: &View,
@@ -228,7 +232,7 @@ pub fn render_groups(
 /// [`render_table`] refuses the same thing, but only once it is asked for a
 /// table: a screen made of several tables, or one that redraws, asks here
 /// first so the typo is one error rather than one per table.
-pub fn check_columns(columns: &[Column], view: &View) -> Result<()> {
+pub(crate) fn check_columns(columns: &[Column], view: &View) -> Result<()> {
     pick(columns, &view.columns).map(|_| ())
 }
 
@@ -441,7 +445,7 @@ fn cut(text: &str, cap: usize) -> String {
 
 /// The first cell of every row, one per line: `-q`, which is there so a list
 /// can be piped into the next command.
-pub fn quiet_lines(rows: &[Vec<String>]) -> String {
+pub(crate) fn quiet_lines(rows: &[Vec<String>]) -> String {
     rows.iter()
         .map(|row| row.first().cloned().unwrap_or_default())
         .collect::<Vec<_>>()

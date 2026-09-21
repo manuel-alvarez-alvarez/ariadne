@@ -46,7 +46,7 @@ const RETRY_MAX: Duration = Duration::from_secs(15);
 ///
 /// `None` is the first try after a drop: the daemon that is coming right back
 /// is picked up in a beat.
-pub fn backoff(previous: Option<Duration>) -> Duration {
+pub(crate) fn backoff(previous: Option<Duration>) -> Duration {
     match previous {
         None => RETRY,
         Some(wait) => (wait * 2).min(RETRY_MAX),
@@ -55,7 +55,7 @@ pub fn backoff(previous: Option<Duration>) -> Duration {
 
 /// Whether a frame handler wants the next frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Next {
+pub(crate) enum Next {
     /// Keep reading.
     Go,
     /// This was the last frame worth having — the session ended, say.
@@ -64,7 +64,7 @@ pub enum Next {
 
 /// How a follow ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ending {
+pub(crate) enum Ending {
     /// The handler said [`Next::Stop`].
     Done,
     /// Ctrl-C.
@@ -77,7 +77,7 @@ pub enum Ending {
 ///
 /// Returns as soon as the handler stops, the daemon hangs up or the user
 /// interrupts — the caller decides which of those deserves a word.
-pub async fn frames(
+pub(crate) async fn frames(
     client: &Client,
     path: &str,
     mut on_frame: impl FnMut(SseEvent) -> Result<Next>,
@@ -96,7 +96,7 @@ pub async fn frames(
 /// Only the *first* connection can fail outright, which is how a caller with
 /// somewhere else to look — `daemon logs` and its file — hears that the daemon
 /// was never there.
-pub async fn frames_reconnecting(
+pub(crate) async fn frames_reconnecting(
     client: &Client,
     path: &str,
     mut on_frame: impl FnMut(SseEvent) -> Result<Next>,
@@ -219,7 +219,7 @@ async fn interrupt() {
 /// events. The connection is held across redraws rather than reopened after
 /// each one, which is what keeps a change made while the screen was being
 /// drawn from being missed.
-pub async fn watch(
+pub(crate) async fn watch(
     client: &Client,
     path: &str,
     relevant: impl Fn(&SseEvent) -> bool,
@@ -329,7 +329,7 @@ impl Drop for Cursor {
 
 /// Whether a failure means the daemon is not there — the one failure
 /// `daemon logs` answers with the log file rather than with an error.
-pub fn unreachable(e: &anyhow::Error) -> bool {
+pub(crate) fn unreachable(e: &anyhow::Error) -> bool {
     matches!(client_error(e), Some(ClientError::Unreachable { .. }))
 }
 

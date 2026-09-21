@@ -28,7 +28,7 @@ const LESS: &str = "FRX";
 ///
 /// A pager that cannot be started is not a failure of the command that had
 /// something to show: the text goes to stdout instead.
-pub fn page(text: &str) -> Result<()> {
+pub(crate) fn page(text: &str) -> Result<()> {
     let Some(mut child) = spawn() else {
         print!("{text}");
         std::io::stdout().flush()?;
@@ -73,7 +73,7 @@ fn spawn() -> Option<std::process::Child> {
 ///
 /// The `+++`/`---` file headers are checked before the `+`/`-` lines they
 /// would otherwise be read as: a header is not an added line.
-pub fn diff(text: &str, color: bool) -> String {
+pub(crate) fn diff(text: &str, color: bool) -> String {
     let mut out = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
         let body = line.trim_end_matches(['\n', '\r']);

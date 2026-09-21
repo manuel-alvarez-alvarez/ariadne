@@ -79,7 +79,7 @@ Examples:
 ";
 
 #[derive(Subcommand)]
-pub enum SessionCommand {
+pub(crate) enum SessionCommand {
     /// List live agent sessions (docker-style; --all includes history)
     #[command(after_help = LS_EXAMPLES)]
     Ls {
@@ -260,7 +260,7 @@ pub enum SessionCommand {
     },
 }
 
-pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result<()> {
     match cmd {
         SessionCommand::Ls {
             task,

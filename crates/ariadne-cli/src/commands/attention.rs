@@ -98,7 +98,7 @@ impl From<AttentionReason> for Reason {
 /// How a session's `attention_reason` is spelled outside this command —
 /// `session ls` and `session inspect` show the same words, and the words are
 /// this list's, so they are taken from here rather than written twice.
-pub fn reason_label(reason: AttentionReason) -> &'static str {
+pub(crate) fn reason_label(reason: AttentionReason) -> &'static str {
     Reason::from(reason).label()
 }
 
@@ -188,7 +188,7 @@ fn prints_a_table(format: Format, view: &View) -> bool {
     matches!(format, Format::Table) && !view.quiet
 }
 
-pub async fn run(client: &Client, watch: bool, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, watch: bool, format: Format) -> Result<()> {
     // Before the first request, let alone the first table: a `--columns` this
     // board does not have is one error, not one per goal — and on a `--watch`
     // it is an error rather than a cleared screen saying it forever.

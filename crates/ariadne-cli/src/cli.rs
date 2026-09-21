@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
-pub mod values;
+pub(crate) mod values;
 
 use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
@@ -20,7 +20,7 @@ use crate::output::{ColorChoice, Format};
 
 /// Where the two flags every command takes are listed. They belong to no
 /// command in particular, so they are not filed under any command's options.
-pub const GLOBAL: &str = "Global options";
+pub(crate) const GLOBAL: &str = "Global options";
 
 /// What `ariadne --help` ends with: the first goal, start to finish, as the
 /// README's quick start runs it.
@@ -161,7 +161,7 @@ Exit codes:
         what says which of them is waiting for you.",
     after_help = format!("{EXAMPLES}\n{EXIT_CODES}")
 )]
-pub struct Cli {
+pub(crate) struct Cli {
     /// Daemon endpoint: unix socket path or http://host:port
     // `--host` was the old name and never meant a host; it stays as an
     // undocumented alias so existing scripts keep working.
@@ -251,7 +251,7 @@ pub struct Cli {
 
 /// How much of a table to print: what fits the terminal, or all of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum Layout {
+pub(crate) enum Layout {
     /// Drop the least important columns until the row fits.
     Normal,
     /// Every column the table has, whatever the terminal's width.
@@ -259,7 +259,7 @@ pub enum Layout {
 }
 
 #[derive(Subcommand)]
-pub enum Command {
+pub(crate) enum Command {
     /// Show client and daemon version
     Version,
     /// Check the installation: agents, tools, config, daemon and service
@@ -459,13 +459,13 @@ pub enum Command {
 }
 
 #[derive(Subcommand)]
-pub enum McpCommand {
+pub(crate) enum McpCommand {
     /// Run the stdio MCP server
     Serve,
 }
 
 #[derive(Subcommand)]
-pub enum DaemonCommand {
+pub(crate) enum DaemonCommand {
     /// Start ariadned in the background
     Start,
     /// Stop a running ariadned and wait for it to be gone
@@ -496,7 +496,7 @@ pub enum DaemonCommand {
 
 /// How long `daemon stop` and `daemon restart` wait for the daemon to be
 /// gone before giving up on it, in seconds.
-pub const STOP_TIMEOUT: u64 = 10;
+pub(crate) const STOP_TIMEOUT: u64 = 10;
 
 /// Subcommand paths where `--format` has nothing to format: they hand the
 /// terminal to another program, print a shell script, or answer a machine on
@@ -599,7 +599,7 @@ const WATCHED: &[&str] = &["attention", "goal ls", "session ls", "task ls"];
 /// The colour of clap's own help and usage errors is settled here too, from
 /// the `--color` on the command line it is about to parse: by the time we
 /// hold a parsed `Cli`, the help it refused the line with has been printed.
-pub fn command() -> clap::Command {
+pub(crate) fn command() -> clap::Command {
     let cmd = Cli::command().color(ColorChoice::from_argv(std::env::args()).for_clap());
     let cmd = NO_FORMAT.iter().fold(cmd, |cmd, path| {
         hide(hide(cmd, path, format_arg()), path, color_arg())

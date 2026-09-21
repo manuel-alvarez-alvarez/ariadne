@@ -22,7 +22,7 @@ use crate::error::Failure;
 /// What kind of thing an id names, which is what decides the list to look
 /// through and the words a failure is spelled in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
+pub(crate) enum Kind {
     Goal,
     Task,
     Session,
@@ -93,7 +93,7 @@ impl Kind {
 /// and the other spelling it answers to where it has one — a repository's
 /// path, a profile's name.
 #[derive(Debug, Clone)]
-pub struct Row {
+pub(crate) struct Row {
     pub id: String,
     pub label: String,
     pub alias: Option<String>,
@@ -111,7 +111,7 @@ impl Row {
 /// Built from the daemon's answer by [`catalog`]; built from a literal list by
 /// the tests, which is the whole reason the matching does not fetch anything
 /// itself.
-pub struct Catalog {
+pub(crate) struct Catalog {
     noun: String,
     plural: String,
     hint: String,
@@ -124,7 +124,7 @@ impl Catalog {
     ///
     /// Case never matters: ids are lowercase, and a terminal that upper-cases
     /// a paste must not turn a correct id into a missing one.
-    pub fn pick(&self, typed: &str) -> Result<&Row> {
+    pub(crate) fn pick(&self, typed: &str) -> Result<&Row> {
         let needle = typed.trim().to_lowercase();
         // Every id starts with it, so an empty argument would name whatever
         // happens to be the only row.
@@ -195,7 +195,7 @@ fn either<'a>(prefixes: Vec<&'a Row>, suffixes: Vec<&'a Row>) -> Vec<&'a Row> {
 /// A catalog over rows the caller has already fetched: `goal create --repo`
 /// and `task create --repo` read the repository list for other reasons
 /// anyway, and it is what the tests match against.
-pub fn among(kind: Kind, rows: impl IntoIterator<Item = Row>) -> Catalog {
+pub(crate) fn among(kind: Kind, rows: impl IntoIterator<Item = Row>) -> Catalog {
     Catalog {
         noun: kind.noun().into(),
         plural: kind.plural().into(),
@@ -206,7 +206,7 @@ pub fn among(kind: Kind, rows: impl IntoIterator<Item = Row>) -> Catalog {
 
 /// One row of a list the caller already has, matched on its id alone — a
 /// repository's path is its own command's to answer for, in its own words.
-pub fn row(id: impl Into<String>, label: impl Into<String>) -> Row {
+pub(crate) fn row(id: impl Into<String>, label: impl Into<String>) -> Row {
     Row {
         id: id.into(),
         label: label.into(),
@@ -216,7 +216,7 @@ pub fn row(id: impl Into<String>, label: impl Into<String>) -> Row {
 
 /// The id the daemon holds for what was typed, fetching its list only when
 /// the typed value is not already a whole id.
-pub async fn id(client: &Client, kind: Kind, typed: &str) -> Result<String> {
+pub(crate) async fn id(client: &Client, kind: Kind, typed: &str) -> Result<String> {
     if let Some(id) = whole_id(typed) {
         return Ok(id);
     }
@@ -225,7 +225,7 @@ pub async fn id(client: &Client, kind: Kind, typed: &str) -> Result<String> {
 
 /// The same for a repeatable id argument (`task update --depends-on`), with
 /// one list fetch behind however many were typed.
-pub async fn ids(client: &Client, kind: Kind, typed: &[String]) -> Result<Vec<String>> {
+pub(crate) async fn ids(client: &Client, kind: Kind, typed: &[String]) -> Result<Vec<String>> {
     if typed.iter().all(|t| whole_id(t).is_some()) {
         return Ok(typed.iter().filter_map(|t| whole_id(t)).collect());
     }
@@ -239,7 +239,7 @@ pub async fn ids(client: &Client, kind: Kind, typed: &[String]) -> Result<Vec<St
 /// The same where the id may name any of the three things `ariadne attach`
 /// takes: what it names is the caller's to know, so a short id that names one
 /// of each is refused rather than guessed at.
-pub async fn attachable(client: &Client, typed: &str) -> Result<String> {
+pub(crate) async fn attachable(client: &Client, typed: &str) -> Result<String> {
     if let Some(id) = whole_id(typed) {
         return Ok(id);
     }

@@ -28,7 +28,7 @@ const EMPTY: &str = "-";
 /// on it is spawned and resumed with them, behind its registry command, and
 /// an edit lands on the next launch.
 #[derive(Subcommand)]
-pub enum AgentCommand {
+pub(crate) enum AgentCommand {
     /// List the registry agents, their flags and the defaults they came from
     Ls,
     /// Replace an agent's flags
@@ -82,7 +82,7 @@ async fn default_flags(client: &Client, agent: &str) -> Result<Vec<String>> {
         .with_context(|| format!("the daemon knows no agent {agent}"))
 }
 
-pub async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<()> {
     match cmd {
         AgentCommand::Ls => {
             let configs: Vec<AgentConfigDto> = client.list_agent_configs().await?;

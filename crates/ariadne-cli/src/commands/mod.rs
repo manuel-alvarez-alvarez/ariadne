@@ -1,27 +1,27 @@
 //! CLI command implementations.
 
-pub mod agent;
-pub mod attach;
-pub mod attention;
-pub mod completions;
-pub mod console;
-pub mod daemon;
-pub mod doctor;
-pub mod events;
+pub(crate) mod agent;
+pub(crate) mod attach;
+pub(crate) mod attention;
+pub(crate) mod completions;
+pub(crate) mod console;
+pub(crate) mod daemon;
+pub(crate) mod doctor;
+pub(crate) mod events;
 #[cfg(test)]
-pub mod fixtures;
-pub mod follow;
-pub mod goal;
-pub mod knowledge;
-pub mod mcp;
-pub mod memory;
-pub mod models;
-pub mod repo;
-pub mod resolve;
-pub mod session;
-pub mod skill;
-pub mod task;
-pub mod transcript;
+pub(crate) mod fixtures;
+pub(crate) mod follow;
+pub(crate) mod goal;
+pub(crate) mod knowledge;
+pub(crate) mod mcp;
+pub(crate) mod memory;
+pub(crate) mod models;
+pub(crate) mod repo;
+pub(crate) mod resolve;
+pub(crate) mod session;
+pub(crate) mod skill;
+pub(crate) mod task;
+pub(crate) mod transcript;
 
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -40,7 +40,7 @@ use crate::output::{Format, print, print_kv, short_id, warn};
 /// A daemon that did not answer is not a failure of `version` itself, so it
 /// stays on stdout — but it is still a line a person reads, so no "client
 /// error (Connect)" in it.
-pub async fn version(client: &Client, format: Format) -> Result<()> {
+pub(crate) async fn version(client: &Client, format: Format) -> Result<()> {
     let daemon = client.version().await;
     let client_version = env!("CARGO_PKG_VERSION");
     // Two builds talking to each other is where the odd 404 and the missing
@@ -93,14 +93,14 @@ fn version_mismatch(client: &str, daemon: &str) -> String {
 /// Both halves of [`confirm`] need it — the question a person answers and the
 /// refusal a script gets — and neither may name something other than what is
 /// about to go.
-pub struct Subject {
+pub(crate) struct Subject {
     kind: &'static str,
     title: String,
     id: String,
 }
 
 impl Subject {
-    pub fn new(kind: &'static str, title: impl Into<String>, id: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: &'static str, title: impl Into<String>, id: impl Into<String>) -> Self {
         Self {
             kind,
             title: title.into(),
@@ -110,7 +110,7 @@ impl Subject {
 
     /// How a question names it: the title, and the short id every table and
     /// the whole UI show — which is what the reader has in front of them.
-    pub fn named(&self) -> String {
+    pub(crate) fn named(&self) -> String {
         format!("\"{}\" ({})", self.title, short_id(&self.id))
     }
 }
@@ -123,7 +123,7 @@ impl Subject {
 /// instead, the way docker and gh refuse it — the caller writes `--yes` when
 /// that is what they meant. Declining is an error too, so `ariadne goal
 /// cancel x && deploy` does not run the second half.
-pub fn confirm(verb: &str, subject: &Subject, question: &str, yes: bool) -> Result<()> {
+pub(crate) fn confirm(verb: &str, subject: &Subject, question: &str, yes: bool) -> Result<()> {
     if yes {
         return Ok(());
     }
@@ -154,7 +154,7 @@ pub fn confirm(verb: &str, subject: &Subject, question: &str, yes: bool) -> Resu
 /// several are narrowed on the answer instead — as `session ls --seat`
 /// already is. Asking for the one there is keeps the common filter where it
 /// belongs, at the daemon.
-pub fn one_of<T: Copy>(statuses: &[T]) -> Option<T> {
+pub(crate) fn one_of<T: Copy>(statuses: &[T]) -> Option<T> {
     match statuses {
         [only] => Some(*only),
         _ => None,
@@ -167,7 +167,7 @@ pub fn one_of<T: Copy>(statuses: &[T]) -> Option<T> {
 /// An agent on `coding` and `testing` reads as exactly that, which is more
 /// than a name would have said. One with no skills is a generic agent with
 /// nothing but its task, and says so.
-pub fn agent_label(skills: &[String]) -> String {
+pub(crate) fn agent_label(skills: &[String]) -> String {
     match skills.is_empty() {
         true => "no skills".to_string(),
         false => skills.join(", "),
@@ -179,7 +179,7 @@ pub fn agent_label(skills: &[String]) -> String {
 /// An effort that was never pinned says nothing at all rather than a word for
 /// it: the model is then run at whatever its agent runs it at, and a `@`
 /// with a guess after it would read as a choice somebody made.
-pub fn agent_pin_label(skills: &[String], model: &str, effort: Option<&str>) -> String {
+pub(crate) fn agent_pin_label(skills: &[String], model: &str, effort: Option<&str>) -> String {
     match effort {
         Some(effort) => format!("{} · {model} @ {effort}", agent_label(skills)),
         None => format!("{} · {model}", agent_label(skills)),
@@ -192,7 +192,7 @@ fn ariadne_home(home_override: Option<PathBuf>) -> PathBuf {
 }
 
 /// Find the ariadned binary: next to the current executable, else on PATH.
-pub fn find_ariadned() -> Result<PathBuf> {
+pub(crate) fn find_ariadned() -> Result<PathBuf> {
     if let Ok(me) = std::env::current_exe()
         && let Some(dir) = me.parent()
     {
@@ -209,14 +209,14 @@ pub fn find_ariadned() -> Result<PathBuf> {
 /// [`ariadne_core::probe`] takes the `PATH` as a parameter because the
 /// daemon's is not this one; everything on this side of the wire means the
 /// environment's.
-pub fn on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn on_path(name: &str) -> Option<PathBuf> {
     probe::which(&std::env::var_os("PATH")?, name)
 }
 
 /// Append `query` to `base` as a URL-encoded query string. Filters that are
 /// `None` are omitted; when nothing remains, `base` is returned untouched
 /// (no stray `?`).
-pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
+pub(crate) fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
     let qs = serde_urlencoded::to_string(query)?;
     Ok(match qs.is_empty() {
         true => base.to_string(),
@@ -228,7 +228,7 @@ pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
 /// daemon reads it: `task update --effort default` runs the model at whatever
 /// its agent runs it at. Efforts only — a model is required, so no
 /// `--model` takes it.
-pub const DEFAULT: &str = "default";
+pub(crate) const DEFAULT: &str = "default";
 
 /// One `--model <agent>:<model>` off the command line, as the daemon spells
 /// it back: the registry agent that runs it, and after the `:` one model of
@@ -238,7 +238,7 @@ pub const DEFAULT: &str = "default";
 /// [`ModelRef`] is where the spelling lives, so a typo is refused here in the
 /// same words the daemon would have refused it in — and never leaves the
 /// shell. Whether the registry holds the agent is the daemon's to answer.
-pub fn parse_model(s: &str) -> Result<String, String> {
+pub(crate) fn parse_model(s: &str) -> Result<String, String> {
     s.parse::<ModelRef>().map(|m| m.to_string())
 }
 
@@ -250,7 +250,7 @@ pub fn parse_model(s: &str) -> Result<String, String> {
 /// agent — so the only thing settled here is that an effort was written at
 /// all. The daemon knows the model this effort will run at, and refuses one
 /// that does not belong to it in words this side could not have written.
-pub fn parse_effort(s: &str) -> Result<String, String> {
+pub(crate) fn parse_effort(s: &str) -> Result<String, String> {
     match s.trim().is_empty() {
         true => Err(
             "no effort was named — write one of the efforts `ariadne models ls` \
@@ -263,7 +263,7 @@ pub fn parse_effort(s: &str) -> Result<String, String> {
 
 /// The same, plus the one word an update takes beside an effort: [`DEFAULT`],
 /// which runs the model at whatever its agent runs it at.
-pub fn parse_effort_or_default(s: &str) -> Result<String, String> {
+pub(crate) fn parse_effort_or_default(s: &str) -> Result<String, String> {
     if s == DEFAULT {
         return Ok(DEFAULT.to_string());
     }
@@ -279,7 +279,7 @@ pub fn parse_effort_or_default(s: &str) -> Result<String, String> {
 /// Everything outside the unreserved set (RFC 3986 §2.3) is escaped rather
 /// than only what is known to hurt, and `/` with it: the value is one
 /// whole segment, so a slash inside it is data, never structure.
-pub fn path_segment(value: &str) -> String {
+pub(crate) fn path_segment(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {

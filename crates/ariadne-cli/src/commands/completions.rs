@@ -29,7 +29,7 @@ const OPEN: &str = "# >>> ariadne >>>";
 const CLOSE: &str = "# <<< ariadne <<<";
 
 #[derive(Subcommand)]
-pub enum CompletionsCommand {
+pub(crate) enum CompletionsCommand {
     /// Add the registration to the shell's startup file
     ///
     /// Writes a marked block that sources the completions on every new
@@ -46,13 +46,13 @@ pub enum CompletionsCommand {
 /// clap can complete is still printable — this is only about where the line
 /// goes.
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum InstallShell {
+pub(crate) enum InstallShell {
     Bash,
     Zsh,
     Fish,
 }
 
-pub fn run(
+pub(crate) fn run(
     shell: Option<Shell>,
     static_script: bool,
     command: Option<CompletionsCommand>,

@@ -146,7 +146,7 @@ fn anything(_: &Value) -> bool {
 }
 
 /// Event kinds accepted by transcript filtering, including live-only kinds.
-pub fn transcript_kinds() -> Vec<CompletionCandidate> {
+pub(crate) fn transcript_kinds() -> Vec<CompletionCandidate> {
     [
         "session_start",
         "user_prompt_submit",
@@ -177,20 +177,20 @@ fn task_help(t: &Value) -> String {
 }
 
 /// Task ids, newest first (task subcommands and `--depends-on`).
-pub fn task_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn task_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/tasks", anything, task_help)
 }
 
 /// What `task retry` can act on: the failed ones, the only status it takes.
 /// `GET /v1/tasks` filters by one status, and this is one.
-pub fn retryable_task_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn retryable_task_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/tasks?status=failed", anything, task_help)
 }
 
 /// What `task cancel` can act on: everything that has not already finished or
 /// been cancelled. Seven statuses against a query that takes one, so the
 /// narrowing is here.
-pub fn cancellable_task_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn cancellable_task_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/tasks", task_is_open, task_help)
 }
 
@@ -205,18 +205,18 @@ fn goal_help(g: &Value) -> String {
 }
 
 /// Goal ids, newest first (goal subcommands and `--goal` filters).
-pub fn goal_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn goal_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/goals", anything, goal_help)
 }
 
 /// What `goal cancel` can act on: a goal still under way. `GET /v1/goals`
 /// takes as many statuses as we care to name, so the daemon does the filtering.
-pub fn cancellable_goal_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn cancellable_goal_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/goals?status=planning,active", anything, goal_help)
 }
 
 /// What `goal rm` can act on: a finished goal, the only kind it will delete.
-pub fn deletable_goal_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn deletable_goal_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/goals?status=completed,cancelled", anything, goal_help)
 }
 
@@ -232,20 +232,20 @@ fn session_help(x: &Value) -> String {
 }
 
 /// Session ids, newest first (`session inspect`, `session logs`).
-pub fn session_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn session_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/sessions", anything, session_help)
 }
 
 /// What `session kill` can act on: a session with an agent process to kill.
 /// Three statuses are live against a query that takes one, so the narrowing
 /// is here.
-pub fn live_session_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn live_session_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/sessions", session_is_live, session_help)
 }
 
 /// What `session resume` can act on: a session that has ended, which is what
 /// it revives.
-pub fn ended_session_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn ended_session_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/sessions", session_has_ended, session_help)
 }
 
@@ -263,7 +263,7 @@ fn session_has_ended(row: &Value) -> bool {
 ///
 /// The three lists are read together on one round rather than one after
 /// another, so the budget covers the lot.
-pub fn attach_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn attach_ids() -> Vec<CompletionCandidate> {
     let Some((sessions, tasks, goals)) = round(async {
         let client = Client::from_env();
         tokio::join!(
@@ -298,7 +298,7 @@ fn attach_order(
 ///
 /// The summary is what tells a reader which skill they want: an agent is its
 /// skills, so a bare list of names would leave the choice to guesswork.
-pub fn skill_names() -> Vec<CompletionCandidate> {
+pub(crate) fn skill_names() -> Vec<CompletionCandidate> {
     fetch("/v1/skills")
         .iter()
         .map(|k| candidate(s(k, "name"), s(k, "summary").to_string()))
@@ -306,7 +306,7 @@ pub fn skill_names() -> Vec<CompletionCandidate> {
 }
 
 /// Registered repository ids (repo subcommands, `goal create --repo`).
-pub fn repo_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn repo_ids() -> Vec<CompletionCandidate> {
     fetch("/v1/repositories").iter().map(repository).collect()
 }
 
@@ -314,7 +314,7 @@ pub fn repo_ids() -> Vec<CompletionCandidate> {
 ///
 /// Only that goal's repositories are candidates, so the id has to come off the
 /// command line, where the goal was named as a positional.
-pub fn goal_repositories() -> Vec<CompletionCandidate> {
+pub(crate) fn goal_repositories() -> Vec<CompletionCandidate> {
     let words: Vec<String> = std::env::args().collect();
     let Some(goal) = goal_on_the_line(&words) else {
         return Vec::new();
@@ -388,7 +388,7 @@ fn is_ulid(word: &str) -> bool {
 /// `--agent` — the places an agent is named on its own, since what an agent
 /// *runs on* is chosen as a whole model (`--model`). In registry order, each
 /// with what discovery made of it.
-pub fn agent_ids() -> Vec<CompletionCandidate> {
+pub(crate) fn agent_ids() -> Vec<CompletionCandidate> {
     fetch("/v1/acp-agents")
         .iter()
         .map(|agent| candidate(s(agent, "id"), s(agent, "status").to_string()))
@@ -405,7 +405,7 @@ pub fn agent_ids() -> Vec<CompletionCandidate> {
 /// kept on disk so that pressing TAB again costs nothing and so that a daemon
 /// which is down still completes with what it last said. A machine that has
 /// never reached one completes nothing: the catalog is what discovery found.
-pub fn models() -> Vec<CompletionCandidate> {
+pub(crate) fn models() -> Vec<CompletionCandidate> {
     model_catalog()
         .map(|catalog| catalog.iter().map(model_candidate).collect())
         .unwrap_or_default()
@@ -422,7 +422,7 @@ pub fn models() -> Vec<CompletionCandidate> {
 /// Each entry lists its own efforts cheapest → deepest, and the lists agree
 /// wherever they overlap, so they are merged rather than concatenated: what
 /// comes out reads from cheapest to deepest across every agent.
-pub fn efforts() -> Vec<CompletionCandidate> {
+pub(crate) fn efforts() -> Vec<CompletionCandidate> {
     let catalog = model_catalog().unwrap_or_default();
     let known = catalog.iter().map(catalog_efforts).collect();
     let entries = catalog_effort_entries(&catalog);
@@ -501,7 +501,7 @@ fn effort_help(id: &str, entries: &[EffortEntry]) -> Option<String> {
 
 /// The same, plus the word an update writes to run the model at whatever its
 /// agent runs it at: `task update --effort` and `profile update --effort`.
-pub fn efforts_or_default() -> Vec<CompletionCandidate> {
+pub(crate) fn efforts_or_default() -> Vec<CompletionCandidate> {
     let mut out = efforts();
     out.push(
         CompletionCandidate::new(crate::commands::DEFAULT).help(Some(

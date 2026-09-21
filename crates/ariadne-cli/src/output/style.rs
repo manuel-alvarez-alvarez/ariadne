@@ -22,7 +22,7 @@ use anstyle::{Ansi256Color, AnsiColor, Style};
 
 /// When to colour output.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
-pub enum ColorChoice {
+pub(crate) enum ColorChoice {
     /// Colour a terminal, unless `NO_COLOR` says otherwise.
     #[default]
     Auto,
@@ -37,7 +37,7 @@ impl ColorChoice {
     /// terminal is coloured, a pipe is not, and any non-empty `NO_COLOR`
     /// takes the terminal out of it. An explicit `--color` outranks all of
     /// it, which is what makes `--color always | cat` a thing one can ask for.
-    pub fn enabled(self) -> bool {
+    pub(crate) fn enabled(self) -> bool {
         match self {
             ColorChoice::Always => true,
             ColorChoice::Never => false,
@@ -46,7 +46,7 @@ impl ColorChoice {
     }
 
     /// The same choice as clap's, for the help it colours itself.
-    pub fn for_clap(self) -> clap::ColorChoice {
+    pub(crate) fn for_clap(self) -> clap::ColorChoice {
         match self {
             ColorChoice::Always => clap::ColorChoice::Always,
             ColorChoice::Never => clap::ColorChoice::Never,
@@ -64,7 +64,7 @@ impl ColorChoice {
     /// error that never reaches our code — so the flag has to be found before
     /// the parse it is an argument to. Both spellings, and nothing else: an
     /// unreadable value leaves the default for clap itself to refuse.
-    pub fn from_argv<I: IntoIterator<Item = String>>(argv: I) -> Self {
+    pub(crate) fn from_argv<I: IntoIterator<Item = String>>(argv: I) -> Self {
         let mut argv = argv.into_iter();
         while let Some(arg) = argv.next() {
             let value = match arg.strip_prefix("--color") {
@@ -90,43 +90,38 @@ fn no_color() -> bool {
 }
 
 /// The id column: present, and never the thing being read.
-pub const ID: Style = Style::new().dimmed();
+pub(crate) const ID: Style = Style::new().dimmed();
 
 /// The title column: what the row is about.
-pub const TITLE: Style = Style::new().bold();
+pub(crate) const TITLE: Style = Style::new().bold();
 
 /// A note that something is off, for the lines that are not table cells.
-pub const WARN: Style = Style::new().fg_color(Some(anstyle::Color::Ansi(AnsiColor::Yellow)));
+pub(crate) const WARN: Style = Style::new().fg_color(Some(anstyle::Color::Ansi(AnsiColor::Yellow)));
 
 // The rest of the palette: one vocabulary for everything the CLI prints for
 // a person rather than for a script — the key column of an inspect block, a
 // section header, the context around a line, a confirmation, an `error:`.
-// Spelled here once rather than in each of the files that print them; the
-// `allow`s come off as `doctor`, the streams and the one-line answers reach
-// for their own.
+// Spelled here once rather than in each of the files that print them.
 
 /// A section header: `ariadne doctor`'s sections, `attention`'s per-goal
 /// headings — what a reader's eye jumps between on a long screen.
-#[allow(dead_code)]
-pub const HEADING: Style = Style::new().bold();
+pub(crate) const HEADING: Style = Style::new().bold();
 
 /// The key column of an inspect block. Dimmed because it is scanned down
 /// rather than read: what one came for is the value beside it.
-pub const KEY: Style = Style::new().dimmed();
+pub(crate) const KEY: Style = Style::new().dimmed();
 
 /// The part of a line that is context rather than content — a timestamp, a
 /// log target, who a message was addressed to — so the content it wraps is
 /// what stands out.
-pub const META: Style = Style::new().dimmed();
+pub(crate) const META: Style = Style::new().dimmed();
 
 /// Something happened as asked: the one-line confirmation a command ends on.
-#[allow(dead_code)]
-pub const OK: Style = green();
+pub(crate) const OK: Style = green();
 
 /// The `error:` a command fails with — the one thing on the screen that has
 /// to be seen.
-#[allow(dead_code)]
-pub const ERROR: Style = red().bold();
+pub(crate) const ERROR: Style = red().bold();
 
 /// `changes_requested`: past a warning, short of a failure. No ANSI-16 colour
 /// sits between yellow and red, so it is the 256-colour orange.
@@ -139,7 +134,7 @@ const ORANGE: Style = Style::new().fg_color(Some(anstyle::Color::Ansi256(Ansi256
 /// An unknown status keeps its word and loses the glyph: a spelling this build
 /// does not know is still a fact, and inventing a glyph for it would be a
 /// guess about which of the five it belongs to.
-pub fn status(word: &str) -> (Style, Option<char>) {
+pub(crate) fn status(word: &str) -> (Style, Option<char>) {
     match word {
         // Waiting for its turn: a task with dependencies, an idle agent.
         "pending" | "idle" => (grey(), Some(PENDING)),
@@ -165,7 +160,7 @@ pub fn status(word: &str) -> (Style, Option<char>) {
 /// Magenta and `?` for everything a person is expected to answer; red and `✗`
 /// for the two that are a breakage rather than a question. `-` — the cell of a
 /// row that wants nothing — stays as plain as it reads.
-pub fn attention(label: &str) -> (Style, Option<char>) {
+pub(crate) fn attention(label: &str) -> (Style, Option<char>) {
     match label {
         "-" => (Style::new(), None),
         "agent error" | "disconnected" | "failed" => (red(), Some(FAILED)),
@@ -178,7 +173,7 @@ pub fn attention(label: &str) -> (Style, Option<char>) {
 /// The same contract as [`status`], for the other vocabulary the CLI reads
 /// words in: a verdict is never colour alone, and a word this build does not
 /// know keeps itself and loses the glyph rather than being guessed at.
-pub fn check(word: &str) -> (Style, Option<char>) {
+pub(crate) fn check(word: &str) -> (Style, Option<char>) {
     match word {
         "ok" => (green(), Some(DONE)),
         // Short of a failure: it works, and something about it is worth
@@ -197,8 +192,7 @@ pub fn check(word: &str) -> (Style, Option<char>) {
 /// belongs to, and the two below it are dimmed so a `--level debug` run still
 /// reads as the story with its detail underneath. Case-insensitive, since a
 /// level arrives spelled however its writer spelled it.
-#[allow(dead_code)]
-pub fn level(level: &str) -> Style {
+pub(crate) fn level(level: &str) -> Style {
     let is = |word: &str| level.eq_ignore_ascii_case(word);
     if is("error") {
         ERROR
@@ -213,17 +207,17 @@ pub fn level(level: &str) -> Style {
 }
 
 /// Something is working on it.
-pub const RUNNING: char = '●';
+pub(crate) const RUNNING: char = '●';
 /// Waiting for its turn.
-pub const PENDING: char = '○';
+pub(crate) const PENDING: char = '○';
 /// Finished: merged, completed, exited.
-pub const DONE: char = '✓';
+pub(crate) const DONE: char = '✓';
 /// Failed or cancelled.
-pub const FAILED: char = '✗';
+pub(crate) const FAILED: char = '✗';
 /// Waiting on you.
-pub const WAITING: char = '?';
+pub(crate) const WAITING: char = '?';
 /// Worth a look, short of a failure.
-pub const ALERT: char = '!';
+pub(crate) const ALERT: char = '!';
 
 const fn grey() -> Style {
     fg(AnsiColor::BrightBlack)
@@ -250,7 +244,7 @@ const fn fg(color: AnsiColor) -> Style {
 
 /// `text` in `style` — or `text` untouched when colour is off, which is what
 /// keeps a pipe free of escapes without every caller asking twice.
-pub fn paint(color: bool, style: Style, text: &str) -> String {
+pub(crate) fn paint(color: bool, style: Style, text: &str) -> String {
     match color && style != Style::new() {
         true => format!("{}{text}{}", style.render(), style.render_reset()),
         false => text.to_string(),

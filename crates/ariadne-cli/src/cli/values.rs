@@ -13,10 +13,10 @@ use clap::{Arg, Command, Error, ValueEnum};
 /// copied out of a listing is a status that can be typed back in.
 ///
 /// Values with a single word are one spelling and reach this unchanged.
-pub struct Spelling<T>(PhantomData<T>);
+pub(crate) struct Spelling<T>(PhantomData<T>);
 
 impl<T> Spelling<T> {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self(PhantomData)
     }
 }

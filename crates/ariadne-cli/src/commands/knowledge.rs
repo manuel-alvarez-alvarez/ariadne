@@ -103,7 +103,7 @@ impl From<Detail> for KnowledgeDetail {
 }
 
 #[derive(Subcommand)]
-pub enum KnowledgeCommand {
+pub(crate) enum KnowledgeCommand {
     /// Show where a repository's index stands
     Status {
         /// Repository id or path
@@ -246,7 +246,7 @@ pub enum KnowledgeCommand {
     },
 }
 
-pub async fn run(client: &Client, command: KnowledgeCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, command: KnowledgeCommand, format: Format) -> Result<()> {
     match command {
         KnowledgeCommand::Status { repo } => {
             let repository_id = resolve::id(client, Kind::Repo, &repo).await?;

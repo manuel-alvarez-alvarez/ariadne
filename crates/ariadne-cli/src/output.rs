@@ -16,9 +16,9 @@
 //! How much of that happens is one decision, taken once from the command line
 //! and the environment ([`init`]) and read back by every renderer ([`view`]).
 
-pub mod pager;
-pub mod style;
-pub mod table;
+pub(crate) mod pager;
+pub(crate) mod style;
+pub(crate) mod table;
 
 use std::io::Write;
 use std::sync::OnceLock;
@@ -27,11 +27,11 @@ use anstyle::Style;
 use ariadne_api::usage::TokenUsageDto;
 use serde::Serialize;
 
-pub use style::ColorChoice;
-pub use table::{Column, UNCAPPED, View, col, render_table};
+pub(crate) use style::ColorChoice;
+pub(crate) use table::{Column, UNCAPPED, View, col, render_table};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum Format {
+pub(crate) enum Format {
     Table,
     Json,
 }
@@ -42,20 +42,20 @@ static VIEW: OnceLock<View> = OnceLock::new();
 /// Settle how this run renders. Called once, from `main`, before any command
 /// prints: everything after it reads the answer rather than asking the
 /// environment again, so one run cannot colour half its output.
-pub fn init(view: View) {
+pub(crate) fn init(view: View) {
     let _ = VIEW.set(view);
 }
 
 /// How this run renders — the plainest possible view where nothing was
 /// settled, which is what a unit test and a fallback both want.
-pub fn view() -> &'static View {
+pub(crate) fn view() -> &'static View {
     VIEW.get_or_init(View::default)
 }
 
 /// How wide the terminal is, or `None` when there is no terminal to fit:
 /// output into a pipe or a file is not laid out for a screen that is not
 /// there, and gets every column.
-pub fn terminal_width() -> Option<usize> {
+pub(crate) fn terminal_width() -> Option<usize> {
     let stdout = std::io::stdout();
     fitted_width(
         std::io::IsTerminal::is_terminal(&stdout),
@@ -96,7 +96,7 @@ fn fitted_width(
 }
 
 /// Print any serializable value as pretty JSON.
-pub fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
+pub(crate) fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
@@ -106,7 +106,7 @@ pub fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
 ///
 /// Nearly every command is this shape — fetch, then render one way or the
 /// other — and writing the `match` out each time is how the two halves drift.
-pub fn print<T: Serialize>(
+pub(crate) fn print<T: Serialize>(
     format: Format,
     payload: &T,
     table: impl FnOnce(),
@@ -126,7 +126,7 @@ pub fn print<T: Serialize>(
 ///
 /// `-q` is the third answer, and the one a pipe wants: the first cell of every
 /// row — the id — and nothing else, header included.
-pub fn print_list<T: Serialize>(
+pub(crate) fn print_list<T: Serialize>(
     format: Format,
     items: &[T],
     columns: &[Column],
@@ -150,20 +150,15 @@ pub fn print_list<T: Serialize>(
 
 /// Print rows as an aligned table with an uppercase header, laid out for this
 /// terminal.
-pub fn print_table(columns: &[Column], rows: &[Vec<String>]) -> anyhow::Result<()> {
+pub(crate) fn print_table(columns: &[Column], rows: &[Vec<String>]) -> anyhow::Result<()> {
     println!("{}", render_table(columns, rows, view())?);
     Ok(())
 }
 
 /// What a block's value holds, which is what says how it is painted: the
 /// same question [`table::Cell`] asks of a column, asked of one value.
-///
-/// `daemon status` is the only block that types a value so far, and it types
-/// a verdict; the inspect blocks that type the rest are the next task, and
-/// the `allow`s come off with them.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
+pub(crate) enum Kind {
     /// Anything with no meaning of its own: counts, paths, flags, prose.
     Plain,
     /// An id: there to be copied, not read.
@@ -187,38 +182,33 @@ pub enum Kind {
 /// table has a colour for say which one — `Kv::status(..)`, `Kv::id(..)` —
 /// and are then painted exactly as the same thing is painted in a cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Kv {
+pub(crate) struct Kv {
     text: String,
     kind: Kind,
 }
 
 impl Kv {
-    #[allow(dead_code)]
-    pub fn id(text: impl Into<String>) -> Self {
+    pub(crate) fn id(text: impl Into<String>) -> Self {
         Self::new(text, Kind::Id)
     }
 
-    #[allow(dead_code)]
-    pub fn title(text: impl Into<String>) -> Self {
+    pub(crate) fn title(text: impl Into<String>) -> Self {
         Self::new(text, Kind::Title)
     }
 
-    #[allow(dead_code)]
-    pub fn status(text: impl Into<String>) -> Self {
+    pub(crate) fn status(text: impl Into<String>) -> Self {
         Self::new(text, Kind::Status)
     }
 
-    pub fn check(text: impl Into<String>) -> Self {
+    pub(crate) fn check(text: impl Into<String>) -> Self {
         Self::new(text, Kind::Check)
     }
 
-    #[allow(dead_code)]
-    pub fn attention(text: impl Into<String>) -> Self {
+    pub(crate) fn attention(text: impl Into<String>) -> Self {
         Self::new(text, Kind::Attention)
     }
 
-    #[allow(dead_code)]
-    pub fn meta(text: impl Into<String>) -> Self {
+    pub(crate) fn meta(text: impl Into<String>) -> Self {
         Self::new(text, Kind::Meta)
     }
 
@@ -273,7 +263,7 @@ impl From<&str> for Kv {
 }
 
 /// Print a key/value inspect block.
-pub fn print_kv<V: Into<Kv> + Clone>(pairs: &[(&str, V)]) {
+pub(crate) fn print_kv<V: Into<Kv> + Clone>(pairs: &[(&str, V)]) {
     let _ = write_kv(&mut std::io::stdout().lock(), pairs, view());
 }
 
@@ -321,7 +311,7 @@ pub(crate) fn kv_block<V: Into<Kv> + Clone>(pairs: &[(&str, V)], view: &View) ->
 }
 
 /// An optional cell: the value, or a dash where there is none.
-pub fn dash(value: Option<&str>) -> String {
+pub(crate) fn dash(value: Option<&str>) -> String {
     value.unwrap_or("-").to_string()
 }
 
@@ -329,7 +319,7 @@ pub fn dash(value: Option<&str>) -> String {
 ///
 /// Ids are 26-character ULIDs — unreadable in full, and the tail is enough to
 /// tell two of them apart. Anything too short to shorten is left alone.
-pub fn short_id(id: &str) -> String {
+pub(crate) fn short_id(id: &str) -> String {
     match id.char_indices().nth_back(7) {
         Some((i, _)) if id.len() > 10 => format!("…{}", &id[i..]),
         _ => id.to_string(),
@@ -337,7 +327,7 @@ pub fn short_id(id: &str) -> String {
 }
 
 /// An optional timestamp as an inspect block spells it, or a dash.
-pub fn at(rfc3339: Option<&str>) -> String {
+pub(crate) fn at(rfc3339: Option<&str>) -> String {
     rfc3339.map_or_else(|| "-".to_string(), moment)
 }
 
@@ -347,7 +337,7 @@ pub fn at(rfc3339: Option<&str>) -> String {
 /// Both, because a block is read for either: the absolute time to line an
 /// event up against a log, the age to see at a glance that it is stale. A
 /// table has no room for both and carries the age alone.
-pub fn moment(rfc3339: &str) -> String {
+pub(crate) fn moment(rfc3339: &str) -> String {
     let absolute = local_time(rfc3339);
     match relative(rfc3339, chrono::Utc::now()) {
         Some(age) => format!("{absolute} ({age} ago)"),
@@ -359,7 +349,7 @@ pub fn moment(rfc3339: &str) -> String {
 /// never rounded, so 89 seconds is "1m" and not the "2m" rounding would jump
 /// to a second early. Anything unparseable is passed through, as
 /// [`local_time`].
-pub fn age(rfc3339: &str, now: chrono::DateTime<chrono::Utc>) -> String {
+pub(crate) fn age(rfc3339: &str, now: chrono::DateTime<chrono::Utc>) -> String {
     relative(rfc3339, now).unwrap_or_else(|| rfc3339.to_string())
 }
 
@@ -380,7 +370,7 @@ fn relative(rfc3339: &str, now: chrono::DateTime<chrono::Utc>) -> Option<String>
 /// A span of seconds as a person reads it: `12s`, `4m 20s`, `3h 12m`,
 /// `2d 3h`. Two units at most — a daemon that has been up for two days and
 /// three hours has not been up for `2d 3h 7m 12s`.
-pub fn duration(seconds: u64) -> String {
+pub(crate) fn duration(seconds: u64) -> String {
     let (days, hours, minutes, secs) = (
         seconds / 86_400,
         (seconds % 86_400) / 3_600,
@@ -414,7 +404,7 @@ pub fn duration(seconds: u64) -> String {
 /// figures give way is above `T`, which has no band above it to carry into:
 /// there is no larger unit a reader would place, so the count keeps counting
 /// in whole `T` however many digits that takes.
-pub fn tokens(count: u64) -> String {
+pub(crate) fn tokens(count: u64) -> String {
     if count < 1_000 {
         count.to_string()
     } else if count < 9_950 {
@@ -448,7 +438,7 @@ pub fn tokens(count: u64) -> String {
 /// served more than the prompt it was serving. The same rule
 /// `ui/src/lib/format.ts` renders, so the share reads the same in a terminal
 /// and on a screen.
-pub fn cached_share(usage: &TokenUsageDto) -> String {
+pub(crate) fn cached_share(usage: &TokenUsageDto) -> String {
     let tenths = match usage.input_tokens {
         0 => 0,
         input => {
@@ -467,7 +457,7 @@ pub fn cached_share(usage: &TokenUsageDto) -> String {
 /// and `↑1.2M 89.1%` is one figure to hold against the row above. The exact
 /// counts are left to [`usage_block`] — a cell is for comparing rows, not
 /// for reading one.
-pub fn usage_cell(usage: &TokenUsageDto) -> String {
+pub(crate) fn usage_cell(usage: &TokenUsageDto) -> String {
     format!(
         "↑{} {} ↓{}",
         tokens(usage.input_tokens),
@@ -493,7 +483,7 @@ pub fn usage_cell(usage: &TokenUsageDto) -> String {
 /// down and passes none. `indent` is where a continuation line starts:
 /// [`print_kv`] pads its keys, and every line after the first lines up under
 /// the first.
-pub fn usage_block(
+pub(crate) fn usage_block(
     total: &TokenUsageDto,
     breakdown: &[(String, TokenUsageDto)],
     indent: &str,
@@ -558,7 +548,7 @@ fn rounded(count: u64, step: u64) -> u128 {
 }
 
 /// A flag as a cell: `yes`, or `no_word` — `-` in a table, `no` in a block.
-pub fn yes_no(flag: bool, no_word: &str) -> String {
+pub(crate) fn yes_no(flag: bool, no_word: &str) -> String {
     match flag {
         true => "yes".into(),
         false => no_word.into(),
@@ -572,7 +562,7 @@ pub fn yes_no(flag: bool, no_word: &str) -> String {
 /// this is the bare line the CLI has always printed: the glyph is part of
 /// the colour here, not a stand-in for it — unlike a table, this line
 /// already spells the status out in words. Quiet output is the id alone.
-pub fn status_line(color: bool, quiet: bool, kind: &str, id: &str, status: &str) -> String {
+pub(crate) fn status_line(color: bool, quiet: bool, kind: &str, id: &str, status: &str) -> String {
     if quiet {
         return id.to_string();
     }
@@ -591,7 +581,7 @@ pub fn status_line(color: bool, quiet: bool, kind: &str, id: &str, status: &str)
 /// `<verb> <id>`: the confirmation a mutation with nothing left to show ends
 /// on — `created`, `updated`, `deleted`, `reset`, `sent` — with the verb in
 /// green and the id dimmed. Quiet output is the id alone.
-pub fn ok_id_line(color: bool, quiet: bool, verb: &str, id: &str) -> String {
+pub(crate) fn ok_id_line(color: bool, quiet: bool, verb: &str, id: &str) -> String {
     if quiet {
         return id.to_string();
     }
@@ -604,7 +594,7 @@ pub fn ok_id_line(color: bool, quiet: bool, verb: &str, id: &str) -> String {
 
 /// An empty listing's sentence, followed by the command that moves the reader
 /// on when there is one.
-pub fn empty_state(statement: &str, next: Option<&str>) -> String {
+pub(crate) fn empty_state(statement: &str, next: Option<&str>) -> String {
     match next {
         Some(command) => format!("{statement}\nNext: {command}"),
         None => statement.to_string(),
@@ -613,14 +603,14 @@ pub fn empty_state(statement: &str, next: Option<&str>) -> String {
 
 /// A note that something looks wrong, in the same place and the same colour
 /// wherever it is said: stderr, so it never lands in what a pipe is reading.
-pub fn warn(message: &str) {
+pub(crate) fn warn(message: &str) {
     note(&style::paint(view().color, style::WARN, message));
 }
 
 /// A word to the person at the terminal — "no tasks yet", "aborted" — never
 /// part of the output a script is reading. Always stderr, so `ls | wc -l`
 /// counts rows and nothing else.
-pub fn note(message: &str) {
+pub(crate) fn note(message: &str) {
     let _ = writeln!(std::io::stderr(), "{message}");
 }
 
@@ -629,7 +619,7 @@ pub fn note(message: &str) {
 ///
 /// Anything unparseable is passed through: a timestamp we cannot read is
 /// still better shown than swallowed.
-pub fn local_time(rfc3339: &str) -> String {
+pub(crate) fn local_time(rfc3339: &str) -> String {
     match chrono::DateTime::parse_from_rfc3339(rfc3339) {
         Ok(t) => t
             .with_timezone(&chrono::Local)

@@ -60,7 +60,7 @@ Examples:
 ";
 
 #[derive(Subcommand)]
-pub enum GoalCommand {
+pub(crate) enum GoalCommand {
     /// Create a goal
     ///
     /// Names what is to be achieved and the registered repositories it is to
@@ -154,7 +154,7 @@ pub enum GoalCommand {
     },
 }
 
-pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()> {
     match cmd {
         GoalCommand::Create {
             title,

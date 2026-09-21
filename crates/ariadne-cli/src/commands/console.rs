@@ -29,7 +29,7 @@ use crate::output::{Format, note, pager, print_json, view};
 /// A terminal on both ends gets the inline TUI. Anything else keeps the plain
 /// line protocol, so `ariadne attach <id> < answers.txt` and everything else a
 /// script does still reads and writes the same thing it always did.
-pub async fn attach(client: &Client, id: &str) -> Result<()> {
+pub(crate) async fn attach(client: &Client, id: &str) -> Result<()> {
     if tui::on_a_terminal() {
         return tui::attach(client, id).await;
     }
@@ -43,7 +43,7 @@ pub async fn attach(client: &Client, id: &str) -> Result<()> {
 }
 
 /// Show an ACP session's transcript, and follow its event stream when asked.
-pub async fn logs(
+pub(crate) async fn logs(
     client: &Client,
     id: &str,
     follow: bool,

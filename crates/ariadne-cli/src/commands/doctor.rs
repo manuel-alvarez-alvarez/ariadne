@@ -167,7 +167,7 @@ impl Report {
 }
 
 /// `ariadne doctor` — build the report, print it, and answer with it.
-pub async fn run(client: &Client, format: Format) -> Result<ExitCode> {
+pub(crate) async fn run(client: &Client, format: Format) -> Result<ExitCode> {
     let report = examine(client).await;
     let view = view();
     let lines = match format {

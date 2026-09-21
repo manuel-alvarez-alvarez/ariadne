@@ -43,7 +43,7 @@ const SNAPSHOT: i64 = 200;
 const DETAIL: usize = 100;
 
 /// What `ariadne events` was asked for.
-pub struct Filters {
+pub(crate) struct Filters {
     pub goal: Option<String>,
     pub task: Option<String>,
     pub session: Option<String>,
@@ -161,7 +161,12 @@ impl Line {
     }
 }
 
-pub async fn run(client: &Client, filters: Filters, follow_it: bool, format: Format) -> Result<()> {
+pub(crate) async fn run(
+    client: &Client,
+    filters: Filters,
+    follow_it: bool,
+    format: Format,
+) -> Result<()> {
     let recorded = snapshot(client, &filters).await?;
     let color = view().color;
     match format {

@@ -25,7 +25,7 @@ const LS: &[Column] = &[
 ];
 
 #[derive(Subcommand)]
-pub enum RepoCommand {
+pub(crate) enum RepoCommand {
     /// Register a repository
     Add {
         /// Absolute path of the checkout
@@ -71,7 +71,7 @@ pub enum RepoCommand {
     },
 }
 
-pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()> {
     match cmd {
         RepoCommand::Add {
             path,

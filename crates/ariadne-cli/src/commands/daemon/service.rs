@@ -19,19 +19,19 @@ use std::path::{Path, PathBuf};
 use ariadne_core::probe;
 
 /// launchd label and systemd unit `scripts/install.sh` registers.
-pub const LAUNCHD_LABEL: &str = "dev.ariadne.daemon";
-pub const SYSTEMD_UNIT: &str = "ariadned.service";
+pub(crate) const LAUNCHD_LABEL: &str = "dev.ariadne.daemon";
+pub(crate) const SYSTEMD_UNIT: &str = "ariadned.service";
 
 /// The service manager of this host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Manager {
+pub(crate) enum Manager {
     Launchd,
     Systemd,
 }
 
 /// What is being asked of a service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
+pub(crate) enum Action {
     Start,
     Stop,
     Restart,
@@ -39,7 +39,7 @@ pub enum Action {
 
 impl Manager {
     /// The manager this OS runs user services under, where Ariadne knows one.
-    pub fn of_this_host() -> Option<Self> {
+    pub(crate) fn of_this_host() -> Option<Self> {
         if cfg!(target_os = "macos") {
             Some(Self::Launchd)
         } else if cfg!(target_os = "linux") {
@@ -50,7 +50,7 @@ impl Manager {
     }
 
     /// How a report names it.
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Launchd => "launchd",
             Self::Systemd => "systemd --user",
@@ -58,7 +58,7 @@ impl Manager {
     }
 
     /// What the manager calls the service.
-    pub fn unit(self) -> &'static str {
+    pub(crate) fn unit(self) -> &'static str {
         match self {
             Self::Launchd => LAUNCHD_LABEL,
             Self::Systemd => SYSTEMD_UNIT,
@@ -66,7 +66,7 @@ impl Manager {
     }
 
     /// What the file that registers it is called, in a report's words.
-    pub fn unit_file_kind(self) -> &'static str {
+    pub(crate) fn unit_file_kind(self) -> &'static str {
         match self {
             Self::Launchd => "launchd plist",
             Self::Systemd => "systemd unit",
@@ -74,7 +74,7 @@ impl Manager {
     }
 
     /// `install.env` key naming that file.
-    pub fn manifest_key(self) -> &'static str {
+    pub(crate) fn manifest_key(self) -> &'static str {
         match self {
             Self::Launchd => "ARIADNE_PLIST",
             Self::Systemd => "ARIADNE_UNIT",
@@ -83,7 +83,7 @@ impl Manager {
 
     /// The manager's own word for a service it is holding up: launchd loads a
     /// job, systemd activates a unit.
-    pub fn up_word(self) -> &'static str {
+    pub(crate) fn up_word(self) -> &'static str {
         match self {
             Self::Launchd => "loaded",
             Self::Systemd => "active",
@@ -92,7 +92,7 @@ impl Manager {
 
     /// Where `scripts/install.sh` writes that file when nothing says otherwise
     /// — the same paths `scripts/lib.sh` resolves.
-    pub fn default_unit_file(self) -> PathBuf {
+    pub(crate) fn default_unit_file(self) -> PathBuf {
         match self {
             Self::Launchd => dirs::home_dir()
                 .unwrap_or_default()
@@ -107,7 +107,7 @@ impl Manager {
     }
 
     /// The file registering the daemon, as this home's manifest names it.
-    pub fn unit_file(self, manifest: &BTreeMap<String, String>) -> PathBuf {
+    pub(crate) fn unit_file(self, manifest: &BTreeMap<String, String>) -> PathBuf {
         manifest
             .get(self.manifest_key())
             .map(PathBuf::from)
@@ -116,7 +116,7 @@ impl Manager {
 
     /// The read-only question "are you holding this service up?", as a
     /// command: a launchd job it has loaded, a systemd unit it has running.
-    pub fn status_probe(self) -> Vec<&'static str> {
+    pub(crate) fn status_probe(self) -> Vec<&'static str> {
         match self {
             Self::Launchd => vec!["launchctl", "list", LAUNCHD_LABEL],
             Self::Systemd => vec!["systemctl", "--user", "is-active", SYSTEMD_UNIT],
@@ -124,7 +124,7 @@ impl Manager {
     }
 
     /// That question, asked.
-    pub async fn up(self) -> bool {
+    pub(crate) async fn up(self) -> bool {
         let probe = self.status_probe();
         probe::probe_status(probe[0], &probe[1..]).await
     }
@@ -132,7 +132,7 @@ impl Manager {
 
 /// A service manager holding the daemon of one home.
 #[derive(Debug, Clone)]
-pub struct Service {
+pub(crate) struct Service {
     pub manager: Manager,
     /// The plist or unit file that registers it.
     pub unit_file: PathBuf,
@@ -147,7 +147,7 @@ pub struct Service {
 impl Service {
     /// A service from answers rather than from this host, which is what a test
     /// hands it.
-    pub fn new(manager: Manager, unit_file: PathBuf, up: bool, uid: u32) -> Self {
+    pub(crate) fn new(manager: Manager, unit_file: PathBuf, up: bool, uid: u32) -> Self {
         Self {
             manager,
             unit_file,
@@ -163,7 +163,7 @@ impl Service {
     /// `ARIADNE_HOME` would find the plist of the real installation and stop
     /// the daemon nobody asked about. A hand-registered service therefore goes
     /// unnoticed here — `ariadne doctor` is where that is reported.
-    pub async fn detect(home: &Path) -> Option<Self> {
+    pub(crate) async fn detect(home: &Path) -> Option<Self> {
         let manager = Manager::of_this_host()?;
         let unit_file = manager.unit_file(&manifest(home)?);
         if !unit_file.is_file() {
@@ -178,7 +178,7 @@ impl Service {
     }
 
     /// "launchd (dev.ariadne.daemon)" — the manager and what it calls this.
-    pub fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> String {
         format!("{} ({})", self.manager.as_str(), self.manager.unit())
     }
 
@@ -192,7 +192,7 @@ impl Service {
     /// but deaf is exactly what should not survive it. `bootout` is the
     /// inverse of the `bootstrap` the installer ran, and `bootstrap` is how a
     /// job that was booted out comes back.
-    pub fn command(&self, action: Action) -> Option<Vec<String>> {
+    pub(crate) fn command(&self, action: Action) -> Option<Vec<String>> {
         let domain = format!("gui/{}", self.uid);
         let target = format!("{domain}/{}", LAUNCHD_LABEL);
         let argv = match (self.manager, action, self.up) {
@@ -223,7 +223,7 @@ impl Service {
 /// `install.env` as `scripts/install.sh` writes it: `KEY="value"` lines and
 /// comments, read as data — nothing is executed. `None` when the home has no
 /// manifest at all, which is what says nothing was installed into it.
-pub fn manifest(home: &Path) -> Option<BTreeMap<String, String>> {
+pub(crate) fn manifest(home: &Path) -> Option<BTreeMap<String, String>> {
     let raw = std::fs::read_to_string(home.join("install.env")).ok()?;
     Some(
         raw.lines()

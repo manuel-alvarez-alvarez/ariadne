@@ -36,12 +36,12 @@ use crate::output::note;
 /// Both ends have to be a terminal: the keys come from one and the viewport is
 /// drawn on the other, and a console with either of them redirected is a
 /// script's, which reads the plain line protocol instead.
-pub fn interactive(stdin: bool, stdout: bool) -> bool {
+pub(super) fn interactive(stdin: bool, stdout: bool) -> bool {
     stdin && stdout
 }
 
 /// Open the inline console on the process terminal.
-pub async fn attach(client: &Client, id: &str) -> Result<()> {
+pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     // The status line names the seat, the model and the session's status. A
     // session the daemon will not describe is still worth attaching to, so a
     // failure here costs the header and nothing else.
@@ -238,7 +238,7 @@ impl Sink for Posts<'_> {
 ///
 /// A trait so that the giving back can be proven: a console that left raw mode
 /// on hands the shell back a terminal that echoes nothing.
-pub trait Terminals {
+pub(super) trait Terminals {
     fn enter(&mut self) -> Result<()>;
     fn leave(&mut self);
 }
@@ -250,7 +250,7 @@ pub trait Terminals {
 /// The modes are switched by escape sequences written to `out`, which is
 /// stdout on the real terminal and a buffer in a test that reads what was
 /// written on the way out.
-pub struct Raw<W: Write = std::io::Stdout> {
+pub(super) struct Raw<W: Write = std::io::Stdout> {
     out: W,
     enhanced: bool,
 }
@@ -306,10 +306,10 @@ impl<W: Write> Terminals for Raw<W> {
 /// Giving it back is a `Drop` rather than a line at the end of the function,
 /// so it happens on every way out: the normal one, an error, a panic, and the
 /// Ctrl-C that is a key here rather than a signal.
-pub struct Held<T: Terminals>(T);
+pub(super) struct Held<T: Terminals>(T);
 
 impl<T: Terminals> Held<T> {
-    pub fn take(mut terminal: T) -> Result<Self> {
+    pub(super) fn take(mut terminal: T) -> Result<Self> {
         terminal.enter()?;
         Ok(Self(terminal))
     }
@@ -322,7 +322,7 @@ impl<T: Terminals> Drop for Held<T> {
 }
 
 /// Whether this process is attached to a terminal on both ends.
-pub fn on_a_terminal() -> bool {
+pub(super) fn on_a_terminal() -> bool {
     interactive(
         std::io::stdin().is_terminal(),
         std::io::stdout().is_terminal(),

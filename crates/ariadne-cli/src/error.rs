@@ -49,7 +49,7 @@ impl From<Exit> for ExitCode {
 /// its status instead ([`exit_code`]).
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
-pub struct Failure {
+pub(crate) struct Failure {
     exit: Exit,
     message: String,
     hint: Option<String>,
@@ -57,19 +57,19 @@ pub struct Failure {
 
 impl Failure {
     /// A command that cannot be run as typed: exit [`Exit::Usage`].
-    pub fn usage(message: impl Into<String>) -> Self {
+    pub(crate) fn usage(message: impl Into<String>) -> Self {
         Self::new(Exit::Usage, message)
     }
 
     /// Nothing of that name: exit [`Exit::NotFound`].
-    pub fn not_found(message: impl Into<String>) -> Self {
+    pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self::new(Exit::NotFound, message)
     }
 
     /// The thing is not in a state that allows it: exit [`Exit::Conflict`],
     /// the same code the daemon's own 409 gets — a refusal is the refusal
     /// whether it was seen coming or answered by the daemon.
-    pub fn conflict(message: impl Into<String>) -> Self {
+    pub(crate) fn conflict(message: impl Into<String>) -> Self {
         Self::new(Exit::Conflict, message)
     }
 
@@ -83,13 +83,13 @@ impl Failure {
 
     /// The one thing to do about it, printed in parentheses after the line —
     /// the same shape a [`ClientError`] hint is printed in.
-    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+    pub(crate) fn hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
         self
     }
 
     /// This failure as the error the commands pass around.
-    pub fn err(self) -> anyhow::Error {
+    pub(crate) fn err(self) -> anyhow::Error {
         anyhow::Error::new(self)
     }
 
@@ -106,7 +106,7 @@ impl Failure {
 }
 
 /// Print a failed command's error and nothing more.
-pub fn report(err: &anyhow::Error, format: Format) {
+pub(crate) fn report(err: &anyhow::Error, format: Format) {
     match format {
         Format::Json => eprintln!("{}", serde_json::json!({"error": json_error(err)})),
         Format::Table => eprintln!("{}", error_line(output::view().color, err)),
@@ -128,12 +128,12 @@ fn error_line(color: bool, err: &anyhow::Error) -> String {
 
 /// What the process exits with: what the CLI decided, else what the daemon's
 /// answer amounts to, else "something went wrong".
-pub fn exit_code(err: &anyhow::Error) -> ExitCode {
+pub(crate) fn exit_code(err: &anyhow::Error) -> ExitCode {
     exit(err).into()
 }
 
 /// The same, as the enum — what the mapping is actually tested on.
-pub fn exit(err: &anyhow::Error) -> Exit {
+pub(crate) fn exit(err: &anyhow::Error) -> Exit {
     if let Some(failure) = err.chain().find_map(|e| e.downcast_ref::<Failure>()) {
         return failure.exit;
     }
@@ -151,7 +151,7 @@ pub fn exit(err: &anyhow::Error) -> Exit {
 }
 
 /// The one line a human reads.
-pub fn human_line(err: &anyhow::Error) -> String {
+pub(crate) fn human_line(err: &anyhow::Error) -> String {
     // A daemon-side failure already reads as prose, and it is the whole story:
     // the transport source and the envelope's machine half stay out of it.
     if let Some(client) = client_error(err) {

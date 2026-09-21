@@ -19,8 +19,8 @@ use super::{Check, Status};
 use crate::commands::daemon::service::{Manager, manifest};
 
 /// Whose lookup a binary was missing from, as the report names it.
-pub const HERE: &str = "PATH";
-pub const THERE: &str = "the daemon's PATH";
+pub(super) const HERE: &str = "PATH";
+pub(super) const THERE: &str = "the daemon's PATH";
 
 const FIRST_START: &str = "the daemon creates it on its first start";
 
@@ -28,7 +28,7 @@ const FIRST_START: &str = "the daemon creates it on its first start";
 
 /// A binary on this shell's PATH, asked for its version — and, for a forge
 /// CLI, whether it is signed in.
-pub async fn tool(name: &str, version_flag: &str, authenticates: bool) -> BinaryDto {
+pub(super) async fn tool(name: &str, version_flag: &str, authenticates: bool) -> BinaryDto {
     found(
         name,
         crate::commands::on_path(name),
@@ -39,7 +39,7 @@ pub async fn tool(name: &str, version_flag: &str, authenticates: bool) -> Binary
 }
 
 /// `ariadned` as `daemon start` would find it: next to this binary, else on PATH.
-pub async fn ariadned() -> BinaryDto {
+pub(super) async fn ariadned() -> BinaryDto {
     found(
         "ariadned",
         crate::commands::find_ariadned().ok(),
@@ -71,7 +71,7 @@ async fn found(name: &str, path: Option<PathBuf>, flag: &str, auths: bool) -> Bi
 /// "git version 2.55.0 at /usr/bin/git", as far as it is known. `lookup` is
 /// whose PATH it was missing from, since the two halves of the report search
 /// different ones.
-pub fn describe(binary: &BinaryDto, lookup: &str) -> String {
+pub(super) fn describe(binary: &BinaryDto, lookup: &str) -> String {
     // Credentials read beside the version: "installed" and "usable" are not
     // the same question for a forge CLI.
     let signed = match binary.authenticated {
@@ -88,7 +88,7 @@ pub fn describe(binary: &BinaryDto, lookup: &str) -> String {
 
 // ---- sections ----------------------------------------------------------
 
-pub fn client(ariadned: &BinaryDto, daemon_reachable: bool) -> Vec<Check> {
+pub(super) fn client(ariadned: &BinaryDto, daemon_reachable: bool) -> Vec<Check> {
     let missing = "not found next to ariadne or on PATH";
     vec![
         Check::ok("ariadne", format!("ariadne {}", env!("CARGO_PKG_VERSION"))),
@@ -105,7 +105,7 @@ pub fn client(ariadned: &BinaryDto, daemon_reachable: bool) -> Vec<Check> {
     ]
 }
 
-pub async fn home(
+pub(super) async fn home(
     home: Option<&Path>,
     config: Option<Result<Option<FileConfig>, ConfigError>>,
 ) -> Vec<Check> {
@@ -195,7 +195,7 @@ fn there(name: &str, path: &Path, exists: bool, missing: &str, hint: &str) -> Ch
     }
 }
 
-pub async fn daemon(
+pub(super) async fn daemon(
     client: &Client,
     health: &Result<ariadne_api::HealthResponse, ClientError>,
     daemon_version: Option<String>,
@@ -288,7 +288,7 @@ fn start_hint(manager: Manager, unit: &Path) -> String {
 /// What this shell has of the two kinds of tool: git, without which no
 /// session can be spawned at all, and the forge CLIs, which only a task
 /// published to a forge needs.
-pub fn tools(required: &[BinaryDto], forges: &[BinaryDto]) -> Vec<Check> {
+pub(super) fn tools(required: &[BinaryDto], forges: &[BinaryDto]) -> Vec<Check> {
     let mut checks: Vec<Check> = required.iter().map(|t| required_tool(t, HERE)).collect();
     checks.extend(forges.iter().map(|forge| forge_check(forge, HERE)));
     checks
@@ -299,7 +299,7 @@ pub fn tools(required: &[BinaryDto], forges: &[BinaryDto]) -> Vec<Check> {
 ///
 /// git is asked one question more, because one thing it does for Ariadne is
 /// younger than the rest: see [`GIT_FLOOR`].
-pub fn required_tool(tool: &BinaryDto, lookup: &str) -> Check {
+pub(super) fn required_tool(tool: &BinaryDto, lookup: &str) -> Check {
     let present = Check::when(
         tool.name.clone(),
         tool.path.is_some(),
@@ -364,7 +364,7 @@ fn major_minor(version: &str) -> Option<(u32, u32)> {
 /// One forge CLI, wherever it is reported from: installed and signed in is the
 /// only state a published task can be watched in, and the other two are
 /// warnings rather than failures — a task landed locally needs neither.
-pub fn forge_check(forge: &BinaryDto, lookup: &str) -> Check {
+pub(super) fn forge_check(forge: &BinaryDto, lookup: &str) -> Check {
     let (name, detail) = (forge.name.clone(), describe(forge, lookup));
     let (forge_word, host) = match name.as_str() {
         "glab" => ("merge request", "GitLab"),

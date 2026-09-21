@@ -29,7 +29,7 @@ const LS: &[Column] = &[
 ];
 
 #[derive(Subcommand)]
-pub enum MemoryCommand {
+pub(crate) enum MemoryCommand {
     /// Save a memory
     ///
     /// Names the one scope the fact belongs to: a repository, or every one
@@ -83,7 +83,7 @@ pub enum MemoryCommand {
     },
 }
 
-pub async fn run(client: &Client, command: MemoryCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, command: MemoryCommand, format: Format) -> Result<()> {
     match command {
         MemoryCommand::Add {
             text,

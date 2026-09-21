@@ -108,7 +108,7 @@ const KNOWLEDGE_TOOLS: &[&str] = &[
 ];
 
 #[derive(Clone)]
-pub struct AriadneMcp {
+pub(crate) struct AriadneMcp {
     client: std::sync::Arc<Client>,
     seat: McpSeat,
     session_id: String,
@@ -121,7 +121,7 @@ pub struct AriadneMcp {
 }
 
 impl AriadneMcp {
-    pub fn from_env() -> Result<Self> {
+    pub(crate) fn from_env() -> Result<Self> {
         let session_id =
             std::env::var("ARIADNE_SESSION_ID").context("ARIADNE_SESSION_ID not set")?;
         let seat = match std::env::var("ARIADNE_SEAT").unwrap_or_default().as_str() {
@@ -420,7 +420,7 @@ impl ServerHandler for AriadneMcp {
 }
 
 /// Entry point for `ariadne mcp serve`.
-pub async fn serve() -> Result<()> {
+pub(crate) async fn serve() -> Result<()> {
     let server = AriadneMcp::from_env()?;
     let service = server
         .serve(rmcp::transport::stdio())

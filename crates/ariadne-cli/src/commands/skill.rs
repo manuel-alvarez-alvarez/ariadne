@@ -34,7 +34,7 @@ const LS: &[Column] = &[
 ];
 
 #[derive(Subcommand)]
-pub enum SkillCommand {
+pub(crate) enum SkillCommand {
     /// List every skill, shipped and written
     Ls,
     /// Show a skill and its document
@@ -91,7 +91,7 @@ pub enum SkillCommand {
     },
 }
 
-pub async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<()> {
+pub(crate) async fn run(client: &Client, cmd: SkillCommand, format: Format) -> Result<()> {
     match cmd {
         SkillCommand::Ls => {
             let skills: Vec<SkillDto> = client.get_json("/v1/skills").await?;

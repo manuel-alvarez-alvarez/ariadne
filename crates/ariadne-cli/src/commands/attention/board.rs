@@ -21,7 +21,7 @@ use crate::output::{Column, UNCAPPED, age, col, short_id};
 /// The reason is why the row is here at all, so it stays with the id and the
 /// title however narrow the terminal is; the task it belongs to is the one
 /// thing the goal heading above already half answers.
-pub const ROWS: &[Column] = &[
+pub(super) const ROWS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 48).title(),
     col("reason", UNCAPPED).attention(),
@@ -31,7 +31,7 @@ pub const ROWS: &[Column] = &[
 
 /// The `--format json` document: goals → items, ready for scripting.
 #[derive(Serialize)]
-pub struct Attention {
+pub(super) struct Attention {
     /// Rows in total, the number the UI's sidebar badge shows.
     pub count: usize,
     pub goals: Vec<Group>,
@@ -39,7 +39,7 @@ pub struct Attention {
 
 /// Everything one goal has that needs attention. Never empty.
 #[derive(Serialize)]
-pub struct Group {
+pub(super) struct Group {
     pub goal_id: String,
     /// The goal itself, when the goals list has it — a task or session can
     /// outlive its goal falling out of the list.
@@ -50,20 +50,24 @@ pub struct Group {
 }
 
 #[derive(Serialize)]
-pub struct AttentionTask {
+pub(super) struct AttentionTask {
     pub reason: Reason,
     pub task: TaskDto,
 }
 
 #[derive(Serialize)]
-pub struct AttentionSession {
+pub(super) struct AttentionSession {
     pub reason: Reason,
     pub session: SessionDto,
 }
 
 /// The three lists as one document: goals first, newest first — the order the
 /// UI shows them in — then any goal the goals list did not carry.
-pub fn group(goals: Vec<GoalDto>, tasks: Vec<TaskDto>, sessions: Vec<SessionDto>) -> Attention {
+pub(super) fn group(
+    goals: Vec<GoalDto>,
+    tasks: Vec<TaskDto>,
+    sessions: Vec<SessionDto>,
+) -> Attention {
     let mut goals = goals;
     goals.sort_by(|a, b| b.id.cmp(&a.id));
 
@@ -119,7 +123,7 @@ pub fn group(goals: Vec<GoalDto>, tasks: Vec<TaskDto>, sessions: Vec<SessionDto>
 
 /// One goal's section title: its title and short id, or just the short id
 /// when the goals list no longer carries it.
-pub fn heading(group: &Group) -> String {
+pub(super) fn heading(group: &Group) -> String {
     match &group.goal {
         Some(goal) => format!("{} ({})", goal.title, short_id(&goal.id)),
         None => format!("Goal {}", short_id(&group.goal_id)),
@@ -127,7 +131,7 @@ pub fn heading(group: &Group) -> String {
 }
 
 /// Task id → title, for naming the task a session was run for.
-pub fn task_titles(tasks: &[TaskDto]) -> HashMap<String, String> {
+pub(super) fn task_titles(tasks: &[TaskDto]) -> HashMap<String, String> {
     tasks
         .iter()
         .map(|task| (task.id.clone(), task.title.clone()))
@@ -137,7 +141,7 @@ pub fn task_titles(tasks: &[TaskDto]) -> HashMap<String, String> {
 /// One goal's rows: its tasks first, then its stuck sessions, as the UI lists
 /// them. `titles` names the task each session was working on, falling back to
 /// a short id — the row still has to say what the agent was doing.
-pub fn rows(
+pub(super) fn rows(
     group: &Group,
     titles: &HashMap<String, String>,
     now: chrono::DateTime<chrono::Utc>,
