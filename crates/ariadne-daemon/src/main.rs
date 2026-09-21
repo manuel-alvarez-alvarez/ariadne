@@ -3,6 +3,8 @@
 //! Serves the REST API on a unix socket (docker-style) and optionally on a
 //! TCP listener for web/desktop frontends.
 
+#![warn(unreachable_pub)]
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

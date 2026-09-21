@@ -135,42 +135,25 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.memories.lists() })
       break
     }
-    case "knowledge_indexed": {
-      const { repository_id } = event.data
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeStatus(repository_id),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeInteractionsAll(repository_id),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeWalksAll(repository_id),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeGraphAll(repository_id),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeOutlineAll(repository_id),
-      })
-      break
-    }
+    case "knowledge_indexed":
     case "knowledge_failed": {
+      // An index run changes every read the knowledge screen makes of the
+      // repository, and each read has a key of its own: status, interactions,
+      // impact and path walks, file graphs, outlines, symbol searches and
+      // symbol definitions. Search and symbol reads must be here too: a search
+      // made while the index was empty holds "no match" until it is refetched.
       const { repository_id } = event.data
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeStatus(repository_id),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeInteractionsAll(repository_id),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeWalksAll(repository_id),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeGraphAll(repository_id),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: qk.repositories.knowledgeOutlineAll(repository_id),
-      })
+      for (const queryKey of [
+        qk.repositories.knowledgeStatus(repository_id),
+        qk.repositories.knowledgeSearchAll(repository_id),
+        qk.repositories.knowledgeSymbolAll(repository_id),
+        qk.repositories.knowledgeInteractionsAll(repository_id),
+        qk.repositories.knowledgeWalksAll(repository_id),
+        qk.repositories.knowledgeGraphAll(repository_id),
+        qk.repositories.knowledgeOutlineAll(repository_id),
+      ]) {
+        void queryClient.invalidateQueries({ queryKey })
+      }
       break
     }
     default: {

@@ -190,7 +190,8 @@ Out: the daemon endpoints themselves (012).
     tabs are one list in `ui/src/features/knowledge/knowledge-tabs.tsx`, one
     entry per tab.
 32. The Overview tab shows one card per registered repository: its state,
-    its files and symbols, its languages, its indexed refs and a Reindex
+    each ref whose last run failed beside its error (022, rule 17), its
+    files and symbols, its languages, its indexed refs and a Reindex
     button. Reindex posts the reindex and shows `indexing` at once; it is off
     while the state is `disabled`.
 33. Every knowledge graph is drawn by one component,
@@ -228,7 +229,8 @@ Out: the daemon endpoints themselves (012).
     symbol history. `?symbol=` keeps the current name. A definition picker
     separates equal names. The side pane shows the signature, documentation,
     line range, and numbered source. The palette's Find symbol action opens
-    `#/knowledge?tab=symbols`.
+    `#/knowledge?tab=symbols`. `knowledge_indexed` and `knowledge_failed`
+    refetch its searches and symbol reads for their repository.
 37. The Impact & path tab (`ui/src/features/knowledge/impact-tab.tsx`) has
     two modes, kept in the URL as `?mode=impact|path` with the inputs
     `?symbol=`, `?from=`, `?to=` and `?depth=`. A typed symbol is written on
@@ -305,7 +307,8 @@ Out: the daemon endpoints themselves (012).
   so they survive a reload; and a pick writes them into it
   (`ui/src/features/knowledge/knowledge-screen.test.tsx::the pickers and the tab`).
 - The Overview tab shows a card per repository in every state the daemon
-  answers with, turns Reindex off for a disabled one, posts a reindex and
+  answers with, names each ref that failed beside its error, turns Reindex
+  off for a disabled one, posts a reindex and
   shows `indexing` at once, and refetches once the daemon says indexing
   finished
   (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Overview tab`,

@@ -471,7 +471,7 @@ Compare the branches with `get_diff`. Then call `pick_winner` once, with the id 
 pub mod ste {
     /// The words an agent-facing text never uses: the long spelling of a
     /// short word, and the ones that leave an instruction optional or vague.
-    const BANNED: [&str; 6] = [
+    pub const BANNED: [&str; 6] = [
         "utilise",
         "prior to",
         "in order to",

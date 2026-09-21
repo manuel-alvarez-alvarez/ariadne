@@ -11,7 +11,7 @@ pub enum KnowledgeState {
     Idle,
     /// An index run is under way.
     Indexing,
-    /// The last run failed; `error` says why.
+    /// The last run of a ref failed; `failures` names the ref and says why.
     Failed,
     /// `knowledge_enabled = false`: nothing is indexed and nothing runs.
     Disabled,
@@ -45,8 +45,16 @@ pub struct KnowledgeStatusDto {
     /// Symbols of the files those paths hold.
     pub symbols: i64,
     pub languages: Vec<KnowledgeLanguageDto>,
-    /// Why the last run failed, on a `failed` repository.
-    pub error: Option<String>,
+    /// The refs whose last run failed, each with why. A good run of one ref
+    /// leaves the failure of another here.
+    pub failures: Vec<KnowledgeFailureDto>,
+}
+
+/// One ref whose last index run failed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct KnowledgeFailureDto {
+    pub git_ref: String,
+    pub error: String,
 }
 
 /// Query of `GET /v1/knowledge/search`.
@@ -74,8 +82,8 @@ pub struct KnowledgeSearchQuery {
 }
 
 impl KnowledgeSearchQuery {
-    const DEFAULT_LIMIT: i64 = 20;
-    const MAX_LIMIT: i64 = 50;
+    pub const DEFAULT_LIMIT: i64 = 20;
+    pub const MAX_LIMIT: i64 = 50;
 
     pub fn limit(&self) -> i64 {
         self.limit
@@ -373,8 +381,8 @@ pub struct KnowledgeGraphQuery {
 }
 
 impl KnowledgeGraphQuery {
-    const DEFAULT_LIMIT: i64 = 2000;
-    const MAX_LIMIT: i64 = 10_000;
+    pub const DEFAULT_LIMIT: i64 = 2000;
+    pub const MAX_LIMIT: i64 = 10_000;
 
     pub fn limit(&self) -> i64 {
         self.limit
@@ -476,9 +484,11 @@ pub struct KnowledgeIndexedDto {
     pub symbols: i64,
 }
 
-/// Payload of `knowledge_failed`: an index run of a repository failed.
+/// Payload of `knowledge_failed`: an index run of one ref of a repository
+/// failed.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct KnowledgeFailedDto {
     pub repository_id: String,
+    pub git_ref: String,
     pub error: String,
 }

@@ -1,7 +1,7 @@
 ---
 id: knowledge-base
 status: current
-updated: 2026-09-20
+updated: 2026-09-21
 areas: [daemon, api, mcp, cli, ui]
 commits: []
 tests:
@@ -163,10 +163,17 @@ agent to do with the tools (017); and the memory tools beside these (019).
     its base branch is edited, and after every landing (a task transition to
     `finished`). A task branch is read every time the daemon sees its head
     move (002, rule 11), and every in-flight task branch is read at daemon
-    start — leniently: a task branch the repository no longer has fails
-    nothing, and its rows go. A landing drops the rows of the task's branch
+    start — leniently: a task branch that git cannot resolve in the
+    repository fails nothing, and its rows go. Every other error of a lenient
+    run — a store that is busy, a git that did not start — is a failure of
+    that ref like any other (rule 36), logged at `warn`, and the rows stay.
+    A landing drops the rows of the task's branch
     and of its author branches (002, rule 6) before the base branch is read
-    again. A deleted repository's rows go with it.
+    again. A deleted repository's rows go with it. The daemon learns of a
+    moved branch from its own event stream, which holds a fixed number of
+    events: when the index falls behind it, the missed moves are gone, so
+    every base branch and every in-flight task branch is queued again, as at
+    daemon start. A run of a ref that did not move reads nothing.
 15. The first read of a ref takes every file git tracks at its head; every
     later read runs `git diff --name-only <last indexed commit> <head>` and
     reads only the changed paths. A file over 1 MiB, a binary file (a NUL
@@ -188,10 +195,16 @@ agent to do with the tools (017); and the memory tools beside these (019).
     `repository_id`, `state` (`idle`, `indexing`, `failed`, `disabled`),
     `refs` (each `git_ref`, `commit`, `indexed_at`, `files`, `symbols`),
     `files` (distinct paths across the refs), `symbols` (of the distinct
-    blobs those paths hold), `languages` (`language`, `files`) and `error`.
-18. `POST /v1/repositories/{id}/knowledge/reindex` marks the repository
-    `indexing`, answers 202 with its status, and the worker then drops its
-    rows and reads its base branch and every task branch it had again.
+    blobs those paths hold), `languages` (`language`, `files`) and
+    `failures` (each `git_ref`, `error`): the refs whose last run failed,
+    with why. The state and the error are kept per ref (rule 36), and the
+    repository's `state` is read off its refs: `indexing` while a run of any
+    ref is under way, else `failed` while `failures` holds a ref, else
+    `idle`.
+18. `POST /v1/repositories/{id}/knowledge/reindex` marks the base branch,
+    and so the repository, `indexing`, answers 202 with its status, and the
+    worker then drops its rows and the state of every ref, marks the base
+    branch and every task branch it had as `indexing`, and reads them again.
 19. `GET /v1/knowledge/search` takes `q`, and optionally `repository`,
     `all`, `git_ref`, `kind`, `path` (a substring) and `limit` (default 20,
     max 50), and answers `KnowledgeHitDto`s: `repository_id`, `path`,
@@ -242,8 +255,8 @@ agent to do with the tools (017); and the memory tools beside these (019).
     definition's own repository comes first.
 24. Every index run publishes `knowledge_indexed` (`repository_id`,
     `git_ref`, `commit`, `files`, `symbols`) on the domain stream, and a
-    failed run `knowledge_failed` (`repository_id`, `error`) (012). Neither
-    belongs to a goal or a task.
+    failed run `knowledge_failed` (`repository_id`, `git_ref`, `error`)
+    (012). Neither belongs to a goal or a task.
 25. Every seat has `search_code`, `outline`, `symbol`, `path`, `impact` and
     `repo_map` (013).
     `search_code` passes `query`, `repository`, `all`, `git_ref`, `kind`,
@@ -277,7 +290,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
     A path hop is `path:line kind name <- edge_kind confidence`, with no
     edge on the first hop; an empty path is `(no path within N)`. An answer
     is cut at 8 KiB, with a last line naming how many results were left and
-    saying to narrow the query.
+    saying to narrow the query. A read the daemon refuses because the ref is
+    not ready (rule 36) answers the refusal itself, as the text of the tool
+    and in the daemon's words, marked as an error — never `No results.`,
+    which an agent reads as a fact about the code. A daemon failure (rule
+    37) is an internal error of the call, and no wrong argument.
 27. `ariadne knowledge status|reindex|search|outline|symbol|path|impact|interactions|map|graph`
     (014) read the same endpoints. `search` takes `--repository`, `--ref`,
     `--kind`, `--path` and `--limit`; `outline` takes the repository, the path
@@ -298,7 +315,9 @@ agent to do with the tools (017); and the memory tools beside these (019).
     impact row names too; `--format json` prints the daemon's groups;
     `symbol` prints a block per definition, an end in another repository led
     by that repository's id and followed by its confidence, its step and its
-    candidate count.
+    candidate count. `status` prints `failures`: each failed ref as `<ref>:
+    <error>`, and `-` where none failed. A read that is refused because the
+    ref is not ready (rule 36) prints the daemon's sentence as it came.
 28. `knowledge_enabled` in `config.toml` defaults to true. False, the daemon
     indexes nothing and opens no store, the status says `disabled`, a
     search, an outline or a reindex is refused with a line naming the key,
@@ -310,8 +329,8 @@ agent to do with the tools (017); and the memory tools beside these (019).
     picker lead it; the refs are the ones the status lists. Its tabs are
     `overview`, `repositories`, `symbols`, `impact` and `files`, and the URL
     keeps the picks and the tab. The Overview tab shows a card per
-    repository with its status and a Reindex button that posts the reindex
-    and shows `indexing` at once. The Repositories tab draws the
+    repository with its status, each ref that failed beside its error, and a
+    Reindex button that posts the reindex and shows `indexing` at once. The Repositories tab draws the
     interactions between repositories as a graph: a node per repository, an
     edge per pair and kind with its count, dashed where it is heuristic only,
     and a click on an edge lists its file-level ends with the step each
@@ -320,7 +339,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
     screen on a repository. `knowledge_indexed` and `knowledge_failed`
     refetch what the screen shows for their repository and leave every other
     repository's caches alone; for the Files tab that includes its file
-    graphs and outlines.
+    graphs and outlines, and for the Symbols tab its searches and its
+    symbol reads, so a search that found nothing while the index was being
+    built shows its results once it is done
+    (`ui/src/features/knowledge/symbols-tab.test.tsx::the Symbols tab`,
+    `ui/src/events/dispatch.test.ts::knowledge events (022)`).
     The Symbols tab searches the selected repository and ref by name, kind,
     and path. Its graph puts the chosen definition at the centre. Callers,
     callees, implementations, references, and tests surround it in separate
@@ -527,7 +550,9 @@ agent to do with the tools (017); and the memory tools beside these (019).
     order from `from` to `to`. Each hop has `repository_id`, `path`, `line`,
     `kind`, `name`, and the `edge_kind` and `confidence` of its incoming edge;
     the first hop has neither edge field. `hops` is empty when no path exists
-    within `depth`.
+    within `depth`. Another repository whose ref is not ready (rule 36) holds
+    no end, and refuses nothing: one repository with no index does not stop
+    the paths of every other one.
 
 35. `GET /v1/knowledge/graph` takes `repository`, and optionally `git_ref`
     (the caller's own by default, rule 20) and `limit` (2000 by default,
@@ -544,6 +569,33 @@ agent to do with the tools (017); and the memory tools beside these (019).
     largest degree, removes edges with an end outside that set, and sets
     `truncated`; degree counts the grouped edges at both ends. `total_nodes`
     is the file count before that cut.
+
+36. The state of an index is kept per ref: `idle`, `indexing` or `failed`,
+    with the error of a failed run. A run marks its own ref `indexing` when
+    it starts and `idle` or `failed` when it ends, and touches no other ref,
+    so a good run of a task branch leaves the failure of the base branch in
+    place. A dropped ref loses its state with its rows. Every read —
+    `search`, `outline`, `symbol`, `impact`, `path`, `map`, `graph` and
+    `interactions` — checks the ref it resolved (rule 20), a ref the call
+    named included, before it asks the store, and a ref that cannot answer
+    refuses with 409 `knowledge_not_ready` and `the index of <ref> in
+    repository <path> (<id>) is not ready: <reason>`. The reason is one of
+    three: `no index run of this ref has started`; `the first index run of
+    this ref is in progress, try again later`; `the last index run of this
+    ref failed: <error>`. A ref that has an index answers while a run
+    updates it. A reindex drops every row first, so each of its refs is in
+    its first index until its run ends. A search or a `symbol` over several
+    repositories is refused where any one of their refs is not ready, and
+    the refusal names it.
+37. A store error and a git error are the daemon's own: every knowledge
+    route answers them with 500 `internal_error` and `the knowledge base
+    failed: <error>`. A 4xx is kept for a wrong request — an empty `q`, a
+    ref that is not ready, a diff range that is no `<base>..<head>` (the
+    three dots of `<base>...<head>` and a space in an end are no such
+    form, and are refused before git runs), that has an end that could read
+    as a flag, or that has an end git cannot resolve. A `git diff` that fails on any other range is a 500 — so that the MCP
+    server, which reports a 4xx as wrong arguments (013), reports a busy
+    database as an internal error.
 
 ## Languages
 
@@ -634,7 +686,8 @@ scan of its lines.
 
 | Table | Columns | Holds |
 | --- | --- | --- |
-| `repositories` | `id`, `state`, `error`, `updated_at`, `base_ref` | every repository the index heard of, at `idle`, `indexing` or `failed`, and the ref another repository is linked against |
+| `repositories` | `id`, `updated_at`, `base_ref` | every repository the index heard of, and the ref another repository is linked against |
+| `ref_states` | `repository_id`, `git_ref`, `state`, `error`, `updated_at` | where the index of one ref stands, at `idle`, `indexing` or `failed`, with the error of a failed run; a ref has a row here from its first run, before it has one in `refs` |
 | `refs` | `repository_id`, `git_ref`, `commit_sha`, `indexed_at` | the refs read per repository, each at the commit it was last read at |
 | `files` | `repository_id`, `git_ref`, `path`, `blob`, `language` | the tracked files of a ref, each with the blob it held there |
 | `blobs` | `blob`, `language`, `parsed_at` | every blob parsed so far |
@@ -645,7 +698,7 @@ scan of its lines.
 | `interfaces` | `blob`, `kind`, `name`, `line`, `symbol`, `handlers`, `method` | the packages, routes and variables of one blob (rule 30), before they are linked |
 | `edges` | `from_repository`, `git_ref`, `from_blob`, `kind`, `from_symbol`, `from_line`, `to_repository`, `to_ref`, `to_blob`, `to_symbol`, `to_line`, `name`, `confidence`, `step`, `candidates` | the relations the resolution and link passes derived, each end a blob at a ref of a repository, a line and a definition where there is one, each naming the step that answered and how many definitions matched there |
 
-`refs` cascade from `repositories`, `files` from `refs`, and `symbols`,
+`refs` and `ref_states` cascade from `repositories`, `files` from `refs`, and `symbols`,
 `mentions`, `imports`, `interfaces` and `edges` from `blobs` and `symbols`.
 Dropping a ref or a repository then drops the blobs no file holds, with
 their symbols and FTS rows, in batches of 100 blobs and one transaction per
@@ -883,9 +936,41 @@ the daemon and knowledge WAL files off the commit path.
 - `symbol Item --detail context` from `api` lists the `web` reference under
   `web` with confidence `heuristic` at step `name`
   (`tests/it/knowledge.rs::a_type_named_in_the_other_repository_lists_that_reference_as_a_guess`).
-- A ref that does not resolve fails the run, and the status says why
+- A ref that does not resolve fails the run, and the status names the ref
+  and says why
   (`knowledge.rs::a_ref_that_does_not_resolve_fails_the_run`,
   `tests/it/knowledge.rs::a_repository_git_cannot_read_reads_as_failed`).
+- Each of the eight reads refuses a ref that was never indexed, a ref in its
+  first index and a ref whose last run failed, with the text of its case,
+  the repository and the ref
+  (`tests/it/knowledge.rs::a_read_of_a_ref_that_is_not_ready_is_refused_with_the_text_of_its_case`),
+  and answers from a ref that has an index while a run updates it
+  (`::a_read_during_an_update_of_a_good_index_answers`).
+- A failure of the base branch survives a good run of another branch: the
+  status stays `failed` and names `main`, `main` refuses its reads, and the
+  other branch answers
+  (`tests/it/knowledge.rs::a_base_branch_failure_survives_a_good_task_branch_run`).
+- A lenient run whose store fails keeps the rows of the branch and records
+  the failure on it
+  (`tests/it/knowledge.rs::a_lenient_run_with_a_store_error_keeps_the_rows`).
+- An index that fell behind the event stream reads every base branch and
+  every in-flight task branch again, at the commits it missed
+  (`tests/it/knowledge.rs::a_lag_queues_the_branches_again`).
+- A store error answers 500 `internal_error`
+  (`tests/it/knowledge.rs::a_store_error_answers_5xx`), and so does a git
+  that fails on a right diff range, while a wrong range answers 400
+  (`::a_git_failure_on_a_right_diff_range_answers_5xx_and_a_wrong_range_4xx`),
+  which the MCP server
+  reports as an internal error
+  (`mcp.rs::a_5xx_reaches_the_agent_as_an_internal_error`,
+  `tools.rs::a_daemon_failure_of_a_knowledge_read_is_an_internal_error`).
+- Each of the six knowledge tools answers a ref that is not ready with the
+  daemon's refusal as its text
+  (`tools.rs::a_ref_that_is_not_ready_answers_every_knowledge_tool_with_the_refusal`).
+- `ariadne knowledge status` names each ref that failed beside its error
+  (`commands/knowledge.rs::a_status_names_each_ref_that_failed`), and so
+  does the Overview card
+  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Overview tab`).
 - Registering a repository indexes its base branch, and the status, the
   search and the outline read it back
   (`tests/it/knowledge.rs::registering_a_repository_indexes_its_base_branch`).

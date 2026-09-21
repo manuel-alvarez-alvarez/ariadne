@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-09-19
+updated: 2026-09-21
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -75,7 +75,13 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      repository's hits with the repository's path, read from
      `GET /v1/repositories` once per call, and put another repository's
      hits — a caller across a route, a reference by name — under a heading
-     of that repository's own
+     of that repository's own. A knowledge read the daemon refuses with
+     `knowledge_not_ready` — the ref has no index yet, its first index runs,
+     or its last run failed (022, rule 36) — is the tool's answer: the
+     daemon's sentence as it came, marked as an error, and never `No
+     results.`. Every other 4xx is wrong arguments carrying the daemon's
+     sentence, and a 5xx — a store or a git that failed — is an internal
+     error
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
@@ -154,6 +160,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`::memory_search_defaults_to_the_goals_only_repository`), and require a
   repository when the goal has several
   (`::memory_search_needs_a_repository_when_the_goal_has_several`).
+- A ref that is not ready answers each of the six knowledge tools with the
+  daemon's refusal as the tool's text
+  (`tools.rs::a_ref_that_is_not_ready_answers_every_knowledge_tool_with_the_refusal`),
+  and a 5xx is an internal error, never wrong arguments
+  (`mcp.rs::a_5xx_reaches_the_agent_as_an_internal_error`,
+  `tools.rs::a_daemon_failure_of_a_knowledge_read_is_an_internal_error`).
 - The knowledge tools are listed to every seat, and to none while the
   knowledge base is off
   (`mcp.rs::the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off`);

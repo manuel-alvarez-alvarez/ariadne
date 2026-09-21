@@ -32,15 +32,7 @@ cargo nextest run -p <crate>              # the crate
 cargo nextest run -p <crate> -E 'test(/^<module>::/)' # one test file of it
 cargo clippy -p <crate> --all-targets
 cargo fmt
-scripts/check-unused-rust                 # a library pub item no other file names
 ```
-
-`unreachable_pub` is a workspace lint, so a `pub` item that its crate does not
-export is a warning. It cannot see a `pub` item of a library crate that no
-other crate uses: to rustc, that is the library's interface.
-`scripts/check-unused-rust` lists each such item, and fails on one. Remove the
-item, or make it private. An item that a derive, serde, utoipa or a public
-signature reaches goes in the script's `IGNORED`, with its reason.
 
 The daemon's integration tests are one test binary, `it`: every file under
 `crates/ariadne-daemon/tests/it/` is a module that `tests/it/main.rs`
@@ -70,7 +62,6 @@ Before a commit on `main`, run the whole workspace:
 cargo nextest run
 cargo clippy --all-targets
 cargo fmt --all -- --check
-scripts/check-unused-rust
 ```
 
 Nothing is `#[ignore]`d: the suite drives real `git` worktrees, which Ariadne

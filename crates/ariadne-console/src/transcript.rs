@@ -143,7 +143,7 @@ pub struct Location {
 }
 
 /// What a tool call reads as when its event names no tool.
-const UNNAMED_TOOL: &str = "ACP tool";
+pub const UNNAMED_TOOL: &str = "ACP tool";
 
 /// One tool call, as the ACP call the daemon records under `payload.acp`
 /// (021): the same shape whether it opened, was updated, ended, or is the
@@ -305,7 +305,7 @@ impl TranscriptItem {
 }
 
 /// What a prompt reads as when its event carries no `text`.
-const UNRECORDED_PROMPT: &str = "(prompt text not recorded)";
+pub const UNRECORDED_PROMPT: &str = "(prompt text not recorded)";
 
 impl From<&AgentEventDto> for TranscriptItem {
     fn from(event: &AgentEventDto) -> Self {

@@ -230,7 +230,7 @@ impl Console {
 
     /// Clear the terminal and draw it again: the banner, every block, and
     /// the pane under them.
-    fn redraw<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
+    pub fn redraw<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
         viewport::restart(terminal)?;
         self.committed = 0;
         self.banner(terminal)?;

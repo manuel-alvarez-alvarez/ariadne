@@ -1,6 +1,8 @@
 //! Daemon internals, exposed as a library so integration tests can exercise
 //! the managers directly. The `ariadned` binary is a thin wrapper.
 
+#![warn(unreachable_pub)]
+
 pub mod acp;
 mod acp_calls;
 pub mod acp_discovery;

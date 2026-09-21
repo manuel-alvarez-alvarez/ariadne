@@ -201,8 +201,9 @@ ariadne knowledge reindex ~/projects/api          # drop it and build it again
 
 `status` prints the repository's state (`idle`, `indexing`, `failed` or
 `disabled`), every indexed ref with its commit, how many files and symbols
-the index holds for it, the files per language, and the error of a failed
-run. `search` and `outline` are listings like every other: `--format json`
+the index holds for it, the files per language, and each ref whose last run
+failed, with its error. A run is of one ref, and so is its failure: a good
+run of a task branch leaves a failed base branch failed, and named. `search` and `outline` are listings like every other: `--format json`
 for the daemon's own objects, `-q` for the first column (`path:line`, or the
 line range of an outline), `-o wide` and `--columns` for the layout.
 `search` reads every repository unless `--repository` names one, at the base
@@ -221,11 +222,43 @@ The same is on the API: `GET /v1/repositories/{id}/knowledge`, `POST
 /v1/knowledge/path`, `GET /v1/knowledge/impact`, `GET
 /v1/knowledge/interactions` and `GET /v1/knowledge/map`, and the domain events
 `knowledge_indexed` and `knowledge_failed` on the event stream (`ariadne
-events` prints them).
+events` prints them). Each names the ref the run was of.
+
+## When an index is not ready
+
+A read of a ref that cannot answer is refused. An empty answer would read as
+a fact about the code, so the daemon says which case it is, and names the
+repository and the ref:
+
+```
+the index of main in repository /home/me/projects/api (01K…) is not ready: <reason>
+```
+
+- `no index run of this ref has started`: the ref was never indexed, or its
+  run is still queued. A ref you named with `--ref` or `git_ref` that is no
+  indexed branch reads like this too.
+- `the first index run of this ref is in progress, try again later`: this
+  holds for every ref of a repository during a reindex, which drops its rows
+  first.
+- `the last index run of this ref failed: <error>`: fix the cause, then run
+  `ariadne knowledge reindex`.
+
+A ref that has an index answers while a run updates it. The CLI prints the
+sentence as it came, an agent reads it as the text of its tool, and the API
+answers 409 with the code `knowledge_not_ready`. A search over several
+repositories is refused where one of them is not ready: name a repository
+to read the others. A store or a git that fails is a 500 with the code
+`internal_error`, never a 4xx: the request was right.
+
+A task branch that git can no longer resolve leaves the index with no
+failure. Every other error of a run is recorded on its ref. When the index
+falls behind the daemon's event stream, it reads every base branch and every
+in-flight task branch again, so no branch move is lost.
 
 In the desktop app, **Knowledge** in the sidebar opens the same data. Pick a
 repository and a ref at the top. The **Overview** tab shows each
-repository's status with a Reindex button. The **Repositories** tab draws
+repository's status, each ref that failed beside its error, and a Reindex
+button. The **Repositories** tab draws
 how the repositories use each other: one node per repository, one edge per
 pair and kind, with the count on it. A dashed edge is a guess only. Click an
 edge to list the files at its ends. The **Impact & path** tab draws what a

@@ -169,9 +169,13 @@ export const qk = {
     detail: (id: string) => ["repositories", "detail", id] as const,
     /** One repository's knowledge-base status (022): state, refs, counts, languages. */
     knowledgeStatus: (id: string) => ["repositories", "detail", id, "knowledge"] as const,
+    /** Every search of one repository, whatever its ref and filters: the prefix events invalidate. */
+    knowledgeSearchAll: (id: string) => ["repositories", "detail", id, "knowledge-search"] as const,
     /** Search over one repository's knowledge base, `q`/`kind`/`path` included. */
     knowledgeSearch: (id: string, filters?: KnowledgeSearchFilters) =>
       ["repositories", "detail", id, "knowledge-search", filters ?? { repository: id }] as const,
+    /** Every symbol read of one repository, whatever its name and detail: the prefix events invalidate. */
+    knowledgeSymbolAll: (id: string) => ["repositories", "detail", id, "knowledge-symbol"] as const,
     knowledgeSymbol: (id: string, filters: KnowledgeSymbolFilters) =>
       ["repositories", "detail", id, "knowledge-symbol", filters] as const,
     /**

@@ -152,6 +152,23 @@ impl Store {
         Ok(event)
     }
 
+    /// The events of a session with an id above `after`, in order: what a
+    /// console stream committed to the store but not yet published on the
+    /// bus when a live event overtook it (008). `None` is every event.
+    pub async fn list_session_events_after(
+        &self,
+        session_id: &str,
+        after: Option<&str>,
+    ) -> Result<Vec<AgentEvent>> {
+        Ok(sqlx::query_as::<_, AgentEvent>(
+            "SELECT * FROM agent_events WHERE session_id = ? AND id > ? ORDER BY id",
+        )
+        .bind(session_id)
+        .bind(after.unwrap_or(""))
+        .fetch_all(self.r())
+        .await?)
+    }
+
     /// Every event a session has produced, in order: the whole transcript an
     /// console replays from, where `list_events`'s page cap would
     /// truncate a long conversation.

@@ -25,7 +25,7 @@ pub struct AcpAgentConfig {
 }
 
 /// Environment variable moving the whole ariadne home directory.
-const HOME_ENV: &str = "ARIADNE_HOME";
+pub const HOME_ENV: &str = "ARIADNE_HOME";
 
 /// The `config.toml` fields the endpoint depends on. Unknown keys are ignored
 /// here: a socket has to be named even for a config that will not parse, so

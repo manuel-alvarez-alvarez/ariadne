@@ -2,7 +2,7 @@
 
 /** The Symbols tab against the public knowledge HTTP surface (022). */
 
-import { screen, waitFor, within } from "@testing-library/react"
+import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -13,6 +13,7 @@ import type {
   KnowledgeSymbolDto,
   RepositoryDto,
 } from "@/api"
+import { dispatchDomainEvent } from "@/events/dispatch"
 import { aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 
@@ -37,7 +38,7 @@ const STATUS: KnowledgeStatusDto = {
   files: 4,
   symbols: 8,
   languages: [],
-  error: null,
+  failures: [],
 }
 const HIT: KnowledgeHitDto = {
   repository_id: WEB.id,
@@ -114,6 +115,8 @@ const CALL_RENDER = definition("callRender", {
 })
 
 let requests: URL[] = []
+/** What `search` answers: a repository whose index is still being built has none. */
+let hits: KnowledgeHitDto[] = [HIT]
 
 function withSource(symbol: KnowledgeSymbolDto): KnowledgeSymbolDto {
   return { ...symbol, context: undefined, source: `${symbol.signature} {\n  return true\n}` }
@@ -121,6 +124,7 @@ function withSource(symbol: KnowledgeSymbolDto): KnowledgeSymbolDto {
 
 beforeEach(() => {
   requests = []
+  hits = [HIT]
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const url = new URL(typeof input === "string" ? input : (input as Request).url)
     requests.push(url)
@@ -128,7 +132,7 @@ beforeEach(() => {
     if (url.pathname.endsWith("/knowledge")) {
       return Promise.resolve(jsonResponse({ ...STATUS, repository_id: url.pathname.split("/")[3] }))
     }
-    if (url.pathname === "/v1/knowledge/search") return Promise.resolve(jsonResponse([HIT]))
+    if (url.pathname === "/v1/knowledge/search") return Promise.resolve(jsonResponse(hits))
     if (url.pathname === "/v1/knowledge/graph") return Promise.resolve(jsonResponse(FILES))
     if (url.pathname === "/v1/knowledge/symbol") {
       const found =
@@ -172,6 +176,38 @@ describe("the Symbols tab", () => {
     expect(await screen.findByRole("button", { name: "callRender ↗" })).toBeDefined()
     // Two fields typed into, each answering every keystroke with its
     // suggestions: more than the default five seconds under a loaded suite.
+  }, 15_000)
+
+  it("refetches a search that found nothing once indexing finishes", async () => {
+    hits = []
+    const user = userEvent.setup()
+    // The seed pins the shipped `staleTime`: only the event can refetch.
+    const { queryClient } = renderScreen(<KnowledgeScreen />, {
+      route: "/knowledge?tab=symbols",
+      seed: () => {},
+    })
+
+    await user.type(await screen.findByRole("combobox", { name: "Search symbols" }), "ren")
+    await user.click(screen.getByRole("button", { name: "Search" }))
+    expect(await screen.findByText("No symbols match this search.")).toBeDefined()
+
+    hits = [HIT]
+    act(() => {
+      dispatchDomainEvent(queryClient, {
+        event: "knowledge_indexed",
+        data: {
+          repository_id: WEB.id,
+          git_ref: "main",
+          commit: "abc1230000000000000000000000000000000000",
+          files: 4,
+          symbols: 8,
+        },
+      })
+    })
+
+    const results = await screen.findByRole("list", { name: "Symbol search results" })
+    expect(within(results).getByText("src/render.ts:10")).toBeDefined()
+    expect(screen.queryByText("No symbols match this search.")).toBeNull()
   }, 15_000)
 
   it("opens the URL symbol, re-centres on a node, and moves backward and forward", async () => {

@@ -154,6 +154,15 @@ impl Landing {
     pub fn validate_landing_template(template: &str) -> Result<(), UnknownPlaceholders> {
         unknown_placeholders("landing", Self::LANDING_PLACEHOLDERS, template)
     }
+
+    /// Whether this ending puts anything in the repository at all.
+    ///
+    /// The one that does not is why a repository's own landing text is not
+    /// handed to every task: a repository's way of taking a change has
+    /// nothing to say about a task that hands it none.
+    pub fn lands_a_change(&self) -> bool {
+        !matches!(self, Landing::None)
+    }
 }
 
 /// A lifecycle briefing of Ariadne's own: one of the texts an agent is

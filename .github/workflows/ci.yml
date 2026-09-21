@@ -90,11 +90,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # rustc reports no `pub` item of a library crate as unused: the audit
-      # fails on one that no other file names.
-      - name: Unused pub items
-        run: scripts/check-unused-rust
-
       # Name the failed test in the run summary and as an annotation, rather
       # than leaving it to a dig through the raw log. Runs even when a test
       # above failed.

@@ -1101,7 +1101,7 @@ fn handler_names(after: &str) -> Vec<String> {
 }
 
 /// The segments of a route: `/v1/items/{id}` is `v1`, `items` and `{id}`.
-fn route_segments(route: &str) -> Vec<&str> {
+pub fn route_segments(route: &str) -> Vec<&str> {
     route
         .split('?')
         .next()
@@ -1113,7 +1113,7 @@ fn route_segments(route: &str) -> Vec<&str> {
 
 /// Whether a segment stands for any value: `{id}`, `:id`, `<id>`, `*rest`,
 /// `${id}`, `$id`, `{}`.
-fn is_wildcard(segment: &str) -> bool {
+pub fn is_wildcard(segment: &str) -> bool {
     segment.starts_with([':', '{', '<', '*', '$']) || segment.contains('$') || segment.contains('{')
 }
 

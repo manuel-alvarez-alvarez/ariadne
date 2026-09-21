@@ -744,7 +744,7 @@ fn first_string_argument(text: &str) -> Option<String> {
 ///
 /// Read off the text rather than off the tree: no tags query captures an
 /// import, and the shapes are few enough to name.
-fn imports_of(language: Language, source: &str) -> Vec<Import> {
+pub fn imports_of(language: Language, source: &str) -> Vec<Import> {
     let lines = Lines::of(source);
     let mut imports = Vec::new();
     match language {
