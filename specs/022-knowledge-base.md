@@ -52,8 +52,8 @@ six MCP tools, the `ariadne knowledge` commands, the `knowledge_enabled`
 and `knowledge_workers` keys, and the desktop knowledge screen over the same
 routes (015).
 
-Out: languages beyond the registry here; what the skill documents tell an
-agent to do with the tools (017); and the memory tools beside these (019).
+Out: languages beyond the registry here; and what the skill documents tell
+an agent to do with the tools (017).
 
 ## Behavior
 
@@ -283,7 +283,7 @@ agent to do with the tools (017); and the memory tools beside these (019).
     `search_code` passes `query`, `repository`, `all`, `git_ref`, `kind`,
     `path` and `limit` through to the search; the daemon applies the defaults
     of rules 19 and 20. `outline`, `symbol`, `path` and `impact` take the
-    repository the memory tools take: the task's, then the goal's only one,
+    task's repository, then the goal's only one,
     and refuse with an instruction where the goal has several. `impact` with
     neither `symbol` nor `diff` is the task's own diff, the base branch to the
     task branch, for a reviewer, and a refusal naming both arguments for any

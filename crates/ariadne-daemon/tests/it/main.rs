@@ -27,7 +27,6 @@ mod knowledge;
 mod landing_lifecycle;
 mod logs;
 mod managers;
-mod memories;
 mod models;
 mod multi_author_tasks;
 mod outside_sessions;

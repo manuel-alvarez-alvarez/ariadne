@@ -501,54 +501,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/memories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["memories_list"];
-        put?: never;
-        post: operations["memories_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/memories/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["memories_search"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/memories/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete: operations["memories_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/models": {
         parameters: {
             query?: never;
@@ -1446,16 +1398,6 @@ export interface components {
             repository_ids: string[];
             title: string;
         };
-        CreateMemoryRequest: {
-            /**
-             * @description The RFC 3339 time after which this entry stays hidden. Omit it for an
-             *     entry that never expires.
-             */
-            expires_at?: string | null;
-            /** @description The repository the fact is about. Omit it to save a global fact. */
-            repository_id?: string | null;
-            text: string;
-        };
         CreateRepositoryRequest: {
             /** @description Omit for the repo's currently checked-out branch. */
             base_branch?: string | null;
@@ -1606,14 +1548,6 @@ export interface components {
             data: components["schemas"]["DeletedDto"];
             /** @enum {string} */
             event: "repository_deleted";
-        } | {
-            data: components["schemas"]["MemoryDto"];
-            /** @enum {string} */
-            event: "memory_created";
-        } | {
-            data: components["schemas"]["MemoryDeletedDto"];
-            /** @enum {string} */
-            event: "memory_deleted";
         } | {
             /** @description The knowledge base read one ref of a repository. */
             data: components["schemas"]["KnowledgeIndexedDto"];
@@ -1970,7 +1904,7 @@ export interface components {
         KnowledgePathDto: {
             hops: components["schemas"]["KnowledgePathHopDto"][];
             /** @description Names of hubs with more than 200 neighbors that the walk did not expand. */
-            skipped: string[];
+            skipped?: string[];
         };
         /** @description One definition on a shortest path. The edge fields name the edge into it. */
         KnowledgePathHopDto: {
@@ -2112,43 +2046,6 @@ export interface components {
         /** @description Response of `GET /v1/logs`: the in-memory ring buffer, oldest first. */
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
-        };
-        /** @description Payload of `memory_deleted`: the entry that went, and its scope. */
-        MemoryDeletedDto: {
-            id: string;
-            /** @description The repository the entry was about, or null when it was global. */
-            repository_id?: string | null;
-        };
-        MemoryDto: {
-            created_at: string;
-            /**
-             * @description The RFC 3339 time after which this entry stays hidden, or null when it
-             *     never expires.
-             */
-            expires_at?: string | null;
-            id: string;
-            /** @description The repository the fact is about, or null when it is global. */
-            repository_id?: string | null;
-            source_goal_id?: string | null;
-            /**
-             * @description The session that saved the fact, and its task and goal. All null when
-             *     the user saved it.
-             */
-            source_session_id?: string | null;
-            source_task_id?: string | null;
-            text: string;
-        };
-        /**
-         * @description Which memories a list or a search reads.
-         * @enum {string}
-         */
-        MemoryScope: "repository" | "global" | "all";
-        /** @description Search hits and whether newest memories stand in for a word match. */
-        MemorySearchResult: {
-            /** @description True where no word matched and the newest memories are the answer. */
-            fallback: boolean;
-            /** @description Matching memories, or newest active memories when `fallback` is true. */
-            hits: components["schemas"]["MemoryDto"][];
         };
         MessageDto: {
             body: string;
@@ -3728,171 +3625,6 @@ export interface operations {
                 content: {
                     "text/event-stream": components["schemas"]["LogSnapshotResponse"];
                 };
-            };
-        };
-    };
-    memories_list: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Read the memories of this repository. Omit it for every repository the
-                 *     caller may read.
-                 */
-                repository?: string | null;
-                /** @description `all` (default), `repository` or `global`. */
-                scope?: null | components["schemas"]["MemoryScope"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MemoryDto"][];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    memories_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateMemoryRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MemoryDto"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    memories_search: {
-        parameters: {
-            query: {
-                /** @description Find entries that hold any word, or a prefix of a word, in this text. */
-                q: string;
-                /**
-                 * @description Search the memories of this repository. Omit it for every repository
-                 *     the caller may read.
-                 */
-                repository?: string | null;
-                /** @description `all` (default), `repository` or `global`. */
-                scope?: null | components["schemas"]["MemoryScope"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MemorySearchResult"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    memories_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description memory id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

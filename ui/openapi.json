@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
     },
-    "version": "0.7.0"
+    "version": "0.8.0"
   },
   "paths": {
     "/v1/acp-agents": {
@@ -1467,203 +1467,6 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/v1/memories": {
-      "get": {
-        "tags": [
-          "memories"
-        ],
-        "operationId": "list",
-        "parameters": [
-          {
-            "name": "repository",
-            "in": "query",
-            "description": "Read the memories of this repository. Omit it for every repository the\ncaller may read.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "scope",
-            "in": "query",
-            "description": "`all` (default), `repository` or `global`.",
-            "required": false,
-            "schema": {
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/components/schemas/MemoryScope"
-                }
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MemoryDto"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "memories"
-        ],
-        "operationId": "create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateMemoryRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/memories/search": {
-      "get": {
-        "tags": [
-          "memories"
-        ],
-        "operationId": "search",
-        "parameters": [
-          {
-            "name": "q",
-            "in": "query",
-            "description": "Find entries that hold any word, or a prefix of a word, in this text.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "repository",
-            "in": "query",
-            "description": "Search the memories of this repository. Omit it for every repository\nthe caller may read.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "scope",
-            "in": "query",
-            "description": "`all` (default), `repository` or `global`.",
-            "required": false,
-            "schema": {
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/components/schemas/MemoryScope"
-                }
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemorySearchResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/memories/{id}": {
-      "delete": {
-        "tags": [
-          "memories"
-        ],
-        "operationId": "delete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "memory id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
           }
         }
       }
@@ -3773,32 +3576,6 @@
         },
         "additionalProperties": false
       },
-      "CreateMemoryRequest": {
-        "type": "object",
-        "required": [
-          "text"
-        ],
-        "properties": {
-          "expires_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The RFC 3339 time after which this entry stays hidden. Omit it for an\nentry that never expires."
-          },
-          "repository_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The repository the fact is about. Omit it to save a global fact."
-          },
-          "text": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
       "CreateRepositoryRequest": {
         "type": "object",
         "required": [
@@ -4268,42 +4045,6 @@
                 "type": "string",
                 "enum": [
                   "repository_deleted"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "data",
-              "event"
-            ],
-            "properties": {
-              "data": {
-                "$ref": "#/components/schemas/MemoryDto"
-              },
-              "event": {
-                "type": "string",
-                "enum": [
-                  "memory_created"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "data",
-              "event"
-            ],
-            "properties": {
-              "data": {
-                "$ref": "#/components/schemas/MemoryDeletedDto"
-              },
-              "event": {
-                "type": "string",
-                "enum": [
-                  "memory_deleted"
                 ]
               }
             }
@@ -5072,8 +4813,7 @@
         "type": "object",
         "description": "The shortest directed path between two symbol names.",
         "required": [
-          "hops",
-          "skipped"
+          "hops"
         ],
         "properties": {
           "hops": {
@@ -5385,107 +5125,6 @@
             "items": {
               "$ref": "#/components/schemas/LogLineDto"
             }
-          }
-        }
-      },
-      "MemoryDeletedDto": {
-        "type": "object",
-        "description": "Payload of `memory_deleted`: the entry that went, and its scope.",
-        "required": [
-          "id"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "repository_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The repository the entry was about, or null when it was global."
-          }
-        }
-      },
-      "MemoryDto": {
-        "type": "object",
-        "required": [
-          "id",
-          "text",
-          "created_at"
-        ],
-        "properties": {
-          "created_at": {
-            "type": "string"
-          },
-          "expires_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The RFC 3339 time after which this entry stays hidden, or null when it\nnever expires."
-          },
-          "id": {
-            "type": "string"
-          },
-          "repository_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The repository the fact is about, or null when it is global."
-          },
-          "source_goal_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "source_session_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The session that saved the fact, and its task and goal. All null when\nthe user saved it."
-          },
-          "source_task_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "text": {
-            "type": "string"
-          }
-        }
-      },
-      "MemoryScope": {
-        "type": "string",
-        "description": "Which memories a list or a search reads.",
-        "enum": [
-          "repository",
-          "global",
-          "all"
-        ]
-      },
-      "MemorySearchResult": {
-        "type": "object",
-        "description": "Search hits and whether newest memories stand in for a word match.",
-        "required": [
-          "hits",
-          "fallback"
-        ],
-        "properties": {
-          "fallback": {
-            "type": "boolean",
-            "description": "True where no word matched and the newest memories are the answer."
-          },
-          "hits": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MemoryDto"
-            },
-            "description": "Matching memories, or newest active memories when `fallback` is true."
           }
         }
       },
@@ -6599,10 +6238,6 @@
     {
       "name": "repositories",
       "description": "Git repositories registered with the daemon"
-    },
-    {
-      "name": "memories",
-      "description": "Searchable facts learned about one repository, or about every one"
     },
     {
       "name": "knowledge",

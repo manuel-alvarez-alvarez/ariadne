@@ -15,7 +15,6 @@ tests:
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/events.rs
-  - crates/ariadne-daemon/tests/it/memories.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
   - crates/ariadne-daemon/tests/it/knowledge.rs
@@ -232,8 +231,6 @@ and the ACP runtime that reports the agent events (021).
   (`::scheduler_transition_emits_task_updated_without_http`), and the
   launcher's session writes emit session events
   (`::launcher_session_writes_emit_session_events`).
-- Memory creation emits its complete entry, and deletion emits its id
-  (`memories.rs::delete_removes_a_memory`).
 - The stream opens with a heartbeat, filters, and resyncs a lagging client
   (`events.rs::sse_stream_opens_with_a_heartbeat`,
   `::sse_stream_frames_events_and_honours_its_filters`,

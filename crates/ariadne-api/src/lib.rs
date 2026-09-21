@@ -10,7 +10,6 @@ pub mod events;
 pub mod goals;
 pub mod knowledge;
 pub mod logs;
-pub mod memories;
 pub mod messages;
 pub mod models;
 pub mod repositories;
