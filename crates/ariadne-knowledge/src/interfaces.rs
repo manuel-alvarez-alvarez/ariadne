@@ -280,7 +280,13 @@ fn npm(source: &str, lines: &Lines, found: &mut Vec<Interface>) {
     else {
         return;
     };
-    let text = |node: tree_sitter::Node| source[node.byte_range()].trim_matches('"').to_string();
+    let text = |node: tree_sitter::Node| {
+        source
+            .get(node.byte_range())
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_string()
+    };
     let mut cursor = object.walk();
     for pair in object.named_children(&mut cursor) {
         let (Some(key), Some(value)) = (
@@ -831,11 +837,35 @@ fn routes(
     language: Language,
     found: &mut Vec<Interface>,
 ) {
+    let mut characters = source.char_indices().peekable();
+    let mut last_angle = None;
+    let mut quotes = source
+        .match_indices(['"', '\'', '`'])
+        .map(|(at, _)| at)
+        .peekable();
     for (open, _) in source.match_indices('(') {
+        while quotes.peek().is_some_and(|at| *at <= open) {
+            quotes.next();
+        }
+        let scan_end = open
+            .saturating_add(1)
+            .saturating_add(crate::parser::STATEMENT_SCAN_MAX);
+        if quotes.peek().is_none_or(|at| *at >= scan_end) {
+            continue;
+        }
+        while let Some(&(at, ch)) = characters.peek() {
+            if at >= open {
+                break;
+            }
+            if ch == '<' {
+                last_angle = Some(at);
+            }
+            characters.next();
+        }
         let head = &source[..open];
         // A generic between the callee and the paren: `get<T>(`.
         let head = match head.ends_with('>') {
-            true => match head.rfind('<') {
+            true => match last_angle {
                 Some(at) => &head[..at],
                 None => head,
             },
@@ -847,15 +877,14 @@ fn routes(
             })
             .len();
         let chain = &head[chain_start..];
-        let segments: Vec<&str> = chain
+        let mut segments = chain
             .split(['.', ':'])
             .map(|s| s.trim_end_matches('!'))
-            .filter(|s| !s.is_empty())
-            .collect();
-        let Some(callee) = segments.last().copied() else {
+            .filter(|s| !s.is_empty());
+        let Some(callee) = segments.next_back() else {
             continue;
         };
-        let receiver = segments.len().checked_sub(2).map(|at| segments[at]);
+        let receiver = segments.next_back();
         let before = head[..chain_start].trim_end();
         let decorated = before.ends_with('@') || before.ends_with("#[");
         // A decorator or an attribute always registers; a verb registers on
@@ -874,7 +903,7 @@ fn routes(
             continue;
         };
         let rest = &source[open + 1..];
-        let end = crate::parser::statement_end(rest, ')').min(600);
+        let end = crate::parser::statement_end(rest, ')');
         let args = &rest[..end];
         // A Dart client is handed the path below the prefix its base URL
         // holds, so its first argument is a route with or without a leading
@@ -1382,6 +1411,14 @@ mod tests {
         let found = read("app.py", Language::Python, python, &symbols);
         assert_eq!(kinds(&found), [(InterfaceKind::Route, "/v1/items/<id>", 1)]);
         assert_eq!(found[0].symbol, Some(0));
+    }
+
+    /// A bounded route scan never cuts through a multi-byte character.
+    #[test]
+    fn a_route_scan_cuts_only_at_a_character_boundary() {
+        let source = format!("client.get(\"/v1/{}─\")", "a".repeat(594));
+
+        assert!(read("client.ts", Language::TypeScript, &source, &[]).is_empty());
     }
 
     /// Each of the five methods a Dart client calls is a route use: the

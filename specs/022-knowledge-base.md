@@ -174,6 +174,12 @@ agent to do with the tools (017); and the memory tools beside these (019).
     and a changed path the run skips loses the row it had. Content is read
     from the commit over `git cat-file --batch`, never from a working tree.
     The files of one batch are parsed a core each.
+    A route argument scan examines at most 600 bytes and stops on a character
+    boundary. Import scans keep complete valid statements and stop malformed
+    ones at the next statement. Recursive import-brace, HTML-element and
+    YAML-mapping walks stop at 128 levels. A grammar parse stops after one second.
+    These limits make malformed text return without a panic, a stack
+    overflow or an unbounded scan.
 16. A search matches identifiers by their parts: a name is stored whole and
     split on camelCase, snake_case and the segments of its qualified name,
     and every word of the query is a prefix that has to match. An exact name
@@ -783,6 +789,14 @@ the daemon and knowledge WAL files off the commit path.
   (`knowledge.rs::a_dropped_ref_takes_its_files_and_its_orphan_blobs`).
 - A changed file the run skips loses its symbols
   (`knowledge.rs::a_changed_file_the_run_skips_loses_its_symbols`).
+- A route scan cuts only on a character boundary, and every registered
+  language returns from each hostile input within two seconds. The inputs
+  cover both parser entry points, the 600-byte route scan limit, the
+  128-level structural limit and linear scans of a 1 MiB line
+  (`interfaces.rs::a_route_scan_cuts_only_at_a_character_boundary`,
+  `parser.rs::hostile_input_returns_for_every_language_within_two_seconds`).
+- A valid import longer than the route scan limit keeps every name
+  (`parser.rs::a_long_valid_import_keeps_every_name`).
 - Indexing this repository at HEAD completes in under 30 seconds, and
   `search_code` for `add_worktree` answers
   `crates/ariadne-daemon/src/gitwt.rs` at the line of the function

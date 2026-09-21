@@ -118,6 +118,86 @@ pub struct Parsed {
 /// not a manual.
 const SIGNATURE_MAX: usize = 200;
 const DOC_MAX: usize = 1000;
+pub(crate) const STATEMENT_SCAN_MAX: usize = 600;
+const NESTING_DEPTH_MAX: usize = 128;
+const PARSE_MAX: std::time::Duration = std::time::Duration::from_secs(1);
+
+struct ParseDeadline {
+    at: std::time::Instant,
+    id: u64,
+    flag: std::sync::Weak<std::sync::atomic::AtomicUsize>,
+}
+
+impl PartialEq for ParseDeadline {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for ParseDeadline {}
+
+impl PartialOrd for ParseDeadline {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ParseDeadline {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.at.cmp(&self.at).then_with(|| other.id.cmp(&self.id))
+    }
+}
+
+fn parse_cancellation() -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+    static DEADLINES: std::sync::OnceLock<std::sync::mpsc::Sender<ParseDeadline>> =
+        std::sync::OnceLock::new();
+    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sender = DEADLINES.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<ParseDeadline>();
+        let _ = std::thread::Builder::new()
+            .name("knowledge-parse-deadline".into())
+            .spawn(move || parse_deadlines(receiver));
+        sender
+    });
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let _ = sender.send(ParseDeadline {
+        at: std::time::Instant::now() + PARSE_MAX,
+        id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        flag: std::sync::Arc::downgrade(&flag),
+    });
+    flag
+}
+
+fn parse_deadlines(receiver: std::sync::mpsc::Receiver<ParseDeadline>) {
+    let mut pending = std::collections::BinaryHeap::new();
+    loop {
+        if pending.is_empty() {
+            let Ok(deadline) = receiver.recv() else {
+                return;
+            };
+            pending.push(deadline);
+        }
+        let next = pending
+            .peek()
+            .map(|deadline| deadline.at)
+            .unwrap_or_else(std::time::Instant::now);
+        match receiver.recv_timeout(next.saturating_duration_since(std::time::Instant::now())) {
+            Ok(deadline) => pending.push(deadline),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let now = std::time::Instant::now();
+                while pending.peek().is_some_and(|deadline| deadline.at <= now) {
+                    let Some(deadline) = pending.pop() else {
+                        break;
+                    };
+                    if let Some(flag) = deadline.flag.upgrade() {
+                        flag.store(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
 
 /// The definitions of `source`, read as `language`.
 pub fn parse(language: Language, source: &str) -> Vec<Symbol> {
@@ -149,22 +229,34 @@ pub fn read(language: Language, source: &str) -> Parsed {
         return Parsed::default();
     };
     let mut context = TagsContext::new();
-    let Ok((tags, _)) = context.generate_tags(configuration, source.as_bytes(), None) else {
+    let cancellation = parse_cancellation();
+    let Ok((tags, _)) =
+        context.generate_tags(configuration, source.as_bytes(), Some(&cancellation))
+    else {
         return Parsed::default();
     };
     let lines = Lines::of(source);
     let mut items: Vec<Item> = tags
         .filter_map(Result::ok)
-        .map(|tag| Item {
-            kind: configuration
-                .syntax_type_name(tag.syntax_type_id)
-                .to_string(),
-            name: source[tag.name_range.clone()].to_string(),
-            lines: lines.of_range(&tag.range),
-            range: tag.range,
-            name_range: tag.name_range,
-            docs: tag.docs,
-            is_definition: tag.is_definition,
+        .filter_map(|tag| {
+            let range = tag.range;
+            let name_range = tag.name_range;
+            if name_range.start < range.start || name_range.end > range.end {
+                return None;
+            }
+            let name = source.get(name_range.clone())?.to_string();
+            source.get(range.clone())?;
+            Some(Item {
+                kind: configuration
+                    .syntax_type_name(tag.syntax_type_id)
+                    .to_string(),
+                name,
+                lines: lines.of_range(&range),
+                range,
+                name_range,
+                docs: tag.docs,
+                is_definition: tag.is_definition,
+            })
         })
         .collect();
     // Document order, an outer definition before the ones inside it.
@@ -210,13 +302,13 @@ pub fn read(language: Language, source: &str) -> Parsed {
                 .as_deref()
                 .map(clean_doc)
                 .filter(|doc| !doc.is_empty())
-                .or_else(|| doc_of(doc_syntax, source, &item));
+                .or_else(|| doc_of(doc_syntax, source, &lines, &item));
             let is_test = match test_rule {
-                TestRule::Attribute(names) => has_attribute(source, &item, names),
-                TestRule::Annotation(names) => has_annotation(source, &item, names),
+                TestRule::Attribute(names) => has_attribute(source, &lines, &item, names),
+                TestRule::Annotation(names) => has_annotation(source, &lines, &item, names),
                 TestRule::NamePrefix(prefix) => item.name.starts_with(prefix),
                 TestRule::AnnotationOrNamePrefix(names, prefix) => {
-                    has_annotation(source, &item, names) || item.name.starts_with(prefix)
+                    has_annotation(source, &lines, &item, names) || item.name.starts_with(prefix)
                 }
                 TestRule::Call(_) | TestRule::None => false,
             };
@@ -330,6 +422,14 @@ impl Lines {
         self.0.partition_point(|start| *start <= at) as u32
     }
 
+    fn line_start(&self, at: usize) -> usize {
+        let line = self
+            .0
+            .partition_point(|start| *start <= at)
+            .saturating_sub(1);
+        self.0.get(line).copied().unwrap_or(0)
+    }
+
     /// The 1-based, inclusive first and last line of a byte range. A range
     /// that ends on a newline ends on the line that newline closes.
     fn of_range(&self, range: &Range<usize>) -> (u32, u32) {
@@ -407,31 +507,31 @@ fn clean_doc(text: &str) -> String {
 }
 
 /// The doc comment of a definition, read by the language's comment syntax.
-fn doc_of(syntax: DocSyntax, source: &str, item: &Item) -> Option<String> {
+fn doc_of(syntax: DocSyntax, source: &str, lines: &Lines, item: &Item) -> Option<String> {
     let doc = match syntax {
         DocSyntax::LinePrefix(prefix) => {
-            let lines: Vec<&str> = lines_above(source, item.range.start)
+            let doc_lines: Vec<&str> = lines_above(source, lines, item.range.start)
                 .filter(|line| !is_attribute_line(line))
                 .take_while(|line| line.trim_start().starts_with(prefix))
                 .map(|line| line.trim_start()[prefix.len()..].trim())
                 .collect();
-            lines.into_iter().rev().collect::<Vec<_>>().join("\n")
+            doc_lines.into_iter().rev().collect::<Vec<_>>().join("\n")
         }
         DocSyntax::Block => {
-            let mut lines: Vec<&str> = Vec::new();
-            let mut above = lines_above(source, item.range.start).peekable();
+            let mut doc_lines: Vec<&str> = Vec::new();
+            let mut above = lines_above(source, lines, item.range.start).peekable();
             match above.peek().map(|line| line.trim()) {
                 Some(line) if line.ends_with("*/") => {
                     for line in above {
-                        lines.push(line);
+                        doc_lines.push(line);
                         if line.trim_start().starts_with("/*") {
                             break;
                         }
                     }
                 }
-                _ => lines.extend(above.take_while(|line| line.trim_start().starts_with("//"))),
+                _ => doc_lines.extend(above.take_while(|line| line.trim_start().starts_with("//"))),
             }
-            clean_doc(&lines.into_iter().rev().collect::<Vec<_>>().join("\n"))
+            clean_doc(&doc_lines.into_iter().rev().collect::<Vec<_>>().join("\n"))
         }
         DocSyntax::Docstring => docstring(
             &source[item.range.clone()],
@@ -443,8 +543,8 @@ fn doc_of(syntax: DocSyntax, source: &str, item: &Item) -> Option<String> {
 }
 
 /// The lines above byte `at`, nearest first.
-fn lines_above(source: &str, at: usize) -> impl Iterator<Item = &str> {
-    let line_start = source[..at].rfind('\n').map_or(0, |nl| nl + 1);
+fn lines_above<'a>(source: &'a str, lines: &Lines, at: usize) -> impl Iterator<Item = &'a str> {
+    let line_start = lines.line_start(at);
     source[..line_start].lines().rev()
 }
 
@@ -471,8 +571,8 @@ fn docstring(text: &str, after: usize) -> Option<String> {
 
 /// Whether one of `names` is an attribute on the definition: on a line of
 /// its own above it, or inside it ahead of its name, as C# writes them.
-fn has_attribute(source: &str, item: &Item, names: &[&str]) -> bool {
-    let above = lines_above(source, item.range.start)
+fn has_attribute(source: &str, lines: &Lines, item: &Item, names: &[&str]) -> bool {
+    let above = lines_above(source, lines, item.range.start)
         .take_while(|line| is_attribute_line(line))
         .map(str::to_string);
     let inside = source[item.range.start..item.name_range.start]
@@ -510,8 +610,8 @@ fn attributes_in(line: &str) -> Vec<String> {
 /// Whether one of `names` is an `@Name` annotation on the definition: on a
 /// line of its own above it, or inside it ahead of its name, as Java,
 /// Kotlin and Swift write them.
-fn has_annotation(source: &str, item: &Item, names: &[&str]) -> bool {
-    let above = lines_above(source, item.range.start)
+fn has_annotation(source: &str, lines: &Lines, item: &Item, names: &[&str]) -> bool {
+    let above = lines_above(source, lines, item.range.start)
         .take_while(|line| is_annotation_line(line))
         .map(str::to_string);
     let inside = source[item.range.start..item.name_range.start]
@@ -690,9 +790,8 @@ pub fn imports_of(language: Language, source: &str) -> Vec<Import> {
             }
             // `require` is a call, not a statement: it sits wherever the
             // binding that holds its answer does.
-            for (at, _) in source.match_indices("require(") {
-                let rest = &source[at + "require(".len()..];
-                if let Some(module) = quoted(&rest[..statement_end(rest, ')')]) {
+            for (at, args) in call_arguments(source, "require(") {
+                if let Some(module) = quoted(args) {
                     imports.push(Import {
                         module,
                         name: None,
@@ -711,31 +810,95 @@ pub fn imports_of(language: Language, source: &str) -> Vec<Import> {
     imports
 }
 
+fn call_arguments<'a>(source: &'a str, pattern: &str) -> Vec<(usize, &'a str)> {
+    let calls: Vec<(usize, usize)> = source
+        .match_indices(pattern)
+        .map(|(at, _)| (at, at + pattern.len() - 1))
+        .collect();
+    let mut ends = vec![None; calls.len()];
+    let mut next_call = 0;
+    let mut stack = Vec::new();
+    for (at, ch) in source.char_indices() {
+        match ch {
+            '(' | '{' | '[' => {
+                let call = calls
+                    .get(next_call)
+                    .filter(|(_, open)| *open == at)
+                    .map(|_| next_call);
+                if call.is_some() {
+                    next_call += 1;
+                }
+                stack.push(call);
+            }
+            ')' | '}' | ']' => {
+                if let Some(Some(call)) = stack.pop()
+                    && ch == ')'
+                {
+                    ends[call] = Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    calls
+        .iter()
+        .enumerate()
+        .map(|(index, &(at, open))| {
+            let start = open + 1;
+            let stop = ends[index]
+                .or_else(|| calls.get(index + 1).map(|(next, _)| *next))
+                .unwrap_or(source.len());
+            (at, &source[start..stop])
+        })
+        .collect()
+}
+
 /// Every statement of `source` that opens with one of `keywords` at the
 /// start of a line, each with the byte it opens at and its text past the
 /// keyword, up to `end` — or up to the closing bracket where one is open.
 fn statements<'a>(source: &'a str, keywords: &[&str], end: char) -> Vec<(usize, &'a str)> {
-    let mut found = Vec::new();
+    let lines = Lines::of(source);
+    let mut starts = Vec::new();
     for keyword in keywords {
         for (at, _) in source.match_indices(keyword) {
-            let line_start = source[..at].rfind('\n').map_or(0, |nl| nl + 1);
+            let line_start = lines.line_start(at);
             // Only a statement of its own, past the visibility it may carry.
             let before = source[line_start..at].trim();
             if !before.is_empty() && !before.starts_with("pub") && !before.starts_with("export") {
                 continue;
             }
-            let rest = &source[at + keyword.len()..];
-            found.push((at, &rest[..statement_end(rest, end)]));
+            starts.push((at, keyword.len()));
         }
     }
     // Document order, whatever order the keywords were given in.
-    found.sort_by_key(|(at, _)| *at);
+    starts.sort_by_key(|(at, _)| *at);
+    let mut found = Vec::with_capacity(starts.len());
+    for (index, &(at, keyword_len)) in starts.iter().enumerate() {
+        let start = at + keyword_len;
+        let stop = starts
+            .get(index + 1)
+            .map_or(source.len(), |(next, _)| *next);
+        let rest = &source[start..stop];
+        found.push((at, &rest[..import_statement_end(rest, end)]));
+    }
     found
 }
 
 /// Where a statement ends: at the first `end` outside a bracket, so a
 /// `from a import (\n b,\n)` and a `use a::{\n b,\n};` are read whole.
 pub(crate) fn statement_end(rest: &str, end: char) -> usize {
+    let mut scan_end = rest.len().min(STATEMENT_SCAN_MAX);
+    while !rest.is_char_boundary(scan_end) {
+        scan_end -= 1;
+    }
+    balanced_statement_end(&rest[..scan_end], end)
+}
+
+fn import_statement_end(rest: &str, end: char) -> usize {
+    balanced_statement_end(rest, end)
+}
+
+fn balanced_statement_end(rest: &str, end: char) -> usize {
     let mut depth = 0i32;
     for (at, ch) in rest.char_indices() {
         if ch == end && depth <= 0 {
@@ -752,7 +915,14 @@ pub(crate) fn statement_end(rest: &str, end: char) -> usize {
 
 /// `a::b::{c, d::e}` as `a::b::c` and `a::b::d::e`.
 fn expand_braces(path: &str, separator: &str) -> Vec<String> {
+    expand_braces_at(path, separator, 0)
+}
+
+fn expand_braces_at(path: &str, separator: &str, depth: usize) -> Vec<String> {
     let path = path.trim();
+    if depth >= NESTING_DEPTH_MAX {
+        return vec![path.to_string()];
+    }
     let (Some(open), Some(close)) = (path.find('{'), path.rfind('}')) else {
         return vec![path.to_string()];
     };
@@ -762,7 +932,7 @@ fn expand_braces(path: &str, separator: &str) -> Vec<String> {
     let prefix = path[..open].trim().trim_end_matches(separator);
     let mut paths = Vec::new();
     for item in split_outside_parentheses(&path[open + 1..close]) {
-        for tail in expand_braces(item, separator) {
+        for tail in expand_braces_at(item, separator, depth + 1) {
             if tail.is_empty() {
                 continue;
             }
@@ -938,7 +1108,7 @@ fn markdown_outline(source: &str) -> Vec<Symbol> {
     if parser.set_language(&grammar).is_err() {
         return Vec::new();
     }
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(tree) = outline_tree(&mut parser, source) else {
         return Vec::new();
     };
     let Ok(query) = tree_sitter::Query::new(&grammar, "[(atx_heading) (setext_heading)] @heading")
@@ -970,10 +1140,10 @@ fn markdown_outline(source: &str) -> Vec<Symbol> {
                     _ => continue,
                 };
             }
-            let text = &source[node.byte_range()];
+            let text = node_text(source, node);
             let name = node
                 .child_by_field_name("heading_content")
-                .map(|content| source[content.byte_range()].to_string())
+                .map(|content| node_text(source, content).to_string())
                 .unwrap_or_else(|| text.lines().next().unwrap_or_default().to_string());
             let name = name
                 .trim()
@@ -1041,6 +1211,10 @@ fn first_line_signature(text: &str) -> String {
     )
 }
 
+fn node_text<'a>(source: &'a str, node: tree_sitter::Node) -> &'a str {
+    source.get(node.byte_range()).unwrap_or_default()
+}
+
 /// A parser for `language`, or an empty outline where the grammar refuses
 /// to load.
 fn outline_parser(language: Language) -> Option<tree_sitter::Parser> {
@@ -1050,13 +1224,26 @@ fn outline_parser(language: Language) -> Option<tree_sitter::Parser> {
     Some(parser)
 }
 
+fn outline_tree(parser: &mut tree_sitter::Parser, source: &str) -> Option<tree_sitter::Tree> {
+    let started = std::time::Instant::now();
+    let mut progress = |_: &tree_sitter::ParseState| match started.elapsed() < PARSE_MAX {
+        true => std::ops::ControlFlow::Continue(()),
+        false => std::ops::ControlFlow::Break(()),
+    };
+    parser.parse_with_options(
+        &mut |at, _| source.as_bytes().get(at..).unwrap_or_default(),
+        None,
+        Some(tree_sitter::ParseOptions::new().progress_callback(&mut progress)),
+    )
+}
+
 /// The top-level keys of a JSON object, and one level of keys nested under
 /// an object value: JSON has no comments to read for a doc.
 fn json_outline(source: &str) -> Vec<Symbol> {
     let Some(mut parser) = outline_parser(Language::Json) else {
         return Vec::new();
     };
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(tree) = outline_tree(&mut parser, source) else {
         return Vec::new();
     };
     let Some(object) = tree
@@ -1090,7 +1277,7 @@ fn json_pairs(
         };
         let name = key
             .named_child(0)
-            .map(|content| source[content.byte_range()].to_string())
+            .map(|content| node_text(source, content).to_string())
             .unwrap_or_default();
         let qualified_name = match parent {
             Some(parent) => format!("{parent}.{name}"),
@@ -1103,7 +1290,7 @@ fn json_pairs(
             qualified_name: qualified_name.clone(),
             start_line,
             end_line,
-            signature: first_line_signature(&source[pair.byte_range()]),
+            signature: first_line_signature(node_text(source, pair)),
             doc: None,
             is_test: false,
         });
@@ -1129,7 +1316,7 @@ fn yaml_outline(source: &str) -> Vec<Symbol> {
     let Some(mut parser) = outline_parser(Language::Yaml) else {
         return Vec::new();
     };
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(tree) = outline_tree(&mut parser, source) else {
         return Vec::new();
     };
     let Some(mapping) = find_block_mapping(tree.root_node()) else {
@@ -1143,12 +1330,19 @@ fn yaml_outline(source: &str) -> Vec<Symbol> {
 
 /// The first `block_mapping` at or under `node`.
 fn find_block_mapping(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    find_block_mapping_at(node, 0)
+}
+
+fn find_block_mapping_at(node: tree_sitter::Node, depth: usize) -> Option<tree_sitter::Node> {
     if node.kind() == "block_mapping" {
         return Some(node);
     }
+    if depth >= NESTING_DEPTH_MAX {
+        return None;
+    }
     let mut cursor = node.walk();
     node.named_children(&mut cursor)
-        .find_map(find_block_mapping)
+        .find_map(|child| find_block_mapping_at(child, depth + 1))
 }
 
 fn yaml_pairs(
@@ -1167,7 +1361,7 @@ fn yaml_pairs(
         let Some(key) = pair.child_by_field_name("key") else {
             continue;
         };
-        let name = source[key.byte_range()].trim().to_string();
+        let name = node_text(source, key).trim().to_string();
         let qualified_name = match parent {
             Some(parent) => format!("{parent}.{name}"),
             None => name.clone(),
@@ -1179,7 +1373,7 @@ fn yaml_pairs(
             qualified_name: qualified_name.clone(),
             start_line,
             end_line,
-            signature: first_line_signature(&source[pair.byte_range()]),
+            signature: first_line_signature(node_text(source, pair)),
             doc: None,
             is_test: false,
         });
@@ -1204,7 +1398,7 @@ fn toml_outline(source: &str) -> Vec<Symbol> {
     let Some(mut parser) = outline_parser(Language::Toml) else {
         return Vec::new();
     };
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(tree) = outline_tree(&mut parser, source) else {
         return Vec::new();
     };
     let lines = Lines::of(source);
@@ -1225,7 +1419,7 @@ fn toml_outline(source: &str) -> Vec<Symbol> {
                     qualified_name: name.clone(),
                     start_line,
                     end_line,
-                    signature: first_line_signature(&source[node.byte_range()]),
+                    signature: first_line_signature(node_text(source, node)),
                     doc: None,
                     is_test: false,
                 });
@@ -1261,7 +1455,7 @@ fn toml_pair(
         qualified_name,
         start_line,
         end_line,
-        signature: first_line_signature(&source[pair.byte_range()]),
+        signature: first_line_signature(node_text(source, pair)),
         doc: None,
         is_test: false,
     })
@@ -1269,7 +1463,7 @@ fn toml_pair(
 
 /// A TOML key's text, its quotes stripped where it is a quoted key.
 fn toml_key_text(node: tree_sitter::Node, source: &str) -> String {
-    source[node.byte_range()]
+    node_text(source, node)
         .trim_matches(['"', '\''])
         .to_string()
 }
@@ -1279,7 +1473,7 @@ fn html_outline(source: &str) -> Vec<Symbol> {
     let Some(mut parser) = outline_parser(Language::Html) else {
         return Vec::new();
     };
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(tree) = outline_tree(&mut parser, source) else {
         return Vec::new();
     };
     let lines = Lines::of(source);
@@ -1290,6 +1484,19 @@ fn html_outline(source: &str) -> Vec<Symbol> {
 
 /// Every element at or under `node` that carries an `id`, depth-first.
 fn html_elements(node: tree_sitter::Node, source: &str, lines: &Lines, symbols: &mut Vec<Symbol>) {
+    html_elements_at(node, source, lines, symbols, 0);
+}
+
+fn html_elements_at(
+    node: tree_sitter::Node,
+    source: &str,
+    lines: &Lines,
+    symbols: &mut Vec<Symbol>,
+    depth: usize,
+) {
+    if depth >= NESTING_DEPTH_MAX {
+        return;
+    }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         if child.kind() == "element"
@@ -1305,12 +1512,12 @@ fn html_elements(node: tree_sitter::Node, source: &str, lines: &Lines, symbols: 
                 qualified_name: id,
                 start_line,
                 end_line,
-                signature: first_line_signature(&source[start_tag.byte_range()]),
+                signature: first_line_signature(node_text(source, start_tag)),
                 doc: None,
                 is_test: false,
             });
         }
-        html_elements(child, source, lines, symbols);
+        html_elements_at(child, source, lines, symbols, depth + 1);
     }
 }
 
@@ -1327,11 +1534,11 @@ fn html_id_attribute(start_tag: tree_sitter::Node, source: &str) -> Option<Strin
         let mut value = None;
         for part in attribute.named_children(&mut parts) {
             match part.kind() {
-                "attribute_name" => is_id = &source[part.byte_range()] == "id",
+                "attribute_name" => is_id = node_text(source, part) == "id",
                 "quoted_attribute_value" => {
                     value = part
                         .named_child(0)
-                        .map(|content| source[content.byte_range()].to_string())
+                        .map(|content| node_text(source, content).to_string())
                 }
                 _ => {}
             }
@@ -1348,7 +1555,7 @@ fn css_outline(source: &str) -> Vec<Symbol> {
     let Some(mut parser) = outline_parser(Language::Css) else {
         return Vec::new();
     };
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(tree) = outline_tree(&mut parser, source) else {
         return Vec::new();
     };
     let grammar = Language::Css.grammar();
@@ -1373,7 +1580,7 @@ fn css_outline(source: &str) -> Vec<Symbol> {
         let (Some(rule), Some(selectors)) = (rule, selectors) else {
             continue;
         };
-        let name = source[selectors.byte_range()]
+        let name = node_text(source, selectors)
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
@@ -1399,7 +1606,7 @@ fn sql_outline(source: &str) -> Vec<Symbol> {
     let Some(mut parser) = outline_parser(Language::Sql) else {
         return Vec::new();
     };
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(tree) = outline_tree(&mut parser, source) else {
         return Vec::new();
     };
     let lines = Lines::of(source);
@@ -1426,7 +1633,7 @@ fn sql_outline(source: &str) -> Vec<Symbol> {
             qualified_name: name,
             start_line,
             end_line,
-            signature: first_line_signature(&source[statement.byte_range()]),
+            signature: first_line_signature(node_text(source, statement)),
             doc: None,
             is_test: false,
         });
@@ -1443,9 +1650,9 @@ fn sql_object_name(node: tree_sitter::Node, source: &str) -> Option<String> {
         .find_map(|child| match child.kind() {
             "object_reference" => {
                 let name = child.child_by_field_name("name")?;
-                Some(source[name.byte_range()].to_string())
+                Some(node_text(source, name).to_string())
             }
-            "identifier" => Some(source[child.byte_range()].to_string()),
+            "identifier" => Some(node_text(source, child).to_string()),
             _ => None,
         })
 }
@@ -1905,5 +2112,106 @@ pub async fn add_worktree(
         );
         assert_eq!(impl_subject("impl GitManager {"), "GitManager");
         assert_eq!(impl_subject("impl<'a> Iterator for Walk<'a> {"), "Walk");
+    }
+
+    /// A valid import keeps every name when its text exceeds the route scan
+    /// limit.
+    #[test]
+    fn a_long_valid_import_keeps_every_name() {
+        let names = (0..100)
+            .map(|at| format!("item_{at:03}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = format!("use crate::items::{{{names}}};");
+        assert!(source.len() > STATEMENT_SCAN_MAX);
+
+        let imports = imports_of(Language::Rust, &source);
+
+        assert_eq!(imports.len(), 100);
+        assert_eq!(
+            imports.first().and_then(|item| item.name.as_deref()),
+            Some("item_000")
+        );
+        assert_eq!(
+            imports.last().and_then(|item| item.name.as_deref()),
+            Some("item_099")
+        );
+        assert!(imports.iter().all(|item| item.module == "crate::items"));
+    }
+
+    /// Every registered language returns from hostile input within the file
+    /// parser's time budget.
+    #[test]
+    fn hostile_input_returns_for_every_language_within_two_seconds() {
+        use std::time::{Duration, Instant};
+
+        const MIB: usize = 1024 * 1024;
+        const LIMIT: Duration = Duration::from_secs(2);
+
+        fn assert_returns(language: Language, name: &str, source: &str) {
+            let started = Instant::now();
+            let parsed = read(language, source);
+            assert!(
+                started.elapsed() < LIMIT,
+                "{} parser exceeded two seconds on {name}",
+                language.name()
+            );
+
+            let started = Instant::now();
+            crate::interfaces::read("hostile.txt", language, source, &parsed.symbols);
+            assert!(
+                started.elapsed() < LIMIT,
+                "{} interface reader exceeded two seconds on {name}",
+                language.name()
+            );
+        }
+
+        let multibyte_clamps = format!(
+            "/// {}─\nfn f({}─: usize) {{ client.get(\"/v1/{}─\") }}",
+            "a".repeat(DOC_MAX - 1),
+            "a".repeat(SIGNATURE_MAX - 1),
+            "a".repeat(594),
+        );
+        let nested_braces = format!("use {}item{};", "{".repeat(20_000), "}".repeat(20_000));
+        let nested_html = format!("{}{}", "<div>".repeat(20_000), "</div>".repeat(20_000));
+        let yaml_flow_lists = format!("{}value{}", "[".repeat(20_000), "]".repeat(20_000));
+        let repeated_calls = "get(".repeat(MIB / 4);
+        let minified_tail = format!("{}{}", "fn a(){}".repeat(5_000), "use a;".repeat(5_000));
+        let generic_call = "x>(\"\")";
+        let generic_calls = generic_call.repeat((MIB - minified_tail.len()) / generic_call.len());
+        let mut one_line = format!("{minified_tail}{generic_calls}");
+        one_line.push_str(&"x".repeat(MIB - one_line.len()));
+
+        for language in Language::ALL {
+            let parsed = read(language, "");
+            crate::interfaces::read("hostile.txt", language, "", &parsed.symbols);
+        }
+        for language in Language::ALL {
+            assert_returns(language, "registry text", "─");
+        }
+        for (language, name, source) in [
+            (
+                Language::Rust,
+                "multibyte clamps",
+                multibyte_clamps.as_str(),
+            ),
+            (
+                Language::TypeScript,
+                "multibyte route clamp",
+                multibyte_clamps.as_str(),
+            ),
+            (Language::Rust, "nested braces", nested_braces.as_str()),
+            (Language::Html, "nested HTML", nested_html.as_str()),
+            (Language::Yaml, "YAML flow lists", yaml_flow_lists.as_str()),
+            (
+                Language::TypeScript,
+                "repeated calls",
+                repeated_calls.as_str(),
+            ),
+            (Language::Rust, "one line", one_line.as_str()),
+            (Language::TypeScript, "one line", one_line.as_str()),
+        ] {
+            assert_returns(language, name, source);
+        }
     }
 }
