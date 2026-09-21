@@ -16,11 +16,10 @@
 import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-
 import type {
+  components,
   KnowledgeGraphDto,
   KnowledgeInteractionGroupDto,
-  KnowledgeOutlineEntryDto,
   KnowledgeStatusDto,
   RepositoryDto,
 } from "@/api"
@@ -30,6 +29,8 @@ import { aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 
 import { KnowledgeScreen } from "./knowledge-screen"
+
+type KnowledgeOutlineEntryDto = components["schemas"]["KnowledgeOutlineEntryDto"]
 
 // jsdom has no WebGL, and sigma.js reads `WebGLRenderingContext` as its module
 // loads: the graph is drawn by the stand-in in `@/test/sigma-canvas.tsx`. It is

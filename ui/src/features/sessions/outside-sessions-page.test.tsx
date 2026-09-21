@@ -4,18 +4,12 @@ import { fireEvent, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
-import type {
-  AcpAgentDto,
-  components,
-  GoalDto,
-  ModelDto,
-  RepositoryDto,
-  SessionDto,
-  TaskDto,
-} from "@/api"
+import type { components, GoalDto, ModelDto, RepositoryDto, SessionDto, TaskDto } from "@/api"
 import { aGoal, aModel, aRepository, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { OutsideSessionsPage } from "./outside-sessions-page"
+
+type AcpAgentDto = components["schemas"]["AcpAgentDto"]
 
 type OutsideSessionDto = components["schemas"]["OutsideSessionDto"]
 

@@ -15,7 +15,10 @@ import { beforeEach, expect, it, vi } from "vitest"
 
 import { AppShell } from "@/components/app-shell"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import type { Connection } from "@/hooks/use-connection"
+import type { useConnection } from "@/hooks/use-connection"
+
+type Connection = ReturnType<typeof useConnection>
+
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 
 vi.mock("@/hooks/use-connection", () => ({

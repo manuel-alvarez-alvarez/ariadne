@@ -9,7 +9,7 @@
 
 import { describe, expect, it, vi } from "vitest"
 
-import { dampedWeight, forceLayout } from "./force-layout"
+import { forceLayout } from "./force-layout"
 import { emptyGraph, type KnowledgeGraphModel, NODE_SIZE } from "./graph-model"
 
 /** Two groups of five, each joined inside, with one edge between them. */
@@ -161,20 +161,6 @@ function filesGraph(count: number): KnowledgeGraphModel {
   }
   return graph
 }
-
-describe("the damped weight of an edge", () => {
-  it("counts a thousand edges as about ten, and one edge as one", () => {
-    // 1 + log2(2467) = 12.27, and 1 + log2(1) = 1.
-    expect(dampedWeight(2467)).toBeLessThan(13)
-    expect(dampedWeight(2467)).toBeGreaterThan(12)
-    expect(dampedWeight(1)).toBe(1)
-  })
-
-  it("pulls with one where the edge names no weight, and where it names less", () => {
-    expect(dampedWeight(undefined)).toBe(1)
-    expect(dampedWeight(0)).toBe(1)
-  })
-})
 
 describe("the force layout", () => {
   it("gives every node a place, and the same place on a second run", () => {

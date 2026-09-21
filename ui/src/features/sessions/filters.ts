@@ -79,7 +79,7 @@ export type StatusValue = SessionStatus | typeof LIVE | typeof ATTENTION
  * remembered in between visits. Anything the daemon does not define is no
  * filter, the way an unknown `?status=` is on the board.
  */
-export function parseStatusFilter(value: string | null): StatusValue | null {
+function parseStatusFilter(value: string | null): StatusValue | null {
   if (value === LIVE) return LIVE
   if (value === ATTENTION) return ATTENTION
   return STATUSES.find((known) => known === value) ?? null

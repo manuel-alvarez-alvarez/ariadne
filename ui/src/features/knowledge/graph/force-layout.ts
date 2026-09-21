@@ -99,7 +99,7 @@ const SEED_SPACING = 3
  * pulls about twelve times as hard as a pair with one, and not two thousand
  * times, which no repulsion answers and which leaves the graph swinging.
  */
-export function dampedWeight(weight: number | undefined): number {
+function dampedWeight(weight: number | undefined): number {
   return 1 + Math.log2(Math.max(weight ?? 1, 1))
 }
 

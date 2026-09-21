@@ -33,11 +33,13 @@ import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
-import { type MessageDto, qk, type SessionDto, type TaskDto, type TaskPickDto } from "@/api"
+import { type components, type MessageDto, qk, type SessionDto, type TaskDto } from "@/api"
 import { shortId } from "@/lib/format"
 import { aSession } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
+
+type TaskPickDto = components["schemas"]["TaskPickDto"]
 
 const TASK: TaskDto = {
   id: "01JTASK0000000000000000001",

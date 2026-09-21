@@ -39,9 +39,9 @@ const SNAPSHOT_EVENT = "snapshot"
 const DELTA_EVENT = "delta"
 
 /** Most lines kept client-side; older ones are dropped as new ones arrive. */
-export const DAEMON_LOG_LINE_CAP = 2_000
+const DAEMON_LOG_LINE_CAP = 2_000
 
-export interface DaemonLogStreamHandlers {
+interface DaemonLogStreamHandlers {
   /**
    * The retained lines after every change, oldest first. Always a fresh
    * array, so the consumer can use it as immutable state.

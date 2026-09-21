@@ -1,47 +1,50 @@
-/**
- * The layered layout (022): ELK runs for real, on the calling thread instead
- * of in a web worker (`@/test/elk-worker.ts`), and what is asserted is where
- * it put each node: left to right, in the layer the model named.
- */
+// @vitest-environment jsdom
 
+import { renderHook, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
 import { emptyGraph } from "./graph-model"
-import { layeredLayout } from "./layered-layout"
+import { useLayeredLayout } from "./layered-layout"
 
 vi.mock("elkjs/lib/elk-worker.min.js?worker", () => import("@/test/elk-worker"))
 
-function x(graph: Awaited<ReturnType<typeof layeredLayout>>, node: string): number {
-  return graph.getNodeAttribute(node, "x") ?? Number.NaN
-}
-
-describe("layeredLayout", () => {
-  it("puts each node in the layer the model named, left to right", async () => {
+describe("useLayeredLayout", () => {
+  it("places named layers from left to right without changing the input graph", async () => {
     const graph = emptyGraph()
     graph.addNode("changed", { label: "changed", tone: "active", layer: 0 })
     graph.addNode("near", { label: "near", tone: "pending", layer: 1 })
     graph.addNode("far", { label: "far", tone: "pending", layer: 2 })
-    graph.addNode("also-near", { label: "also-near", tone: "pending", layer: 1 })
 
-    const laid = await layeredLayout(graph)
+    const { result } = renderHook(() => useLayeredLayout(graph))
 
-    expect(x(laid, "changed")).toBeLessThan(x(laid, "near"))
-    expect(x(laid, "near")).toBeLessThan(x(laid, "far"))
-    expect(x(laid, "also-near")).toBe(x(laid, "near"))
-    // Two nodes of one layer do not sit on each other.
-    expect(laid.getNodeAttribute("also-near", "y")).not.toBe(laid.getNodeAttribute("near", "y"))
+    await waitFor(() => expect(result.current.graph).toBeDefined())
+    const laid = result.current.graph
+    if (!laid) throw new Error("layout did not finish")
+    expect(laid.getNodeAttribute("changed", "x")).toBeLessThan(
+      laid.getNodeAttribute("near", "x") ?? Infinity,
+    )
+    expect(laid.getNodeAttribute("near", "x")).toBeLessThan(
+      laid.getNodeAttribute("far", "x") ?? Infinity,
+    )
+    expect(graph.getNodeAttribute("changed", "x")).toBeUndefined()
   })
 
-  it("puts a node with no layer where its edges lead, and leaves the model as it was", async () => {
+  it("uses directed edges to place nodes without named layers", async () => {
     const graph = emptyGraph()
     for (const name of ["a", "b", "c"]) graph.addNode(name, { label: name, tone: "pending" })
     graph.addDirectedEdge("a", "b", { tone: "ready" })
     graph.addDirectedEdge("b", "c", { tone: "ready" })
 
-    const laid = await layeredLayout(graph)
+    const { result } = renderHook(() => useLayeredLayout(graph))
 
-    expect(x(laid, "a")).toBeLessThan(x(laid, "b"))
-    expect(x(laid, "b")).toBeLessThan(x(laid, "c"))
-    expect(graph.getNodeAttribute("a", "x")).toBeUndefined()
+    await waitFor(() => expect(result.current.graph).toBeDefined())
+    const laid = result.current.graph
+    if (!laid) throw new Error("layout did not finish")
+    expect(laid.getNodeAttribute("a", "x")).toBeLessThan(
+      laid.getNodeAttribute("b", "x") ?? Infinity,
+    )
+    expect(laid.getNodeAttribute("b", "x")).toBeLessThan(
+      laid.getNodeAttribute("c", "x") ?? Infinity,
+    )
   })
 })

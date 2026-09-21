@@ -13,7 +13,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
-import { DomainEventStream, type DomainEventStreamHandlers } from "./stream"
+import { DomainEventStream } from "./stream"
+
+type DomainEventStreamHandlers = ConstructorParameters<typeof DomainEventStream>[1]
 
 function handlers() {
   return {

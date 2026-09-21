@@ -10,12 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { LogLineDto } from "@/api"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
-import {
-  DAEMON_LOG_LINE_CAP,
-  DaemonLogStream,
-  type DaemonLogStreamHandlers,
-  daemonLogStreamUrl,
-} from "./daemon-log-stream"
+import { DaemonLogStream, daemonLogStreamUrl } from "./daemon-log-stream"
+
+const DAEMON_LOG_LINE_CAP = 2_000
+type DaemonLogStreamHandlers = ConstructorParameters<typeof DaemonLogStream>[1]
 
 function handlers() {
   return {

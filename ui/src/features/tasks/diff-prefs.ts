@@ -13,11 +13,11 @@ import { useCallback, useState } from "react"
 const DIFF_WRAP_KEY = "ariadne.tasks.diff-wrap"
 
 /** Only an explicit "off" turns wrapping off; anything else is the default. */
-export function parseWrap(raw: string | null): boolean {
+function parseWrap(raw: string | null): boolean {
   return raw !== "off"
 }
 
-export function serializeWrap(wrap: boolean): string {
+function serializeWrap(wrap: boolean): string {
   return wrap ? "on" : "off"
 }
 

@@ -54,7 +54,7 @@ Nothing polls: an idle window makes no requests at all.
 | `npm run lint` | Biome lint + format check |
 | `npm run lint:fix` | Biome, applying safe fixes |
 | `npm run format` | Biome formatter only |
-| `npm run check:unused` | fails on a declared dependency nothing imports, or an export no other file imports |
+| `npm run check:unused` | fails on unused declared dependencies, production exports, or non-test source files |
 | `npm run gen:api` | regenerate the API types (below) |
 | `npm run tauri <cmd>` | the Tauri CLI (`dev`, `build`, `info`, …) |
 

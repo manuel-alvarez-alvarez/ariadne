@@ -5,9 +5,11 @@
 
 import { describe, expect, it } from "vitest"
 
-import type { KnowledgePathHopDto } from "@/api"
+import type { components } from "@/api"
 
 import { pathGraph } from "./path-graph"
+
+type KnowledgePathHopDto = components["schemas"]["KnowledgePathHopDto"]
 
 function hop(name: string, edge?: [kind: string, confidence: string]): KnowledgePathHopDto {
   return {

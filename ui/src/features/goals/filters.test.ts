@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest"
 import {
   DEFAULT_GOAL_STATUS_FILTER,
   NO_STATUS_FILTER,
-  normalizeStatusFilter,
-  parseStatusFilter,
   readStatusFilter,
   restoreStatusFilter,
   serializeStatusFilter,
@@ -41,15 +39,6 @@ describe("readStatusFilter", () => {
   it("reads a selection of every status as no filter", () => {
     const every = new URLSearchParams(`status=${GOAL_STATUSES.join(",")}`)
     expect(readStatusFilter(every)).toEqual(NO_STATUS_FILTER)
-  })
-})
-
-describe("normalizeStatusFilter", () => {
-  it("orders the selection and drops duplicates", () => {
-    expect(normalizeStatusFilter(["cancelled", "planning", "cancelled"])).toEqual([
-      "planning",
-      "cancelled",
-    ])
   })
 })
 
@@ -125,7 +114,9 @@ describe("serializeStatusFilter", () => {
 
   it("round-trips a remembered selection", () => {
     const filter = ["planning", "completed"] as const
-    expect(parseStatusFilter(serializeStatusFilter(filter))).toEqual(filter)
+    expect(
+      readStatusFilter(new URLSearchParams(`status=${serializeStatusFilter(filter)}`)),
+    ).toEqual(filter)
   })
 })
 
@@ -161,13 +152,18 @@ describe("restoreStatusFilter", () => {
 describe("the default filter", () => {
   it("opens the board on the work that is still moving", () => {
     // Not "all statuses": a few weeks in, that is a wall of finished lanes.
-    expect(parseStatusFilter(DEFAULT_GOAL_STATUS_FILTER)).toEqual(["planning", "active"])
+    expect(readStatusFilter(new URLSearchParams(`status=${DEFAULT_GOAL_STATUS_FILTER}`))).toEqual([
+      "planning",
+      "active",
+    ])
   })
 
   it("is spelled the way the param and the settings store spell one", () => {
-    expect(serializeStatusFilter(parseStatusFilter(DEFAULT_GOAL_STATUS_FILTER))).toBe(
-      DEFAULT_GOAL_STATUS_FILTER,
-    )
+    expect(
+      serializeStatusFilter(
+        readStatusFilter(new URLSearchParams(`status=${DEFAULT_GOAL_STATUS_FILTER}`)),
+      ),
+    ).toBe(DEFAULT_GOAL_STATUS_FILTER)
   })
 
   it("is put back on a bare entry, like any remembered filter", () => {
@@ -182,7 +178,9 @@ describe("the finished toggle", () => {
   })
 
   it("reads the default filter as hiding what is finished", () => {
-    expect(showsFinished(parseStatusFilter(DEFAULT_GOAL_STATUS_FILTER))).toBe(false)
+    expect(
+      showsFinished(readStatusFilter(new URLSearchParams(`status=${DEFAULT_GOAL_STATUS_FILTER}`))),
+    ).toBe(false)
   })
 
   it("reads a selection that lets one finished status through as showing them", () => {
@@ -190,7 +188,10 @@ describe("the finished toggle", () => {
   })
 
   it("turns them on from the default, which is every status", () => {
-    const shown = withFinished(parseStatusFilter(DEFAULT_GOAL_STATUS_FILTER), true)
+    const shown = withFinished(
+      readStatusFilter(new URLSearchParams(`status=${DEFAULT_GOAL_STATUS_FILTER}`)),
+      true,
+    )
     expect(shown).toEqual(NO_STATUS_FILTER)
     expect(showsFinished(shown)).toBe(true)
   })

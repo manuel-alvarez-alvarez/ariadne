@@ -61,7 +61,7 @@ export const STATUS_PARAM = "status"
  * Everything that leaves this module goes through it, so equal selections
  * produce equal URLs — and, through `goalListKey`, equal query keys.
  */
-export function normalizeStatusFilter(statuses: readonly string[]): StatusFilter {
+function normalizeStatusFilter(statuses: readonly string[]): StatusFilter {
   const asked = new Set(statuses)
   const selected = GOAL_STATUSES.filter((status) => asked.has(status))
   return selected.length === GOAL_STATUSES.length ? NO_STATUS_FILTER : selected
@@ -71,7 +71,7 @@ export function normalizeStatusFilter(statuses: readonly string[]): StatusFilter
  * A selection out of the comma-separated form the param travels in, which is
  * also the form it is remembered in between visits to the board.
  */
-export function parseStatusFilter(value: string): StatusFilter {
+function parseStatusFilter(value: string): StatusFilter {
   if (!value) return NO_STATUS_FILTER
   return normalizeStatusFilter(value.split(",").map((status) => status.trim()))
 }

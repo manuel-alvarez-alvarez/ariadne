@@ -183,7 +183,7 @@ export function useRowAction<T extends { id: string }, V = void>(
  * Everything else — a 5xx, a dropped response mid-flight — is transient and
  * still gets its two retries.
  */
-export function shouldRetryQuery(failureCount: number, error: unknown): boolean {
+function shouldRetryQuery(failureCount: number, error: unknown): boolean {
   if (ApiError.is(error) && (error.isNetworkError || (error.status >= 400 && error.status < 500))) {
     return false
   }

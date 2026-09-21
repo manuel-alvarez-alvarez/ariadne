@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest"
 
 import { ApiError } from "@/api"
-import { type ConfirmFlow, isSettling } from "./confirm-dialog"
+import { isSettling } from "./confirm-dialog"
+
+type ConfirmFlow = Parameters<typeof isSettling>[number]
 
 /** Nothing has happened yet: the trigger is on screen, the dialog is not. */
 const IDLE: ConfirmFlow = { open: false, pending: false, error: null }

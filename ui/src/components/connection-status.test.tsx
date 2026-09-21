@@ -20,9 +20,11 @@ import { expect, it, vi } from "vitest"
 
 import { AppShell } from "@/components/app-shell"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import type { Connection } from "@/hooks/use-connection"
+import type { useConnection } from "@/hooks/use-connection"
 
 import { ConnectionStatus } from "./connection-status"
+
+type Connection = ReturnType<typeof useConnection>
 
 /** What the mocked `useConnection` answers; each test writes its own. */
 const state = vi.hoisted(() => ({ current: undefined as unknown }))

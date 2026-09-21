@@ -9,7 +9,9 @@ import { describe, expect, it } from "vitest"
 
 import type { KnowledgeGraphDto } from "@/api"
 
-import { type FilesFilters, filesGraph, filesVisibility } from "./files-graph"
+import { filesGraph, filesVisibility } from "./files-graph"
+
+type FilesFilters = Parameters<typeof filesVisibility>[1]
 
 /** The summed edge between two nodes, of one kind, found by what it joins. */
 function between(built: ReturnType<typeof filesGraph>, from: string, to: string, kind: string) {

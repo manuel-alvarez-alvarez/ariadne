@@ -159,7 +159,7 @@ export function useAttention(): Attention {
  * would hide exactly the row the strip exists for — the row names the goal by
  * its short id instead.
  */
-export function collectAttention(
+function collectAttention(
   goals: GoalDto[] | undefined,
   tasks: TaskDto[] | undefined,
   sessions: SessionDto[] | undefined,
@@ -269,7 +269,7 @@ export function useBoardAttention(): BoardAttention {
  * has room for one badge, so the most recently raised reason wins: it is the
  * one the strip lists first, and the one the user has not seen yet.
  */
-export function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttention {
+function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttention {
   const byTask = new Map<string, Flagged>()
   const byGoal = new Map<string, Flagged>()
 

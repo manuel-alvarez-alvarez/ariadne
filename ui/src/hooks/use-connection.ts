@@ -15,7 +15,7 @@ import { useStreamStore } from "@/stores/stream"
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected"
 
-export interface Connection {
+interface Connection {
   status: ConnectionStatus
   /** Daemon base URL currently configured. */
   baseUrl: string

@@ -60,7 +60,7 @@ export interface EdgeDisplay {
   zIndex: number
 }
 
-export interface SigmaCanvasProps {
+interface SigmaCanvasProps {
   /**
    * Every node already placed and settled: see `placed` in `graph-model.ts`
    * and `forceLayout` in `force-layout.ts`.

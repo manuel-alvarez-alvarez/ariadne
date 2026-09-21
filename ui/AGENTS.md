@@ -10,6 +10,7 @@ On a task branch, run the checks of what you changed, and only those:
 npx vitest run <path>          # the test files of the change
 npx biome check <paths>        # the files of the change
 npm run typecheck              # the project's types, always whole
+npm run check:unused           # dependency, export and source reachability
 ```
 
 Before a commit on `main`, run the whole suite: `npm test`, `npm run

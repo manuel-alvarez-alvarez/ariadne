@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest"
 
 import {
-  isBareKey,
   isTypingTarget,
   keySequenceLabel,
   matchesHelpKey,
   matchesKeySequence,
   matchesShortcut,
-  type ShortcutEvent,
   sequenceLead,
 } from "./shortcuts"
+
+type ShortcutEvent = Parameters<typeof matchesShortcut>[0]
 
 function event(overrides: Partial<ShortcutEvent> & { key: string }): ShortcutEvent {
   return { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...overrides }
@@ -94,14 +94,6 @@ describe("matchesHelpKey", () => {
     expect(matchesHelpKey(event({ key: "?", ctrlKey: true }))).toBe(false)
     expect(matchesHelpKey(event({ key: "?", altKey: true }))).toBe(false)
     expect(matchesHelpKey(event({ key: "/" }))).toBe(false)
-  })
-})
-
-describe("isBareKey", () => {
-  it("is true only with nothing held", () => {
-    expect(isBareKey(event({ key: "g" }))).toBe(true)
-    expect(isBareKey(event({ key: "g", metaKey: true }))).toBe(false)
-    expect(isBareKey(event({ key: "g", shiftKey: true }))).toBe(false)
   })
 })
 

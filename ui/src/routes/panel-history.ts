@@ -72,13 +72,13 @@ function isTopmost(panel: Panel, search: URLSearchParams): boolean {
  * here". Any other shape of state is not ours and counts as nothing behind,
  * which is the conservative answer: the panel closes in place.
  */
-export function canStepBack(historyState: unknown): boolean {
+function canStepBack(historyState: unknown): boolean {
   const idx = (historyState as { idx?: unknown } | null | undefined)?.idx
   return typeof idx === "number" && idx > 0
 }
 
 /** The same search params with the panel, and everything inside it, gone. */
-export function withoutPanel(panel: Panel, search: URLSearchParams): URLSearchParams {
+function withoutPanel(panel: Panel, search: URLSearchParams): URLSearchParams {
   const next = new URLSearchParams(search)
   for (const param of PANEL_PARAMS[panel]) next.delete(param)
   return next

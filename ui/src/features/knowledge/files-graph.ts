@@ -60,7 +60,7 @@ interface FilesGraph {
   edges: Map<string, FilesEdge>
 }
 
-export interface FilesFilters {
+interface FilesFilters {
   /** A node is shown when its path holds this text, in any case. Empty shows all. */
   text: string
   /** The edge kinds turned off. */

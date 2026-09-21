@@ -26,7 +26,6 @@ export type CreateMemoryRequest = Schemas["CreateMemoryRequest"]
 
 export type TaskDto = Schemas["TaskDto"]
 export type TaskAgentDto = Schemas["TaskAgentDto"]
-export type TaskPickDto = Schemas["TaskPickDto"]
 export type AgentAssignment = Schemas["AgentAssignment"]
 export type TaskUsage = Schemas["TaskUsageDto"]
 export type TaskStatus = Schemas["TaskStatus"]
@@ -60,7 +59,6 @@ export type EffortDto = Schemas["EffortDto"]
 export type SetModelEnabledRequest = Schemas["SetModelEnabledRequest"]
 
 export type AgentConfigDto = Schemas["AgentConfigDto"]
-export type AcpAgentDto = Schemas["AcpAgentDto"]
 
 export type LogLineDto = Schemas["LogLineDto"]
 
@@ -74,12 +72,9 @@ export type KnowledgeSymbolDto = Schemas["KnowledgeSymbolDto"]
 export type KnowledgeRelatedDto = Schemas["KnowledgeRelatedDto"]
 export type KnowledgeDetail = Schemas["KnowledgeDetail"]
 export type KnowledgeImpactDto = Schemas["KnowledgeImpactDto"]
-export type KnowledgeImpactCallerDto = Schemas["KnowledgeImpactCallerDto"]
 export type KnowledgePathDto = Schemas["KnowledgePathDto"]
-export type KnowledgePathHopDto = Schemas["KnowledgePathHopDto"]
 export type KnowledgeGraphDto = Schemas["KnowledgeGraphDto"]
 export type KnowledgeGraphEdgeDto = Schemas["KnowledgeGraphEdgeDto"]
-export type KnowledgeOutlineEntryDto = Schemas["KnowledgeOutlineEntryDto"]
 
 export type AgentEventDto = Schemas["AgentEventDto"]
 export type ResyncDto = Schemas["ResyncDto"]

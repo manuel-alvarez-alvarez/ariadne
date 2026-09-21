@@ -114,7 +114,7 @@ export function ConfirmDialog({
  * has landed but the dialog has not re-rendered is exactly where the error would
  * otherwise be thrown away.
  */
-export interface ConfirmFlow {
+interface ConfirmFlow {
   /** Its dialog is on screen. */
   open: boolean
   /** Its mutation is in flight. */

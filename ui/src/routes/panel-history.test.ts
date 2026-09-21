@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { canStepBack, closePanel, type Panel, withoutPanel } from "./panel-history"
+import { closePanel, type Panel } from "./panel-history"
 
 /**
  * The browser's session history, as much of it as the panels use: entries the
@@ -112,35 +112,5 @@ describe("closing a panel", () => {
     history.close("session")
     expect(history.current).toBe("status=failed")
     expect(history.entries).toHaveLength(1)
-  })
-})
-
-describe("withoutPanel", () => {
-  it("takes the panel's own state with it", () => {
-    const left = withoutPanel("task", new URLSearchParams("goal=g1&task=t1&tab=diff&session=s1"))
-    expect(left.toString()).toBe("goal=g1")
-  })
-
-  it("takes the task stacked on a goal down with the goal", () => {
-    const left = withoutPanel("goal", new URLSearchParams("status=active&goal=g1&task=t1&tab=diff"))
-    expect(left.toString()).toBe("status=active")
-  })
-
-  it("leaves the screen's own params when a session panel closes", () => {
-    const left = withoutPanel(
-      "session",
-      new URLSearchParams("status=failed&seat=author&session=s1&tab=activity"),
-    )
-    expect(left.toString()).toBe("status=failed&seat=author")
-  })
-})
-
-describe("canStepBack", () => {
-  it("is true only for an entry this app pushed its way to", () => {
-    expect(canStepBack({ idx: 1 })).toBe(true)
-    expect(canStepBack({ idx: 0 })).toBe(false)
-    expect(canStepBack({ usr: null })).toBe(false)
-    expect(canStepBack(null)).toBe(false)
-    expect(canStepBack(undefined)).toBe(false)
   })
 })

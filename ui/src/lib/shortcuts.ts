@@ -36,7 +36,7 @@ export interface KeySequence {
 }
 
 /** The bit of a keyboard event this module needs; keeps the tests DOM-free. */
-export interface ShortcutEvent {
+interface ShortcutEvent {
   key: string
   metaKey: boolean
   ctrlKey: boolean
@@ -60,7 +60,7 @@ export function matchesShortcut(event: ShortcutEvent, shortcut: Shortcut): boole
 }
 
 /** Whether nothing is held down — what makes a keystroke a *typed* chord. */
-export function isBareKey(event: ShortcutEvent): boolean {
+function isBareKey(event: ShortcutEvent): boolean {
   return !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
 }
 

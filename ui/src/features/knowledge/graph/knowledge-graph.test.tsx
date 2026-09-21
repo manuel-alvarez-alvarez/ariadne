@@ -20,7 +20,8 @@ import { renderScreen } from "@/test/harness"
 import { forceLayout } from "./force-layout"
 import { emphasis, emptyGraph, type KnowledgeGraphModel, placed } from "./graph-model"
 import { KnowledgeGraph } from "./knowledge-graph"
-import type { SigmaCanvasProps } from "./sigma-canvas"
+
+type SigmaCanvasProps = Parameters<typeof import("./sigma-canvas").SigmaCanvas>[0]
 
 /**
  * The very graph the view was last handed, kept as it is: its nodes are

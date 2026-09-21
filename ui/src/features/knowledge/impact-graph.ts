@@ -32,7 +32,7 @@ interface Located {
 }
 
 /** A definition is its place: the same name in two files is two nodes. */
-export function definitionKey(definition: Located): string {
+function definitionKey(definition: Located): string {
   return `${definition.repository_id}:${definition.path}:${definition.line}:${definition.name}`
 }
 

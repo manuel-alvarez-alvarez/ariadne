@@ -20,7 +20,7 @@ import { useCallback, useState } from "react"
 const COLLAPSED_LANES_KEY = "ariadne.goals.collapsed-lanes"
 
 /** What the user has said about individual lanes, either way. */
-export interface LaneCollapse {
+interface LaneCollapse {
   /** Lanes folded away by hand. */
   collapsed: ReadonlySet<string>
   /** Lanes opened by hand, whatever the board would have done with them. */
@@ -37,7 +37,7 @@ const NOTHING: LaneCollapse = { collapsed: new Set(), expanded: new Set() }
  * board written by a previous version left behind — it reads as "these were
  * folded away, nothing was expanded", which is exactly what it meant.
  */
-export function parseCollapsed(raw: string | null): LaneCollapse {
+function parseCollapsed(raw: string | null): LaneCollapse {
   if (!raw) return NOTHING
   try {
     const parsed: unknown = JSON.parse(raw)
@@ -51,7 +51,7 @@ export function parseCollapsed(raw: string | null): LaneCollapse {
 }
 
 /** The stored form: two id lists, stable in order so writes stay diffable. */
-export function serializeCollapsed(state: LaneCollapse): string {
+function serializeCollapsed(state: LaneCollapse): string {
   return JSON.stringify({
     collapsed: [...state.collapsed].sort(),
     expanded: [...state.expanded].sort(),
@@ -63,11 +63,7 @@ export function serializeCollapsed(state: LaneCollapse): string {
  * way it went, so a lane the user opened stays open and a lane the user folded
  * stays folded even where the board's default is the other one.
  */
-export function setLaneCollapsed(
-  state: LaneCollapse,
-  id: string,
-  collapsed: boolean,
-): LaneCollapse {
+function setLaneCollapsed(state: LaneCollapse, id: string, collapsed: boolean): LaneCollapse {
   const next = {
     collapsed: new Set(state.collapsed),
     expanded: new Set(state.expanded),
@@ -79,7 +75,7 @@ export function setLaneCollapsed(
 }
 
 /** Whether this lane is folded away: what the user said, else the board's default. */
-export function isLaneCollapsed(state: LaneCollapse, id: string, byDefault: boolean): boolean {
+function isLaneCollapsed(state: LaneCollapse, id: string, byDefault: boolean): boolean {
   if (state.collapsed.has(id)) return true
   if (state.expanded.has(id)) return false
   return byDefault

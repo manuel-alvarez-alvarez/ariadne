@@ -14,10 +14,9 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-
 import type {
+  components,
   KnowledgeHitDto,
-  KnowledgeImpactCallerDto,
   KnowledgeImpactDto,
   KnowledgePathDto,
   RepositoryDto,
@@ -26,6 +25,8 @@ import { aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 
 import { KnowledgeScreen } from "./knowledge-screen"
+
+type KnowledgeImpactCallerDto = components["schemas"]["KnowledgeImpactCallerDto"]
 
 // jsdom has no WebGL and no Worker: see `@/test/sigma-canvas.tsx` and `@/test/elk-worker.ts`.
 vi.mock("@/features/knowledge/graph/sigma-canvas", () => import("@/test/sigma-canvas"))

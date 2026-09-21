@@ -56,7 +56,7 @@ function layerEdges(graph: KnowledgeGraphModel): ElkExtendedEdge[] {
   return edges
 }
 
-export async function layeredLayout(graph: KnowledgeGraphModel): Promise<KnowledgeGraphModel> {
+async function layeredLayout(graph: KnowledgeGraphModel): Promise<KnowledgeGraphModel> {
   const root: ElkNode = {
     id: "root",
     layoutOptions: {

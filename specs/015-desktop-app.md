@@ -408,7 +408,7 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/repositories/repository-form-dialog.test.tsx`).
 - The attention strip holds a placeholder while its lists load and survives a
   partial failure (`ui/src/features/goals/attention-strip.test.tsx`).
-- Unused exports fail `npm run check:unused`.
+- Unused declared dependencies, exports only tests import, and orphan source files fail `npm run check:unused`.
 - The goal dialog and task dialog refuse a missing model and a pin that is
   one half only
   (`ui/src/features/goals/create-goal-dialog.test.tsx::refuses a model that names no agent, before the daemon is asked`,

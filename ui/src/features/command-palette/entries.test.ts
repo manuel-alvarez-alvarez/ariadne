@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto } from "@/api"
-import { attentionTarget, collectAttention } from "@/features/goals/attention"
+import { type AttentionItem, attentionTarget } from "@/features/goals/attention"
 import { aGoal, aRepository, aSession, aSkill, aTask } from "@/test/fixtures"
 import { attentionEntries, buildPaletteEntries, paletteTargetTo } from "./entries"
 
@@ -133,11 +133,8 @@ describe("buildPaletteEntries", () => {
 
 /**
  * The rows are built from what the strip is showing, so they are asserted the
- * same way — through `collectAttention`, rather than against items written out
- * by hand that could stop being what the strip collects. What a row *is* is
- * `attention.ts`'s business (a task and the session stuck on it are one row);
- * what this pins is the shape a palette row takes around it, and that a pick
- * lands where the strip's own row would.
+ * same way. What a row is remains `attention.ts`'s business; this pins the
+ * palette shape around an item and where its pick lands.
  */
 describe("attentionEntries", () => {
   const FAILED = aTask({ ...TASK, id: "01JTASK0000000000000FAILED", status: "failed" })
@@ -146,9 +143,31 @@ describe("attentionEntries", () => {
     attention_reason: "agent_error",
     attention_since: "2026-01-02T00:00:00Z",
   }
+  const failedItem: AttentionItem = {
+    id: FAILED.id,
+    goalId: GOAL.id,
+    goal: GOAL,
+    at: FAILED.updated_at,
+    taskId: FAILED.id,
+    task: FAILED,
+    taskReason: "failed",
+    session: undefined,
+    sessionReason: null,
+  }
+  const flaggedItem: AttentionItem = {
+    id: TASK.id,
+    goalId: GOAL.id,
+    goal: GOAL,
+    at: FLAGGED.attention_since ?? "2026-01-01T00:00:00Z",
+    taskId: TASK.id,
+    task: TASK,
+    taskReason: null,
+    session: FLAGGED,
+    sessionReason: "agent_error",
+  }
 
   it("names a stuck task by its title, with the reason it is on the list", () => {
-    const [entry] = attentionEntries(collectAttention([GOAL], [FAILED], []))
+    const [entry] = attentionEntries([failedItem])
 
     expect(entry?.label).toBe(FAILED.title)
     expect(entry?.detail).toBe("Failed")
@@ -156,7 +175,7 @@ describe("attentionEntries", () => {
   })
 
   it("leads with the session's reason on a row that carries one", () => {
-    const [entry] = attentionEntries(collectAttention([GOAL], [TASK], [FLAGGED]))
+    const [entry] = attentionEntries([flaggedItem])
 
     // The row is the task's — a task and the agent stuck on it are one thing
     // gone wrong — and what it is asking for is the session's reason.
@@ -167,7 +186,16 @@ describe("attentionEntries", () => {
 
   it("names an orchestrator's row by its seat and goal, having no task", () => {
     const orchestrator: SessionDto = { ...PLANNER_SESSION, attention_reason: "disconnected" }
-    const [entry] = attentionEntries(collectAttention([GOAL], [], [orchestrator]))
+    const [entry] = attentionEntries([
+      {
+        ...flaggedItem,
+        id: orchestrator.id,
+        taskId: null,
+        task: undefined,
+        session: orchestrator,
+        sessionReason: "disconnected",
+      },
+    ])
 
     expect(entry?.label).toBe(`Orchestrator · ${GOAL.title}`)
     expect(entry?.detail).toBe("Disconnected")
@@ -177,27 +205,29 @@ describe("attentionEntries", () => {
     // Two tasks of the same name, failed the same way: the rows are word for
     // word identical, and cmdk shows one row per *value*.
     const twin = aTask({ ...FAILED, id: "01JTASK00000000000000TWIN1" })
-    const entries = attentionEntries(collectAttention([GOAL], [FAILED, twin], []))
+    const entries = attentionEntries([
+      { ...failedItem, task: twin, id: twin.id, taskId: twin.id },
+      failedItem,
+    ])
 
     expect(entries).toHaveLength(2)
     expect(new Set(entries.map((entry) => entry.value)).size).toBe(2)
   })
 
   it("sends a pick exactly where the strip's own row goes", () => {
-    const [item] = collectAttention([GOAL], [TASK], [FLAGGED])
-    const [entry] = attentionEntries(collectAttention([GOAL], [TASK], [FLAGGED]))
+    const [entry] = attentionEntries([flaggedItem])
     const search = new URLSearchParams("status=failed")
-    if (!item || !entry) throw new Error("nothing was collected")
+    if (!entry) throw new Error("nothing was collected")
 
     // Same function, same answer: a question is answered in the thread it was
     // asked in, wherever the palette was opened.
     expect(paletteTargetTo(entry.target, search, "/goals")).toEqual(
-      attentionTarget(item, search, "/goals"),
+      attentionTarget(flaggedItem, search, "/goals"),
     )
   })
 
   it("has nothing to list when nothing is stuck", () => {
-    expect(attentionEntries(collectAttention([GOAL], [TASK], [SESSION]))).toEqual([])
+    expect(attentionEntries([])).toEqual([])
   })
 })
 

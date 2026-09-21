@@ -1,12 +1,18 @@
+// @vitest-environment jsdom
+
+import { act, renderHook } from "@testing-library/react"
+import { createElement } from "react"
+import { MemoryRouter, useLocation } from "react-router-dom"
 import { describe, expect, it } from "vitest"
 
 import {
-  panelSessionTo,
   paths,
   sessionPanelFrom,
   taskPanelFrom,
   taskPanelTo,
   taskSessionPanelFrom,
+  usePanelSessionNavigation,
+  usePanelSessionTo,
 } from "./paths"
 
 /** Any screen but the sessions one, where a task panel opens over the screen. */
@@ -58,30 +64,6 @@ describe("sessionPanelFrom", () => {
     expect(params.get("goal")).toBe("g1")
     expect(params.get("task")).toBe("t1")
     expect(params.get("session")).toBe("s1")
-  })
-})
-
-describe("panelSessionTo", () => {
-  it("points the open panel at the session", () => {
-    const to = panelSessionTo(new URLSearchParams("goal=g1&task=t1&tab=diff"), "s1")
-    const params = new URLSearchParams(to.search)
-    expect(params.get("goal")).toBe("g1")
-    expect(params.get("task")).toBe("t1")
-    expect(params.get("tab")).toBe("sessions")
-    expect(params.get("session")).toBe("s1")
-  })
-
-  it("replaces the session that was selected", () => {
-    const to = panelSessionTo(new URLSearchParams("task=t1&tab=sessions&session=s1"), "s2")
-    expect(new URLSearchParams(to.search).get("session")).toBe("s2")
-  })
-
-  it("comes back out of the session onto the list it came from", () => {
-    const to = panelSessionTo(new URLSearchParams("task=t1&tab=sessions&session=s1"), null)
-    const params = new URLSearchParams(to.search)
-    expect(params.get("task")).toBe("t1")
-    expect(params.get("tab")).toBe("sessions")
-    expect(params.has("session")).toBe(false)
   })
 })
 
@@ -140,5 +122,43 @@ describe("taskPanelFrom", () => {
       pathname: paths.goals(),
       search: "?task=t1",
     })
+  })
+})
+
+describe("usePanelSessionTo", () => {
+  it("keeps the open panel and moves its selected session", () => {
+    const { result } = renderHook(() => usePanelSessionTo("s2"), {
+      wrapper: ({ children }) =>
+        createElement(MemoryRouter, { initialEntries: ["/?goal=g1&task=t1&tab=diff"] }, children),
+    })
+
+    const params = new URLSearchParams(result.current.search)
+    expect(params.get("goal")).toBe("g1")
+    expect(params.get("task")).toBe("t1")
+    expect(params.get("tab")).toBe("sessions")
+    expect(params.get("session")).toBe("s2")
+  })
+})
+
+describe("usePanelSessionNavigation", () => {
+  it("comes back out of the session onto the list it came from", () => {
+    const { result } = renderHook(
+      () => ({ navigate: usePanelSessionNavigation(), location: useLocation() }),
+      {
+        wrapper: ({ children }) =>
+          createElement(
+            MemoryRouter,
+            { initialEntries: ["/?task=t1&tab=sessions&session=s1"] },
+            children,
+          ),
+      },
+    )
+
+    act(() => result.current.navigate(null))
+
+    const params = new URLSearchParams(result.current.location.search)
+    expect(params.get("task")).toBe("t1")
+    expect(params.get("tab")).toBe("sessions")
+    expect(params.has("session")).toBe(false)
   })
 })

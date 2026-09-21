@@ -3,8 +3,10 @@
  *
  * - every `dependencies` / `devDependencies` entry is reached from somewhere in
  *   the app (a TS/TSX import, a CSS `@import`, a config file);
- * - every exported symbol is *imported* by some file other than the one that
- *   declares it.
+ * - every exported symbol is *imported* by a non-test file other than the one
+ *   that declares it;
+ * - every source file is imported by another file, unless it is an entry point
+ *   or a test.
  *
  * Both print what they found and exit non-zero when anything is unused, so a
  * dependency or an export that stops being reachable is a failing check rather
@@ -12,34 +14,45 @@
  */
 
 import { readdirSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join, normalize } from "node:path"
 import { fileURLToPath } from "node:url"
 
-const root = fileURLToPath(new URL("..", import.meta.url))
+const root = process.env.CHECK_UNUSED_ROOT ?? fileURLToPath(new URL("..", import.meta.url))
 
 /** Files whose exports are a public surface with no in-repo caller. */
 const ENTRYPOINTS = new Set(["src/main.tsx"])
 /** Generated; not ours to prune. */
 const GENERATED = new Set(["src/api/schema.d.ts"])
+const SOURCE_EXTENSIONS = [".ts", ".tsx", ".css"]
+
+function isTestFile(path) {
+  return /(?:\.test\.(?:ts|tsx)|(?:^|\/)(?:setup|[^/]+\.setup)\.(?:ts|tsx)|^src\/test\/)/.test(path)
+}
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
     const path = `${dir}/${entry.name}`
     if (entry.isDirectory()) walk(path, out)
-    else if (/\.(ts|tsx|css)$/.test(entry.name)) out.push(path)
+    else if (SOURCE_EXTENSIONS.some((extension) => path.endsWith(extension))) out.push(path)
   }
   return out
 }
 
 const files = walk("src")
 const sources = new Map(files.map((path) => [path, readFileSync(join(root, path), "utf8")]))
-const extra = ["vite.config.ts", "index.html", "components.json"].map((path) => [
-  path,
-  readFileSync(join(root, path), "utf8"),
-])
-for (const [path, text] of extra) sources.set(path, text)
-for (const path of readdirSync(join(root, "scripts"))) {
-  sources.set(`scripts/${path}`, readFileSync(join(root, "scripts", path), "utf8"))
+for (const path of ["vite.config.ts", "index.html", "components.json"]) {
+  try {
+    sources.set(path, readFileSync(join(root, path), "utf8"))
+  } catch {
+    // Fixtures only need the source tree.
+  }
+}
+try {
+  for (const path of readdirSync(join(root, "scripts"))) {
+    sources.set(`scripts/${path}`, readFileSync(join(root, "scripts", path), "utf8"))
+  }
+} catch {
+  // Fixtures only need the source tree.
 }
 
 let failed = false
@@ -146,13 +159,14 @@ function exportedNames(text) {
  */
 const importedFrom = new Map()
 for (const [path, text] of sources) {
-  if (GENERATED.has(path) || path.endsWith(".css")) continue
+  if (GENERATED.has(path) || path.endsWith(".css") || isTestFile(path)) continue
   importedFrom.set(path, importedNames(text))
 }
 
 const unusedExports = []
 for (const [path, text] of sources) {
-  if (!path.startsWith("src/") || GENERATED.has(path) || ENTRYPOINTS.has(path)) continue
+  if (!path.startsWith("src/") || GENERATED.has(path) || ENTRYPOINTS.has(path) || isTestFile(path))
+    continue
   if (path.endsWith(".css")) continue
   for (const name of exportedNames(text)) {
     let seen = false
@@ -171,7 +185,55 @@ if (unusedExports.length > 0) {
   console.log(`\nexports referenced nowhere outside their own file (${unusedExports.length}):`)
   for (const line of unusedExports) console.log(`  ${line}`)
 } else {
-  console.log("exports: every export in src/ is referenced by another file")
+  console.log("exports: every production export in src/ is referenced by another production file")
+}
+
+// ── source files ─────────────────────────────────────────────────────────
+
+const MODULE_SPECIFIER = /(?:^|\n)\s*(?:import|export)(?:\s+[\s\S]*?\s+from)?\s*["']([^"']+)["']/g
+const DYNAMIC_IMPORT = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g
+
+function moduleSpecifiers(text) {
+  const specifiers = new Set()
+  const code = stripComments(text)
+  for (const [, specifier] of code.matchAll(MODULE_SPECIFIER)) specifiers.add(specifier)
+  for (const [, specifier] of code.matchAll(DYNAMIC_IMPORT)) specifiers.add(specifier)
+  return specifiers
+}
+
+function importedFile(path, specifier) {
+  const clean = specifier.split(/[?#]/, 1)[0]
+  let base
+  if (clean.startsWith("@/")) base = `src/${clean.slice(2)}`
+  else if (clean.startsWith(".")) base = normalize(join(dirname(path), clean))
+  else return undefined
+
+  const candidates = [
+    base,
+    ...SOURCE_EXTENSIONS.map((extension) => `${base}${extension}`),
+    ...SOURCE_EXTENSIONS.map((extension) => `${base}/index${extension}`),
+  ]
+  return candidates.find((candidate) => sources.has(candidate))
+}
+
+const importedFiles = new Set()
+for (const [path, text] of sources) {
+  for (const specifier of moduleSpecifiers(text)) {
+    const target = importedFile(path, specifier)
+    if (target) importedFiles.add(target)
+  }
+}
+
+const orphanFiles = files.filter(
+  (path) =>
+    !GENERATED.has(path) && !ENTRYPOINTS.has(path) && !isTestFile(path) && !importedFiles.has(path),
+)
+if (orphanFiles.length > 0) {
+  failed = true
+  console.log(`\norphan source files (${orphanFiles.length}):`)
+  for (const path of orphanFiles) console.log(`  ${path}`)
+} else {
+  console.log("source files: every non-test file in src/ is imported")
 }
 
 process.exit(failed ? 1 : 0)

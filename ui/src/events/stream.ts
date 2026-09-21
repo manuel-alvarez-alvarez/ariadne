@@ -70,7 +70,7 @@ const IDLE_BUDGET_MS = 2.5 * 15_000
 /** A shared subscription, so it waits longer than a per-view stream would. */
 const MAX_BACKOFF_MS = 10_000
 
-export interface DomainEventStreamHandlers {
+interface DomainEventStreamHandlers {
   /** A domain event arrived, already parsed into its tagged-union shape. */
   onEvent: (event: DomainEvent) => void
   /** The daemon dropped events for this connection and is closing it. */

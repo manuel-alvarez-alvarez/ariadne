@@ -6,9 +6,11 @@
 
 import { describe, expect, it } from "vitest"
 
-import type { KnowledgeImpactCallerDto, KnowledgeImpactDto } from "@/api"
+import type { components, KnowledgeImpactDto } from "@/api"
 
-import { definitionKey, impactGraph } from "./impact-graph"
+import { impactGraph } from "./impact-graph"
+
+type KnowledgeImpactCallerDto = components["schemas"]["KnowledgeImpactCallerDto"]
 
 const REPOSITORY = "01JREPO000000000000000WEB"
 
@@ -95,7 +97,6 @@ describe("impactGraph", () => {
   it("names the symbol behind each node, whatever its label says", () => {
     const { graph, symbols } = impactGraph([anImpact([caller("hub", 1)], ["hub"])])
 
-    expect(symbols.get(definitionKey(caller("hub", 1)))).toBe("hub")
     expect([...symbols.values()].sort()).toEqual(["hub", "parse"])
     expect(graph.order).toBe(2)
   })

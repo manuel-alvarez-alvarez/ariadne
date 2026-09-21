@@ -130,6 +130,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Check unused code
+        run: npm run check:unused
+
       - name: Test
         run: npm test
 

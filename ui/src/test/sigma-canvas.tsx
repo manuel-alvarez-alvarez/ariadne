@@ -12,7 +12,9 @@
  * layout put a node before the first frame.
  */
 
-import type { SigmaCanvasProps } from "@/features/knowledge/graph/sigma-canvas"
+type SigmaCanvasProps = Parameters<
+  typeof import("@/features/knowledge/graph/sigma-canvas").SigmaCanvas
+>[0]
 
 export function SigmaCanvas({
   graph,

@@ -169,10 +169,7 @@ export function sessionPanelFrom(
  * This is how a session id mentioned somewhere in a panel — a review's session
  * — becomes a way to watch that agent.
  */
-export function panelSessionTo(
-  current: URLSearchParams,
-  sessionId: string | null,
-): { search: string } {
+function panelSessionTo(current: URLSearchParams, sessionId: string | null): { search: string } {
   const next = withoutArrival(current)
   next.set("tab", "sessions")
   if (sessionId === null) next.delete("session")
