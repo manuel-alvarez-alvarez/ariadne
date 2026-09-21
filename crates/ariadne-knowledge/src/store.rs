@@ -24,7 +24,7 @@ use crate::resolve::{
 
 /// The schema this build writes. Bump it with every change to `schema.sql`:
 /// a store at another version is thrown away and indexed again.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 /// The edge kinds a walk of the callers follows: a call, and a request of
 /// a route the definition handles.
@@ -85,7 +85,8 @@ pub struct KnowledgeStore {
     read: Pool<Sqlite>,
 }
 
-/// Where a repository's index stands.
+/// Where the index of one ref stands, and of a repository: `Indexing` while
+/// one of its refs is, else `Failed` while one of them is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Idle,
@@ -115,13 +116,34 @@ impl State {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub state: State,
-    pub error: Option<String>,
+    /// The refs whose last run failed, each with why, in ref order.
+    pub failures: Vec<RefFailure>,
     pub refs: Vec<RefStatus>,
     /// Distinct paths indexed across the repository's refs.
     pub files: i64,
     /// The symbols of the distinct blobs those paths hold.
     pub symbols: i64,
     pub languages: Vec<LanguageCount>,
+}
+
+/// A ref whose last index run failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefFailure {
+    pub git_ref: String,
+    pub error: String,
+}
+
+/// Whether a ref can answer a read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Readiness {
+    /// The ref has an index. A run that updates it does not change that.
+    Ready,
+    /// No run of the ref has started.
+    NoIndex,
+    /// The first run of the ref is under way.
+    FirstIndex,
+    /// The last run of the ref failed, with why.
+    Failed(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -438,15 +460,29 @@ impl KnowledgeStore {
     // -- status ---------------------------------------------------------------
 
     pub async fn status(&self, repository_id: &str) -> Result<Status> {
-        let row: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT state, error FROM repositories WHERE id = ?")
-                .bind(repository_id)
-                .fetch_optional(&self.read)
-                .await?;
-        let (state, error) = match row {
-            Some((state, error)) => (State::parse(&state), error),
-            None => (State::Idle, None),
-        };
+        let states: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT git_ref, state, error FROM ref_states WHERE repository_id = ? ORDER BY git_ref",
+        )
+        .bind(repository_id)
+        .fetch_all(&self.read)
+        .await?;
+        let mut state = State::Idle;
+        let mut failures = Vec::new();
+        for (git_ref, ref_state, error) in states {
+            match State::parse(&ref_state) {
+                State::Indexing => state = State::Indexing,
+                State::Failed => {
+                    if state == State::Idle {
+                        state = State::Failed;
+                    }
+                    failures.push(RefFailure {
+                        git_ref,
+                        error: error.unwrap_or_default(),
+                    });
+                }
+                State::Idle => {}
+            }
+        }
         let refs: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT git_ref, commit_sha, indexed_at FROM refs WHERE repository_id = ? ORDER BY git_ref",
         )
@@ -485,7 +521,7 @@ impl KnowledgeStore {
         .await?;
         Ok(Status {
             state,
-            error,
+            failures,
             refs: statuses,
             files,
             symbols,
@@ -496,25 +532,66 @@ impl KnowledgeStore {
         })
     }
 
-    /// Record where a repository's indexing stands.
-    pub async fn set_state(
+    /// Record where the index of one ref stands, with why a failed run
+    /// failed. The other refs of the repository keep what they had.
+    pub async fn set_ref_state(
         &self,
         repository_id: &str,
+        git_ref: &str,
         state: State,
         error: Option<&str>,
     ) -> Result<()> {
+        let mut tx = self.write.begin().await?;
+        let stamp = now();
         sqlx::query(
-            "INSERT INTO repositories (id, state, error, updated_at) VALUES (?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET state = excluded.state, error = excluded.error,
-                                           updated_at = excluded.updated_at",
+            "INSERT INTO repositories (id, updated_at) VALUES (?, ?)
+             ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at",
         )
         .bind(repository_id)
+        .bind(&stamp)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO ref_states (repository_id, git_ref, state, error, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(repository_id, git_ref) DO UPDATE SET state = excluded.state,
+                 error = excluded.error, updated_at = excluded.updated_at",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
         .bind(state.as_str())
         .bind(error)
-        .bind(now())
-        .execute(&self.write)
+        .bind(&stamp)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(())
+    }
+
+    /// Whether a ref can answer a read: it has an index, and its last run
+    /// did not fail. A ref with an index answers while a run updates it.
+    pub async fn readiness(&self, repository_id: &str, git_ref: &str) -> Result<Readiness> {
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT state, error FROM ref_states WHERE repository_id = ? AND git_ref = ?",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .fetch_optional(&self.read)
+        .await?;
+        let (state, error) = match row {
+            Some((state, error)) => (State::parse(&state), error),
+            None => (State::Idle, None),
+        };
+        if state == State::Failed {
+            return Ok(Readiness::Failed(error.unwrap_or_default()));
+        }
+        if self.ref_commit(repository_id, git_ref).await?.is_some() {
+            return Ok(Readiness::Ready);
+        }
+        Ok(match state {
+            State::Indexing => Readiness::FirstIndex,
+            _ => Readiness::NoIndex,
+        })
     }
 
     /// Record the ref another repository is read against: the base branch,
@@ -522,7 +599,7 @@ impl KnowledgeStore {
     /// stands in.
     pub async fn set_base_ref(&self, repository_id: &str, git_ref: &str) -> Result<()> {
         sqlx::query(
-            "INSERT INTO repositories (id, state, error, updated_at, base_ref) VALUES (?, 'idle', NULL, ?, ?)
+            "INSERT INTO repositories (id, updated_at, base_ref) VALUES (?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET base_ref = excluded.base_ref",
         )
         .bind(repository_id)
@@ -606,11 +683,17 @@ impl KnowledgeStore {
         Ok(())
     }
 
-    /// Forget one ref of a repository: its files, and the blobs no file
-    /// holds any more. What a landed or deleted task branch leaves behind.
+    /// Forget one ref of a repository: its state, its files, and the blobs
+    /// no file holds any more. What a landed or deleted task branch leaves
+    /// behind.
     pub async fn drop_ref(&self, repository_id: &str, git_ref: &str) -> Result<()> {
         let mut tx = self.write.begin().await?;
         sqlx::query("DELETE FROM refs WHERE repository_id = ? AND git_ref = ?")
+            .bind(repository_id)
+            .bind(git_ref)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM ref_states WHERE repository_id = ? AND git_ref = ?")
             .bind(repository_id)
             .bind(git_ref)
             .execute(&mut *tx)
@@ -2294,7 +2377,7 @@ impl KnowledgeStore {
         // The first ref indexed is the base ref until the daemon says which
         // one is.
         sqlx::query(
-            "INSERT INTO repositories (id, state, error, updated_at, base_ref) VALUES (?1, 'idle', NULL, ?2, ?3)
+            "INSERT INTO repositories (id, updated_at, base_ref) VALUES (?1, ?2, ?3)
              ON CONFLICT(id) DO UPDATE SET base_ref = COALESCE(base_ref, excluded.base_ref)",
         )
         .bind(repository_id)
@@ -2856,7 +2939,7 @@ mod tests {
              WITH RECURSIVE n(value) AS (
                  VALUES(0) UNION ALL SELECT value + 1 FROM n WHERE value + 1 < 50
              ) INSERT INTO test_mentions SELECT value FROM n;
-             INSERT INTO repositories (id, state, updated_at) VALUES ('repo', 'idle', 'now');
+             INSERT INTO repositories (id, updated_at) VALUES ('repo', 'now');
              INSERT INTO refs (repository_id, git_ref, commit_sha, indexed_at)
                  VALUES ('repo', 'branch', 'commit', 'now');
              INSERT INTO blobs (blob, language, parsed_at)
@@ -2908,7 +2991,7 @@ mod tests {
             while !done.load(Ordering::Acquire) || writes == 0 {
                 let started = std::time::Instant::now();
                 store
-                    .set_state("contender", State::Idle, None)
+                    .set_ref_state("contender", "main", State::Idle, None)
                     .await
                     .unwrap();
                 slowest = slowest.max(started.elapsed());
@@ -3187,7 +3270,7 @@ mod tests {
         let path = dir.path().join("knowledge.db");
         let store = KnowledgeStore::open(&path).await.unwrap();
         store
-            .set_state("repo", State::Failed, Some("boom"))
+            .set_ref_state("repo", "main", State::Failed, Some("boom"))
             .await
             .unwrap();
         drop(store);
@@ -3206,7 +3289,7 @@ mod tests {
         let store = KnowledgeStore::open(&path).await.unwrap();
         let status = store.status("repo").await.unwrap();
         assert_eq!(status.state, State::Idle, "the old rows are gone");
-        assert_eq!(status.error, None);
+        assert_eq!(status.failures, []);
         assert_eq!(version_of(&path).await, Some(SCHEMA_VERSION));
     }
 }

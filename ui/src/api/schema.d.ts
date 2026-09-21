@@ -1811,10 +1811,19 @@ export interface components {
              */
             symbol: string;
         };
-        /** @description Payload of `knowledge_failed`: an index run of a repository failed. */
+        /**
+         * @description Payload of `knowledge_failed`: an index run of one ref of a repository
+         *     failed.
+         */
         KnowledgeFailedDto: {
             error: string;
+            git_ref: string;
             repository_id: string;
+        };
+        /** @description One ref whose last index run failed. */
+        KnowledgeFailureDto: {
+            error: string;
+            git_ref: string;
         };
         /**
          * @description How confidently every symbol edge in a file edge was resolved.
@@ -2022,8 +2031,11 @@ export interface components {
         KnowledgeState: "idle" | "indexing" | "failed" | "disabled";
         /** @description Response of `GET /v1/repositories/{id}/knowledge`. */
         KnowledgeStatusDto: {
-            /** @description Why the last run failed, on a `failed` repository. */
-            error?: string | null;
+            /**
+             * @description The refs whose last run failed, each with why. A good run of one ref
+             *     leaves the failure of another here.
+             */
+            failures: components["schemas"]["KnowledgeFailureDto"][];
             /**
              * Format: int64
              * @description Distinct paths indexed across the repository's refs.
@@ -3277,8 +3289,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the knowledge base is disabled */
+            /** @description the knowledge base is disabled, or the index of the ref is not ready */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge store or git failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3326,8 +3345,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the knowledge base is disabled */
+            /** @description the knowledge base is disabled, or the index of the ref is not ready */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge store or git failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3363,8 +3389,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the knowledge base is disabled */
+            /** @description the knowledge base is disabled, or the index of the ref is not ready */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge store or git failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3407,8 +3440,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the knowledge base is disabled */
+            /** @description the knowledge base is disabled, or the index of the ref is not ready */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge store or git failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3449,8 +3489,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the knowledge base is disabled */
+            /** @description the knowledge base is disabled, or the index of the ref is not ready */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge store or git failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3498,8 +3545,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the knowledge base is disabled */
+            /** @description the knowledge base is disabled, or the index of the ref is not ready */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge store or git failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3563,8 +3617,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the knowledge base is disabled */
+            /** @description the knowledge base is disabled, or the index of the ref is not ready */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge store or git failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3610,8 +3671,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the knowledge base is disabled */
+            /** @description the knowledge base is disabled, or the index of the ref is not ready */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge store or git failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4156,6 +4224,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description the knowledge store failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     knowledge_reindex: {
@@ -4186,6 +4261,13 @@ export interface operations {
             };
             /** @description the knowledge base is disabled */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the knowledge store failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
