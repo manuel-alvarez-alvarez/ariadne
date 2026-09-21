@@ -138,6 +138,7 @@ async fn main() -> Result<()> {
 
     ariadne_daemon::checkpoint::start(
         store.clone(),
+        knowledge.store().cloned(),
         ariadne_daemon::timeouts::Timeouts::default().checkpoint,
     );
     let sched_tx = ariadne_daemon::scheduler::start(

@@ -616,7 +616,7 @@ scan of its lines.
 
 ## Schema
 
-`crates/ariadne-knowledge/src/schema.sql`, version 11:
+`crates/ariadne-knowledge/src/schema.sql`, version 12:
 
 | Table | Columns | Holds |
 | --- | --- | --- |
@@ -634,9 +634,10 @@ scan of its lines.
 `refs` cascade from `repositories`, `files` from `refs`, and `symbols`,
 `mentions`, `imports`, `interfaces` and `edges` from `blobs` and `symbols`.
 Dropping a ref or a repository then drops the blobs no file holds, with
-their symbols and FTS rows, in two statements: the FTS rows are found by
-rowid, never by reading the table; everything keyed by the blob goes with
-it.
+their symbols and FTS rows, in batches of 100 blobs and one transaction per
+batch. The orphan lookup is an anti-join through `files_by_blob`, and each
+blob-owned child set is deleted directly before its parent. Thus the store's
+one write connection becomes available between bounded batches.
 
 `edges` is indexed in both directions, `(from_repository, git_ref, kind,
 from_symbol, to_symbol, confidence)` and `(to_repository, to_ref, kind,
@@ -649,7 +650,13 @@ they come from; and by
 again deletes by. `files` is indexed by `(blob, repository_id, git_ref)`,
 which is what reading an end's path back joins by. `symbols` is indexed by
 `name`, which is what resolution and `symbol` ask by; `interfaces` by blob
-and by `(kind, name)`.
+and by `(kind, name)`. Cascades also have indexes led by every child key:
+`mentions(from_symbol)`, `interfaces(symbol)`, `edges(from_symbol)`,
+`edges(to_symbol)`, `edges(from_blob)` and `edges(to_blob)`.
+
+The store disables SQLite's automatic WAL checkpoint and gives each
+connection a 64 MiB page cache. The daemon's checkpoint task truncates both
+the daemon and knowledge WAL files off the commit path.
 
 ## Acceptance criteria
 
@@ -768,6 +775,15 @@ and by `(kind, name)`.
   `::a_query_becomes_prefix_terms_that_all_have_to_match`).
 - A store at another schema version is rebuilt
   (`store.rs::a_store_at_another_schema_version_is_rebuilt`).
+- Every cascading foreign-key lookup uses an index and scans no child table
+  (`store.rs::every_cascading_foreign_key_delete_uses_an_index`).
+- Dropping 20,000 orphan blobs holding 300,000 symbols and 1,000,000 mentions
+  finishes within 120 seconds, and no batch blocks another write for two
+  seconds (`store.rs::dropping_twenty_thousand_orphan_blobs_keeps_writes_moving`).
+- The knowledge store disables automatic checkpoints and uses a 64 MiB cache,
+  while one daemon checkpoint tick leaves its WAL below 32 KiB
+  (`store.rs::opening_a_store_keeps_checkpoints_off_the_commit_path`,
+  `checkpoint.rs::a_checkpoint_tick_bounds_the_knowledge_write_ahead_log`).
 - `git ls-tree` and `git cat-file --batch` are read record by record, and a
   NUL byte marks a binary
   (`index.rs::an_ls_tree_record_is_read_for_its_mode_blob_size_and_path`,
