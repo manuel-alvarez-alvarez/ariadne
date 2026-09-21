@@ -16,9 +16,10 @@ use ariadne_api::knowledge::{
     KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
     KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
+use ariadne_core::Seat;
 use ariadne_knowledge::store::{CONTEXT_LIMIT, INTERACTION_KINDS};
 use ariadne_knowledge::{InteractionEnd, KnowledgeStore, Readiness, Related, SearchQuery, index};
-use ariadne_store::Repository;
+use ariadne_store::{Repository, author_branch};
 
 use super::AppState;
 use super::caller::{CallCtx, call_ctx};
@@ -298,23 +299,123 @@ pub(super) async fn impact(
         .diff
         .as_deref()
         .filter(|range| !range.trim().is_empty());
+    if matches!((symbol, diff), (Some(_), Some(_)) | (None, None)) {
+        return Err(ApiError::bad_request(
+            "pass symbol or diff, and only one of them",
+        ));
+    }
+    let (ends, diff_lines) = match diff {
+        Some(range) => {
+            let Some(ends) = ends_of(range.trim()) else {
+                return Err(ApiError::bad_request(format!(
+                    "a diff is `<base>..<head>`, not {:?}",
+                    range.trim()
+                )));
+            };
+            let repo = std::path::Path::new(&repository.path);
+            let lines = match index::changed_lines(repo, range.trim()).await {
+                Ok(lines) => lines,
+                // A wrong range is the caller's; a git that failed on a
+                // right one is the daemon's.
+                Err(e) => {
+                    return Err(match an_end_is_gone(repo, ends).await {
+                        true => ApiError::bad_request(e.to_string()),
+                        false => internal(e),
+                    });
+                }
+            };
+            (Some(ends), Some(lines))
+        }
+        None => (None, None),
+    };
     // A diff names the ref it is about: its lines are the head's, so the
-    // definitions have to be the head's too. Where the head is a ref the
-    // index knows, it is what answers; where it is not, the caller's own ref
-    // is all there is.
-    let head = match (&query.git_ref, diff) {
-        (None, Some(range)) => head_of(range),
-        _ => None,
-    };
+    // definitions have to be the head's too.
+    let head = ends
+        .as_ref()
+        .and_then(|[_, head]| (!head.is_empty()).then(|| (*head).to_string()));
     let named = match &head {
-        Some(head) => knowledge
-            .ref_commit(&repository.id, head)
-            .await
-            .map_err(internal)?
-            .map(|_| head.as_str()),
-        None => query.git_ref.as_deref(),
+        Some(head) => {
+            let direct = knowledge
+                .ref_commit(&repository.id, head)
+                .await
+                .map_err(internal)?;
+            let (indexed, commit) = match direct {
+                Some(commit) => (head.to_string(), commit),
+                // `git diff` also accepts a commit as its head. A ref at that
+                // commit has the same definitions, so it is safe to use.
+                None => {
+                    let mut matching = None;
+                    for git_ref in knowledge
+                        .ref_names(&repository.id)
+                        .await
+                        .map_err(internal)?
+                    {
+                        if knowledge
+                            .ref_commit(&repository.id, &git_ref)
+                            .await
+                            .map_err(internal)?
+                            .as_deref()
+                            == Some(head)
+                        {
+                            matching = Some((git_ref, head.to_string()));
+                            break;
+                        }
+                    }
+                    match matching {
+                        Some(git_ref) => git_ref,
+                        None => {
+                            ready(knowledge, &repository, head).await?;
+                            let commit = knowledge
+                                .ref_commit(&repository.id, head)
+                                .await
+                                .map_err(internal)?
+                                .ok_or_else(|| {
+                                    ApiError::conflict(format!(
+                                        "the index of {head} changed while it became ready; try again"
+                                    ))
+                                })?;
+                            (head.to_string(), commit)
+                        }
+                    }
+                }
+            };
+            if let Some(git_ref) = query
+                .git_ref
+                .as_deref()
+                .filter(|git_ref| !git_ref.is_empty())
+            {
+                let named_commit = knowledge
+                    .ref_commit(&repository.id, git_ref)
+                    .await
+                    .map_err(internal)?;
+                let named_commit = match named_commit {
+                    Some(commit) => commit,
+                    None => {
+                        ready(knowledge, &repository, git_ref).await?;
+                        knowledge
+                            .ref_commit(&repository.id, git_ref)
+                            .await
+                            .map_err(internal)?
+                            .ok_or_else(|| {
+                                ApiError::conflict(format!(
+                                    "the index of {git_ref} changed while it became ready; try again"
+                                ))
+                            })?
+                    }
+                };
+                if named_commit != commit {
+                    return Err(ApiError::bad_request(format!(
+                        "diff head {head} does not match git_ref {git_ref}"
+                    )));
+                }
+                Some(git_ref.to_string())
+            } else {
+                Some(indexed)
+            }
+        }
+        None => query.git_ref.clone(),
     };
-    let git_ref = ref_for(&state, knowledge, &ctx, &repository, named).await?;
+    let git_ref = ref_for(&state, knowledge, &ctx, &repository, named.as_deref()).await?;
     ready(knowledge, &repository, &git_ref).await?;
     // One or the other: a call that named both would get an answer to a
     // question it did not ask.
@@ -340,27 +441,10 @@ pub(super) async fn impact(
                 )
             })
             .collect(),
-        (None, Some(range)) => {
-            let repo = std::path::Path::new(&repository.path);
-            let Some(ends) = ends_of(range.trim()) else {
-                return Err(ApiError::bad_request(format!(
-                    "a diff is `<base>..<head>`, not {:?}",
-                    range.trim()
-                )));
-            };
-            let lines = match index::changed_lines(repo, range.trim()).await {
-                Ok(lines) => lines,
-                // A wrong range is the caller's; a git that failed on a
-                // right one is the daemon's.
-                Err(e) => {
-                    return Err(match an_end_is_gone(repo, ends).await {
-                        true => ApiError::bad_request(e.to_string()),
-                        false => internal(e),
-                    });
-                }
-            };
+        (None, Some(_)) => {
+            let lines = diff_lines.as_ref().expect("a diff has changed lines");
             knowledge
-                .symbols_in_lines(&repository.id, &git_ref, &lines)
+                .symbols_in_lines(&repository.id, &git_ref, lines)
                 .await
                 .map_err(internal)?
         }
@@ -680,12 +764,6 @@ async fn an_end_is_gone(repo: &std::path::Path, ends: [&str; 2]) -> bool {
     false
 }
 
-/// The head of a `<base>..<head>` range, where it names one.
-fn head_of(range: &str) -> Option<String> {
-    let head = range.trim().split_once("..")?.1.trim();
-    (!head.is_empty()).then(|| head.to_string())
-}
-
 /// Lines `first` to `last` of a file, 1-based and inclusive.
 fn lines_of(text: &str, first: i64, last: i64) -> Option<String> {
     let first = first.max(1) as usize;
@@ -751,10 +829,10 @@ async fn ready(
 
 /// The ref a caller reads a repository at: the one it named, else its own.
 ///
-/// A task session's own is its task branch, in the task's repository —
-/// where that branch has moved and been indexed; until then the branch is
-/// the base branch's tree, and the base branch is what answers. Everyone
-/// else reads the base branch.
+/// An author task session's own is its author branch, in the task's
+/// repository. A reviewer reads the first author branch. Until that branch
+/// is indexed, the base branch is what answers. Everyone else reads the base
+/// branch.
 async fn ref_for(
     state: &AppState,
     knowledge: &KnowledgeStore,
@@ -765,20 +843,29 @@ async fn ref_for(
     if let Some(git_ref) = named.filter(|git_ref| !git_ref.is_empty()) {
         return Ok(git_ref.to_string());
     }
-    if let Some(task_id) = ctx
-        .session
-        .as_ref()
-        .and_then(|session| session.task_id.as_deref())
+    if let Some(session) = ctx.session.as_ref()
+        && let Some(task_id) = session.task_id.as_deref()
     {
         let task = state.store.get_task(task_id).await?;
+        let branch = if session.seat() == Seat::Author {
+            match session.task_agent_id.as_deref() {
+                Some(agent_id) => {
+                    let author = state.store.get_task_agent(agent_id).await?;
+                    author_branch(&task.branch, author.ordinal)
+                }
+                None => task.branch.clone(),
+            }
+        } else {
+            task.branch.clone()
+        };
         if task.repo_id == repository.id
             && knowledge
-                .ref_commit(&repository.id, &task.branch)
+                .ref_commit(&repository.id, &branch)
                 .await
                 .map_err(internal)?
                 .is_some()
         {
-            return Ok(task.branch);
+            return Ok(branch);
         }
     }
     Ok(repository.base_branch.clone())

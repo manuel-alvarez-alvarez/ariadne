@@ -223,10 +223,12 @@ agent to do with the tools (017); and the memory tools beside these (019).
     `line`, `kind`, `name`, `signature`. Without `repository` a user
     searches every repository, and an agent session the repositories of its
     goal, or every one with `all=true`.
-20. Without `git_ref` a repository is read at the caller's own ref: a task
-    session's task branch, where that branch has been indexed in the task's
-    repository, else the base branch. A task branch not yet indexed is the
-    base branch's tree, so the base branch answers for it.
+20. A supplied `git_ref` stays the ref the caller named. Without `git_ref` a
+    repository is read at the caller's own ref: an author task session's own
+    author branch, a reviewer task session's first author branch, where that
+    branch has been indexed in the task's repository, else the base branch.
+    A task branch not yet indexed is the base branch's tree, so the base branch
+    answers for it.
 21. `GET /v1/knowledge/outline` takes `repository`, `path` and optionally
     `git_ref`, and answers `KnowledgeOutlineEntryDto`s in line order: `kind`,
     `name`, `start_line`, `end_line`, `signature`. A path not indexed at
@@ -253,8 +255,12 @@ agent to do with the tools (017); and the memory tools beside these (019).
     `depth` (default 2, max 4), and exactly one of `symbol` and `diff`
     (`<base>..<head>`) — neither and both are refused. `symbol` names every
     definition of that name; `diff` names every definition whose lines a
-    hunk of `git diff --unified=0 <base>..<head>` touched. A value that
-    could read as a git flag is refused rather than run. For each changed
+    hunk of `git diff --unified=0 <base>..<head>` touched, at the indexed
+    head. A full SHA head uses an indexed ref at that commit; an abbreviated
+    or unknown SHA is a wrong range, while an unindexed SHA is refused and
+    names the head. A `git_ref` at another commit is refused, while one at the
+    head commit stays named. A three-dot range and a value that could read as
+    a git flag are refused rather than run. For each changed
     definition it answers a `KnowledgeImpactDto`: the `symbol` itself, whose
     `step` is null because it is a definition and no end of an edge, its
     `callers` by depth (`depth`, `repository_id`, `path`, `line`, `name`,
@@ -1043,6 +1049,9 @@ the daemon and knowledge WAL files off the commit path.
   symbol added on it, the base ref does not, and the author's own default
   is its branch
   (`tests/it/knowledge.rs::a_task_branch_head_move_indexes_the_new_commit`).
+- The second author of a task reads its `-a2` branch. A reviewer reads the
+  first author branch by default and another branch with `git_ref`
+  (`tests/it/knowledge.rs::authors_and_reviewers_read_their_correct_task_branch`).
 - A landing indexes the base branch again and drops the task's branch
   (`tests/it/knowledge.rs::a_landing_indexes_the_base_branch_again`), and a
   start reads a task branch that is gone without failing its repository
@@ -1062,9 +1071,13 @@ the daemon and knowledge WAL files off the commit path.
   knowledge tool
   (`mcp.rs::the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off`).
 - `symbol` answers the outline, the source and the context of a definition,
-  and `impact` the callers of a change; a diff with no ref is read at its own
-  head; one of `symbol` and `diff` is required and both are refused
+  and `impact` the callers of a change. An indexed ref or full SHA diff head
+  is read at its own commit. A mismatched `git_ref`, a three-dot range, and
+  one of `symbol` and `diff` missing or both named are refused before git
+  reads the range
   (`tests/it/knowledge.rs::the_symbol_and_impact_endpoints_answer_from_the_derived_graph`).
+- An unindexed diff head is refused and names the head
+  (`tests/it/knowledge.rs::an_unindexed_diff_head_is_refused_by_name`).
 - A map ranks the files of a fixture and holds to its budget, and a map
   toward one path ranks that file's neighbours first
   (`knowledge.rs::a_repo_map_ranks_the_files_and_holds_to_its_budget`); the
@@ -1265,11 +1278,9 @@ a `.env` file is read by the first path its blob was seen at, like every blob's
 language. The link pass derives a whole pair of refs at a time, which is one
 scan of the interfaces and the unresolved names of each side per run.
 
-A reviewer on a task staffed with several authors reads the task's first
-branch by default and names another with `git_ref`. A blob is parsed as the
-language of the first path it was seen at. The branch of a cancelled or failed
-task, and of a task whose goal was deleted, keeps its rows until a reindex or
-a restart drops what no longer resolves.
+A blob is parsed as the language of the first path it was seen at. The branch
+of a cancelled or failed task, and of a task whose goal was deleted, keeps its
+rows until a reindex or a restart drops what no longer resolves.
 
 ## Sources
 

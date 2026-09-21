@@ -17,11 +17,11 @@ use ariadne_api::knowledge::{
     KnowledgePathDto, KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
 };
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::{Actor, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::knowledge::Knowledge;
 use ariadne_knowledge::State;
-use ariadne_store::Repository;
+use ariadne_store::{NewTask, NewTaskAgent, Repository, author_branch};
 use tokio::sync::broadcast::Receiver;
 
 use common::{Harness, QUIET, TIMEOUT, eventually, get, harness, next_event, post, sh, test_pin};
@@ -285,6 +285,131 @@ async fn a_task_branch_head_move_indexes_the_new_commit() {
         )
         .await;
     assert_eq!(own_outline.len(), 1, "{own_outline:?}");
+}
+
+/// An author reads its own branch, while a reviewer reads the first author
+/// branch unless it names another author branch.
+#[tokio::test]
+async fn authors_and_reviewers_read_their_correct_task_branch() {
+    let h = harness().knowledge().await;
+    let mut rx = h.bus.subscribe();
+    let repo = code_repo(&h, "task-branches");
+    let repository = h.repository(&repo).await;
+    indexed(&mut rx, &repository.id, "main", None).await;
+    let goal = h.goal_on(&repository, test_pin()).await;
+    let author = || NewTaskAgent::new(Seat::Author, ["coding"], test_pin());
+    let task = h
+        .store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repository.id.clone(),
+            title: "two authors".into(),
+            description: "read branches".into(),
+            agents: [
+                author(),
+                author(),
+                NewTaskAgent::new(Seat::Reviewer, ["code-review"], test_pin()),
+            ]
+            .into(),
+            depends_on: vec![],
+            landing: None,
+            permission_mode: None,
+        })
+        .await
+        .unwrap();
+    let authors = h.store.list_task_authors(&task.id).await.unwrap();
+    let reviewer = h
+        .store
+        .list_task_reviewers(&task.id)
+        .await
+        .unwrap()
+        .remove(0);
+    let second_branch = author_branch(&task.branch, authors[1].ordinal);
+
+    sh(&repo, &format!("git checkout -q -b {}", task.branch));
+    std::fs::write(repo.join("first.rs"), "pub fn first_author() {}\n").unwrap();
+    commit(&repo, "first-author");
+    sh(&repo, &format!("git checkout -q -b {second_branch}"));
+    std::fs::write(repo.join("second.rs"), "pub fn second_author() {}\n").unwrap();
+    commit(&repo, "second-author");
+    sh(&repo, "git checkout -q main");
+    h.state.knowledge.index(&repository.id, &task.branch);
+    indexed(&mut rx, &repository.id, &task.branch, None).await;
+    h.state.knowledge.index(&repository.id, &second_branch);
+    indexed(&mut rx, &repository.id, &second_branch, None).await;
+
+    let author_two = h
+        .session(&goal, Some(&task), Seat::Author, &authors[1].id)
+        .await;
+    let own: Vec<KnowledgeHitDto> = h
+        .json(
+            get_as("/v1/knowledge/search?q=second_author", &author_two.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        own.len(),
+        1,
+        "the second author reads its own branch: {own:?}"
+    );
+
+    let reviewer = h
+        .session(&goal, Some(&task), Seat::Reviewer, &reviewer.id)
+        .await;
+    let first: Vec<KnowledgeHitDto> = h
+        .json(
+            get_as("/v1/knowledge/search?q=first_author", &reviewer.id),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        first.len(),
+        1,
+        "the reviewer reads the first branch: {first:?}"
+    );
+    let named: Vec<KnowledgeHitDto> = h
+        .json(
+            get_as(
+                &search_uri("second_author", &repository.id, Some(&second_branch)),
+                &reviewer.id,
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        named.len(),
+        1,
+        "the reviewer reads the named branch: {named:?}"
+    );
+}
+
+/// A diff needs definitions from its head, so an unindexed head is refused.
+#[tokio::test]
+async fn an_unindexed_diff_head_is_refused_by_name() {
+    let h = harness().knowledge().await;
+    let mut rx = h.bus.subscribe();
+    let repo = code_repo(&h, "unindexed-diff");
+    let repository = h.repository(&repo).await;
+    indexed(&mut rx, &repository.id, "main", None).await;
+    sh(&repo, "git checkout -q -b unindexed-head");
+    std::fs::write(repo.join("new.rs"), "pub fn only_in_the_head() {}\n").unwrap();
+    commit(&repo, "unindexed-head");
+    sh(&repo, "git checkout -q main");
+
+    let refused = h
+        .error(
+            get(&format!(
+                "/v1/knowledge/impact?repository={}&diff=main..unindexed-head",
+                repository.id
+            )),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(refused.error.code, "knowledge_not_ready");
+    assert!(
+        refused.error.message.contains("unindexed-head"),
+        "{refused:?}"
+    );
 }
 
 /// A landing indexes the base branch again, at the commit it landed, and
@@ -891,16 +1016,16 @@ async fn a_git_failure_on_a_right_diff_range_answers_5xx_and_a_wrong_range_4xx()
         let refused = h.error(impact(wrong), StatusCode::BAD_REQUEST).await;
         assert_eq!(refused.error.code, "invalid_request", "{wrong}");
     }
-    let answered: Vec<KnowledgeImpactDto> = h.json(impact("main..next"), StatusCode::OK).await;
+    let answered: Vec<KnowledgeImpactDto> = h.json(impact("main..main"), StatusCode::OK).await;
     assert!(
         answered.is_empty(),
-        "`next` changes no definition: {answered:?}"
+        "`main` changes no definition: {answered:?}"
     );
 
     // The same range, in a repository git can no longer read.
     std::fs::rename(path.join(".git"), path.join("git-gone")).unwrap();
     let failed = h
-        .error(impact("main..next"), StatusCode::INTERNAL_SERVER_ERROR)
+        .error(impact("main..main"), StatusCode::INTERNAL_SERVER_ERROR)
         .await;
     assert_eq!(failed.error.code, "internal_error");
 }
@@ -1394,10 +1519,13 @@ async fn the_symbol_and_impact_endpoints_answer_from_the_derived_graph() {
          printf '/// Adds.\\npub fn helper() {}\\n\\n/// Adds.\\npub fn b() {\\n    helper();\\n}\\n' \
            > inner/m.rs",
     );
-    commit(&repo, "move-b");
+    let feat_head = commit(&repo, "move-b");
     sh(&repo, "git checkout -q main");
     h.state.knowledge.index(&repository.id, "feat-graph");
     indexed(&mut rx, &repository.id, "feat-graph", None).await;
+    sh(&repo, "git branch same-feat feat-graph");
+    h.state.knowledge.index(&repository.id, "same-feat");
+    indexed(&mut rx, &repository.id, "same-feat", Some(&feat_head)).await;
 
     let changed: Vec<KnowledgeImpactDto> = h
         .get(&format!(
@@ -1426,8 +1554,89 @@ async fn the_symbol_and_impact_endpoints_answer_from_the_derived_graph() {
     assert_eq!(callers("b"), ["1 a", "2 a_proof"]);
     assert_eq!(callers("helper"), ["1 b", "2 a"]);
 
+    let three_dot = h
+        .error(
+            get(&format!(
+                "/v1/knowledge/impact?repository={}&diff=main...feat-graph",
+                repository.id
+            )),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        three_dot
+            .error
+            .message
+            .contains("a diff is `<base>..<head>`"),
+        "{three_dot:?}"
+    );
+
+    let mismatched = h
+        .error(
+            get(&format!(
+                "/v1/knowledge/impact?repository={}&diff=main..feat-graph&git_ref=main",
+                repository.id
+            )),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        mismatched
+            .error
+            .message
+            .contains("diff head feat-graph does not match git_ref main"),
+        "{mismatched:?}"
+    );
+
+    let sha_head: Vec<KnowledgeImpactDto> = h
+        .get(&format!(
+            "/v1/knowledge/impact?repository={}&diff=main..{feat_head}",
+            repository.id
+        ))
+        .await;
+    assert_eq!(
+        sha_head
+            .iter()
+            .map(|impact| (impact.symbol.name.as_str(), impact.symbol.line))
+            .collect::<Vec<_>>(),
+        [("helper", 2), ("b", 5)],
+        "an indexed ref at the SHA head answers"
+    );
+    let named_same_commit: Vec<KnowledgeImpactDto> = h
+        .get(&format!(
+            "/v1/knowledge/impact?repository={}&diff=main..{feat_head}&git_ref=same-feat",
+            repository.id
+        ))
+        .await;
+    assert_eq!(
+        named_same_commit
+            .iter()
+            .map(|impact| (impact.symbol.name.as_str(), impact.symbol.line))
+            .collect::<Vec<_>>(),
+        [("helper", 2), ("b", 5)],
+        "a named ref at the SHA head commit answers"
+    );
+    sh(&repo, "git checkout -q -b unindexed-sha main");
+    std::fs::write(repo.join("unindexed.rs"), "pub fn unindexed_sha() {}\n").unwrap();
+    let unindexed_sha = commit(&repo, "unindexed-sha");
+    sh(&repo, "git checkout -q main");
+    let unindexed_head = h
+        .error(
+            get(&format!(
+                "/v1/knowledge/impact?repository={}&diff=main..{unindexed_sha}",
+                repository.id
+            )),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(unindexed_head.error.code, "knowledge_not_ready");
+    assert!(
+        unindexed_head.error.message.contains(&unindexed_sha),
+        "{unindexed_head:?}"
+    );
+
     // One of `symbol` and `diff`, never both and never neither.
-    for query in ["", "&symbol=b&diff=main..main"] {
+    for query in ["", "&symbol=b&diff=main...feat-graph"] {
         let refused = h
             .error(
                 get(&format!(
