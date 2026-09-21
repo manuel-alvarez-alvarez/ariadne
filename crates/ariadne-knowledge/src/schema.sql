@@ -19,8 +19,14 @@ CREATE TABLE repositories (
 CREATE TABLE refs (
     repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     git_ref       TEXT NOT NULL,
+    -- The commit the files of the ref are at.
     commit_sha    TEXT NOT NULL,
     indexed_at    TEXT NOT NULL,
+    -- The commit the edges of the ref are at: written once the resolution and
+    -- link passes of a run succeeded. NULL, or behind `commit_sha`, after a
+    -- run that failed between the two, and the next run derives every edge
+    -- of the ref again.
+    edges_commit  TEXT,
     PRIMARY KEY (repository_id, git_ref)
 );
 

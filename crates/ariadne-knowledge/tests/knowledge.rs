@@ -578,7 +578,10 @@ async fn indexing_this_repository_at_head_finds_add_worktree_in_gitwt() {
         + 1;
 
     let dir = tempfile::tempdir().unwrap();
-    let store = store(dir.path()).await;
+    // Every core, as before the worker limit: the 30 seconds measure the
+    // machine, and the default leaves half of it to the other work.
+    let cores = std::thread::available_parallelism().map_or(4, |cores| cores.get());
+    let store = store(dir.path()).await.with_workers(cores);
     let started = Instant::now();
     let indexed = store.index("ariadne", &repo, "HEAD").await.unwrap();
     let took = started.elapsed();
@@ -1768,5 +1771,269 @@ async fn a_map_ranks_over_the_symbol_edges_and_not_the_manifests() {
         at("src/core.rs") < at("crates/dep/Cargo.toml"),
         "the dependency fan-in ranked a manifest over the call graph: {}",
         map.text
+    );
+}
+
+// -- a run that goes wrong -----------------------------------------------------
+
+/// A second connection to the store's file, which a test breaks a table
+/// with: a trigger that refuses every insert is a write that fails for real,
+/// at the step the test is about.
+async fn writer(dir: &Path) -> sqlx::Pool<sqlx::Sqlite> {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(dir.join("knowledge.db")))
+        .await
+        .unwrap()
+}
+
+/// Refuse every insert into `table`, until [`open`] is called for it.
+async fn close(db: &sqlx::Pool<sqlx::Sqlite>, table: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER {table}_is_closed BEFORE INSERT ON {table}
+         BEGIN SELECT RAISE(ABORT, '{table} is closed'); END"
+    )))
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+async fn open(db: &sqlx::Pool<sqlx::Sqlite>, table: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {table}_is_closed"
+    )))
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+/// A run that stored its blobs and then failed, before the files that hold
+/// them were written, takes them back: no blob, symbol, mention or FTS row
+/// stays that no file holds, and the next run parses the same files again.
+#[tokio::test]
+async fn a_failed_run_leaves_no_row_that_no_file_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(dir.path(), &[("src/kept.rs", "pub fn kept() {}\n")]);
+    let store = store(dir.path()).await;
+    store.index("repo", &repo, "main").await.unwrap();
+    commit_files(
+        &repo,
+        "more",
+        &[
+            ("src/b.rs", "pub fn b() {}\n"),
+            ("src/a.rs", "pub fn a() {\n    b();\n}\n"),
+        ],
+    );
+
+    let db = writer(dir.path()).await;
+    close(&db, "files").await;
+    let error = store.index("repo", &repo, "main").await.unwrap_err();
+    assert!(
+        format!("{error:#}").contains("files is closed"),
+        "{error:#}"
+    );
+
+    let orphans = [
+        (
+            "blobs",
+            "SELECT COUNT(*) FROM blobs WHERE blob NOT IN (SELECT blob FROM files)",
+        ),
+        (
+            "symbols",
+            "SELECT COUNT(*) FROM symbols WHERE blob NOT IN (SELECT blob FROM files)",
+        ),
+        (
+            "mentions",
+            "SELECT COUNT(*) FROM mentions WHERE blob NOT IN (SELECT blob FROM files)",
+        ),
+        (
+            "symbols_fts",
+            "SELECT COUNT(*) FROM symbols_fts WHERE rowid NOT IN
+               (SELECT s.id FROM symbols s JOIN files f ON f.blob = s.blob)",
+        ),
+    ];
+    for (table, sql) in orphans {
+        let count: i64 = sqlx::query_scalar(sql).fetch_one(&db).await.unwrap();
+        assert_eq!(count, 0, "{table} holds rows that no file holds");
+    }
+    // What the ref held before the run is still there.
+    assert_eq!(only(&store, "kept").await.path, "src/kept.rs");
+
+    open(&db, "files").await;
+    let again = store.index("repo", &repo, "main").await.unwrap();
+    assert_eq!(again.parsed, 2, "{again:?}");
+    assert_eq!(again.files, 3, "{again:?}");
+}
+
+/// A run is done for a commit once its edges are derived, and not before: a
+/// run that failed in the resolution pass left the files of the commit and no
+/// edge, and the next run of the same commit derives the edges.
+#[tokio::test]
+async fn a_run_whose_resolve_step_failed_derives_the_edges_on_the_next_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/b.rs", "pub fn b() {}\n"),
+            ("src/a.rs", "pub fn a() {\n    b();\n}\n"),
+        ],
+    );
+    let store = store(dir.path()).await;
+
+    let db = writer(dir.path()).await;
+    close(&db, "edges").await;
+    let error = store.index("repo", &repo, "main").await.unwrap_err();
+    assert!(
+        format!("{error:#}").contains("edges is closed"),
+        "{error:#}"
+    );
+    open(&db, "edges").await;
+
+    let again = store.index("repo", &repo, "main").await.unwrap();
+    assert_eq!(
+        again.parsed, 0,
+        "the blobs of the first run stand: {again:?}"
+    );
+    assert_eq!(again.resolved, 2, "{again:?}");
+    let b = only(&store, "b").await;
+    let context = store.context(b.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(ends(&context.callers), ["src/a.rs:1 a exact"]);
+}
+
+/// A file whose parse panics is skipped: the run succeeds and names it, the
+/// file is held with no symbols, and the other files are indexed whole.
+#[tokio::test]
+async fn a_file_whose_parse_panics_is_skipped_and_the_run_goes_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(
+        dir.path(),
+        &[
+            ("src/bad.rs", "pub fn bad() {}\n"),
+            ("src/b.rs", "pub fn b() {}\n"),
+            ("src/a.rs", "pub fn a() {\n    b();\n}\n"),
+        ],
+    );
+    let store = store(dir.path()).await.before_parse(|path| {
+        if path == "src/bad.rs" {
+            panic!("the parser gave up on {path}");
+        }
+    });
+
+    let indexed = store.index("repo", &repo, "main").await.unwrap();
+    assert_eq!(indexed.skipped, ["src/bad.rs"], "{indexed:?}");
+    assert_eq!(indexed.files, 3, "{indexed:?}");
+    assert_eq!(indexed.symbols, 2, "{indexed:?}");
+
+    let b = only(&store, "b").await;
+    let context = store.context(b.id, "repo", "main", 20).await.unwrap();
+    assert_eq!(ends(&context.callers), ["src/a.rs:1 a exact"]);
+    let bad = store
+        .definitions("bad", &[("repo".into(), "main".into())])
+        .await
+        .unwrap();
+    assert!(bad.is_empty(), "{bad:#?}");
+    let outline = store.outline("repo", "main", "src/bad.rs").await.unwrap();
+    assert_eq!(
+        outline,
+        Some(Vec::new()),
+        "the file is held, with nothing in it"
+    );
+}
+
+/// The most files a run over `files` parses at the same time, with `workers`
+/// workers. Each parse holds still for a moment before it starts, so parses
+/// on two workers overlap.
+async fn parses_at_a_time(workers: usize, files: &[(&str, &str)]) -> usize {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(dir.path(), files);
+    let running = Arc::new(AtomicUsize::new(0));
+    let most = Arc::new(AtomicUsize::new(0));
+    let store = store(dir.path()).await.with_workers(workers).before_parse({
+        let (running, most) = (Arc::clone(&running), Arc::clone(&most));
+        move |_| {
+            most.fetch_max(running.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(100));
+            running.fetch_sub(1, Ordering::SeqCst);
+        }
+    });
+    let indexed = store.index("repo", &repo, "main").await.unwrap();
+    assert_eq!(indexed.parsed, files.len(), "{indexed:?}");
+    most.load(Ordering::SeqCst)
+}
+
+/// `knowledge_workers = 1` parses on one worker: no two files of a run are
+/// parsed at the same time. Four workers parse several at once, which is
+/// what says the count can see it.
+#[tokio::test]
+async fn a_run_parses_on_no_more_workers_than_it_was_given() {
+    let files: Vec<(String, String)> = (0..8)
+        .map(|n| (format!("src/f{n}.rs"), format!("pub fn f{n}() {{}}\n")))
+        .collect();
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+
+    assert_eq!(parses_at_a_time(1, &files).await, 1);
+    let four = parses_at_a_time(4, &files).await;
+    assert!(
+        (2..=4).contains(&four),
+        "four workers parsed {four} at a time"
+    );
+}
+
+/// A worker takes the next file that no worker has: while one worker holds a
+/// slow file, the other reads every other file of the batch. With a fixed
+/// piece for each worker, the files behind the slow one wait for it.
+#[tokio::test]
+async fn a_slow_file_holds_one_worker_and_not_the_files_behind_it() {
+    use std::sync::{Arc, Condvar, Mutex};
+
+    let files: Vec<(String, String)> = std::iter::once("src/a_slow.rs".to_string())
+        .chain((0..7).map(|n| format!("src/f{n}.rs")))
+        .enumerate()
+        .map(|(n, path)| (path, format!("pub fn f{n}() {{}}\n")))
+        .collect();
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    let others = files.len() - 1;
+
+    let dir = tempfile::tempdir().unwrap();
+    let repo = graph_repo(dir.path(), &files);
+    // How many of the other files reached the parser, and whether the slow
+    // file saw all of them come before it gave up.
+    let reached = Arc::new((Mutex::new(0usize), Condvar::new()));
+    let saw_all = Arc::new(Mutex::new(None));
+    let store = store(dir.path()).await.with_workers(2).before_parse({
+        let (reached, saw_all) = (Arc::clone(&reached), Arc::clone(&saw_all));
+        move |path| {
+            let (count, changed) = &*reached;
+            if path != "src/a_slow.rs" {
+                *count.lock().unwrap() += 1;
+                changed.notify_all();
+                return;
+            }
+            // Long, because the first parse of a process builds the tags
+            // queries. The wait ends as soon as the last file comes.
+            let (count, timeout) = changed
+                .wait_timeout_while(count.lock().unwrap(), Duration::from_secs(60), |count| {
+                    *count < others
+                })
+                .unwrap();
+            *saw_all.lock().unwrap() = Some((*count, !timeout.timed_out()));
+        }
+    });
+    let indexed = store.index("repo", &repo, "main").await.unwrap();
+
+    assert_eq!(indexed.parsed, files.len(), "{indexed:?}");
+    assert_eq!(
+        *saw_all.lock().unwrap(),
+        Some((others, true)),
+        "the files read while the slow file held its worker"
     );
 }

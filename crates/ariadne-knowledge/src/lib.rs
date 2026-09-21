@@ -37,5 +37,5 @@ pub use parser::{EdgeKind, Symbol};
 pub use store::{
     Definition, FileGraph, GraphEdge, GraphNode, Hit, ImpactCaller, Interaction, InteractionEnd,
     KnowledgeStore, LanguageCount, OutlineEntry, RefStatus, Related, SearchQuery, State, Status,
-    SymbolContext,
+    SymbolContext, default_workers,
 };

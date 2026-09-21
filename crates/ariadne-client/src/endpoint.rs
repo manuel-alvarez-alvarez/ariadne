@@ -68,6 +68,9 @@ pub struct FileConfig {
     /// Index every registered repository into the knowledge base and serve
     /// the `search_code` and `outline` tools (default true).
     pub knowledge_enabled: Option<bool>,
+    /// How many files the knowledge base parses at a time (default: half of
+    /// the cores, and one at least).
+    pub knowledge_workers: Option<usize>,
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,
