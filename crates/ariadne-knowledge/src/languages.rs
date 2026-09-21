@@ -288,7 +288,7 @@ impl Language {
     /// other class reference. Where an upstream pattern matches the same
     /// node, its tag is the one kept, so the C# base lists are taken out of
     /// the upstream text before they are put back under the new name.
-    pub fn tags_query(self) -> Option<String> {
+    fn tags_query(self) -> Option<String> {
         Some(match self {
             // The upstream query names an `impl` block only where its trait
             // is a bare identifier: `impl fmt::Display for T` names nothing,

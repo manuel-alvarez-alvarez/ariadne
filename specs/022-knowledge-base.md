@@ -723,7 +723,7 @@ scan of its lines.
 
 ## Schema
 
-`crates/ariadne-knowledge/src/schema.sql`, version 13:
+`crates/ariadne-knowledge/src/schema.sql`, version 14:
 
 | Table | Columns | Holds |
 | --- | --- | --- |
