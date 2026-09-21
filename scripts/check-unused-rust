@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""List every `pub` item of a library crate that no other file names.
+
+The library crates expose their items through `pub mod`, so rustc's
+`dead_code` and `unreachable_pub` lints never report a `pub` item that no
+other crate uses: to rustc, a `pub` item of a library is its interface. This
+audit closes that gap by text. For each `pub` item declared in a library
+crate, it looks for the item's name in every other `.rs` file of the
+workspace. An item that no other file names is either dead (remove it) or
+used only inside its own file (make it private).
+
+A name is a word match on code with its comments removed, so prose naming an
+item is not a use of it. A common name such as `new` matches everywhere,
+which can hide a dead item; it never reports a live one.
+
+It prints what it found and exits non-zero on any finding, so a `pub` item
+that stops being used is a failing check. Run it from anywhere:
+
+    scripts/check-unused-rust
+"""
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# The crates whose `pub` items rustc cannot check. The binaries (`ariadne-cli`,
+# `ariadne-daemon`) are covered by `unreachable_pub` and `dead_code`.
+LIBRARIES = [
+    "ariadne-core",
+    "ariadne-api",
+    "ariadne-store",
+    "ariadne-client",
+    "ariadne-console",
+    "ariadne-knowledge",
+]
+
+# Items that no other file names, but that something reaches all the same: a
+# macro, a derive, serde or utoipa, or a public item whose signature holds the
+# type, so that rustc rejects a private one. `path: name` -> the reason.
+IGNORED = {
+    "crates/ariadne-core/src/lib.rs: UnknownPlaceholders": (
+        "the error of the public `validate_template`; its callers print it"
+    ),
+    "crates/ariadne-api/src/error.rs: ErrorDetail": (
+        "the `error` field of `ErrorBody`; serde writes it and utoipa names it in the OpenAPI"
+    ),
+    "crates/ariadne-store/src/defaults.rs: BuiltinSkill": (
+        "the element type of the public `BUILTIN_SKILLS`; its callers read the fields"
+    ),
+    "crates/ariadne-console/src/transcript.rs: Location": (
+        "the element type of the public field `Tool::locations`"
+    ),
+    "crates/ariadne-knowledge/src/store.rs: ContextMore": (
+        "the type of the public field `SymbolContext::more`"
+    ),
+    "crates/ariadne-knowledge/src/store.rs: PathHop": (
+        "the element type of what the public `Store::path` returns"
+    ),
+}
+
+DECLARATION = re.compile(
+    r"^[ \t]*pub[ \t]+"
+    r"(?:(?:const|async|unsafe|extern(?:[ \t]+\"[^\"]*\")?)[ \t]+)*"
+    r"(fn|struct|enum|union|trait|type|const|static|mod)[ \t]+"
+    r"(?:mut[ \t]+)?"
+    r"([A-Za-z_][A-Za-z0-9_]*)",
+    re.MULTILINE,
+)
+
+COMMENT = re.compile(
+    r"//[^\n]*"  # a line comment, doc comments included
+    r"|/\*.*?\*/"  # a block comment
+    r"|\"(?:\\.|[^\"\\])*\""  # a string, kept: a string is not a comment
+    r"|'(?:\\.|[^'\\])'",  # a char, kept: `'"'` does not open a string
+    re.DOTALL,
+)
+
+
+def strip_comments(text: str) -> str:
+    """Remove comments, and keep strings whole so `"//"` stays code."""
+    return COMMENT.sub(lambda m: m.group(0) if m.group(0)[0] in "\"'" else "", text)
+
+
+def main() -> int:
+    files = sorted(
+        path
+        for path in (ROOT / "crates").rglob("*.rs")
+        if "target" not in path.relative_to(ROOT).parts
+    )
+    code = {path: strip_comments(path.read_text()) for path in files}
+
+    findings = []
+    stale = set(IGNORED)
+    for crate in LIBRARIES:
+        for path in files:
+            rel = path.relative_to(ROOT).as_posix()
+            if not rel.startswith(f"crates/{crate}/src/"):
+                continue
+            for kind, name in DECLARATION.findall(code[path]):
+                # A module is reached by its path, which names its file.
+                if kind == "mod":
+                    continue
+                key = f"{rel}: {name}"
+                if key in IGNORED:
+                    stale.discard(key)
+                    continue
+                word = re.compile(rf"\b{re.escape(name)}\b")
+                if not any(word.search(text) for other, text in code.items() if other != path):
+                    finding = f"{key} ({kind})"
+                    # Two impls in one file can each declare the same name.
+                    if finding not in findings:
+                        findings.append(finding)
+
+    failed = False
+    if findings:
+        failed = True
+        print(f"pub items named by no other file ({len(findings)}):")
+        for line in findings:
+            print(f"  {line}")
+        print("remove each one, or make it private; see IGNORED in this script")
+    else:
+        print(f"pub items: every one in {', '.join(LIBRARIES)} is named by another file")
+    if stale:
+        failed = True
+        print(f"ignore entries that match no finding ({len(stale)}):")
+        for key in sorted(stale):
+            print(f"  {key}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

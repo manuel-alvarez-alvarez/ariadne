@@ -37,7 +37,7 @@ const STATUS: KnowledgeStatusDto = {
   files: 4,
   symbols: 8,
   languages: [],
-  failures: [],
+  error: null,
 }
 const HIT: KnowledgeHitDto = {
   repository_id: WEB.id,

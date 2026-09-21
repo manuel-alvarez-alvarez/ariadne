@@ -850,20 +850,6 @@ pub(crate) mod tests {
         assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     }
 
-    /// A failure of the daemon's own — a store that is busy, a git that did
-    /// not start — is no wrong argument, and must not reach the agent as one.
-    #[test]
-    fn a_5xx_reaches_the_agent_as_an_internal_error() {
-        let failure = "the knowledge base failed: database is locked";
-        let err = to_mcp_err(ClientError::Api {
-            status: http::StatusCode::INTERNAL_SERVER_ERROR,
-            code: "internal_error".into(),
-            message: failure.into(),
-        });
-        assert!(err.message.contains(failure), "{}", err.message);
-        assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
-    }
-
     /// One request as a fake daemon read it.
     #[derive(Clone, Debug)]
     pub(crate) struct Seen {
@@ -885,18 +871,7 @@ pub(crate) mod tests {
     pub(crate) async fn recording_daemon_answering(
         answer: &'static str,
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
-        recording_daemon_with_answers("200 OK", vec![answer.to_string()], true).await
-    }
-
-    /// The same daemon, refusing every call with one status line and one
-    /// error envelope.
-    pub(crate) async fn refusing_daemon(
-        status: &'static str,
-        code: &str,
-        message: &str,
-    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
-        let envelope = serde_json::json!({"error": {"code": code, "message": message}});
-        recording_daemon_with_answers(status, vec![envelope.to_string()], true).await
+        recording_daemon_with_answers(vec![answer.to_string()], true).await
     }
 
     /// The same daemon, with one answer per request in order.
@@ -904,7 +879,6 @@ pub(crate) mod tests {
         answers: &[&str],
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
         recording_daemon_with_answers(
-            "200 OK",
             answers.iter().map(|answer| answer.to_string()).collect(),
             false,
         )
@@ -912,7 +886,6 @@ pub(crate) mod tests {
     }
 
     async fn recording_daemon_with_answers(
-        status: &'static str,
         answers: Vec<String>,
         repeat_last: bool,
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
@@ -969,7 +942,7 @@ pub(crate) mod tests {
                     false => answers.pop_front().unwrap_or_else(|| "{}".into()),
                 };
                 let response = format!(
-                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{answer}",
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{answer}",
                     answer.len()
                 );
                 let _ = socket.write_all(response.as_bytes()).await;

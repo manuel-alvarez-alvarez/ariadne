@@ -709,57 +709,16 @@ fn print_status(status: &KnowledgeStatusDto) {
         ("files", status.files.to_string().into()),
         ("symbols", status.symbols.to_string().into()),
         ("languages", languages.into()),
-        ("failures", failures_text(status).into()),
+        (
+            "error",
+            status.error.clone().unwrap_or_else(|| "-".into()).into(),
+        ),
     ]);
-}
-
-/// The refs whose last run failed, each named with why: a good run of one
-/// ref leaves the failure of another, so the ref is what tells them apart.
-fn failures_text(status: &KnowledgeStatusDto) -> String {
-    match status.failures.is_empty() {
-        true => "-".to_string(),
-        false => status
-            .failures
-            .iter()
-            .map(|failure| format!("{}: {}", failure.git_ref, failure.error))
-            .collect::<Vec<_>>()
-            .join("; "),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The status names each ref that failed beside its error, and a
-    /// repository with no failure reads `-`.
-    #[test]
-    fn a_status_names_each_ref_that_failed() {
-        let mut status = KnowledgeStatusDto {
-            repository_id: "01REPO".into(),
-            state: KnowledgeState::Failed,
-            refs: Vec::new(),
-            files: 0,
-            symbols: 0,
-            languages: Vec::new(),
-            failures: Vec::new(),
-        };
-        assert_eq!(failures_text(&status), "-");
-        status.failures = vec![
-            ariadne_api::knowledge::KnowledgeFailureDto {
-                git_ref: "main".into(),
-                error: "resolving main in /work/api".into(),
-            },
-            ariadne_api::knowledge::KnowledgeFailureDto {
-                git_ref: "fix-w1".into(),
-                error: "database is locked".into(),
-            },
-        ];
-        assert_eq!(
-            failures_text(&status),
-            "main: resolving main in /work/api; fix-w1: database is locked"
-        );
-    }
 
     /// The graph summary counts symbol edges by kind and ranks files by
     /// their degree.

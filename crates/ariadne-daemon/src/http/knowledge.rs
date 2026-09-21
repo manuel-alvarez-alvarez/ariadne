@@ -7,23 +7,21 @@ use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::knowledge::{
     KnowledgeContextDto, KnowledgeContextMoreDto, KnowledgeDetail, KnowledgeEdgeDto,
-    KnowledgeEndpointDto, KnowledgeFailureDto, KnowledgeGraphConfidence, KnowledgeGraphDto,
-    KnowledgeGraphEdgeDto, KnowledgeGraphNodeDto, KnowledgeGraphQuery, KnowledgeHitDto,
-    KnowledgeImpactCallerDto, KnowledgeImpactDto, KnowledgeImpactQuery,
-    KnowledgeInteractionGroupDto, KnowledgeInteractionsQuery, KnowledgeLanguageDto,
-    KnowledgeMapDto, KnowledgeMapQuery, KnowledgeOutlineEntryDto, KnowledgeOutlineQuery,
-    KnowledgePathDto, KnowledgePathHopDto, KnowledgePathQuery, KnowledgeRefDto,
-    KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState, KnowledgeStatusDto,
-    KnowledgeSymbolDto, KnowledgeSymbolQuery,
+    KnowledgeEndpointDto, KnowledgeGraphConfidence, KnowledgeGraphDto, KnowledgeGraphEdgeDto,
+    KnowledgeGraphNodeDto, KnowledgeGraphQuery, KnowledgeHitDto, KnowledgeImpactCallerDto,
+    KnowledgeImpactDto, KnowledgeImpactQuery, KnowledgeInteractionGroupDto,
+    KnowledgeInteractionsQuery, KnowledgeLanguageDto, KnowledgeMapDto, KnowledgeMapQuery,
+    KnowledgeOutlineEntryDto, KnowledgeOutlineQuery, KnowledgePathDto, KnowledgePathHopDto,
+    KnowledgePathQuery, KnowledgeRefDto, KnowledgeRelatedDto, KnowledgeSearchQuery, KnowledgeState,
+    KnowledgeStatusDto, KnowledgeSymbolDto, KnowledgeSymbolQuery,
 };
 use ariadne_knowledge::store::{CONTEXT_LIMIT, INTERACTION_KINDS};
-use ariadne_knowledge::{InteractionEnd, KnowledgeStore, Readiness, Related, SearchQuery, index};
+use ariadne_knowledge::{InteractionEnd, KnowledgeStore, Related, SearchQuery, index};
 use ariadne_store::Repository;
 
 use super::AppState;
 use super::caller::{CallCtx, call_ctx};
 use super::error::{ApiError, ApiResult, Json};
-use crate::knowledge::ref_is_gone;
 
 /// What a call is refused with while `knowledge_enabled = false`.
 const DISABLED: &str =
@@ -31,8 +29,7 @@ const DISABLED: &str =
 
 #[utoipa::path(get, path = "/v1/repositories/{id}/knowledge", tag = "knowledge",
     params(("id" = String, Path, description = "repository id")),
-    responses((status = 200, body = KnowledgeStatusDto), (status = 404),
-              (status = 500, description = "the knowledge store failed")))]
+    responses((status = 200, body = KnowledgeStatusDto), (status = 404)))]
 pub(super) async fn status(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -44,27 +41,25 @@ pub(super) async fn status(
 #[utoipa::path(post, path = "/v1/repositories/{id}/knowledge/reindex", tag = "knowledge",
     params(("id" = String, Path, description = "repository id")),
     responses((status = 202, body = KnowledgeStatusDto), (status = 404),
-              (status = 409, description = "the knowledge base is disabled"),
-              (status = 500, description = "the knowledge store failed")))]
+              (status = 409, description = "the knowledge base is disabled")))]
 pub(super) async fn reindex(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<(StatusCode, Json<KnowledgeStatusDto>)> {
-    let repository = state.store.get_repository(&id).await?;
+    state.store.get_repository(&id).await?;
     enabled(&state)?;
     state
         .knowledge
-        .reindex(&id, &repository.base_branch)
+        .reindex(&id)
         .await
-        .map_err(internal)?;
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok((StatusCode::ACCEPTED, Json(status_dto(&state, &id).await?)))
 }
 
 #[utoipa::path(get, path = "/v1/knowledge/search", tag = "knowledge",
     params(KnowledgeSearchQuery),
     responses((status = 200, body = [KnowledgeHitDto]), (status = 400), (status = 404),
-              (status = 409, description = "the knowledge base is disabled, or the index of the ref is not ready"),
-              (status = 500, description = "the knowledge store or git failed")))]
+              (status = 409, description = "the knowledge base is disabled")))]
 pub(super) async fn search(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -94,7 +89,6 @@ pub(super) async fn search(
             query.git_ref.as_deref(),
         )
         .await?;
-        ready(knowledge, repository, &git_ref).await?;
         scopes.push((repository.id.clone(), git_ref));
     }
     let hits = knowledge
@@ -106,7 +100,7 @@ pub(super) async fn search(
             limit: query.limit(),
         })
         .await
-        .map_err(internal)?;
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(Json(
         hits.into_iter()
             .map(|hit| KnowledgeHitDto {
@@ -125,8 +119,7 @@ pub(super) async fn search(
     params(KnowledgeOutlineQuery),
     responses((status = 200, body = [KnowledgeOutlineEntryDto]),
               (status = 404, description = "no such repository, or the path is not indexed at the ref"),
-              (status = 409, description = "the knowledge base is disabled, or the index of the ref is not ready"),
-              (status = 500, description = "the knowledge store or git failed")))]
+              (status = 409, description = "the knowledge base is disabled")))]
 pub(super) async fn outline(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -143,11 +136,10 @@ pub(super) async fn outline(
         query.git_ref.as_deref(),
     )
     .await?;
-    ready(knowledge, &repository, &git_ref).await?;
     let entries = knowledge
         .outline(&repository.id, &git_ref, &query.path)
         .await
-        .map_err(internal)?
+        .map_err(|e| ApiError::conflict(e.to_string()))?
         .ok_or_else(|| {
             ApiError::new(
                 StatusCode::NOT_FOUND,
@@ -175,8 +167,7 @@ pub(super) async fn outline(
 #[utoipa::path(get, path = "/v1/knowledge/symbol", tag = "knowledge",
     params(KnowledgeSymbolQuery),
     responses((status = 200, body = [KnowledgeSymbolDto]), (status = 400), (status = 404),
-              (status = 409, description = "the knowledge base is disabled, or the index of the ref is not ready"),
-              (status = 500, description = "the knowledge store or git failed")))]
+              (status = 409, description = "the knowledge base is disabled")))]
 pub(super) async fn symbol(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -204,13 +195,12 @@ pub(super) async fn symbol(
             query.git_ref.as_deref(),
         )
         .await?;
-        ready(knowledge, repository, &git_ref).await?;
         scopes.push((repository.id.clone(), git_ref));
     }
     let definitions = knowledge
         .definitions(query.name.trim(), &scopes)
         .await
-        .map_err(internal)?;
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
     let detail = query.detail.unwrap_or_default();
     let mut answers = Vec::with_capacity(definitions.len());
     for definition in definitions {
@@ -224,7 +214,7 @@ pub(super) async fn symbol(
                     Some(path) => lines_of(
                         &index::blob_text(std::path::Path::new(&path), &definition.blob)
                             .await
-                            .map_err(internal)?,
+                            .map_err(|e| ApiError::conflict(e.to_string()))?,
                         definition.start_line,
                         definition.end_line,
                     ),
@@ -257,7 +247,7 @@ pub(super) async fn symbol(
                             tests: context.more.tests,
                         },
                     })
-                    .map_err(internal)?,
+                    .map_err(|e| ApiError::conflict(e.to_string()))?,
             ),
             _ => None,
         };
@@ -280,8 +270,7 @@ pub(super) async fn symbol(
 #[utoipa::path(get, path = "/v1/knowledge/impact", tag = "knowledge",
     params(KnowledgeImpactQuery),
     responses((status = 200, body = [KnowledgeImpactDto]), (status = 400), (status = 404),
-              (status = 409, description = "the knowledge base is disabled, or the index of the ref is not ready"),
-              (status = 500, description = "the knowledge store or git failed")))]
+              (status = 409, description = "the knowledge base is disabled")))]
 pub(super) async fn impact(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -310,19 +299,18 @@ pub(super) async fn impact(
         Some(head) => knowledge
             .ref_commit(&repository.id, head)
             .await
-            .map_err(internal)?
+            .map_err(|e| ApiError::conflict(e.to_string()))?
             .map(|_| head.as_str()),
         None => query.git_ref.as_deref(),
     };
     let git_ref = ref_for(&state, knowledge, &ctx, &repository, named).await?;
-    ready(knowledge, &repository, &git_ref).await?;
     // One or the other: a call that named both would get an answer to a
     // question it did not ask.
     let changed: Vec<(i64, Related)> = match (symbol, diff) {
         (Some(name), None) => knowledge
             .definitions(name.trim(), &[(repository.id.clone(), git_ref.clone())])
             .await
-            .map_err(internal)?
+            .map_err(|e| ApiError::conflict(e.to_string()))?
             .into_iter()
             .map(|definition| {
                 (
@@ -341,28 +329,13 @@ pub(super) async fn impact(
             })
             .collect(),
         (None, Some(range)) => {
-            let repo = std::path::Path::new(&repository.path);
-            let Some(ends) = ends_of(range.trim()) else {
-                return Err(ApiError::bad_request(format!(
-                    "a diff is `<base>..<head>`, not {:?}",
-                    range.trim()
-                )));
-            };
-            let lines = match index::changed_lines(repo, range.trim()).await {
-                Ok(lines) => lines,
-                // A wrong range is the caller's; a git that failed on a
-                // right one is the daemon's.
-                Err(e) => {
-                    return Err(match an_end_is_gone(repo, ends).await {
-                        true => ApiError::bad_request(e.to_string()),
-                        false => internal(e),
-                    });
-                }
-            };
+            let lines = index::changed_lines(std::path::Path::new(&repository.path), range.trim())
+                .await
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
             knowledge
                 .symbols_in_lines(&repository.id, &git_ref, &lines)
                 .await
-                .map_err(internal)?
+                .map_err(|e| ApiError::conflict(e.to_string()))?
         }
         _ => {
             return Err(ApiError::bad_request(
@@ -376,7 +349,7 @@ pub(super) async fn impact(
         let (callers, stopped) = knowledge
             .impact(id, &repository.id, &git_ref, depth)
             .await
-            .map_err(internal)?;
+            .map_err(|e| ApiError::conflict(e.to_string()))?;
         answers.push(KnowledgeImpactDto {
             symbol: KnowledgeRelatedDto {
                 repository_id: symbol.repository_id,
@@ -409,8 +382,7 @@ pub(super) async fn impact(
 #[utoipa::path(get, path = "/v1/knowledge/path", tag = "knowledge",
     params(KnowledgePathQuery),
     responses((status = 200, body = KnowledgePathDto), (status = 400), (status = 404),
-              (status = 409, description = "the knowledge base is disabled, or the index of the ref is not ready"),
-              (status = 500, description = "the knowledge store or git failed")))]
+              (status = 409, description = "the knowledge base is disabled")))]
 pub(super) async fn path(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -432,43 +404,33 @@ pub(super) async fn path(
         query.git_ref.as_deref(),
     )
     .await?;
-    ready(knowledge, &repository, &git_ref).await?;
     let starts = knowledge
         .definitions(
             query.from.trim(),
             &[(repository.id.clone(), git_ref.clone())],
         )
         .await
-        .map_err(internal)?;
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
 
     // The destination may sit across an edge in another repository. Read
-    // each other repository at its own ref, as rule 20 does. Another
-    // repository whose ref is not ready holds no end: one repository with no
-    // index must not refuse every path of every other one.
+    // each other repository at its own ref, as rule 20 does.
     let repositories = state.store.list_repositories().await?;
     let mut end_scopes = Vec::with_capacity(repositories.len());
     for candidate in &repositories {
-        if candidate.id == repository.id {
-            end_scopes.push((candidate.id.clone(), git_ref.clone()));
-            continue;
-        }
-        let candidate_ref = ref_for(&state, knowledge, &ctx, candidate, None).await?;
-        let readiness = knowledge
-            .readiness(&candidate.id, &candidate_ref)
-            .await
-            .map_err(internal)?;
-        if readiness == Readiness::Ready {
-            end_scopes.push((candidate.id.clone(), candidate_ref));
-        }
+        let candidate_ref = match candidate.id == repository.id {
+            true => git_ref.clone(),
+            false => ref_for(&state, knowledge, &ctx, candidate, None).await?,
+        };
+        end_scopes.push((candidate.id.clone(), candidate_ref));
     }
     let ends = knowledge
         .definitions(query.to.trim(), &end_scopes)
         .await
-        .map_err(internal)?;
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
     let hops = knowledge
         .path(&starts, &ends, query.depth())
         .await
-        .map_err(internal)?
+        .map_err(|e| ApiError::conflict(e.to_string()))?
         .into_iter()
         .map(|hop| KnowledgePathHopDto {
             repository_id: hop.repository_id,
@@ -486,8 +448,7 @@ pub(super) async fn path(
 #[utoipa::path(get, path = "/v1/knowledge/map", tag = "knowledge",
     params(KnowledgeMapQuery),
     responses((status = 200, body = KnowledgeMapDto), (status = 404),
-              (status = 409, description = "the knowledge base is disabled, or the index of the ref is not ready"),
-              (status = 500, description = "the knowledge store or git failed")))]
+              (status = 409, description = "the knowledge base is disabled")))]
 pub(super) async fn map(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -504,7 +465,6 @@ pub(super) async fn map(
         query.git_ref.as_deref(),
     )
     .await?;
-    ready(knowledge, &repository, &git_ref).await?;
     let toward = query.path.as_deref().filter(|path| !path.trim().is_empty());
     let map = knowledge
         .map(
@@ -514,7 +474,7 @@ pub(super) async fn map(
             query.budget().max(1) as usize,
         )
         .await
-        .map_err(internal)?;
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(Json(KnowledgeMapDto {
         repository_id: repository.id,
         git_ref,
@@ -528,8 +488,7 @@ pub(super) async fn map(
 #[utoipa::path(get, path = "/v1/knowledge/graph", tag = "knowledge",
     params(KnowledgeGraphQuery),
     responses((status = 200, body = KnowledgeGraphDto), (status = 404),
-              (status = 409, description = "the knowledge base is disabled, or the index of the ref is not ready"),
-              (status = 500, description = "the knowledge store or git failed")))]
+              (status = 409, description = "the knowledge base is disabled")))]
 pub(super) async fn graph(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -546,11 +505,10 @@ pub(super) async fn graph(
         query.git_ref.as_deref(),
     )
     .await?;
-    ready(knowledge, &repository, &git_ref).await?;
     let graph = knowledge
         .graph(&repository.id, &git_ref, query.limit() as usize)
         .await
-        .map_err(internal)?;
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(Json(KnowledgeGraphDto {
         repository_id: repository.id,
         git_ref,
@@ -585,8 +543,7 @@ pub(super) async fn graph(
 #[utoipa::path(get, path = "/v1/knowledge/interactions", tag = "knowledge",
     params(KnowledgeInteractionsQuery),
     responses((status = 200, body = [KnowledgeInteractionGroupDto]), (status = 404),
-              (status = 409, description = "the knowledge base is disabled, or the index of the ref is not ready"),
-              (status = 500, description = "the knowledge store or git failed")))]
+              (status = 409, description = "the knowledge base is disabled")))]
 pub(super) async fn interactions(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -603,11 +560,10 @@ pub(super) async fn interactions(
         query.git_ref.as_deref(),
     )
     .await?;
-    ready(knowledge, &repository, &git_ref).await?;
     let found = knowledge
         .interactions(&repository.id, &git_ref)
         .await
-        .map_err(internal)?;
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
     // One group per kind that has an edge, in the order the kinds are
     // listed in.
     let mut groups: Vec<KnowledgeInteractionGroupDto> = Vec::new();
@@ -656,30 +612,6 @@ fn related(ends: Vec<Related>) -> Vec<KnowledgeRelatedDto> {
         .collect()
 }
 
-/// The two ends of a `<base>..<head>` range, or `None` for any other form:
-/// no `..`, the three dots of a merge-base diff, an end with a space, or an
-/// end that could read as a flag. Git reads each end as it is given, so none
-/// is trimmed here. An empty end is `HEAD`, as git reads it.
-fn ends_of(range: &str) -> Option<[&str; 2]> {
-    let (base, head) = range.split_once("..")?;
-    let right = |end: &str| {
-        !end.starts_with(['-', '.']) && !end.ends_with('.') && !end.contains(char::is_whitespace)
-    };
-    (right(base) && right(head)).then_some([base, head])
-}
-
-/// Whether an end of a diff range names no commit of `repo`, which is the
-/// caller's error. Git fails on a right range too — a repository it cannot
-/// read, a git that did not start — and that is no wrong request.
-async fn an_end_is_gone(repo: &std::path::Path, ends: [&str; 2]) -> bool {
-    for end in ends {
-        if !end.is_empty() && ref_is_gone(repo, end).await {
-            return true;
-        }
-    }
-    false
-}
-
 /// The head of a `<base>..<head>` range, where it names one.
 fn head_of(range: &str) -> Option<String> {
     let head = range.trim().split_once("..")?.1.trim();
@@ -704,49 +636,6 @@ fn enabled(state: &AppState) -> ApiResult<&KnowledgeStore> {
         .knowledge
         .store()
         .ok_or_else(|| ApiError::conflict(DISABLED))
-}
-
-/// A failure of the store or of git: the daemon's own, and no fault of the
-/// request. A 5xx, so that no client reads it as a wrong argument.
-fn internal(e: anyhow::Error) -> ApiError {
-    tracing::error!(error = %format!("{e:#}"), "the knowledge base failed");
-    ApiError::new(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "internal_error",
-        format!("the knowledge base failed: {e:#}"),
-    )
-}
-
-/// Refuse a read of a ref that cannot answer it: one with no index yet, one
-/// in its first index run, or one whose last run failed. The refusal says
-/// which, and names the repository and the ref. An empty answer from such a
-/// ref would read as a fact. A ref that has an index answers while a run
-/// updates it.
-async fn ready(
-    knowledge: &KnowledgeStore,
-    repository: &Repository,
-    git_ref: &str,
-) -> ApiResult<()> {
-    let reason = match knowledge
-        .readiness(&repository.id, git_ref)
-        .await
-        .map_err(internal)?
-    {
-        Readiness::Ready => return Ok(()),
-        Readiness::NoIndex => "no index run of this ref has started".to_string(),
-        Readiness::FirstIndex => {
-            "the first index run of this ref is in progress, try again later".to_string()
-        }
-        Readiness::Failed(error) => format!("the last index run of this ref failed: {error}"),
-    };
-    Err(ApiError::new(
-        StatusCode::CONFLICT,
-        "knowledge_not_ready",
-        format!(
-            "the index of {git_ref} in repository {} ({}) is not ready: {reason}",
-            repository.path, repository.id
-        ),
-    ))
 }
 
 /// The ref a caller reads a repository at: the one it named, else its own.
@@ -775,7 +664,7 @@ async fn ref_for(
             && knowledge
                 .ref_commit(&repository.id, &task.branch)
                 .await
-                .map_err(internal)?
+                .map_err(|e| ApiError::conflict(e.to_string()))?
                 .is_some()
         {
             return Ok(task.branch);
@@ -793,10 +682,13 @@ async fn status_dto(state: &AppState, repository_id: &str) -> ApiResult<Knowledg
             files: 0,
             symbols: 0,
             languages: Vec::new(),
-            failures: Vec::new(),
+            error: None,
         });
     };
-    let status = knowledge.status(repository_id).await.map_err(internal)?;
+    let status = knowledge
+        .status(repository_id)
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(KnowledgeStatusDto {
         repository_id: repository_id.to_string(),
         state: match status.state {
@@ -825,13 +717,6 @@ async fn status_dto(state: &AppState, repository_id: &str) -> ApiResult<Knowledg
                 files: l.files,
             })
             .collect(),
-        failures: status
-            .failures
-            .into_iter()
-            .map(|failure| KnowledgeFailureDto {
-                git_ref: failure.git_ref,
-                error: failure.error,
-            })
-            .collect(),
+        error: status.error,
     })
 }

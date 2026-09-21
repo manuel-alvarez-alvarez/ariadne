@@ -97,16 +97,8 @@ function StatusBody({ status }: { status: KnowledgeStatusDto }) {
 
   return (
     <div className="flex flex-col gap-2 text-xs">
-      {/* Per ref: a good run of one ref leaves the failure of another, so
-          the ref is what says which index a read is refused for. */}
-      {status.failures.length > 0 ? (
-        <ul aria-label="Failed refs" className="flex flex-col gap-1 text-sm text-destructive">
-          {status.failures.map((failure) => (
-            <li key={failure.git_ref}>
-              <span className="font-mono">{failure.git_ref}</span>: {failure.error}
-            </li>
-          ))}
-        </ul>
+      {status.state === "failed" && status.error ? (
+        <p className="text-sm text-destructive">{status.error}</p>
       ) : null}
 
       <dl className="grid grid-cols-2 gap-2">

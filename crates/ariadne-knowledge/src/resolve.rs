@@ -29,14 +29,14 @@ use crate::parser::{EdgeKind, Import};
 /// How many definitions a name may match and still be resolved. Past this,
 /// the name says nothing about which definition was meant — `new` in a large
 /// repository — and the edges would be noise measured in thousands.
-pub const MAX_CANDIDATES: usize = 20;
+const MAX_CANDIDATES: usize = 20;
 
 /// How many definitions a name may match at step `repository` and still be
 /// resolved. The three nearer steps stand on where the definition is, and a
 /// few candidates there are a short list worth reading; the repository holds
 /// every definition of the name, so `new` or `get` joins files that have no
 /// relation, in the thousands.
-pub const MAX_REPOSITORY_CANDIDATES: usize = 3;
+const MAX_REPOSITORY_CANDIDATES: usize = 3;
 
 /// The shortest name a reference across repositories is looked up by: a
 /// shorter one — `get`, `run`, `new` — is defined everywhere and means

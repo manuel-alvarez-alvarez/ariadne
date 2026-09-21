@@ -12,13 +12,13 @@ use axum::http::{Request, StatusCode};
 
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::knowledge::{
-    KnowledgeFailureDto, KnowledgeGraphDto, KnowledgeHitDto, KnowledgeImpactDto,
-    KnowledgeIndexedDto, KnowledgeInteractionGroupDto, KnowledgeMapDto, KnowledgeOutlineEntryDto,
-    KnowledgePathDto, KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
+    KnowledgeGraphDto, KnowledgeHitDto, KnowledgeImpactDto, KnowledgeIndexedDto,
+    KnowledgeInteractionGroupDto, KnowledgeMapDto, KnowledgeOutlineEntryDto, KnowledgePathDto,
+    KnowledgeState, KnowledgeStatusDto, KnowledgeSymbolDto,
 };
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{Actor, SessionStatus, TaskStatus};
-use ariadne_daemon::bus::{BusEvent, EventBus};
+use ariadne_daemon::bus::BusEvent;
 use ariadne_daemon::knowledge::Knowledge;
 use ariadne_knowledge::State;
 use ariadne_store::Repository;
@@ -137,7 +137,7 @@ async fn registering_a_repository_indexes_its_base_branch() {
     assert_eq!(status.symbols, 1);
     assert_eq!(status.languages.len(), 1);
     assert_eq!(status.languages[0].language, "rust");
-    assert_eq!(status.failures, []);
+    assert_eq!(status.error, None);
 
     let hits: Vec<KnowledgeHitDto> = h.get(&search_uri("add", &repo.id, None)).await;
     assert_eq!(hits.len(), 1, "{hits:?}");
@@ -386,7 +386,7 @@ async fn a_start_reads_a_task_branch_that_is_gone_without_failing_the_repository
         .await
         .unwrap();
     assert_eq!(status.state, State::Idle, "{status:?}");
-    assert_eq!(status.failures, []);
+    assert_eq!(status.error, None);
     let refs: Vec<&str> = status.refs.iter().map(|r| r.git_ref.as_str()).collect();
     assert_eq!(refs, ["main"]);
 }
@@ -513,410 +513,14 @@ async fn a_repository_git_cannot_read_reads_as_failed() {
     let DomainEvent::KnowledgeFailed(failed) = event.event else {
         unreachable!("matched knowledge_failed")
     };
-    assert_eq!(failed.git_ref, "main");
     assert!(failed.error.contains("main"), "{}", failed.error);
     eventually(TIMEOUT, "the status to read failed", || async {
         let status: KnowledgeStatusDto = h
             .get(&format!("/v1/repositories/{}/knowledge", repo.id))
             .await;
-        status.state == KnowledgeState::Failed
-            && status.failures
-                == [KnowledgeFailureDto {
-                    git_ref: "main".into(),
-                    error: failed.error.clone(),
-                }]
+        status.state == KnowledgeState::Failed && status.error.is_some()
     })
     .await;
-}
-
-/// The eight reads of one repository at one ref, each with the arguments it
-/// needs to get as far as the index.
-fn read_uris(repository: &str, git_ref: &str) -> Vec<String> {
-    [
-        "search?q=add",
-        "outline?path=lib.rs",
-        "symbol?name=add",
-        "impact?symbol=add",
-        "path?from=add&to=add",
-        "map?",
-        "graph?",
-        "interactions?",
-    ]
-    .iter()
-    .map(|read| format!("/v1/knowledge/{read}&repository={repository}&git_ref={git_ref}"))
-    .collect()
-}
-
-/// A ref that cannot answer refuses every read, and the refusal says which
-/// of the three cases it is, and names the repository and the ref: an empty
-/// answer would read as a fact about the code.
-#[tokio::test]
-async fn a_read_of_a_ref_that_is_not_ready_is_refused_with_the_text_of_its_case() {
-    let h = harness().knowledge().await;
-    let mut rx = h.bus.subscribe();
-    let path = code_repo(&h, "repo");
-    let repo = h.repository(&path).await;
-    indexed(&mut rx, &repo.id, "main", None).await;
-    let store = h.state.knowledge.store().expect("enabled");
-
-    // Never indexed: no run of `feature` has started.
-    for uri in read_uris(&repo.id, "feature") {
-        let refused = h.error(get(&uri), StatusCode::CONFLICT).await;
-        assert_eq!(refused.error.code, "knowledge_not_ready", "{uri}");
-        assert_eq!(
-            refused.error.message,
-            format!(
-                "the index of feature in repository {} ({}) is not ready: \
-                 no index run of this ref has started",
-                path.display(),
-                repo.id
-            ),
-            "{uri}"
-        );
-    }
-
-    // In its first index: a run has started, and the ref has no rows yet.
-    store
-        .set_ref_state(&repo.id, "feature", State::Indexing, None)
-        .await
-        .unwrap();
-    for uri in read_uris(&repo.id, "feature") {
-        let refused = h.error(get(&uri), StatusCode::CONFLICT).await;
-        assert_eq!(refused.error.code, "knowledge_not_ready", "{uri}");
-        assert_eq!(
-            refused.error.message,
-            format!(
-                "the index of feature in repository {} ({}) is not ready: \
-                 the first index run of this ref is in progress, try again later",
-                path.display(),
-                repo.id
-            ),
-            "{uri}"
-        );
-    }
-
-    // Failed: a directory git cannot read.
-    let plain = h.repository(&h.at("plain")).await;
-    let event = next_event(
-        &mut rx,
-        |e| matches!(&e.event, DomainEvent::KnowledgeFailed(k) if k.repository_id == plain.id),
-    )
-    .await;
-    let DomainEvent::KnowledgeFailed(failed) = event.event else {
-        unreachable!("matched knowledge_failed")
-    };
-    for uri in read_uris(&plain.id, "main") {
-        let refused = h.error(get(&uri), StatusCode::CONFLICT).await;
-        assert_eq!(refused.error.code, "knowledge_not_ready", "{uri}");
-        assert_eq!(
-            refused.error.message,
-            format!(
-                "the index of main in repository {} ({}) is not ready: \
-                 the last index run of this ref failed: {}",
-                plain.path, plain.id, failed.error
-            ),
-            "{uri}"
-        );
-    }
-}
-
-/// A ref that has an index answers while a run updates it.
-#[tokio::test]
-async fn a_read_during_an_update_of_a_good_index_answers() {
-    let h = harness().knowledge().await;
-    let mut rx = h.bus.subscribe();
-    let repo = h.repository(&code_repo(&h, "repo")).await;
-    indexed(&mut rx, &repo.id, "main", None).await;
-
-    h.state
-        .knowledge
-        .store()
-        .expect("enabled")
-        .set_ref_state(&repo.id, "main", State::Indexing, None)
-        .await
-        .unwrap();
-    let status: KnowledgeStatusDto = h
-        .get(&format!("/v1/repositories/{}/knowledge", repo.id))
-        .await;
-    assert_eq!(status.state, KnowledgeState::Indexing);
-
-    let hits: Vec<KnowledgeHitDto> = h.get(&search_uri("add", &repo.id, None)).await;
-    assert_eq!(hits.len(), 1, "{hits:?}");
-    for uri in read_uris(&repo.id, "main") {
-        let (answered, body) = h.send(get(&uri)).await;
-        assert_eq!(
-            answered,
-            StatusCode::OK,
-            "{uri}: {}",
-            String::from_utf8_lossy(&body)
-        );
-    }
-}
-
-/// A run is of one ref, and so is its failure: a good run of another branch
-/// leaves the base branch failed, named, and refusing its reads.
-#[tokio::test]
-async fn a_base_branch_failure_survives_a_good_task_branch_run() {
-    let h = harness().knowledge().await;
-    let mut rx = h.bus.subscribe();
-    let path = code_repo(&h, "repo");
-    let repo = h.repository(&path).await;
-    indexed(&mut rx, &repo.id, "main", None).await;
-
-    // The base branch goes, and its next run fails.
-    sh(&path, "git checkout -q -b task && git branch -q -D main");
-    h.state.knowledge.index(&repo.id, "main");
-    let event = next_event(
-        &mut rx,
-        |e| matches!(&e.event, DomainEvent::KnowledgeFailed(k) if k.repository_id == repo.id),
-    )
-    .await;
-    let DomainEvent::KnowledgeFailed(failed) = event.event else {
-        unreachable!("matched knowledge_failed")
-    };
-    assert_eq!(failed.git_ref, "main");
-
-    h.state.knowledge.index(&repo.id, "task");
-    indexed(&mut rx, &repo.id, "task", None).await;
-
-    let status: KnowledgeStatusDto = h
-        .get(&format!("/v1/repositories/{}/knowledge", repo.id))
-        .await;
-    assert_eq!(status.state, KnowledgeState::Failed, "{status:?}");
-    assert_eq!(
-        status.failures,
-        [KnowledgeFailureDto {
-            git_ref: "main".into(),
-            error: failed.error,
-        }]
-    );
-    let refused = h
-        .error(
-            get(&search_uri("add", &repo.id, Some("main"))),
-            StatusCode::CONFLICT,
-        )
-        .await;
-    assert_eq!(refused.error.code, "knowledge_not_ready");
-    let hits: Vec<KnowledgeHitDto> = h.get(&search_uri("add", &repo.id, Some("task"))).await;
-    assert_eq!(hits.len(), 1, "the good ref answers: {hits:?}");
-}
-
-/// A connection of the test's own to the knowledge store, to break it with.
-async fn knowledge_db(path: &Path) -> sqlx::SqlitePool {
-    sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(path))
-        .await
-        .unwrap()
-}
-
-/// An in-flight task of `cast` on a branch that holds `branch.rs`, as a
-/// start finds it.
-async fn in_flight_branch(h: &Harness, repo: &Path, cast: &common::Cast) {
-    let worktree = h.at("wt").display().to_string();
-    h.store
-        .set_task_worktree(&cast.task.id, Some(&worktree))
-        .await
-        .unwrap();
-    h.advance(&cast.task, TaskStatus::InProgress).await;
-    commit_on(
-        repo,
-        &cast.task.branch,
-        "branch.rs",
-        "pub fn on_the_branch() {}",
-    );
-}
-
-/// Commit one file on `branch` of `repo`, cut from `main` where it is new,
-/// and answer the sha. The checkout goes back to `main`.
-fn commit_on(repo: &Path, branch: &str, file: &str, text: &str) -> String {
-    sh(
-        repo,
-        &format!(
-            "(git checkout -q {branch} 2>/dev/null || git checkout -q -b {branch}) && \
-             printf '{text}\\n' > {file} && git add . && \
-             git -c user.email=t@t -c user.name=t commit -qm {file} && \
-             git rev-parse HEAD && git checkout -q main"
-        ),
-    )
-}
-
-/// A lenient run drops a branch only where git cannot resolve it. A store
-/// that fails is no deleted branch: the rows stay, and the ref reads as
-/// failed.
-#[tokio::test]
-async fn a_lenient_run_with_a_store_error_keeps_the_rows() {
-    let h = harness().await;
-    let path = code_repo(&h, "repo");
-    let cast = h.active_cast().await;
-    in_flight_branch(&h, &path, &cast).await;
-    let branch = cast.task.branch.clone();
-
-    // The branch as an earlier daemon indexed it, and then a store that
-    // refuses every new symbol, under a branch that moved.
-    let db = h.at("knowledge.db");
-    let earlier = ariadne_knowledge::KnowledgeStore::open(&db).await.unwrap();
-    earlier.index(&cast.repo.id, &path, &branch).await.unwrap();
-    drop(earlier);
-    let pool = knowledge_db(&db).await;
-    sqlx::raw_sql(
-        "CREATE TRIGGER busy BEFORE INSERT ON symbols
-         BEGIN SELECT RAISE(ABORT, 'the store is busy'); END",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    pool.close().await;
-    commit_on(&path, &branch, "moved.rs", "pub fn moved() {}");
-
-    let mut rx = h.bus.subscribe();
-    let knowledge = Knowledge::start(true, db, h.store.clone(), h.bus.clone())
-        .await
-        .unwrap();
-    let event = next_event(
-        &mut rx,
-        |e| matches!(&e.event, DomainEvent::KnowledgeFailed(k) if k.repository_id == cast.repo.id),
-    )
-    .await;
-    let DomainEvent::KnowledgeFailed(failed) = event.event else {
-        unreachable!("matched knowledge_failed")
-    };
-    assert_eq!(failed.git_ref, branch);
-    assert!(failed.error.contains("the store is busy"), "{failed:?}");
-
-    let status = knowledge
-        .store()
-        .expect("enabled")
-        .status(&cast.repo.id)
-        .await
-        .unwrap();
-    let kept = status
-        .refs
-        .iter()
-        .find(|r| r.git_ref == branch)
-        .unwrap_or_else(|| panic!("the rows of the branch went: {status:?}"));
-    assert_eq!(kept.files, 2, "lib.rs and branch.rs: {status:?}");
-    let failures: Vec<&str> = status.failures.iter().map(|f| f.git_ref.as_str()).collect();
-    assert_eq!(failures, [branch.as_str()]);
-}
-
-/// A follower that fell behind the event stream lost branch moves it cannot
-/// get back, so it queues what a start queues: every base branch and every
-/// in-flight task branch.
-#[tokio::test]
-async fn a_lag_queues_the_branches_again() {
-    let h = harness().await;
-    let path = code_repo(&h, "repo");
-    let cast = h.active_cast().await;
-    in_flight_branch(&h, &path, &cast).await;
-    let branch = cast.task.branch.clone();
-
-    // A bus of the knowledge base's own: nothing but this test publishes on
-    // it, and four events fill it.
-    let bus = EventBus::with_capacity(4);
-    let mut rx = bus.subscribe();
-    let _knowledge = Knowledge::start(true, h.at("knowledge.db"), h.store.clone(), bus.clone())
-        .await
-        .unwrap();
-    indexed(&mut rx, &cast.repo.id, "main", None).await;
-    indexed(&mut rx, &cast.repo.id, &branch, None).await;
-
-    // Both branches move with no event, and the follower then misses more
-    // events than the bus holds. Nothing awaits in between, so the follower
-    // reads none of them before they are gone.
-    let base_head = commit_on(&path, "main", "later.rs", "pub fn later() {}");
-    let branch_head = commit_on(&path, &branch, "moved.rs", "pub fn moved() {}");
-    for _ in 0..16 {
-        bus.publish(BusEvent {
-            event: DomainEvent::KnowledgeIndexed(KnowledgeIndexedDto {
-                repository_id: "no-repository".into(),
-                git_ref: "main".into(),
-                commit: String::new(),
-                files: 0,
-                symbols: 0,
-            }),
-            goal_id: None,
-            task_id: None,
-            recorded: None,
-        });
-    }
-    let mut rx = bus.subscribe();
-
-    indexed(&mut rx, &cast.repo.id, "main", Some(&base_head)).await;
-    indexed(&mut rx, &cast.repo.id, &branch, Some(&branch_head)).await;
-}
-
-/// A diff range of the wrong form, or with an end that names no commit, is a
-/// wrong request. A git that fails on a right range is the daemon's failure.
-#[tokio::test]
-async fn a_git_failure_on_a_right_diff_range_answers_5xx_and_a_wrong_range_4xx() {
-    let h = harness().knowledge().await;
-    let mut rx = h.bus.subscribe();
-    let path = code_repo(&h, "repo");
-    let repo = h.repository(&path).await;
-    indexed(&mut rx, &repo.id, "main", None).await;
-    let impact = |range: &str| {
-        get(&format!(
-            "/v1/knowledge/impact?repository={}&git_ref=main&diff={range}",
-            repo.id
-        ))
-    };
-
-    for wrong in [
-        "main",
-        "main..no-such-branch",
-        "main..--output=x",
-        "main%20..%20next",
-        "main...next",
-        "main....next",
-    ] {
-        let refused = h.error(impact(wrong), StatusCode::BAD_REQUEST).await;
-        assert_eq!(refused.error.code, "invalid_request", "{wrong}");
-    }
-    let answered: Vec<KnowledgeImpactDto> = h.json(impact("main..next"), StatusCode::OK).await;
-    assert!(
-        answered.is_empty(),
-        "`next` changes no definition: {answered:?}"
-    );
-
-    // The same range, in a repository git can no longer read.
-    std::fs::rename(path.join(".git"), path.join("git-gone")).unwrap();
-    let failed = h
-        .error(impact("main..next"), StatusCode::INTERNAL_SERVER_ERROR)
-        .await;
-    assert_eq!(failed.error.code, "internal_error");
-}
-
-/// A store that fails is the daemon's own failure: a 5xx, which no client
-/// reads as a wrong argument.
-#[tokio::test]
-async fn a_store_error_answers_5xx() {
-    let h = harness().knowledge().await;
-    let mut rx = h.bus.subscribe();
-    let repo = h.repository(&code_repo(&h, "repo")).await;
-    indexed(&mut rx, &repo.id, "main", None).await;
-
-    let pool = knowledge_db(&h.launcher.cfg.knowledge_db_path()).await;
-    sqlx::raw_sql("DROP TABLE files")
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool.close().await;
-
-    let failed = h
-        .error(
-            get(&search_uri("add", &repo.id, None)),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        )
-        .await;
-    assert_eq!(failed.error.code, "internal_error");
-    assert!(
-        failed
-            .error
-            .message
-            .starts_with("the knowledge base failed: "),
-        "{failed:?}"
-    );
 }
 
 #[tokio::test]
