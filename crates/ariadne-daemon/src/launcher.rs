@@ -125,13 +125,23 @@ impl Launcher {
         };
         let run_dir = self.run_dir(&session.id);
         // Written before the adapter plans anything, and by the same call that
-        // renders the index, so what the prompt names is what is on disk.
+        // renders the index, so what the prompt names is what is on disk. Each
+        // document is written as the text for this daemon's knowledge base:
+        // off, no text names a tool the session is not listed.
         let skills_dir = match skills.is_empty() {
             true => None,
             false => {
                 let documents: Vec<(String, String)> = skills
                     .iter()
-                    .map(|skill| (skill.name.clone(), skill.document_text().to_string()))
+                    .map(|skill| {
+                        (
+                            skill.name.clone(),
+                            ariadne_store::defaults::skill_text(
+                                skill.document_text(),
+                                self.cfg.knowledge_enabled,
+                            ),
+                        )
+                    })
                     .collect();
                 Some(write_skills(&run_dir, &documents)?)
             }

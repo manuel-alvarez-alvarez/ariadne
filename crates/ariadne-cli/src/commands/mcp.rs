@@ -337,9 +337,18 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
 /// of what they cover is the list of everything an agent writes, since a rule
 /// that named only some of it would read as licence for the rest. Each
 /// playbook names the texts of its own seat again, in its own layer.
-fn session_rules(seat: &McpSeat) -> String {
+///
+/// A client can defer the tools of an MCP server: Claude Code lists only
+/// their names, and the agent loads a tool with its tool search before it can
+/// call it. An agent that was told to call a tool it never loaded did not
+/// call it, so the rules say to load a tool first. The words name no client:
+/// a client that defers nothing has nothing to load.
+///
+/// With the knowledge base off the knowledge tools are not listed, and no
+/// rule names one.
+fn session_rules(seat: &McpSeat, knowledge_enabled: bool) -> String {
     format!(
-        r#"Reach Ariadne only through these tools. A backticked name is a tool. {} Find code with `search_code` and `symbol` before you read a file. Call `search_memory` before you repeat a discovery. Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
+        r#"Reach Ariadne only through these tools. A backticked name is a tool. If your client defers these tools, load the ones you need in one tool search before the first call. {} {}Call `search_memory` before you repeat a discovery. Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
 
 Write all text in ASD-STE100 Simplified Technical English (STE):
 - Write one instruction in one sentence.
@@ -353,7 +362,11 @@ STE holds for all you write:
 - task titles and descriptions
 - `request_review` summaries, verdicts and `fail_task` reasons
 - commit subjects and bodies, and pull request text"#,
-        ask_rule(seat)
+        ask_rule(seat),
+        match knowledge_enabled {
+            true => "Find code with `search_code` and `symbol` before you read a file. ",
+            false => "",
+        }
     )
 }
 
@@ -379,7 +392,7 @@ impl ServerHandler for AriadneMcp {
                 Some(task) => format!(", task {task}"),
                 None => String::new(),
             },
-            session_rules(&self.seat)
+            session_rules(&self.seat, self.knowledge_enabled)
         ));
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
@@ -581,6 +594,10 @@ pub(crate) mod tests {
 
     /// With the knowledge base off, no seat is listed a knowledge tool, and a
     /// call to one is refused by name; every other tool of the seat stays.
+    /// No text an agent gets names one either: not the instructions, and not
+    /// the text of a compiled skill, which the launcher writes for the same
+    /// setting. A text that named a tool nothing serves would send the agent
+    /// after it.
     #[test]
     fn the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off() {
         for seat in SEATS {
@@ -612,6 +629,59 @@ pub(crate) mod tests {
                 .filter(|t| !KNOWLEDGE_TOOLS.contains(&t.as_str()))
                 .collect();
             assert_eq!(without.iter().collect::<Vec<_>>(), rest, "{seat:?}");
+
+            let instructions = mcp.get_info().instructions.expect("instructions");
+            assert_eq!(
+                knowledge_name(&instructions),
+                None,
+                "{seat:?}: {instructions}"
+            );
+        }
+        for skill in &ariadne_store::defaults::BUILTIN_SKILLS {
+            let off = ariadne_store::defaults::skill_text(skill.document, false);
+            assert_eq!(
+                knowledge_name(&off),
+                None,
+                "the {} skill: {off}",
+                skill.name
+            );
+        }
+    }
+
+    /// The first knowledge tool or `ariadne knowledge` command that `text`
+    /// names. A tool is matched as a tool is written in a text an agent
+    /// reads, in backticks, so the word "path" in a sentence is no match.
+    fn knowledge_name(text: &str) -> Option<String> {
+        KNOWLEDGE_TOOLS
+            .iter()
+            .flat_map(|tool| [format!("`{tool}`"), format!("`{tool} ")])
+            .chain(["ariadne knowledge".to_string()])
+            .find(|name| text.contains(name.as_str()))
+    }
+
+    /// A client that defers MCP tools lists only their names, and a tool the
+    /// agent did not load is a tool it cannot call. With the knowledge base
+    /// on, every seat is told to load the tools it needs before the first
+    /// call, and the knowledge tools are still named for it to load.
+    #[test]
+    fn every_session_is_told_to_load_a_deferred_tool_before_it_calls_it() {
+        for seat in SEATS {
+            let mcp = server_at(
+                seat.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
+            let instructions = mcp.get_info().instructions.expect("instructions");
+            assert!(
+                instructions.contains(
+                    "If your client defers these tools, load the ones you need \
+                     in one tool search before the first call."
+                ),
+                "{seat:?}: {instructions}"
+            );
+            assert!(
+                knowledge_name(&instructions).is_some(),
+                "{seat:?}: {instructions}"
+            );
         }
     }
 
@@ -739,7 +809,12 @@ pub(crate) mod tests {
     /// names the tool its own step needs; this is the one line that holds
     /// wherever a seat reaches for a file.
     ///
-    /// The cap rises to 900 for the memory rule, which is the same shape
+    /// The cap rises to 1000 for the load rule: load a deferred tool before
+    /// the first call. Claude Code defers MCP tools, and an agent that was
+    /// told to call a tool it never loaded did not call it. The rule holds
+    /// for every tool of every seat, so it is here and in no skill.
+    ///
+    /// The cap was 900 for the memory rule, which is the same shape
     /// again: call `search_memory` before you repeat a discovery. Every
     /// seat holds the tool (019) and no seat was ever told when to use it,
     /// so the store held nothing. The reading rule is the one line that
@@ -747,9 +822,9 @@ pub(crate) mod tests {
     /// skill's own step to say.
     #[test]
     fn the_shared_rules_stay_small() {
-        const CAP: usize = 900;
+        const CAP: usize = 1000;
         for seat in SEATS {
-            let rules = session_rules(&seat);
+            let rules = session_rules(&seat, true);
             assert!(
                 rules.len() <= CAP,
                 "the {seat:?} session rules are {} characters, over their {CAP}",
@@ -775,10 +850,12 @@ pub(crate) mod tests {
 
         let mut texts = Vec::new();
         for seat in SEATS {
-            texts.push((
-                format!("the {} session rules", seat.as_str()),
-                session_rules(&seat),
-            ));
+            for knowledge in [true, false] {
+                texts.push((
+                    format!("the {} session rules", seat.as_str()),
+                    session_rules(&seat, knowledge),
+                ));
+            }
             let mcp = server_at(
                 seat.clone(),
                 Client::resolve(Some("http://127.0.0.1:1"), None),

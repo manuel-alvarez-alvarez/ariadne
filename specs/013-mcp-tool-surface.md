@@ -33,7 +33,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    itself.
 2. The server's instructions, which every session receives before its first
    prompt, say what this session is and carry the session rules that hold for
-   every seat alike (006).
+   every seat alike (006). A client can defer the tools of a server: Claude
+   Code lists only their names until the agent loads one with its tool
+   search. So the rules tell every seat, in words that name no client, to
+   load the tools it needs in one tool search before the first call. The
+   rule that sends a seat to `search_code` and `symbol` before it reads a
+   file is there only while the knowledge base is on.
 3. Whether anyone answers a question is the one rule picked by seat: the
    orchestrator's user answers in the console, one question at a time, and the
    orchestrator then waits; an author or reviewer works alone, and asks only
@@ -166,8 +171,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   and a 5xx is an internal error, never wrong arguments
   (`mcp.rs::a_5xx_reaches_the_agent_as_an_internal_error`,
   `tools.rs::a_daemon_failure_of_a_knowledge_read_is_an_internal_error`).
+- Every seat is told to load a deferred tool before it calls it
+  (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
 - The knowledge tools are listed to every seat, and to none while the
-  knowledge base is off
+  knowledge base is off; then neither the instructions nor the text of a
+  compiled skill names one, or `ariadne knowledge`
   (`mcp.rs::the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off`);
   what each one sends and answers is spec 022's
   (`tools.rs::search_code_asks_the_daemon_with_its_filters_and_answers_one_line_per_hit`,

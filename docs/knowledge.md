@@ -184,7 +184,14 @@ hop as `path:line kind name <- edge_kind confidence`; its first hop has no
 edge. An answer is cut at 8 KiB, and its last line then says how many results
 were left out and to narrow the query.
 
-Nothing is added to a prompt: an agent calls the tools when it needs them.
+Nothing is added to a prompt but a few lines. The session rules tell every
+agent to find code with `search_code` and `symbol` before it reads a file.
+They also tell it to load the tools it needs in one tool search before the
+first call: Claude Code lists an MCP tool by name only until the agent loads
+it. The skills name the tool of the step that needs it. `coding` tells the
+agent not to search with the shell for what `search_code` found, and
+`code-review` calls `impact`, `symbol` and `path` only for a question the
+diff leaves open.
 
 ## From the CLI
 
@@ -286,7 +293,9 @@ knowledge_enabled = false   # in ~/.ariadne/config.toml
 
 With it off, nothing is indexed, no session is offered a knowledge tool,
 `ariadne knowledge status` says `disabled`, and a search is refused with a
-line that names the key.
+line that names the key. No text an agent reads names a knowledge tool
+either: the session rules drop the line about `search_code`, and each skill
+is written without its knowledge steps.
 
 ## The store
 

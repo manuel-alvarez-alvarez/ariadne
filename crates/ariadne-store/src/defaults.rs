@@ -160,6 +160,48 @@ pub fn skill_summary(document: &str) -> Option<&str> {
         .filter(|summary| !summary.is_empty())
 }
 
+/// The line that opens the text a skill reads only with the knowledge base on.
+const KNOWLEDGE_ON: &str = "<!-- knowledge on -->";
+/// The line that opens the text a skill reads only with the knowledge base off.
+const KNOWLEDGE_OFF: &str = "<!-- knowledge off -->";
+/// The line that closes either text.
+const KNOWLEDGE_END: &str = "<!-- knowledge end -->";
+
+/// The text of a skill `document` that an agent reads, with the knowledge
+/// base on or off.
+///
+/// One document holds both texts. A step that names a knowledge tool sits
+/// between `KNOWLEDGE_ON` and `KNOWLEDGE_OFF`, and the step that takes
+/// its place without the tools between `KNOWLEDGE_OFF` and
+/// `KNOWLEDGE_END`; either half can be empty. Each marker is a line of its
+/// own, and no text keeps one. A document with no marker, which is every
+/// skill a user wrote without them, reads the same either way.
+///
+/// The markers are HTML comments, so a Markdown view of the document shows
+/// neither of them.
+pub fn skill_text(document: &str, knowledge_enabled: bool) -> String {
+    #[derive(PartialEq)]
+    enum Part {
+        Both,
+        On,
+        Off,
+    }
+    let mut part = Part::Both;
+    let mut text = String::with_capacity(document.len());
+    for line in document.split_inclusive('\n') {
+        match line.trim() {
+            KNOWLEDGE_ON => part = Part::On,
+            KNOWLEDGE_OFF => part = Part::Off,
+            KNOWLEDGE_END => part = Part::Both,
+            _ if part == Part::Both || (part == Part::On) == knowledge_enabled => {
+                text.push_str(line)
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
 /// The system prompt an agent in `seat` is spawned with.
 ///
 /// It says what the seat owes and nothing about the work itself: what an
@@ -1711,23 +1753,25 @@ mod tests {
 
     /// The knowledge base serves six tools to every seat (022), and a skill
     /// that says nothing about them is a seat that grepped and read whole
-    /// files instead. Each of the five skills that reads code names the tool
-    /// its own step needs, at that step:
+    /// files instead. With the knowledge base on, each skill that reads code
+    /// names the tool its own step needs, at that step:
     ///
     /// - `coding` finds code with `search_code`, `outline` and `symbol`, asks
-    ///   `impact` what changes reach, and asks `path` how definitions connect;
-    /// - `code-review` asks `impact` for the callers of the task diff, and
-    ///   `symbol --detail context` for tests, and `path` between definitions,
-    ///   and reads the last verdict with `read_messages` and `all: true`;
-    /// - `debugging` ranks hypotheses with `symbol --detail context`, `impact`
-    ///   and `path`;
+    ///   `impact` what a changed signature reaches, and asks `path` how
+    ///   definitions connect; it does not search with the shell for what
+    ///   `search_code` found, so a tool call replaces a shell call;
+    /// - `code-review` calls `impact`, `symbol --detail context` and `path`
+    ///   only for a question the diff leaves open, and reads the last
+    ///   verdict with `read_messages` and `all: true`;
     /// - `refactoring` reads callers, tests and paths around what it moves;
     /// - `orchestration` explores a goal with `repo_map`, and with
     ///   `interactions` where the goal names several repositories.
     ///
-    /// The session rules carry the one line that holds for every seat alike
-    /// — find code before you read a file — and the tool of a step is the
-    /// skill's to name, the way spec 006 holds every rule to one place.
+    /// `debugging` names none: its tools came at step 4, after the agent had
+    /// found the code, and no agent called one there. The session rules
+    /// carry the one line that holds for every seat alike — find code before
+    /// you read a file — and the tool of a step is the skill's to name, the
+    /// way spec 006 holds every rule to one place.
     #[test]
     fn every_skill_that_reads_code_names_the_knowledge_tools() {
         for (name, tools) in [
@@ -1739,21 +1783,19 @@ mod tests {
                     "`symbol`",
                     "`path`",
                     "`impact`",
+                    "Do not search with the shell for what `search_code` found.",
                 ][..],
             ),
             (
                 "code-review",
                 &[
+                    "Call a knowledge tool only for a question the diff leaves open",
                     "`impact`",
                     "`symbol --detail context`",
                     "`path`",
                     "`read_messages`",
                     "`all: true`",
                 ][..],
-            ),
-            (
-                "debugging",
-                &["`symbol --detail context`", "`impact`", "`path`"][..],
             ),
             ("refactoring", &["`symbol --detail context`", "`path`"][..]),
             // `interactions` is a CLI command and no tool, so the skill
@@ -1763,11 +1805,88 @@ mod tests {
                 &["`repo_map`", "knowledge interactions"][..],
             ),
         ] {
-            let doc = unwrapped(default_skill_document(name).unwrap());
+            let doc = unwrapped(&skill_text(default_skill_document(name).unwrap(), true));
             for tool in tools {
                 assert!(doc.contains(tool), "the {name} skill does not name {tool}");
             }
         }
+    }
+
+    /// `coding` used to end its search step on "Done when a tool named every
+    /// file you opened". The agents then added knowledge calls to their
+    /// shell calls, and still searched with `rg`. The step ends on what the
+    /// agent knows now, and the two texts end it alike.
+    #[test]
+    fn the_coding_search_step_ends_on_what_the_agent_knows() {
+        for knowledge in [true, false] {
+            let doc = unwrapped(&skill_text(
+                default_skill_document("coding").unwrap(),
+                knowledge,
+            ));
+            assert!(
+                !doc.contains("a tool named every file"),
+                "{knowledge}: {doc}"
+            );
+            assert!(
+                doc.contains("Done when you can name each definition you change and its callers."),
+                "{knowledge}: {doc}"
+            );
+        }
+    }
+
+    /// With the knowledge base off, no text of a skill names a knowledge
+    /// tool or the `ariadne knowledge` command, and no text keeps a marker.
+    /// Each step that lost a tool still has its "Done when" line.
+    #[test]
+    fn a_skill_names_no_knowledge_tool_when_the_knowledge_base_is_off() {
+        for skill in &BUILTIN_SKILLS {
+            let off = skill_text(skill.document, false);
+            let on = skill_text(skill.document, true);
+            for text in [&off, &on] {
+                assert!(!text.contains("<!-- knowledge"), "{}: {text}", skill.name);
+            }
+            for name in [
+                "search_code",
+                "repo_map",
+                "`outline",
+                "`symbol",
+                "`path`",
+                "`impact",
+                "ariadne knowledge",
+            ] {
+                assert!(!off.contains(name), "the {} skill names {name}", skill.name);
+            }
+            assert_eq!(
+                off.matches("Done when").count(),
+                on.matches("Done when").count(),
+                "the {} skill lost a \"Done when\" line with the tools",
+                skill.name
+            );
+        }
+        let coding = unwrapped(&skill_text(
+            default_skill_document("coding").unwrap(),
+            false,
+        ));
+        assert!(
+            coding.contains("2. Read the code around the change."),
+            "{coding}"
+        );
+    }
+
+    /// A document with no marker reads the same with the knowledge base on
+    /// or off, and each marker takes its line with it.
+    #[test]
+    fn a_skill_text_keeps_the_half_of_its_knowledge_setting() {
+        const DOCUMENT: &str = "1. Read.\n<!-- knowledge on -->\n2. Call `symbol`.\n<!-- knowledge off -->\n2. Read more.\n<!-- knowledge end -->\n3. Done.\n";
+        assert_eq!(
+            skill_text(DOCUMENT, true),
+            "1. Read.\n2. Call `symbol`.\n3. Done.\n"
+        );
+        assert_eq!(
+            skill_text(DOCUMENT, false),
+            "1. Read.\n2. Read more.\n3. Done.\n"
+        );
+        assert_eq!(skill_text("Ask twice.\n", false), "Ask twice.\n");
     }
 
     /// Every seat holds `save_memory` and `search_memory` (019), and for as
@@ -1899,6 +2018,10 @@ mod tests {
     /// (refactor nothing, no trailer, nothing generated), a rationale said
     /// twice, and a closing sentence that repeated a step. A cap that rose for
     /// a paragraph about saving less would have argued against itself.
+    ///
+    /// A document then came to hold two texts, one for the knowledge base on
+    /// and one for it off ([`skill_text`]). An agent reads one of them, so a
+    /// cap holds the longer of the two, not the document with its markers.
     #[test]
     fn skill_size_caps_hold() {
         const TOTAL: usize = 39_000;
@@ -1914,19 +2037,26 @@ mod tests {
             _ => 2400,
         };
 
+        let read = |skill: &BuiltinSkill| {
+            [true, false]
+                .map(|knowledge| skill_text(skill.document, knowledge).len())
+                .into_iter()
+                .max()
+                .unwrap_or_default()
+        };
         for skill in &BUILTIN_SKILLS {
-            println!("{:5}  {}", skill.document.len(), skill.name);
+            println!("{:5}  {}", read(skill), skill.name);
         }
         for skill in &BUILTIN_SKILLS {
             assert!(
-                skill.document.len() <= cap(skill.name),
+                read(skill) <= cap(skill.name),
                 "the {} skill is {} characters, over its {}",
                 skill.name,
-                skill.document.len(),
+                read(skill),
                 cap(skill.name)
             );
         }
-        let total: usize = BUILTIN_SKILLS.iter().map(|s| s.document.len()).sum();
+        let total: usize = BUILTIN_SKILLS.iter().map(read).sum();
         assert!(
             total <= TOTAL,
             "the skills total {total} characters, over {TOTAL}"

@@ -10,11 +10,15 @@ conversation with the user.
 
 ## Steps
 
-1. Read the goal. Explore its repositories. Call `repo_map` for each one,
-   and `search_memory` for what past sessions learned of it. Where the goal
-   names several repositories, run `ariadne knowledge interactions <repo>`
-   for what joins them. Name the repositories each task touches in its
-   ticket.
+1. Read the goal. Explore its repositories.
+<!-- knowledge on -->
+   Call `repo_map` for each one, and `search_memory` for what past sessions
+   learned of it. Where the goal names several repositories, run
+   `ariadne knowledge interactions <repo>` for what joins them.
+<!-- knowledge off -->
+   Call `search_memory` for what past sessions learned of it.
+<!-- knowledge end -->
+   Name the repositories each task touches in its ticket.
    Done when you can name each repository the goal touches.
 2. Ask the user about every unclear point.
    Write one question in your turn text.

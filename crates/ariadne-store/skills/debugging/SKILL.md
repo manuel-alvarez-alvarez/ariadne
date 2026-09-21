@@ -21,9 +21,7 @@ The feedback loop is the skill.
    run the loop after each cut.
    Done when a cut of any part left turns the loop green.
 4. Rank three to five falsifiable hypotheses before you test one. Write each
-   prediction: "if X is the cause, then Y turns the loop green." Rank them
-   with `symbol --detail context`, `impact` and `path` for the definitions
-   the repro runs through.
+   prediction: "if X is the cause, then Y turns the loop green."
    Done when the list is ranked and each entry has a prediction.
 5. Test the top hypothesis with one probe. Change one variable at a time.
    Tag every debug log with one prefix, such as `[DBG-1]`.
