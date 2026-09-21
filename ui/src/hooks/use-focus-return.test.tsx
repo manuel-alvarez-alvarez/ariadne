@@ -18,10 +18,10 @@
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { StrictMode, useRef } from "react"
-import { MemoryRouter, useNavigate, useSearchParams } from "react-router-dom"
+import { BrowserRouter, useNavigate, useSearchParams } from "react-router-dom"
 import { expect, it } from "vitest"
-
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { startAt } from "@/test/harness"
 
 import { useFocusReturn } from "./use-focus-return"
 
@@ -84,11 +84,12 @@ function Screen({ withRow = true }: { withRow?: boolean }) {
 }
 
 function mount({ at = "/", ...props }: { at?: string; withRow?: boolean } = {}) {
+  startAt(at)
   render(
     <StrictMode>
-      <MemoryRouter initialEntries={[at]}>
+      <BrowserRouter>
         <Screen {...props} />
-      </MemoryRouter>
+      </BrowserRouter>
     </StrictMode>,
   )
   return userEvent.setup()

@@ -17,10 +17,20 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { MemoryRouter, useLocation } from "react-router-dom"
+import { BrowserRouter, useLocation } from "react-router-dom"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 export { daemonFetch } from "./setup"
+
+/**
+ * Points the document at `entry`, for the router a test mounts to read.
+ *
+ * jsdom keeps one URL for the whole file, so a router that reads it starts
+ * wherever the last test left it unless each test says where it begins.
+ */
+export function startAt(entry: string): void {
+  window.history.replaceState(null, "", entry)
+}
 
 /** Where the router is, kept up to date by the probe `renderScreen` mounts. */
 interface Location {
@@ -61,6 +71,7 @@ export function renderScreen(
     },
   })
   seed?.(queryClient)
+  if (route !== null) startAt(route)
   const location: Location = { url: route ?? "/" }
   function Probe() {
     const current = useLocation()
@@ -76,11 +87,7 @@ export function renderScreen(
         </TooltipProvider>
       </QueryClientProvider>
     )
-    return route === null ? (
-      providers
-    ) : (
-      <MemoryRouter initialEntries={[route]}>{providers}</MemoryRouter>
-    )
+    return route === null ? providers : <BrowserRouter>{providers}</BrowserRouter>
   }
   const view = render(wrap(ui))
   return { queryClient, location, rerender: (next) => view.rerender(wrap(next)) }

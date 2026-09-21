@@ -12,13 +12,13 @@
 
 import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from "react-router-dom"
+import { createBrowserRouter, RouterProvider, useLocation, useNavigate } from "react-router-dom"
 import { beforeEach, describe, expect, it } from "vitest"
 
 import type { SkillDto } from "@/api"
 import { paths, SKILL_PARAM } from "@/routes/paths"
 import { aSkill } from "@/test/fixtures"
-import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, jsonResponse, renderScreen, startAt } from "@/test/harness"
 import { SkillsPage } from "./skills-page"
 
 const CODING: SkillDto = aSkill({ name: "coding" })
@@ -109,20 +109,18 @@ function renderPage(entry: string = paths.skills()) {
       </>
     )
   }
-  const router = createMemoryRouter(
-    [
-      {
-        path: paths.skills(),
-        element: (
-          <>
-            <Harness />
-            <SkillsPage />
-          </>
-        ),
-      },
-    ],
-    { initialEntries: [entry] },
-  )
+  startAt(entry)
+  const router = createBrowserRouter([
+    {
+      path: paths.skills(),
+      element: (
+        <>
+          <Harness />
+          <SkillsPage />
+        </>
+      ),
+    },
+  ])
   return renderScreen(<RouterProvider router={router} />, { route: null })
 }
 

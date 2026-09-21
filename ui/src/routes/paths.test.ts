@@ -2,9 +2,9 @@
 
 import { act, renderHook } from "@testing-library/react"
 import { createElement } from "react"
-import { MemoryRouter, useLocation } from "react-router-dom"
+import { BrowserRouter, useLocation } from "react-router-dom"
 import { describe, expect, it } from "vitest"
-
+import { startAt } from "@/test/harness"
 import {
   paths,
   sessionPanelFrom,
@@ -127,9 +127,9 @@ describe("taskPanelFrom", () => {
 
 describe("usePanelSessionTo", () => {
   it("keeps the open panel and moves its selected session", () => {
+    startAt("/?goal=g1&task=t1&tab=diff")
     const { result } = renderHook(() => usePanelSessionTo("s2"), {
-      wrapper: ({ children }) =>
-        createElement(MemoryRouter, { initialEntries: ["/?goal=g1&task=t1&tab=diff"] }, children),
+      wrapper: ({ children }) => createElement(BrowserRouter, null, children),
     })
 
     const params = new URLSearchParams(result.current.search)
@@ -142,16 +142,10 @@ describe("usePanelSessionTo", () => {
 
 describe("usePanelSessionNavigation", () => {
   it("comes back out of the session onto the list it came from", () => {
+    startAt("/?task=t1&tab=sessions&session=s1")
     const { result } = renderHook(
       () => ({ navigate: usePanelSessionNavigation(), location: useLocation() }),
-      {
-        wrapper: ({ children }) =>
-          createElement(
-            MemoryRouter,
-            { initialEntries: ["/?task=t1&tab=sessions&session=s1"] },
-            children,
-          ),
-      },
+      { wrapper: ({ children }) => createElement(BrowserRouter, null, children) },
     )
 
     act(() => result.current.navigate(null))

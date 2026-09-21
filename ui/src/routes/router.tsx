@@ -25,7 +25,6 @@ import { AppShell, type PageHandle } from "@/components/app-shell"
 import { AgentsPage } from "@/features/agents/agents-page"
 import { GoalsListPage } from "@/features/goals/goals-list-page"
 import { KnowledgeScreen } from "@/features/knowledge/knowledge-screen"
-import { MemoryPage } from "@/features/memory/memory-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { OutsideSessionsPage } from "@/features/sessions/outside-sessions-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
@@ -61,7 +60,6 @@ const routes: RouteObject[] = [
   // The models were folded into the agents screen; the address outlives it.
   { path: "models", element: <Navigate to={paths.agents()} replace /> },
   { path: "repositories", element: <RepositoriesPage />, handle: { title: "Repositories" } },
-  { path: "memory", element: <MemoryPage />, handle: { title: "Memory" } },
   { path: "knowledge", element: <KnowledgeScreen />, handle: { title: "Knowledge" } },
   { path: "*", element: <NotFoundPage /> },
 ]

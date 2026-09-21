@@ -18,30 +18,28 @@
 
 import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createMemoryRouter, RouterProvider } from "react-router-dom"
+import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { beforeEach, expect, it } from "vitest"
 
 import { AppShell, type PageHandle } from "@/components/app-shell"
 import { useSettingsStore } from "@/stores/settings"
-import { renderScreen } from "@/test/harness"
+import { renderScreen, startAt } from "@/test/harness"
 
 // The store is a module singleton, and the rail is persisted: without this,
 // the first test to fold it away folds it for every test after it.
 beforeEach(() => useSettingsStore.setState({ sidebarCollapsed: false }))
 
 function mountShell() {
-  const router = createMemoryRouter(
-    [
-      {
-        path: "/",
-        element: <AppShell />,
-        children: [
-          { index: true, element: <div />, handle: { title: "Goals" } satisfies PageHandle },
-        ],
-      },
-    ],
-    { initialEntries: ["/"] },
-  )
+  startAt("/")
+  const router = createBrowserRouter([
+    {
+      path: "/",
+      element: <AppShell />,
+      children: [
+        { index: true, element: <div />, handle: { title: "Goals" } satisfies PageHandle },
+      ],
+    },
+  ])
   // The tree brings its own router, so the harness only wraps it in the query
   // client and the tooltip provider the shell's own pieces need.
   renderScreen(<RouterProvider router={router} />, { route: null })
@@ -57,11 +55,11 @@ it("shows the navigation in full until it is folded away", () => {
   expect(screen.getByRole("link", { name: "Repositories" }).textContent).toBe("Repositories")
 })
 
-it("lists the knowledge screen right after memory", () => {
+it("lists the knowledge screen right after repositories", () => {
   mountShell()
 
   const links = screen.getAllByRole("link").map((link) => link.getAttribute("aria-label"))
-  expect(links.indexOf("Knowledge")).toBe(links.indexOf("Memory") + 1)
+  expect(links.indexOf("Knowledge")).toBe(links.indexOf("Repositories") + 1)
   expect(screen.getByRole("link", { name: "Knowledge" }).getAttribute("href")).toBe("/knowledge")
 })
 

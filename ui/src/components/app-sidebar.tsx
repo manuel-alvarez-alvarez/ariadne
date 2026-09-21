@@ -27,7 +27,6 @@
 
 import {
   BotIcon,
-  BrainIcon,
   CpuIcon,
   FolderGit2Icon,
   type LucideIcon,
@@ -53,7 +52,6 @@ const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean
   { to: paths.skills(), label: "Skills", icon: CpuIcon },
   { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
-  { to: paths.memory(), label: "Memory", icon: BrainIcon },
   { to: paths.knowledge(), label: "Knowledge", icon: NetworkIcon },
 ]
 

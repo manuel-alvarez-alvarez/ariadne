@@ -103,7 +103,7 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["skills",       "list", {}]        ["skills",   "detail", name]
 ["repositories", "list", filters]   ["repositories", "detail", id]
 ["agents",       "list", {}]        ["models",   "list", {}]
-["agent-events", "list", filters]   ["memories", "list", filters]
+["agent-events", "list", filters]
 ```
 
 The knowledge reads are sub-resources of a repository's detail key, and the
@@ -153,7 +153,6 @@ the query cache and it stays live.
 | `repository_created` | patch `repositories.detail`, invalidate `repositories.lists` |
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
-| `memory_created`, `memory_deleted` | invalidate `memories.lists` — a memory carries no id worth a detail key, and a global one sits in the global list, the every-scope list and each repository's, so, like `agent_event`, this simply refetches |
 | `knowledge_indexed`, `knowledge_failed` | invalidate that repository's `knowledgeStatus`, every `knowledgeSearch` and `knowledgeSymbol` entry, every `knowledgeInteractions` list, every impact and path walk, and every `knowledgeGraph` and `knowledgeOutline` entry under it (022) |
 
 The daemon has **no replay**: anything that happened while the stream was down
@@ -234,8 +233,8 @@ There is no per-feature route file: there are a handful of routes, half of them
 one line, and a file that mounted one said less about its feature than the line
 it held. What the header calls a screen rides on the route's own `handle`.
 
-Seven screens have URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
-`#/agents`, `#/repositories`, `#/memory`, `#/knowledge` — and `#/` redirects
+Six screens have URLs of their own — `#/goals`, `#/sessions`, `#/skills`,
+`#/agents`, `#/repositories`, `#/knowledge` — and `#/` redirects
 onto the board. The knowledge screen keeps its repository, ref and tab in
 `?repository=`, `?ref=` and `?tab=`; a tab is one entry in
 `src/features/knowledge/knowledge-tabs.tsx`.
@@ -245,11 +244,6 @@ a session's own panel, `?tab=sessions&session=` for a session inside a goal's or
 a task's panel), which `src/components/detail-panels.tsx` reads. The old
 `#/goals/:goalId` and `#/tasks/:taskId` deep links survive as redirects onto the
 board with the panel open.
-
-Memory (019) has a sidebar screen of its own at `#/memory`, over the global
-memories and every repository's. Its scope filter is the `?repository=<id>`
-param (`?repository=global` for the global set), so a link or a reload opens
-it narrowed to one repository.
 
 **The sessions screen is the one exception**, and the only place a param means
 two things: there `?goal=` and `?task=` are what the *list* is narrowed to — the

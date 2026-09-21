@@ -56,8 +56,6 @@ export const paths = {
   outsideSessions: () => "/sessions/outside",
   agents: () => "/agents",
   repositories: () => "/repositories",
-  /** Every saved memory, global and every repository's: list, search, add and delete (019). */
-  memory: () => "/memory",
   /**
    * What the knowledge base holds for every repository (022), opened on one
    * repository's pick when given: see `features/knowledge/knowledge-screen.tsx`.

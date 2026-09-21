@@ -42,8 +42,6 @@ const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   repository_created: true,
   repository_updated: true,
   repository_deleted: true,
-  memory_created: true,
-  memory_deleted: true,
   knowledge_indexed: true,
   knowledge_failed: true,
 }

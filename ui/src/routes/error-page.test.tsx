@@ -16,8 +16,10 @@
 
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createMemoryRouter, RouterProvider } from "react-router-dom"
+import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { expect, it, vi } from "vitest"
+
+import { startAt } from "@/test/harness"
 
 import { RouteErrorPage } from "./error-page"
 import { NotFoundPage } from "./not-found-page"
@@ -28,23 +30,21 @@ function Boom(): never {
 }
 
 function mount(element: React.ReactElement, path = "/boom") {
-  const router = createMemoryRouter(
-    [
-      { path: "/boom", element, errorElement: <RouteErrorPage /> },
-      // The router's own way of saying a thing is not there: a route that
-      // throws a `Response`, which is what `isRouteErrorResponse` recognises.
-      {
-        path: "/missing",
-        loader: () => {
-          throw new Response("no such goal", { status: 404, statusText: "Not Found" })
-        },
-        element: <div />,
-        errorElement: <RouteErrorPage />,
+  startAt(path)
+  const router = createBrowserRouter([
+    { path: "/boom", element, errorElement: <RouteErrorPage /> },
+    // The router's own way of saying a thing is not there: a route that
+    // throws a `Response`, which is what `isRouteErrorResponse` recognises.
+    {
+      path: "/missing",
+      loader: () => {
+        throw new Response("no such goal", { status: 404, statusText: "Not Found" })
       },
-      { path: "*", element: <NotFoundPage /> },
-    ],
-    { initialEntries: [path] },
-  )
+      element: <div />,
+      errorElement: <RouteErrorPage />,
+    },
+    { path: "*", element: <NotFoundPage /> },
+  ])
   render(<RouterProvider router={router} />)
 }
 

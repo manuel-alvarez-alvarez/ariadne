@@ -35,8 +35,7 @@ Out: the daemon endpoints themselves (012).
 3. Screens: the goals board (swimlanes plus an attention strip), the task
    panel (facts, diff, messages, history), sessions, each shown in its
    console, outside sessions that a ready task can adopt as its author,
-   skills, repositories, memory (list, search, add, delete, narrowed to one
-   repository by `?repository=<id>`), the knowledge screen (below), the
+   skills, repositories, the knowledge screen (below), the
    agents of the daemon's ACP registry with their launch flags and the models
    each may be staffed on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
@@ -180,7 +179,7 @@ Out: the daemon endpoints themselves (012).
 30. A session panel shows a reported context window as `<used> / <size>`,
     using the compact spelling of token figures. It shows no context fact
     before the agent reports one, and it never shows a cost.
-31. The knowledge screen (022) is a sidebar entry next to Memory, at
+31. The knowledge screen (022) is a sidebar entry after Repositories, at
     `#/knowledge`. A repository picker and a ref picker lead it, and tabs
     follow: `overview`, `repositories`, `symbols`, `impact` and `files`. The
     URL keeps all three as `?repository=`, `?ref=` and `?tab=`; without them
@@ -287,20 +286,9 @@ Out: the daemon endpoints themselves (012).
   `::lists what each reviewer picked, oldest first`,
   `::keeps the singular Author fact and shows no pick on a one-author task`)
   — parity with `ariadne task inspect`'s own author and picks lines (004).
-- The memory screen `#/memory` lists, searches through the daemon's own
-  search endpoint, and deletes an entry, and it opens narrowed to the
-  repository of `?repository=<id>` and writes the scope filter back to that
-  param
-  (`ui/src/features/memory/memory-page.test.tsx::opens with the repository of the URL selected, and lists its memories alone`,
-  `::writes the picked scope back to the URL, and clears it for all scopes`,
-  `::searches through the daemon's own endpoint rather than filtering locally`,
-  `::keeps the daemon's delete refusal on screen instead of toasting it away`)
-  — parity with `ariadne memory ls|search|delete` (019). A repository row
-  has no Memory button
-  (`ui/src/features/repositories/repositories-page.test.tsx::offers no Memory button on a row, which is managed from its own screen`).
-- The sidebar lists Knowledge right after Memory, and `#/knowledge` mounts
+- The sidebar lists Knowledge right after Repositories, and `#/knowledge` mounts
   the knowledge screen
-  (`ui/src/components/app-shell.test.tsx::lists the knowledge screen right after memory`,
+  (`ui/src/components/app-shell.test.tsx::lists the knowledge screen right after repositories`,
   `ui/src/routes/router.test.tsx::mounts the knowledge screen at #/knowledge`).
 - The screen opens on the Overview tab, the first repository and its base
   branch; it reads the repository, the ref and the tab back from the URL,

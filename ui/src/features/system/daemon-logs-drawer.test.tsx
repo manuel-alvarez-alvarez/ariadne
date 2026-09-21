@@ -10,7 +10,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createMemoryRouter, RouterProvider } from "react-router-dom"
+import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { beforeEach, expect, it, vi } from "vitest"
 
 import { AppShell } from "@/components/app-shell"
@@ -20,6 +20,7 @@ import type { useConnection } from "@/hooks/use-connection"
 type Connection = ReturnType<typeof useConnection>
 
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
+import { startAt } from "@/test/harness"
 
 vi.mock("@/hooks/use-connection", () => ({
   useConnection: (): Connection => ({
@@ -37,7 +38,8 @@ beforeEach(() => {
 })
 
 function mountShell() {
-  const router = createMemoryRouter([
+  startAt("/")
+  const router = createBrowserRouter([
     { path: "/", element: <AppShell />, children: [{ index: true, element: <div /> }] },
   ])
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })

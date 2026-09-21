@@ -19,7 +19,7 @@
  * same key.
  */
 
-import type { MemoryScope, SessionStatus, TaskStatus } from "./types"
+import type { SessionStatus, TaskStatus } from "./types"
 
 interface PageFilters {
   after?: string
@@ -48,15 +48,6 @@ interface OutsideSessionFilters {
   dir?: string
   since?: string
   until?: string
-  q?: string
-}
-
-interface MemoryFilters {
-  /** One repository's memories; omitted, every repository's. */
-  repository?: string
-  /** `repository`, `global` or `all`; the daemon defaults to `all`. */
-  scope?: MemoryScope
-  /** A substring search hits the daemon's search endpoint instead of list. */
   q?: string
 }
 
@@ -242,14 +233,5 @@ export const qk = {
     all: () => ["agent-events"] as const,
     lists: () => ["agent-events", "list"] as const,
     list: (filters?: AgentEventFilters) => ["agent-events", "list", filters ?? {}] as const,
-  },
-  /**
-   * Saved facts, of one repository or of none (`GET /v1/memories[/search]`),
-   * narrowed by repository and scope.
-   */
-  memories: {
-    all: () => ["memories"] as const,
-    lists: () => ["memories", "list"] as const,
-    list: (filters: MemoryFilters) => ["memories", "list", filters] as const,
   },
 } as const

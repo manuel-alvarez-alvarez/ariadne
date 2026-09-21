@@ -72,7 +72,7 @@ npm run gen:api -- ../some-spec-dump.json  # a spec dump on disk
 ```
 
 and commit both files. `openapi.json` is the daemon's verbatim document; one
-normalization happens in memory before generating: utoipa derives `operationId`
+normalization happens on the script's own copy before generating: utoipa derives `operationId`
 from the handler function name, so ids collide across tags (`goals::list` and
 `tasks::list` are both `list`), and `scripts/gen-api.mjs` qualifies them with
 their tag — `goals_list`, `tasks_list` — which is what the generated

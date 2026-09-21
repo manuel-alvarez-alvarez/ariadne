@@ -20,10 +20,6 @@ export type RepositoryDto = Schemas["RepositoryDto"]
 export type CreateRepositoryRequest = Schemas["CreateRepositoryRequest"]
 export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
 
-export type MemoryDto = Schemas["MemoryDto"]
-export type MemoryScope = Schemas["MemoryScope"]
-export type CreateMemoryRequest = Schemas["CreateMemoryRequest"]
-
 export type TaskDto = Schemas["TaskDto"]
 export type TaskAgentDto = Schemas["TaskAgentDto"]
 export type AgentAssignment = Schemas["AgentAssignment"]
@@ -80,7 +76,13 @@ export type AgentEventDto = Schemas["AgentEventDto"]
 export type ResyncDto = Schemas["ResyncDto"]
 export type HeartbeatDto = Schemas["HeartbeatDto"]
 
-/** Every domain event carried by `GET /v1/events/stream`, as a tagged union. */
-export type DomainEvent = Schemas["DomainEvent"]
+/**
+ * Every domain event carried by `GET /v1/events/stream`, as a tagged union.
+ *
+ * Minus the kinds starting `memo`: the generated schema still lists them and
+ * the app no longer reads them. Drop the `Exclude` when the schema is
+ * regenerated without them.
+ */
+export type DomainEvent = Exclude<Schemas["DomainEvent"], { event: `memo${string}` }>
 /** `"goal_updated" | "task_updated" | ...` */
 export type DomainEventKind = DomainEvent["event"]

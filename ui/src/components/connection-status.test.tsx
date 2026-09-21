@@ -15,12 +15,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createMemoryRouter, RouterProvider } from "react-router-dom"
+import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { expect, it, vi } from "vitest"
 
 import { AppShell } from "@/components/app-shell"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { useConnection } from "@/hooks/use-connection"
+import { startAt } from "@/test/harness"
 
 import { ConnectionStatus } from "./connection-status"
 
@@ -104,7 +105,8 @@ it("says why the connection went, once it is gone", async () => {
 
 it("lives in the shell's footer, and no longer in the sidebar", () => {
   state.current = conn()
-  const router = createMemoryRouter([
+  startAt("/")
+  const router = createBrowserRouter([
     { path: "/", element: <AppShell />, children: [{ index: true, element: <div /> }] },
   ])
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
