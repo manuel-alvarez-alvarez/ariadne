@@ -45,11 +45,6 @@ Judge two axes apart: repository conventions, and task acceptance.
    Done when every check has a result.
 6. Judge the repository axis. Check the change against documented style,
    naming, structure and code patterns.
-   Call `save_memory` for a convention breach that repeats across tasks.
-   Save a trap, a working command or a convention no file states. Save only
-   a fact that cost you time. Never save a task report, a change summary, a
-   plan, or what the code, a spec or `AGENTS.md` states. A task saves 2
-   memories at most, and the daemon refuses the third.
    Done when every breach cites its rule and location.
 7. Judge the acceptance axis. Check every criterion, its tests and added
    behavior.

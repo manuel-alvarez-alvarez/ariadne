@@ -26,7 +26,6 @@ const GROUPS: &[&str] = &[
     "daemon",
     "goal",
     "knowledge",
-    "memory",
     "repo",
     "session",
     "skill",
@@ -121,10 +120,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("knowledge status", true),
     ("knowledge symbol", true),
     ("mcp serve", false),
-    ("memory add", true),
-    ("memory delete", true),
-    ("memory ls", true),
-    ("memory search", true),
     ("models disable", true),
     ("models enable", true),
     ("models ls", true),
@@ -579,107 +574,6 @@ fn discover_all_and_cursor_are_exclusive() {
             "next-page",
         ])
         .is_err()
-    );
-}
-
-#[test]
-fn memory_delete_takes_the_entry_alone() {
-    let Command::Memory {
-        command: MemoryCommand::Delete { id, yes },
-    } = parse(&["ariadne", "memory", "delete", "01MEMORY", "--yes"]).command
-    else {
-        panic!("memory delete");
-    };
-    assert_eq!(id, "01MEMORY");
-    assert!(yes);
-    assert!(
-        try_parse(&[
-            "ariadne", "memory", "delete", "01MEMORY", "--repo", "01REPO",
-        ])
-        .is_err(),
-        "delete names no repository"
-    );
-}
-
-/// `ls` and `search` read one repository, only the global memories, or, named
-/// neither, every scope, and refuse a call that names both.
-#[test]
-fn memory_ls_and_search_take_a_repository_or_global_or_neither() {
-    let scope = |command: MemoryCommand| match command {
-        MemoryCommand::Ls { repo, global } | MemoryCommand::Search { repo, global, .. } => {
-            (repo, global)
-        }
-        _ => panic!("neither ls nor search"),
-    };
-    for verb in [&["ls"][..], &["search", "parser"][..]] {
-        let line = |args: &[&str]| {
-            let mut argv = vec!["ariadne", "memory"];
-            argv.extend_from_slice(verb);
-            argv.extend_from_slice(args);
-            try_parse(&argv)
-        };
-        let read = |args: &[&str]| {
-            let Command::Memory { command } = line(args).expect("parses").command else {
-                panic!("memory");
-            };
-            scope(command)
-        };
-
-        assert_eq!(read(&["--repo", "01REPO"]), (Some("01REPO".into()), false));
-        assert_eq!(read(&["--global"]), (None, true));
-        assert_eq!(read(&[]), (None, false), "neither reads every scope");
-        assert!(
-            line(&["--repo", "01REPO", "--global"]).is_err(),
-            "{verb:?}: a read has one scope or none"
-        );
-    }
-}
-
-/// `add` names the one scope a fact belongs to, and refuses a call that
-/// names none or both.
-#[test]
-fn memory_add_names_exactly_one_scope() {
-    let line = |args: &[&str]| {
-        let mut argv = vec!["ariadne", "memory", "add", "Run the parser fixture."];
-        argv.extend_from_slice(args);
-        try_parse(&argv)
-    };
-
-    let Command::Memory {
-        command:
-            MemoryCommand::Add {
-                text,
-                repo,
-                global,
-                expires,
-            },
-    } = line(&["--repo", "01REPO"])
-        .expect("a named repository parses")
-        .command
-    else {
-        panic!("memory add");
-    };
-    assert_eq!(text, "Run the parser fixture.");
-    assert_eq!(repo.as_deref(), Some("01REPO"));
-    assert!(!global);
-    assert_eq!(expires, None);
-
-    let Command::Memory {
-        command: MemoryCommand::Add { repo, global, .. },
-    } = line(&["--global"]).expect("--global parses").command
-    else {
-        panic!("memory add");
-    };
-    assert_eq!(repo, None);
-    assert!(global);
-
-    assert!(
-        line(&[]).is_err(),
-        "nothing says which scope the fact is in"
-    );
-    assert!(
-        line(&["--repo", "01REPO", "--global"]).is_err(),
-        "a fact belongs to one scope"
     );
 }
 

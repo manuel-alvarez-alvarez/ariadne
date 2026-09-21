@@ -14,7 +14,6 @@ reads.
 | [Permission modes](permissions.md) | automatic, prompted, and remembered ACP permission answers |
 | [Adopting a session](adopting-sessions.md) | finding an ACP agent's stored session and using it as a task author |
 | [The knowledge base](knowledge.md) | the symbol index over every repository: what is indexed, the `search_code` and `outline` tools, `ariadne knowledge`, and `knowledge_enabled` |
-| [Memory](memory.md) | facts an agent or you save about a repository or globally, who writes one, and `ariadne memory add\|ls\|search\|delete` |
 | [How Ariadne works](how-it-works.md) | a goal from planning to landing, task lifecycle, and ACP sessions |
 
 Ariadne Desktop has its own page: [`ui/README.md`](../ui/README.md).

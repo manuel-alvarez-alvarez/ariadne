@@ -133,7 +133,7 @@ per kind.
 
 ## The tools agents get
 
-Every seat has six tools, beside the memory tools:
+Every seat has six tools:
 
 - `search_code` finds definitions by name. Words, camelCase parts and
   snake_case parts all match, each as a prefix: `add_worktree`, `addWork` and

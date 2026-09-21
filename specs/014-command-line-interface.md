@@ -42,11 +42,10 @@ same binary also serves (013).
 
 ## Behavior
 
-1. Every user-facing action exists both here and in the desktop app, project
-   memory included (019).
+1. Every user-facing action exists both here and in the desktop app.
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
    `models`, `skill`, `repo`, `goal`, `task`, `session`, `events`,
-   `attention`, `memory`, `knowledge`, `attach`, `doctor`, `completions`,
+   `attention`, `knowledge`, `attach`, `doctor`, `completions`,
    plus the one hidden command the agents use (`mcp serve`). Nothing in the tree launches
    an agent or reports on one's behalf: the daemon's ACP runtime does both
    (021).
@@ -163,10 +162,7 @@ same binary also serves (013).
     ids, `--repo` repository ids and `--agent` registry agent ids. The
     command prints a status line each for the goal, the task and the session;
     JSON preserves all three, and quiet output prints the task id.
-27. `ariadne memory add|ls|search|delete` writes, reads and removes active
-    memories. `add`, `ls` and `search` name a repository, by id or path, or
-    `--global`; `delete` takes only the entry's id (019).
-28. `ariadne attach`, `goal attach` and `task attach` open the console of the
+27. `ariadne attach`, `goal attach` and `task attach` open the console of the
     session an id names, revived first when it is gone. On a terminal it is an
     inline pane (008); with stdin or stdout redirected it is the plain line
     protocol — one `kind · summary` per event, numbered permission choices,
@@ -176,7 +172,7 @@ same binary also serves (013).
     permission answers. `--tail`, `--since` and repeatable `--kind` narrow the
     snapshot. Their `-f` forms follow the console stream and print agent chunks
     as they arrive, while JSON keeps the daemon's event objects unchanged.
-29. `ariadne knowledge status|reindex|search|outline|symbol|path|impact|interactions|map`
+28. `ariadne knowledge status|reindex|search|outline|symbol|path|impact|interactions|map`
     read the knowledge base (022). `status`, `reindex` and `interactions`
     name a repository by id or path, `interactions` taking `--ref` too;
     `search <query>` takes `--repository`, `--ref`, `--kind`, `--path` and
@@ -350,10 +346,6 @@ same binary also serves (013).
   author is refused
   (`cli/tests.rs::adopt_takes_the_session_the_new_goal_and_the_task_flags`,
   `::adopt_takes_a_goal_or_a_new_goal_and_exactly_one`).
-- The memory commands are classified like other lists and mutations
-  (`cli/tests.rs::every_command_in_the_tree_is_classified`), `add` names
-  exactly one scope (`::memory_add_names_exactly_one_scope`), and delete
-  takes its entry alone (`::memory_delete_takes_the_entry_alone`).
 - The knowledge commands are classified the same way, `search` takes its
   filters, `outline` its repository and path, `symbol` its name and detail,
   `path` its two names and depth, `impact` one of a symbol and a diff, and

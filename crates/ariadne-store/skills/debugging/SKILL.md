@@ -30,12 +30,7 @@ The feedback loop is the skill.
    regression test.
    Done when the test fails without the fix, passes with it, and the tests
    of the crate you changed are green.
-7. Call `save_memory` for the cause, once the loop proved it. Save a trap, a
-   working command or a convention no file states. Save only a fact that
-   cost you time. Never save a task report, a change summary, a plan, or
-   what the code, a spec or `AGENTS.md` states. A task saves 2 memories at
-   most, and the daemon refuses the third.
-8. Clean up. Grep the debug prefix away and delete the throwaway harness.
+7. Clean up. Grep the debug prefix away and delete the throwaway harness.
    Name the confirmed cause in the commit body.
    Done when the grep finds nothing.
 
@@ -65,7 +60,7 @@ The feedback loop is the skill.
 - "The failing test is probably wrong." -> Verify that. Fix a wrong test;
   skip none.
 - "The reviewer wants to see my reasoning." -> The commit body carries the
-  cause. Save the trap alone.
+  cause.
 
 ## Done
 

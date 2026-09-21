@@ -66,9 +66,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      (the pick of spec 004: once per reviewer, only once every author is
      approved)
    - **every seat**: `send_message`, `read_messages` — the channel
-     the agents talk to each other on (018); `save_memory`, `search_memory` —
-     the repository facts agents choose to keep and retrieve (019);
-     `search_code`, `outline`, `symbol`, `path`, `impact`, `repo_map` — the
+     the agents talk to each other on (018); `search_code`, `outline`,
+     `symbol`, `path`, `impact`, `repo_map` — the
      symbol index over the
      repositories and the graph over it (022), listed and served only while
      the daemon runs with `knowledge_enabled`, which every launch tells the
@@ -159,14 +158,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::a_message_body_is_taken_as_message_too`).
 - Every permission mode the schema offers is one the tool takes
   (`tools.rs::a_task_takes_every_permission_mode_its_schema_offers`).
-- Memory tools save and search the repository they name
-  (`tools.rs::memory_tools_save_and_search_the_named_repository`).
-- Memory tools default to a task's repository
-  (`tools.rs::memory_tools_default_to_the_task_repository`), default to a
-  goal's only repository
-  (`::memory_search_defaults_to_the_goals_only_repository`), and require a
-  repository when the goal has several
-  (`::memory_search_needs_a_repository_when_the_goal_has_several`).
 - A ref that is not ready answers each of the six knowledge tools with the
   daemon's refusal as the tool's text
   (`tools.rs::a_ref_that_is_not_ready_answers_every_knowledge_tool_with_the_refusal`),

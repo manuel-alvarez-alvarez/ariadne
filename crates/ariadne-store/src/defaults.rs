@@ -898,9 +898,7 @@ mod tests {
     /// only its: the block that used to be pasted into all three system
     /// prompts lives in one place now, and no prompt here repeats it. The
     /// skills are read beside the defaults, since a skill that restated a
-    /// session rule would be a second owner of it: the rule to search memory
-    /// before a discovery is repeated holds for every seat and is stated
-    /// there alone (019).
+    /// session rule would be a second owner of it.
     #[test]
     fn no_default_repeats_what_every_session_is_told_by_the_mcp_server() {
         for (name, text) in all_defaults().into_iter().chain(all_skills()) {
@@ -1517,9 +1515,6 @@ mod tests {
         // whole suite is the author's seat text to say, and the run itself is
         // a step of the landing that owns it.
         //
-        // The last is the one search of memory a skill names: the
-        // orchestrator's, while it explores a goal. Every other seat is told
-        // to search by the session rules alone (019).
         for marker in [
             "git merge --no-edit",
             "push plainly",
@@ -1529,7 +1524,6 @@ mod tests {
             "It starts every task and ends planning",
             "the reviewer runs it before each verdict; the landing runs it once",
             "Otherwise, run the whole suite, build and linters once.",
-            "`search_memory`",
         ] {
             let places = all_defaults()
                 .into_iter()
@@ -2024,71 +2018,6 @@ mod tests {
         assert_eq!(skill_text("Ask twice.\n", false), "Ask twice.\n");
     }
 
-    /// Every seat holds `save_memory` and `search_memory` (019), and for as
-    /// long as no skill named either the store held nothing: a tool no step
-    /// names is a tool no seat calls. So the five skills that learn something
-    /// a later session pays to learn again each save it at the step that
-    /// earns it, and `orchestration` searches while it explores a goal:
-    ///
-    /// - `coding` saves the trap it hit, or the command that proved the
-    ///   change;
-    /// - `testing` saves the seam or the flake it had to learn;
-    /// - `debugging` saves the cause once the loop proved it;
-    /// - `code-review` saves a convention breach that repeats across tasks;
-    /// - `research` saves the finding that answers the question again later.
-    ///
-    /// The failure to prevent is the other one: a talkative agent that writes
-    /// eight true and worthless notes. The daemon caps a task at two memories,
-    /// and every write step carries the bar that keeps an agent under the cap
-    /// by choice — what is worth saving, what never is, and the cap itself —
-    /// in the same words, so a step that lost a sentence of it reads as a
-    /// step that lost the bar. The session rules carry the one read rule that
-    /// holds for every seat alike, and no skill repeats it
-    /// (`no_default_repeats_what_every_session_is_told_by_the_mcp_server`).
-    #[test]
-    fn every_skill_that_learns_names_the_memory_tools() {
-        const BAR: [&str; 4] = [
-            "Save a trap, a working command or a convention no file states.",
-            "Save only a fact that cost you time.",
-            "Never save a task report, a change summary, a plan, or what the code, a spec or `AGENTS.md` states.",
-            "A task saves 2 memories at most, and the daemon refuses the third.",
-        ];
-        for (name, earns) in [
-            (
-                "coding",
-                "the trap you hit, the seam you had to learn, or the command that proved the change",
-            ),
-            ("debugging", "the cause, once the loop proved it"),
-            (
-                "code-review",
-                "a convention breach that repeats across tasks",
-            ),
-            (
-                "research",
-                "the finding that answers the question again later",
-            ),
-        ] {
-            let doc = unwrapped(default_skill_document(name).unwrap());
-            assert!(
-                doc.contains(&format!("Call `save_memory` for {earns}.")),
-                "the {name} skill does not save {earns}"
-            );
-            for rule in BAR {
-                assert!(
-                    doc.contains(rule),
-                    "the {name} skill dropped \"{rule}\" from the bar"
-                );
-            }
-        }
-
-        let orchestration = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
-        assert!(
-            orchestration.contains("Explore its repositories.")
-                && orchestration.contains("`search_memory` for what past sessions learned of it"),
-            "the orchestration skill does not search memory while it explores a goal"
-        );
-    }
-
     /// A skill is read on demand rather than on every launch, so it is capped
     /// on its own rather than against the briefings' total. The caps are still
     /// what a rewrite fits in: moving one is a decision, not a way round a
@@ -2118,8 +2047,8 @@ mod tests {
     /// becoming room nobody had argued for.
     ///
     /// `coding` gets 5400, because `testing` merged into it. The two ran at
-    /// 3000 each and shared four blocks: the check that ends a step, the
-    /// memory bar, the log rule and half the rationalizations. One document
+    /// 3000 each and shared three blocks: the check that ends a step, the
+    /// log rule and half the rationalizations. One document
     /// states them once and adds the commit form, so the merged cap is the
     /// two tiers less the overlap the merge took out.
     ///
@@ -2145,14 +2074,6 @@ mod tests {
     /// the tool it needs pays for the line range instead. Each of the five
     /// names the tool at the step that uses it, and none of them explains
     /// the tool — the tool's own description does that.
-    ///
-    /// The memory step then cost `coding`, `testing`, `debugging`,
-    /// `code-review` and `research` a paragraph each, and `orchestration` a
-    /// clause, and no cap moved for it. The room came from the words the
-    /// documents could spare: a rule the author's seat text already states
-    /// (refactor nothing, no trailer, nothing generated), a rationale said
-    /// twice, and a closing sentence that repeated a step. A cap that rose for
-    /// a paragraph about saving less would have argued against itself.
     ///
     /// A document then came to hold two texts, one for the knowledge base on
     /// and one for it off ([`skill_text`]). An agent reads one of them, so a

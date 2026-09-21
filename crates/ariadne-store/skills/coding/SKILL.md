@@ -48,13 +48,7 @@ test proves it. The task is one commit.
    For another runner: `| tail -n 40`.
    Read the log file only for the detail of a failure.
    Done when both are green.
-9. Call `save_memory` for the trap you hit, the seam you had to learn, or
-   the command that proved the change. Save a trap, a working command or a
-   convention no file states. Save only a fact that cost you time. Never
-   save a task report, a change summary, a plan, or what the code, a spec
-   or `AGENTS.md` states. A task saves 2 memories at most, and the daemon
-   refuses the third.
-10. Commit the work once, in the form below.
+9. Commit the work once, in the form below.
     Done when the task is one commit on your branch.
 
 ## The commit

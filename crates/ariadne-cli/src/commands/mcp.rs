@@ -50,8 +50,6 @@ impl McpSeat {
                 "complete_goal",
                 "send_message",
                 "read_messages",
-                "save_memory",
-                "search_memory",
                 "search_code",
                 "outline",
                 "symbol",
@@ -67,8 +65,6 @@ impl McpSeat {
                 "record_pull_request",
                 "send_message",
                 "read_messages",
-                "save_memory",
-                "search_memory",
                 "search_code",
                 "outline",
                 "symbol",
@@ -83,8 +79,6 @@ impl McpSeat {
                 "pick_winner",
                 "send_message",
                 "read_messages",
-                "save_memory",
-                "search_memory",
                 "search_code",
                 "outline",
                 "symbol",
@@ -195,9 +189,9 @@ impl AriadneMcp {
         self.client.post_json(path, body).await.map_err(to_mcp_err)
     }
 
-    /// Resolve the repository for a memory tool, or for an outline: the
+    /// Resolve the repository for an outline: the
     /// task's, else the goal's only one, else a refusal that says to name it.
-    async fn memory_repository(&self, named: Option<String>) -> Result<String, McpError> {
+    async fn repository(&self, named: Option<String>) -> Result<String, McpError> {
         if let Some(repository_id) = named {
             return Ok(repository_id);
         }
@@ -348,7 +342,7 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
 /// rule names one.
 fn session_rules(seat: &McpSeat, knowledge_enabled: bool) -> String {
     format!(
-        r#"Reach Ariadne only through these tools. A backticked name is a tool. If your client defers these tools, load the ones you need in one tool search before the first call. {} {}Call `search_memory` before you repeat a discovery. Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
+        r#"Reach Ariadne only through these tools. A backticked name is a tool. If your client defers these tools, load the ones you need in one tool search before the first call. {} {}Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
 
 Write all text in ASD-STE100 Simplified Technical English (STE):
 - Write one instruction in one sentence.
@@ -489,8 +483,6 @@ pub(crate) mod tests {
                     "complete_goal",
                     "send_message",
                     "read_messages",
-                    "save_memory",
-                    "search_memory",
                     "search_code",
                     "outline",
                     "symbol",
@@ -509,8 +501,6 @@ pub(crate) mod tests {
                     "record_pull_request",
                     "send_message",
                     "read_messages",
-                    "save_memory",
-                    "search_memory",
                     "search_code",
                     "outline",
                     "symbol",
@@ -528,8 +518,6 @@ pub(crate) mod tests {
                     "pick_winner",
                     "send_message",
                     "read_messages",
-                    "save_memory",
-                    "search_memory",
                     "search_code",
                     "outline",
                     "symbol",
@@ -565,9 +553,7 @@ pub(crate) mod tests {
             "repo_map",
             "request_review",
             "retry_task",
-            "save_memory",
             "search_code",
-            "search_memory",
             "send_message",
             "submit_verdict",
             "symbol",
@@ -715,7 +701,6 @@ pub(crate) mod tests {
             for rule in [
                 "Reach Ariadne only through these tools",
                 "Find code with `search_code` and `symbol` before you read a file",
-                "Call `search_memory` before you repeat a discovery",
                 "as few turns as you can",
                 "Write all text in ASD-STE100 Simplified Technical English",
                 "Write no more than 20 words in a sentence",
@@ -814,12 +799,6 @@ pub(crate) mod tests {
     /// told to call a tool it never loaded did not call it. The rule holds
     /// for every tool of every seat, so it is here and in no skill.
     ///
-    /// The cap was 900 for the memory rule, which is the same shape
-    /// again: call `search_memory` before you repeat a discovery. Every
-    /// seat holds the tool (019) and no seat was ever told when to use it,
-    /// so the store held nothing. The reading rule is the one line that
-    /// holds for every seat alike; when a skill writes a memory is that
-    /// skill's own step to say.
     #[test]
     fn the_shared_rules_stay_small() {
         const CAP: usize = 1000;

@@ -10,7 +10,6 @@ use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
 use crate::commands::knowledge::KnowledgeCommand;
-use crate::commands::memory::MemoryCommand;
 use crate::commands::models::ModelsCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
@@ -69,15 +68,6 @@ Examples:
   ariadne repo add ~/projects/ui --branch next
   ariadne repo ls
   ariadne repo update <repo-id> --branch main
-";
-
-const MEMORY_EXAMPLES: &str = "\
-Examples:
-  ariadne memory add \"Run the parser fixture before a knowledge change\" --repo <repo-id>
-  ariadne memory add \"The daemon needs a real git checkout\" --global
-  ariadne memory ls --repo <repo-id>            # or --global, or neither for every scope
-  ariadne memory search parser --repo <repo-id>
-  ariadne memory delete <memory-id>
 ";
 
 const KNOWLEDGE_EXAMPLES: &str = "\
@@ -351,16 +341,6 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
-    /// Save and read memory
-    ///
-    /// A fact about one repository, or a global one true of every
-    /// repository. An agent saves one about its own work; you save, list,
-    /// search and delete in any scope. Nothing here is added to a prompt.
-    #[command(after_help = MEMORY_EXAMPLES)]
-    Memory {
-        #[command(subcommand)]
-        command: MemoryCommand,
-    },
     /// Search the code index
     ///
     /// The daemon indexes every registered repository: its definitions, by
@@ -526,8 +506,6 @@ const LISTINGS: &[&str] = &[
     "knowledge outline",
     "knowledge search",
     "models ls",
-    "memory ls",
-    "memory search",
     "skill ls",
     "repo ls",
     "session discover",
@@ -554,10 +532,6 @@ const QUIET_OUTPUT: &[&str] = &[
     "models disable",
     "models enable",
     "models ls",
-    "memory add",
-    "memory delete",
-    "memory ls",
-    "memory search",
     "repo add",
     "repo ls",
     "repo rm",

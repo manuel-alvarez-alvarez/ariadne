@@ -12,11 +12,10 @@ conversation with the user.
 
 1. Read the goal. Explore its repositories.
 <!-- knowledge on -->
-   Call `repo_map` for each one, and `search_memory` for what past sessions
-   learned of it. Where the goal names several repositories, run
+   Call `repo_map` for each one. Where the goal names several repositories, run
    `ariadne knowledge interactions <repo>` for what joins them.
 <!-- knowledge off -->
-   Call `search_memory` for what past sessions learned of it.
+   Read the repository before you plan work in it.
 <!-- knowledge end -->
    Name the repositories each task touches in its ticket.
    Done when you can name each repository the goal touches.

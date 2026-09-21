@@ -205,10 +205,6 @@ async fn a_daemon_with_the_knowledge_base_off_writes_skills_without_the_knowledg
             "the playbook names {name}: {written}"
         );
     }
-    assert!(
-        written.contains("Call `search_memory` for what past sessions learned of it."),
-        "the playbook lost its off text: {written}"
-    );
 }
 
 /// The playbook is editable like any shipped skill, and an edit reaches the
