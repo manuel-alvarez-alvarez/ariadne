@@ -91,14 +91,6 @@ pub struct TokenUsage {
     pub output_tokens: u64,
 }
 
-impl TokenUsage {
-    /// Whether nothing has been reported: the zero every read answers with
-    /// where no transcript said anything.
-    pub fn is_zero(&self) -> bool {
-        *self == Self::default()
-    }
-}
-
 impl Add for TokenUsage {
     type Output = Self;
 
@@ -277,10 +269,9 @@ mod tests {
             }
         );
         assert_eq!([one, two].into_iter().sum::<TokenUsage>(), one + two);
-        assert!(
-            std::iter::empty::<TokenUsage>()
-                .sum::<TokenUsage>()
-                .is_zero()
+        assert_eq!(
+            std::iter::empty::<TokenUsage>().sum::<TokenUsage>(),
+            TokenUsage::default()
         );
     }
 

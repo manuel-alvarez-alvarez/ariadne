@@ -8,8 +8,6 @@
 //!
 //! A new file under this directory is a test only when it is named here.
 
-#![warn(unreachable_pub)]
-
 mod common;
 
 mod acp_console;

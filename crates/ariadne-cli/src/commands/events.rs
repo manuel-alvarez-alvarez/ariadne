@@ -419,7 +419,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             at: now(),
             kind,
             subject: k.repository_id.clone(),
-            detail: format!("{} · {}", k.git_ref, k.error),
+            detail: k.error.clone(),
             session: None,
             status: None,
         },

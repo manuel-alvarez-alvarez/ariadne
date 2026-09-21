@@ -31,12 +31,12 @@ pub use sse::{SseEvent, SseParser};
 
 /// Environment variable pointing at the daemon endpoint. Either a filesystem
 /// path (unix socket) or an `http://host:port` URL (TCP).
-pub const ENDPOINT_ENV: &str = "ARIADNE_ENDPOINT";
+const ENDPOINT_ENV: &str = "ARIADNE_ENDPOINT";
 
 /// What [`ENDPOINT_ENV`] used to be called, still honoured after it: the name
 /// says socket, but an `http://` endpoint was always allowed in it, and it is
 /// what every agent session is spawned with.
-pub const LEGACY_ENDPOINT_ENV: &str = "ARIADNE_SOCKET";
+const LEGACY_ENDPOINT_ENV: &str = "ARIADNE_SOCKET";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 

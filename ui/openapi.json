@@ -824,10 +824,7 @@
             "description": ""
           },
           "409": {
-            "description": "the knowledge base is disabled, or the index of the ref is not ready"
-          },
-          "500": {
-            "description": "the knowledge store or git failed"
+            "description": "the knowledge base is disabled"
           }
         }
       }
@@ -919,10 +916,7 @@
             "description": ""
           },
           "409": {
-            "description": "the knowledge base is disabled, or the index of the ref is not ready"
-          },
-          "500": {
-            "description": "the knowledge store or git failed"
+            "description": "the knowledge base is disabled"
           }
         }
       }
@@ -974,10 +968,7 @@
             "description": ""
           },
           "409": {
-            "description": "the knowledge base is disabled, or the index of the ref is not ready"
-          },
-          "500": {
-            "description": "the knowledge store or git failed"
+            "description": "the knowledge base is disabled"
           }
         }
       }
@@ -1051,10 +1042,7 @@
             "description": ""
           },
           "409": {
-            "description": "the knowledge base is disabled, or the index of the ref is not ready"
-          },
-          "500": {
-            "description": "the knowledge store or git failed"
+            "description": "the knowledge base is disabled"
           }
         }
       }
@@ -1114,10 +1102,7 @@
             "description": "no such repository, or the path is not indexed at the ref"
           },
           "409": {
-            "description": "the knowledge base is disabled, or the index of the ref is not ready"
-          },
-          "500": {
-            "description": "the knowledge store or git failed"
+            "description": "the knowledge base is disabled"
           }
         }
       }
@@ -1200,10 +1185,7 @@
             "description": ""
           },
           "409": {
-            "description": "the knowledge base is disabled, or the index of the ref is not ready"
-          },
-          "500": {
-            "description": "the knowledge store or git failed"
+            "description": "the knowledge base is disabled"
           }
         }
       }
@@ -1319,10 +1301,7 @@
             "description": ""
           },
           "409": {
-            "description": "the knowledge base is disabled, or the index of the ref is not ready"
-          },
-          "500": {
-            "description": "the knowledge store or git failed"
+            "description": "the knowledge base is disabled"
           }
         }
       }
@@ -1405,10 +1384,7 @@
             "description": ""
           },
           "409": {
-            "description": "the knowledge base is disabled, or the index of the ref is not ready"
-          },
-          "500": {
-            "description": "the knowledge store or git failed"
+            "description": "the knowledge base is disabled"
           }
         }
       }
@@ -2096,9 +2072,6 @@
           },
           "404": {
             "description": ""
-          },
-          "500": {
-            "description": "the knowledge store failed"
           }
         }
       }
@@ -2136,9 +2109,6 @@
           },
           "409": {
             "description": "the knowledge base is disabled"
-          },
-          "500": {
-            "description": "the knowledge store failed"
           }
         }
       }
@@ -4694,36 +4664,16 @@
       },
       "KnowledgeFailedDto": {
         "type": "object",
-        "description": "Payload of `knowledge_failed`: an index run of one ref of a repository\nfailed.",
+        "description": "Payload of `knowledge_failed`: an index run of a repository failed.",
         "required": [
           "repository_id",
-          "git_ref",
           "error"
         ],
         "properties": {
           "error": {
-            "type": "string"
-          },
-          "git_ref": {
             "type": "string"
           },
           "repository_id": {
-            "type": "string"
-          }
-        }
-      },
-      "KnowledgeFailureDto": {
-        "type": "object",
-        "description": "One ref whose last index run failed.",
-        "required": [
-          "git_ref",
-          "error"
-        ],
-        "properties": {
-          "error": {
-            "type": "string"
-          },
-          "git_ref": {
             "type": "string"
           }
         }
@@ -5221,16 +5171,15 @@
           "refs",
           "files",
           "symbols",
-          "languages",
-          "failures"
+          "languages"
         ],
         "properties": {
-          "failures": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeFailureDto"
-            },
-            "description": "The refs whose last run failed, each with why. A good run of one ref\nleaves the failure of another here."
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last run failed, on a `failed` repository."
           },
           "files": {
             "type": "integer",

@@ -31,7 +31,7 @@ const ROUNDS: usize = 30;
 const BACK_WEIGHT: f64 = 0.25;
 
 /// How many characters one token is counted as.
-pub const TOKEN_CHARS: usize = 4;
+const TOKEN_CHARS: usize = 4;
 
 /// One file of a map: where it is, how central it is, and the definitions
 /// the map names in it.

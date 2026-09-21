@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use ariadne_knowledge::{KnowledgeStore, Readiness, RefFailure, SearchQuery, State};
+use ariadne_knowledge::{KnowledgeStore, SearchQuery, State};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 /// Where the fixture files live: one per language, each holding a
@@ -543,8 +543,8 @@ async fn a_changed_file_the_run_skips_loses_its_symbols() {
     assert!(hits.is_empty(), "{hits:#?}");
 }
 
-/// A failed run is recorded on the ref it was of, and the ref then refuses
-/// a read with the reason.
+/// A failed run is recorded as such, and a repository's state is readable
+/// before anything was indexed.
 #[tokio::test]
 async fn a_ref_that_does_not_resolve_fails_the_run() {
     let dir = tempfile::tempdir().unwrap();
@@ -557,22 +557,12 @@ async fn a_ref_that_does_not_resolve_fails_the_run() {
         .to_string();
     assert!(error.contains("no-such-branch"), "{error}");
     store
-        .set_ref_state("repo", "no-such-branch", State::Failed, Some(&error))
+        .set_state("repo", State::Failed, Some(&error))
         .await
         .unwrap();
     let status = store.status("repo").await.unwrap();
     assert_eq!(status.state, State::Failed);
-    assert_eq!(
-        status.failures,
-        [RefFailure {
-            git_ref: "no-such-branch".into(),
-            error: error.clone(),
-        }]
-    );
-    assert_eq!(
-        store.readiness("repo", "no-such-branch").await.unwrap(),
-        Readiness::Failed(error)
-    );
+    assert_eq!(status.error.as_deref(), Some(error.as_str()));
 }
 
 /// Indexing this repository at HEAD completes in under 30 seconds, and

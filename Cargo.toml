@@ -124,6 +124,7 @@ zbus = "5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+unreachable_pub = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

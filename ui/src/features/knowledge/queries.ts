@@ -39,7 +39,7 @@ export function useReindexKnowledge(repositoryId: string) {
       queryClient.setQueryData(
         qk.repositories.knowledgeStatus(repositoryId),
         (status: KnowledgeStatusDto | undefined) =>
-          status ? { ...status, state: "indexing" as const, failures: [] } : status,
+          status ? { ...status, state: "indexing" as const, error: null } : status,
       )
     },
   })

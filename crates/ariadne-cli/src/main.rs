@@ -1,7 +1,5 @@
 //! ariadne — CLI for the Ariadne daemon.
 
-#![warn(unreachable_pub)]
-
 mod cli;
 mod commands;
 mod complete;

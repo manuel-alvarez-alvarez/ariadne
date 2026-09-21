@@ -31,8 +31,6 @@ use ariadne_api::tasks::{
 };
 use ariadne_core::{Actor, Landing, MessageKind, PermissionMode, Seat, TaskStatus};
 
-use ariadne_client::ClientError;
-
 use super::{AriadneMcp, McpSeat, json_result, to_mcp_err};
 use crate::commands::query_path;
 
@@ -485,30 +483,6 @@ fn repository_heading(paths: &HashMap<String, String>, repository_id: &str) -> S
     )
 }
 
-/// The code the daemon refuses a knowledge read with where the ref has no
-/// index that can answer: none yet, its first one under way, or a failed one.
-const KNOWLEDGE_NOT_READY: &str = "knowledge_not_ready";
-
-impl AriadneMcp {
-    /// A knowledge read: the answer, or the daemon's refusal of a ref that is
-    /// not ready, as the tool's own text and in the daemon's own words. The
-    /// refusal is an answer about the index and no wrong argument, and an
-    /// agent that read "No results." in its place would take it for a fact
-    /// about the code.
-    async fn knowledge_get<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-    ) -> Result<Result<T, CallToolResult>, McpError> {
-        match self.client.get_json(path).await {
-            Ok(answer) => Ok(Ok(answer)),
-            Err(ClientError::Api { code, message, .. }) if code == KNOWLEDGE_NOT_READY => Ok(Err(
-                CallToolResult::error(vec![ContentBlock::text(message)]),
-            )),
-            Err(e) => Err(to_mcp_err(e)),
-        }
-    }
-}
-
 fn text_result(text: String) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
 }
@@ -729,13 +703,9 @@ impl AriadneMcp {
             path: req.path,
             limit: req.limit.map(i64::from),
         };
-        let hits: Vec<KnowledgeHitDto> = match self
-            .knowledge_get(&knowledge_path("/v1/knowledge/search", &query)?)
-            .await?
-        {
-            Ok(answer) => answer,
-            Err(refusal) => return Ok(refusal),
-        };
+        let hits: Vec<KnowledgeHitDto> = self
+            .get(&knowledge_path("/v1/knowledge/search", &query)?)
+            .await?;
         if hits.is_empty() {
             return text_result("No results.\n".into());
         }
@@ -773,13 +743,9 @@ impl AriadneMcp {
             path: req.path.clone(),
             git_ref: req.git_ref,
         };
-        let entries: Vec<KnowledgeOutlineEntryDto> = match self
-            .knowledge_get(&knowledge_path("/v1/knowledge/outline", &query)?)
-            .await?
-        {
-            Ok(answer) => answer,
-            Err(refusal) => return Ok(refusal),
-        };
+        let entries: Vec<KnowledgeOutlineEntryDto> = self
+            .get(&knowledge_path("/v1/knowledge/outline", &query)?)
+            .await?;
         if entries.is_empty() {
             return text_result("No definitions.\n".into());
         }
@@ -814,13 +780,9 @@ impl AriadneMcp {
             git_ref: req.git_ref,
             detail: req.detail.map(KnowledgeDetail::from),
         };
-        let found: Vec<KnowledgeSymbolDto> = match self
-            .knowledge_get(&knowledge_path("/v1/knowledge/symbol", &query)?)
-            .await?
-        {
-            Ok(answer) => answer,
-            Err(refusal) => return Ok(refusal),
-        };
+        let found: Vec<KnowledgeSymbolDto> = self
+            .get(&knowledge_path("/v1/knowledge/symbol", &query)?)
+            .await?;
         if found.is_empty() {
             return text_result(format!("No definition of {}.\n", req.name));
         }
@@ -934,13 +896,9 @@ impl AriadneMcp {
             diff,
             depth: req.depth.map(i64::from),
         };
-        let found: Vec<KnowledgeImpactDto> = match self
-            .knowledge_get(&knowledge_path("/v1/knowledge/impact", &query)?)
-            .await?
-        {
-            Ok(answer) => answer,
-            Err(refusal) => return Ok(refusal),
-        };
+        let found: Vec<KnowledgeImpactDto> = self
+            .get(&knowledge_path("/v1/knowledge/impact", &query)?)
+            .await?;
         if found.is_empty() {
             return text_result("No changed definition.\n".into());
         }
@@ -1020,13 +978,9 @@ impl AriadneMcp {
             git_ref: req.git_ref,
             depth: req.depth.map(i64::from),
         };
-        let found: KnowledgePathDto = match self
-            .knowledge_get(&knowledge_path("/v1/knowledge/path", &query)?)
-            .await?
-        {
-            Ok(answer) => answer,
-            Err(refusal) => return Ok(refusal),
-        };
+        let found: KnowledgePathDto = self
+            .get(&knowledge_path("/v1/knowledge/path", &query)?)
+            .await?;
         if found.hops.is_empty() {
             return text_result(format!("(no path within {depth})\n"));
         }
@@ -1079,13 +1033,9 @@ impl AriadneMcp {
                 path: req.path.clone(),
                 budget: Some(share),
             };
-            let map: KnowledgeMapDto = match self
-                .knowledge_get(&knowledge_path("/v1/knowledge/map", &query)?)
-                .await?
-            {
-                Ok(answer) => answer,
-                Err(refusal) => return Ok(refusal),
-            };
+            let map: KnowledgeMapDto = self
+                .get(&knowledge_path("/v1/knowledge/map", &query)?)
+                .await?;
             if several {
                 lines.push(repository_heading(&paths, repository));
             }
@@ -1527,7 +1477,7 @@ mod tests {
     use crate::commands::mcp::McpSeat;
     use crate::commands::mcp::tests::{
         recording_daemon, recording_daemon_answering, recording_daemon_answering_in_order,
-        refusing_daemon, server_at,
+        server_at,
     };
 
     /// The orchestrator is never offered a model it cannot staff an agent on.
@@ -2512,106 +2462,6 @@ mod tests {
                 "/v1/knowledge/path?repository=01REPO&from=b&to=a",
             ]
         );
-    }
-
-    /// A ref that is not ready refuses the read, and the refusal is the text
-    /// of the tool, in the daemon's words: never "No results.", which an
-    /// agent reads as a fact about the code.
-    #[tokio::test]
-    async fn a_ref_that_is_not_ready_answers_every_knowledge_tool_with_the_refusal() {
-        let refusal = "the index of main in repository /work/api (01REPO) is not ready: \
-                       the first index run of this ref is in progress, try again later";
-        let (endpoint, _seen) =
-            refusing_daemon("409 Conflict", "knowledge_not_ready", refusal).await;
-        let mcp = server_at(
-            McpSeat::Author,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        let repository = || Some("01REPO".to_string());
-
-        let answers = [
-            mcp.search_code(Parameters(SearchCodeReq {
-                query: "add".into(),
-                repository: repository(),
-                all: None,
-                git_ref: None,
-                kind: None,
-                path: None,
-                limit: None,
-            }))
-            .await,
-            mcp.outline(Parameters(OutlineReq {
-                path: "src/lib.rs".into(),
-                repository: repository(),
-                git_ref: None,
-            }))
-            .await,
-            mcp.symbol(Parameters(SymbolReq {
-                name: "add".into(),
-                repository: repository(),
-                git_ref: None,
-                detail: None,
-            }))
-            .await,
-            mcp.impact(Parameters(ImpactReq {
-                symbol: Some("add".into()),
-                diff: None,
-                repository: repository(),
-                git_ref: None,
-                depth: None,
-            }))
-            .await,
-            mcp.path(Parameters(PathReq {
-                from: "add".into(),
-                to: "sum".into(),
-                repository: repository(),
-                git_ref: None,
-                depth: None,
-            }))
-            .await,
-            mcp.repo_map(Parameters(RepoMapReq {
-                repository: repository(),
-                path: None,
-                budget: None,
-                git_ref: None,
-            }))
-            .await,
-        ];
-        for answer in answers {
-            let answer = answer.expect("the refusal is the tool's answer");
-            assert_eq!(answer.is_error, Some(true));
-            let ContentBlock::Text(text) = &answer.content[0] else {
-                panic!("the answer is not text");
-            };
-            assert_eq!(text.text, refusal);
-        }
-    }
-
-    /// A daemon failure stays a failure of the call, and an internal one: the
-    /// arguments were right.
-    #[tokio::test]
-    async fn a_daemon_failure_of_a_knowledge_read_is_an_internal_error() {
-        let failure = "the knowledge base failed: database is locked";
-        let (endpoint, _seen) =
-            refusing_daemon("500 Internal Server Error", "internal_error", failure).await;
-        let mcp = server_at(
-            McpSeat::Author,
-            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
-        );
-        let error = mcp
-            .search_code(Parameters(SearchCodeReq {
-                query: "add".into(),
-                repository: Some("01REPO".into()),
-                all: None,
-                git_ref: None,
-                kind: None,
-                path: None,
-                limit: None,
-            }))
-            .await
-            .expect_err("the daemon failed");
-        assert_eq!(error.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
-        assert!(error.message.contains(failure), "{error:?}");
     }
 
     /// Every other seat has to say what it is asking about.

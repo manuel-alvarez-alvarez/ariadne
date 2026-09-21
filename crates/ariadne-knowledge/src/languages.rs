@@ -212,7 +212,7 @@ impl Language {
     }
 
     /// The file extensions read as this language.
-    pub fn extensions(self) -> &'static [&'static str] {
+    fn extensions(self) -> &'static [&'static str] {
         match self {
             Language::Rust => &["rs"],
             Language::TypeScript => &["ts", "mts", "cts"],
