@@ -155,7 +155,7 @@ type Reaped = Shared<oneshot::Receiver<()>>;
 
 /// Where a prompt came from, as `user_prompt_submit` reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PromptSource {
+pub(crate) enum PromptSource {
     /// Typed into the session's console.
     Console,
     /// Everything the daemon itself says: the briefing, a nudge, a message.
@@ -332,7 +332,7 @@ impl AcpRuntime {
     }
 
     /// A runtime that waits on its agents as long as `timeouts` says.
-    pub fn with_timeouts(store: Store, timeouts: Timeouts) -> Self {
+    pub(crate) fn with_timeouts(store: Store, timeouts: Timeouts) -> Self {
         Self::with_transcripts(store, timeouts, TranscriptHomes::from_env())
     }
 
@@ -358,7 +358,7 @@ impl AcpRuntime {
 
     /// Give the runtime the scheduler's waker. Called once, from the
     /// scheduler's own start.
-    pub fn connect_scheduler(&self, tx: mpsc::UnboundedSender<SchedEvent>) {
+    pub(crate) fn connect_scheduler(&self, tx: mpsc::UnboundedSender<SchedEvent>) {
         let _ = self.inner.scheduler.set(tx);
     }
 
@@ -379,7 +379,7 @@ impl AcpRuntime {
     ///
     /// Errs where there is nobody here to hear it: no agent runs for this
     /// session.
-    pub fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
+    pub(crate) fn send_prompt(&self, session_id: &str, text: String) -> Result<()> {
         self.inner
             .running
             .lock()
@@ -422,7 +422,7 @@ impl AcpRuntime {
     ///
     /// Errs where there is nobody here to hear it: no agent runs for this
     /// session.
-    pub fn send_input(&self, session_id: &str, text: String) -> Result<()> {
+    pub(crate) fn send_input(&self, session_id: &str, text: String) -> Result<()> {
         let (prompts, permission) = {
             let running = self.inner.running.lock().expect("acp registry lock");
             let agent = running
@@ -454,14 +454,14 @@ impl AcpRuntime {
     /// next turn. The turn lock itself is taken only for the check, so a
     /// child that stops reading its stdin stalls this call and not the
     /// driver.
-    pub async fn cancel(&self, session_id: &str) -> Result<()> {
+    pub(crate) async fn cancel(&self, session_id: &str) -> Result<()> {
         self.cancel_turn(session_id, None).await
     }
 
     /// [`Self::cancel`], but only while the session still runs under
     /// `launch_id`: a cancel decided on one launch never lands on the turn a
     /// relaunch since started.
-    pub async fn cancel_launch(&self, session_id: &str, launch_id: &str) -> Result<()> {
+    pub(crate) async fn cancel_launch(&self, session_id: &str, launch_id: &str) -> Result<()> {
         self.cancel_turn(session_id, Some(launch_id)).await
     }
 
@@ -510,21 +510,11 @@ impl AcpRuntime {
         }
     }
 
-    /// The running turn's text so far, as the chunk events a console snapshot
-    /// appends after the stored ones; empty between turns, and for a session
-    /// with no agent here.
-    pub async fn turn_so_far(&self, session_id: &str) -> Vec<AgentEventDto> {
-        let Some((turn, task_id)) = self.turn_of(session_id) else {
-            return Vec::new();
-        };
-        turn.lock().await.so_far(session_id, &task_id)
-    }
-
     /// Follow the live console events, and read the running turn's text so
     /// far under the same lock the driver appends and publishes under: every
     /// chunk is then either in the text returned or on the subscription, and
     /// never in both.
-    pub async fn subscribe_console(
+    pub(crate) async fn subscribe_console(
         &self,
         session_id: &str,
     ) -> (broadcast::Receiver<AgentEventDto>, Vec<AgentEventDto>) {
@@ -675,7 +665,7 @@ impl AcpRuntime {
     ///
     /// The kill does not wait for the reap; the next launch of the session
     /// does.
-    pub fn kill(&self, session_id: &str) {
+    pub(crate) fn kill(&self, session_id: &str) {
         self.take_down(session_id);
     }
 

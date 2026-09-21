@@ -27,15 +27,6 @@ use crate::acp_discovery::AgentRegistry;
 /// How old the snapshot may be before a request takes it again.
 const SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(60);
 
-/// The stored sessions of every registry agent that can list them, minus the
-/// ones already bound to an Ariadne session row — asked of the agents now.
-pub async fn discover(registry: &AgentRegistry, store: &Store) -> Result<Vec<OutsideSessionDto>> {
-    let known = adopted(store).await?;
-    let mut sessions = registry.stored_sessions().await;
-    sessions.retain(|session| !known.contains(&session_key(session)));
-    Ok(sessions)
-}
-
 /// The `(agent, internal id)` of every session an Ariadne row already holds.
 ///
 /// The `model` column of a session carries `<agent>:<model>`, so the agent an
@@ -65,7 +56,7 @@ fn session_key(session: &OutsideSessionDto) -> (String, String) {
 /// Every outside session of every agent at one moment, adopted ones
 /// included: what a row already holds is subtracted when a page is cut, so
 /// an adoption shows without a new snapshot.
-pub struct Snapshot {
+pub(crate) struct Snapshot {
     sessions: Vec<OutsideSessionDto>,
     /// The moment, for the reply.
     taken_at: DateTime<Utc>,
@@ -75,7 +66,7 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Find one session still outside Ariadne by its agent and internal id.
-    pub async fn find(
+    pub(crate) async fn find(
         &self,
         store: &Store,
         agent_id: &str,
@@ -106,7 +97,7 @@ impl OutsideSessions {
     /// `refresh` asks for one, or where the current one is older than
     /// [`SNAPSHOT_MAX_AGE`]. Requests that find it stale together wait on
     /// one another, so each agent is asked once for the lot.
-    pub async fn snapshot(&self, registry: &AgentRegistry, refresh: bool) -> Arc<Snapshot> {
+    pub(crate) async fn snapshot(&self, registry: &AgentRegistry, refresh: bool) -> Arc<Snapshot> {
         let mut current = self.snapshot.lock().await;
         if let Some(snapshot) = current.as_ref()
             && !refresh
@@ -126,7 +117,7 @@ impl OutsideSessions {
 
 /// Why a query cannot be answered: which value, and what is wrong with it.
 #[derive(Debug)]
-pub enum QueryError {
+pub(crate) enum QueryError {
     /// A cursor this daemon did not write.
     InvalidCursor,
     /// A filter whose value cannot be read.
@@ -144,7 +135,7 @@ impl std::fmt::Display for QueryError {
 
 /// The query of one listing request, read once: every value parsed, and the
 /// page it asks for.
-pub struct Filter {
+pub(crate) struct Filter {
     agent: Option<String>,
     dir: Option<PathBuf>,
     since: Option<DateTime<Utc>>,
@@ -156,7 +147,7 @@ pub struct Filter {
 }
 
 impl Filter {
-    pub fn parse(query: &OutsideSessionListQuery) -> Result<Self, QueryError> {
+    pub(crate) fn parse(query: &OutsideSessionListQuery) -> Result<Self, QueryError> {
         let bound = |name: &str, value: &Option<String>| match value {
             Some(value) => moment(value).map(Some).ok_or_else(|| {
                 QueryError::InvalidFilter(format!("{name} is not RFC 3339: {value}"))
@@ -214,7 +205,7 @@ impl Filter {
 ///
 /// The cursor is a keyset over the sort key, so a page cut from a newer
 /// snapshot continues from the same row rather than the same offset.
-pub async fn page(
+pub(crate) async fn page(
     snapshot: &Snapshot,
     store: &Store,
     filter: &Filter,

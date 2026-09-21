@@ -97,13 +97,13 @@ impl BranchWatchers {
     /// it has, so an author respawned into the worktree it left does not
     /// stack a second one. Nothing is published for where the branch stands at
     /// this moment — only for where it moves next.
-    pub fn watch(&self, task: &Task, repo: &Path) {
+    pub(crate) fn watch(&self, task: &Task, repo: &Path) {
         self.watch_keyed(task.id.clone(), task, &task.branch, repo);
     }
 
     /// Follow one author's branch of a task staffed with several: one watch
     /// per author, beside its siblings rather than in place of them.
-    pub fn watch_author(&self, task: &Task, agent_id: &str, branch: &str, repo: &Path) {
+    pub(crate) fn watch_author(&self, task: &Task, agent_id: &str, branch: &str, repo: &Path) {
         self.watch_keyed(author_key(&task.id, agent_id), task, branch, repo);
     }
 
@@ -146,7 +146,7 @@ impl BranchWatchers {
     }
 
     /// Stop following one author's branch: the pick passed it over.
-    pub fn unwatch_author(&self, task_id: &str, agent_id: &str) {
+    pub(crate) fn unwatch_author(&self, task_id: &str, agent_id: &str) {
         if self.lock().remove(&author_key(task_id, agent_id)).is_some() {
             debug!(task = %task_id, agent = %agent_id, "no longer following the author branch");
         }

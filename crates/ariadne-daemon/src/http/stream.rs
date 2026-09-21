@@ -52,7 +52,7 @@ use ariadne_api::stream::{DomainEvent, EventStreamQuery, ResyncDto};
                        comes from the daemon's watch on the task branch rather than from a \
                        store write: it says a commit landed and the task's diff has moved.",
         content_type = "text/event-stream", body = DomainEvent)))]
-pub async fn stream(
+pub(super) async fn stream(
     State(state): State<AppState>,
     Query(q): Query<EventStreamQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {

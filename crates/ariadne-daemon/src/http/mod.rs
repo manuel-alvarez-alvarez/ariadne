@@ -94,11 +94,11 @@ impl AppState {
         }
     }
 
-    pub fn notify_scheduler(&self, task_id: &str) {
+    pub(crate) fn notify_scheduler(&self, task_id: &str) {
         self.wake(SchedEvent::TaskChanged(task_id.to_string()));
     }
 
-    pub fn notify_scheduler_session(&self, session_id: &str) {
+    pub(crate) fn notify_scheduler_session(&self, session_id: &str) {
         self.wake(SchedEvent::SessionEvent(session_id.to_string()));
     }
 

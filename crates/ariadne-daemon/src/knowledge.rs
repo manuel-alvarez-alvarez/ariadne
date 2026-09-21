@@ -64,7 +64,7 @@ enum Job {
 
 impl Knowledge {
     /// A knowledge base that indexes nothing and serves nothing.
-    pub fn disabled() -> Self {
+    pub(crate) fn disabled() -> Self {
         Self { inner: None }
     }
 
@@ -112,10 +112,6 @@ impl Knowledge {
         })
     }
 
-    pub fn enabled(&self) -> bool {
-        self.inner.is_some()
-    }
-
     /// The store, where the knowledge base is enabled.
     pub fn store(&self) -> Option<&KnowledgeStore> {
         self.inner.as_ref().map(|inner| &inner.store)
@@ -134,7 +130,7 @@ impl Knowledge {
 
     /// Drop a repository's rows and index it again. The repository reads as
     /// `indexing` from here until the worker is done with it.
-    pub async fn reindex(&self, repository_id: &str) -> Result<()> {
+    pub(crate) async fn reindex(&self, repository_id: &str) -> Result<()> {
         let Some(inner) = &self.inner else {
             return Ok(());
         };

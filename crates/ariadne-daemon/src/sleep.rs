@@ -36,7 +36,7 @@ trait Backend: Send + Sync {
 /// so repeated calls with the same value neither stack inhibitions nor
 /// double-release. A failed acquisition leaves the inhibitor inactive, so the
 /// next tick retries instead of pretending the machine is pinned awake.
-pub struct SleepInhibitor {
+pub(crate) struct SleepInhibitor {
     backend: Box<dyn Backend>,
     active: bool,
     /// Whether the current run of failures has already been reported: a
@@ -45,7 +45,7 @@ pub struct SleepInhibitor {
 }
 
 impl SleepInhibitor {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_backend(platform_backend())
     }
 
@@ -58,7 +58,7 @@ impl SleepInhibitor {
     }
 
     /// Acquire on the false→true edge, release on the true→false edge.
-    pub fn set_active(&mut self, active: bool) {
+    pub(crate) fn set_active(&mut self, active: bool) {
         if active == self.active {
             return;
         }

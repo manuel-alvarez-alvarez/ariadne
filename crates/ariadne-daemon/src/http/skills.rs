@@ -24,7 +24,7 @@ use super::error::{ApiResult, Json};
         (status = 201, body = SkillDto),
         (status = 409, description = "name already exists")
     ))]
-pub async fn create(
+pub(super) async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateSkillRequest>,
 ) -> ApiResult<(StatusCode, Json<SkillDto>)> {
@@ -41,7 +41,7 @@ pub async fn create(
 /// List every skill, shipped and written, by name.
 #[utoipa::path(get, path = "/v1/skills", tag = "skills",
     responses((status = 200, body = [SkillDto])))]
-pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<SkillDto>>> {
+pub(super) async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<SkillDto>>> {
     let skills = state.store.list_skills().await?;
     Ok(Json(skills.into_iter().map(skill_dto).collect()))
 }
@@ -50,7 +50,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<SkillDto>
 #[utoipa::path(get, path = "/v1/skills/{name}", tag = "skills",
     params(("name" = String, Path, description = "skill name")),
     responses((status = 200, body = SkillDto), (status = 404)))]
-pub async fn get(
+pub(super) async fn get(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> ApiResult<Json<SkillDto>> {
@@ -62,7 +62,7 @@ pub async fn get(
     request_body = UpdateSkillRequest,
     params(("name" = String, Path, description = "skill name")),
     responses((status = 200, body = SkillDto), (status = 404)))]
-pub async fn update(
+pub(super) async fn update(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(req): Json<UpdateSkillRequest>,
@@ -78,7 +78,7 @@ pub async fn update(
 #[utoipa::path(delete, path = "/v1/skills/{name}", tag = "skills",
     params(("name" = String, Path, description = "skill name")),
     responses((status = 204), (status = 404), (status = 409)))]
-pub async fn delete(
+pub(super) async fn delete(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> ApiResult<StatusCode> {
@@ -90,7 +90,7 @@ pub async fn delete(
 #[utoipa::path(post, path = "/v1/skills/{name}/document/reset", tag = "skills",
     params(("name" = String, Path, description = "skill name")),
     responses((status = 200, body = SkillDto), (status = 404), (status = 409)))]
-pub async fn reset_document(
+pub(super) async fn reset_document(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> ApiResult<Json<SkillDto>> {

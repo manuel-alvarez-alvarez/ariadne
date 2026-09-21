@@ -41,13 +41,13 @@ const CLEAR_EFFORT: [&str; 2] = ["", "default"];
 /// named with no model beside it is checked against and pinned to — so that
 /// moving an effort alone leaves the model where it was.
 #[derive(Debug, Clone, Copy)]
-pub struct Standing<'a> {
+pub(super) struct Standing<'a> {
     pub model: &'a str,
 }
 
 /// What an edit says about the pin a row is on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Repin {
+pub(super) enum Repin {
     /// The request said nothing about it: the row keeps the pin it has.
     Untouched,
     /// Onto this agent, model and effort.
@@ -59,7 +59,7 @@ pub enum Repin {
 
 /// The pin a creation asks for. A model is required: a request that names
 /// none, or writes the empty string or `default`, is refused by the rule.
-pub async fn chosen(
+pub(super) async fn chosen(
     store: &Store,
     registry: &AgentRegistry,
     model: Option<&str>,
@@ -70,7 +70,7 @@ pub async fn chosen(
 
 /// The same for an edit, which has one more thing to say: an effort can move
 /// on its own, checked against the model the row already runs.
-pub async fn rechosen(
+pub(super) async fn rechosen(
     store: &Store,
     registry: &AgentRegistry,
     model: Option<&str>,
@@ -97,7 +97,7 @@ pub async fn rechosen(
 /// registry agent, is a fact about the request, not about anything beside
 /// it. The whole check is [`chosen`], which also asks the store what the
 /// user has turned off.
-pub fn readable(model: Option<&str>, registry: &AgentRegistry) -> ApiResult<()> {
+pub(super) fn readable(model: Option<&str>, registry: &AgentRegistry) -> ApiResult<()> {
     parsed(required(model)?, registry).map(|_| ())
 }
 

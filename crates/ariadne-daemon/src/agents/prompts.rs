@@ -37,7 +37,7 @@ pub fn template_for(kind: PromptKind) -> &'static str {
 /// `{token}` with no value travels through verbatim, so does a `{` that never
 /// closes (or closes only after another `{`), and a template that is empty or
 /// pure noise renders to itself. There is no error case.
-pub fn render(template: &str, values: &[(&str, &str)]) -> String {
+pub(crate) fn render(template: &str, values: &[(&str, &str)]) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(open) = rest.find('{') {
@@ -74,7 +74,7 @@ pub fn render(template: &str, values: &[(&str, &str)]) -> String {
 /// `skills_dir` is where the documents were written
 /// ([`write_skills`](super::write_skills)); each line names the file, so an
 /// agent opens the one it needs itself.
-pub fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Path>) -> String {
+pub(crate) fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Path>) -> String {
     let mut prompt = default_system_prompt(seat).trim().to_string();
     if skills.is_empty() {
         return prompt;
@@ -110,7 +110,7 @@ const SKILLS_HEADER: &str =
 /// the checkout the orchestrator is started in, and the one its commands name.
 /// A goal with no repository is not one an orchestrator is ever started for, so
 /// what that case renders only has to stay readable, never to work.
-pub fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> String {
+pub(crate) fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> String {
     let repo_lines = repos
         .iter()
         .map(|r| {
@@ -133,19 +133,19 @@ pub fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) 
 }
 
 /// What an orchestrator that has gone quiet is nudged with.
-pub fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> String {
+pub(crate) fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> String {
     render(template, &[("goal_title", &goal.title)])
 }
 
 /// What the orchestrator of a goal under way is woken with: the goal, and the
 /// lines the scheduler wrote about the tasks that need it.
-pub fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) -> String {
+pub(crate) fn goal_attention_briefing(template: &str, goal: &Goal, tasks: &str) -> String {
     render(template, &[("goal_title", &goal.title), ("tasks", tasks)])
 }
 
 /// What one agent said to another, as the recipient reads it: who wrote it,
 /// the id an answer names, and what it says.
-pub fn incoming_message_briefing(template: &str, message: &Message, from: &str) -> String {
+pub(crate) fn incoming_message_briefing(template: &str, message: &Message, from: &str) -> String {
     render(template, &[("from", from), ("body", &message.body)])
 }
 
@@ -195,7 +195,7 @@ pub fn author_resume_briefing(template: &str, task: &Task) -> String {
 }
 
 /// Initial prompt for a reviewer session.
-pub fn reviewer_briefing(
+pub(crate) fn reviewer_briefing(
     template: &str,
     task: &Task,
     goal: &Goal,
@@ -238,7 +238,11 @@ pub fn reviewer_resume_briefing(template: &str, task: &Task, summary: Option<&st
 /// `authors` is (id, branch) per author, in the order the orchestrator
 /// listed them — the id is what `pick_winner` takes, so each line leads with
 /// it.
-pub fn reviewer_pick_briefing(template: &str, task: &Task, authors: &[(String, String)]) -> String {
+pub(crate) fn reviewer_pick_briefing(
+    template: &str,
+    task: &Task,
+    authors: &[(String, String)],
+) -> String {
     let lines = authors
         .iter()
         .map(|(id, branch)| format!("- {id}: branch {branch}"))
@@ -255,7 +259,7 @@ pub fn reviewer_pick_briefing(template: &str, task: &Task, authors: &[(String, S
 /// `feedback` is one entry per source, each a heading naming who asked and
 /// what they wrote: the reviewers of the round, or the people reading a
 /// published request, whose comments the daemon relays itself.
-pub fn changes_requested_briefing(template: &str, feedback: &[(String, String)]) -> String {
+pub(crate) fn changes_requested_briefing(template: &str, feedback: &[(String, String)]) -> String {
     let items = feedback
         .iter()
         .map(|(who, body)| format!("### From {who}\n{body}"))
@@ -271,7 +275,7 @@ pub fn changes_requested_briefing(template: &str, feedback: &[(String, String)])
 /// which is the text set on it or the default of its merge strategy — so what
 /// is rendered here is the one procedure the author runs, and nothing of the
 /// other.
-pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> String {
+pub(crate) fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> String {
     render(
         template,
         &[

@@ -34,7 +34,7 @@ pub struct TranscriptHomes {
 
 impl TranscriptHomes {
     /// The homes the daemon's own environment names, which its agents inherit.
-    pub fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default();

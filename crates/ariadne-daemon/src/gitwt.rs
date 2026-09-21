@@ -98,7 +98,7 @@ impl GitManager {
         Ok(())
     }
 
-    pub async fn prune_worktrees(&self, repo: &Path) -> Result<()> {
+    pub(crate) async fn prune_worktrees(&self, repo: &Path) -> Result<()> {
         self.git(repo, &["worktree", "prune"]).await?;
         Ok(())
     }
@@ -108,7 +108,7 @@ impl GitManager {
     }
 
     /// The commit `branch` points at, as a full sha.
-    pub async fn branch_tip(&self, repo: &Path, branch: &str) -> Result<String> {
+    pub(crate) async fn branch_tip(&self, repo: &Path, branch: &str) -> Result<String> {
         self.git(
             repo,
             &[
@@ -127,13 +127,13 @@ impl GitManager {
     /// a linked worktree or a bare clone keeps them elsewhere, and only git
     /// knows where — which matters to whoever watches a branch, since a task
     /// branch is written there whichever tree commits to it.
-    pub async fn common_dir(&self, repo: &Path) -> Result<PathBuf> {
+    pub(crate) async fn common_dir(&self, repo: &Path) -> Result<PathBuf> {
         let args = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
         Ok(PathBuf::from(self.git(repo, &args).await?))
     }
 
     /// Ensure `path` is an existing git work tree.
-    pub async fn validate_repo(&self, path: &Path) -> Result<()> {
+    pub(crate) async fn validate_repo(&self, path: &Path) -> Result<()> {
         if !path.is_dir() {
             bail!(
                 "repo path does not exist or is not a directory: {}",
@@ -150,7 +150,7 @@ impl GitManager {
     }
 
     /// Current branch of the repo (used as default base branch).
-    pub async fn current_branch(&self, repo: &Path) -> Result<String> {
+    pub(crate) async fn current_branch(&self, repo: &Path) -> Result<String> {
         self.git(repo, &["symbolic-ref", "--short", "HEAD"])
             .await
             .with_context(|| {

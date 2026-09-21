@@ -10,7 +10,7 @@
 /// What each registry agent is launched with, editable in one place: the
 /// flags ride behind the agent's registry command on every spawn and resume,
 /// so an edit lands on the next launch.
-pub mod agents {
+pub(super) mod agents {
     use axum::extract::{Path, State};
 
     use ariadne_api::agents::{AgentConfigDto, UpdateAgentConfigRequest};
@@ -22,7 +22,9 @@ pub mod agents {
     /// flags for is listed with none.
     #[utoipa::path(get, path = "/v1/agents", tag = "agents",
         responses((status = 200, body = [AgentConfigDto])))]
-    pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<AgentConfigDto>>> {
+    pub(crate) async fn list(
+        State(state): State<AppState>,
+    ) -> ApiResult<Json<Vec<AgentConfigDto>>> {
         let mut out = Vec::new();
         for agent in state.agent_registry.agents().await {
             let extra_flags = state.store.agent_flags(&agent.id).await?;
@@ -48,7 +50,7 @@ pub mod agents {
             (status = 200, body = AgentConfigDto),
             (status = 400, description = "no such agent in the registry")
         ))]
-    pub async fn update(
+    pub(crate) async fn update(
         State(state): State<AppState>,
         Path(id): Path<String>,
         Json(req): Json<UpdateAgentConfigRequest>,
@@ -72,7 +74,7 @@ pub mod agents {
 }
 
 /// ACP agent registry endpoints.
-pub mod acp_agents {
+pub(super) mod acp_agents {
     use axum::extract::State;
 
     use ariadne_api::agents::AcpAgentDto;
@@ -83,20 +85,22 @@ pub mod acp_agents {
     /// Every built-in and configured ACP agent with its cached probe result.
     #[utoipa::path(get, path = "/v1/acp-agents", tag = "acp-agents",
         responses((status = 200, body = [AcpAgentDto])))]
-    pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<AcpAgentDto>>> {
+    pub(crate) async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<AcpAgentDto>>> {
         Ok(Json(state.agent_registry.agents().await))
     }
 
     /// Probe every registry entry and replace the cached discovery snapshot.
     #[utoipa::path(post, path = "/v1/acp-agents/refresh", tag = "acp-agents",
         responses((status = 200, body = [AcpAgentDto])))]
-    pub async fn refresh(State(state): State<AppState>) -> ApiResult<Json<Vec<AcpAgentDto>>> {
+    pub(crate) async fn refresh(
+        State(state): State<AppState>,
+    ) -> ApiResult<Json<Vec<AcpAgentDto>>> {
         Ok(Json(state.agent_registry.refresh().await))
     }
 }
 
 /// Model catalog endpoint.
-pub mod models {
+pub(super) mod models {
     use axum::extract::State;
 
     use ariadne_api::models::{ModelDto, SetModelEnabledRequest};
@@ -116,7 +120,7 @@ pub mod models {
     /// on, and nothing to say why a pin naming it is refused.
     #[utoipa::path(get, path = "/v1/models", tag = "models",
         responses((status = 200, body = [ModelDto])))]
-    pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<ModelDto>>> {
+    pub(crate) async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<ModelDto>>> {
         let mut out = catalog(&state).await;
         let off = state.store.disabled_models().await?;
         for entry in &mut out {
@@ -138,7 +142,7 @@ pub mod models {
             (status = 404, description = "no such model in the catalog"),
             (status = 409, description = "it is the last model left enabled")
         ))]
-    pub async fn set_enabled(
+    pub(crate) async fn set_enabled(
         State(state): State<AppState>,
         Json(req): Json<SetModelEnabledRequest>,
     ) -> ApiResult<Json<ModelDto>> {
@@ -184,7 +188,7 @@ pub mod models {
     /// None where nothing here lists the model — a hand-typed id — which is
     /// what [`ariadne_core::models::effort_error`] reads as "take any effort
     /// that is not blank".
-    pub async fn efforts_of(
+    pub(crate) async fn efforts_of(
         registry: &crate::acp_discovery::AgentRegistry,
         model: &str,
     ) -> Option<Vec<String>> {

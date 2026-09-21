@@ -18,7 +18,7 @@ use super::sse;
 #[utoipa::path(get, path = "/v1/logs", tag = "logs",
     params(LogsQuery),
     responses((status = 200, body = LogSnapshotResponse)))]
-pub async fn snapshot(
+pub(super) async fn snapshot(
     State(state): State<AppState>,
     Query(q): Query<LogsQuery>,
 ) -> Json<LogSnapshotResponse> {
@@ -47,7 +47,7 @@ pub async fn snapshot(
                        behind is disconnected; reconnecting starts over from a fresh \
                        snapshot.",
         content_type = "text/event-stream", body = LogSnapshotResponse)))]
-pub async fn stream(
+pub(super) async fn stream(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (lines, rx) = state.logs.snapshot_and_follow();

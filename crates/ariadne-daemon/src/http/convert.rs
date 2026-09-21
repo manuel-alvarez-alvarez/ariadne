@@ -44,7 +44,7 @@ macro_rules! dto {
 }
 
 dto! {
-    pub fn skill_dto(s: store::Skill) -> SkillDto {
+    pub(crate) fn skill_dto(s: store::Skill) -> SkillDto {
         seat: match s.seat() {
             store::SkillSeat::Orchestrator => SkillSeat::Orchestrator,
             store::SkillSeat::Task => SkillSeat::Task,
@@ -56,11 +56,11 @@ dto! {
         .. name, created_at, updated_at
     }
 
-    pub fn repository_dto(r: store::Repository) -> RepositoryDto {
+    pub(crate) fn repository_dto(r: store::Repository) -> RepositoryDto {
         .. id, path, base_branch, description, created_at, updated_at
     }
 
-    pub fn memory_dto(m: store::Memory) -> MemoryDto {
+    pub(crate) fn memory_dto(m: store::Memory) -> MemoryDto {
         .. id, repository_id, text, source_session_id, source_task_id,
            source_goal_id, created_at, expires_at
     }
@@ -93,7 +93,7 @@ dto! {
         .. id, model, effort, brief
     }
 
-    pub fn task_pick_dto(p: store::TaskPick) -> TaskPickDto {
+    pub(crate) fn task_pick_dto(p: store::TaskPick) -> TaskPickDto {
         .. reviewer_agent_id, author_agent_id, created_at
     }
 
@@ -127,11 +127,11 @@ dto! {
            merge_commit, pr_url, picked_agent_id, created_at, updated_at
     }
 
-    pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
+    pub(crate) fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
         .. id, from_status, to_status, actor, reason, created_at
     }
 
-    pub fn message_dto(m: store::Message) -> MessageDto {
+    pub(crate) fn message_dto(m: store::Message) -> MessageDto {
         // A kind or an actor this build does not know is carried rather than
         // dropped: the body is what somebody typed, and a listing that
         // silently loses a message is worse than one that shows a `note`.
@@ -159,7 +159,7 @@ dto! {
 /// Not in the [`dto!`] block above: `summary` is built from both `kind` and
 /// `payload` together, which the macro's one-expression-per-field shape has
 /// no room for.
-pub fn event_dto(e: store::AgentEvent) -> AgentEventDto {
+pub(crate) fn event_dto(e: store::AgentEvent) -> AgentEventDto {
     let payload: serde_json::Value =
         serde_json::from_str(&e.payload).unwrap_or(serde_json::Value::Null);
     let summary = super::classify::summarize(&e.kind, &payload);
@@ -192,7 +192,7 @@ async fn agent_skills(store: &Store, agent_id: &str) -> Vec<String> {
 ///
 /// The skills beside every agent are what a task is read for: an agent is its
 /// skills, and no prompt can teach a reader to read an id.
-pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, StoreError> {
+pub(crate) async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, StoreError> {
     let mut agents = Vec::new();
     for agent in store.list_task_agents(&task.id).await? {
         let skills = agent_skills(store, &agent.id).await;
@@ -211,7 +211,7 @@ pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, St
 }
 
 /// [`session_dto`] with what the session has spent loaded from the store.
-pub async fn session_dto_of(
+pub(crate) async fn session_dto_of(
     store: &Store,
     session: store::AgentSession,
 ) -> Result<SessionDto, StoreError> {
@@ -221,7 +221,7 @@ pub async fn session_dto_of(
 
 /// [`goal_dto`] with everything it needs loaded: the repositories the goal
 /// references, and what every session under it has spent.
-pub async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<GoalDto, StoreError> {
+pub(crate) async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<GoalDto, StoreError> {
     let repos = store.list_goal_repositories(&goal.id).await?;
     let usage = goal_usage(store, &goal.id).await?;
     Ok(goal_dto(goal, repos, usage))

@@ -80,7 +80,7 @@ impl LogBuffer {
     /// The buffered lines plus a subscription to everything after them —
     /// taken atomically against [`push`](Self::push), so a stream opened here
     /// neither misses a line nor sees one twice across the boundary.
-    pub fn snapshot_and_follow(&self) -> (Vec<LogLineDto>, broadcast::Receiver<LogLineDto>) {
+    pub(crate) fn snapshot_and_follow(&self) -> (Vec<LogLineDto>, broadcast::Receiver<LogLineDto>) {
         let lines = self.lines.lock().unwrap();
         (lines.iter().cloned().collect(), self.tx.subscribe())
     }

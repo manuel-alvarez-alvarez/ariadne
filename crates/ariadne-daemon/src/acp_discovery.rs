@@ -289,7 +289,7 @@ impl AgentRegistry {
     /// asks each of them, and the child is gone again before it returns. An
     /// agent that fails to answer contributes nothing rather than failing the
     /// whole listing.
-    pub async fn stored_sessions(&self) -> Vec<OutsideSessionDto> {
+    pub(crate) async fn stored_sessions(&self) -> Vec<OutsideSessionDto> {
         let cwd = self.probe_cwd.clone();
         let capable: Vec<AcpAgentDto> = self
             .results
@@ -342,7 +342,7 @@ impl AgentRegistry {
     /// The cached capabilities of one agent, by id: what the last probe
     /// measured, which is what a launch decision reads. `None` where the id
     /// is not in the registry.
-    pub async fn capabilities_of(&self, id: &str) -> Option<AcpCapabilitiesDto> {
+    pub(crate) async fn capabilities_of(&self, id: &str) -> Option<AcpCapabilitiesDto> {
         self.results
             .read()
             .await
@@ -352,7 +352,7 @@ impl AgentRegistry {
     }
 
     /// Convert every accepted discovery choice into the shared model catalog.
-    pub async fn models(&self) -> Vec<ModelDto> {
+    pub(crate) async fn models(&self) -> Vec<ModelDto> {
         self.results
             .read()
             .await

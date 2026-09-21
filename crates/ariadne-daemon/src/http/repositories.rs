@@ -22,7 +22,7 @@ use crate::gitwt::GitManager;
                                       or an unknown branch"),
         (status = 409, description = "this path and base branch are already registered")
     ))]
-pub async fn create(
+pub(super) async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateRepositoryRequest>,
 ) -> ApiResult<(StatusCode, Json<RepositoryDto>)> {
@@ -42,7 +42,7 @@ pub async fn create(
 /// List repositories.
 #[utoipa::path(get, path = "/v1/repositories", tag = "repositories",
     responses((status = 200, body = [RepositoryDto])))]
-pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<RepositoryDto>>> {
+pub(super) async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<RepositoryDto>>> {
     let repositories = state.store.list_repositories().await?;
     Ok(Json(repositories.into_iter().map(repository_dto).collect()))
 }
@@ -51,7 +51,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<Repositor
 #[utoipa::path(get, path = "/v1/repositories/{id}", tag = "repositories",
     params(("id" = String, Path, description = "repository id")),
     responses((status = 200, body = RepositoryDto), (status = 404)))]
-pub async fn get(
+pub(super) async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<RepositoryDto>> {
@@ -69,7 +69,7 @@ pub async fn get(
         (status = 404),
         (status = 409, description = "this path and base branch are already registered")
     ))]
-pub async fn update(
+pub(super) async fn update(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateRepositoryRequest>,
@@ -108,7 +108,7 @@ pub async fn update(
 #[utoipa::path(delete, path = "/v1/repositories/{id}", tag = "repositories",
     params(("id" = String, Path, description = "repository id")),
     responses((status = 204), (status = 404)))]
-pub async fn delete(
+pub(super) async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {

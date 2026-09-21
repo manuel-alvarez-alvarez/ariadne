@@ -121,7 +121,7 @@ pub(super) async fn verify_merged(
         (status = 403, description = "not an author session"),
         (status = 409, description = "the task is not approved")
     ))]
-pub async fn record_pull_request(
+pub(super) async fn record_pull_request(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -162,7 +162,7 @@ pub async fn record_pull_request(
 #[utoipa::path(get, path = "/v1/tasks/{id}/messages", tag = "tasks",
     params(("id" = String, Path, description = "task id"), MessageListQuery),
     responses((status = 200, body = [MessageDto])))]
-pub async fn list_task_messages(
+pub(super) async fn list_task_messages(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -258,7 +258,7 @@ pub(super) async fn read_channel(
     request_body = SendMessageRequest,
     params(("id" = String, Path, description = "task id")),
     responses((status = 201, body = MessageDto), (status = 403), (status = 409)))]
-pub async fn post_task_message(
+pub(super) async fn post_task_message(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -428,7 +428,7 @@ pub(super) async fn send(
 /// Which branch of a task a diff is asked about: one author's of several, or
 /// — left out — the task's own, which after the pick is the winner's.
 #[derive(Debug, Default, serde::Deserialize, utoipa::IntoParams)]
-pub struct DiffQuery {
+pub(super) struct DiffQuery {
     /// Id of the author whose branch to read, on a task staffed with several.
     pub agent: Option<String>,
 }
@@ -444,7 +444,7 @@ pub struct DiffQuery {
 #[utoipa::path(get, path = "/v1/tasks/{id}/diff", tag = "tasks",
     params(("id" = String, Path, description = "task id"), DiffQuery),
     responses((status = 200, content_type = "text/plain", body = String), (status = 404), (status = 409)))]
-pub async fn diff(
+pub(super) async fn diff(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(q): Query<DiffQuery>,
@@ -518,7 +518,7 @@ pub async fn diff(
         (status = 403, description = "not a reviewer session"),
         (status = 409, description = "the pick has not started, or this reviewer has picked already")
     ))]
-pub async fn pick_winner(
+pub(super) async fn pick_winner(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,

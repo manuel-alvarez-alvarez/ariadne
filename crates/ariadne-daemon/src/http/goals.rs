@@ -17,7 +17,7 @@ use super::error::{ApiError, ApiResult, Json};
 use super::{landing, pins};
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
-pub struct GoalListQuery {
+pub(super) struct GoalListQuery {
     /// Filter by status: one status, or several comma-separated
     /// (`status=active,completed`), matching goals in any of them.
     #[param(value_type = Option<String>, example = "active,completed")]
@@ -56,7 +56,7 @@ impl GoalListQuery {
         (status = 400),
         (status = 404, description = "no such repository or orchestrator profile")
     ))]
-pub async fn create(
+pub(super) async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateGoalRequest>,
 ) -> ApiResult<(StatusCode, Json<GoalDto>)> {
@@ -99,7 +99,7 @@ pub async fn create(
 #[utoipa::path(get, path = "/v1/goals", tag = "goals",
     params(GoalListQuery),
     responses((status = 200, body = [GoalDto])))]
-pub async fn list(
+pub(super) async fn list(
     State(state): State<AppState>,
     Query(q): Query<GoalListQuery>,
 ) -> ApiResult<Json<Vec<GoalDto>>> {
@@ -115,7 +115,7 @@ pub async fn list(
 #[utoipa::path(get, path = "/v1/goals/{id}", tag = "goals",
     params(("id" = String, Path, description = "goal id")),
     responses((status = 200, body = GoalDto), (status = 404)))]
-pub async fn get(
+pub(super) async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<GoalDto>> {
@@ -126,7 +126,7 @@ pub async fn get(
 #[utoipa::path(post, path = "/v1/goals/{id}/cancel", tag = "goals",
     params(("id" = String, Path, description = "goal id")),
     responses((status = 200, body = GoalDto), (status = 404), (status = 409)))]
-pub async fn cancel(
+pub(super) async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<GoalDto>> {
@@ -154,7 +154,7 @@ pub async fn cancel(
         (status = 404),
         (status = 409, description = "the goal is not finished yet; cancel it first")
     ))]
-pub async fn delete(
+pub(super) async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
@@ -200,7 +200,7 @@ pub async fn delete(
     request_body = FinalizePlanRequest,
     params(("id" = String, Path, description = "goal id")),
     responses((status = 200, body = GoalDto), (status = 403), (status = 409)))]
-pub async fn finalize(
+pub(super) async fn finalize(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -252,7 +252,7 @@ pub async fn finalize(
     request_body = CompleteGoalRequest,
     params(("id" = String, Path, description = "goal id")),
     responses((status = 200, body = GoalDto), (status = 403), (status = 409)))]
-pub async fn complete(
+pub(super) async fn complete(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -306,7 +306,7 @@ pub async fn complete(
 #[utoipa::path(get, path = "/v1/goals/{id}/messages", tag = "goals",
     params(("id" = String, Path, description = "goal id"), MessageListQuery),
     responses((status = 200, body = [MessageDto])))]
-pub async fn list_goal_messages(
+pub(super) async fn list_goal_messages(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -329,7 +329,7 @@ pub async fn list_goal_messages(
     request_body = SendMessageRequest,
     params(("id" = String, Path, description = "goal id")),
     responses((status = 201, body = MessageDto), (status = 403), (status = 409)))]
-pub async fn post_goal_message(
+pub(super) async fn post_goal_message(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,

@@ -30,7 +30,7 @@ const DISABLED: &str =
 #[utoipa::path(get, path = "/v1/repositories/{id}/knowledge", tag = "knowledge",
     params(("id" = String, Path, description = "repository id")),
     responses((status = 200, body = KnowledgeStatusDto), (status = 404)))]
-pub async fn status(
+pub(super) async fn status(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<KnowledgeStatusDto>> {
@@ -42,7 +42,7 @@ pub async fn status(
     params(("id" = String, Path, description = "repository id")),
     responses((status = 202, body = KnowledgeStatusDto), (status = 404),
               (status = 409, description = "the knowledge base is disabled")))]
-pub async fn reindex(
+pub(super) async fn reindex(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<(StatusCode, Json<KnowledgeStatusDto>)> {
@@ -60,7 +60,7 @@ pub async fn reindex(
     params(KnowledgeSearchQuery),
     responses((status = 200, body = [KnowledgeHitDto]), (status = 400), (status = 404),
               (status = 409, description = "the knowledge base is disabled")))]
-pub async fn search(
+pub(super) async fn search(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<KnowledgeSearchQuery>,
@@ -120,7 +120,7 @@ pub async fn search(
     responses((status = 200, body = [KnowledgeOutlineEntryDto]),
               (status = 404, description = "no such repository, or the path is not indexed at the ref"),
               (status = 409, description = "the knowledge base is disabled")))]
-pub async fn outline(
+pub(super) async fn outline(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<KnowledgeOutlineQuery>,
@@ -168,7 +168,7 @@ pub async fn outline(
     params(KnowledgeSymbolQuery),
     responses((status = 200, body = [KnowledgeSymbolDto]), (status = 400), (status = 404),
               (status = 409, description = "the knowledge base is disabled")))]
-pub async fn symbol(
+pub(super) async fn symbol(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<KnowledgeSymbolQuery>,
@@ -271,7 +271,7 @@ pub async fn symbol(
     params(KnowledgeImpactQuery),
     responses((status = 200, body = [KnowledgeImpactDto]), (status = 400), (status = 404),
               (status = 409, description = "the knowledge base is disabled")))]
-pub async fn impact(
+pub(super) async fn impact(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<KnowledgeImpactQuery>,
@@ -383,7 +383,7 @@ pub async fn impact(
     params(KnowledgePathQuery),
     responses((status = 200, body = KnowledgePathDto), (status = 400), (status = 404),
               (status = 409, description = "the knowledge base is disabled")))]
-pub async fn path(
+pub(super) async fn path(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<KnowledgePathQuery>,
@@ -449,7 +449,7 @@ pub async fn path(
     params(KnowledgeMapQuery),
     responses((status = 200, body = KnowledgeMapDto), (status = 404),
               (status = 409, description = "the knowledge base is disabled")))]
-pub async fn map(
+pub(super) async fn map(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<KnowledgeMapQuery>,
@@ -489,7 +489,7 @@ pub async fn map(
     params(KnowledgeGraphQuery),
     responses((status = 200, body = KnowledgeGraphDto), (status = 404),
               (status = 409, description = "the knowledge base is disabled")))]
-pub async fn graph(
+pub(super) async fn graph(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<KnowledgeGraphQuery>,
@@ -544,7 +544,7 @@ pub async fn graph(
     params(KnowledgeInteractionsQuery),
     responses((status = 200, body = [KnowledgeInteractionGroupDto]), (status = 404),
               (status = 409, description = "the knowledge base is disabled")))]
-pub async fn interactions(
+pub(super) async fn interactions(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<KnowledgeInteractionsQuery>,

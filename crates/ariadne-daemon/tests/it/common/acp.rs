@@ -30,11 +30,11 @@ use serde_json::{Value, json};
 /// How long a `writer_child` agent's writer lives on once the agent is gone,
 /// the way `codex app-server` finishes up after its client closes: longer
 /// than any wait a test gives a kill.
-pub const WRITER_LINGER_SECS: u64 = 30;
+pub(crate) const WRITER_LINGER_SECS: u64 = 30;
 
 /// One stub agent on disk: the executable the registry runs, and the files it
 /// reports through.
-pub struct StubAcpAgent {
+pub(crate) struct StubAcpAgent {
     /// The wrapper script the daemon spawns.
     pub bin: String,
     script_file: PathBuf,
@@ -45,7 +45,7 @@ pub struct StubAcpAgent {
 
 impl StubAcpAgent {
     /// Every JSON-RPC message the daemon sent, in the order it arrived.
-    pub fn messages(&self) -> Vec<Value> {
+    pub(crate) fn messages(&self) -> Vec<Value> {
         std::fs::read_to_string(&self.log)
             .unwrap_or_default()
             .lines()
@@ -54,7 +54,7 @@ impl StubAcpAgent {
     }
 
     /// The methods of the requests among them.
-    pub fn methods(&self) -> Vec<String> {
+    pub(crate) fn methods(&self) -> Vec<String> {
         self.messages()
             .iter()
             .filter_map(|m| m.get("method").and_then(Value::as_str))
@@ -63,7 +63,7 @@ impl StubAcpAgent {
     }
 
     /// The params of every request of `method`.
-    pub fn calls_of(&self, method: &str) -> Vec<Value> {
+    pub(crate) fn calls_of(&self, method: &str) -> Vec<Value> {
         self.messages()
             .into_iter()
             .filter(|m| m.get("method").and_then(Value::as_str) == Some(method))
@@ -73,7 +73,7 @@ impl StubAcpAgent {
 
     /// The text of every `session/prompt` the agent processes of one Ariadne
     /// session were sent, in order.
-    pub fn prompts_for(&self, session_id: &str) -> Vec<String> {
+    pub(crate) fn prompts_for(&self, session_id: &str) -> Vec<String> {
         self.messages()
             .into_iter()
             .filter(|m| m.get("method").and_then(Value::as_str) == Some("session/prompt"))
@@ -88,7 +88,7 @@ impl StubAcpAgent {
 
     /// The arguments every agent process of one Ariadne session was started
     /// with behind the stub's own command, one list per process, in order.
-    pub fn launches_for(&self, session_id: &str) -> Vec<Vec<String>> {
+    pub(crate) fn launches_for(&self, session_id: &str) -> Vec<Vec<String>> {
         std::fs::read_to_string(&self.launches)
             .unwrap_or_default()
             .lines()
@@ -109,7 +109,7 @@ impl StubAcpAgent {
     }
 
     /// The codex-acp initial mode each process of one Ariadne session received.
-    pub fn codex_modes_for(&self, session_id: &str) -> Vec<Option<String>> {
+    pub(crate) fn codex_modes_for(&self, session_id: &str) -> Vec<Option<String>> {
         std::fs::read_to_string(&self.launches)
             .unwrap_or_default()
             .lines()
@@ -128,7 +128,7 @@ impl StubAcpAgent {
 
     /// Forget every message logged so far: what a test starts asserting from
     /// after the discovery probe has already driven the stub once.
-    pub fn clear_messages(&self) {
+    pub(crate) fn clear_messages(&self) {
         let _ = std::fs::remove_file(&self.log);
     }
 
@@ -136,7 +136,7 @@ impl StubAcpAgent {
     /// the script as it starts, so the next one the daemon spawns follows
     /// this one: how a test moves the world under a daemon between two
     /// requests.
-    pub fn reprogram(&self, script: Value) {
+    pub(crate) fn reprogram(&self, script: Value) {
         write_script_file(
             &self.script_file,
             script,
@@ -148,7 +148,7 @@ impl StubAcpAgent {
 
     /// The pid of the child a `writer_child` agent process started, once it
     /// has written it down — the last process's, like [`Self::pid`].
-    pub fn writer_pid(&self) -> Option<u32> {
+    pub(crate) fn writer_pid(&self) -> Option<u32> {
         std::fs::read_to_string(format!("{}.writer", self.pid_file.display()))
             .ok()?
             .trim()
@@ -157,7 +157,7 @@ impl StubAcpAgent {
     }
 
     /// The agent process's pid, once it has written it down.
-    pub fn pid(&self) -> Option<u32> {
+    pub(crate) fn pid(&self) -> Option<u32> {
         std::fs::read_to_string(&self.pid_file)
             .ok()?
             .trim()
@@ -167,7 +167,7 @@ impl StubAcpAgent {
 
     /// Whether that process still exists — a reaped child does not, where an
     /// unreaped zombie still would.
-    pub fn process_is_alive(&self) -> bool {
+    pub(crate) fn process_is_alive(&self) -> bool {
         self.pid().is_some_and(pid_is_alive)
     }
 }
@@ -175,7 +175,7 @@ impl StubAcpAgent {
 /// Whether `pid` still exists. A relaunch starts a second agent process that
 /// overwrites the pid file, so a test that watches the first one dies keeps
 /// its pid and asks here.
-pub fn pid_is_alive(pid: u32) -> bool {
+pub(crate) fn pid_is_alive(pid: u32) -> bool {
     std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])
         .status()
@@ -184,7 +184,7 @@ pub fn pid_is_alive(pid: u32) -> bool {
 
 /// A home whose `config.toml` registers the stub as the agent `stub`, for a
 /// harness built over it with [`super::HarnessBuilder::home`].
-pub fn registry_home(stub: &StubAcpAgent) -> PathBuf {
+pub(crate) fn registry_home(stub: &StubAcpAgent) -> PathBuf {
     let home = Path::new(&stub.bin).parent().unwrap().join("home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
@@ -203,12 +203,12 @@ pub fn registry_home(stub: &StubAcpAgent) -> PathBuf {
 ///
 /// A probe under full-suite load can run out its timeout: probe again until
 /// the stub is accepted, so no test reads a timed-out snapshot.
-pub async fn discovery_settled(h: &super::Harness, stub: &StubAcpAgent) {
+pub(crate) async fn discovery_settled(h: &super::Harness, stub: &StubAcpAgent) {
     discovery_accepted(h, stub, "stub").await;
 }
 
 /// The same, for a stub registered under `agent_id`.
-pub async fn discovery_accepted(h: &super::Harness, stub: &StubAcpAgent, agent_id: &str) {
+pub(crate) async fn discovery_accepted(h: &super::Harness, stub: &StubAcpAgent, agent_id: &str) {
     let accepted = || async {
         h.launcher.registry.agents().await.iter().any(|agent| {
             agent.id == agent_id && agent.status == ariadne_api::agents::AcpAgentStatus::Ready
@@ -226,7 +226,7 @@ pub async fn discovery_accepted(h: &super::Harness, stub: &StubAcpAgent, agent_i
 }
 
 /// One configuration option in the ACP shape, as the stub offers it.
-pub fn option(id: &str, category: &str, current: &str) -> Value {
+pub(crate) fn option(id: &str, category: &str, current: &str) -> Value {
     json!({
         "id": id,
         "name": id,
@@ -240,7 +240,7 @@ pub fn option(id: &str, category: &str, current: &str) -> Value {
 /// The script most tests want: version 1, a resumable agent, a model and a
 /// thought-level option, and one prompt turn that runs a tool call and
 /// answers "done".
-pub fn script() -> Value {
+pub(crate) fn script() -> Value {
     json!({
         "capabilities": {"loadSession": true, "sessionCapabilities": {"resume": {}}},
         "session_id": "stub-session",
@@ -263,7 +263,7 @@ pub fn script() -> Value {
 
 /// Write the stub into `dir` and answer with the handle the test drives it
 /// by. The script is `script()` with whatever the test changed.
-pub fn stub_acp_agent(dir: &Path, script: Value) -> StubAcpAgent {
+pub(crate) fn stub_acp_agent(dir: &Path, script: Value) -> StubAcpAgent {
     let log = dir.join("acp-messages.jsonl");
     let launches = dir.join("acp-launches.jsonl");
     let pid_file = dir.join("acp-agent.pid");

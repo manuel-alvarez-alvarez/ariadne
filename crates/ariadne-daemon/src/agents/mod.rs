@@ -105,7 +105,7 @@ pub struct SpawnPlan {
 
 /// Env vars every agent is launched with. The MCP server reads these to know
 /// which session it acts for.
-pub fn base_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
+pub(crate) fn base_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
     let mut env = vec![
         ("ARIADNE_SESSION_ID".into(), ctx.session_id.clone()),
         ("ARIADNE_LAUNCH_ID".into(), ctx.launch_id.clone()),

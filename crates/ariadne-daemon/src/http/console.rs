@@ -438,7 +438,7 @@ where
     responses((status = 200, body = [AgentEventDto]), (status = 404),
         (status = 503, description = "the console streamed faster than a snapshot could be \
                                       read, every time it was tried; ask again")))]
-pub async fn snapshot(
+pub(super) async fn snapshot(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Vec<AgentEventDto>>> {
@@ -549,7 +549,7 @@ fn call_of(event: &AgentEventDto) -> String {
                        event (ResyncDto) and the connection closes.",
         content_type = "text/event-stream", body = AgentEventDto),
         (status = 404)))]
-pub async fn stream(
+pub(super) async fn stream(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
@@ -607,7 +607,7 @@ pub async fn stream(
     params(("id" = String, Path, description = "session id")),
     responses((status = 204, description = "Permission answer or prompt accepted"),
         (status = 404), (status = 409)))]
-pub async fn input(
+pub(super) async fn input(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<ConsoleInputRequest>,
@@ -649,7 +649,7 @@ pub(super) async fn take_input(state: &AppState, id: &str, text: String) -> ApiR
     params(("id" = String, Path, description = "session id")),
     responses((status = 204, description = "The running turn was told to cancel"),
         (status = 404), (status = 409)))]
-pub async fn cancel(
+pub(super) async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {

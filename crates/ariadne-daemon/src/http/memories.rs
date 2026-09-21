@@ -27,7 +27,7 @@ const MEMORY_SEARCH_FALLBACK_LIMIT: usize = 5;
 #[utoipa::path(post, path = "/v1/memories", tag = "memories",
     request_body = CreateMemoryRequest,
     responses((status = 201, body = MemoryDto), (status = 400), (status = 403), (status = 404)))]
-pub async fn create(
+pub(super) async fn create(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<CreateMemoryRequest>,
@@ -96,7 +96,7 @@ fn source_limit_error(error: StoreError, session: &ariadne_store::AgentSession) 
 #[utoipa::path(get, path = "/v1/memories", tag = "memories",
     params(MemoryListQuery),
     responses((status = 200, body = [MemoryDto]), (status = 400), (status = 403), (status = 404)))]
-pub async fn list(
+pub(super) async fn list(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<MemoryListQuery>,
@@ -116,7 +116,7 @@ pub async fn list(
 #[utoipa::path(get, path = "/v1/memories/search", tag = "memories",
     params(MemorySearchQuery),
     responses((status = 200, body = MemorySearchResult), (status = 400), (status = 403), (status = 404)))]
-pub async fn search(
+pub(super) async fn search(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<MemorySearchQuery>,
@@ -145,7 +145,7 @@ pub async fn search(
 #[utoipa::path(delete, path = "/v1/memories/{id}", tag = "memories",
     params(("id" = String, Path, description = "memory id")),
     responses((status = 204), (status = 403), (status = 404)))]
-pub async fn delete(
+pub(super) async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,

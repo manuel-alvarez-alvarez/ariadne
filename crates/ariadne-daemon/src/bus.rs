@@ -52,7 +52,7 @@ pub struct BusEvent {
 impl BusEvent {
     /// Does this event pass the `goal`/`task` stream filters? An event with no
     /// such association (profiles, repositories) is filtered out by either filter.
-    pub fn matches(&self, goal: Option<&str>, task: Option<&str>) -> bool {
+    pub(crate) fn matches(&self, goal: Option<&str>, task: Option<&str>) -> bool {
         goal.is_none_or(|g| self.goal_id.as_deref() == Some(g))
             && task.is_none_or(|t| self.task_id.as_deref() == Some(t))
     }
@@ -95,7 +95,7 @@ impl Default for EventBus {
 }
 
 impl EventBus {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_capacity(CAPACITY)
     }
 
@@ -145,7 +145,7 @@ impl EventBus {
     ///
     /// A bus with no pump behind it answers at once: nothing fattens for it,
     /// so nothing of it is ever pending.
-    pub async fn drained(&self) {
+    pub(crate) async fn drained(&self) {
         let (answer, answered) = oneshot::channel();
         if self.drains.send(answer).is_ok() {
             let _ = answered.await;
@@ -162,7 +162,7 @@ impl EventBus {
     /// which is read from the store and holds the event
     /// ([`crate::http::console`]). A console of any other session reads its
     /// own count, which the drop left where it was.
-    pub fn dropped(&self, session_id: &str) -> u64 {
+    pub(crate) fn dropped(&self, session_id: &str) -> u64 {
         // The lock is taken only where something was dropped at all, so an
         // ordinary console asks the atomic and no more.
         if self.dropped.total.load(Ordering::Relaxed) == 0 {
@@ -173,7 +173,7 @@ impl EventBus {
 
     /// Count one agent event of a session that the pump dropped: its own
     /// accounting, and what a test stands in for the pump with.
-    pub fn count_dropped(&self, session_id: &str) {
+    pub(crate) fn count_dropped(&self, session_id: &str) {
         *self.sessions().entry(session_id.to_string()).or_default() += 1;
         // Written last: a console that reads a total above zero finds the
         // session's count already there.

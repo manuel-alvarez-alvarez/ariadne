@@ -68,7 +68,7 @@ async fn resolve_seat(
     request_body = CreateTaskRequest,
     params(("goal_id" = String, Path, description = "goal id")),
     responses((status = 201, body = TaskDto), (status = 400), (status = 409)))]
-pub async fn create(
+pub(super) async fn create(
     State(state): State<AppState>,
     Path(goal_id): Path<String>,
     headers: HeaderMap,
@@ -128,7 +128,7 @@ pub async fn create(
 #[utoipa::path(get, path = "/v1/tasks", tag = "tasks",
     params(TaskListQuery),
     responses((status = 200, body = [TaskDto])))]
-pub async fn list(
+pub(super) async fn list(
     State(state): State<AppState>,
     Query(q): Query<TaskListQuery>,
 ) -> ApiResult<Json<Vec<TaskDto>>> {
@@ -150,7 +150,7 @@ pub async fn list(
 #[utoipa::path(get, path = "/v1/tasks/{id}", tag = "tasks",
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, body = TaskDto), (status = 404)))]
-pub async fn get(
+pub(super) async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<TaskDto>> {
@@ -163,7 +163,7 @@ pub async fn get(
     request_body = UpdateTaskRequest,
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, body = TaskDto), (status = 404), (status = 409)))]
-pub async fn update(
+pub(super) async fn update(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -228,7 +228,7 @@ pub async fn update(
     request_body = TransitionRequest,
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, body = TaskDto), (status = 404), (status = 409)))]
-pub async fn transition(
+pub(super) async fn transition(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -317,7 +317,7 @@ pub(crate) async fn apply_transition(
 #[utoipa::path(post, path = "/v1/tasks/{id}/cancel", tag = "tasks",
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, body = TaskDto), (status = 403), (status = 409)))]
-pub async fn cancel(
+pub(super) async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -344,7 +344,7 @@ pub async fn cancel(
 #[utoipa::path(post, path = "/v1/tasks/{id}/retry", tag = "tasks",
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, body = TaskDto), (status = 403), (status = 409)))]
-pub async fn retry(
+pub(super) async fn retry(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -369,7 +369,7 @@ pub async fn retry(
 #[utoipa::path(get, path = "/v1/tasks/{id}/transitions", tag = "tasks",
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, body = [TaskTransitionDto])))]
-pub async fn list_transitions(
+pub(super) async fn list_transitions(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Vec<TaskTransitionDto>>> {

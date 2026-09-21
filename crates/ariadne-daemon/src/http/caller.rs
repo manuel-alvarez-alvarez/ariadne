@@ -13,14 +13,14 @@ use ariadne_store::{AgentSession, Store};
 use super::error::{ApiError, ApiResult};
 
 /// Resolved identity of the caller.
-pub struct CallCtx {
+pub(super) struct CallCtx {
     pub actor: Actor,
     /// Present when the call came from an agent session.
     pub session: Option<AgentSession>,
 }
 
 impl CallCtx {
-    pub fn user() -> Self {
+    pub(super) fn user() -> Self {
         Self {
             actor: Actor::User,
             session: None,
@@ -28,7 +28,7 @@ impl CallCtx {
     }
 }
 
-pub async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<CallCtx> {
+pub(super) async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<CallCtx> {
     let Some(raw) = headers.get(SESSION_HEADER) else {
         return Ok(CallCtx::user());
     };
@@ -51,7 +51,7 @@ pub async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<CallCtx> 
 }
 
 /// Ensure an agent session is scoped to the given task (users pass freely).
-pub fn ensure_task_scope(ctx: &CallCtx, task_id: &str) -> ApiResult<()> {
+pub(super) fn ensure_task_scope(ctx: &CallCtx, task_id: &str) -> ApiResult<()> {
     if let Some(session) = &ctx.session
         && session.task_id.as_deref() != Some(task_id)
         && session.seat() != Seat::Orchestrator
@@ -65,7 +65,10 @@ pub fn ensure_task_scope(ctx: &CallCtx, task_id: &str) -> ApiResult<()> {
 }
 
 /// The repositories an agent session may read: its task's, or its goal's.
-pub async fn session_repositories(store: &Store, session: &AgentSession) -> ApiResult<Vec<String>> {
+pub(super) async fn session_repositories(
+    store: &Store,
+    session: &AgentSession,
+) -> ApiResult<Vec<String>> {
     Ok(match &session.task_id {
         Some(task_id) => vec![store.get_task(task_id).await?.repo_id],
         None => store
@@ -78,7 +81,7 @@ pub async fn session_repositories(store: &Store, session: &AgentSession) -> ApiR
 }
 
 /// Ensure an agent session belongs to the repository it reads or changes.
-pub async fn ensure_repository_scope(
+pub(super) async fn ensure_repository_scope(
     store: &Store,
     ctx: &CallCtx,
     repository_id: &str,

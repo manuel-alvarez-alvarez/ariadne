@@ -11,7 +11,7 @@
 //! session a test seeded itself.
 //!
 
-pub mod acp;
+pub(crate) mod acp;
 
 use std::future::IntoFuture;
 use std::path::{Path, PathBuf};
@@ -61,7 +61,7 @@ use ariadne_store::{
 /// Generous because some of what is waited on is not the daemon thinking: a
 /// stub agent is a python process the daemon starts and talks to, and every
 /// test in the crate runs beside the others.
-pub const TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long a test listens for something that must not happen.
 ///
@@ -69,17 +69,17 @@ pub const TIMEOUT: Duration = Duration::from_secs(30);
 /// catches a wrong event that comes later still. Everything it listens for is
 /// the daemon reacting inside its own process, and the branch watch, the
 /// slowest of those, debounces for 50 ms.
-pub const QUIET: Duration = Duration::from_millis(500);
+pub(crate) const QUIET: Duration = Duration::from_millis(500);
 
 /// A daemon timeout for a test that is about that timeout running out. The
 /// test waits it out, so it is short, and nothing the test needs done in time
 /// runs under it.
-pub const RUNS_OUT: Duration = Duration::from_millis(500);
+pub(crate) const RUNS_OUT: Duration = Duration::from_millis(500);
 
 /// The registry id the harness registers its stub agent under.
-pub const STUB: &str = "stub";
+pub(crate) const STUB: &str = "stub";
 
-pub struct Harness {
+pub(crate) struct Harness {
     pub store: Store,
     pub launcher: Arc<Launcher>,
     pub router: Router,
@@ -103,7 +103,7 @@ pub struct Harness {
     db: sqlx::SqlitePool,
 }
 
-pub struct HarnessBuilder {
+pub(crate) struct HarnessBuilder {
     home: Option<PathBuf>,
     scheduler: bool,
     spawns: bool,
@@ -117,7 +117,7 @@ pub struct HarnessBuilder {
 /// The pin the fixtures staff an agent on: a model of the registry agent the
 /// harness registers. A model is required everywhere, so every seeded row
 /// names one, and a test that cares which model it is names its own.
-pub fn test_pin() -> AgentPin {
+pub(crate) fn test_pin() -> AgentPin {
     AgentPin {
         model: format!("{STUB}:test-model"),
         effort: None,
@@ -126,7 +126,7 @@ pub fn test_pin() -> AgentPin {
 
 /// A daemon in a temporary directory, its registry holding the stub agent,
 /// and no scheduler.
-pub fn harness() -> HarnessBuilder {
+pub(crate) fn harness() -> HarnessBuilder {
     HarnessBuilder {
         home: None,
         scheduler: false,
@@ -143,34 +143,34 @@ impl HarnessBuilder {
     /// Build the daemon around an already prepared home directory — a
     /// `config.toml` in it is read as `ariadned` would read it, its registry
     /// included.
-    pub fn home(mut self, home: PathBuf) -> Self {
+    pub(crate) fn home(mut self, home: PathBuf) -> Self {
         self.home = Some(home);
         self
     }
 
     /// Run a real scheduler behind the router, as the daemon does. No sleep
     /// inhibition: nothing in a test runs long enough to matter.
-    pub fn scheduler(mut self) -> Self {
+    pub(crate) fn scheduler(mut self) -> Self {
         self.scheduler = true;
         self
     }
 
     /// A daemon that cannot start anything: the registry's stub agent names
     /// no executable, so every fresh session dies at the launch.
-    pub fn cannot_spawn(mut self) -> Self {
+    pub(crate) fn cannot_spawn(mut self) -> Self {
         self.spawns = false;
         self
     }
 
     /// A daemon whose agent starts and exits at once: every launch works,
     /// and not one agent is ever heard from.
-    pub fn dying_agent(mut self) -> Self {
+    pub(crate) fn dying_agent(mut self) -> Self {
         self.dies = true;
         self
     }
 
     /// Serve `/v1/logs` from a buffer the test already holds.
-    pub fn logs(mut self, logs: LogBuffer) -> Self {
+    pub(crate) fn logs(mut self, logs: LogBuffer) -> Self {
         self.logs = Some(logs);
         self
     }
@@ -181,14 +181,14 @@ impl HarnessBuilder {
     /// resume is gated on what discovery measured — with the stub probed
     /// until discovery accepts it and the probes' traffic dropped from its
     /// log.
-    pub fn discover_agents(mut self) -> Self {
+    pub(crate) fn discover_agents(mut self) -> Self {
         self.discover_agents = true;
         self
     }
 
     /// Wait on agents as long as `timeouts` says, rather than as long as a
     /// daemon does: for a test about one of them running out ([`RUNS_OUT`]).
-    pub fn timeouts(mut self, timeouts: Timeouts) -> Self {
+    pub(crate) fn timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
@@ -197,7 +197,7 @@ impl HarnessBuilder {
     /// every repository registered from here on is indexed. Off by default,
     /// since most repositories the tests register are not git repositories,
     /// and each would be one failed index run on the bus.
-    pub fn knowledge(mut self) -> Self {
+    pub(crate) fn knowledge(mut self) -> Self {
         self.knowledge = true;
         self
     }
@@ -418,11 +418,11 @@ fn shared_script(script: &str) -> PathBuf {
 
 impl Harness {
     /// Where this harness's agents keep their transcripts.
-    pub fn transcript_homes(&self) -> TranscriptHomes {
+    pub(crate) fn transcript_homes(&self) -> TranscriptHomes {
         transcript_homes(self.dir.path())
     }
 
-    pub fn at(&self, name: &str) -> PathBuf {
+    pub(crate) fn at(&self, name: &str) -> PathBuf {
         self.dir.path().join(name)
     }
 
@@ -433,7 +433,7 @@ impl Harness {
     /// read back with the status `ingest_event` writes last — so what the
     /// test writes to the row afterwards is not written over by the rest of
     /// the handshake still draining behind it.
-    pub async fn agent_runs(&self, session: &AgentSession) {
+    pub(crate) async fn agent_runs(&self, session: &AgentSession) {
         let agent_id = agent_of(&session.model).to_string();
         self.agent_runs_as(session, &agent_id).await;
     }
@@ -477,7 +477,7 @@ impl Harness {
     /// and never publish at all. Every caller already either starts a
     /// session fresh or calls `set_status(.., Idle)` before reusing one;
     /// this only turns that into something enforced rather than assumed.
-    pub async fn agent_runs_as(&self, session: &AgentSession, agent_id: &str) {
+    pub(crate) async fn agent_runs_as(&self, session: &AgentSession, agent_id: &str) {
         let repository_id = match &session.task_id {
             Some(task) => self.store.get_task(task).await.unwrap().repo_id,
             None => {
@@ -556,13 +556,13 @@ impl Harness {
     }
 
     /// Whether the runtime still owns an agent process for this session.
-    pub fn agent_is_running(&self, session: &AgentSession) -> bool {
+    pub(crate) fn agent_is_running(&self, session: &AgentSession) -> bool {
         self.launcher.acp.is_running(&session.id)
     }
 
     /// Every prompt the harness's stub agent was handed for this session, in
     /// order, as the agent read it.
-    pub fn prompts_to(&self, session: &AgentSession) -> Vec<String> {
+    pub(crate) fn prompts_to(&self, session: &AgentSession) -> Vec<String> {
         self.agent.prompts_for(&session.id)
     }
 
@@ -571,14 +571,14 @@ impl Harness {
     /// was handed, and a test that writes over the session right after can
     /// still be caught by that turn's own later reports landing — the same
     /// gap `agent_runs` closes for the first turn a session ever runs.
-    pub async fn nudged(&self, session: &AgentSession) -> bool {
+    pub(crate) async fn nudged(&self, session: &AgentSession) -> bool {
         !self.prompts_to(session).is_empty()
             && self.session_status(session).await == SessionStatus::Idle
     }
 
     /// Every prompt this session's agent was handed since its launch, as one
     /// text: what a delivery to it is read back from.
-    pub fn prompted(&self, session: &AgentSession) -> String {
+    pub(crate) fn prompted(&self, session: &AgentSession) -> String {
         self.prompts_to(session).join("\n\n")
     }
 
@@ -586,7 +586,7 @@ impl Harness {
     /// briefing of its last launch, and every prompt the harness's stub was
     /// sent for it since — whichever way a briefing travelled, a relaunch or
     /// a prompt to an agent already up.
-    pub fn told(&self, session_id: &str) -> String {
+    pub(crate) fn told(&self, session_id: &str) -> String {
         let prompts = self.agent.prompts_for(session_id);
         let mut told = Vec::new();
         if let Some(launch) = self.launch_file(session_id) {
@@ -609,7 +609,7 @@ impl Harness {
 
     /// The launch file the adapter last wrote for this session: what its
     /// agent was told, pinned to and connected to.
-    pub fn launch_file(&self, session_id: &str) -> Option<LaunchConfig> {
+    pub(crate) fn launch_file(&self, session_id: &str) -> Option<LaunchConfig> {
         let path = self.launcher.cfg.run_dir.join(session_id).join("acp.json");
         serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
     }
@@ -622,7 +622,7 @@ impl Harness {
 ///
 /// The orchestrator is not among them: a goal has exactly one, it is the one
 /// agent type Ariadne defines, and nothing staffs it.
-pub struct Cast {
+pub(crate) struct Cast {
     pub goal: Goal,
     pub task: Task,
     pub repo: Repository,
@@ -633,7 +633,7 @@ pub struct Cast {
 impl Harness {
     /// A toy git repo under the harness directory: `main` at one commit, and a
     /// `next` branch one commit ahead of it, checked out on `main`.
-    pub fn git_repo(&self, name: &str) -> PathBuf {
+    pub(crate) fn git_repo(&self, name: &str) -> PathBuf {
         let repo = self.at(name);
         std::fs::create_dir_all(&repo).unwrap();
         sh(
@@ -650,7 +650,7 @@ impl Harness {
     /// A registered repository at `path`: a directory that exists, since an
     /// orchestrator is started in it, but only the tests that spawn an author
     /// ever have git look at it.
-    pub async fn repository(&self, path: &Path) -> Repository {
+    pub(crate) async fn repository(&self, path: &Path) -> Repository {
         std::fs::create_dir_all(path).unwrap();
         self.store
             .create_repository(NewRepository {
@@ -665,7 +665,7 @@ impl Harness {
     /// One reviewer's verdict on the round a task stands in, as the reviewer
     /// itself would send it: a message to the author, of the kind that closes
     /// a round.
-    pub async fn verdict(
+    pub(crate) async fn verdict(
         &self,
         task: &Task,
         reviewer_agent_id: &str,
@@ -678,7 +678,7 @@ impl Harness {
 
     /// The same, sent from a live reviewer session, so the verdict names the
     /// session it came from.
-    pub async fn verdict_from(
+    pub(crate) async fn verdict_from(
         &self,
         task: &Task,
         session: &AgentSession,
@@ -721,13 +721,13 @@ impl Harness {
 
     /// A goal still in planning, on a repository of its own, pinned to the
     /// stub as [`Self::cast_reviewed_by`] pins its own.
-    pub async fn goal(&self) -> (Goal, Repository) {
+    pub(crate) async fn goal(&self) -> (Goal, Repository) {
         let repo = self.repository(&self.at("repo")).await;
         let goal = self.goal_on(&repo, test_pin()).await;
         (goal, repo)
     }
 
-    pub async fn goal_on(&self, repo: &Repository, pin: AgentPin) -> Goal {
+    pub(crate) async fn goal_on(&self, repo: &Repository, pin: AgentPin) -> Goal {
         self.store
             .create_goal(NewGoal {
                 title: "Ship the UI".into(),
@@ -741,7 +741,7 @@ impl Harness {
 
     /// A task on a goal, staffed with one author and the reviewers given, all
     /// on the same pin.
-    pub async fn task_on(
+    pub(crate) async fn task_on(
         &self,
         goal: &Goal,
         repo: &Repository,
@@ -770,27 +770,27 @@ impl Harness {
 
     /// A goal still in planning, with a repository behind it and nothing else:
     /// no task, so nothing but the orchestrator is under reconciliation.
-    pub async fn planning_goal(&self) -> Goal {
+    pub(crate) async fn planning_goal(&self) -> Goal {
         let (goal, _repo) = self.goal().await;
         goal
     }
 
     /// A goal in planning with one task on it, and the agents staffed on that
     /// task: the shape most tests start from.
-    pub async fn cast(&self) -> Cast {
+    pub(crate) async fn cast(&self) -> Cast {
         self.cast_reviewed_by(1).await
     }
 
     /// The same, with `reviewers` reviewers on the task. A task is approved
     /// when every one of them has approved, so two of them is where a round
     /// one verdict does not close — a reviewer sitting with its work done.
-    pub async fn cast_reviewed_by(&self, reviewers: usize) -> Cast {
+    pub(crate) async fn cast_reviewed_by(&self, reviewers: usize) -> Cast {
         self.cast_pinned(&test_pin().model, reviewers).await
     }
 
     /// The same on another model: what a goal and a task's agents run on is
     /// what they were pinned to when they were created.
-    pub async fn cast_pinned(&self, model: &str, reviewers: usize) -> Cast {
+    pub(crate) async fn cast_pinned(&self, model: &str, reviewers: usize) -> Cast {
         let pin = AgentPin {
             model: model.to_string(),
             effort: None,
@@ -816,7 +816,7 @@ impl Harness {
 
     /// Move a staffed agent onto another model, which is what a `PATCH
     /// /v1/tasks/{id}` from the UI amounts to.
-    pub async fn move_agent(&self, agent_id: &str, model: &str) {
+    pub(crate) async fn move_agent(&self, agent_id: &str, model: &str) {
         let pin = AgentPin {
             model: model.to_string(),
             effort: None,
@@ -831,7 +831,7 @@ impl Harness {
     /// preserves commit order, so seeing the last one means the earlier ones
     /// are out too — so a stream opened afterwards sees nothing but what the
     /// test itself does.
-    pub async fn active_cast(&self) -> Cast {
+    pub(crate) async fn active_cast(&self) -> Cast {
         let mut rx = self.bus.subscribe();
         let mut cast = self.cast().await;
         cast.goal = self.activate(&cast.goal).await;
@@ -843,7 +843,7 @@ impl Harness {
         cast
     }
 
-    pub async fn activate(&self, goal: &Goal) -> Goal {
+    pub(crate) async fn activate(&self, goal: &Goal) -> Goal {
         self.store
             .set_goal_status(&goal.id, GoalStatus::Active)
             .await
@@ -852,7 +852,7 @@ impl Harness {
 
     /// A session of `seat`, as the launcher would have created it — a row,
     /// with no agent process under it until [`Self::agent_runs`] starts one.
-    pub async fn session(
+    pub(crate) async fn session(
         &self,
         goal: &Goal,
         task: Option<&Task>,
@@ -865,7 +865,7 @@ impl Harness {
     /// An orchestrator session on a goal of its own, on a repository named
     /// after `name`: the least a test that only cares about one session
     /// needs, and two names for two of them.
-    pub async fn lone_session(&self, name: &str) -> AgentSession {
+    pub(crate) async fn lone_session(&self, name: &str) -> AgentSession {
         let repo = self.repository(&self.at(&format!("repo-{name}"))).await;
         let goal = self.goal_on(&repo, test_pin()).await;
         // An orchestrator is staffed on no task, so its session carries no
@@ -874,7 +874,7 @@ impl Harness {
     }
 
     /// An orchestrator session on `goal`.
-    pub async fn orchestrator_session(&self, goal: &Goal) -> AgentSession {
+    pub(crate) async fn orchestrator_session(&self, goal: &Goal) -> AgentSession {
         self.new_session(goal, None, Seat::Orchestrator, None).await
     }
 
@@ -912,7 +912,7 @@ impl Harness {
     /// goal it belonged to would. Straight SQL: nothing an agent can call does
     /// this, which is the point — it is the state the daemon has to cope with,
     /// not one it is asked to produce.
-    pub async fn forget_session(&self, session: &AgentSession) {
+    pub(crate) async fn forget_session(&self, session: &AgentSession) {
         sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
             .bind(&session.id)
             .execute(&self.db)
@@ -923,7 +923,7 @@ impl Harness {
     /// A task whose author session has already run once: a worktree on disk,
     /// an agent conversation to resume, and no agent left running.
     /// What the launcher relaunches when the reviewers bounce a task back.
-    pub async fn resumable_author(&self) -> (Cast, AgentSession) {
+    pub(crate) async fn resumable_author(&self) -> (Cast, AgentSession) {
         let cast = self.cast().await;
         let session = self
             .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
@@ -935,7 +935,7 @@ impl Harness {
 
     /// What a relaunch needs to find: an agent conversation to resume and a
     /// tree to resume it in.
-    pub async fn make_resumable(&self, task: &Task, session: &AgentSession) {
+    pub(crate) async fn make_resumable(&self, task: &Task, session: &AgentSession) {
         let worktree = session.worktree_path.clone().expect("a session worktree");
         std::fs::create_dir_all(&worktree).unwrap();
         self.store
@@ -952,7 +952,7 @@ impl Harness {
     /// wherever it stands: a scheduler woken by a live agent may already
     /// have taken it part of the way, and may take a step of the walk
     /// between this read of the status and this write of it.
-    pub async fn advance(&self, task: &Task, to: TaskStatus) {
+    pub(crate) async fn advance(&self, task: &Task, to: TaskStatus) {
         let steps = [
             (TaskStatus::Ready, Actor::Daemon),
             (TaskStatus::InProgress, Actor::Daemon),
@@ -989,7 +989,7 @@ impl Harness {
     }
 
     /// One event recorded for an agent, straight into the store.
-    pub async fn reports(&self, session: &AgentSession, kind: &str) {
+    pub(crate) async fn reports(&self, session: &AgentSession, kind: &str) {
         self.store
             .create_event(NewAgentEvent {
                 session_id: Some(session.id.clone()),
@@ -1004,14 +1004,19 @@ impl Harness {
     /// One event reported by an agent, down the ingestion path the ACP
     /// runtime reports on — the whole of it, rather than the store write at
     /// the end of it — and the scheduler woken, as the runtime wakes it.
-    pub async fn ingest(&self, session: &AgentSession, kind: &str, payload: serde_json::Value) {
+    pub(crate) async fn ingest(
+        &self,
+        session: &AgentSession,
+        kind: &str,
+        payload: serde_json::Value,
+    ) {
         self.ingest_as(session, None, kind, payload).await;
     }
 
     /// The same event, reported by a named launch of that session: what
     /// every agent the daemon starts reports under, and the only thing that
     /// tells the agent running from the one it replaced.
-    pub async fn ingest_from(
+    pub(crate) async fn ingest_from(
         &self,
         session: &AgentSession,
         launch: &str,
@@ -1045,12 +1050,12 @@ impl Harness {
     }
 
     /// The launch this session's row is currently answering for.
-    pub async fn launch_id(&self, session: &AgentSession) -> Option<String> {
+    pub(crate) async fn launch_id(&self, session: &AgentSession) -> Option<String> {
         self.store.get_session(&session.id).await.unwrap().launch_id
     }
 
     /// Raise a flag on a session, the way the ingestion or a sweep would.
-    pub async fn raise(&self, session: &AgentSession, reason: AttentionReason) {
+    pub(crate) async fn raise(&self, session: &AgentSession, reason: AttentionReason) {
         self.store
             .set_session_attention(&session.id, reason)
             .await
@@ -1058,18 +1063,18 @@ impl Harness {
     }
 
     /// Move a session's lifecycle status, the way its agent reporting would.
-    pub async fn set_status(&self, session: &AgentSession, status: SessionStatus) {
+    pub(crate) async fn set_status(&self, session: &AgentSession, status: SessionStatus) {
         self.store
             .set_session_status(&session.id, status)
             .await
             .unwrap();
     }
 
-    pub async fn session_status(&self, session: &AgentSession) -> SessionStatus {
+    pub(crate) async fn session_status(&self, session: &AgentSession) -> SessionStatus {
         self.store.get_session(&session.id).await.unwrap().status()
     }
 
-    pub async fn attention(&self, session: &AgentSession) -> Option<AttentionReason> {
+    pub(crate) async fn attention(&self, session: &AgentSession) -> Option<AttentionReason> {
         self.store
             .get_session(&session.id)
             .await
@@ -1079,7 +1084,7 @@ impl Harness {
 
     /// Poke the scheduler about a task, the way an HTTP handler does after a
     /// write. Only for a harness built with [`HarnessBuilder::scheduler`].
-    pub fn notify(&self, task_id: &str) {
+    pub(crate) fn notify(&self, task_id: &str) {
         self.wake(SchedEvent::TaskChanged(task_id.to_string()));
     }
 
@@ -1088,7 +1093,7 @@ impl Harness {
     /// One notification is one complete reconciliation. Sending another on
     /// every poll can build a queue behind a slow agent launch, leaving the
     /// later state change waiting behind stale passes over the same task.
-    pub async fn reconcile_task_until(
+    pub(crate) async fn reconcile_task_until(
         &self,
         task_id: &str,
         patience: Duration,
@@ -1100,7 +1105,7 @@ impl Harness {
     }
 
     /// The same about a goal: what a status change sends.
-    pub fn notify_goal(&self, goal_id: &str) {
+    pub(crate) fn notify_goal(&self, goal_id: &str) {
         self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
     }
 
@@ -1110,7 +1115,7 @@ impl Harness {
     /// this right after, so it knows the failing pass actually ran before it
     /// heals the failure and looks for the retry: a fixed sleep only bets
     /// that the pass was fast enough, and loses that bet under load.
-    pub async fn flush_scheduler(&self) {
+    pub(crate) async fn flush_scheduler(&self) {
         ariadne_daemon::scheduler::flush_for_test(
             self.sched.as_ref().expect("this harness has no scheduler"),
         )
@@ -1125,13 +1130,13 @@ impl Harness {
             .unwrap();
     }
 
-    pub async fn status(&self, task_id: &str) -> TaskStatus {
+    pub(crate) async fn status(&self, task_id: &str) -> TaskStatus {
         self.store.get_task(task_id).await.unwrap().status()
     }
 
     /// Every session a goal has ever had, live or not — an orchestrator's
     /// included, which is the one no task lists.
-    pub async fn sessions_of_goal(&self, goal_id: &str) -> Vec<AgentSession> {
+    pub(crate) async fn sessions_of_goal(&self, goal_id: &str) -> Vec<AgentSession> {
         self.store
             .list_sessions(SessionFilter {
                 goal_id: Some(goal_id.to_string()),
@@ -1142,7 +1147,7 @@ impl Harness {
     }
 
     /// Every session a task has ever had, live or not.
-    pub async fn sessions_of(&self, task_id: &str) -> Vec<AgentSession> {
+    pub(crate) async fn sessions_of(&self, task_id: &str) -> Vec<AgentSession> {
         self.store
             .list_sessions(SessionFilter {
                 task_id: Some(task_id.to_string()),
@@ -1158,7 +1163,7 @@ impl Harness {
     /// launched, and a test that reads what an agent was started with has to
     /// wait for the launch that wrote it down. Running or idle alike — a stub
     /// agent answers its briefing at once and sits at its prompt.
-    pub async fn running_session(&self, task_id: &str, seat: Seat) -> Option<AgentSession> {
+    pub(crate) async fn running_session(&self, task_id: &str, seat: Seat) -> Option<AgentSession> {
         self.sessions_of(task_id).await.into_iter().find(|s| {
             s.seat() == seat
                 && matches!(s.status(), SessionStatus::Running | SessionStatus::Idle)
@@ -1180,7 +1185,7 @@ impl Harness {
     /// while after the launch, and a test that moved the clock before that
     /// turn settled would have it landed over. Idle, heard from, is the turn
     /// over and every write it made done: what a test can safely write over.
-    pub async fn relaunched(&self, session: &AgentSession, before: &Option<String>) -> bool {
+    pub(crate) async fn relaunched(&self, session: &AgentSession, before: &Option<String>) -> bool {
         let row = self.store.get_session(&session.id).await.unwrap();
         row.launched_at.is_some()
             && &row.launched_at != before
@@ -1191,7 +1196,7 @@ impl Harness {
     // -- the clock ----------------------------------------------------------
 
     /// An agent that has been sitting there doing nothing for `secs`.
-    pub async fn idle_for(&self, session: &AgentSession, secs: i64) {
+    pub(crate) async fn idle_for(&self, session: &AgentSession, secs: i64) {
         self.store
             .set_session_status(&session.id, SessionStatus::Idle)
             .await
@@ -1201,7 +1206,7 @@ impl Harness {
 
     /// An agent launched `secs` ago, running ever since and silent all the
     /// while: what a turn that never ends looks like from outside the agent.
-    pub async fn launched_ago(&self, session: &AgentSession, secs: i64) {
+    pub(crate) async fn launched_ago(&self, session: &AgentSession, secs: i64) {
         self.store
             .set_session_status(&session.id, SessionStatus::Running)
             .await
@@ -1215,13 +1220,13 @@ impl Harness {
     /// what it concludes has to date the start. `created_at` is the column
     /// that holds it for a row nothing has launched yet, and the only one of
     /// the three the sweep reads that such a row has at all.
-    pub async fn starting_for(&self, session: &AgentSession, secs: i64) {
+    pub(crate) async fn starting_for(&self, session: &AgentSession, secs: i64) {
         self.backdate(&["created_at"], session, secs).await;
     }
 
     /// When this session's agent process was last started, which is what a
     /// relaunch moves.
-    pub async fn launched_at(&self, session: &AgentSession) -> Option<String> {
+    pub(crate) async fn launched_at(&self, session: &AgentSession) -> Option<String> {
         self.store
             .get_session(&session.id)
             .await
@@ -1233,7 +1238,7 @@ impl Harness {
     /// that did not know better left one behind. It has to go around the
     /// store, which now refuses to raise a prompt on a session that has
     /// ended — which is why there are rows like this to heal at all.
-    pub async fn stale_attention(&self, session: &AgentSession, reason: AttentionReason) {
+    pub(crate) async fn stale_attention(&self, session: &AgentSession, reason: AttentionReason) {
         sqlx::query(
             "UPDATE agent_sessions SET attention_reason = ?, attention_since = ? WHERE id = ?",
         )
@@ -1269,11 +1274,11 @@ impl Harness {
     // -- HTTP ---------------------------------------------------------------
 
     /// The whole response, for the handful of tests that assert on a header.
-    pub async fn response(&self, request: Request<Body>) -> axum::response::Response {
+    pub(crate) async fn response(&self, request: Request<Body>) -> axum::response::Response {
         self.router.clone().oneshot(request).await.unwrap()
     }
 
-    pub async fn send(&self, request: Request<Body>) -> (StatusCode, Vec<u8>) {
+    pub(crate) async fn send(&self, request: Request<Body>) -> (StatusCode, Vec<u8>) {
         let response = self.response(request).await;
         let status = response.status();
         let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -1281,7 +1286,7 @@ impl Harness {
     }
 
     /// Send a request expected to answer `expected` and decode its JSON body.
-    pub async fn json<T: DeserializeOwned>(
+    pub(crate) async fn json<T: DeserializeOwned>(
         &self,
         request: Request<Body>,
         expected: StatusCode,
@@ -1292,19 +1297,19 @@ impl Harness {
     }
 
     /// The same for `200 OK`, which is what most reads answer.
-    pub async fn get<T: DeserializeOwned>(&self, uri: &str) -> T {
+    pub(crate) async fn get<T: DeserializeOwned>(&self, uri: &str) -> T {
         self.json(get(uri), StatusCode::OK).await
     }
 
     /// Send a request expected to fail and decode the error envelope.
-    pub async fn error(&self, request: Request<Body>, expected: StatusCode) -> ErrorBody {
+    pub(crate) async fn error(&self, request: Request<Body>, expected: StatusCode) -> ErrorBody {
         let (status, body) = self.send(request).await;
         assert_eq!(status, expected, "{}", String::from_utf8_lossy(&body));
         serde_json::from_slice(&body).unwrap()
     }
 
     /// The body of a streaming response, to be read message by message.
-    pub async fn stream(&self, request: Request<Body>) -> Body {
+    pub(crate) async fn stream(&self, request: Request<Body>) -> Body {
         let response = self.response(request).await;
         assert_eq!(response.status(), StatusCode::OK);
         response.into_body()
@@ -1313,11 +1318,11 @@ impl Harness {
 
 // -- requests ---------------------------------------------------------------
 
-pub fn get(uri: &str) -> Request<Body> {
+pub(crate) fn get(uri: &str) -> Request<Body> {
     Request::builder().uri(uri).body(Body::empty()).unwrap()
 }
 
-pub fn post(uri: &str) -> Request<Body> {
+pub(crate) fn post(uri: &str) -> Request<Body> {
     Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -1325,7 +1330,7 @@ pub fn post(uri: &str) -> Request<Body> {
         .unwrap()
 }
 
-pub fn delete(uri: &str) -> Request<Body> {
+pub(crate) fn delete(uri: &str) -> Request<Body> {
     Request::builder()
         .method(Method::DELETE)
         .uri(uri)
@@ -1342,21 +1347,21 @@ fn json_request(method: Method, uri: &str, body: serde_json::Value) -> Request<B
         .unwrap()
 }
 
-pub fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+pub(crate) fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
     json_request(Method::POST, uri, body)
 }
 
-pub fn put_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+pub(crate) fn put_json(uri: &str, body: serde_json::Value) -> Request<Body> {
     json_request(Method::PUT, uri, body)
 }
 
-pub fn patch_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+pub(crate) fn patch_json(uri: &str, body: serde_json::Value) -> Request<Body> {
     json_request(Method::PATCH, uri, body)
 }
 
 /// A request an agent makes as itself, carrying the session header the daemon
 /// identifies it by.
-pub fn as_session(uri: &str, session_id: &str, body: serde_json::Value) -> Request<Body> {
+pub(crate) fn as_session(uri: &str, session_id: &str, body: serde_json::Value) -> Request<Body> {
     Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -1371,7 +1376,7 @@ pub fn as_session(uri: &str, session_id: &str, body: serde_json::Value) -> Reque
 /// stamped (`mark_session_launched`). The launch's own stamp is written
 /// before the agent is up, so it alone says nothing about whether the agent
 /// has said anything since.
-pub fn heard_from(session: &AgentSession) -> bool {
+pub(crate) fn heard_from(session: &AgentSession) -> bool {
     match (&session.last_activity_at, &session.launched_at) {
         (Some(heard), Some(launched)) => heard > launched,
         _ => false,
@@ -1386,7 +1391,11 @@ pub fn heard_from(session: &AgentSession) -> bool {
 /// The patience is the caller's: what is waited on here ranges from a store
 /// write to a reconciliation tick coming round, and each file says in a
 /// constant of its own how long its own kind of waiting is worth.
-pub async fn eventually(patience: Duration, what: &str, mut check: impl AsyncFnMut() -> bool) {
+pub(crate) async fn eventually(
+    patience: Duration,
+    what: &str,
+    mut check: impl AsyncFnMut() -> bool,
+) {
     let deadline = Instant::now() + patience;
     loop {
         if check().await {
@@ -1398,7 +1407,10 @@ pub async fn eventually(patience: Duration, what: &str, mut check: impl AsyncFnM
 }
 
 /// Wait for the first event matching `pred`, skipping unrelated ones.
-pub async fn next_event(rx: &mut Receiver<BusEvent>, pred: impl Fn(&BusEvent) -> bool) -> BusEvent {
+pub(crate) async fn next_event(
+    rx: &mut Receiver<BusEvent>,
+    pred: impl Fn(&BusEvent) -> bool,
+) -> BusEvent {
     tokio::time::timeout(TIMEOUT, async {
         loop {
             let event = rx.recv().await.expect("event bus closed");
@@ -1415,7 +1427,7 @@ pub async fn next_event(rx: &mut Receiver<BusEvent>, pred: impl Fn(&BusEvent) ->
 /// stream that closes is a different thing from one that says nothing, and
 /// both are behaviours the session-log tests assert.
 #[derive(Debug)]
-pub enum Sse {
+pub(crate) enum Sse {
     Message(String),
     /// The daemon closed the connection.
     Closed,
@@ -1424,7 +1436,7 @@ pub enum Sse {
 }
 
 /// Read from an SSE body until one complete message (`\n\n`-terminated) is in.
-pub async fn next_sse(body: &mut Body, within: Duration) -> Sse {
+pub(crate) async fn next_sse(body: &mut Body, within: Duration) -> Sse {
     let read = tokio::time::timeout(within, async {
         let mut buf = String::new();
         while let Some(frame) = body.frame().await {
@@ -1446,7 +1458,7 @@ pub async fn next_sse(body: &mut Body, within: Duration) -> Sse {
     }
 }
 
-pub async fn next_sse_message(body: &mut Body) -> String {
+pub(crate) async fn next_sse_message(body: &mut Body) -> String {
     match next_sse(body, TIMEOUT).await {
         Sse::Message(message) => message,
         other => panic!("expected an sse message, got {other:?}"),
@@ -1454,7 +1466,7 @@ pub async fn next_sse_message(body: &mut Body) -> String {
 }
 
 /// The next SSE message, which has to be a `name` one: its decoded payload.
-pub async fn expect_sse(body: &mut Body, name: &str) -> serde_json::Value {
+pub(crate) async fn expect_sse(body: &mut Body, name: &str) -> serde_json::Value {
     let (got, payload) = parse_sse(&next_sse_message(body).await);
     assert_eq!(
         got, name,
@@ -1464,7 +1476,7 @@ pub async fn expect_sse(body: &mut Body, name: &str) -> serde_json::Value {
 }
 
 /// Assert that a stream is over: nothing at all follows, message or frame.
-pub async fn sse_is_closed(body: &mut Body) {
+pub(crate) async fn sse_is_closed(body: &mut Body) {
     match next_sse(body, TIMEOUT).await {
         Sse::Closed => {}
         other => panic!("expected the stream to be closed, got {other:?}"),
@@ -1472,7 +1484,7 @@ pub async fn sse_is_closed(body: &mut Body) {
 }
 
 /// `event:` name and decoded `data:` payload of one SSE message.
-pub fn parse_sse(message: &str) -> (String, serde_json::Value) {
+pub(crate) fn parse_sse(message: &str) -> (String, serde_json::Value) {
     let mut name = None;
     let mut data = None;
     for line in message.trim_end().lines() {
@@ -1496,7 +1508,7 @@ pub fn parse_sse(message: &str) -> (String, serde_json::Value) {
 /// Run a shell command in `dir` — a repository being set up, or read back —
 /// failing the test if it does not succeed. The trimmed stdout comes back for
 /// the callers that want it.
-pub fn sh(dir: &Path, cmd: &str) -> String {
+pub(crate) fn sh(dir: &Path, cmd: &str) -> String {
     let output = std::process::Command::new("sh")
         .arg("-c")
         .arg(cmd)

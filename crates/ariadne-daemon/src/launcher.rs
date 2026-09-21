@@ -84,7 +84,7 @@ impl Launcher {
     /// Whether the agent process behind a session is alive: the runtime that
     /// owns the child answers ([`AcpRuntime::is_running`]), and it always
     /// answers.
-    pub async fn session_process_alive(&self, session: &AgentSession) -> bool {
+    pub(crate) async fn session_process_alive(&self, session: &AgentSession) -> bool {
         self.acp.is_running(&session.id)
     }
 
@@ -424,7 +424,7 @@ impl Launcher {
     /// what the user agreed with it. An agent process that went away — a
     /// daemon restart takes every one down — is that same orchestrator put
     /// back on its feet, not a stranger starting from the briefing.
-    pub async fn resume_orchestrator(
+    pub(crate) async fn resume_orchestrator(
         &self,
         goal_id: &str,
         instruction: &str,
@@ -476,7 +476,11 @@ impl Launcher {
     /// Spawn the author of a task afresh — the picked winner where the pick
     /// has settled, the first author otherwise — briefed on its task and then
     /// told `then`, as [`Self::spawn_author_agent_told`].
-    pub async fn spawn_author_told(&self, task_id: &str, then: &str) -> Result<AgentSession> {
+    pub(crate) async fn spawn_author_told(
+        &self,
+        task_id: &str,
+        then: &str,
+    ) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
         let author = match &task.picked_agent_id {
             Some(picked) => self.store.get_task_agent(picked).await?,
@@ -490,7 +494,7 @@ impl Launcher {
     /// resume would have told the conversation it has no longer. An author
     /// that has to start afresh on an approved task is still the one that
     /// lands it, and one sent back with review feedback still has to read it.
-    pub async fn spawn_author_agent_told(
+    pub(crate) async fn spawn_author_agent_told(
         &self,
         task_id: &str,
         agent_id: &str,
@@ -548,7 +552,7 @@ impl Launcher {
     /// The adopted conversation becomes the task's first author. A task
     /// staffed with several authors adopts into that seat alone; its
     /// siblings are spawned by the scheduler as usual.
-    pub async fn adopt_author(
+    pub(crate) async fn adopt_author(
         &self,
         task_id: &str,
         agent_id: &str,
@@ -733,7 +737,7 @@ impl Launcher {
     /// that author's branch, and its briefing carries that author's summary.
     /// `None` reads the task's own branch and summary, which is the whole of
     /// a one-author task.
-    pub async fn spawn_reviewer_for(
+    pub(crate) async fn spawn_reviewer_for(
         &self,
         task_id: &str,
         agent_id: &str,
@@ -807,7 +811,7 @@ impl Launcher {
     /// the tree it verifies in has to be on that author's branch before the
     /// briefing that names it lands. The reviewer is detached and read-only,
     /// so between reviews there is nothing of its own in the tree to lose.
-    pub async fn refresh_reviewer_worktree(
+    pub(crate) async fn refresh_reviewer_worktree(
         &self,
         task_id: &str,
         agent_id: &str,
@@ -854,7 +858,7 @@ impl Launcher {
 
     /// The same, resumed for one named author's review: the worktree is
     /// re-pointed at that author's branch rather than the task's.
-    pub async fn resume_reviewer_for(
+    pub(crate) async fn resume_reviewer_for(
         &self,
         task_id: &str,
         agent_id: &str,
@@ -904,7 +908,7 @@ impl Launcher {
     }
 
     /// Resume one author of a task, by the staffed agent it runs.
-    pub async fn resume_author_agent(
+    pub(crate) async fn resume_author_agent(
         &self,
         task_id: &str,
         agent_id: &str,
@@ -1174,7 +1178,7 @@ impl Launcher {
     /// a losing branch is one the reviewers judged and set aside, and the
     /// task is still running — nothing later comes back for it. Idempotent,
     /// so a pass that crashed halfway just runs again.
-    pub async fn cleanup_losing_authors(&self, task_id: &str) -> Result<()> {
+    pub(crate) async fn cleanup_losing_authors(&self, task_id: &str) -> Result<()> {
         let task = self.store.get_task(task_id).await?;
         let Some(winner) = task.picked_agent_id.clone() else {
             return Ok(());

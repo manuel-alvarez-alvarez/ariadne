@@ -61,7 +61,7 @@ use super::error::ApiResult;
                        that draw the console, and JSON text frames of \
                        `TerminalServerMessage`."),
         (status = 404)))]
-pub async fn terminal(
+pub(super) async fn terminal(
     State(state): State<AppState>,
     Path(id): Path<String>,
     ws: WebSocketUpgrade,

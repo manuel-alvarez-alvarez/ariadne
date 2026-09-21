@@ -21,7 +21,7 @@ use super::error::{ApiResult, Json};
 #[utoipa::path(get, path = "/v1/events", tag = "events",
     params(EventListQuery, Page),
     responses((status = 200, body = [AgentEventDto])))]
-pub async fn list(
+pub(crate) async fn list(
     State(state): State<AppState>,
     Query(q): Query<EventListQuery>,
     Query(page): Query<Page>,

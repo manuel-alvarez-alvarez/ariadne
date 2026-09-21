@@ -27,7 +27,7 @@ const KEEP_ALIVE: Duration = Duration::from_secs(15);
 /// An idle connection is kept alive with an SSE comment, which a browser's
 /// `EventSource` never surfaces — for a stream whose client has to see the
 /// keep-alive, use [`respond_alive`].
-pub fn respond<S>(events: S) -> Sse<impl Stream<Item = Result<Event, Infallible>>>
+pub(super) fn respond<S>(events: S) -> Sse<impl Stream<Item = Result<Event, Infallible>>>
 where
     S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
 {
@@ -36,7 +36,7 @@ where
 
 /// The same, with `alive` sent on an idle connection instead of a comment, so
 /// a client can see for itself that the daemon is still there.
-pub fn respond_alive<S>(
+pub(super) fn respond_alive<S>(
     events: S,
     alive: Event,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>>
@@ -58,13 +58,13 @@ where
 }
 
 /// One named event carrying `payload` as compact JSON.
-pub fn json_event(name: &str, payload: impl Serialize) -> Event {
+pub(super) fn json_event(name: &str, payload: impl Serialize) -> Event {
     Event::default().event(name).data(encode(payload))
 }
 
 /// The same with a fresh ULID `id` in front of it — the field order the
 /// domain stream has always put on the wire, and what its clients parse.
-pub fn identified_event(name: &str, payload: impl Serialize) -> Event {
+pub(super) fn identified_event(name: &str, payload: impl Serialize) -> Event {
     Event::default()
         .id(new_id())
         .event(name)
@@ -92,7 +92,7 @@ struct Follower<T, F, L> {
 /// connection closes; the missed messages are gone from the channel for good,
 /// so hanging up is the honest answer. A closed channel is the daemon
 /// shutting down, and ends the stream with nothing.
-pub fn follow<T, F, L>(
+pub(super) fn follow<T, F, L>(
     rx: Receiver<T>,
     frame: F,
     lagged: L,

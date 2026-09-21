@@ -39,7 +39,7 @@ const TOOLS: [(&str, &str, bool); 3] = [
 /// directories it works in.
 #[utoipa::path(get, path = "/v1/doctor", tag = "system",
     responses((status = 200, description = "The daemon's own environment", body = DaemonReportDto)))]
-pub async fn report(State(state): State<AppState>) -> Json<DaemonReportDto> {
+pub(super) async fn report(State(state): State<AppState>) -> Json<DaemonReportDto> {
     let cfg = &state.launcher.cfg;
     let path = std::env::var_os("PATH");
     let path = path.as_deref();

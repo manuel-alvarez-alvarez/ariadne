@@ -24,7 +24,7 @@ use crate::acp_sessions::{Filter, QueryError};
 #[utoipa::path(get, path = "/v1/outside-sessions", tag = "sessions",
     params(OutsideSessionListQuery),
     responses((status = 200, body = OutsideSessionPageDto), (status = 400)))]
-pub async fn list_outside(
+pub(super) async fn list_outside(
     State(state): State<AppState>,
     Query(q): Query<OutsideSessionListQuery>,
 ) -> ApiResult<Json<OutsideSessionPageDto>> {
@@ -63,7 +63,7 @@ pub async fn list_outside(
         (status = 404),
         (status = 409)
     ))]
-pub async fn adopt_outside(
+pub(super) async fn adopt_outside(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<AdoptOutsideSessionRequest>,
@@ -326,7 +326,7 @@ fn repository_containing<'a>(
 #[utoipa::path(get, path = "/v1/sessions", tag = "sessions",
     params(SessionListQuery),
     responses((status = 200, body = [SessionDto])))]
-pub async fn list(
+pub(super) async fn list(
     State(state): State<AppState>,
     Query(q): Query<SessionListQuery>,
 ) -> ApiResult<Json<Vec<SessionDto>>> {
@@ -351,7 +351,7 @@ pub async fn list(
 #[utoipa::path(get, path = "/v1/sessions/{id}", tag = "sessions",
     params(("id" = String, Path, description = "session id")),
     responses((status = 200, body = SessionDto), (status = 404)))]
-pub async fn get(
+pub(super) async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<SessionDto>> {
@@ -370,7 +370,7 @@ pub async fn get(
 #[utoipa::path(post, path = "/v1/sessions/{id}/resume", tag = "sessions",
     params(("id" = String, Path, description = "session id")),
     responses((status = 200, body = SessionDto), (status = 404), (status = 409)))]
-pub async fn resume(
+pub(super) async fn resume(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<SessionDto>> {
@@ -386,7 +386,7 @@ pub async fn resume(
 #[utoipa::path(post, path = "/v1/sessions/{id}/kill", tag = "sessions",
     params(("id" = String, Path, description = "session id")),
     responses((status = 200, body = SessionDto), (status = 404)))]
-pub async fn kill(
+pub(super) async fn kill(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<SessionDto>> {
@@ -405,7 +405,7 @@ pub async fn kill(
 /// Body of the internal debug-spawn endpoint.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DebugSpawnRequest {
+pub(super) struct DebugSpawnRequest {
     pub seat: ariadne_core::Seat,
     pub goal_id: Option<String>,
     pub task_id: Option<String>,
@@ -415,7 +415,7 @@ pub struct DebugSpawnRequest {
 
 /// Manually spawn an agent session (debug/testing path until the scheduler
 /// drives spawns automatically). Not part of the public OpenAPI surface.
-pub async fn debug_spawn(
+pub(super) async fn debug_spawn(
     State(state): State<AppState>,
     Json(req): Json<DebugSpawnRequest>,
 ) -> ApiResult<Json<SessionDto>> {

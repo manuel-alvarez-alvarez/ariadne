@@ -122,7 +122,7 @@ const _: () = assert!(
     "the flag stays clear of a five-minute sleep, with margin"
 );
 
-pub struct Scheduler {
+pub(crate) struct Scheduler {
     store: Store,
     launcher: Arc<Launcher>,
     /// Spawn failures per task, and per goal whose orchestrator will not

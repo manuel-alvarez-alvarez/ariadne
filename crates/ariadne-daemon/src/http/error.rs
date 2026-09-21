@@ -12,28 +12,28 @@ use ariadne_api::error::ErrorBody;
 use ariadne_store::StoreError;
 
 #[derive(Debug)]
-pub struct ApiError {
+pub(crate) struct ApiError {
     pub status: StatusCode,
     pub body: ErrorBody,
 }
 
 impl ApiError {
-    pub fn new(status: StatusCode, code: &str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(status: StatusCode, code: &str, message: impl Into<String>) -> Self {
         Self {
             status,
             body: ErrorBody::new(code, message),
         }
     }
 
-    pub fn bad_request(message: impl Into<String>) -> Self {
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", message)
     }
 
-    pub fn conflict(message: impl Into<String>) -> Self {
+    pub(crate) fn conflict(message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, "conflict", message)
     }
 
-    pub fn forbidden(message: impl Into<String>) -> Self {
+    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
         Self::new(StatusCode::FORBIDDEN, "forbidden", message)
     }
 }
@@ -71,7 +71,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-pub type ApiResult<T> = Result<T, ApiError>;
+pub(super) type ApiResult<T> = Result<T, ApiError>;
 
 /// The JSON body of a request, and the JSON body of a reply: `axum::Json`
 /// with its rejection folded into the envelope every other refusal uses.
@@ -81,7 +81,7 @@ pub type ApiResult<T> = Result<T, ApiError>;
 /// silence. axum answers such a body with a plain-text `422`, which no client
 /// can branch on; this one answers with `invalid_request` and serde's own
 /// sentence, which names the field. The status axum chose is kept.
-pub struct Json<T>(pub T);
+pub(crate) struct Json<T>(pub T);
 
 impl<T, S> FromRequest<S> for Json<T>
 where
