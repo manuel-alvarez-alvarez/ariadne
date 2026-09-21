@@ -41,6 +41,9 @@ use crate::commands::query_path;
 /// what was left out.
 pub(super) const ANSWER_CAP: usize = 8 * 1024;
 
+/// A map's answer may use its documented maximum of 4000 tokens.
+const MAP_ANSWER_CAP: usize = KnowledgeMapQuery::MAX_BUDGET as usize * 4;
+
 // ---------- tool parameter types ----------
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -431,15 +434,37 @@ pub(super) struct RepoMapReq {
 /// `lines` as one text under [`ANSWER_CAP`]: what fits, then a last line
 /// that says how many results were left out.
 fn cut_answer(lines: Vec<String>, cap: usize) -> String {
+    cut_answer_with_tail(lines, cap, |lines, at| {
+        format!("{} results left. Narrow the query.\n", lines.len() - at)
+    })
+}
+
+fn cut_map_answer(lines: Vec<String>, cap: usize) -> String {
+    cut_answer_with_tail(lines, cap, |lines, at| {
+        let files_left = lines[at..]
+            .iter()
+            .filter(|line| {
+                !line.starts_with("  ")
+                    && !line.starts_with('#')
+                    && !line.starts_with("No file is indexed.")
+                    && !line.contains(" files left. Raise the budget or name a path.")
+            })
+            .count();
+        format!("{files_left} files left. Raise the budget or name a path.\n")
+    })
+}
+
+fn cut_answer_with_tail(
+    lines: Vec<String>,
+    cap: usize,
+    tail: impl Fn(&[String], usize) -> String,
+) -> String {
     // Room kept for the last line, whatever number it carries.
     const TAIL: usize = 64;
     let mut answer = String::new();
     for (at, line) in lines.iter().enumerate() {
         if answer.len() + line.len() + 1 > cap.saturating_sub(TAIL) {
-            answer.push_str(&format!(
-                "{} results left. Narrow the query.\n",
-                lines.len() - at
-            ));
+            answer.push_str(&tail(&lines, at));
             return answer;
         }
         answer.push_str(line);
@@ -1028,7 +1053,13 @@ impl AriadneMcp {
             Err(refusal) => return Ok(refusal),
         };
         if found.hops.is_empty() {
-            return text_result(format!("(no path within {depth})\n"));
+            let mut answer = format!("(no path within {depth})\n");
+            for name in &found.skipped {
+                answer.push_str(&format!(
+                    "{name} has more than 200 neighbors: the walk stopped there.\n"
+                ));
+            }
+            return text_result(answer);
         }
         let paths = self.repository_paths().await?;
         let mut lines = Vec::new();
@@ -1044,7 +1075,14 @@ impl AriadneMcp {
             }
             lines.push(line);
         }
-        text_result(cut_answer(lines, ANSWER_CAP))
+        let skipped = found
+            .skipped
+            .iter()
+            .map(|name| format!("{name} has more than 200 neighbors: the walk stopped there.\n"))
+            .collect::<String>();
+        let mut answer = cut_answer(lines, ANSWER_CAP.saturating_sub(skipped.len()));
+        answer.push_str(&skipped);
+        text_result(answer)
     }
 
     #[tool(
@@ -1098,7 +1136,7 @@ impl AriadneMcp {
                 (true, false) => lines.push("No file is indexed.".into()),
             }
         }
-        text_result(cut_answer(lines, ANSWER_CAP))
+        text_result(cut_map_answer(lines, MAP_ANSWER_CAP))
     }
 
     /// The path of every registered repository, by id: what `symbol` and
@@ -2026,6 +2064,54 @@ mod tests {
         assert_eq!(short, "a.rs:1 function a fn a()\n");
     }
 
+    /// A map may use its full 4000-token budget, and a transport cut names
+    /// files rather than results.
+    #[tokio::test]
+    async fn repo_map_uses_its_full_budget_and_names_files_when_cut() {
+        let map_text: String = (0..460)
+            .map(|n| {
+                format!("src/file_{n:04}.rs\n  1-2 function symbol_{n:04} pub fn symbol_{n:04}()\n")
+            })
+            .collect();
+        assert!(map_text.len() > ANSWER_CAP);
+        let answer: &'static str = Box::leak(
+            serde_json::json!({
+                "repository_id": "01REPO",
+                "git_ref": "main",
+                "text": map_text,
+                "tokens": 4000,
+                "files": 460,
+                "files_left": 0,
+            })
+            .to_string()
+            .into_boxed_str(),
+        );
+        let (endpoint, _) = recording_daemon_answering(answer).await;
+        let mcp = server_at(
+            McpSeat::Author,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        let answered = mcp
+            .repo_map(Parameters(RepoMapReq {
+                repository: Some("01REPO".into()),
+                path: None,
+                git_ref: None,
+                budget: Some(4000),
+            }))
+            .await
+            .expect("repo_map");
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the answer is not text");
+        };
+        assert!(text.text.len() > ANSWER_CAP, "{} bytes", text.text.len());
+        assert!(text.text.len() <= 16 * 1024, "{} bytes", text.text.len());
+        assert!(
+            text.text
+                .contains("files left. Raise the budget or name a path.")
+        );
+        assert!(!text.text.contains("results left. Narrow the query."));
+    }
+
     /// `outline` takes the task's repository by default, like the memory
     /// tools, and answers one line per definition with its line range.
     #[tokio::test]
@@ -2458,7 +2544,7 @@ mod tests {
         let (endpoint, seen) = recording_daemon_answering_in_order(&[
             r#"{"hops":[{"repository_id":"01REPO","path":"src/a.rs","line":1,"kind":"function","name":"a","edge_kind":null,"confidence":null},{"repository_id":"01WEB","path":"src/b.ts","line":2,"kind":"function","name":"b","edge_kind":"calls_route","confidence":"heuristic"}]}"#,
             r#"[{"id":"01REPO","path":"/repos/api"},{"id":"01WEB","path":"/repos/web"}]"#,
-            r#"{"hops":[]}"#,
+            r#"{"hops":[],"skipped":["hub"]}"#,
         ])
         .await;
         let mcp = server_at(
@@ -2500,7 +2586,11 @@ mod tests {
         let ContentBlock::Text(text) = &answered.content[0] else {
             panic!("the answer is not text");
         };
-        assert_eq!(text.text, "(no path within 6)\n");
+        assert_eq!(
+            text.text,
+            "(no path within 6)\n\
+             hub has more than 200 neighbors: the walk stopped there.\n"
+        );
 
         let seen = seen.lock().expect("lock").clone();
         let paths: Vec<&str> = seen.iter().map(|call| call.path.as_str()).collect();

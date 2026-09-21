@@ -403,7 +403,18 @@ pub async fn changed_lines(repo: &Path, range: &str) -> Result<Vec<(String, Vec<
     if range.starts_with('-') || !range.contains("..") {
         bail!("a diff is `<base>..<head>`, not {range:?}");
     }
-    let output = git_output(repo, &["diff", "--unified=0", "--no-color", range]).await?;
+    let output = git_output(
+        repo,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--unified=0",
+            "--no-color",
+            range,
+        ],
+    )
+    .await?;
     Ok(parse_hunks(&String::from_utf8_lossy(&output)))
 }
 
@@ -420,23 +431,81 @@ pub async fn blob_text(repo: &Path, blob: &str) -> Result<String> {
 /// path gained. A hunk that only deletes is the line it deleted at, so the
 /// definition around it is still named.
 fn parse_hunks(diff: &str) -> Vec<(String, Vec<(u32, u32)>)> {
+    let decode_path = |path: &str| {
+        let path = path.trim();
+        if !(path.starts_with('"') && path.ends_with('"')) {
+            return path.to_string();
+        }
+        let bytes = path.as_bytes();
+        let mut decoded = Vec::with_capacity(bytes.len() - 2);
+        let mut at = 1;
+        while at + 1 < bytes.len() {
+            if bytes[at] != b'\\' {
+                decoded.push(bytes[at]);
+                at += 1;
+                continue;
+            }
+            at += 1;
+            if at + 2 < bytes.len()
+                && bytes[at..at + 3]
+                    .iter()
+                    .all(|byte| (b'0'..=b'7').contains(byte))
+            {
+                let value = bytes[at..at + 3]
+                    .iter()
+                    .fold(0, |value, byte| value * 8 + byte - b'0');
+                decoded.push(value);
+                at += 3;
+                continue;
+            }
+            decoded.push(match bytes.get(at).copied() {
+                Some(b't') => b'\t',
+                Some(b'n') => b'\n',
+                Some(b'r') => b'\r',
+                Some(byte) => byte,
+                None => b'\\',
+            });
+            at += 1;
+        }
+        String::from_utf8_lossy(&decoded).into_owned()
+    };
     let mut changed: Vec<(String, Vec<(u32, u32)>)> = Vec::new();
     // Which file the hunks now being read belong to. `None` for a file the
     // diff deletes, whose right-hand side is `/dev/null`: its hunks belong to
     // no path, and adding them to the file before it would report lines that
     // file never changed.
     let mut at: Option<usize> = None;
+    let mut file_header = false;
+    let mut old_header = false;
     for line in diff.lines() {
-        if let Some(path) = line.strip_prefix("+++ ") {
-            let path = path.strip_prefix("b/").unwrap_or(path).trim();
-            at = match path {
-                "/dev/null" => None,
-                path => {
-                    changed.push((path.to_string(), Vec::new()));
-                    Some(changed.len() - 1)
-                }
-            };
+        if line.starts_with("diff --git ") {
+            at = None;
+            file_header = true;
+            old_header = false;
             continue;
+        }
+        if file_header && line.starts_with("--- ") {
+            old_header = true;
+            continue;
+        }
+        if file_header && old_header {
+            old_header = false;
+            if let Some(path) = line.strip_prefix("+++ ") {
+                file_header = false;
+                let path = decode_path(path);
+                let path = path.strip_prefix("b/").unwrap_or(&path);
+                at = match path {
+                    "/dev/null" => None,
+                    path => {
+                        changed.push((path.to_string(), Vec::new()));
+                        Some(changed.len() - 1)
+                    }
+                };
+                continue;
+            }
+        }
+        if line.starts_with("@@ ") {
+            file_header = false;
         }
         let Some(hunk) = line.strip_prefix("@@ ") else {
             continue;
@@ -801,6 +870,43 @@ deleted file mode 100644
             parse_hunks(diff),
             [("src/a.rs".to_string(), vec![(41, 42)])],
             "the deleted file's hunk is not src/a.rs's"
+        );
+    }
+
+    /// A source line beginning with `++ ` is not a file header, and a
+    /// non-ASCII path remains in the changed-lines answer.
+    #[tokio::test]
+    async fn changed_lines_reads_plus_source_lines_and_non_ascii_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo_with(
+            dir.path(),
+            &[("src/naïve.rs".into(), "fn old() {}\n".into())],
+        );
+        std::fs::write(repo.join("src/naïve.rs"), "fn old() {}\n++ source\n").unwrap();
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(
+                "git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+                 commit -qm change",
+            )
+            .current_dir(&repo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            changed_lines(&repo, "HEAD~1..HEAD").await.unwrap(),
+            [("src/naïve.rs".into(), vec![(2, 2)])]
+        );
+        assert_eq!(
+            parse_hunks(
+                "diff --git \"a/src/weird\\t.rs\" \"b/src/weird\\t.rs\"\n\
+                 --- \"a/src/weird\\t.rs\"\n\
+                 +++ \"b/src/weird\\t.rs\"\n\
+                 @@ -1 +1 @@\n\
+                 -old\n\
+                 +new\n"
+            ),
+            [("src/weird\t.rs".into(), vec![(1, 1)])]
         );
     }
 

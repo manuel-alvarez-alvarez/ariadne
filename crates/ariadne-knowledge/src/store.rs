@@ -1178,15 +1178,17 @@ impl KnowledgeStore {
 
     /// The shortest directed path from any definition in `starts` to any
     /// definition in `ends`, up to `depth` edges. The search grows from both
-    /// sides, and reads each reached repository at the ref its edge names.
+    /// sides, reads each reached repository at its edge ref, and skips a hub
+    /// with more than [`MAX_FANOUT`] neighbors. The second result names hubs
+    /// that the walk skipped.
     pub async fn path(
         &self,
         starts: &[Definition],
         ends: &[Definition],
         depth: i64,
-    ) -> Result<Vec<PathHop>> {
+    ) -> Result<(Vec<PathHop>, Vec<String>)> {
         if starts.is_empty() || ends.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let mut forward: HashMap<PathKey, PathVisit> = starts
             .iter()
@@ -1208,12 +1210,21 @@ impl KnowledgeStore {
             backward.values().map(|visit| visit.node.clone()).collect();
         forward_level.sort_by(path_node_order);
         backward_level.sort_by(path_node_order);
+        let mut skipped = Vec::new();
+        let finish = |hops, skipped: &mut Vec<String>| {
+            skipped.sort();
+            skipped.dedup();
+            (hops, std::mem::take(skipped))
+        };
 
         if let Some(meeting) = forward_level
             .iter()
             .find(|node| backward.contains_key(&node.key))
         {
-            return Ok(join_path(&meeting.key, &forward, &backward));
+            return Ok(finish(
+                join_path(&meeting.key, &forward, &backward),
+                &mut skipped,
+            ));
         }
 
         let max_depth = depth.max(0);
@@ -1229,7 +1240,10 @@ impl KnowledgeStore {
             if grow_forward {
                 forward_depth += 1;
                 let mut next = Vec::new();
-                for neighbor in self.path_neighbors(&forward_level, true).await? {
+                let (neighbors, mut found_skipped) =
+                    self.path_neighbors(&forward_level, true).await?;
+                skipped.append(&mut found_skipped);
+                for neighbor in neighbors {
                     if forward.contains_key(&neighbor.far.key) {
                         continue;
                     }
@@ -1250,7 +1264,10 @@ impl KnowledgeStore {
             } else {
                 backward_depth += 1;
                 let mut next = Vec::new();
-                for neighbor in self.path_neighbors(&backward_level, false).await? {
+                let (neighbors, mut found_skipped) =
+                    self.path_neighbors(&backward_level, false).await?;
+                skipped.append(&mut found_skipped);
+                for neighbor in neighbors {
                     if backward.contains_key(&neighbor.far.key) {
                         continue;
                     }
@@ -1270,15 +1287,23 @@ impl KnowledgeStore {
                 backward_level = next;
             }
             if let Some(meeting) = meeting {
-                return Ok(join_path(&meeting, &forward, &backward));
+                return Ok(finish(
+                    join_path(&meeting, &forward, &backward),
+                    &mut skipped,
+                ));
             }
         }
-        Ok(Vec::new())
+        Ok(finish(Vec::new(), &mut skipped))
     }
 
     /// One level beside `level`. Forward reads edges out of the level;
-    /// backward reads edges into it. Each query stays on an edge index.
-    async fn path_neighbors(&self, level: &[PathNode], forward: bool) -> Result<Vec<PathNeighbor>> {
+    /// backward reads edges into it. A node with more than [`MAX_FANOUT`]
+    /// neighbors is skipped before its edge rows are read.
+    async fn path_neighbors(
+        &self,
+        level: &[PathNode],
+        forward: bool,
+    ) -> Result<(Vec<PathNeighbor>, Vec<String>)> {
         let mut scopes: Vec<((String, String), Vec<i64>)> = Vec::new();
         for node in level {
             let scope = (node.key.repository_id.clone(), node.key.git_ref.clone());
@@ -1288,8 +1313,58 @@ impl KnowledgeStore {
             }
         }
         let mut neighbors = Vec::new();
+        let mut skipped = Vec::new();
         for ((repository, git_ref), ids) in scopes {
+            let mut counts = HashMap::new();
             for chunk in ids.chunks(CHUNK) {
+                let mut sql = QueryBuilder::<Sqlite>::new(if forward {
+                    "SELECT from_symbol, COUNT(*) FROM edges WHERE from_repository = "
+                } else {
+                    "SELECT to_symbol, COUNT(*) FROM edges WHERE to_repository = "
+                });
+                sql.push_bind(&repository)
+                    .push(if forward {
+                        " AND git_ref = "
+                    } else {
+                        " AND to_ref = "
+                    })
+                    .push_bind(&git_ref)
+                    .push(" AND ");
+                push_kinds(&mut sql, "", PATH_KINDS);
+                sql.push(if forward {
+                    " AND from_symbol IN ("
+                } else {
+                    " AND to_symbol IN ("
+                });
+                let mut values = sql.separated(", ");
+                for id in chunk {
+                    values.push_bind(id);
+                }
+                sql.push(if forward {
+                    ") GROUP BY from_symbol"
+                } else {
+                    ") GROUP BY to_symbol"
+                });
+                let rows: Vec<(Option<i64>, i64)> =
+                    sql.build_query_as().fetch_all(&self.read).await?;
+                counts.extend(
+                    rows.into_iter()
+                        .filter_map(|(id, count)| id.map(|id| (id, count))),
+                );
+            }
+            for node in level
+                .iter()
+                .filter(|node| node.key.repository_id == repository && node.key.git_ref == git_ref)
+            {
+                if counts.get(&node.key.symbol_id).copied().unwrap_or(0) > MAX_FANOUT {
+                    skipped.push(node.name.clone());
+                }
+            }
+            let wanted: Vec<i64> = ids
+                .into_iter()
+                .filter(|id| counts.get(id).copied().unwrap_or(0) <= MAX_FANOUT)
+                .collect();
+            for chunk in wanted.chunks(CHUNK) {
                 let mut sql = match forward {
                     true => QueryBuilder::<Sqlite>::new(
                         "SELECT e.from_symbol AS near_symbol, s.id AS far_symbol,
@@ -1358,7 +1433,7 @@ impl KnowledgeStore {
                 }));
             }
         }
-        Ok(neighbors)
+        Ok((neighbors, skipped))
     }
 
     /// The edges between one ref of a repository and every other repository,
@@ -3343,10 +3418,11 @@ mod tests {
             .await
             .unwrap();
 
-        let path = store
+        let (path, skipped) = store
             .path(std::slice::from_ref(&a), std::slice::from_ref(&c), 1)
             .await
             .unwrap();
+        assert!(skipped.is_empty());
         assert_eq!(
             path.iter().map(|hop| hop.name.as_str()).collect::<Vec<_>>(),
             ["a", "c"]
@@ -3354,16 +3430,122 @@ mod tests {
         assert_eq!(path[0].edge_kind, None);
         assert_eq!(path[1].edge_kind.as_deref(), Some("calls"));
 
-        let path = store
+        let (path, skipped) = store
             .path(std::slice::from_ref(&a), std::slice::from_ref(&c), 6)
             .await
             .unwrap();
+        assert!(skipped.is_empty());
         assert_eq!(
             path.iter().map(|hop| hop.name.as_str()).collect::<Vec<_>>(),
             ["a", "c"]
         );
 
-        assert!(store.path(&[a], &[b], 0).await.unwrap().is_empty());
+        let (path, skipped) = store.path(&[a], &[b], 0).await.unwrap();
+        assert!(path.is_empty());
+        assert!(skipped.is_empty());
+    }
+
+    /// A path does not expand a synthetic hub with more than 200 outgoing
+    /// neighbors, so the walk avoids the hub's unbounded fan-out.
+    #[tokio::test]
+    async fn a_path_skips_a_hub_with_more_than_two_hundred_neighbors() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KnowledgeStore::open(dir.path().join("knowledge.db"))
+            .await
+            .unwrap();
+        let names = std::iter::once("start".to_string())
+            .chain(std::iter::once("hub".to_string()))
+            .chain(std::iter::once("target".to_string()))
+            .chain((0..201).map(|n| format!("caller{n}")))
+            .chain((0..201).map(|n| format!("child{n}")))
+            .collect::<Vec<_>>();
+        let symbols = names
+            .iter()
+            .enumerate()
+            .map(|(line, name)| Symbol {
+                kind: "function".into(),
+                name: name.clone(),
+                qualified_name: name.clone(),
+                start_line: line as u32 + 1,
+                end_line: line as u32 + 1,
+                signature: format!("fn {name}()"),
+                doc: None,
+                is_test: false,
+            })
+            .collect();
+        store
+            .commit_blobs(&[ParsedBlob {
+                blob: "blob".into(),
+                language: "rust",
+                symbols,
+                references: Vec::new(),
+                imports: Vec::new(),
+                interfaces: Vec::new(),
+            }])
+            .await
+            .unwrap();
+        store
+            .commit_files(
+                "repo",
+                "main",
+                "commit",
+                &FileChanges {
+                    replace_all: true,
+                    removed: Vec::new(),
+                    upserted: vec![FileRow {
+                        path: "src/all.rs".into(),
+                        blob: "blob".into(),
+                        language: "rust",
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+        let scope = [("repo".into(), "main".into())];
+        let start = store.definitions("start", &scope).await.unwrap().remove(0);
+        let hub = store.definitions("hub", &scope).await.unwrap().remove(0);
+        let target = store.definitions("target", &scope).await.unwrap().remove(0);
+        let mut callers = Vec::new();
+        for n in 0..201 {
+            let name = format!("caller{n}");
+            callers.push(store.definitions(&name, &scope).await.unwrap().remove(0));
+        }
+        let mut children = Vec::new();
+        for n in 0..201 {
+            let name = format!("child{n}");
+            children.push(store.definitions(&name, &scope).await.unwrap().remove(0));
+        }
+        let edge = |from: &Definition, to: &Definition| Edge {
+            kind: "calls".into(),
+            from_blob: from.blob.clone(),
+            from_symbol: Some(from.id),
+            from_line: from.start_line,
+            to_blob: to.blob.clone(),
+            to_symbol: Some(to.id),
+            to_line: to.start_line,
+            name: None,
+            confidence: "exact",
+            step: "file",
+            candidates: 1,
+        };
+        let mut edges = vec![edge(&start, &hub), edge(&hub, &target)];
+        edges.extend(children.iter().map(|child| edge(&hub, child)));
+        edges.extend(callers.iter().map(|caller| edge(caller, &hub)));
+        store
+            .commit_edges("repo", "main", &[], &edges)
+            .await
+            .unwrap();
+
+        let (path, skipped) = store
+            .path(
+                std::slice::from_ref(&start),
+                std::slice::from_ref(&target),
+                2,
+            )
+            .await
+            .unwrap();
+        assert!(path.is_empty());
+        assert_eq!(skipped, ["hub"]);
     }
 
     /// The schema is applied to a fresh file, and a file at another version

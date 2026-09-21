@@ -5072,7 +5072,8 @@
         "type": "object",
         "description": "The shortest directed path between two symbol names.",
         "required": [
-          "hops"
+          "hops",
+          "skipped"
         ],
         "properties": {
           "hops": {
@@ -5080,6 +5081,13 @@
             "items": {
               "$ref": "#/components/schemas/KnowledgePathHopDto"
             }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of hubs with more than 200 neighbors that the walk did not expand."
           }
         }
       },

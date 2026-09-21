@@ -64,6 +64,7 @@ const PATH: KnowledgePathDto = {
     { ...definition("get_goal"), kind: "function", edge_kind: "calls_route", confidence: "exact" },
     { ...definition("load_goal"), kind: "function", edge_kind: "calls", confidence: "heuristic" },
   ],
+  skipped: [],
 }
 
 const HITS: KnowledgeHitDto[] = [
@@ -73,7 +74,7 @@ const HITS: KnowledgeHitDto[] = [
 
 let requests: URL[] = []
 let impact: KnowledgeImpactDto[] = []
-let path: KnowledgePathDto = { hops: [] }
+let path: KnowledgePathDto = { hops: [], skipped: [] }
 
 beforeEach(() => {
   requests = []
@@ -273,7 +274,7 @@ describe("the Path mode", () => {
   })
 
   it("says there is no path where the daemon finds none", async () => {
-    path = { hops: [] }
+    path = { hops: [], skipped: [] }
     renderScreen(<KnowledgeScreen />, { route: `${PATH_ROUTE}&depth=4` })
 
     expect(

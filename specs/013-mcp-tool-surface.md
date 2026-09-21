@@ -86,7 +86,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      daemon's sentence as it came, marked as an error, and never `No
      results.`. Every other 4xx is wrong arguments carrying the daemon's
      sentence, and a 5xx — a store or a git that failed — is an internal
-     error
+     error. `path` names every hub with more than 200 neighbors that its walk
+     did not expand, so an empty path is not an all-clear when a hub was
+     skipped.
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
@@ -187,6 +189,16 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   `::impact_needs_a_symbol_or_a_diff_from_a_seat_that_is_no_reviewer`,
   `::repo_map_maps_every_repository_of_the_goal_on_a_share_of_the_budget`,
   `::repo_map_takes_one_repository_with_the_path_to_rank_around`).
+- A repository map may use its full 4000-token budget, and a transport cut
+  names files rather than results
+  (`tools.rs::repo_map_uses_its_full_budget_and_names_files_when_cut`).
+- The knowledge CLI distinguishes no changed definition from a definition with
+  no callers (`commands/knowledge.rs::impact_distinguishes_no_definition_from_no_callers`).
+- Diff parsing ignores added source lines that resemble headers and keeps
+  quoted non-ASCII paths
+  (`index.rs::changed_lines_reads_plus_source_lines_and_non_ascii_paths`).
+- Path answers name hubs with more than 200 neighbors whose walk stopped
+  (`tools.rs::path_answers_one_line_per_hop_and_says_when_none`).
 
 ## Sources
 

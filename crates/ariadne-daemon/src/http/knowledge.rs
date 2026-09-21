@@ -549,10 +549,11 @@ pub(super) async fn path(
         .definitions(query.to.trim(), &end_scopes)
         .await
         .map_err(internal)?;
-    let hops = knowledge
+    let (hops, skipped) = knowledge
         .path(&starts, &ends, query.depth())
         .await
-        .map_err(internal)?
+        .map_err(internal)?;
+    let hops = hops
         .into_iter()
         .map(|hop| KnowledgePathHopDto {
             repository_id: hop.repository_id,
@@ -564,7 +565,7 @@ pub(super) async fn path(
             confidence: hop.confidence,
         })
         .collect();
-    Ok(Json(KnowledgePathDto { hops }))
+    Ok(Json(KnowledgePathDto { hops, skipped }))
 }
 
 #[utoipa::path(get, path = "/v1/knowledge/map", tag = "knowledge",

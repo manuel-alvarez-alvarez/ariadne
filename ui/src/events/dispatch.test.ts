@@ -197,7 +197,7 @@ describe("knowledge events (022)", () => {
         to: "b",
         depth: 6,
       }),
-      { hops: [] },
+      { hops: [], skipped: [] },
     )
     return queryClient
   }

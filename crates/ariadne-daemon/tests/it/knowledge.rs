@@ -1364,6 +1364,7 @@ async fn a_path_crosses_a_route_into_the_other_repository() {
         ))
         .await;
     assert_eq!(path.hops.len(), 2, "{path:?}");
+    assert!(path.skipped.is_empty(), "{path:?}");
     assert_eq!(path.hops[0].repository_id, web.id);
     assert_eq!(path.hops[0].path, "src/client.ts");
     assert_eq!(path.hops[0].name, "fetchItem");

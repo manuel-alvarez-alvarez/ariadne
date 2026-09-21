@@ -1969,6 +1969,8 @@ export interface components {
         /** @description The shortest directed path between two symbol names. */
         KnowledgePathDto: {
             hops: components["schemas"]["KnowledgePathHopDto"][];
+            /** @description Names of hubs with more than 200 neighbors that the walk did not expand. */
+            skipped: string[];
         };
         /** @description One definition on a shortest path. The edge fields name the edge into it. */
         KnowledgePathHopDto: {

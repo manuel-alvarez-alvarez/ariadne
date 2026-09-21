@@ -260,7 +260,10 @@ agent to do with the tools (017); and the memory tools beside these (019).
     or unknown SHA is a wrong range, while an unindexed SHA is refused and
     names the head. A `git_ref` at another commit is refused, while one at the
     head commit stays named. A three-dot range and a value that could read as
-    a git flag are refused rather than run. For each changed
+    a git flag are refused rather than run. A hunk parser reads a file header
+    only in the diff header and keeps quoted paths
+    (`index.rs::changed_lines_reads_plus_source_lines_and_non_ascii_paths`).
+    For each changed
     definition it answers a `KnowledgeImpactDto`: the `symbol` itself, whose
     `step` is null because it is a definition and no end of an edge, its
     `callers` by depth (`depth`, `repository_id`, `path`, `line`, `name`,
@@ -306,9 +309,14 @@ agent to do with the tools (017); and the memory tools beside these (019).
     heading of that repository's own, with only the lists it has an end in
     (`symbol`), its ordered hops (`path`), or its callers alone (`impact`).
     A path hop is `path:line kind name <- edge_kind confidence`, with no
-    edge on the first hop; an empty path is `(no path within N)`. An answer
+    edge on the first hop; an empty path is `(no path within N)`. Its
+    `KnowledgePathDto.skipped` names hubs with more than 200 neighbors that
+    the walk did not expand. Each text surface prints a skipped name with
+    `has more than 200 neighbors: the walk stopped there.` An answer
     is cut at 8 KiB, with a last line naming how many results were left and
-    saying to narrow the query. A read the daemon refuses because the ref is
+    saying to narrow the query; `repo_map` may use its full 4000-token budget,
+    and its cut names files and says to raise the budget or name a path. A
+    read the daemon refuses because the ref is
     not ready (rule 40) answers the refusal itself, as the text of the tool
     and in the daemon's words, marked as an error — never `No results.`,
     which an agent reads as a fact about the code. A daemon failure (rule
@@ -330,7 +338,9 @@ agent to do with the tools (017); and the memory tools beside these (019).
     whose `-q` prints `path:line` and the line range — an interaction row
     leads with its from end as `repository:path:line`, and names its kind,
     its to end, its confidence and the step that joined them, which an
-    impact row names too; `--format json` prints the daemon's groups;
+    impact row names too; `--format json` prints the daemon's groups; an empty
+    impact distinguishes no changed definition from a changed definition with
+    no callers;
     `symbol` prints a block per definition, an end in another repository led
     by that repository's id and followed by its confidence, its step and its
     candidate count. `status` prints `failures`: each failed ref as `<ref>:
@@ -870,7 +880,10 @@ the daemon and knowledge WAL files off the commit path.
   what the change reaches, and a range that is no range is refused
   (`knowledge.rs::a_diff_names_the_definitions_it_changed_and_their_callers`);
   the hunks of a file the diff deletes belong to no path
-  (`index.rs::the_hunks_of_a_deleted_file_belong_to_no_path`).
+  (`index.rs::the_hunks_of_a_deleted_file_belong_to_no_path`); added source
+  lines beginning with `++ ` are not file headers, and quoted non-ASCII paths
+  remain in the changed-lines answer
+  (`index.rs::changed_lines_reads_plus_source_lines_and_non_ascii_paths`).
 - A definition with more than 200 callers is not walked past, and the answer
   names it
   (`knowledge.rs::a_definition_with_more_than_two_hundred_callers_is_not_walked_past`).
@@ -1106,7 +1119,11 @@ the daemon and knowledge WAL files off the commit path.
 - A direct edge wins over a two-edge path, the depth stops the walk, and a
   path is answered hop by hop
   (`store.rs::a_path_is_found_between_two_definitions_and_none_past_the_depth`,
-  `knowledge.rs::the_shortest_path_between_two_symbols_is_answered_hop_by_hop`).
+  `knowledge.rs::the_shortest_path_between_two_symbols_is_answered_hop_by_hop`);
+  a path skips a hub with more than 200 neighbors and reports its name
+  (`store.rs::a_path_skips_a_hub_with_more_than_two_hundred_neighbors`,
+  `commands/knowledge.rs::a_path_names_a_hub_where_the_walk_stopped`,
+  `tools.rs::path_answers_one_line_per_hop_and_says_when_none`).
 - A path crosses a route into another repository
   (`tests/it/knowledge.rs::a_path_crosses_a_route_into_the_other_repository`).
 - Every seat lists `search_code`, `outline`, `symbol`, `path`, `impact` and
@@ -1118,8 +1135,11 @@ the daemon and knowledge WAL files off the commit path.
   travels bare by default and widens on `all`
   (`tools.rs::search_code_asks_the_daemon_with_its_filters_and_answers_one_line_per_hit`,
   `::search_code_defaults_to_the_sessions_own_scope_and_widens_on_request`).
-- An answer over 8 KiB is cut with the number of results left
-  (`tools.rs::an_answer_over_8_kib_is_cut_with_the_number_of_results_left`).
+- An answer over 8 KiB is cut with the number of results left, except that a
+  map may use its full 4000-token budget and a map cut names files and tells
+  the agent to raise the budget or name a path
+  (`tools.rs::an_answer_over_8_kib_is_cut_with_the_number_of_results_left`,
+  `tools.rs::repo_map_uses_its_full_budget_and_names_files_when_cut`).
 - `outline` takes the task's repository by default and lists line ranges
   (`tools.rs::outline_defaults_to_the_task_repository_and_lists_line_ranges`).
 - `symbol` groups its answer under a heading for each repository — its path
@@ -1160,6 +1180,9 @@ the daemon and knowledge WAL files off the commit path.
   (`::an_end_row_names_the_step_that_resolved_it`). A graph summary counts
   its edges by kind and ranks files by degree
   (`commands/knowledge.rs::graph_summary_counts_edges_by_kind_and_ranks_files_by_degree`).
+  The CLI impact command distinguishes no matching definition from a matching
+  definition with no callers
+  (`commands/knowledge.rs::impact_distinguishes_no_definition_from_no_callers`).
 - The desktop knowledge screen keeps its pickers and its tab in the URL,
   renders a status card per repository in every state, posts a reindex and
   shows `indexing` at once, and refetches once `knowledge_indexed` arrives

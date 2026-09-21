@@ -929,7 +929,8 @@ async fn the_shortest_path_between_two_symbols_is_answered_hop_by_hop() {
     let first = only(&store, "first").await;
     let last = only(&store, "last").await;
 
-    let path = store.path(&[first], &[last], 6).await.unwrap();
+    let (path, skipped) = store.path(&[first], &[last], 6).await.unwrap();
+    assert!(skipped.is_empty());
     let answered = path
         .iter()
         .map(|hop| {

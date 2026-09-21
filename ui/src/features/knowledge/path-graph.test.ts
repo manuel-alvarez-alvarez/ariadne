@@ -27,6 +27,7 @@ describe("pathGraph", () => {
   it("chains the hops in order, each edge labelled by its edge kind", () => {
     const { graph } = pathGraph({
       hops: [hop("start"), hop("middle", ["calls", "exact"]), hop("end", ["calls_route", "exact"])],
+      skipped: [],
     })
 
     expect(graph.mapNodes((_key, attributes) => attributes.label)).toEqual([
@@ -49,6 +50,7 @@ describe("pathGraph", () => {
   it("dashes an edge that is a guess, and no other", () => {
     const { graph } = pathGraph({
       hops: [hop("start"), hop("middle", ["calls", "heuristic"]), hop("end", ["calls", "exact"])],
+      skipped: [],
     })
 
     expect(graph.mapEdges((_key, attributes) => attributes.dashed)).toEqual([true, false])
@@ -57,6 +59,7 @@ describe("pathGraph", () => {
   it("tells the two ends of the chain from the hops between them", () => {
     const { graph } = pathGraph({
       hops: [hop("start"), hop("middle", ["calls", "exact"]), hop("end", ["calls", "exact"])],
+      skipped: [],
     })
 
     expect(graph.mapNodes((_key, attributes) => attributes.tone)).toEqual([
@@ -67,13 +70,16 @@ describe("pathGraph", () => {
   })
 
   it("names the symbol behind each node", () => {
-    const { symbols } = pathGraph({ hops: [hop("start"), hop("end", ["calls", "exact"])] })
+    const { symbols } = pathGraph({
+      hops: [hop("start"), hop("end", ["calls", "exact"])],
+      skipped: [],
+    })
 
     expect([...symbols.values()]).toEqual(["start", "end"])
   })
 
   it("has no node where there is no path", () => {
-    const { graph } = pathGraph({ hops: [] })
+    const { graph } = pathGraph({ hops: [], skipped: [] })
 
     expect(graph.order).toBe(0)
   })

@@ -322,6 +322,9 @@ pub struct KnowledgePathHopDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct KnowledgePathDto {
     pub hops: Vec<KnowledgePathHopDto>,
+    /// Names of hubs with more than 200 neighbors that the walk did not expand.
+    #[serde(default)]
+    pub skipped: Vec<String>,
 }
 
 /// Query of `GET /v1/knowledge/map`.

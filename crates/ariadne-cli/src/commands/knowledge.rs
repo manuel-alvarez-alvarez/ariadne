@@ -68,6 +68,19 @@ const PATH: &[Column] = &[
     col("repo", UNCAPPED).id().rank(3),
 ];
 
+fn impact_empty_state(found: &[KnowledgeImpactDto], symbol: Option<&str>) -> String {
+    if found.is_empty() {
+        return symbol
+            .map(|name| format!("No definition named {name}."))
+            .unwrap_or_else(|| "No changed definition.".into());
+    }
+    "Nothing calls it within this depth.".into()
+}
+
+fn path_stopped_note(name: &str) -> String {
+    format!("{name} has more than 200 neighbors: the walk stopped there.")
+}
+
 /// Columns of `knowledge interactions`: where the edge starts, its kind,
 /// what the two ends are, how sure the match is and what joined them. The
 /// from end leads, so `-q` prints `path:line`.
@@ -358,6 +371,7 @@ pub(crate) async fn run(client: &Client, command: KnowledgeCommand, format: Form
                 .iter()
                 .flat_map(|impact| impact.callers.iter().map(move |caller| (impact, caller)))
                 .collect();
+            let empty = impact_empty_state(&found, request.symbol.as_deref());
             print_list(
                 format,
                 &rows,
@@ -373,7 +387,7 @@ pub(crate) async fn run(client: &Client, command: KnowledgeCommand, format: Form
                         caller.repository_id.clone(),
                     ]
                 },
-                empty_state("Nothing calls what changed.", None),
+                empty_state(&empty, None),
             )?;
             // A note, so `-q` stays a list of locations and nothing else.
             for name in found.iter().flat_map(|impact| &impact.stopped) {
@@ -419,6 +433,9 @@ pub(crate) async fn run(client: &Client, command: KnowledgeCommand, format: Form
                 },
                 empty_state("No path exists within the depth.", None),
             )?;
+            for name in &found.skipped {
+                note(&path_stopped_note(name));
+            }
         }
         KnowledgeCommand::Interactions { repo, git_ref } => {
             let repository = resolve::id(client, Kind::Repo, &repo).await?;
@@ -865,6 +882,14 @@ mod tests {
         assert!(header.contains("STEP"), "{table}");
     }
 
+    #[test]
+    fn a_path_names_a_hub_where_the_walk_stopped() {
+        assert_eq!(
+            path_stopped_note("hub"),
+            "hub has more than 200 neighbors: the walk stopped there."
+        );
+    }
+
     /// An interaction row leads with its from end, so `-q` prints where the
     /// edge starts, and names its kind, its to end and the step that joined
     /// them.
@@ -963,6 +988,31 @@ mod tests {
         assert_eq!(
             map_text(&empty),
             "The repository holds nothing the index read.\n"
+        );
+    }
+
+    #[test]
+    fn impact_distinguishes_no_definition_from_no_callers() {
+        assert_eq!(
+            impact_empty_state(&[], Some("missing")),
+            "No definition named missing."
+        );
+        let found = [KnowledgeImpactDto {
+            symbol: KnowledgeRelatedDto {
+                repository_id: "01REPO".into(),
+                path: "src/lib.rs".into(),
+                line: 1,
+                name: "quiet".into(),
+                confidence: "exact".into(),
+                step: None,
+                candidates: 1,
+            },
+            callers: Vec::new(),
+            stopped: Vec::new(),
+        }];
+        assert_eq!(
+            impact_empty_state(&found, Some("quiet")),
+            "Nothing calls it within this depth."
         );
     }
 }
