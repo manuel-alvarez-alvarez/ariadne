@@ -71,7 +71,15 @@ cargo nextest run
 cargo clippy --all-targets
 cargo fmt --all -- --check
 scripts/check-unused-rust
+cargo machete .
 ```
+
+`cargo machete` is [cargo-machete](https://github.com/bnjbvr/cargo-machete)
+(`cargo binstall cargo-machete@0.9.2`, the version CI pins). It fails on a
+dependency that no source file names, in the workspace and in `ui/src-tauri`.
+Remove the dependency. Where a crate is used only through a macro or a
+feature, keep it and list it under `[package.metadata.cargo-machete]` with a
+comment that says why.
 
 Nothing is `#[ignore]`d: the suite drives real `git` worktrees, which Ariadne
 requires anyway, and a stub ACP agent that `tests/it/common/acp.rs` writes in

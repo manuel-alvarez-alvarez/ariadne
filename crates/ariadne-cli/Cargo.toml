@@ -49,7 +49,6 @@ serde_urlencoded = { workspace = true }
 sigpipe = "0.1.3"
 thiserror = { workspace = true }
 tokio = { workspace = true }
-toml = { workspace = true }
 
 [dev-dependencies]
 # The console tests run a small API server for the CLI client.

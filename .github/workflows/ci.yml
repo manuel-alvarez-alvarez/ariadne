@@ -65,12 +65,26 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # Pinned, so a new release cannot add findings to a run that no commit
+      # touched.
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete@0.9.2
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
           # One cache per OS; the matrix legs must not share a target dir.
           key: ${{ matrix.os }}
           cache-on-failure: true
+
+      # Exits non-zero on any dependency that no source file names. It reads
+      # the source and builds nothing, so it runs before the build. It
+      # descends from `.`, so it covers the workspace and `ui/src-tauri`,
+      # which is outside it.
+      - name: Check for unused dependencies
+        run: cargo machete .
 
       - name: Build
         run: cargo build --workspace --all-targets

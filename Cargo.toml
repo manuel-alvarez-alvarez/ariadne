@@ -103,7 +103,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # whether *this* process may write a directory is a question only the kernel
 # can answer, and `ariadne doctor` must ask it without writing anything.
 rustix = { version = "1", features = ["fs", "process", "termios"] }
-ulid = { version = "3", features = ["serde"] }
+ulid = "3"
 # Filesystem notifications: the branch watcher is woken by the ref writes
 # themselves instead of polling for them (see `ariadne-daemon/src/branch.rs`).
 # kqueue rather than the default FSEvents on macOS: the branch watcher is built
