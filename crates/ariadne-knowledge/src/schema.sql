@@ -3,24 +3,41 @@
 -- `PRAGMA user_version`, and a file at any other version is deleted and
 -- rebuilt from the repositories. Spec 022 documents every table.
 
--- Every registered repository the index has heard of, with its state and
--- the ref another repository is read against: what the daemon says the
--- base branch is, and the first ref indexed until it says.
+-- Every registered repository the index has heard of, with the ref another
+-- repository is read against: what the daemon says the base branch is, and
+-- the first ref indexed until it says.
 CREATE TABLE repositories (
     id          TEXT PRIMARY KEY,
-    -- idle | indexing | failed
-    state       TEXT NOT NULL,
-    error       TEXT,
     updated_at  TEXT NOT NULL,
     base_ref    TEXT
+);
+
+-- Where the index of one ref stands, and why its last run failed. A run is of
+-- one ref, so its outcome is too: a good run of a task branch says nothing
+-- about the base branch. A ref has a row here from its first run, which is
+-- before it has one in `refs`.
+CREATE TABLE ref_states (
+    repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    git_ref       TEXT NOT NULL,
+    -- idle | indexing | failed
+    state         TEXT NOT NULL,
+    error         TEXT,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (repository_id, git_ref)
 );
 
 -- The refs indexed per repository, each at the commit it was last read at.
 CREATE TABLE refs (
     repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     git_ref       TEXT NOT NULL,
+    -- The commit the files of the ref are at.
     commit_sha    TEXT NOT NULL,
     indexed_at    TEXT NOT NULL,
+    -- The commit the edges of the ref are at: written once the resolution and
+    -- link passes of a run succeeded. NULL, or behind `commit_sha`, after a
+    -- run that failed between the two, and the next run derives every edge
+    -- of the ref again.
+    edges_commit  TEXT,
     PRIMARY KEY (repository_id, git_ref)
 );
 

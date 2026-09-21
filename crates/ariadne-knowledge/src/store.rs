@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -24,7 +25,7 @@ use crate::resolve::{
 
 /// The schema this build writes. Bump it with every change to `schema.sql`:
 /// a store at another version is thrown away and indexed again.
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 14;
 
 /// The edge kinds a walk of the callers follows: a call, and a request of
 /// a route the definition handles.
@@ -83,9 +84,24 @@ pub struct KnowledgeStore {
     /// Single-connection pool: every write serializes here.
     write: Pool<Sqlite>,
     read: Pool<Sqlite>,
+    /// How many files of one batch an index run parses at a time.
+    pub(crate) workers: usize,
+    /// Called with the path of each file before it is parsed. Tests only.
+    pub(crate) before_parse: Option<ParseHook>,
 }
 
-/// Where a repository's index stands.
+/// What [`KnowledgeStore::before_parse`] takes.
+pub(crate) type ParseHook = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// How many files an index run parses at a time where the configuration does
+/// not say: half of the cores, and one at least. A run shares the machine
+/// with the agents it indexes for.
+pub fn default_workers() -> usize {
+    std::thread::available_parallelism().map_or(1, |cores| (cores.get() / 2).max(1))
+}
+
+/// Where the index of one ref stands, and of a repository: `Indexing` while
+/// one of its refs is, else `Failed` while one of them is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Idle,
@@ -115,13 +131,34 @@ impl State {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub state: State,
-    pub error: Option<String>,
+    /// The refs whose last run failed, each with why, in ref order.
+    pub failures: Vec<RefFailure>,
     pub refs: Vec<RefStatus>,
     /// Distinct paths indexed across the repository's refs.
     pub files: i64,
     /// The symbols of the distinct blobs those paths hold.
     pub symbols: i64,
     pub languages: Vec<LanguageCount>,
+}
+
+/// A ref whose last index run failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefFailure {
+    pub git_ref: String,
+    pub error: String,
+}
+
+/// Whether a ref can answer a read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Readiness {
+    /// The ref has an index. A run that updates it does not change that.
+    Ready,
+    /// No run of the ref has started.
+    NoIndex,
+    /// The first run of the ref is under way.
+    FirstIndex,
+    /// The last run of the ref failed, with why.
+    Failed(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -424,7 +461,27 @@ impl KnowledgeStore {
             .max_connections(4)
             .connect_with(options.read_only(true))
             .await?;
-        Ok(Self { write, read })
+        Ok(Self {
+            write,
+            read,
+            workers: default_workers(),
+            before_parse: None,
+        })
+    }
+
+    /// Parse `workers` files of one batch at a time, and one at least.
+    pub fn with_workers(mut self, workers: usize) -> Self {
+        self.workers = workers.max(1);
+        self
+    }
+
+    /// Call `hook` with the path of each file, on the thread that parses it
+    /// and before it does. For tests: it is where one makes a parse panic, and
+    /// where one counts the parses that run at a time.
+    #[doc(hidden)]
+    pub fn before_parse(mut self, hook: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        self.before_parse = Some(Arc::new(hook));
+        self
     }
 
     /// Fold the write-ahead log into the database, off the commit path.
@@ -438,15 +495,29 @@ impl KnowledgeStore {
     // -- status ---------------------------------------------------------------
 
     pub async fn status(&self, repository_id: &str) -> Result<Status> {
-        let row: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT state, error FROM repositories WHERE id = ?")
-                .bind(repository_id)
-                .fetch_optional(&self.read)
-                .await?;
-        let (state, error) = match row {
-            Some((state, error)) => (State::parse(&state), error),
-            None => (State::Idle, None),
-        };
+        let states: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT git_ref, state, error FROM ref_states WHERE repository_id = ? ORDER BY git_ref",
+        )
+        .bind(repository_id)
+        .fetch_all(&self.read)
+        .await?;
+        let mut state = State::Idle;
+        let mut failures = Vec::new();
+        for (git_ref, ref_state, error) in states {
+            match State::parse(&ref_state) {
+                State::Indexing => state = State::Indexing,
+                State::Failed => {
+                    if state == State::Idle {
+                        state = State::Failed;
+                    }
+                    failures.push(RefFailure {
+                        git_ref,
+                        error: error.unwrap_or_default(),
+                    });
+                }
+                State::Idle => {}
+            }
+        }
         let refs: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT git_ref, commit_sha, indexed_at FROM refs WHERE repository_id = ? ORDER BY git_ref",
         )
@@ -485,7 +556,7 @@ impl KnowledgeStore {
         .await?;
         Ok(Status {
             state,
-            error,
+            failures,
             refs: statuses,
             files,
             symbols,
@@ -496,25 +567,66 @@ impl KnowledgeStore {
         })
     }
 
-    /// Record where a repository's indexing stands.
-    pub async fn set_state(
+    /// Record where the index of one ref stands, with why a failed run
+    /// failed. The other refs of the repository keep what they had.
+    pub async fn set_ref_state(
         &self,
         repository_id: &str,
+        git_ref: &str,
         state: State,
         error: Option<&str>,
     ) -> Result<()> {
+        let mut tx = self.write.begin().await?;
+        let stamp = now();
         sqlx::query(
-            "INSERT INTO repositories (id, state, error, updated_at) VALUES (?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET state = excluded.state, error = excluded.error,
-                                           updated_at = excluded.updated_at",
+            "INSERT INTO repositories (id, updated_at) VALUES (?, ?)
+             ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at",
         )
         .bind(repository_id)
+        .bind(&stamp)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO ref_states (repository_id, git_ref, state, error, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(repository_id, git_ref) DO UPDATE SET state = excluded.state,
+                 error = excluded.error, updated_at = excluded.updated_at",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
         .bind(state.as_str())
         .bind(error)
-        .bind(now())
-        .execute(&self.write)
+        .bind(&stamp)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(())
+    }
+
+    /// Whether a ref can answer a read: it has an index, and its last run
+    /// did not fail. A ref with an index answers while a run updates it.
+    pub async fn readiness(&self, repository_id: &str, git_ref: &str) -> Result<Readiness> {
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT state, error FROM ref_states WHERE repository_id = ? AND git_ref = ?",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .fetch_optional(&self.read)
+        .await?;
+        let (state, error) = match row {
+            Some((state, error)) => (State::parse(&state), error),
+            None => (State::Idle, None),
+        };
+        if state == State::Failed {
+            return Ok(Readiness::Failed(error.unwrap_or_default()));
+        }
+        if self.ref_commit(repository_id, git_ref).await?.is_some() {
+            return Ok(Readiness::Ready);
+        }
+        Ok(match state {
+            State::Indexing => Readiness::FirstIndex,
+            _ => Readiness::NoIndex,
+        })
     }
 
     /// Record the ref another repository is read against: the base branch,
@@ -522,7 +634,7 @@ impl KnowledgeStore {
     /// stands in.
     pub async fn set_base_ref(&self, repository_id: &str, git_ref: &str) -> Result<()> {
         sqlx::query(
-            "INSERT INTO repositories (id, state, error, updated_at, base_ref) VALUES (?, 'idle', NULL, ?, ?)
+            "INSERT INTO repositories (id, updated_at, base_ref) VALUES (?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET base_ref = excluded.base_ref",
         )
         .bind(repository_id)
@@ -554,6 +666,24 @@ impl KnowledgeStore {
         .bind(git_ref)
         .fetch_optional(&self.read)
         .await?)
+    }
+
+    /// The commit whose edges a ref holds: the last one a run got through the
+    /// resolution and link passes of. Behind [`Self::ref_commit`] after a run
+    /// that failed between the files and the edges.
+    pub(crate) async fn edges_commit(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+    ) -> Result<Option<String>> {
+        let commit: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT edges_commit FROM refs WHERE repository_id = ? AND git_ref = ?",
+        )
+        .bind(repository_id)
+        .bind(git_ref)
+        .fetch_optional(&self.read)
+        .await?;
+        Ok(commit.flatten())
     }
 
     /// The refs indexed for a repository.
@@ -606,11 +736,17 @@ impl KnowledgeStore {
         Ok(())
     }
 
-    /// Forget one ref of a repository: its files, and the blobs no file
-    /// holds any more. What a landed or deleted task branch leaves behind.
+    /// Forget one ref of a repository: its state, its files, and the blobs
+    /// no file holds any more. What a landed or deleted task branch leaves
+    /// behind.
     pub async fn drop_ref(&self, repository_id: &str, git_ref: &str) -> Result<()> {
         let mut tx = self.write.begin().await?;
         sqlx::query("DELETE FROM refs WHERE repository_id = ? AND git_ref = ?")
+            .bind(repository_id)
+            .bind(git_ref)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM ref_states WHERE repository_id = ? AND git_ref = ?")
             .bind(repository_id)
             .bind(git_ref)
             .execute(&mut *tx)
@@ -1771,7 +1907,57 @@ impl KnowledgeStore {
         Ok(())
     }
 
+    /// Drop the ones among `blobs` that no file holds, with their symbols,
+    /// their FTS rows and everything else keyed by them: what a run stored
+    /// and, failing before it wrote the files, left to nobody. Only the blobs
+    /// named are looked at, so the cost is the failed run's and not the
+    /// store's, and a blob another ref came to hold in the meantime stays.
+    pub(crate) async fn drop_unheld_blobs(&self, blobs: &[String]) -> Result<()> {
+        // A transaction per chunk: each one leaves the store whole, and none
+        // holds the writer for as long as the whole run's blobs would.
+        for chunk in blobs.chunks(CHUNK) {
+            let mut tx = self.write.begin().await?;
+            // The FTS rows go by rowid, which is the symbol id, and first:
+            // the blobs take their symbols with them.
+            let mut sql = QueryBuilder::<Sqlite>::new(
+                "DELETE FROM symbols_fts WHERE rowid IN (SELECT id FROM symbols WHERE blob IN (",
+            );
+            let mut values = sql.separated(", ");
+            for blob in chunk {
+                values.push_bind(blob);
+            }
+            sql.push(") AND NOT EXISTS (SELECT 1 FROM files WHERE files.blob = symbols.blob))");
+            sql.build().execute(&mut *tx).await?;
+            let mut sql = QueryBuilder::<Sqlite>::new("DELETE FROM blobs WHERE blob IN (");
+            let mut values = sql.separated(", ");
+            for blob in chunk {
+                values.push_bind(blob);
+            }
+            sql.push(") AND NOT EXISTS (SELECT 1 FROM files WHERE files.blob = blobs.blob)");
+            sql.build().execute(&mut *tx).await?;
+            tx.commit().await?;
+        }
+        Ok(())
+    }
+
     // -- the resolution pass --------------------------------------------------
+
+    /// Record that the edges of a ref stand for `commit`: the resolution and
+    /// link passes of the run that read it both succeeded.
+    pub(crate) async fn commit_edges_done(
+        &self,
+        repository_id: &str,
+        git_ref: &str,
+        commit: &str,
+    ) -> Result<()> {
+        sqlx::query("UPDATE refs SET edges_commit = ? WHERE repository_id = ? AND git_ref = ?")
+            .bind(commit)
+            .bind(repository_id)
+            .bind(git_ref)
+            .execute(&self.write)
+            .await?;
+        Ok(())
+    }
 
     /// The names the blobs at `paths` define, at one ref.
     pub(crate) async fn names_at(
@@ -2018,7 +2204,6 @@ impl KnowledgeStore {
     }
 
     /// Every blob one ref holds.
-    #[cfg(test)]
     pub(crate) async fn blobs_at(&self, repository_id: &str, git_ref: &str) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar(
             "SELECT DISTINCT blob FROM files WHERE repository_id = ? AND git_ref = ? ORDER BY blob",
@@ -2282,6 +2467,8 @@ impl KnowledgeStore {
     }
 
     /// Record the files of a ref at a commit, once their blobs are stored.
+    /// The edges of the ref are not at that commit yet, and `edges_commit`
+    /// keeps what it held: [`Self::commit_edges_done`] moves it.
     pub(crate) async fn commit_files(
         &self,
         repository_id: &str,
@@ -2294,7 +2481,7 @@ impl KnowledgeStore {
         // The first ref indexed is the base ref until the daemon says which
         // one is.
         sqlx::query(
-            "INSERT INTO repositories (id, state, error, updated_at, base_ref) VALUES (?1, 'idle', NULL, ?2, ?3)
+            "INSERT INTO repositories (id, updated_at, base_ref) VALUES (?1, ?2, ?3)
              ON CONFLICT(id) DO UPDATE SET base_ref = COALESCE(base_ref, excluded.base_ref)",
         )
         .bind(repository_id)
@@ -2856,7 +3043,7 @@ mod tests {
              WITH RECURSIVE n(value) AS (
                  VALUES(0) UNION ALL SELECT value + 1 FROM n WHERE value + 1 < 50
              ) INSERT INTO test_mentions SELECT value FROM n;
-             INSERT INTO repositories (id, state, updated_at) VALUES ('repo', 'idle', 'now');
+             INSERT INTO repositories (id, updated_at) VALUES ('repo', 'now');
              INSERT INTO refs (repository_id, git_ref, commit_sha, indexed_at)
                  VALUES ('repo', 'branch', 'commit', 'now');
              INSERT INTO blobs (blob, language, parsed_at)
@@ -2908,7 +3095,7 @@ mod tests {
             while !done.load(Ordering::Acquire) || writes == 0 {
                 let started = std::time::Instant::now();
                 store
-                    .set_state("contender", State::Idle, None)
+                    .set_ref_state("contender", "main", State::Idle, None)
                     .await
                     .unwrap();
                 slowest = slowest.max(started.elapsed());
@@ -3187,7 +3374,7 @@ mod tests {
         let path = dir.path().join("knowledge.db");
         let store = KnowledgeStore::open(&path).await.unwrap();
         store
-            .set_state("repo", State::Failed, Some("boom"))
+            .set_ref_state("repo", "main", State::Failed, Some("boom"))
             .await
             .unwrap();
         drop(store);
@@ -3206,7 +3393,7 @@ mod tests {
         let store = KnowledgeStore::open(&path).await.unwrap();
         let status = store.status("repo").await.unwrap();
         assert_eq!(status.state, State::Idle, "the old rows are gone");
-        assert_eq!(status.error, None);
+        assert_eq!(status.failures, []);
         assert_eq!(version_of(&path).await, Some(SCHEMA_VERSION));
     }
 }

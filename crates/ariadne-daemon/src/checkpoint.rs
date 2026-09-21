@@ -63,7 +63,7 @@ mod tests {
 
         for n in 0..200 {
             knowledge
-                .set_state(&format!("repo-{n}"), State::Idle, None)
+                .set_ref_state(&format!("repo-{n}"), "main", State::Idle, None)
                 .await
                 .unwrap();
         }

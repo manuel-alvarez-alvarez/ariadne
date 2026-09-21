@@ -219,7 +219,7 @@ and the ACP runtime that reports the agent events (021).
     others, grouped by kind, each edge two ends and a confidence), and reports
     every index run on the domain stream as `knowledge_indexed`
     (`repository_id`, `git_ref`, `commit`, `files`, `symbols`) or
-    `knowledge_failed` (`repository_id`, `error`). Like a branch move, these
+    `knowledge_failed` (`repository_id`, `git_ref`, `error`). Like a branch move, these
     are published straight onto the bus — nothing in the database changed —
     and belong to no goal or task, so a `goal` or `task` filter drops them.
 

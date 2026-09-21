@@ -77,7 +77,7 @@ function idleStatus(
       { language: "Rust", files: 100 },
       { language: "TypeScript", files: 28 },
     ],
-    error: null,
+    failures: [],
     ...overrides,
   }
 }
@@ -229,15 +229,34 @@ describe("the Overview tab", () => {
 
   it.each([
     ["indexing", { state: "indexing" }, "Indexing"],
-    ["failed", { state: "failed", error: "git clone failed: permission denied" }, "Failed"],
+    ["failed", { state: "failed" }, "Failed"],
   ] as const)("shows a repository while %s", async (_label, overrides, badge) => {
     statuses[WEB.id] = idleStatus(WEB, overrides)
     renderScreen(<KnowledgeScreen />, { route: "/knowledge" })
 
     await waitFor(() => expect(within(card("web")).getByText(badge)).toBeDefined())
-    if (overrides.state === "failed") {
-      expect(within(card("web")).getByText(overrides.error)).toBeDefined()
-    }
+  })
+
+  it("names each ref that failed beside its error", async () => {
+    // The base branch failed and a task branch then indexed well: the
+    // failure stays, under the name of its ref.
+    statuses[WEB.id] = idleStatus(WEB, {
+      state: "failed",
+      failures: [
+        { git_ref: "main", error: "git clone failed: permission denied" },
+        { git_ref: "fix-w1", error: "database is locked" },
+      ],
+    })
+    renderScreen(<KnowledgeScreen />, { route: "/knowledge" })
+
+    const failed = await waitFor(() =>
+      within(card("web")).getByRole("list", { name: "Failed refs" }),
+    )
+    expect(
+      within(failed)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["main: git clone failed: permission denied", "fix-w1: database is locked"])
   })
 
   it("turns Reindex off for a disabled repository, and says why", async () => {

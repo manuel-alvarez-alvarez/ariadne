@@ -9,18 +9,28 @@
 //! Only what git tracks is read, over `git ls-tree` and `git cat-file
 //! --batch`, never the working tree: the ref may be checked out nowhere, and
 //! an author's uncommitted edits are not the branch.
+//!
+//! A run that goes wrong leaves a store the next run can stand on. A file
+//! whose parse panics is skipped and the run goes on. A run that fails takes
+//! back the blobs it stored and no file came to hold. And a ref is done for a
+//! commit only once its edges are derived: until then the next run of the
+//! same commit derives them.
 
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tracing::warn;
 
 use crate::languages::Language;
-use crate::store::{FileChanges, FileRow, KnowledgeStore, ParsedBlob};
+use crate::store::{FileChanges, FileRow, KnowledgeStore, ParseHook, ParsedBlob};
 use crate::{interfaces, parser, resolve};
 
 /// Files over this size are skipped: generated code and data dumps, not the
@@ -53,8 +63,12 @@ pub struct Indexed {
     /// Blobs parsed by this run: the files that changed and were not known.
     pub parsed: usize,
     /// Blobs whose edges this run derived again: the ones it parsed, and the
-    /// ones that name a definition the run moved.
+    /// ones that name a definition the run moved. Every blob of the ref after
+    /// a run that failed before its edges were derived.
     pub resolved: usize,
+    /// The paths of the files whose parse panicked. Each one is stored with
+    /// no symbols, and the run went on without it.
+    pub skipped: Vec<String>,
 }
 
 /// One entry of `git ls-tree`.
@@ -69,6 +83,27 @@ impl KnowledgeStore {
     /// Index `git_ref` of the repository at `repo` under `repository_id`, from
     /// wherever it was last indexed.
     pub async fn index(&self, repository_id: &str, repo: &Path, git_ref: &str) -> Result<Indexed> {
+        let mut stored = Vec::new();
+        let indexed = self.read(repository_id, repo, git_ref, &mut stored).await;
+        // A run that failed before it wrote the files leaves blobs no file
+        // holds: nothing would ever drop them, and every later read would
+        // scan them.
+        if indexed.is_err()
+            && let Err(e) = self.drop_unheld_blobs(&stored).await
+        {
+            warn!(repository = %repository_id, git_ref, error = %e, "cannot drop the blobs of a failed run");
+        }
+        indexed
+    }
+
+    /// One run. `stored` takes every blob the run stored, as it stores it.
+    async fn read(
+        &self,
+        repository_id: &str,
+        repo: &Path,
+        git_ref: &str,
+        stored: &mut Vec<String>,
+    ) -> Result<Indexed> {
         let commit = git(
             repo,
             &[
@@ -81,7 +116,10 @@ impl KnowledgeStore {
         .await
         .with_context(|| format!("resolving {git_ref} in {}", repo.display()))?;
         let previous = self.ref_commit(repository_id, git_ref).await?;
-        if previous.as_deref() == Some(commit.as_str()) {
+        // The ref is done for a commit once its edges are at it, and not
+        // when its files are: a run that failed between the two is run again.
+        let edges = self.edges_commit(repository_id, git_ref).await?;
+        if previous.as_deref() == Some(commit.as_str()) && edges == previous {
             let (files, symbols) = self.counts(repository_id, git_ref).await?;
             return Ok(Indexed {
                 git_ref: git_ref.to_string(),
@@ -90,8 +128,12 @@ impl KnowledgeStore {
                 symbols,
                 parsed: 0,
                 resolved: 0,
+                skipped: Vec::new(),
             });
         }
+        // The files of the ref are ahead of its edges: which edges the failed
+        // run invalidated went with it, so every blob of the ref is resolved.
+        let behind = previous.is_some() && edges != previous;
 
         // What this run decides about: every tracked path on a first read,
         // else the paths that changed since the last commit.
@@ -165,50 +207,51 @@ impl KnowledgeStore {
         let mut moved_names = self.names_at(repository_id, git_ref, &touched).await?;
 
         let mut parsed = 0;
+        let mut skipped = Vec::new();
         for chunk in to_parse.chunks(BATCH) {
             let ids: Vec<&str> = chunk.iter().map(|(blob, _, _)| blob.as_str()).collect();
             let contents = cat_file(repo, &ids).await?;
-            // A core each: reading every reference of a file costs several
+            // A worker each: reading every reference of a file costs several
             // times what reading its definitions alone did, and the files of
-            // one batch are read one from another.
+            // one batch are read one from another. As many workers as the
+            // store was given and no more: a run shares the machine. Each
+            // worker takes the next file that no worker has, so a few large
+            // files hold one worker and not the batch.
             let contents = Arc::new(contents);
-            let workers = std::thread::available_parallelism().map_or(4, |cores| cores.get());
+            let files = Arc::new(chunk.to_vec());
+            let next = Arc::new(AtomicUsize::new(0));
             let mut reading = Vec::new();
-            for piece in chunk.chunks(chunk.len().div_ceil(workers).max(1)) {
-                let piece = piece.to_vec();
+            for _ in 0..self.workers.min(files.len()) {
                 let contents = Arc::clone(&contents);
+                let files = Arc::clone(&files);
+                let next = Arc::clone(&next);
+                let before_parse = self.before_parse.clone();
                 reading.push(tokio::task::spawn_blocking(move || {
-                    piece
-                        .into_iter()
-                        .map(|(blob, language, path)| {
-                            let (read, found) = match contents.get(&blob) {
-                                Some(bytes) if !is_binary(bytes) => {
-                                    let text = String::from_utf8_lossy(bytes);
-                                    let read = parser::read(language, &text);
-                                    let found =
-                                        interfaces::read(&path, language, &text, &read.symbols);
-                                    (read, found)
-                                }
-                                _ => (parser::Parsed::default(), Vec::new()),
-                            };
-                            ParsedBlob {
-                                blob,
-                                language: language.name(),
-                                symbols: read.symbols,
-                                references: read.references,
-                                imports: read.imports,
-                                interfaces: found,
-                            }
-                        })
-                        .collect::<Vec<_>>()
+                    let mut read = Vec::new();
+                    while let Some((blob, language, path)) =
+                        files.get(next.fetch_add(1, Ordering::Relaxed))
+                    {
+                        read.push(read_file(
+                            &contents,
+                            blob,
+                            *language,
+                            path,
+                            before_parse.as_ref(),
+                        ));
+                    }
+                    read
                 }));
             }
             let mut batch = Vec::with_capacity(chunk.len());
             for read in reading {
-                batch.extend(read.await.context("parsing")?);
+                for (blob, panicked) in read.await.context("parsing")? {
+                    batch.push(blob);
+                    skipped.extend(panicked);
+                }
             }
             parsed += batch.len();
             self.commit_blobs(&batch).await?;
+            stored.extend(batch.into_iter().map(|blob| blob.blob));
         }
         self.commit_files(repository_id, git_ref, &commit, &changes)
             .await?;
@@ -218,17 +261,24 @@ impl KnowledgeStore {
         // and no others. The names the touched paths hold now count too: on
         // the first read of a branch nothing was parsed, and the blobs that
         // name what the branch changed still have to point at it.
-        let mut to_resolve: HashSet<String> =
-            to_parse.into_iter().map(|(blob, _, _)| blob).collect();
-        moved_names.extend(self.names_at(repository_id, git_ref, &touched).await?);
-        let moved: Vec<String> = moved_names.into_iter().collect();
-        to_resolve.extend(self.blobs_naming(repository_id, git_ref, &moved).await?);
-        let to_resolve: Vec<String> = to_resolve.into_iter().collect();
+        let to_resolve: Vec<String> = if behind {
+            self.blobs_at(repository_id, git_ref).await?
+        } else {
+            let mut to_resolve: HashSet<String> =
+                to_parse.into_iter().map(|(blob, _, _)| blob).collect();
+            moved_names.extend(self.names_at(repository_id, git_ref, &touched).await?);
+            let moved: Vec<String> = moved_names.into_iter().collect();
+            to_resolve.extend(self.blobs_naming(repository_id, git_ref, &moved).await?);
+            to_resolve.into_iter().collect()
+        };
         self.resolve(repository_id, git_ref, &to_resolve).await?;
         // What this ref offers the other repositories and takes from them,
         // derived whole: a change here can move a package, a route or a
         // variable that another repository's edges point at.
         self.link(repository_id, git_ref).await?;
+        // Only now is the run done for this commit.
+        self.commit_edges_done(repository_id, git_ref, &commit)
+            .await?;
 
         let (files, symbols) = self.counts(repository_id, git_ref).await?;
         Ok(Indexed {
@@ -238,6 +288,7 @@ impl KnowledgeStore {
             symbols,
             parsed,
             resolved: to_resolve.len(),
+            skipped,
         })
     }
 
@@ -286,6 +337,62 @@ struct Batches {
     transactions: usize,
     /// The most definitions one batch held at once.
     most_candidates: usize,
+}
+
+/// One file of a batch, read. A panic is one file's: a parser that gives up
+/// on one input gives up on it in every run, and the run that died of it
+/// would never get past it. The path comes back where the parse panicked.
+fn read_file(
+    contents: &HashMap<String, Vec<u8>>,
+    blob: &str,
+    language: Language,
+    path: &str,
+    before_parse: Option<&ParseHook>,
+) -> (ParsedBlob, Option<String>) {
+    let read = catch_unwind(AssertUnwindSafe(|| {
+        if let Some(before_parse) = before_parse {
+            before_parse(path);
+        }
+        match contents.get(blob) {
+            Some(bytes) if !is_binary(bytes) => {
+                let text = String::from_utf8_lossy(bytes);
+                let read = parser::read(language, &text);
+                let found = interfaces::read(path, language, &text, &read.symbols);
+                (read, found)
+            }
+            _ => (parser::Parsed::default(), Vec::new()),
+        }
+    }));
+    let (read, found, panicked) = match read {
+        Ok((read, found)) => (read, found, None),
+        Err(panic) => {
+            let panic = panic_message(panic.as_ref());
+            warn!(path = %path, blob = %blob, panic = %panic, "the parser panicked: skipping the file");
+            (
+                parser::Parsed::default(),
+                Vec::new(),
+                Some(path.to_string()),
+            )
+        }
+    };
+    let blob = ParsedBlob {
+        blob: blob.to_string(),
+        language: language.name(),
+        symbols: read.symbols,
+        references: read.references,
+        imports: read.imports,
+        interfaces: found,
+    };
+    (blob, panicked)
+}
+
+/// What a panic said, where it said it in words.
+fn panic_message(panic: &(dyn Any + Send)) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|message| message.to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a panic that carries no message".to_string())
 }
 
 /// The lines a diff changed, per path on its right-hand side: what

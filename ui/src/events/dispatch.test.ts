@@ -249,7 +249,11 @@ describe("knowledge events (022)", () => {
     })
     dispatch(failed, {
       event: "knowledge_failed",
-      data: { repository_id: REPOSITORY.id, error: "git clone failed: permission denied" },
+      data: {
+        repository_id: REPOSITORY.id,
+        git_ref: "main",
+        error: "git clone failed: permission denied",
+      },
     })
 
     expect(
@@ -266,7 +270,11 @@ describe("knowledge events (022)", () => {
 
     dispatch(queryClient, {
       event: "knowledge_failed",
-      data: { repository_id: REPOSITORY.id, error: "git clone failed: permission denied" },
+      data: {
+        repository_id: REPOSITORY.id,
+        git_ref: "main",
+        error: "git clone failed: permission denied",
+      },
     })
 
     expect(stale(queryClient, qk.repositories.knowledgeStatus(REPOSITORY.id))).toBe(true)
@@ -300,7 +308,10 @@ describe("knowledge events (022)", () => {
           symbols: 34,
         },
       },
-      { event: "knowledge_failed" as const, data: { repository_id: REPOSITORY.id, error: "no" } },
+      {
+        event: "knowledge_failed" as const,
+        data: { repository_id: REPOSITORY.id, git_ref: "main", error: "no" },
+      },
     ]) {
       const queryClient = withKnowledge()
       queryClient.setQueryData(graphKey, { nodes: [], edges: [] })

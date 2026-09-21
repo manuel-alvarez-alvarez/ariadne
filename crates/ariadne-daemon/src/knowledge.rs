@@ -8,12 +8,15 @@
 //!
 //! What a run did is published on the bus as `knowledge_indexed`, and a
 //! failed run as `knowledge_failed`, straight onto the bus like a branch
-//! move: nothing in the daemon's database changed.
+//! move: nothing in the daemon's database changed. A run is of one ref, and
+//! so is its outcome: the state and the error are kept per ref, and a good
+//! run of a task branch leaves the failure of the base branch in place.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use tokio::process::Command;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, info, warn};
 
@@ -42,9 +45,10 @@ struct Enabled {
 /// its path when it runs, so a repository deleted while queued is skipped.
 #[derive(Debug)]
 enum Job {
-    /// Read one ref of one repository from where it was last read. A strict
-    /// run that fails marks the repository failed; a lenient one is for a
-    /// task branch that may be gone, and drops the ref's rows when it is.
+    /// Read one ref of one repository from where it was last read. A run
+    /// that fails marks the ref failed; a lenient one is for a task branch
+    /// that may be gone, and drops the ref's rows where git cannot resolve
+    /// it.
     Index {
         repository_id: String,
         git_ref: String,
@@ -70,9 +74,10 @@ impl Knowledge {
 
     /// Open the store at `db_path`, start the worker and the follower, and
     /// queue every base branch and in-flight task branch. `enabled = false`
-    /// is [`Self::disabled`].
+    /// is [`Self::disabled`]. An index run parses `workers` files at a time.
     pub async fn start(
         enabled: bool,
+        workers: usize,
         db_path: PathBuf,
         store: Store,
         events: EventBus,
@@ -82,28 +87,12 @@ impl Knowledge {
         }
         let knowledge = KnowledgeStore::open(&db_path)
             .await
-            .with_context(|| format!("opening the knowledge store {}", db_path.display()))?;
+            .with_context(|| format!("opening the knowledge store {}", db_path.display()))?
+            .with_workers(workers);
         let (jobs, rx) = mpsc::unbounded_channel();
         tokio::spawn(worker(knowledge.clone(), store.clone(), events.clone(), rx));
         tokio::spawn(follow(store.clone(), events.subscribe(), jobs.clone()));
-        for repository in store.list_repositories().await? {
-            let _ = jobs.send(Job::Index {
-                repository_id: repository.id,
-                git_ref: repository.base_branch,
-                strict: true,
-            });
-        }
-        // Leniently: a branch a user deleted by hand while the daemon was
-        // down is no failure of the repository.
-        for task in store.list_tasks(TaskFilter::default()).await? {
-            if !task.status().is_terminal() && task.worktree_path.is_some() {
-                let _ = jobs.send(Job::Index {
-                    repository_id: task.repo_id,
-                    git_ref: task.branch,
-                    strict: false,
-                });
-            }
-        }
+        queue_every_branch(&store, &jobs).await?;
         Ok(Self {
             inner: Some(Arc::new(Enabled {
                 store: knowledge,
@@ -128,21 +117,46 @@ impl Knowledge {
         }
     }
 
-    /// Drop a repository's rows and index it again. The repository reads as
-    /// `indexing` from here until the worker is done with it.
-    pub(crate) async fn reindex(&self, repository_id: &str) -> Result<()> {
+    /// Drop a repository's rows and index it again. Its base branch, and so
+    /// the repository, reads as `indexing` from here until the worker is
+    /// done with it.
+    pub(crate) async fn reindex(&self, repository_id: &str, base_branch: &str) -> Result<()> {
         let Some(inner) = &self.inner else {
             return Ok(());
         };
         inner
             .store
-            .set_state(repository_id, State::Indexing, None)
+            .set_ref_state(repository_id, base_branch, State::Indexing, None)
             .await?;
         let _ = inner.jobs.send(Job::Reindex {
             repository_id: repository_id.to_string(),
         });
         Ok(())
     }
+}
+
+/// Queue every base branch and every in-flight task branch: what a start
+/// reads, and what a follower that fell behind the event stream reads again.
+async fn queue_every_branch(store: &Store, jobs: &mpsc::UnboundedSender<Job>) -> Result<()> {
+    for repository in store.list_repositories().await? {
+        let _ = jobs.send(Job::Index {
+            repository_id: repository.id,
+            git_ref: repository.base_branch,
+            strict: true,
+        });
+    }
+    // Leniently: a branch a user deleted by hand while the daemon was
+    // down is no failure of the repository.
+    for task in store.list_tasks(TaskFilter::default()).await? {
+        if !task.status().is_terminal() && task.worktree_path.is_some() {
+            let _ = jobs.send(Job::Index {
+                repository_id: task.repo_id,
+                git_ref: task.branch,
+                strict: false,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Turn the daemon's events into jobs, until the bus closes.
@@ -154,8 +168,17 @@ async fn follow(
     loop {
         let event = match rx.recv().await {
             Ok(event) => event.event,
+            // The missed events are gone, and any of them may have been a
+            // branch that moved. A run of a ref that did not move reads
+            // nothing, so every branch is queued again.
             Err(broadcast::error::RecvError::Lagged(missed)) => {
-                warn!(missed, "the knowledge base fell behind the event stream");
+                warn!(
+                    missed,
+                    "the knowledge base fell behind the event stream: reading every branch again"
+                );
+                if let Err(e) = queue_every_branch(&store, &jobs).await {
+                    warn!(error = %e, "cannot queue the branches again");
+                }
                 continue;
             }
             Err(broadcast::error::RecvError::Closed) => return,
@@ -247,6 +270,16 @@ async fn worker(
                     warn!(repository = %repository_id, error = %e, "cannot drop the repository's index");
                 }
                 refs.retain(|git_ref| *git_ref != repository.base_branch);
+                // The states went with the rows. Each ref reads as in its
+                // first index from here, not as never indexed.
+                for git_ref in std::iter::once(&repository.base_branch).chain(&refs) {
+                    if let Err(e) = knowledge
+                        .set_ref_state(&repository_id, git_ref, State::Indexing, None)
+                        .await
+                    {
+                        warn!(repository = %repository_id, git_ref, error = %e, "cannot record the indexing state");
+                    }
+                }
                 run(
                     &knowledge,
                     &store,
@@ -292,9 +325,10 @@ async fn worker(
     }
 }
 
-/// Read one ref, and say how it went. `strict` reports a failure on the
-/// repository; a lenient run is for a task branch that may be gone, and
-/// drops the ref's rows rather than failing anything.
+/// Read one ref, and say how it went, on that ref alone. A lenient run is
+/// for a task branch that may be gone: where git cannot resolve the branch,
+/// its rows go and nothing failed. Every other error of a lenient run is a
+/// failure like that of a strict one, and the rows stay.
 async fn run(
     knowledge: &KnowledgeStore,
     store: &Store,
@@ -308,7 +342,7 @@ async fn run(
         return;
     };
     if let Err(e) = knowledge
-        .set_state(repository_id, State::Indexing, None)
+        .set_ref_state(repository_id, git_ref, State::Indexing, None)
         .await
     {
         warn!(repository = %repository_id, error = %e, "cannot record the indexing state");
@@ -329,7 +363,9 @@ async fn run(
                 files = indexed.files, symbols = indexed.symbols, parsed = indexed.parsed,
                 "indexed"
             );
-            let _ = knowledge.set_state(repository_id, State::Idle, None).await;
+            let _ = knowledge
+                .set_ref_state(repository_id, git_ref, State::Idle, None)
+                .await;
             publish(
                 events,
                 DomainEvent::KnowledgeIndexed(KnowledgeIndexedDto {
@@ -341,28 +377,46 @@ async fn run(
                 }),
             );
         }
-        Err(e) if strict => {
+        Err(e) => {
+            if !strict && ref_is_gone(Path::new(&repository.path), git_ref).await {
+                debug!(repository = %repository_id, git_ref, error = %e, "a branch is gone: dropping it");
+                if let Err(e) = knowledge.drop_ref(repository_id, git_ref).await {
+                    warn!(repository = %repository_id, git_ref, error = %e, "cannot drop the ref's index");
+                }
+                return;
+            }
             let error = format!("{e:#}");
             warn!(repository = %repository_id, git_ref, error = %error, "indexing failed");
             let _ = knowledge
-                .set_state(repository_id, State::Failed, Some(&error))
+                .set_ref_state(repository_id, git_ref, State::Failed, Some(&error))
                 .await;
             publish(
                 events,
                 DomainEvent::KnowledgeFailed(KnowledgeFailedDto {
                     repository_id: repository_id.to_string(),
+                    git_ref: git_ref.to_string(),
                     error,
                 }),
             );
         }
-        Err(e) => {
-            debug!(repository = %repository_id, git_ref, error = %e, "a ref could not be read: dropping it");
-            if let Err(e) = knowledge.drop_ref(repository_id, git_ref).await {
-                warn!(repository = %repository_id, git_ref, error = %e, "cannot drop the ref's index");
-            }
-            let _ = knowledge.set_state(repository_id, State::Idle, None).await;
-        }
     }
+}
+
+/// Whether git says that `git_ref` names no commit of `repo`. `rev-parse
+/// --verify --quiet` exits with 1 for that alone: a repository git cannot
+/// read exits with 128, and a git that did not start exits with nothing. Only
+/// the first is a branch that is gone.
+pub(crate) async fn ref_is_gone(repo: &Path, git_ref: &str) -> bool {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("{git_ref}^{{commit}}"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+    matches!(status, Ok(status) if status.code() == Some(1))
 }
 
 /// Knowledge events belong to no goal and no task.
