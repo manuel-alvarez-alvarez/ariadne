@@ -1,10 +1,11 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-09-11
-areas: [install, scripts, store]
+updated: 2026-09-21
+areas: [daemon, install, scripts, store]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, 03f9c8b7]
 tests:
+  - crates/ariadne-daemon/src/resource.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/it/agents.rs
   - scripts/install.sh
@@ -69,6 +70,12 @@ Out: what the daemon does once running (009, 012).
    is pre-1.0, so a database is recreated rather than migrated.
 10. `ariadne doctor` is the only thing still running when that happens, so it
     is what explains it (014).
+11. At startup, the daemon raises its soft open-file limit towards the hard
+    limit, capped at 4096, and logs the old and new values. The cap matters on
+    macOS, where `setrlimit` refuses a value above `OPEN_MAX` when launchd
+    reports an unlimited hard limit. The installed launchd and systemd
+    services set the same soft limit, so reinstalling also protects an older
+    daemon binary.
 
 ## Acceptance criteria
 
@@ -87,6 +94,10 @@ Out: what the daemon does once running (009, 012).
 - A source build installs the binaries cargo wrote, under `CARGO_TARGET_DIR`
   as much as under `target/` (`scripts/install.sh`, covered by
   `fix(install): install the binaries cargo actually built`).
+- Daemon startup raises a low soft open-file limit
+  (`resource.rs::daemon_start_raises_its_soft_open_file_limit`), and both
+  installed service definitions set the same limit
+  (`resource.rs::installer_services_raise_the_open_file_limit`).
 
 ## Known gap
 
@@ -100,4 +111,5 @@ the checksum in place — are not implemented.
 
 `scripts/install.sh`, `scripts/lib.sh`, `scripts/uninstall.sh`,
 `.github/RELEASING.md`, `crates/ariadne-store/src/lib.rs`,
-`crates/ariadne-store/migrations/0001_init.sql`.
+`crates/ariadne-store/migrations/0001_init.sql`,
+`crates/ariadne-daemon/src/resource.rs`, `crates/ariadne-daemon/src/main.rs`.

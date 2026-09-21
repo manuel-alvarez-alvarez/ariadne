@@ -6,10 +6,19 @@
 use crate::common;
 
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::Command;
 
 use ariadne_daemon::gitwt::GitManager;
+#[cfg(unix)]
+use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
 
+#[cfg(unix)]
+use common::harness;
 use common::sh;
+
+#[cfg(unix)]
+const FAILED_GIT_CHILD: &str = "ARIADNE_FAILED_GIT_CHILD";
 
 /// A toy repo with an initial commit on `main`.
 fn toy_repo() -> (tempfile::TempDir, PathBuf) {
@@ -212,4 +221,63 @@ async fn a_worktree_is_cut_from_a_base_branch_with_no_commits() {
     assert!(diff.contains("+v1"), "{diff}");
 
     git.remove_worktree(&repo, &wt).await.unwrap();
+}
+
+/// A ref that git could not inspect is not an unborn ref. The review request
+/// must preserve the start error, so the scheduler can retry it later.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_git_start_failure_is_not_reported_as_an_empty_review() {
+    if std::env::var_os(FAILED_GIT_CHILD).is_none() {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "managers::a_git_start_failure_is_not_reported_as_an_empty_review",
+                "--nocapture",
+            ])
+            .env(FAILED_GIT_CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "child failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let h = harness().await;
+    let repo = h.git_repo("repo");
+    let cast = h.cast().await;
+    sh(&repo, &format!("git branch {}", cast.task.branch));
+    let original = getrlimit(Resource::Nofile);
+    setrlimit(
+        Resource::Nofile,
+        Rlimit {
+            current: Some(original.maximum.map_or(64, |maximum| maximum.min(64))),
+            maximum: original.maximum,
+        },
+    )
+    .unwrap();
+    let mut held = Vec::new();
+    while let Ok(file) = std::fs::File::open("/dev/null") {
+        held.push(file);
+    }
+    // Leave enough room for the store lookup that leads to the git check,
+    // but not enough for Command::output to create its pipes and child.
+    for _ in 0..3 {
+        drop(held.pop());
+    }
+    let error = h
+        .launcher
+        .spawn_reviewer(&cast.task.id, &cast.reviewer.id)
+        .await
+        .unwrap_err();
+    drop(held);
+    setrlimit(Resource::Nofile, original).unwrap();
+    let error = format!("{error:#}");
+    assert!(error.contains("git could not start"), "{error}");
+    assert!(!error.contains("nothing to review"), "{error}");
+    assert!(!error.contains("has no commits yet"), "{error}");
 }

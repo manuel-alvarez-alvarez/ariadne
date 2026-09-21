@@ -22,7 +22,7 @@ use crate::acp_discovery::AgentRegistry;
 use crate::agents::{SpawnCtx, SpawnPlan, plan_resume, plan_spawn, prompts, write_skills};
 use crate::branch::BranchWatchers;
 use crate::config::Config;
-use crate::gitwt::GitManager;
+use crate::gitwt::{BranchHasNoCommits, GitManager};
 
 pub struct Launcher {
     pub cfg: Arc<Config>,
@@ -713,10 +713,12 @@ impl Launcher {
             let repo = self.store.get_repository(&task.repo_id).await?;
             PathBuf::from(repo.path)
         };
-        self.git
-            .ensure_branch_has_commits(&repo_path, branch)
-            .await
-            .with_context(|| format!("task {} has nothing to review yet", task.id))?;
+        if let Err(error) = self.git.ensure_branch_has_commits(&repo_path, branch).await {
+            if error.downcast_ref::<BranchHasNoCommits>().is_some() {
+                return Err(error.context(format!("task {} has nothing to review yet", task.id)));
+            }
+            return Err(error);
+        }
         let worktree = self
             .cfg
             .worktree_root

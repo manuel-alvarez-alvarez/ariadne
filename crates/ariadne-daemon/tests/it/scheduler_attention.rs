@@ -26,8 +26,12 @@
 use crate::common;
 
 use std::ops::Deref;
+#[cfg(unix)]
+use std::process::Command;
 use std::time::Duration;
 
+#[cfg(unix)]
+use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing_subscriber::layer::SubscriberExt;
 
@@ -45,6 +49,8 @@ use ariadne_daemon::scheduler::{
 use ariadne_daemon::timeouts::Timeouts;
 use ariadne_store::{AgentSession, Goal, NewTaskAgent, SessionFilter, Task};
 
+#[cfg(unix)]
+use common::sh;
 use common::{Harness, eventually, harness, test_pin};
 
 /// The budget the goal's orchestrator spends: how many attempts starting one is
@@ -68,6 +74,8 @@ const LONG_WINDOW: Duration = Duration::from_secs(2);
 /// test about a pass that outlives its own window: launching an agent starts
 /// a process, which no machine does in ten milliseconds.
 const BRIEF_WINDOW: Duration = Duration::from_millis(10);
+#[cfg(unix)]
+const DESCRIPTOR_RETRY_CHILD: &str = "ARIADNE_DESCRIPTOR_RETRY_CHILD";
 
 /// The daemon's own log, captured for this thread while the guard lives, as
 /// the daemon captures it behind `/v1/logs`. A `#[tokio::test]` runs its
@@ -1042,6 +1050,87 @@ async fn a_task_that_could_never_be_started_fails_with_the_reason_on_it() {
         ended[0].reason.as_deref(),
         Some("the agent could not be started"),
         "the task does not say what stopped it"
+    );
+}
+
+/// A descriptor shortage receives one attempt, not one attempt per adjacent
+/// wake. Once descriptors return, the task still waits for the retry delay.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
+    if std::env::var_os(DESCRIPTOR_RETRY_CHILD).is_none() {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "scheduler_attention::a_descriptor_shortage_does_not_spend_adjacent_retry_attempts",
+                "--nocapture",
+            ])
+            .env(DESCRIPTOR_RETRY_CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "child failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            ..Timeouts::default()
+        })
+        .await;
+    let repo = h.git_repo("repo");
+    let w = World::build(h, 1).await;
+    w.advance(&w.task, TaskStatus::UnderReview).await;
+    sh(&repo, &format!("git branch {}", w.task.branch));
+
+    let original = getrlimit(Resource::Nofile);
+    setrlimit(
+        Resource::Nofile,
+        Rlimit {
+            current: Some(original.maximum.map_or(64, |maximum| maximum.min(64))),
+            maximum: original.maximum,
+        },
+    )
+    .unwrap();
+    let mut held = Vec::new();
+    while let Ok(file) = std::fs::File::open("/dev/null") {
+        held.push(file);
+    }
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    sched.flush().await;
+    drop(held);
+    setrlimit(Resource::Nofile, original).unwrap();
+
+    for _ in 0..SPAWN_RETRY_BUDGET {
+        sched.task(&w.task);
+    }
+    sched.flush().await;
+
+    let reviewers: Vec<_> = w
+        .store
+        .list_sessions(SessionFilter {
+            task_id: Some(w.task.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|session| session.seat() == Seat::Reviewer)
+        .collect();
+    assert!(
+        reviewers.is_empty(),
+        "an adjacent wake retried the reviewer: {reviewers:#?}"
+    );
+    assert_eq!(
+        w.store.get_task(&w.task.id).await.unwrap().status(),
+        TaskStatus::UnderReview,
+        "adjacent wakes spent the retry budget"
     );
 }
 

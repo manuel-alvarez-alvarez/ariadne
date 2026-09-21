@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-20
+updated: 2026-09-21
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -157,6 +157,12 @@ the ACP runtime that takes a prompt (021).
     window measured from the wake is already over when a slow pass returns:
     the wakes that queued behind it would each run a pass of their own, which
     is the pass per event this removes.
+34. A task launch that fails because the daemon reached its open-file limit
+    names that limit in the task's failure reason. Attempts after that error
+    are at least 30 seconds apart, so adjacent wakes cannot spend the whole
+    retry budget before another task can release descriptors. A git process
+    that cannot inspect a reviewer branch keeps its start error, so this same
+    retry applies instead of refusing the review as an empty branch.
 
 ## Acceptance criteria
 
@@ -240,6 +246,14 @@ the ACP runtime that takes a prompt (021).
   (`::a_task_that_could_never_be_started_fails_with_the_reason_on_it`), and an
   orchestrator that can never be started gives up with one alarm
   (`::an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm`).
+- An open-file-limit launch failure names the descriptor limit and carries a
+  30-second retry delay
+  (`scheduler/mod.rs::an_open_file_limit_failure_names_the_limit_and_waits_before_retrying`).
+- Adjacent wakes during an open-file shortage neither retry the reviewer nor
+  spend the task's retry budget
+  (`scheduler_attention.rs::a_descriptor_shortage_does_not_spend_adjacent_retry_attempts`).
+- A reviewer ref check that cannot start git reports the start error
+  (`managers.rs::a_git_start_failure_is_not_reported_as_an_empty_review`).
 - An orchestrator that dies the moment it starts is given up on, with one
   alarm and nothing started again
   (`::an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on`), and a

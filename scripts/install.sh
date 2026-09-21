@@ -600,6 +600,8 @@ if [ "$WITH_SERVICE" = 1 ]; then
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key>
     <dict><key>SuccessfulExit</key><false/></dict>
+    <key>SoftResourceLimits</key>
+    <dict><key>NumberOfFiles</key><integer>4096</integer></dict>
     <key>ThrottleInterval</key><integer>10</integer>
     <key>StandardOutPath</key><string>$ARIADNE_HOME/ariadned.log</string>
     <key>StandardErrorPath</key><string>$ARIADNE_HOME/ariadned.log</string>
@@ -619,6 +621,7 @@ Description=Ariadne coding-agent orchestrator daemon
 ExecStart=$PREFIX/ariadned
 # systemd user services also get a minimal PATH.
 Environment="PATH=$PATH"
+LimitNOFILE=4096
 Restart=on-failure
 RestartSec=10
 

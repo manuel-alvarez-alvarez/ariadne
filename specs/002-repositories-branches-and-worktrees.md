@@ -1,10 +1,11 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-09-13
+updated: 2026-09-21
 areas: [store, daemon]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
+  - crates/ariadne-daemon/src/branch.rs
   - crates/ariadne-daemon/tests/it/repositories.rs
   - crates/ariadne-daemon/tests/it/goal_repositories.rs
   - crates/ariadne-daemon/tests/it/managers.rs
@@ -58,8 +59,10 @@ agent is briefed with in its worktree (006).
    under review, and it is refreshed between reviews so each review reads the
    commits it was asked about. The refresh discards whatever the reviewer
    left in the tree, tracked edits and untracked files alike, and keeps
-   ignored files; a leftover edit never stops the tree from moving. A branch with no commits on it has nothing to
-   pin at, and spawning a reviewer there says so.
+   ignored files; a leftover edit never stops the tree from moving. A branch
+   with no commits on it has nothing to pin at, and spawning a reviewer there
+   says so. A failed git start is not an empty branch: the start error remains
+   visible, and the scheduler retries it.
 9. An orchestrator works in the repository's primary checkout, not a worktree
    of its own: it is the first repository of its goal.
 10. Worktrees are removed when the work that owned them ends; whether finished
@@ -67,7 +70,11 @@ agent is briefed with in its worktree (006).
 11. The daemon watches each task branch's head and announces a move on the
     event stream, so clients see a commit without polling. The watch is
     established for the worktrees found at startup and goes when the worktree
-    does; a failed task stops being followed.
+    does; a failed task stops being followed. All followed branches in one
+    repository share one filesystem watch. After a ref update, the daemon
+    recreates that watch, so refs deleted by git pack-refs remain neither
+    watched nor open. A repository wake still resolves each followed branch
+    once, and only a moved branch emits an event.
 
 ## Acceptance criteria
 
@@ -96,12 +103,22 @@ agent is briefed with in its worktree (006).
   gives an orphan worktree that has nothing to review until it commits, and
   then diffs, lands, and diffs again as a landed task
   (`::a_worktree_is_cut_from_a_base_branch_with_no_commits`).
+- A git process that cannot start while the reviewer branch is checked keeps
+  its start error and is not reported as an empty review
+  (`managers.rs::a_git_start_failure_is_not_reported_as_an_empty_review`).
 - A commit on a task branch reaches the stream
   (`task_branches.rs::a_commit_on_the_task_branch_reaches_the_stream`), the
   startup sweep follows the worktrees it finds
   (`::the_startup_sweep_follows_the_worktrees_it_finds`), a failed task stops
   being followed (`::a_failed_task_stops_being_followed`), and the watch goes
   with the worktree (`::the_watch_goes_with_the_worktree`).
+- Twelve followed branches in a repository with 100 loose refs use a bounded
+  number of descriptors
+  (`branch.rs::twelve_followed_branches_share_one_repository_watch`), and
+  packing those refs releases the descriptors for deleted files
+  (`branch.rs::packing_refs_releases_deleted_ref_descriptors`).
+- A repository watch that failed to arm can start on the next follow request
+  (`branch.rs::a_failed_repository_watch_can_be_started_again`).
 
 ## Sources
 

@@ -30,13 +30,13 @@
 //! object in the repository held open, per task, for as long as the daemon
 //! runs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
@@ -56,7 +56,8 @@ use crate::gitwt::GitManager;
 /// tab can tell the difference.
 const DEBOUNCE: Duration = Duration::from_millis(50);
 
-/// The task branches the daemon is following, one watch per task.
+/// The task branches the daemon is following, with one filesystem watch per
+/// repository.
 ///
 /// Watches live only as long as the process holding them: a daemon that
 /// restarts re-establishes them from the store (see
@@ -64,19 +65,37 @@ const DEBOUNCE: Duration = Duration::from_millis(50);
 pub struct BranchWatchers {
     events: EventBus,
     git: GitManager,
-    /// One watch per task, by task id. Removing the entry ends the watch:
-    /// dropping it aborts the task that owns the `notify` watcher.
-    watches: Mutex<HashMap<String, Watch>>,
+    state: Mutex<State>,
+}
+
+struct State {
+    /// One follower per task, by task id.
+    branches: HashMap<String, Watch>,
+    /// One filesystem watch per registered repository.
+    repositories: HashMap<PathBuf, RepositoryWatch>,
 }
 
 /// One live watch. What it is on is kept beside it so that asking for the same
 /// branch again is a no-op rather than a second watch on the same ref.
 struct Watch {
     branch: String,
+    repo: PathBuf,
     handle: JoinHandle<()>,
 }
 
 impl Drop for Watch {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+struct RepositoryWatch {
+    changes: broadcast::Sender<()>,
+    ready: watch::Receiver<bool>,
+    handle: JoinHandle<()>,
+}
+
+impl Drop for RepositoryWatch {
     fn drop(&mut self) {
         self.handle.abort();
     }
@@ -87,7 +106,10 @@ impl BranchWatchers {
         Self {
             events,
             git: GitManager,
-            watches: Mutex::new(HashMap::new()),
+            state: Mutex::new(State {
+                branches: HashMap::new(),
+                repositories: HashMap::new(),
+            }),
         }
     }
 
@@ -108,10 +130,47 @@ impl BranchWatchers {
     }
 
     fn watch_keyed(&self, key: String, task: &Task, branch: &str, repo: &Path) {
-        let mut watches = self.lock();
-        if watches.get(&key).is_some_and(|w| w.branch == branch) {
+        let mut state = self.lock();
+        let stopped: HashSet<_> = state
+            .repositories
+            .iter()
+            .filter(|(_, watch)| watch.handle.is_finished())
+            .map(|(repo, _)| repo.clone())
+            .collect();
+        state.repositories.retain(|repo, _| !stopped.contains(repo));
+        state
+            .branches
+            .retain(|_, watch| !stopped.contains(&watch.repo));
+        if state
+            .branches
+            .get(&key)
+            .is_some_and(|w| w.branch == branch && w.repo == repo)
+        {
             return;
         }
+        state.branches.remove(&key);
+        Self::drop_unused_repositories(&mut state);
+
+        let repository = state
+            .repositories
+            .entry(repo.to_path_buf())
+            .or_insert_with(|| {
+                let (changes, _) = broadcast::channel(1);
+                let (ready_tx, ready) = watch::channel(false);
+                let handle = tokio::spawn(watch_repository(
+                    self.git.clone(),
+                    repo.to_path_buf(),
+                    changes.clone(),
+                    ready_tx,
+                ));
+                RepositoryWatch {
+                    changes,
+                    ready,
+                    handle,
+                }
+            });
+        let ready = repository.ready.clone();
+        let changes = repository.changes.subscribe();
         debug!(task = %task.id, branch = %branch, "following the task branch");
         let handle = tokio::spawn(follow(
             self.events.clone(),
@@ -122,12 +181,14 @@ impl BranchWatchers {
                 branch: branch.to_string(),
                 repo: repo.to_path_buf(),
             },
+            ready,
+            changes,
         ));
-        // Assigning drops the watch this replaces, if any, which ends it.
-        watches.insert(
+        state.branches.insert(
             key,
             Watch {
                 branch: branch.to_string(),
+                repo: repo.to_path_buf(),
                 handle,
             },
         );
@@ -137,17 +198,26 @@ impl BranchWatchers {
     /// author's: its worktrees are gone, or the task is.
     pub fn unwatch(&self, task_id: &str) {
         let prefix = author_key(task_id, "");
-        let mut watches = self.lock();
-        let count = watches.len();
-        watches.retain(|key, _| key != task_id && !key.starts_with(&prefix));
-        if watches.len() < count {
+        let mut state = self.lock();
+        let count = state.branches.len();
+        state
+            .branches
+            .retain(|key, _| key != task_id && !key.starts_with(&prefix));
+        Self::drop_unused_repositories(&mut state);
+        if state.branches.len() < count {
             debug!(task = %task_id, "no longer following the task branch");
         }
     }
 
     /// Stop following one author's branch: the pick passed it over.
     pub(crate) fn unwatch_author(&self, task_id: &str, agent_id: &str) {
-        if self.lock().remove(&author_key(task_id, agent_id)).is_some() {
+        let mut state = self.lock();
+        if state
+            .branches
+            .remove(&author_key(task_id, agent_id))
+            .is_some()
+        {
+            Self::drop_unused_repositories(&mut state);
             debug!(task = %task_id, agent = %agent_id, "no longer following the author branch");
         }
     }
@@ -156,15 +226,25 @@ impl BranchWatchers {
     pub fn is_watching(&self, task_id: &str) -> bool {
         let prefix = author_key(task_id, "");
         self.lock()
+            .branches
             .keys()
             .any(|key| key == task_id || key.starts_with(&prefix))
+    }
+
+    fn drop_unused_repositories(state: &mut State) {
+        let live: HashSet<_> = state
+            .branches
+            .values()
+            .map(|watch| watch.repo.clone())
+            .collect();
+        state.repositories.retain(|repo, _| live.contains(repo));
     }
 
     /// A watch registry is only ever read and written under this lock, and
     /// nothing held across it can panic — so a poisoned lock cannot happen,
     /// and treating it as fatal would take the daemon down over a map.
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Watch>> {
-        self.watches.lock().unwrap_or_else(|e| e.into_inner())
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -191,39 +271,31 @@ struct Followed {
 /// was written, and there is nothing to write — where a branch points is git's
 /// to know, and the event exists so a client can go and ask for the diff
 /// again.
-async fn follow(events: EventBus, git: GitManager, what: Followed) {
+async fn follow(
+    events: EventBus,
+    git: GitManager,
+    what: Followed,
+    mut ready: watch::Receiver<bool>,
+    mut changes: broadcast::Receiver<()>,
+) {
     let Followed {
         task_id,
         goal_id,
         branch,
         repo,
     } = what;
-    let git_dir = match git.common_dir(&repo).await {
-        Ok(dir) => dir,
-        Err(e) => {
-            warn!(task = %task_id, error = %e, "cannot find the refs of the task's repository");
-            return;
-        }
-    };
-    // One slot is all a wake-up needs: what follows one is a fresh `git
-    // rev-parse`, so "something changed" does not accumulate.
-    let (tx, mut rx) = mpsc::channel(1);
-    // Held for as long as this task runs; dropping it ends the watch.
-    let mut refs = Refs::arm(&git_dir, tx);
+    if ready.wait_for(|ready| *ready).await.is_err() {
+        return;
+    }
 
     // Where the branch stands as the watch begins. A client that has just
     // fetched the diff holds this one already, so it is the baseline and not
     // an event.
     let mut head = git.branch_tip(&repo, &branch).await.ok();
-    while rx.recv().await.is_some() {
-        // Let the rest of the burst land, and take it all as this wake-up.
-        tokio::time::sleep(DEBOUNCE).await;
-        while rx.try_recv().is_ok() {}
-        // A `git gc` in that burst left a `packed-refs` the watch is no longer
-        // on. Cheap enough to do every time: one `open(2)` when it is already
-        // held.
-        if let Some(refs) = &mut refs {
-            refs.rearm_packed();
+    loop {
+        match changes.recv().await {
+            Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+            Err(broadcast::error::RecvError::Closed) => return,
         }
         let Ok(tip) = git.branch_tip(&repo, &branch).await else {
             // Deleted, or git could not be asked. Either way there is nothing
@@ -252,7 +324,46 @@ async fn follow(events: EventBus, git: GitManager, what: Followed) {
     }
 }
 
-/// The `notify` watch behind one followed branch: the two places a ref can be
+/// Turn one repository's ref notifications into wake-ups for every followed
+/// branch in it.
+async fn watch_repository(
+    git: GitManager,
+    repo: PathBuf,
+    changes: broadcast::Sender<()>,
+    ready: watch::Sender<bool>,
+) {
+    let git_dir = match git.common_dir(&repo).await {
+        Ok(dir) => dir,
+        Err(e) => {
+            warn!(path = %repo.display(), error = %e, "cannot find the repository refs");
+            return;
+        }
+    };
+    // One slot is all a wake-up needs. Every subscriber resolves its own
+    // branch once for the whole burst.
+    let (tx, mut rx) = mpsc::channel(1);
+    let Some(mut refs) = Refs::arm(&git_dir, tx.clone()) else {
+        return;
+    };
+    let _ = ready.send(true);
+
+    while rx.recv().await.is_some() {
+        tokio::time::sleep(DEBOUNCE).await;
+        while rx.try_recv().is_ok() {}
+
+        // Recreate the backend after every burst. Git may have packed and
+        // deleted loose refs, and kqueue keeps deleted watched files open
+        // until its watcher is dropped.
+        let Some(next) = Refs::arm(&git_dir, tx.clone()) else {
+            return;
+        };
+        refs = next;
+        let _ = changes.send(());
+    }
+    drop(refs);
+}
+
+/// The `notify` watch behind one repository: the two places its refs can be
 /// read from.
 struct Refs {
     watcher: RecommendedWatcher,
@@ -382,6 +493,55 @@ mod tests {
             picked_agent_id: None,
             created_at: String::new(),
             updated_at: String::new(),
+        }
+    }
+
+    fn task_on(repo: &Path, n: usize) -> Task {
+        let mut task = task(repo);
+        task.id = format!("task-{n}");
+        task.branch = format!("work-{n}");
+        task
+    }
+
+    #[cfg(target_os = "macos")]
+    fn open_descriptors() -> usize {
+        let out = Command::new("lsof")
+            .args(["-a", "-p", &std::process::id().to_string(), "-Fn"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "lsof failed");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|line| {
+                line.strip_prefix('f')
+                    .and_then(|fd| fd.chars().next())
+                    .is_some_and(|first| first.is_ascii_digit())
+            })
+            .count()
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn settled_descriptors() -> usize {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        let mut last = usize::MAX;
+        let mut same = 0;
+        loop {
+            let current = open_descriptors();
+            if current == last {
+                same += 1;
+                if same == 5 {
+                    return current;
+                }
+            } else {
+                last = current;
+                same = 0;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the branch descriptors did not settle"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
@@ -528,6 +688,98 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "a commit after the watch was dropped still published an event"
+        );
+    }
+
+    /// A repository watch that could not arm is retried when the same task is
+    /// followed again.
+    #[tokio::test]
+    async fn a_failed_repository_watch_can_be_started_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let events = EventBus::new();
+        let mut rx = events.subscribe();
+        let watchers = BranchWatchers::new(events);
+        let task = task(&repo);
+        watchers.watch(&task, &repo);
+        loop {
+            if watchers
+                .lock()
+                .repositories
+                .get(&repo)
+                .is_some_and(|watch| watch.handle.is_finished())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        sh(
+            &repo,
+            "git init -q -b work && echo v1 > file.txt && git add . && \
+             git -c user.email=t@t -c user.name=t commit -qm init",
+        );
+        watchers.watch(&task, &repo);
+        commit_until_seen(&repo, &mut rx).await;
+    }
+
+    /// One repository watch serves every followed task branch in it. The
+    /// descriptor cost therefore stays fixed as the task count grows.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn twelve_followed_branches_share_one_repository_watch() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path());
+        for n in 0..100 {
+            sh(&repo, &format!("git branch work-{n}"));
+        }
+        let baseline = settled_descriptors().await;
+        let events = EventBus::new();
+        let watchers = BranchWatchers::new(events);
+        for n in 0..12 {
+            watchers.watch(&task_on(&repo, n), &repo);
+        }
+        let _ = settled_descriptors().await;
+        for n in 0..20 {
+            sh(&repo, &format!("git branch late-{n}"));
+        }
+        let twelve = settled_descriptors().await;
+        assert!(
+            twelve <= baseline + 8,
+            "descriptors grew with followed tasks: baseline={baseline}, twelve={twelve}"
+        );
+    }
+
+    /// Re-arming a repository watch after git packs its loose refs releases
+    /// the descriptors for the files git removed.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn packing_refs_releases_deleted_ref_descriptors() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path());
+        let baseline = settled_descriptors().await;
+        let events = EventBus::new();
+        let watchers = BranchWatchers::new(events);
+        watchers.watch(&task(&repo), &repo);
+        let _ = settled_descriptors().await;
+        for n in 0..100 {
+            sh(&repo, &format!("git branch packed-{n}"));
+        }
+        let loose = settled_descriptors().await;
+        // Every ref creation wakes and recreates the watcher. Therefore the
+        // descriptors do not accumulate before packing either. Removing that
+        // re-arm makes this assertion fail by about the number of new refs.
+        assert!(
+            loose <= baseline + 8,
+            "loose ref descriptors accumulated: baseline={baseline}, loose={loose}"
+        );
+
+        sh(&repo, "git pack-refs --all");
+        let packed = settled_descriptors().await;
+        assert!(
+            packed <= baseline + 8,
+            "deleted loose refs stayed open: baseline={baseline}, loose={loose}, packed={packed}"
         );
     }
 }

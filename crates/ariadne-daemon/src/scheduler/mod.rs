@@ -21,6 +21,7 @@ mod tasks;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -77,6 +78,12 @@ pub const START_GRACE_SECS: i64 = 30;
 /// Spawn attempts before the daemon stops trying: per task, after which it is
 /// failed, and per goal, after which its orchestrator is left alone.
 pub const SPAWN_RETRY_BUDGET: u32 = 3;
+/// A process-wide descriptor shortage cannot clear between adjacent scheduler
+/// wakes. Leave time for another task to end before spending another attempt.
+const DESCRIPTOR_RETRY: Duration = Duration::from_secs(30);
+const SPAWN_FAILURE_REASON: &str = "the agent could not be started";
+const DESCRIPTOR_LIMIT_REASON: &str =
+    "the agent could not start because the daemon reached its open file descriptor limit";
 /// How long a session may report nothing before it is nudged: told to get on
 /// with the work in front of it.
 ///
@@ -131,6 +138,9 @@ pub(crate) struct Scheduler {
     /// restart, which is fine — a restart is exactly when a retry is
     /// warranted).
     spawn_failures: HashMap<String, u32>,
+    /// The earliest time a task may retry after the process ran out of file
+    /// descriptors.
+    spawn_retry_at: HashMap<String, tokio::time::Instant>,
     /// The launch each seat's last death on arrival was already counted for,
     /// keyed like the map above and holding the `launch_id` that died: an
     /// agent that came up and was never heard from is counted once, not once
@@ -198,6 +208,7 @@ pub fn start(
         store,
         launcher,
         spawn_failures: HashMap::new(),
+        spawn_retry_at: HashMap::new(),
         dead_launch: HashMap::new(),
         refunded_launch: HashMap::new(),
         quiet: HashMap::new(),
@@ -298,11 +309,26 @@ impl Scheduler {
     /// none of them says anything about whether an orchestrator can be
     /// started.
     async fn reconcile(&mut self, target: Target<'_>) {
+        if let Target::Task(id) = target {
+            if self
+                .spawn_retry_at
+                .get(id)
+                .is_some_and(|retry| *retry > tokio::time::Instant::now())
+            {
+                return;
+            }
+            self.spawn_retry_at.remove(id);
+        }
         let failed = match target {
             Target::Goal(id) => self.reconcile_goal(id).await.err(),
             Target::Task(id) => self.reconcile_task(id).await.err(),
         };
-        let Some(e) = failed else { return };
+        let Some(e) = failed else {
+            if let Target::Task(id) = target {
+                self.spawn_retry_at.remove(id);
+            }
+            return;
+        };
         match target {
             Target::Goal(id) => {
                 warn!(goal = %id, error = %format!("{e:#}"), "goal reconciliation failed")
@@ -317,8 +343,12 @@ impl Scheduler {
                 // attempts, three ticks of it fail a task whose agent was
                 // never asked for.
                 if !unanswered(&e) {
-                    self.record_spawn_failure(id, "the agent could not be started")
-                        .await;
+                    let failure = spawn_failure(&e);
+                    let exhausted = self.record_spawn_failure(id, failure.reason).await;
+                    if !exhausted && let Some(delay) = failure.retry {
+                        self.spawn_retry_at
+                            .insert(id.to_string(), tokio::time::Instant::now() + delay);
+                    }
                 }
             }
         }
@@ -491,12 +521,37 @@ fn unanswered(error: &anyhow::Error) -> bool {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SpawnFailure {
+    reason: &'static str,
+    retry: Option<Duration>,
+}
+
+fn spawn_failure(error: &anyhow::Error) -> SpawnFailure {
+    let descriptor_limit = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::raw_os_error)
+            == Some(rustix::io::Errno::MFILE.raw_os_error())
+    });
+    match descriptor_limit {
+        true => SpawnFailure {
+            reason: DESCRIPTOR_LIMIT_REASON,
+            retry: Some(DESCRIPTOR_RETRY),
+        },
+        false => SpawnFailure {
+            reason: SPAWN_FAILURE_REASON,
+            retry: None,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ariadne_core::{TaskStatus, TransitionError};
     use ariadne_store::StoreError;
 
-    use super::unanswered;
+    use super::{DESCRIPTOR_LIMIT_REASON, DESCRIPTOR_RETRY, spawn_failure, unanswered};
 
     /// The spawn-retry budget is for a task whose agent will not start. A
     /// store that would not answer is the daemon failing to read, not the
@@ -529,5 +584,18 @@ mod tests {
 
         let other = anyhow::anyhow!("git would not spawn");
         assert!(!unanswered(&other), "not a store error at all: {other}");
+    }
+
+    #[test]
+    fn an_open_file_limit_failure_names_the_limit_and_waits_before_retrying() {
+        let error = anyhow::Error::new(std::io::Error::from_raw_os_error(
+            rustix::io::Errno::MFILE.raw_os_error(),
+        ))
+        .context("starting the ACP agent");
+
+        let failure = spawn_failure(&error);
+
+        assert_eq!(failure.reason, DESCRIPTOR_LIMIT_REASON);
+        assert_eq!(failure.retry, Some(DESCRIPTOR_RETRY));
     }
 }

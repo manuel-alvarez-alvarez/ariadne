@@ -93,6 +93,7 @@ async fn main() -> Result<()> {
         .init();
 
     info!(root = %config.root.display(), "starting ariadned {}", env!("CARGO_PKG_VERSION"));
+    ariadne_daemon::resource::raise_open_file_limit();
 
     let store = ariadne_store::Store::open(&config.db_path)
         .await

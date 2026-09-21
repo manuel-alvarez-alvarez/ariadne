@@ -5,6 +5,7 @@
 //! CLI is the canonical implementation.
 
 use std::path::{Path, PathBuf};
+use std::{error, fmt};
 
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
@@ -12,6 +13,17 @@ use tokio::process::Command;
 /// Git's own hash of the empty tree: the "before" of a branch that starts from
 /// no commit at all.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+#[derive(Debug)]
+pub(crate) struct BranchHasNoCommits(String);
+
+impl fmt::Display for BranchHasNoCommits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl error::Error for BranchHasNoCommits {}
 
 #[derive(Debug, Clone, Default)]
 pub struct GitManager;
@@ -24,7 +36,7 @@ impl GitManager {
             .args(args)
             .output()
             .await
-            .context("running git")?;
+            .context("git could not start")?;
         if !output.status.success() {
             bail!(
                 "git {} failed in {}: {}",
@@ -104,7 +116,31 @@ impl GitManager {
     }
 
     pub async fn branch_exists(&self, repo: &Path, branch: &str) -> Result<bool> {
-        Ok(self.branch_tip(repo, branch).await.is_ok())
+        let args = [
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ];
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .await
+            .context("git could not start")?;
+        if output.status.success() {
+            return Ok(true);
+        }
+        if output.status.code() == Some(1) {
+            return Ok(false);
+        }
+        bail!(
+            "git {} failed in {}: {}",
+            args.join(" "),
+            repo.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
     }
 
     /// The commit `branch` points at, as a full sha.
@@ -167,7 +203,10 @@ impl GitManager {
         if self.branch_exists(repo, branch).await? {
             return Ok(());
         }
-        bail!("branch {branch} of {} has no commits yet", repo.display())
+        Err(anyhow::Error::new(BranchHasNoCommits(format!(
+            "branch {branch} of {} has no commits yet",
+            repo.display()
+        ))))
     }
 
     pub async fn delete_branch(&self, repo: &Path, branch: &str) -> Result<()> {

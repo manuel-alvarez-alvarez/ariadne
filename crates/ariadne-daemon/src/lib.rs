@@ -18,6 +18,7 @@ pub mod http;
 pub mod knowledge;
 pub mod launcher;
 pub mod log;
+pub mod resource;
 pub mod scheduler;
 pub(crate) mod sleep;
 pub mod timeouts;
