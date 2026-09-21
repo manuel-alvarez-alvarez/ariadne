@@ -407,11 +407,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
     offers.
 30. Beyond its symbols, a file holds interfaces: what it offers another
     repository and what it takes from one. Each is read off the text at parse
-    time, kept per blob like the mentions, and carries the definition it sits
-    in where there is one:
+    time, after its compiled tags configuration says it is code, kept per blob
+    like the mentions, and carries the definition it sits in where there is one:
     - A manifest, read by its file name, names the package it defines and
       the packages it depends on. `Cargo.toml`: `[package] name`, and every
-      key of a `dependencies`, `dev-dependencies`, `build-dependencies`,
+      key before a dotted metadata suffix of a `dependencies`, `dev-dependencies`, `build-dependencies`,
       `workspace.dependencies` or `target.*.dependencies` table, a `path`
       dependency told from one by name and `package = "x"` naming what is
       depended on. `package.json`: `name`, and every key of `dependencies`,
@@ -420,11 +420,11 @@ agent to do with the tools (017); and the memory tools beside these (019).
       dependency, and every `workspaces` entry that names a directory a path
       dependency on the package named by its last segment. `pubspec.yaml`:
       `name`, and every key under `dependencies`, `dev_dependencies` and
-      `dependency_overrides`, one with a `path:` key under it by path.
+      `dependency_overrides`, at its direct indentation, one with a `path:` key under it by path.
       `go.mod`: `module`, every `require`, and every `replace` to a
       directory as a path dependency. `pom.xml`: the project's own
       `groupId:artifactId` — the first outside `<parent>`, `<dependency>` and
-      `<plugin>` — and one per `<dependency>`. `build.gradle` and
+      `<plugin>`, or the parent's group where it has none — and one per `<dependency>`. `build.gradle` and
       `build.gradle.kts`: the `group:artifact` of every `implementation`,
       `api`, `compileOnly`, `runtimeOnly`, `testImplementation`,
       `testCompileOnly`, `testRuntimeOnly`, `annotationProcessor`, `kapt`
@@ -437,18 +437,22 @@ agent to do with the tools (017); and the memory tools beside these (019).
       `handle`, `Handle`, `HandleFunc`, `handleFunc`, `resource`, `service`,
       `mount`, `MapGet`, `MapPost`, `MapPut`, `MapDelete`, `MapPatch`,
       `MapMethods`, `RequestMapping`, `GetMapping`, `PostMapping`,
-      `PutMapping`, `DeleteMapping`, `PatchMapping` or `Path`; an HTTP verb
+      `PutMapping`, `DeleteMapping` or `PatchMapping`; an HTTP verb
       (`get`, `post`, `put`, `patch`, `delete`, `head`, `options`, `all`,
       `any`, `use`, in lowercase, uppercase or capitalised) on a receiver
       named `app`, `router`, `routes`, `r`, `mux`, `server`, `srv`, `group`,
       `g`, `route` or `sub`; or any of those under a decorator (`@app.get`)
       or an attribute (`#[get(…)]`). In a request call it is a route use: a
-      verb on any other receiver (`axios.get`, `client.get`, `http.Get`), or
+      verb only on an HTTP-client receiver (`api`, `axios`, `client`, `fetch`,
+      `http`, `request` or `requests`, such as `axios.get`, `client.get` or
+      `http.Get`), or
       a call named `fetch`, `request`, `Request`, `NewRequest`,
-      `NewRequestWithContext`, `open`, `ajax`, `getJSON`, `apiFetch`,
+      `NewRequestWithContext`, `ajax`, `getJSON`, `apiFetch`,
       `daemonFetch` or `$http`. A query string and a trailing `/` are
-      dropped. A route read off a verb carries that verb, uppercased, as its
-      method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or `OPTIONS`,
+      dropped. A generic call finds the `<` that balances its final `>`;
+      an arrow `=>` is not a generic. A route read off a verb carries that
+      verb, uppercased, as its method: `GET`, `POST`, `PUT`, `PATCH`,
+      `DELETE`, `HEAD` or `OPTIONS`,
       and no method for `all`, `any` and `use`. A template carries the
       identifiers the registration passes after the literal, up to a
       closure's body and past the verbs and the routing words, as its
@@ -925,6 +929,12 @@ the daemon and knowledge WAL files off the commit path.
 - Each manifest names its package and its dependencies, a path dependency
   told from one by name
   (`interfaces.rs::every_manifest_names_its_package_and_its_dependencies`),
+  with dotted Cargo metadata naming its dependency, a parent Maven group
+  naming a child package, and any direct pubspec indentation naming a
+  dependency
+  (`interfaces.rs::a_dotted_cargo_dependency_key_names_its_dependency`,
+  `::a_pom_inherits_its_parent_group_for_its_package`,
+  `::a_four_space_pubspec_dependency_is_read`),
   and a manifest with no language of its own is read by its name
   (`languages.rs::a_path_is_read_by_its_extension`).
 - An environment variable is set by a `.env` line, a compose or workflow
@@ -935,6 +945,12 @@ the daemon and knowledge WAL files off the commit path.
   registers the definition under it, and a literal with one segment is
   neither
   (`interfaces.rs::a_route_is_registered_by_a_router_and_used_by_a_request`).
+- A filesystem constructor, opener or accessor is not a route; a verb needs
+  a known HTTP-client receiver before it is a route use
+  (`interfaces.rs::filesystem_paths_are_not_routes`).
+- Nested type arguments keep the HTTP client of a generic route call, and an
+  arrow does not begin a generic
+  (`interfaces.rs::a_balanced_generic_before_a_route_call_keeps_its_client`).
 - A route use with a wildcard segment matches its template and is marked
   `heuristic`, a full match is `exact`, and a different segment count is no
   match (`interfaces.rs::a_route_use_fits_a_template_segment_by_segment`).

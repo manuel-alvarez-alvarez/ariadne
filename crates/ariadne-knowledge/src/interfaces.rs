@@ -142,7 +142,7 @@ pub fn read(path: &str, language: Language, source: &str, symbols: &[Symbol]) ->
         Some(Manifest::EnvYaml) => env_yaml(source, &mut found),
         None => {}
     }
-    if language.tags_query().is_some() {
+    if language.tags().is_some() {
         env_in_code(source, &lines, symbols, &mut found);
         routes(source, &lines, symbols, language, &mut found);
     }
@@ -224,6 +224,7 @@ fn cargo(source: &str, found: &mut Vec<Interface>) {
             continue;
         };
         let key = key.trim().trim_matches('"');
+        let key = key.split('.').next().unwrap_or(key);
         let value = value.trim();
         if section == "package" && key == "name" {
             push(found, InterfaceKind::Package, &unquote(value), line_no);
@@ -381,6 +382,7 @@ fn npm(source: &str, lines: &Lines, found: &mut Vec<Interface>) {
 fn pubspec(source: &str, found: &mut Vec<Interface>) {
     let mut section = String::new();
     let mut dependency: Option<String> = None;
+    let mut dependency_indent = None;
     for (at, line) in source.lines().enumerate() {
         let line_no = at as u32 + 1;
         let indent = line.len() - line.trim_start().len();
@@ -395,6 +397,7 @@ fn pubspec(source: &str, found: &mut Vec<Interface>) {
         if indent == 0 {
             section = key.to_string();
             dependency = None;
+            dependency_indent = None;
             if key == "name" {
                 push(found, InterfaceKind::Package, &unquote(value), line_no);
             }
@@ -407,12 +410,17 @@ fn pubspec(source: &str, found: &mut Vec<Interface>) {
         if !in_dependencies {
             continue;
         }
-        match (indent, key) {
-            (1..=2, _) => {
+        match dependency_indent {
+            None => {
+                push(found, InterfaceKind::Dependency, key, line_no);
+                dependency = Some(key.to_string());
+                dependency_indent = Some(indent);
+            }
+            Some(depth) if indent == depth => {
                 push(found, InterfaceKind::Dependency, key, line_no);
                 dependency = Some(key.to_string());
             }
-            (_, "path") => {
+            Some(depth) if indent > depth && key == "path" => {
                 if let Some(name) = &dependency {
                     make_path_dependency(found, name);
                 }
@@ -485,6 +493,7 @@ fn pom(source: &str, lines: &Lines, found: &mut Vec<Interface>) {
     let mut group: Vec<Option<String>> = Vec::new();
     let mut at = 0;
     let mut project_named = false;
+    let mut project_group = None;
     while let Some(open) = source[at..].find('<') {
         let open = at + open;
         let Some(close) = source[open..].find('>') else {
@@ -516,11 +525,19 @@ fn pom(source: &str, lines: &Lines, found: &mut Vec<Interface>) {
                 let element = stack.last().copied().unwrap_or("");
                 if name == "groupId" {
                     if let Some(slot) = group.last_mut() {
-                        *slot = Some(value);
+                        *slot = Some(value.clone());
+                    }
+                    if element == "parent" {
+                        project_group = Some(value);
                     }
                     continue;
                 }
-                let coordinate = match group.last().and_then(Option::as_deref) {
+                let group = group.last().and_then(Option::as_deref).or_else(|| {
+                    (element == "project")
+                        .then_some(project_group.as_deref())
+                        .flatten()
+                });
+                let coordinate = match group {
                     Some(group) => format!("{group}:{value}"),
                     None => value,
                 };
@@ -749,7 +766,6 @@ const REGISTER: &[&str] = &[
     "PutMapping",
     "DeleteMapping",
     "PatchMapping",
-    "Path",
 ];
 
 /// The HTTP verbs, which register a route on a router and request one on
@@ -779,12 +795,17 @@ const REQUEST: &[&str] = &[
     "Request",
     "NewRequest",
     "NewRequestWithContext",
-    "open",
     "ajax",
     "getJSON",
     "apiFetch",
     "daemonFetch",
     "$http",
+];
+
+/// The receivers whose HTTP verbs make route uses. An unknown `.get()` is
+/// more likely to read a local value or path than to send an HTTP request.
+const REQUEST_RECEIVERS: &[&str] = &[
+    "api", "axios", "client", "fetch", "http", "request", "requests", "$http",
 ];
 
 /// The names in a registration call that are never its handler.
@@ -838,12 +859,13 @@ fn routes(
     found: &mut Vec<Interface>,
 ) {
     let mut characters = source.char_indices().peekable();
-    let mut last_angle = None;
+    let mut angles = Vec::new();
     let mut quotes = source
         .match_indices(['"', '\'', '`'])
         .map(|(at, _)| at)
         .peekable();
     for (open, _) in source.match_indices('(') {
+        let mut generic_angle = None;
         while quotes.peek().is_some_and(|at| *at <= open) {
             quotes.next();
         }
@@ -858,14 +880,19 @@ fn routes(
                 break;
             }
             if ch == '<' {
-                last_angle = Some(at);
+                angles.push(at);
+            } else if ch == '>' && source.as_bytes().get(at.saturating_sub(1)) != Some(&b'=') {
+                let angle = angles.pop();
+                if at + 1 == open {
+                    generic_angle = angle;
+                }
             }
             characters.next();
         }
         let head = &source[..open];
         // A generic between the callee and the paren: `get<T>(`.
         let head = match head.ends_with('>') {
-            true => match last_angle {
+            true => match generic_angle {
                 Some(at) => &head[..at],
                 None => head,
             },
@@ -895,7 +922,8 @@ fn routes(
         } else if VERBS.contains(&callee) {
             match decorated || on_router {
                 true => Role::Register,
-                false => Role::Request,
+                false if receiver.is_some_and(is_request_receiver) => Role::Request,
+                false => continue,
             }
         } else if REQUEST.contains(&callee) {
             Role::Request
@@ -941,6 +969,11 @@ fn routes(
             method: http_method(callee),
         });
     }
+}
+
+fn is_request_receiver(receiver: &str) -> bool {
+    let receiver = receiver.trim_matches('_').to_ascii_lowercase();
+    REQUEST_RECEIVERS.contains(&receiver.as_str())
 }
 
 /// The HTTP method a callee names, uppercased: `Get` and `get` are both
@@ -1295,6 +1328,45 @@ mod tests {
         );
     }
 
+    /// A dotted Cargo key is metadata for the dependency before its dot.
+    #[test]
+    fn a_dotted_cargo_dependency_key_names_its_dependency() {
+        let cargo = "[dependencies]\nserde.workspace = true\nserde.version = \"1\"\n";
+
+        assert_eq!(
+            kinds(&read("Cargo.toml", Language::Toml, cargo, &[])),
+            [
+                (InterfaceKind::Dependency, "serde", 2),
+                (InterfaceKind::Dependency, "serde", 3),
+            ]
+        );
+    }
+
+    /// A child Maven project inherits its parent group when it has no own group.
+    #[test]
+    fn a_pom_inherits_its_parent_group_for_its_package() {
+        let pom = "<project>\n  <parent>\n    <groupId>org.parent</groupId>\n    <artifactId>parent</artifactId>\n  </parent>\n  <artifactId>api</artifactId>\n</project>\n";
+
+        assert_eq!(
+            kinds(&read("pom.xml", Language::Manifest, pom, &[])),
+            [(InterfaceKind::Package, "org.parent:api", 6)]
+        );
+    }
+
+    /// A pubspec dependency can use four spaces below its section.
+    #[test]
+    fn a_four_space_pubspec_dependency_is_read() {
+        let pubspec = "name: app\ndependencies:\n    api_types: ^1.0\n";
+
+        assert_eq!(
+            kinds(&read("pubspec.yaml", Language::Yaml, pubspec, &[])),
+            [
+                (InterfaceKind::Package, "app", 1),
+                (InterfaceKind::Dependency, "api_types", 3),
+            ]
+        );
+    }
+
     /// A variable is set by a `.env` line, a compose or workflow entry and
     /// `set_var`, and read by each language's own call.
     #[test]
@@ -1411,6 +1483,41 @@ mod tests {
         let found = read("app.py", Language::Python, python, &symbols);
         assert_eq!(kinds(&found), [(InterfaceKind::Route, "/v1/items/<id>", 1)]);
         assert_eq!(found[0].symbol, Some(0));
+    }
+
+    /// Filesystem calls do not name HTTP routes.
+    #[test]
+    fn filesystem_paths_are_not_routes() {
+        for (path, language, source) in [
+            (
+                "app.py",
+                Language::Python,
+                "root = Path(\"/usr/local/bin\")\nlog = open(\"/var/log/x.log\")\n",
+            ),
+            (
+                "App.java",
+                Language::Java,
+                "var certificates = Paths.get(\"/etc/ssl\");\n",
+            ),
+        ] {
+            assert!(
+                read(path, language, source, &[]).is_empty(),
+                "{path} produced a route"
+            );
+        }
+    }
+
+    /// Nested type arguments and an arrow do not cut a route call chain.
+    #[test]
+    fn a_balanced_generic_before_a_route_call_keeps_its_client() {
+        let typescript = "client.get<Array<User>>(\"/v1/users\");\n";
+        assert_eq!(
+            kinds(&read("client.ts", Language::TypeScript, typescript, &[])),
+            [(InterfaceKind::RouteUse, "/v1/users", 1)]
+        );
+
+        let javascript = "if (a < b) run = () =>(\"/x\");\n";
+        assert!(read("client.js", Language::JavaScript, javascript, &[]).is_empty());
     }
 
     /// A bounded route scan never cuts through a multi-byte character.
