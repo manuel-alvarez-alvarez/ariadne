@@ -187,6 +187,34 @@ impl StubAcpAgent {
         }
         dir.as_os_str().to_os_string()
     }
+
+    /// The same `PATH`, holding this stub under each `(package, name)` the
+    /// way a package manager leaves it: the file under the directories of
+    /// the package, and the command a link to it. That is what a name only
+    /// a package gives has to look like to be discovered under it.
+    pub(crate) fn path_with_packaged(&self, installed: &[(&str, &str)]) -> OsString {
+        let dir = Path::new(&self.bin).parent().unwrap();
+        for (package, name) in installed {
+            install_package(dir, package, name, Path::new(&self.bin));
+        }
+        dir.as_os_str().to_os_string()
+    }
+}
+
+/// Install `name` on `dir` as a package manager does: `program` under the
+/// directories `package` is unpacked into, and `name` itself a link to it.
+/// The program is the caller's — this stub, or anything else a test wants
+/// found under that name.
+pub(crate) fn install_package(dir: &Path, package: &str, name: &str, program: &Path) {
+    let home = dir.join("packages").join(package).join("bin");
+    std::fs::create_dir_all(&home).unwrap();
+    let file = home.join(name);
+    let link = dir.join(name);
+    for path in [&file, &link] {
+        let _ = std::fs::remove_file(path);
+    }
+    std::os::unix::fs::symlink(program, &file).unwrap();
+    std::os::unix::fs::symlink(&file, &link).unwrap();
 }
 
 /// Whether `pid` still exists. A relaunch starts a second agent process that

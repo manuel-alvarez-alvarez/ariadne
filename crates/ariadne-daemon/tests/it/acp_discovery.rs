@@ -475,11 +475,14 @@ fn from_this_directory(dir: &std::path::Path) -> std::ffi::OsString {
 /// under its own id, so both are tried. `claude-acp` is the package
 /// `@agentclientprotocol/claude-agent-acp`, whose command is
 /// `claude-agent-acp`, and the agent takes the registry id all the same.
+/// The command found under that name is the package's own file, which is
+/// what makes it the agent's rather than another program's.
 #[tokio::test]
 async fn an_npx_agent_is_found_under_the_name_of_its_package() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let path = agent.path_with(&["claude-agent-acp"]);
+    let path =
+        agent.path_with_packaged(&[("@agentclientprotocol/claude-agent-acp", "claude-agent-acp")]);
     let h = settled(
         harness().home(empty_home(dir.path())).agents_on_path(path),
         "claude-acp",
@@ -497,6 +500,137 @@ async fn an_npx_agent_is_found_under_the_name_of_its_package() {
     );
 }
 
+/// A package's name is nobody's in particular: `@minimax-ai/code` installs
+/// `code`, and so does an editor that speaks no ACP at all. A program found
+/// under a package's name is the agent only where the package put it there,
+/// and one that no package did is passed over — it is never started, and the
+/// entry it was found for is registered as nothing.
+#[tokio::test]
+async fn a_program_that_only_shares_a_package_name_is_not_the_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    // `code` is this stub, and a working ACP agent: only where it comes from
+    // keeps it from answering for MiniMax Code.
+    agent.path_with(&["code"]);
+    let path = agent.path_with_packaged(&[("installed-agent", "installed-agent")]);
+    let index = json!({
+        "version": "1.0.0",
+        "agents": [
+            {
+                "id": "minimax-code",
+                "distribution": {"npx": {"package": "@minimax-ai/code@0.2.7", "args": ["acp"]}}
+            },
+            {
+                "id": "installed-agent",
+                "distribution": {"npx": {"package": "installed-agent@1.0.0"}}
+            }
+        ]
+    });
+    let h = settled(
+        harness()
+            .home(empty_home(dir.path()))
+            .agents_on_path(path)
+            .acp_index(index.to_string()),
+        "installed-agent",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert_eq!(ids, ["installed-agent"], "{agents:#?}");
+    assert_eq!(h.launcher.registry.command_of("minimax-code"), None);
+}
+
+/// Where the package did put it, the probe still has the last word: a
+/// program installed under the package's name that speaks no ACP is not the
+/// agent either, and the entry is registered as nothing rather than listed
+/// as an agent that is here and broken.
+#[tokio::test]
+async fn a_program_under_the_package_name_that_speaks_no_acp_is_registered_as_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let path = agent.path_with_packaged(&[("installed-agent", "installed-agent")]);
+    common::acp::install_package(
+        std::path::Path::new(&path),
+        "@vendor/quiet-cli",
+        "quiet-cli",
+        std::path::Path::new("/bin/echo"),
+    );
+    let index = json!({
+        "version": "1.0.0",
+        "agents": [
+            {
+                "id": "quiet",
+                "distribution": {"npx": {"package": "@vendor/quiet-cli@1.0.0", "args": ["acp"]}}
+            },
+            {
+                "id": "installed-agent",
+                "distribution": {"npx": {"package": "installed-agent@1.0.0"}}
+            }
+        ]
+    });
+    let h = settled(
+        harness()
+            .home(empty_home(dir.path()))
+            .agents_on_path(path)
+            .acp_index(index.to_string()),
+        "installed-agent",
+    )
+    .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert_eq!(ids, ["installed-agent"], "{agents:#?}");
+    assert_eq!(h.launcher.registry.command_of("quiet"), None);
+}
+
+/// Only an answer takes an agent off the registry. A probe that runs out of
+/// time showed nothing either way, and the agent — found under its package
+/// name like any npm-installed one — is listed with what it did show, so a
+/// loaded machine never loses the agent its goals are pinned to.
+#[tokio::test]
+async fn a_package_named_agent_whose_probe_times_out_is_still_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["silent_methods"] = json!(["initialize"]);
+    let agent = stub_acp_agent(dir.path(), setup);
+    let path = agent.path_with_packaged(&[("@vendor/mute-cli", "mute-cli")]);
+    let index = json!({
+        "version": "1.0.0",
+        "agents": [
+            {
+                "id": "mute",
+                "distribution": {"npx": {"package": "@vendor/mute-cli@1.0.0", "args": ["acp"]}}
+            }
+        ]
+    });
+    let h = harness()
+        .home(empty_home(dir.path()))
+        .agents_on_path(path)
+        .acp_index(index.to_string())
+        .discover_agents()
+        .timeouts(Timeouts {
+            probe: Duration::from_secs(1),
+            ..Timeouts::default()
+        })
+        .await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let ids: Vec<&str> = agents.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert_eq!(ids, ["mute"], "{agents:#?}");
+    assert_eq!(agents[0]["status"], "rejected", "{:#?}", agents[0]);
+    assert_eq!(
+        agents[0]["rejection_reason"],
+        json!("discovery timed out"),
+        "{:#?}",
+        agents[0]
+    );
+    assert_eq!(
+        h.launcher.registry.command_of("mute"),
+        Some(vec!["mute-cli".to_string(), "acp".to_string()])
+    );
+}
+
 /// The index decides the command: a package entry is looked up under the
 /// entry id first and under the package name after it — without its
 /// `@scope/` and without the version it is pinned to — and the
@@ -505,7 +639,8 @@ async fn an_npx_agent_is_found_under_the_name_of_its_package() {
 async fn the_index_maps_an_entry_to_the_first_name_the_path_holds() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let path = agent.path_with(&["packaged-cli", "under-its-id", "id-cli"]);
+    agent.path_with(&["under-its-id", "id-cli"]);
+    let path = agent.path_with_packaged(&[("packaged-cli", "packaged-cli")]);
     let index = json!({
         "version": "1.0.0",
         "agents": [
@@ -547,7 +682,10 @@ async fn the_index_maps_an_entry_to_the_first_name_the_path_holds() {
 async fn an_index_id_that_cannot_be_pinned_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let agent = stub_acp_agent(dir.path(), script());
-    let path = agent.path_with(&["odd-agent", "nameless-agent"]);
+    let path = agent.path_with_packaged(&[
+        ("odd-agent", "odd-agent"),
+        ("nameless-agent", "nameless-agent"),
+    ]);
     let index = json!({
         "version": "1.0.0",
         "agents": [
@@ -842,6 +980,51 @@ async fn a_timed_out_probe_keeps_what_it_measured() {
         reached
     })
     .await;
+}
+
+/// A probe that runs out of time says nothing about the models: the catalog
+/// the store kept for that very command is still the agent's last word, and
+/// it stays on offer. A machine too busy to answer a probe in time keeps the
+/// models its goals are staffed from, and the agent is listed as timed out
+/// all the same.
+#[tokio::test]
+async fn a_timed_out_probe_keeps_the_models_the_store_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = script();
+    setup["agent_info"] = json!({"name": "stub", "version": "1.0"});
+    let agent = stub_acp_agent(dir.path(), setup.clone());
+    let h = settled(
+        harness()
+            .home(home_with_agent("busy", &agent.bin))
+            .timeouts(Timeouts {
+                probe: Duration::from_secs(2),
+                ..Timeouts::default()
+            }),
+        "busy",
+    )
+    .await;
+    let models: Vec<Value> = h.get("/v1/models").await;
+    assert!(
+        models.iter().any(|model| model["id"] == "busy:old-model"),
+        "{models:#?}"
+    );
+
+    // The agent now answers nothing at all, as one does on a machine with no
+    // time to spare for it.
+    setup["silent_methods"] = json!(["initialize"]);
+    agent.reprogram(setup);
+    let _: Vec<Value> = h.json(post("/v1/acp-agents/refresh"), StatusCode::OK).await;
+
+    let agents: Vec<Value> = h.get("/v1/acp-agents").await;
+    let busy = agents.iter().find(|a| a["id"] == "busy").unwrap();
+    assert_eq!(busy["status"], "rejected", "{busy:#?}");
+    assert_eq!(busy["rejection_reason"], json!("discovery timed out"));
+    let models: Vec<Value> = h.get("/v1/models").await;
+    let model = models
+        .iter()
+        .find(|model| model["id"] == "busy:old-model")
+        .unwrap_or_else(|| panic!("the kept models are gone: {models:#?}"));
+    assert_eq!(model["efforts"][0]["id"], "low");
 }
 
 /// Refresh replaces the cached models with a new probe result.

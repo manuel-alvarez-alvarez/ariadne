@@ -56,7 +56,18 @@ skill says (017).
    version — `@google/gemini-cli` is `gemini` first and `gemini-cli` after
    it. The first name the `PATH` holds as an executable is the agent's
    command, and an entry that no name of it finds is registered as nothing at
-   all. Only the absolute entries of the `PATH` are searched, in their own
+   all.
+
+   A name only the package gives has to be the package's file as well: the
+   program found under it, or a link on the way to it, stands under the
+   directories the package is unpacked into — `@scope` and then the name,
+   or the name alone. That is what every package manager leaves behind, and
+   a program of another origin that carries the name has none of it:
+   `@minimax-ai/code` installs `code`, and so does an editor that speaks no
+   ACP. Such a program is passed over without being started, and the next
+   name is tried. A name the agent itself is known by — its registry id, or
+   the command of its own build — stands for the agent wherever it was
+   installed from, and is taken as it is found. Only the absolute entries of the `PATH` are searched, in their own
    order: an empty entry — and an empty `PATH` is one — or a relative one
    names the directory the daemon was started in, which is not where its
    agents come from. Such an entry is dropped, and the entries behind it are
@@ -95,25 +106,42 @@ skill says (017).
    opens is closed (`session/close`) where the agent advertises it. No
    prompt is ever sent, since a prompt is a model turn the agent bills. A
    probe has five seconds; one that runs out is rejected with every
-   capability it measured before it did.
+   capability it measured before it did, and carries the catalog the store
+   kept for its command — the agent's last word on its models, which
+   silence does not take back. The models it offers are replaced by an
+   answer or by nothing at all.
 4. An agent is `ready` only when it negotiates ACP version 1, opens a
    session — now, or at the version its kept catalog was read from — and
    offers a model option with at least one choice. Anything short of that is
    `rejected`, with the reason on the entry.
+
+   An entry the `PATH` answered for under the name of its package alone is
+   the one exception: a probe that shows the program is no ACP agent at all
+   — it never negotiated the protocol, and it did not merely run out of time
+   — takes the entry off the registry, which then holds it no more than it
+   holds an agent the `PATH` never had. Only an answer does that. A probe
+   that ran out of time showed nothing either way and leaves the agent
+   listed with what it measured, so a loaded machine keeps the agents its
+   sessions are pinned to, and an agent that negotiated the protocol
+   answered for itself whatever it is rejected for afterwards.
 5. A ready agent that lacks an optional capability is degraded, one flag per
    gap: `no_efforts` for no effort option, `no_adoption` for no
    `session_list`, and `no_restart_resume` for no `session_load`.
-6. Each registry agent has one list of extra flags. `GET /v1/agents` lists
+6. `GET /v1/models` lists the models of every agent whose catalog the
+   registry knows: what a ready agent has just answered, and what a kept
+   catalog holds for an agent whose probe ran out of time. An agent that
+   answered and was rejected has no catalog and offers no model.
+7. Each registry agent has one list of extra flags. `GET /v1/agents` lists
    every registry agent with its flags and an empty `default_flags`.
    `PUT /v1/agents/{id}` replaces the list whole, an empty list included, and
    refuses an id the registry does not hold by name.
-7. A launch runs the registry command of the agent the pin names, with that
+8. A launch runs the registry command of the agent the pin names, with that
    agent's flags behind it. The flags are read on every launch, spawn and
    resume alike, and the launch adds no flag of its own.
-8. The pin is `<agent>:<model>` (011). The agent is told only the model half,
+9. The pin is `<agent>:<model>` (011). The agent is told only the model half,
    and the effort only where the session pinned one. Both come off the
    session row, so no launch of a session moves either.
-9. Every launch carries the session context in its environment —
+10. Every launch carries the session context in its environment —
    `ARIADNE_SESSION_ID`, `ARIADNE_LAUNCH_ID`, `ARIADNE_GOAL_ID`,
    `ARIADNE_SEAT`, `ARIADNE_SOCKET`, and `ARIADNE_TASK_ID` for a task seat —
    and runs in the seat's worktree, or the repository for the orchestrator.
@@ -121,32 +149,32 @@ skill says (017).
    `agent-full-access`, so its sessions never hand an approval to Codex's
    guardian sub-agent. The setting applies to that process only and does not
    edit the user's Codex configuration.
-10. The launch id is fresh for every process started under a session row,
+11. The launch id is fresh for every process started under a session row,
     and the row is told it before the process starts. That is what tells the
     events of a replaced agent from those of the agent that replaces it.
-11. Every launch writes `acp.json` into the session's run directory: the
+12. Every launch writes `acp.json` into the session's run directory: the
     system prompt, the first prompt, the model, the effort, the session it
     resumes, and one MCP server, `ariadne` — the `ariadne` CLI with the
     arguments `mcp serve` and the session context as its environment. The
     runtime sends the agent exactly what this file says.
-12. A spawn opens a new agent session and carries the briefing as the first
+13. A spawn opens a new agent session and carries the briefing as the first
     prompt. A resume names the agent session it continues and carries its
     instruction once, as the next prompt; an empty instruction resumes an
     agent that is told nothing.
-13. A briefing has no size limit on its way to the agent: it travels in the
+14. A briefing has no size limit on its way to the agent: it travels in the
     launch file and the protocol, never on a command line.
-14. The skill documents of the agent are written into its run directory
+15. The skill documents of the agent are written into its run directory
     before the launch is planned, one `<name>/SKILL.md` under `skills/`, and
     never into the worktree. The index in the system prompt names each one by
     that path (006). A skill the agent no longer holds is removed by the same
     write.
-15. A resume is gated on discovery: an agent whose cached capabilities lack
+16. A resume is gated on discovery: an agent whose cached capabilities lack
     `session_load` is refused as not resumable, and no process starts.
-16. A session with no agent session id is not revived, and the next launch of
+17. A session with no agent session id is not revived, and the next launch of
     its seat is a fresh spawn. A session of a finished goal is not revived at
     all. A revive brings back the very row it names, on the same agent and
     model.
-17. The daemon asks no agent to compact, and does not listen for one. An
+18. The daemon asks no agent to compact, and does not listen for one. An
     agent that compacts near its context limit carries on afterwards, and
     what it does next moves its session as any other work does.
 
@@ -182,6 +210,13 @@ skill says (017).
   (`::an_npx_agent_is_found_under_the_name_of_its_package`), and the index
   decides which name is tried first and what follows it
   (`::the_index_maps_an_entry_to_the_first_name_the_path_holds`).
+- A program that only shares the name of an agent's package is never started
+  and registers nothing
+  (`acp_discovery.rs::a_program_that_only_shares_a_package_name_is_not_the_agent`),
+  one the package did install that speaks no ACP registers nothing either
+  (`::a_program_under_the_package_name_that_speaks_no_acp_is_registered_as_nothing`),
+  and one whose probe runs out of time stays registered with what it showed
+  (`::a_package_named_agent_whose_probe_times_out_is_still_registered`).
 - A configured entry replaces the discovered agent of its id, and a launch
   runs the configured command
   (`acp_discovery.rs::a_configured_agent_replaces_the_discovered_agent_of_its_id`).
@@ -196,7 +231,9 @@ skill says (017).
 - Discovery refreshes on demand and replaces the cache
   (`acp_discovery.rs::discovery_refreshes_on_demand`), sends no prompt
   (`::discovery_sends_no_prompt`), and a probe that runs out its time keeps
-  what it measured (`::a_timed_out_probe_keeps_what_it_measured`).
+  what it measured (`::a_timed_out_probe_keeps_what_it_measured`) and the
+  models the store kept for its command
+  (`::a_timed_out_probe_keeps_the_models_the_store_kept`).
 - A start reads a catalog once per agent version, closes the session it
   opened, and reads again on a new version or an explicit refresh
   (`acp_discovery.rs::a_catalog_is_read_once_per_agent_version`). An agent

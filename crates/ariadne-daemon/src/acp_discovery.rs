@@ -59,6 +59,11 @@ struct RegistryEntry {
     /// searched, or the program of a configured command.
     program: PathBuf,
     source: AcpAgentSource,
+    /// Whether the `PATH` answered for this entry under the name of its
+    /// package rather than a name the agent is known by. A package name is
+    /// nobody's in particular, so a probe that shows the program is not an
+    /// ACP agent takes the entry off the registry rather than listing it.
+    named_by_package: bool,
     /// Why this entry is refused outright, where it is: a configuration
     /// error, permanent until the config changes. A duplicate id is already
     /// another entry's, and only that one may answer for it. A refused entry
@@ -99,6 +104,11 @@ struct Discovery {
     /// kept under. An agent that reports none has its catalog read afresh on
     /// every probe, since nothing tells when it changes.
     version: Option<String>,
+    /// Whether the probe showed the program is no ACP agent at all: it never
+    /// negotiated the protocol, and it did not merely run out of time. A
+    /// probe that got that far answered for the agent, whatever it failed at
+    /// afterwards.
+    refuted: bool,
 }
 
 /// What one `session/new` said about an agent's configuration.
@@ -181,6 +191,7 @@ impl AgentRegistry {
                     command: found.command,
                     program: found.program,
                     source: AcpAgentSource::Registry,
+                    named_by_package: found.named_by_package,
                     refused,
                 }
             })
@@ -199,6 +210,7 @@ impl AgentRegistry {
                 command: agent.command.clone(),
                 program: agent.command.first().cloned().unwrap_or_default().into(),
                 source: AcpAgentSource::Config,
+                named_by_package: false,
                 refused,
             };
             let discovered = entries
@@ -298,11 +310,10 @@ impl AgentRegistry {
             None => self.selected_index().await,
         };
         let entries = Self::entries(&self.custom, &self.path, &index);
-        let kept = if reread {
-            BTreeMap::new()
-        } else {
-            self.kept_catalogs().await
-        };
+        // Every kept catalog is on hand, a refresh included: a refresh reads
+        // the catalogs again rather than trusting these, but a probe that
+        // runs out of time still falls back on the one it did not replace.
+        let kept = self.kept_catalogs().await;
         let cwd = self.probe_cwd.clone();
         let probes = entries.iter().cloned().map(|entry| {
             let cwd = cwd.clone();
@@ -314,19 +325,41 @@ impl AgentRegistry {
                 if let Some(reason) = &entry.refused {
                     return rejected(&entry, reason.clone());
                 }
-                probe(entry, &cwd, cached, self.timeouts.probe).await
+                probe(entry, &cwd, cached, reread, self.timeouts.probe).await
             }
         });
         let discovered = join_all(probes).await;
+        // A name only a package gives is another program's as easily as the
+        // agent's. One that answered for nothing is that other program, and
+        // the entry stands for nothing here: the registry holds it no more
+        // than it holds an agent the `PATH` never had.
+        let (entries, discovered): (Vec<RegistryEntry>, Vec<Discovery>) = entries
+            .into_iter()
+            .zip(discovered)
+            .filter(|(entry, result)| {
+                let mistaken = entry.named_by_package && result.refuted;
+                if mistaken {
+                    tracing::info!(
+                        agent = entry.id,
+                        command = entry.command.join(" "),
+                        program = %entry.program.display(),
+                        reason = result.agent.rejection_reason.as_deref().unwrap_or_default(),
+                        "a program under the package name of an agent is not that agent; it is registered as nothing"
+                    );
+                }
+                !mistaken
+            })
+            .unzip();
 
         for result in &discovered {
             let (AcpAgentStatus::Ready, Some(version)) = (result.agent.status, &result.version)
             else {
                 continue;
             };
-            let unchanged = kept.get(&result.agent.id).is_some_and(|cached| {
-                &cached.version == version && cached.command == result.agent.command
-            });
+            let unchanged = !reread
+                && kept.get(&result.agent.id).is_some_and(|cached| {
+                    &cached.version == version && cached.command == result.agent.command
+                });
             if !unchanged {
                 self.keep_catalog(&result.agent, version, &result.catalog)
                     .await;
@@ -477,12 +510,18 @@ impl AgentRegistry {
     }
 
     /// Convert every accepted discovery choice into the shared model catalog.
+    /// Every model the registry knows of: an agent's own, as its last
+    /// answer gave them. A ready agent has just said what it offers, and one
+    /// whose probe ran out of time carries the catalog the store kept for
+    /// its command — the models it offered when it last answered, which
+    /// nothing has taken back. An agent that answered and was rejected has
+    /// no catalog, and offers nothing.
     pub(crate) async fn models(&self) -> Vec<ModelDto> {
         self.results
             .read()
             .await
             .iter()
-            .filter(|result| result.agent.status == AcpAgentStatus::Ready)
+            .filter(|result| !result.catalog.models.is_empty())
             .flat_map(|result| {
                 let catalog = &result.catalog;
                 catalog.models.iter().map(|model| ModelDto {
@@ -514,13 +553,14 @@ fn not_probed(entry: &RegistryEntry) -> Discovery {
 }
 
 fn rejected(entry: &RegistryEntry, reason: String) -> Discovery {
-    rejected_with(entry, AcpCapabilitiesDto::default(), reason)
+    rejected_with(entry, AcpCapabilitiesDto::default(), reason, false)
 }
 
 fn rejected_with(
     entry: &RegistryEntry,
     capabilities: AcpCapabilitiesDto,
     reason: String,
+    refuted: bool,
 ) -> Discovery {
     Discovery {
         agent: AcpAgentDto {
@@ -534,15 +574,22 @@ fn rejected_with(
         },
         catalog: Catalog::default(),
         version: None,
+        refuted,
     }
 }
 
 /// Probe one agent: `initialize` always, and a `session/new` only where
-/// `cached` holds no catalog for the version the agent reports.
+/// `cached` holds no catalog for the version the agent reports — or where
+/// `reread` asks for the catalog to be read again whatever is kept.
+///
+/// A kept catalog is the agent's last word on its models, so a probe that
+/// runs out of time hands it back rather than nothing: what the agent
+/// offers is replaced by an answer, never by silence.
 async fn probe(
     entry: RegistryEntry,
     cwd: &Path,
     cached: Option<CachedCatalog>,
+    reread: bool,
     timeout: Duration,
 ) -> Discovery {
     let Some((_, args)) = entry.command.split_first() else {
@@ -584,23 +631,41 @@ async fn probe(
             .builder()
             .name("ariadne-discovery")
             .connect_with(pipes(stdin, stdout), async |cx| {
+                let shortcut = cached.clone().filter(|_| !reread);
                 discovered =
-                    Some(probe_protocol(&entry, &cx, cwd, cached, &mut capabilities).await);
+                    Some(probe_protocol(&entry, &cx, cwd, shortcut, &mut capabilities).await);
                 Ok(())
             }),
     )
     .await;
-    let result = match (result, discovered) {
-        (_, Some(discovery)) => discovery,
-        (Ok(Err(error)), None) => Err(anyhow!("ACP connection failed: {error}")),
-        (Ok(Ok(())), None) => Err(anyhow!("the agent closed its stdio during discovery")),
-        (Err(_), None) => Err(anyhow!("discovery timed out")),
+    let (result, timed_out) = match (result, discovered) {
+        (_, Some(discovery)) => (discovery, false),
+        (Ok(Err(error)), None) => (Err(anyhow!("ACP connection failed: {error}")), false),
+        (Ok(Ok(())), None) => (
+            Err(anyhow!("the agent closed its stdio during discovery")),
+            false,
+        ),
+        (Err(_), None) => (Err(anyhow!("discovery timed out")), true),
     };
     let _ = child.start_kill();
     let _ = child.wait().await;
     match result {
         Ok(discovery) => discovery,
-        Err(error) => rejected_with(&entry, capabilities, format!("{error:#}")),
+        Err(error) => {
+            // Nothing spoke ACP here, and time is not what it ran out of:
+            // whatever this program is, it is not the agent.
+            let refuted = !capabilities.protocol_v1 && !timed_out;
+            let mut rejection = rejected_with(&entry, capabilities, format!("{error:#}"), refuted);
+            // A probe out of time said nothing about the models. The catalog
+            // the store kept for this very command is still the agent's last
+            // word, and it stays on offer until an answer replaces it: a busy
+            // machine keeps the models its goals are staffed from.
+            if timed_out && let Some(kept) = cached {
+                rejection.catalog = kept.catalog;
+                rejection.version = Some(kept.version);
+            }
+            rejection
+        }
     }
 }
 
@@ -665,6 +730,7 @@ async fn probe_protocol(
         },
         catalog,
         version,
+        refuted: false,
     })
 }
 

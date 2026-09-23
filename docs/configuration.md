@@ -32,7 +32,11 @@ its `PATH`: Ariadne ships a snapshot of that index — `claude-acp`,
 `codex-acp`, `goose`, `opencode` and 37 more — and installs none of them. An
 `[[acp_agents]]` entry adds an agent the registry does not name, and one whose
 id the registry does name replaces it, command and all. The daemon probes
-every entry at startup. See [Installing Ariadne](install.md) to add an agent,
+every entry at startup. Where an agent is found under the name of its package
+rather than its own — `claude-acp` is installed as `claude-agent-acp` — the
+command has to be the file that package installed, and it has to answer as an
+ACP agent: a program that only shares the name, as Visual Studio Code's `code`
+shares MiniMax Code's, is not started and is not listed. See [Installing Ariadne](install.md) to add an agent,
 and [Permission modes](permissions.md) to choose how it handles tool requests.
 
 `POST /v1/acp-agents/refresh` downloads the index from `acp_registry_url`,
