@@ -15,7 +15,7 @@
 #
 #   ariadne-<target>.tar.gz              the `ariadne` and `ariadned` binaries
 #   ariadne-desktop-<target>.app.tar.gz  Ariadne Desktop.app (macOS)
-#   ariadne-desktop-<target>.AppImage    Ariadne Desktop (Linux)
+#   ariadne-desktop-<target>.tar.gz      Ariadne Desktop binary + icon (Linux)
 #   checksums-<target>.txt               sha256 of the assets above
 #
 # Nothing here is signed or notarized: the artifacts ship unsigned and the
@@ -161,14 +161,13 @@ jobs:
         working-directory: ui
         run: npm run tauri build -- --bundles app
 
-      - name: Build Ariadne Desktop (AppImage)
+      # A bundled Linux package carries the runner's own glib and Mesa, and
+      # aborts on a host whose gio module needs a newer glib symbol; the
+      # host's own webkit2gtk works, so ship a plain binary that links it.
+      - name: Build Ariadne Desktop (no bundle)
         if: matrix.platform == 'linux'
         working-directory: ui
-        env:
-          # linuxdeploy ships as an AppImage and the runners have no FUSE to
-          # mount it with, so let it unpack itself instead.
-          APPIMAGE_EXTRACT_AND_RUN: 1
-        run: npm run tauri build -- --bundles appimage
+        run: npm run tauri build -- --no-bundle
 
       - name: Stage the release assets
         env:
@@ -190,12 +189,20 @@ jobs:
             tar --mac-metadata -czf "$PWD/dist/ariadne-desktop-$TARGET.app.tar.gz" \
               -C "$bundle/macos" "Ariadne Desktop.app"
           else
-            appimage=$(find "$bundle/appimage" -maxdepth 1 -name '*.AppImage' -print -quit)
-            if [ -z "$appimage" ]; then
-              echo "::error::no AppImage was produced under $bundle/appimage"
+            # --no-bundle leaves the plain cargo binary at the crate's own
+            # target dir; its name follows the crate or `productName`, so
+            # find it rather than assume it. The crate's cdylib is also
+            # executable and sits right beside it, always as `lib*.so` on
+            # Linux, so exclude that name rather than the binary's own.
+            binary=$(find ui/src-tauri/target/release -maxdepth 1 -type f -perm -u+x -not -name 'lib*.so' -print -quit)
+            if [ -z "$binary" ]; then
+              echo "::error::no Tauri binary was produced under ui/src-tauri/target/release"
               exit 1
             fi
-            install -m 755 "$appimage" "dist/ariadne-desktop-$TARGET.AppImage"
+            stage=$(mktemp -d)
+            install -m 755 "$binary" "$stage/ariadne-desktop"
+            cp ui/src-tauri/icons/icon.png "$stage/icon.png"
+            tar -czf "$PWD/dist/ariadne-desktop-$TARGET.tar.gz" -C "$stage" ariadne-desktop icon.png
           fi
 
           # sha256, one line per asset, `<digest>  <name>`. The checksums file
