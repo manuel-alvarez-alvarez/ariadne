@@ -15,7 +15,6 @@ pub mod checkpoint;
 pub mod config;
 pub mod gitwt;
 pub mod http;
-pub mod knowledge;
 pub mod launcher;
 pub mod log;
 pub mod resource;

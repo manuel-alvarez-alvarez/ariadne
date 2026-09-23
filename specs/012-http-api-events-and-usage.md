@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-20
+updated: 2026-09-23
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
@@ -13,11 +13,11 @@ tests:
   - crates/ariadne-daemon/tests/it/models.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/http/classify.rs
+  - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/src/events.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_terminal.rs
-  - crates/ariadne-daemon/tests/it/knowledge.rs
   - crates/ariadne-daemon/tests/it/transcript_usage.rs
   - crates/ariadne-daemon/src/transcript.rs
 ---
@@ -209,18 +209,10 @@ and the ACP runtime that reports the agent events (021).
     reporter sent. The row is written and read back by one statement, which
     is all the lock that orders the ids covers: every live console chunk of
     every session waits behind that lock.
-25. The knowledge base (022) is served at `GET
-    /v1/repositories/{id}/knowledge`, `POST
-    /v1/repositories/{id}/knowledge/reindex` (202), `GET
-    /v1/knowledge/search`, `GET /v1/knowledge/outline`, `GET
-    /v1/knowledge/symbol`, `GET /v1/knowledge/impact` and `GET
-    /v1/knowledge/interactions` (the edges between one repository and the
-    others, grouped by kind, each edge two ends and a confidence), and reports
-    every index run on the domain stream as `knowledge_indexed`
-    (`repository_id`, `git_ref`, `commit`, `files`, `symbols`) or
-    `knowledge_failed` (`repository_id`, `git_ref`, `error`). Like a branch move, these
-    are published straight onto the bus — nothing in the database changed —
-    and belong to no goal or task, so a `goal` or `task` filter drops them.
+25. The API serves no symbol index: the daemon indexes no repository, and the
+    stream carries no `knowledge_indexed` and no `knowledge_failed`. A
+    `config.toml` that still holds `knowledge_enabled` or `knowledge_workers`
+    stops the daemon, because the file is read strictly.
 
 ## Acceptance criteria
 
@@ -359,15 +351,9 @@ and the ACP runtime that reports the agent events (021).
   `acp_console.rs::the_cancel_endpoint_is_in_the_openapi_document`,
   `acp_terminal.rs::the_terminal_endpoint_is_in_the_openapi_document`,
   `doctor.rs::endpoint_is_in_the_openapi_document`,
-  `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`,
-  `knowledge.rs::every_knowledge_endpoint_is_in_the_openapi_document`).
-- An index run reaches the domain stream as `knowledge_indexed`, and a
-  failed one as `knowledge_failed`
-  (`knowledge.rs::registering_a_repository_indexes_its_base_branch`,
-  `::a_repository_git_cannot_read_reads_as_failed`).
-- The interactions of a repository are listed by kind with both ends of
-  each edge
-  (`knowledge.rs::interactions_between_two_repositories_are_listed_by_kind`).
+  `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`).
+- A `config.toml` that still names a knowledge key stops the daemon
+  (`config.rs::a_knowledge_key_stops_the_daemon`).
 - ACP registry endpoints expose the cached result and refresh it on demand
   (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`,
   `::discovery_refreshes_on_demand`).

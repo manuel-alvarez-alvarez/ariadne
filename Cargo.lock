@@ -262,7 +262,6 @@ dependencies = [
  "ariadne-client",
  "ariadne-console",
  "ariadne-core",
- "ariadne-knowledge",
  "ariadne-store",
  "axum",
  "base64 0.22.1",

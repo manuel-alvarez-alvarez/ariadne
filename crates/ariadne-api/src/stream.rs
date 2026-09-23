@@ -13,7 +13,6 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::events::AgentEventSummaryDto;
 use crate::goals::GoalDto;
-use crate::knowledge::{KnowledgeFailedDto, KnowledgeIndexedDto};
 use crate::messages::MessageDto;
 use crate::repositories::RepositoryDto;
 use crate::sessions::SessionDto;
@@ -107,10 +106,6 @@ pub enum DomainEvent {
     RepositoryCreated(RepositoryDto),
     RepositoryUpdated(RepositoryDto),
     RepositoryDeleted(DeletedDto),
-    /// The knowledge base read one ref of a repository.
-    KnowledgeIndexed(KnowledgeIndexedDto),
-    /// An index run of a repository failed.
-    KnowledgeFailed(KnowledgeFailedDto),
 }
 
 impl DomainEvent {
@@ -133,8 +128,6 @@ impl DomainEvent {
             Self::RepositoryCreated(_) => "repository_created",
             Self::RepositoryUpdated(_) => "repository_updated",
             Self::RepositoryDeleted(_) => "repository_deleted",
-            Self::KnowledgeIndexed(_) => "knowledge_indexed",
-            Self::KnowledgeFailed(_) => "knowledge_failed",
         }
     }
 
@@ -157,8 +150,6 @@ impl DomainEvent {
             Self::SkillDeleted(d) => json(d),
             Self::RepositoryCreated(r) | Self::RepositoryUpdated(r) => json(r),
             Self::RepositoryDeleted(d) => json(d),
-            Self::KnowledgeIndexed(k) => json(k),
-            Self::KnowledgeFailed(k) => json(k),
         }
     }
 }

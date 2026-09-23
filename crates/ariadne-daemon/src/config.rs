@@ -28,11 +28,6 @@ pub struct Config {
     pub delete_merged_branches: bool,
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
-    /// Whether the knowledge base indexes the repositories and serves its
-    /// tools. Off, nothing is indexed and no session lists them.
-    pub knowledge_enabled: bool,
-    /// How many files an index run of the knowledge base parses at a time.
-    pub knowledge_workers: usize,
     /// The default for ACP task permission requests. A task may override it.
     pub permission_mode: PermissionMode,
     /// User-defined ACP agent commands appended to the built-in registry.
@@ -81,10 +76,6 @@ impl Config {
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
-            knowledge_enabled: file.knowledge_enabled.unwrap_or(true),
-            knowledge_workers: file
-                .knowledge_workers
-                .unwrap_or_else(ariadne_knowledge::default_workers),
             permission_mode: file.permission_mode.unwrap_or(PermissionMode::Auto),
             acp_agents: file.acp_agents,
             root,
@@ -95,11 +86,6 @@ impl Config {
         }
 
         Ok(config)
-    }
-
-    /// The knowledge store: `knowledge.db` beside the daemon's database.
-    pub fn knowledge_db_path(&self) -> PathBuf {
-        self.db_path.with_file_name("knowledge.db")
     }
 
     /// `ariadned --check-config`: read `<home>/config.toml` the way [`load`]
@@ -145,37 +131,19 @@ mod tests {
         assert!(config.delete_merged_worktrees);
         assert!(config.delete_merged_branches);
         assert!(config.prevent_sleep);
-        assert!(config.knowledge_enabled);
-        let cores = std::thread::available_parallelism().map_or(1, |cores| cores.get());
-        assert_eq!(
-            config.knowledge_workers,
-            (cores / 2).max(1),
-            "an index run takes half of the cores, and one at least"
-        );
         assert_eq!(config.permission_mode, PermissionMode::Auto);
-        assert_eq!(
-            config.knowledge_db_path(),
-            dir.path().join("home/knowledge.db"),
-            "the knowledge store sits beside the database"
+    }
+
+    /// The knowledge base is gone, and its keys with it: a file that still
+    /// holds one stops the daemon rather than being ignored.
+    #[test]
+    fn a_knowledge_key_stops_the_daemon() {
+        let dir = home_with("knowledge_enabled = true\n");
+        let error = Config::load(Some(dir.path().join("home"))).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("knowledge_enabled"),
+            "and says which key it could not read: {error:#}"
         );
-    }
-
-    /// `knowledge_enabled = false` is read: the daemon then indexes nothing
-    /// and no session is offered the knowledge tools.
-    #[test]
-    fn knowledge_can_be_turned_off_in_the_config() {
-        let dir = home_with("knowledge_enabled = false\n");
-        let config = Config::load(Some(dir.path().join("home"))).unwrap();
-        assert!(!config.knowledge_enabled);
-    }
-
-    /// `knowledge_workers` is read: an index run parses that many files at a
-    /// time.
-    #[test]
-    fn the_workers_of_the_knowledge_base_are_read_from_the_config() {
-        let dir = home_with("knowledge_workers = 3\n");
-        let config = Config::load(Some(dir.path().join("home"))).unwrap();
-        assert_eq!(config.knowledge_workers, 3);
     }
 
     /// The check is the start's own reading, without the start: a file the

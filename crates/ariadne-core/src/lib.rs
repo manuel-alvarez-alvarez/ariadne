@@ -570,7 +570,7 @@ impl AttentionReason {
 /// tool: an answer is a message to whoever asked, addressed the way the
 /// question was, so nothing threads. Each message reaches its agent as a turn
 /// — which is why the tool that sends one takes questions and answers and
-/// nothing else, no acknowledgement and no thanks.
+/// nothing else, no confirmation and no thanks.
 ///
 /// The kind is what the daemon reads. Two of them move the task
 /// ([`TaskStatus`]), and the rest are said and left.

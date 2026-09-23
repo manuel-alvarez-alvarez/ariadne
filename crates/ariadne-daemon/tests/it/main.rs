@@ -23,7 +23,6 @@ mod events;
 mod goal_completion;
 mod goal_delete;
 mod goal_repositories;
-mod knowledge;
 mod landing_lifecycle;
 mod logs;
 mod managers;

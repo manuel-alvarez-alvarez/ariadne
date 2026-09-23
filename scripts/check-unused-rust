@@ -33,7 +33,6 @@ LIBRARIES = [
     "ariadne-store",
     "ariadne-client",
     "ariadne-console",
-    "ariadne-knowledge",
 ]
 
 # Items that no other file names, but that something reaches all the same: a
@@ -51,12 +50,6 @@ IGNORED = {
     ),
     "crates/ariadne-console/src/transcript.rs: Location": (
         "the element type of the public field `Tool::locations`"
-    ),
-    "crates/ariadne-knowledge/src/store.rs: ContextMore": (
-        "the type of the public field `SymbolContext::more`"
-    ),
-    "crates/ariadne-knowledge/src/store.rs: PathHop": (
-        "the element type of what the public `Store::path` returns"
     ),
 }
 

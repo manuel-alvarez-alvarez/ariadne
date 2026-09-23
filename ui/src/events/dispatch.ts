@@ -125,14 +125,6 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
       break
     }
-    case "knowledge_indexed":
-    case "knowledge_failed": {
-      // Nothing reads a knowledge base any more: the screen and its query keys
-      // are gone, so this invalidates nothing. The case stays until T3 takes
-      // the two kinds out of the daemon and regenerates `schema.d.ts`; until
-      // then the app takes them and does nothing, rather than warning.
-      break
-    }
     default: {
       // A kind the generated types do not know about: the daemon is newer than
       // these types. Regenerate with `npm run gen:api`.

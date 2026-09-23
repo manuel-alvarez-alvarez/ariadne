@@ -33,7 +33,6 @@ ariadne-client = { workspace = true }
 ariadne-console = { workspace = true }
 # The symbol index the daemon fills off the request path and serves to
 # every seat.
-ariadne-knowledge = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }

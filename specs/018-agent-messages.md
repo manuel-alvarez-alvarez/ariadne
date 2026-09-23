@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-09-18
+updated: 2026-09-23
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -47,7 +47,7 @@ and the wording of the text a message arrives in (006).
    There is no `answer` kind and no `reply`: an answer is a message to
    whoever asked, addressed the way the question was, so nothing threads and
    no row points at another.
-6. A message asks or answers, and carries nothing else — no acknowledgement,
+6. A message asks or answers, and carries nothing else — no confirmation,
    no thanks, and nothing about what the sender is going to do next. Every
    message arrives at its recipient as a turn (9), so a courtesy costs the recipient
    a turn: that is what the tool's own description bans, and it is banned

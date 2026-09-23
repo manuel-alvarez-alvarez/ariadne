@@ -676,7 +676,7 @@ pub(crate) mod tests {
     /// not start — is no wrong argument, and must not reach the agent as one.
     #[test]
     fn a_5xx_reaches_the_agent_as_an_internal_error() {
-        let failure = "the knowledge base failed: database is locked";
+        let failure = "the store failed: database is locked";
         let err = to_mcp_err(ClientError::Api {
             status: http::StatusCode::INTERNAL_SERVER_ERROR,
             code: "internal_error".into(),

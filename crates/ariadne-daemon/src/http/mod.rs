@@ -11,7 +11,6 @@ mod doctor;
 mod error;
 pub(crate) mod events;
 mod goals;
-mod knowledge;
 mod landing;
 mod logs;
 mod pins;
@@ -44,7 +43,6 @@ use crate::acp_sessions::OutsideSessions;
 use catalog::{acp_agents, agents, models};
 
 use crate::bus::EventBus;
-use crate::knowledge::Knowledge;
 use crate::launcher::Launcher;
 use crate::log::LogBuffer;
 use crate::scheduler::SchedEvent;
@@ -70,8 +68,6 @@ pub struct AppState {
     /// The snapshot of every agent's stored sessions that
     /// `/v1/outside-sessions` pages.
     pub outside_sessions: OutsideSessions,
-    /// The symbol index over every registered repository, or a disabled one.
-    pub knowledge: Knowledge,
 }
 
 impl AppState {
@@ -122,10 +118,6 @@ impl AppState {
         skills::reset_document,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
-        knowledge::status, knowledge::reindex, knowledge::search, knowledge::outline,
-        knowledge::symbol, knowledge::impact, knowledge::path, knowledge::interactions,
-        knowledge::map, knowledge::graph,
-
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
@@ -146,7 +138,7 @@ impl AppState {
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::stream::HeartbeatDto,
         ariadne_api::events::AgentEventDto, ariadne_api::events::AgentEventSummaryDto,
-        ariadne_api::events::EventOrder, ariadne_api::knowledge::KnowledgeDetail,
+        ariadne_api::events::EventOrder,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
     )),
     tags(
@@ -155,7 +147,6 @@ impl AppState {
         (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
-        (name = "knowledge", description = "The symbol index over every registered repository"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions, and the console each one is driven through"),
@@ -198,20 +189,6 @@ pub fn router(state: AppState) -> Router {
                 .put(repositories::update)
                 .delete(repositories::delete),
         )
-        // knowledge
-        .route("/v1/repositories/{id}/knowledge", get(knowledge::status))
-        .route(
-            "/v1/repositories/{id}/knowledge/reindex",
-            post(knowledge::reindex),
-        )
-        .route("/v1/knowledge/search", get(knowledge::search))
-        .route("/v1/knowledge/outline", get(knowledge::outline))
-        .route("/v1/knowledge/symbol", get(knowledge::symbol))
-        .route("/v1/knowledge/impact", get(knowledge::impact))
-        .route("/v1/knowledge/path", get(knowledge::path))
-        .route("/v1/knowledge/interactions", get(knowledge::interactions))
-        .route("/v1/knowledge/map", get(knowledge::map))
-        .route("/v1/knowledge/graph", get(knowledge::graph))
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))
         .route("/v1/goals/{id}", get(goals::get).delete(goals::delete))
