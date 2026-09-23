@@ -98,7 +98,7 @@ APP_TARGET_DIR="${CARGO_TARGET_DIR:-$APP_SRC_DIR/src-tauri/target}/release"
 # Download-mode state; all empty when building from source.
 TARGET=""          # the release target triple this machine runs
 BIN_ASSET=""       # the tarball with ariadne + ariadned
-APP_ASSET=""       # the desktop bundle (.app.tar.gz on macOS, .AppImage on Linux)
+APP_ASSET=""       # the desktop archive (.app.tar.gz on macOS, .tar.gz on Linux)
 RELEASE_REPO=""    # owner/repo the release and its attestations come from
 RESOLVED_TAG=""    # the tag actually installed, once gh has told us
 STAGE_DIR=""       # scratch directory the assets are downloaded into
@@ -169,7 +169,7 @@ clear_quarantine() {
 }
 
 # Put a built or downloaded desktop bundle in place, setting APP_PATH to where
-# it landed: the .app in /Applications on macOS, the AppImage (or plain binary)
+# it landed: the .app in /Applications on macOS, the plain binary
 # as $PREFIX/ariadne-desktop on Linux.
 install_app_bundle() {
     local bundle="$1"
@@ -197,26 +197,11 @@ install_app_bundle() {
     esac
 }
 
-# Extracts the icon bundled in an AppImage into $2. --appimage-extract needs
-# no FUSE, unlike running the AppImage itself. Best-effort: returns 1 and
-# copies nothing if extraction fails or no icon is found inside.
-extract_appimage_icon() {
-    local appimage="$1" dest="$2" extract_root icon
-    extract_root="$(mktemp -d "${TMPDIR:-/tmp}/ariadne-appimage-icon.XXXXXX")"
-    if ! ( cd "$extract_root" && run_logged "$appimage" --appimage-extract ); then
-        rm -rf "$extract_root"
-        return 1
-    fi
-    # A missing squashfs-root (an AppImage runtime that behaves unexpectedly)
-    # would make `find` fail; every step here is best-effort, so none of it
-    # is allowed to take the installer down with it.
-    icon="$(find "$extract_root/squashfs-root" -maxdepth 1 -name '*.png' -print -quit 2>/dev/null)" || true
-    if [ -z "$icon" ]; then
-        icon="$(find "$extract_root/squashfs-root/usr/share/icons" -name '*.png' -print -quit 2>/dev/null)" || true
-    fi
-    [ -n "$icon" ] && { cp "$icon" "$dest" || true; }
-    rm -rf "$extract_root"
-    [ -n "$icon" ] && [ -f "$dest" ]
+# The Linux binary uses the host's WebKitGTK. User PATHs may omit sbin.
+has_webkitgtk() {
+    local ldconfig_bin
+    ldconfig_bin="$(command -v ldconfig)" || ldconfig_bin="/sbin/ldconfig"
+    "$ldconfig_bin" -p 2>/dev/null | grep -F 'libwebkit2gtk-4.1.so.0 ' > /dev/null
 }
 
 # The "<width>x<height>" a PNG's own header reports, for picking its hicolor
@@ -287,7 +272,7 @@ if [ "$BUILD_FROM_SOURCE" = 0 ]; then
     BIN_ASSET="ariadne-$TARGET.tar.gz"
     case "$OS" in
         Darwin) APP_ASSET="ariadne-desktop-$TARGET.app.tar.gz" ;;
-        *) APP_ASSET="ariadne-desktop-$TARGET.AppImage" ;;
+        *) APP_ASSET="ariadne-desktop-$TARGET.tar.gz" ;;
     esac
     if [ -n "$RELEASE_TAG" ]; then
         RELEASE_DESC="release $RELEASE_TAG"
@@ -336,6 +321,13 @@ fi
 
 ui_log_init "$LOG_FILE"
 
+# Check before downloading the app too: a missing runtime must not stop the
+# CLI, daemon or completions from installing when no desktop asset is needed.
+APP_SKIP_REASON=""
+if [ "$WITH_UI" = 1 ] && [ "$OS" = Linux ] && ! has_webkitgtk; then
+    APP_SKIP_REASON="libwebkit2gtk-4.1.so.0 not found"
+fi
+
 # --- previous install (for cross-prefix idempotency) --------------------------
 OLD_PREFIX=""
 if [ -f "$ARIADNE_MANIFEST" ]; then
@@ -375,7 +367,7 @@ else
     run_logged gh release download "$RESOLVED_TAG" --repo "$RELEASE_REPO" \
         --dir "$STAGE_DIR" --pattern "$BIN_ASSET" \
         || ui_die "$RESOLVED_TAG has no $BIN_ASSET - use --build-from-source"
-    if [ "$WITH_UI" = 1 ]; then
+    if [ "$WITH_UI" = 1 ] && [ -z "$APP_SKIP_REASON" ]; then
         run_logged gh release download "$RESOLVED_TAG" --repo "$RELEASE_REPO" \
             --dir "$STAGE_DIR" --pattern "$APP_ASSET" \
             || ui_die "$RESOLVED_TAG has no $APP_ASSET (--no-ui installs the CLI and daemon only)"
@@ -427,7 +419,11 @@ fi
 APP_PATH=""
 APP_STATE="not installed (--no-ui)"
 ARIADNE_DESKTOP_ICON=""
-if [ "$WITH_UI" = 1 ] && [ "$BUILD_FROM_SOURCE" = 0 ]; then
+if [ -n "$APP_SKIP_REASON" ]; then
+    step_begin
+    APP_STATE="skipped - $APP_SKIP_REASON"
+    step_skip "$APP_SKIP_REASON - install with apt install libwebkit2gtk-4.1-0, dnf install webkit2gtk4.1, or pacman -S webkit2gtk-4.1; re-run the installer"
+elif [ "$WITH_UI" = 1 ] && [ "$BUILD_FROM_SOURCE" = 0 ]; then
     step_begin
     case "$OS" in
         Darwin)
@@ -440,7 +436,12 @@ if [ "$WITH_UI" = 1 ] && [ "$BUILD_FROM_SOURCE" = 0 ]; then
             ;;
         # Any other OS died in detect_target long before this; install_app_bundle
         # is the one place that refuses it, here and in the build branch below.
-        *) APP_BUNDLE="$STAGE_DIR/$APP_ASSET" ;;
+        *)
+            run_logged tar -xzf "$STAGE_DIR/$APP_ASSET" -C "$STAGE_DIR" \
+                || ui_die "could not unpack $APP_ASSET"
+            APP_BUNDLE="$STAGE_DIR/ariadne-desktop"
+            [ -f "$APP_BUNDLE" ] || ui_die "$APP_ASSET holds no ariadne-desktop"
+            ;;
     esac
     install_app_bundle "$APP_BUNDLE"
     clear_quarantine "$APP_PATH"
@@ -464,6 +465,7 @@ elif [ "$WITH_UI" = 1 ]; then
         # about half the time on macOS 26.
         case "$OS" in
             Darwin) app_npm run tauri build -- --bundles app ;;
+            Linux) app_npm run tauri build -- --no-bundle ;;
             *) app_npm run tauri build ;;
         esac || ui_die "npm run tauri build failed (--no-ui skips the app)"
 
@@ -473,19 +475,17 @@ elif [ "$WITH_UI" = 1 ]; then
                 [ -d "$APP_BUNDLE" ] || ui_die "the build produced no $APP_NAME.app"
                 ;;
             Linux)
-                # The AppImage when its tooling produced one; the plain
-                # binary otherwise, named after the crate - or after
+                # The plain binary, named after the crate - or after
                 # productName, depending on the Tauri version, so try both.
                 APP_BUNDLE=""
-                for _candidate in "$APP_TARGET_DIR/bundle/appimage/"*.AppImage \
-                                  "$APP_TARGET_DIR/ariadne-ui" \
+                for _candidate in "$APP_TARGET_DIR/ariadne-ui" \
                                   "$APP_TARGET_DIR/$APP_NAME"; do
                     if [ -f "$_candidate" ]; then
                         APP_BUNDLE="$_candidate"
                         break
                     fi
                 done
-                [ -n "$APP_BUNDLE" ] || ui_die "the build produced no AppImage and no binary"
+                [ -n "$APP_BUNDLE" ] || ui_die "the build produced no desktop binary"
                 ;;
             *) APP_BUNDLE="" ;;
         esac
@@ -509,23 +509,13 @@ if [ "$WITH_UI" = 1 ] && [ "$OS" = Linux ]; then
             OLD_DESKTOP_ICON="$(. "$ARIADNE_MANIFEST" && echo "${ARIADNE_DESKTOP_ICON:-}")"
         fi
 
-        ICON_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ariadne-icon.XXXXXX")"
-        ICON_SRC=""
-        case "$APP_BUNDLE" in
-            *.AppImage)
-                # $APP_PATH, not $APP_BUNDLE: install_app_bundle already made
-                # it executable (mode 755), which a freshly downloaded asset
-                # is not guaranteed to be.
-                extract_appimage_icon "$APP_PATH" "$ICON_TMP_DIR/icon.png" \
-                    && ICON_SRC="$ICON_TMP_DIR/icon.png"
-                ;;
-        esac
-        if [ -z "$ICON_SRC" ] && [ -f "$APP_SRC_DIR/src-tauri/icons/icon.png" ]; then
+        if [ "$BUILD_FROM_SOURCE" = 1 ]; then
             ICON_SRC="$APP_SRC_DIR/src-tauri/icons/icon.png"
+        else
+            ICON_SRC="$STAGE_DIR/icon.png"
         fi
 
         install_desktop_entry "$ICON_SRC"
-        rm -rf "$ICON_TMP_DIR"
 
         if [ -n "$OLD_DESKTOP_ICON" ] && [ "$OLD_DESKTOP_ICON" != "$ARIADNE_DESKTOP_ICON" ]; then
             rm -f "$OLD_DESKTOP_ICON"

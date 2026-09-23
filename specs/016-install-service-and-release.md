@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-09-21
+updated: 2026-09-23
 areas: [daemon, install, scripts, store]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251, 03f9c8b7]
 tests:
@@ -9,6 +9,7 @@ tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/tests/it/agents.rs
   - scripts/install.sh
+  - scripts/tests/install-linux.sh
   - .github/workflows/release-please.yml
 ---
 
@@ -29,10 +30,18 @@ Out: what the daemon does once running (009, 012).
 
 1. `scripts/install.sh` installs the binaries, registers the daemon as a user
    service (launchd on macOS, `systemd --user` on Linux), installs bash and zsh
-   completions, and installs the Ariadne Desktop app. On Linux it also registers the app with GNOME: a
+   completions, and installs the Ariadne Desktop app. On Linux, the installer
+   checks for `libwebkit2gtk-4.1.so.0` when the app is requested. If missing,
+   it skips only the app and GNOME registration, gives apt, dnf and pacman
+   install hints, and includes the reason in the summary. Linux releases
+   supply `ariadne-desktop-<target>.tar.gz`, verified before extraction.
+   Its root contains `ariadne-desktop` and `icon.png`. The installer installs
+   the binary as `$PREFIX/ariadne-desktop`, mode 755. Linux source builds
+   disable bundling and install the plain binary. On Linux it also registers
+   the installed app with GNOME: a
    `~/.local/share/applications/dev.ariadne.ui.desktop` entry and an icon
-   under `~/.local/share/icons/hicolor`, taken from the AppImage
-   (`--appimage-extract`, which needs no FUSE) or, for a source build, from
+   under `~/.local/share/icons/hicolor`, taken from the tarball's `icon.png`
+   or, for a source build, from
    `ui/src-tauri/icons/`. The entry names the window it belongs to
    (`StartupWMClass`, the installed app's own basename), without which the
    icon is right in the app grid and generic in the dash — the grid reads the
@@ -79,6 +88,11 @@ Out: what the daemon does once running (009, 012).
 
 ## Acceptance criteria
 
+- Linux release and source installs use the plain desktop binary and its icon.
+  Missing WebKitGTK skips only the app and GNOME registration. Extraction
+  requires attestation verification, and uninstall removes the desktop files
+  (`scripts/tests/install-linux.sh`: `release`, `source`, `missing`,
+  `source-missing`, `rejected`, `no-ui`).
 - A database from before the squash says which file to delete
   (`store.rs::a_database_from_before_the_squash_says_which_file_to_delete`).
 - The shipped skills are seeded into a fresh database, each on the text

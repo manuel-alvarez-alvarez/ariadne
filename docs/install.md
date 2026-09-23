@@ -98,8 +98,25 @@ checkout instead and needs neither `gh` nor a published release.
 
 ## The desktop app
 
+On Linux, install the WebKitGTK 4.1 runtime before running the installer:
+
+```sh
+sudo apt install libwebkit2gtk-4.1-0       # Debian / Ubuntu
+sudo dnf install webkit2gtk4.1            # Fedora
+sudo pacman -S webkit2gtk-4.1             # Arch Linux
+```
+
+The app uses the host's WebKitGTK libraries. If `libwebkit2gtk-4.1.so.0` is
+missing, the installer skips the app and GNOME registration. It still
+installs the CLI, daemon service, and completions. Install the runtime, then
+re-run the installer. This check also applies to `--build-from-source`;
+source builds still need the development dependencies.
+
 The app installs to `/Applications/Ariadne Desktop.app` on macOS
 (`~/Applications` when needed), and to `$PREFIX/ariadne-desktop` on Linux.
+Linux releases supply the binary and GNOME icon in
+`ariadne-desktop-<target>.tar.gz`. Source builds install the plain binary
+without a bundle and take the icon from `ui/src-tauri/icons/`.
 Its TCP connection is off by default; set `tcp_listen` in
 `~/.ariadne/config.toml` before connecting the app. See
 [Configuration](configuration.md).
