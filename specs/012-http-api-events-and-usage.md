@@ -209,11 +209,6 @@ and the ACP runtime that reports the agent events (021).
     reporter sent. The row is written and read back by one statement, which
     is all the lock that orders the ids covers: every live console chunk of
     every session waits behind that lock.
-25. The API serves no symbol index: the daemon indexes no repository, and the
-    stream carries no `knowledge_indexed` and no `knowledge_failed`. A
-    `config.toml` that still holds `knowledge_enabled` or `knowledge_workers`
-    stops the daemon, because the file is read strictly.
-
 ## Acceptance criteria
 
 - An HTTP mutation emits a fat event
@@ -352,8 +347,8 @@ and the ACP runtime that reports the agent events (021).
   `acp_terminal.rs::the_terminal_endpoint_is_in_the_openapi_document`,
   `doctor.rs::endpoint_is_in_the_openapi_document`,
   `models.rs::endpoint_is_in_the_openapi_document_with_nothing_to_filter_by`).
-- A `config.toml` that still names a knowledge key stops the daemon
-  (`config.rs::a_knowledge_key_stops_the_daemon`).
+- A `config.toml` that names an unknown key stops the daemon
+  (`config.rs::an_unknown_key_stops_the_daemon`).
 - ACP registry endpoints expose the cached result and refresh it on demand
   (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`,
   `::discovery_refreshes_on_demand`).

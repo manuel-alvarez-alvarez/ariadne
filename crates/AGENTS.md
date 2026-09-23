@@ -12,7 +12,6 @@ ariadne-api      REST DTOs / error shape (single source of truth for OpenAPI)
 ariadne-store    SQLite persistence (sqlx, one embedded init migration)
 ariadne-client   REST client (unix socket / TCP), used by CLI + MCP
 ariadne-console  the session console: transcript model, markdown, the inline pane and its loop
-ariadne-knowledge the knowledge base: language registry, tree-sitter parser, the SQLite symbol store
 ariadne-daemon   ariadned: axum API, scheduler, ACP runtime, agent registry, git managers
 ariadne-cli      ariadne: CLI, MCP server (`mcp serve`), `ariadne attach` over ariadne-console
 ```

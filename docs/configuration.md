@@ -54,11 +54,6 @@ ignored — so a `config.toml` naming `running_quiet_flag_secs` or
 long a session has reported nothing keeps its own timeline (a nudge at three
 minutes, the flag at ten, a relaunch at thirty) and takes neither key.
 
-`knowledge_enabled` and `knowledge_workers` go the same way: the knowledge
-base is gone, so a file that still names one stops the daemon. Drop the keys,
-and delete `<home>/knowledge.db` with its `-wal` and `-shm` files — the daemon
-writes none of them any more, and removes none of them either.
-
 ## Addressing another daemon
 
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve

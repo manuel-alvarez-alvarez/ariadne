@@ -134,14 +134,13 @@ mod tests {
         assert_eq!(config.permission_mode, PermissionMode::Auto);
     }
 
-    /// The knowledge base is gone, and its keys with it: a file that still
-    /// holds one stops the daemon rather than being ignored.
+    /// A key the daemon no longer has stops the daemon rather than being ignored.
     #[test]
-    fn a_knowledge_key_stops_the_daemon() {
-        let dir = home_with("knowledge_enabled = true\n");
+    fn an_unknown_key_stops_the_daemon() {
+        let dir = home_with("obsolete_option = true\n");
         let error = Config::load(Some(dir.path().join("home"))).unwrap_err();
         assert!(
-            format!("{error:#}").contains("knowledge_enabled"),
+            format!("{error:#}").contains("obsolete_option"),
             "and says which key it could not read: {error:#}"
         );
     }

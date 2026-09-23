@@ -108,8 +108,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     state one more rule, in their own words and place:
     run a check in the foreground and never poll a background one, and send
     its full output to a log file outside the worktree, so only the summary
-    and the failures reach the agent. No shipped skill names a knowledge
-    command or tool.
+    and the failures reach the agent.
     `coding` ends its search step when the agent can name each definition
     it changes and its callers, not when a tool named every file it opened.
 
@@ -171,9 +170,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`defaults.rs::checks_run_in_the_foreground_and_print_only_failures`).
 - `coding` ends its search step on what the agent knows
   (`::the_coding_search_step_ends_on_what_the_agent_knows`).
-- A skill document is written whole for its agent, and no shipped skill names
-  a removed knowledge command or tool
-  (`defaults.rs::a_shipped_skill_names_no_knowledge_command_or_tool`).
+- A skill document is written whole for its agent.
 - No shipped skill divides a task, and `coding` and `refactoring` each name
   one commit
   (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).

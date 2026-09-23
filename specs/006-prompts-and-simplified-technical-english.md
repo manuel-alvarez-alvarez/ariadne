@@ -163,9 +163,7 @@ they describe (003, 004, 005) — and what a skill is (017).
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).
 - The index adds one line per skill, and the path it names holds the document
   (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
-- Every shipped skill document is within its cap
-  (`defaults.rs::skill_size_caps_hold`), and no shipped skill names a removed
-  knowledge command or tool (`defaults.rs::a_shipped_skill_names_no_knowledge_command_or_tool`).
+- Every shipped skill document is within its cap (`defaults.rs::skill_size_caps_hold`).
 - Every session is told to load a deferred tool before it calls it
   (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
 

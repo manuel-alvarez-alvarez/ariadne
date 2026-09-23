@@ -1,8 +1,0 @@
-# The fixture config.
-name = "demo"
-
-[server]
-host = "localhost"
-
-[server.tls]
-enabled = true

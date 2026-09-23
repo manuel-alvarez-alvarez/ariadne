@@ -1703,7 +1703,7 @@ mod tests {
     /// repository's `merge_strategy` to say, and the procedure reaches the
     /// orchestrator as a value its briefing carries
     /// ([`default_spec_landing_prompt`]). A playbook that spelled out one of
-    /// the two landings would be a second copy of that knowledge, going stale
+    /// the two landings would be a second copy of those details, going stale
     /// on its own, and an orchestrator running it in the wrong repository.
     /// The orchestration skill is one of its texts, so it is read here too.
     #[test]
@@ -1851,33 +1851,6 @@ mod tests {
         assert!(
             doc.contains("Done when you can name each definition you change and its callers."),
             "{doc}"
-        );
-    }
-
-    /// No shipped skill document names a removed knowledge command or tool.
-    #[test]
-    fn a_shipped_skill_names_no_knowledge_command_or_tool() {
-        for skill in &BUILTIN_SKILLS {
-            for name in [
-                "search_code",
-                "repo_map",
-                "`outline",
-                "`symbol",
-                "`path`",
-                "`impact",
-                "ariadne knowledge",
-            ] {
-                assert!(
-                    !skill.document.contains(name),
-                    "the {} skill names {name}",
-                    skill.name
-                );
-            }
-        }
-        let coding = unwrapped(&skill_text(default_skill_document("coding").unwrap()));
-        assert!(
-            coding.contains("2. Read the code around the change."),
-            "{coding}"
         );
     }
 

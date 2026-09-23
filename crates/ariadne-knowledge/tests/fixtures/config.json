@@ -1,9 +1,0 @@
-{
-  "name": "demo",
-  "server": {
-    "host": "localhost",
-    "tls": {
-      "enabled": true
-    }
-  }
-}

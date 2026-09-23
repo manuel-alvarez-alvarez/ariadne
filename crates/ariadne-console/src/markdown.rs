@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn a_wide_table_keeps_short_columns_whole_and_wraps_long_cells_at_spaces() {
-        let task = "Knowledge screen and Repositories graph with a sidebar entry and pickers";
+        let task = "Repositories graph with a sidebar entry and pickers";
         let source =
             format!("| # | Task | Depends on |\n| --- | --- | --- |\n| A | {task} | B, E |");
         let lines = render(&source, 40);
