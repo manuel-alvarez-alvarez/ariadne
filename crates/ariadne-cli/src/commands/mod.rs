@@ -12,7 +12,6 @@ pub(crate) mod events;
 pub(crate) mod fixtures;
 pub(crate) mod follow;
 pub(crate) mod goal;
-pub(crate) mod knowledge;
 pub(crate) mod mcp;
 pub(crate) mod models;
 pub(crate) mod repo;

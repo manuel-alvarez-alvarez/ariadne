@@ -166,45 +166,9 @@ async fn an_orchestrator_session_indexes_the_orchestration_skill() {
     // And the path the line names is the document, not a promise.
     assert_eq!(
         std::fs::read_to_string(&document).expect("the document on disk"),
-        skill_text(default_skill_document(ORCHESTRATION_SKILL).unwrap(), true),
+        skill_text(default_skill_document(ORCHESTRATION_SKILL).unwrap()),
         "the shipped playbook, written whole for the agent to open"
     );
-}
-
-/// A daemon with the knowledge base off writes each skill as its text for
-/// that setting: the playbook on disk names no knowledge tool and no
-/// `ariadne knowledge` command, since the session is listed none of them.
-#[tokio::test]
-async fn a_daemon_with_the_knowledge_base_off_writes_skills_without_the_knowledge_tools() {
-    let agent_dir = tempfile::tempdir().unwrap();
-    let stub = common::acp::stub_acp_agent(agent_dir.path(), common::acp::script());
-    let home = common::acp::registry_home(&stub);
-    let config = std::fs::read_to_string(home.join("config.toml")).unwrap();
-    std::fs::write(
-        home.join("config.toml"),
-        format!("knowledge_enabled = false\n{config}"),
-    )
-    .unwrap();
-    let h = harness().home(home).await;
-    assert!(!h.launcher.cfg.knowledge_enabled);
-    let goal = h.planning_goal().await;
-
-    let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
-    let document = h
-        .launcher
-        .cfg
-        .run_dir
-        .join(&session.id)
-        .join("skills")
-        .join(ORCHESTRATION_SKILL)
-        .join("SKILL.md");
-    let written = std::fs::read_to_string(&document).expect("the document on disk");
-    for name in ["`repo_map`", "ariadne knowledge", "<!-- knowledge"] {
-        assert!(
-            !written.contains(name),
-            "the playbook names {name}: {written}"
-        );
-    }
 }
 
 /// The playbook is editable like any shipped skill, and an edit reaches the

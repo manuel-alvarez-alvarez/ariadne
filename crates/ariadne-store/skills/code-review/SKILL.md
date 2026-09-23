@@ -32,12 +32,6 @@ Judge two axes apart: repository conventions, and task acceptance.
    Done when each axis has a source or a recorded absence.
 4. Read the scoped diff and the code around it. Map each changed hunk to
    its purpose.
-<!-- knowledge on -->
-   Call a knowledge tool only for a question the diff leaves open:
-   - Callers of a changed signature: `impact`.
-   - Tests of a definition the diff does not test: `symbol --detail context`.
-   - A link between distant changed definitions: `path`.
-<!-- knowledge end -->
    Done when every hunk has a stated purpose.
 5. Record each build, test and lint result from its log. Read the log
    only for the detail of a failure. Do not run a check again before

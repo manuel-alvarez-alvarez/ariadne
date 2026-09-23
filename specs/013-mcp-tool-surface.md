@@ -36,9 +36,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    every seat alike (006). A client can defer the tools of a server: Claude
    Code lists only their names until the agent loads one with its tool
    search. So the rules tell every seat, in words that name no client, to
-   load the tools it needs in one tool search before the first call. The
-   rule that sends a seat to `search_code` and `symbol` before it reads a
-   file is there only while the knowledge base is on.
+   load the tools it needs in one tool search before the first call.
 3. Whether anyone answers a question is the one rule picked by seat: the
    orchestrator's user answers in the console, one question at a time, and the
    orchestrator then waits; an author or reviewer works alone, and asks only
@@ -65,29 +63,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      required there, since several reviews are open at once), `pick_winner`
      (the pick of spec 004: once per reviewer, only once every author is
      approved)
-   - **every seat**: `send_message`, `read_messages` — the channel
-     the agents talk to each other on (018); `search_code`, `outline`,
-     `symbol`, `path`, `impact`, `repo_map` — the
-     symbol index over the
-     repositories and the graph over it (022), listed and served only while
-     the daemon runs with `knowledge_enabled`, which every launch tells the
-     server in `ARIADNE_KNOWLEDGE_ENABLED`. `impact` with neither `symbol`
-     nor `diff` is the reviewer's own task diff, base branch to task branch,
-     and a refusal for any other seat. `repo_map` with no `repository` maps
-     every repository of the session's goal, each on a share of the budget
-     and under a heading of its own. `symbol`, `path` and `impact` head each
-     repository's hits with the repository's path, read from
-     `GET /v1/repositories` once per call, and put another repository's
-     hits — a caller across a route, a reference by name — under a heading
-     of that repository's own. A knowledge read the daemon refuses with
-     `knowledge_not_ready` — the ref has no index yet, its first index runs,
-     or its last run failed (022, rule 40) — is the tool's answer: the
-     daemon's sentence as it came, marked as an error, and never `No
-     results.`. Every other 4xx is wrong arguments carrying the daemon's
-     sentence, and a 5xx — a store or a git that failed — is an internal
-     error. `path` names every hub with more than 200 neighbors that its walk
-     did not expand, so an empty path is not an all-clear when a hub was
-     skipped.
 5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
@@ -158,33 +133,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::a_message_body_is_taken_as_message_too`).
 - Every permission mode the schema offers is one the tool takes
   (`tools.rs::a_task_takes_every_permission_mode_its_schema_offers`).
-- A ref that is not ready answers each of the six knowledge tools with the
-  daemon's refusal as the tool's text
-  (`tools.rs::a_ref_that_is_not_ready_answers_every_knowledge_tool_with_the_refusal`),
-  and a 5xx is an internal error, never wrong arguments
-  (`mcp.rs::a_5xx_reaches_the_agent_as_an_internal_error`,
-  `tools.rs::a_daemon_failure_of_a_knowledge_read_is_an_internal_error`).
-- Every seat is told to load a deferred tool before it calls it
-  (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
-- The knowledge tools are listed to every seat, and to none while the
-  knowledge base is off; then neither the instructions nor the text of a
-  compiled skill names one, or `ariadne knowledge`
-  (`mcp.rs::the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off`);
-  what each one sends and answers is spec 022's
-  (`tools.rs::search_code_asks_the_daemon_with_its_filters_and_answers_one_line_per_hit`,
-  `::outline_defaults_to_the_task_repository_and_lists_line_ranges`,
-  `::symbol_groups_its_answer_under_a_heading_for_each_repository`,
-  `::symbol_defaults_to_the_task_repository`,
-  `::path_answers_one_line_per_hop_and_says_when_none`,
-  `::impact_reads_the_task_diff_for_a_reviewer_that_names_nothing`,
-  `::impact_needs_a_symbol_or_a_diff_from_a_seat_that_is_no_reviewer`,
-  `::repo_map_maps_every_repository_of_the_goal_on_a_share_of_the_budget`,
-  `::repo_map_takes_one_repository_with_the_path_to_rank_around`).
-- A repository map may use its full 4000-token budget, and a transport cut
-  names files rather than results
-  (`tools.rs::repo_map_uses_its_full_budget_and_names_files_when_cut`).
-- The knowledge CLI distinguishes no changed definition from a definition with
-  no callers (`commands/knowledge.rs::impact_distinguishes_no_definition_from_no_callers`).
 - Diff parsing ignores added source lines that resemble headers and keeps
   quoted non-ASCII paths
   (`index.rs::changed_lines_reads_plus_source_lines_and_non_ascii_paths`).

@@ -11,17 +11,8 @@ test proves it. The task is one commit.
 ## Steps
 
 1. Read the task, its acceptance criteria and the spec it names.
-<!-- knowledge on -->
-2. Find the code before you read a file. Call `search_code` for a name,
-   `outline` for the shape of a file, `symbol` for one definition. Read a
-   file by the line range `symbol` gives. Call `impact` on a definition
-   whose signature you change. Call `path` only where the change crosses
-   several edges. Do not search with the shell for what `search_code` found.
-   Done when you can name each definition you change and its callers.
-<!-- knowledge off -->
 2. Read the code around the change. Match its style, naming and structure.
    Done when you can name each definition you change and its callers.
-<!-- knowledge end -->
 3. State your assumptions where you report the work.
    Done when each gap in the task has a named assumption.
 4. On a contradiction, ask the orchestrator over `send_message`. Name the

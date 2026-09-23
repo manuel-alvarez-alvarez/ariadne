@@ -34,10 +34,8 @@ they describe (003, 004, 005) — and what a skill is (017).
      prompt, whatever its seat: that Ariadne is reached only through its
      tools, that a client which defers tools loads the ones it needs in one
      tool search before the first call, whether a session works alone or
-     waits on the user, when it may ask anyway, that code is found with
-     `search_code` and `symbol` before a file is read (022) — only while the
-     knowledge base is on — how few turns to take, and the English to write
-     in (013);
+     waits on the user, when it may ask anyway, how few turns to take, and
+     the English to write in (013);
    - the **system prompt**, which states what a seat owes from its first read
      to the call that ends its turn, and then indexes the skills this agent
      was staffed with (017) — for the orchestrator, the one skill its seat
@@ -106,9 +104,7 @@ they describe (003, 004, 005) — and what a skill is (017).
     come down to what a rewrite fits in. Moving a cap is a decision argued in
     the test's own documentation, never a way round a failing assertion. The
     shipped skill documents are capped on their own scale, since a skill is
-    read once and on purpose rather than carried by every turn. A skill
-    document holds a text for the knowledge base on and one for it off
-    (017), and its cap holds the longer of the two.
+    read once and on purpose rather than carried by every turn.
 
 ## Acceptance criteria
 
@@ -167,14 +163,9 @@ they describe (003, 004, 005) — and what a skill is (017).
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).
 - The index adds one line per skill, and the path it names holds the document
   (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`).
-- Every shipped skill document is within its cap, with the knowledge base on
-  and off (`defaults.rs::skill_size_caps_hold`), and every skill that reads
-  code names the knowledge tool of its own step while the knowledge base is
-  on (`defaults.rs::every_skill_that_reads_code_names_the_knowledge_tools`).
-- With the knowledge base off, no skill text and no session rule names a
-  knowledge tool or `ariadne knowledge`
-  (`defaults.rs::a_skill_names_no_knowledge_tool_when_the_knowledge_base_is_off`,
-  `mcp.rs::the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off`).
+- Every shipped skill document is within its cap
+  (`defaults.rs::skill_size_caps_hold`), and no shipped skill names a removed
+  knowledge command or tool (`defaults.rs::a_shipped_skill_names_no_knowledge_command_or_tool`).
 - Every session is told to load a deferred tool before it calls it
   (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
 

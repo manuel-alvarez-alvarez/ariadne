@@ -240,8 +240,8 @@ pub struct KnowledgeImpactQuery {
 }
 
 impl KnowledgeImpactQuery {
-    pub const DEFAULT_DEPTH: i64 = 2;
-    pub const MAX_DEPTH: i64 = 4;
+    const DEFAULT_DEPTH: i64 = 2;
+    const MAX_DEPTH: i64 = 4;
 
     pub fn depth(&self) -> i64 {
         self.depth
@@ -293,8 +293,8 @@ pub struct KnowledgePathQuery {
 }
 
 impl KnowledgePathQuery {
-    pub const DEFAULT_DEPTH: i64 = 6;
-    pub const MAX_DEPTH: i64 = 10;
+    const DEFAULT_DEPTH: i64 = 6;
+    const MAX_DEPTH: i64 = 10;
 
     pub fn depth(&self) -> i64 {
         self.depth
@@ -343,8 +343,8 @@ pub struct KnowledgeMapQuery {
 }
 
 impl KnowledgeMapQuery {
-    pub const DEFAULT_BUDGET: i64 = 1000;
-    pub const MAX_BUDGET: i64 = 4000;
+    const DEFAULT_BUDGET: i64 = 1000;
+    const MAX_BUDGET: i64 = 4000;
 
     pub fn budget(&self) -> i64 {
         self.budget

@@ -160,46 +160,9 @@ pub fn skill_summary(document: &str) -> Option<&str> {
         .filter(|summary| !summary.is_empty())
 }
 
-/// The line that opens the text a skill reads only with the knowledge base on.
-const KNOWLEDGE_ON: &str = "<!-- knowledge on -->";
-/// The line that opens the text a skill reads only with the knowledge base off.
-const KNOWLEDGE_OFF: &str = "<!-- knowledge off -->";
-/// The line that closes either text.
-const KNOWLEDGE_END: &str = "<!-- knowledge end -->";
-
-/// The text of a skill `document` that an agent reads, with the knowledge
-/// base on or off.
-///
-/// One document holds both texts. A step that names a knowledge tool sits
-/// between `KNOWLEDGE_ON` and `KNOWLEDGE_OFF`, and the step that takes
-/// its place without the tools between `KNOWLEDGE_OFF` and
-/// `KNOWLEDGE_END`; either half can be empty. Each marker is a line of its
-/// own, and no text keeps one. A document with no marker, which is every
-/// skill a user wrote without them, reads the same either way.
-///
-/// The markers are HTML comments, so a Markdown view of the document shows
-/// neither of them.
-pub fn skill_text(document: &str, knowledge_enabled: bool) -> String {
-    #[derive(PartialEq)]
-    enum Part {
-        Both,
-        On,
-        Off,
-    }
-    let mut part = Part::Both;
-    let mut text = String::with_capacity(document.len());
-    for line in document.split_inclusive('\n') {
-        match line.trim() {
-            KNOWLEDGE_ON => part = Part::On,
-            KNOWLEDGE_OFF => part = Part::Off,
-            KNOWLEDGE_END => part = Part::Both,
-            _ if part == Part::Both || (part == Part::On) == knowledge_enabled => {
-                text.push_str(line)
-            }
-            _ => {}
-        }
-    }
-    text
+/// The text of a skill `document` that an agent reads.
+pub fn skill_text(document: &str) -> String {
+    document.to_string()
 }
 
 /// The system prompt an agent in `seat` is spawned with.
@@ -1880,100 +1843,21 @@ mod tests {
         }
     }
 
-    /// The knowledge base serves six tools to every seat (022), and a skill
-    /// that says nothing about them is a seat that grepped and read whole
-    /// files instead. With the knowledge base on, each skill that reads code
-    /// names the tool its own step needs, at that step:
-    ///
-    /// - `coding` finds code with `search_code`, `outline` and `symbol`, asks
-    ///   `impact` what a changed signature reaches, and asks `path` how
-    ///   definitions connect; it does not search with the shell for what
-    ///   `search_code` found, so a tool call replaces a shell call;
-    /// - `code-review` calls `impact`, `symbol --detail context` and `path`
-    ///   only for a question the diff leaves open, and reads the last
-    ///   verdict with `read_messages` and `all: true`;
-    /// - `refactoring` reads callers, tests and paths around what it moves;
-    /// - `orchestration` explores a goal with `repo_map`, and with
-    ///   `interactions` where the goal names several repositories.
-    ///
-    /// `debugging` names none: its tools came at step 4, after the agent had
-    /// found the code, and no agent called one there. The session rules
-    /// carry the one line that holds for every seat alike — find code before
-    /// you read a file — and the tool of a step is the skill's to name, the
-    /// way spec 006 holds every rule to one place.
-    #[test]
-    fn every_skill_that_reads_code_names_the_knowledge_tools() {
-        for (name, tools) in [
-            (
-                "coding",
-                &[
-                    "`search_code`",
-                    "`outline`",
-                    "`symbol`",
-                    "`path`",
-                    "`impact`",
-                    "Do not search with the shell for what `search_code` found.",
-                ][..],
-            ),
-            (
-                "code-review",
-                &[
-                    "Call a knowledge tool only for a question the diff leaves open",
-                    "`impact`",
-                    "`symbol --detail context`",
-                    "`path`",
-                    "`read_messages`",
-                    "`all: true`",
-                ][..],
-            ),
-            ("refactoring", &["`symbol --detail context`", "`path`"][..]),
-            // `interactions` is a CLI command and no tool, so the skill
-            // names it the way it is run.
-            (
-                "orchestration",
-                &["`repo_map`", "knowledge interactions"][..],
-            ),
-        ] {
-            let doc = unwrapped(&skill_text(default_skill_document(name).unwrap(), true));
-            for tool in tools {
-                assert!(doc.contains(tool), "the {name} skill does not name {tool}");
-            }
-        }
-    }
-
-    /// `coding` used to end its search step on "Done when a tool named every
-    /// file you opened". The agents then added knowledge calls to their
-    /// shell calls, and still searched with `rg`. The step ends on what the
-    /// agent knows now, and the two texts end it alike.
+    /// `coding` ends its search step on what the agent knows.
     #[test]
     fn the_coding_search_step_ends_on_what_the_agent_knows() {
-        for knowledge in [true, false] {
-            let doc = unwrapped(&skill_text(
-                default_skill_document("coding").unwrap(),
-                knowledge,
-            ));
-            assert!(
-                !doc.contains("a tool named every file"),
-                "{knowledge}: {doc}"
-            );
-            assert!(
-                doc.contains("Done when you can name each definition you change and its callers."),
-                "{knowledge}: {doc}"
-            );
-        }
+        let doc = unwrapped(&skill_text(default_skill_document("coding").unwrap()));
+        assert!(!doc.contains("a tool named every file"), "{doc}");
+        assert!(
+            doc.contains("Done when you can name each definition you change and its callers."),
+            "{doc}"
+        );
     }
 
-    /// With the knowledge base off, no text of a skill names a knowledge
-    /// tool or the `ariadne knowledge` command, and no text keeps a marker.
-    /// Each step that lost a tool still has its "Done when" line.
+    /// No shipped skill document names a removed knowledge command or tool.
     #[test]
-    fn a_skill_names_no_knowledge_tool_when_the_knowledge_base_is_off() {
+    fn a_shipped_skill_names_no_knowledge_command_or_tool() {
         for skill in &BUILTIN_SKILLS {
-            let off = skill_text(skill.document, false);
-            let on = skill_text(skill.document, true);
-            for text in [&off, &on] {
-                assert!(!text.contains("<!-- knowledge"), "{}: {text}", skill.name);
-            }
             for name in [
                 "search_code",
                 "repo_map",
@@ -1983,39 +1867,23 @@ mod tests {
                 "`impact",
                 "ariadne knowledge",
             ] {
-                assert!(!off.contains(name), "the {} skill names {name}", skill.name);
+                assert!(
+                    !skill.document.contains(name),
+                    "the {} skill names {name}",
+                    skill.name
+                );
             }
-            assert_eq!(
-                off.matches("Done when").count(),
-                on.matches("Done when").count(),
-                "the {} skill lost a \"Done when\" line with the tools",
-                skill.name
-            );
         }
-        let coding = unwrapped(&skill_text(
-            default_skill_document("coding").unwrap(),
-            false,
-        ));
+        let coding = unwrapped(&skill_text(default_skill_document("coding").unwrap()));
         assert!(
             coding.contains("2. Read the code around the change."),
             "{coding}"
         );
     }
 
-    /// A document with no marker reads the same with the knowledge base on
-    /// or off, and each marker takes its line with it.
     #[test]
-    fn a_skill_text_keeps_the_half_of_its_knowledge_setting() {
-        const DOCUMENT: &str = "1. Read.\n<!-- knowledge on -->\n2. Call `symbol`.\n<!-- knowledge off -->\n2. Read more.\n<!-- knowledge end -->\n3. Done.\n";
-        assert_eq!(
-            skill_text(DOCUMENT, true),
-            "1. Read.\n2. Call `symbol`.\n3. Done.\n"
-        );
-        assert_eq!(
-            skill_text(DOCUMENT, false),
-            "1. Read.\n2. Read more.\n3. Done.\n"
-        );
-        assert_eq!(skill_text("Ask twice.\n", false), "Ask twice.\n");
+    fn skill_text_returns_its_document() {
+        assert_eq!(skill_text("Ask twice.\n"), "Ask twice.\n");
     }
 
     /// A skill is read on demand rather than on every launch, so it is capped
@@ -2065,19 +1933,6 @@ mod tests {
     /// `cargo nextest` was the largest single waste a measurement of this
     /// week's sessions found, and the fix costs each of the four skills a
     /// paragraph.
-    ///
-    /// The knowledge tools then cost each skill that reads code the tool of
-    /// one step: `orchestration` rises from 3900 to 4100, `code-review` from
-    /// 4000 to 4300 and `debugging` from 3400 to 3500. `coding` and
-    /// `refactoring` hold their tiers. An agent that grepped a repository
-    /// and read whole files paid for every line it opened; a step that names
-    /// the tool it needs pays for the line range instead. Each of the five
-    /// names the tool at the step that uses it, and none of them explains
-    /// the tool — the tool's own description does that.
-    ///
-    /// A document then came to hold two texts, one for the knowledge base on
-    /// and one for it off ([`skill_text`]). An agent reads one of them, so a
-    /// cap holds the longer of the two, not the document with its markers.
     #[test]
     fn skill_size_caps_hold() {
         const TOTAL: usize = 39_000;
@@ -2087,19 +1942,13 @@ mod tests {
             // and the contract rule that keeps a frontend task and its
             // backend task off a false `depends_on`.
             ORCHESTRATION_SKILL => 4100,
-            "debugging" => 3500,
-            "code-review" => 4300,
+            "debugging" => 3400,
+            "code-review" => 4000,
             "coding" => 5400,
             _ => 2400,
         };
 
-        let read = |skill: &BuiltinSkill| {
-            [true, false]
-                .map(|knowledge| skill_text(skill.document, knowledge).len())
-                .into_iter()
-                .max()
-                .unwrap_or_default()
-        };
+        let read = |skill: &BuiltinSkill| skill_text(skill.document).len();
         for skill in &BUILTIN_SKILLS {
             println!("{:5}  {}", read(skill), skill.name);
         }

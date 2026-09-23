@@ -23,7 +23,6 @@ tests:
   - crates/ariadne-cli/src/commands/agent.rs
   - crates/ariadne-cli/src/commands/skill.rs
   - crates/ariadne-cli/src/commands/console.rs
-  - crates/ariadne-cli/src/commands/knowledge.rs
 ---
 
 # Command-line interface
@@ -45,7 +44,7 @@ same binary also serves (013).
 1. Every user-facing action exists both here and in the desktop app.
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
    `models`, `skill`, `repo`, `goal`, `task`, `session`, `events`,
-   `attention`, `knowledge`, `attach`, `doctor`, `completions`,
+   `attention`, `attach`, `doctor`, `completions`,
    plus the one hidden command the agents use (`mcp serve`). Nothing in the tree launches
    an agent or reports on one's behalf: the daemon's ACP runtime does both
    (021).
@@ -172,28 +171,6 @@ same binary also serves (013).
     permission answers. `--tail`, `--since` and repeatable `--kind` narrow the
     snapshot. Their `-f` forms follow the console stream and print agent chunks
     as they arrive, while JSON keeps the daemon's event objects unchanged.
-28. `ariadne knowledge status|reindex|search|outline|symbol|path|impact|interactions|map`
-    read the knowledge base (022). `status`, `reindex` and `interactions`
-    name a repository by id or path, `interactions` taking `--ref` too;
-    `search <query>` takes `--repository`, `--ref`, `--kind`, `--path` and
-    `--limit`; `outline <repo> <path>` takes `--ref`; `symbol <name>` takes
-    `--repository`, `--ref` and `--detail` (`outline`, `source` or
-    `context`, `outline` by default); `path <from> <to>` takes a required
-    `--repository`, `--ref` and `--depth`; `impact` takes a required
-    `--repository`, one of `--symbol` and `--diff`, `--ref` and `--depth`;
-    and `map <repo>` takes `--path`, the file to rank around, `--budget`,
-    how many tokens the map runs to, and `--ref`. `map` prints the one text
-    the daemon rendered, as it came.
-    `search`, `outline`, `path`, `impact` and `interactions` are listings like
-    every other, whose subject column is `title`, and whose `-q` prints the
-    location (`path:line`, `repository:path:line` for an interaction's from
-    end) or the line range, an impact row carrying how far away the caller
-    is and an interaction row its kind, its to end and its confidence.
-    `path`, `impact` and `interactions` answer the daemon's own objects under
-    `--format json`, and `impact` says what it stopped at in a note rather
-    than a row. `symbol` prints a block per definition, an end in another
-    repository led by that repository's id; `reindex` is a mutation whose
-    `-q` prints the repository id.
 30. `session inspect` shows a reported context window as `<used> / <size>`
     with the compact token spelling. It shows no context line when the agent
     has not reported one, and it never shows a cost.
@@ -346,22 +323,6 @@ same binary also serves (013).
   author is refused
   (`cli/tests.rs::adopt_takes_the_session_the_new_goal_and_the_task_flags`,
   `::adopt_takes_a_goal_or_a_new_goal_and_exactly_one`).
-- The knowledge commands are classified the same way, `search` takes its
-  filters, `outline` its repository and path, `symbol` its name and detail,
-  `path` its two names and depth, `impact` one of a symbol and a diff, and
-  `interactions` its repository and ref
-  (`cli/tests.rs::every_command_in_the_tree_is_classified`,
-  `::knowledge_search_takes_its_filters`,
-  `::knowledge_outline_takes_the_repository_and_the_path`,
-  `::knowledge_symbol_takes_its_name_and_detail`,
-  `::knowledge_path_takes_two_names_and_the_depth`,
-  `::knowledge_impact_takes_a_symbol_or_a_diff_and_the_depth`,
-  `::knowledge_interactions_takes_the_repository_and_the_ref`,
-  `::knowledge_map_takes_the_path_and_the_budget`), and a search
-  row, an impact row and an interaction row each lead with their location
-  (`commands/knowledge.rs::a_search_row_leads_with_its_location_and_titles_the_symbol`,
-  `::an_impact_row_leads_with_its_location_and_says_how_far_away_it_is`,
-  `::an_interaction_row_leads_with_its_from_end_and_names_its_kind`).
 - The console renders a stub-agent transcript and submits typed input, and
   its permission question submits the selected option
   (`commands/console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,

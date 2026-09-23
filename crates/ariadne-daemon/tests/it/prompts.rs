@@ -102,7 +102,6 @@ async fn a_spawned_author_is_briefed_from_the_builtin_template() {
         written,
         ariadne_store::defaults::skill_text(
             ariadne_store::defaults::default_skill_document("coding").unwrap(),
-            true,
         ),
         "the shipped document, written whole for the agent to open"
     );

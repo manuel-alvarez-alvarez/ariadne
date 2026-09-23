@@ -9,7 +9,6 @@ pub(crate) mod values;
 use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
-use crate::commands::knowledge::KnowledgeCommand;
 use crate::commands::models::ModelsCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
@@ -68,17 +67,6 @@ Examples:
   ariadne repo add ~/projects/ui --branch next
   ariadne repo ls
   ariadne repo update <repo-id> --branch main
-";
-
-const KNOWLEDGE_EXAMPLES: &str = "\
-Examples:
-  ariadne knowledge status ~/projects/api
-  ariadne knowledge search add_worktree --repository ~/projects/api
-  ariadne knowledge search Manager --kind class --path src/
-  ariadne knowledge outline ~/projects/api src/lib.rs
-  ariadne knowledge symbol add_worktree --detail context
-  ariadne knowledge impact --repository ~/projects/api --symbol add_worktree
-  ariadne knowledge reindex ~/projects/api
 ";
 
 const GOAL_EXAMPLES: &str = "\
@@ -341,17 +329,6 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
-    /// Search the code index
-    ///
-    /// The daemon indexes every registered repository: its definitions, by
-    /// name, with their line ranges, on the base branch and on every task
-    /// branch. These commands read that index, say where a repository's
-    /// index stands, and ask for it to be built again.
-    #[command(after_help = KNOWLEDGE_EXAMPLES)]
-    Knowledge {
-        #[command(subcommand)]
-        command: KnowledgeCommand,
-    },
     /// Manage goals
     ///
     /// A goal is a whole effort. An orchestrator agent breaks it into tasks
@@ -502,9 +479,6 @@ const LISTINGS: &[&str] = &[
     "agent ls",
     "attention",
     "goal ls",
-    "knowledge impact",
-    "knowledge outline",
-    "knowledge search",
     "models ls",
     "skill ls",
     "repo ls",
@@ -525,10 +499,6 @@ const QUIET_OUTPUT: &[&str] = &[
     "goal create",
     "goal ls",
     "goal rm",
-    "knowledge impact",
-    "knowledge outline",
-    "knowledge reindex",
-    "knowledge search",
     "models disable",
     "models enable",
     "models ls",

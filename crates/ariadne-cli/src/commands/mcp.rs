@@ -50,12 +50,6 @@ impl McpSeat {
                 "complete_goal",
                 "send_message",
                 "read_messages",
-                "search_code",
-                "outline",
-                "symbol",
-                "path",
-                "impact",
-                "repo_map",
             ],
             McpSeat::Author => &[
                 "get_task",
@@ -65,12 +59,6 @@ impl McpSeat {
                 "record_pull_request",
                 "send_message",
                 "read_messages",
-                "search_code",
-                "outline",
-                "symbol",
-                "path",
-                "impact",
-                "repo_map",
             ],
             McpSeat::Reviewer => &[
                 "get_task",
@@ -79,27 +67,10 @@ impl McpSeat {
                 "pick_winner",
                 "send_message",
                 "read_messages",
-                "search_code",
-                "outline",
-                "symbol",
-                "path",
-                "impact",
-                "repo_map",
             ],
         }
     }
 }
-
-/// The tools of the knowledge base (022): every seat has them, and none has
-/// them while the daemon runs with `knowledge_enabled = false`.
-const KNOWLEDGE_TOOLS: &[&str] = &[
-    "search_code",
-    "outline",
-    "symbol",
-    "path",
-    "impact",
-    "repo_map",
-];
 
 #[derive(Clone)]
 pub(crate) struct AriadneMcp {
@@ -108,9 +79,6 @@ pub(crate) struct AriadneMcp {
     session_id: String,
     goal_id: String,
     task_id: Option<String>,
-    /// What the daemon said at launch: off, the knowledge tools are neither
-    /// listed nor served.
-    knowledge_enabled: bool,
     tool_router: ToolRouter<Self>,
 }
 
@@ -130,20 +98,13 @@ impl AriadneMcp {
             session_id,
             goal_id: std::env::var("ARIADNE_GOAL_ID").context("ARIADNE_GOAL_ID not set")?,
             task_id: std::env::var("ARIADNE_TASK_ID").ok(),
-            // Only an explicit `false` turns them off: a launch that says
-            // nothing is one whose daemon serves them.
-            knowledge_enabled: std::env::var("ARIADNE_KNOWLEDGE_ENABLED")
-                .map(|value| value != "false")
-                .unwrap_or(true),
             tool_router: Self::tool_router(),
         })
     }
 
-    /// Whether this session may call `name`: its seat lists it, and it is
-    /// not a knowledge tool of a daemon whose knowledge base is off.
+    /// Whether this session may call `name`: its seat lists it.
     fn allows(&self, name: &str) -> bool {
         self.seat.tools().contains(&name)
-            && (self.knowledge_enabled || !KNOWLEDGE_TOOLS.contains(&name))
     }
 
     /// The tools this session is listed, which are the ones it may call.
@@ -187,86 +148,6 @@ impl AriadneMcp {
         body: &B,
     ) -> Result<serde_json::Value, McpError> {
         self.client.post_json(path, body).await.map_err(to_mcp_err)
-    }
-
-    /// Resolve the repository for an outline: the
-    /// task's, else the goal's only one, else a refusal that says to name it.
-    async fn repository(&self, named: Option<String>) -> Result<String, McpError> {
-        if let Some(repository_id) = named {
-            return Ok(repository_id);
-        }
-        if let Some(task_id) = &self.task_id {
-            let task: serde_json::Value = self.get(&format!("/v1/tasks/{task_id}")).await?;
-            return task["repo_id"]
-                .as_str()
-                .map(str::to_string)
-                .ok_or_else(|| McpError::internal_error("the task names no repository", None));
-        }
-        let goal: serde_json::Value = self.get(&format!("/v1/goals/{}", self.goal_id)).await?;
-        let repositories = goal["repos"]
-            .as_array()
-            .ok_or_else(|| McpError::internal_error("the goal names no repository list", None))?;
-        match repositories.as_slice() {
-            [repository] => repository["id"]
-                .as_str()
-                .map(str::to_string)
-                .ok_or_else(|| McpError::internal_error("the repository has no id", None)),
-            _ => Err(McpError::invalid_params(
-                "pass repository_id because this goal does not have one repository",
-                None,
-            )),
-        }
-    }
-
-    /// Every repository of this session's goal, which is what `repo_map`
-    /// reads when the call names none. A map is of one repository, and an
-    /// orchestrator exploring a goal wants each of them.
-    async fn goal_repositories(&self) -> Result<Vec<String>, McpError> {
-        let goal: serde_json::Value = self.get(&format!("/v1/goals/{}", self.goal_id)).await?;
-        let repositories: Vec<String> = goal["repos"]
-            .as_array()
-            .ok_or_else(|| McpError::internal_error("the goal names no repository list", None))?
-            .iter()
-            .filter_map(|repository| repository["id"].as_str().map(str::to_string))
-            .collect();
-        match repositories.is_empty() {
-            true => Err(McpError::invalid_params(
-                "pass repository because this goal names none",
-                None,
-            )),
-            false => Ok(repositories),
-        }
-    }
-
-    /// This task's repository, and the range of its own change: the base
-    /// branch to the task branch. What a reviewer reads when it asks for the
-    /// impact of the change it is judging.
-    async fn task_diff(&self) -> Result<(String, String), McpError> {
-        let Some(task_id) = &self.task_id else {
-            return Err(McpError::invalid_params(
-                "no task in scope: pass diff as `<base>..<head>`",
-                None,
-            ));
-        };
-        let task: serde_json::Value = self.get(&format!("/v1/tasks/{task_id}")).await?;
-        let (Some(repository_id), Some(branch)) =
-            (task["repo_id"].as_str(), task["branch"].as_str())
-        else {
-            return Err(McpError::internal_error(
-                "the task names no repository and no branch",
-                None,
-            ));
-        };
-        let repository: serde_json::Value = self
-            .get(&format!("/v1/repositories/{repository_id}"))
-            .await?;
-        let Some(base) = repository["base_branch"].as_str() else {
-            return Err(McpError::internal_error(
-                "the repository names no base branch",
-                None,
-            ));
-        };
-        Ok((repository_id.to_string(), format!("{base}..{branch}")))
     }
 }
 
@@ -337,12 +218,9 @@ fn ask_rule(seat: &McpSeat) -> &'static str {
 /// call it. An agent that was told to call a tool it never loaded did not
 /// call it, so the rules say to load a tool first. The words name no client:
 /// a client that defers nothing has nothing to load.
-///
-/// With the knowledge base off the knowledge tools are not listed, and no
-/// rule names one.
-fn session_rules(seat: &McpSeat, knowledge_enabled: bool) -> String {
+fn session_rules(seat: &McpSeat) -> String {
     format!(
-        r#"Reach Ariadne only through these tools. A backticked name is a tool. If your client defers these tools, load the ones you need in one tool search before the first call. {} {}Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
+        r#"Reach Ariadne only through these tools. A backticked name is a tool. If your client defers these tools, load the ones you need in one tool search before the first call. {} Run a check in the foreground. Never poll it with a no-op command. Never narrate progress. Take as few turns as you can.
 
 Write all text in ASD-STE100 Simplified Technical English (STE):
 - Write one instruction in one sentence.
@@ -356,11 +234,7 @@ STE holds for all you write:
 - task titles and descriptions
 - `request_review` summaries, verdicts and `fail_task` reasons
 - commit subjects and bodies, and pull request text"#,
-        ask_rule(seat),
-        match knowledge_enabled {
-            true => "Find code with `search_code` and `symbol` before you read a file. ",
-            false => "",
-        }
+        ask_rule(seat)
     )
 }
 
@@ -386,7 +260,7 @@ impl ServerHandler for AriadneMcp {
                 Some(task) => format!(", task {task}"),
                 None => String::new(),
             },
-            session_rules(&self.seat, self.knowledge_enabled)
+            session_rules(&self.seat)
         ));
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
@@ -450,7 +324,6 @@ pub(crate) mod tests {
             session_id: "01SESSION".into(),
             goal_id: "01GOAL".into(),
             task_id: Some("01TASK".into()),
-            knowledge_enabled: true,
             tool_router: AriadneMcp::tool_router(),
         }
     }
@@ -483,12 +356,6 @@ pub(crate) mod tests {
                     "complete_goal",
                     "send_message",
                     "read_messages",
-                    "search_code",
-                    "outline",
-                    "symbol",
-                    "path",
-                    "impact",
-                    "repo_map",
                 ][..],
             ),
             (
@@ -501,12 +368,6 @@ pub(crate) mod tests {
                     "record_pull_request",
                     "send_message",
                     "read_messages",
-                    "search_code",
-                    "outline",
-                    "symbol",
-                    "path",
-                    "impact",
-                    "repo_map",
                 ][..],
             ),
             (
@@ -518,12 +379,6 @@ pub(crate) mod tests {
                     "pick_winner",
                     "send_message",
                     "read_messages",
-                    "search_code",
-                    "outline",
-                    "symbol",
-                    "path",
-                    "impact",
-                    "repo_map",
                 ][..],
             ),
         ] {
@@ -541,22 +396,16 @@ pub(crate) mod tests {
             "finish_task",
             "get_diff",
             "get_task",
-            "impact",
             "list_models",
             "list_skills",
             "list_tasks",
-            "outline",
-            "path",
             "pick_winner",
             "read_messages",
             "record_pull_request",
-            "repo_map",
             "request_review",
             "retry_task",
-            "search_code",
             "send_message",
             "submit_verdict",
-            "symbol",
             "update_task",
         ];
         assert_eq!(distinct_tools(), EVERY_TOOL);
@@ -578,77 +427,8 @@ pub(crate) mod tests {
         tools
     }
 
-    /// With the knowledge base off, no seat is listed a knowledge tool, and a
-    /// call to one is refused by name; every other tool of the seat stays.
-    /// No text an agent gets names one either: not the instructions, and not
-    /// the text of a compiled skill, which the launcher writes for the same
-    /// setting. A text that named a tool nothing serves would send the agent
-    /// after it.
-    #[test]
-    fn the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off() {
-        for seat in SEATS {
-            let mut mcp = server_at(
-                seat.clone(),
-                Client::resolve(Some("http://127.0.0.1:1"), None),
-            );
-            let listed = |mcp: &AriadneMcp| -> Vec<String> {
-                mcp.listed_tools()
-                    .into_iter()
-                    .map(|t| t.name.to_string())
-                    .collect()
-            };
-            let with: Vec<String> = listed(&mcp);
-            assert!(
-                with.iter().any(|t| t == "search_code"),
-                "{seat:?}: {with:?}"
-            );
-            assert!(with.iter().any(|t| t == "outline"), "{seat:?}: {with:?}");
-
-            mcp.knowledge_enabled = false;
-            let without = listed(&mcp);
-            for tool in KNOWLEDGE_TOOLS {
-                assert!(!without.iter().any(|t| t == tool), "{seat:?}: {without:?}");
-                assert!(!mcp.allows(tool), "{seat:?} may still call {tool}");
-            }
-            let rest: Vec<&String> = with
-                .iter()
-                .filter(|t| !KNOWLEDGE_TOOLS.contains(&t.as_str()))
-                .collect();
-            assert_eq!(without.iter().collect::<Vec<_>>(), rest, "{seat:?}");
-
-            let instructions = mcp.get_info().instructions.expect("instructions");
-            assert_eq!(
-                knowledge_name(&instructions),
-                None,
-                "{seat:?}: {instructions}"
-            );
-        }
-        for skill in &ariadne_store::defaults::BUILTIN_SKILLS {
-            let off = ariadne_store::defaults::skill_text(skill.document, false);
-            assert_eq!(
-                knowledge_name(&off),
-                None,
-                "the {} skill: {off}",
-                skill.name
-            );
-        }
-    }
-
-    /// The first knowledge tool or `ariadne knowledge` command that `text`
-    /// names. A tool is matched as a tool is written in a text an agent
-    /// reads, in backticks, so the word "path" in a sentence is no match.
-    fn knowledge_name(text: &str) -> Option<String> {
-        KNOWLEDGE_TOOLS
-            .iter()
-            .flat_map(|tool| [format!("`{tool}`"), format!("`{tool} ")])
-            .chain(["ariadne knowledge".to_string()])
-            .find(|name| text.contains(name.as_str()))
-    }
-
     /// A client that defers MCP tools lists only their names, and a tool the
-    /// agent did not load is a tool it cannot call. With the knowledge base
-    /// on, every seat is told to load the tools it needs before the first
-    /// call, and the knowledge tools are still named for it to load.
+    /// agent did not load is a tool it cannot call.
     #[test]
     fn every_session_is_told_to_load_a_deferred_tool_before_it_calls_it() {
         for seat in SEATS {
@@ -662,10 +442,6 @@ pub(crate) mod tests {
                     "If your client defers these tools, load the ones you need \
                      in one tool search before the first call."
                 ),
-                "{seat:?}: {instructions}"
-            );
-            assert!(
-                knowledge_name(&instructions).is_some(),
                 "{seat:?}: {instructions}"
             );
         }
@@ -700,7 +476,6 @@ pub(crate) mod tests {
             let instructions = mcp.get_info().instructions.expect("instructions");
             for rule in [
                 "Reach Ariadne only through these tools",
-                "Find code with `search_code` and `symbol` before you read a file",
                 "as few turns as you can",
                 "Write all text in ASD-STE100 Simplified Technical English",
                 "Write no more than 20 words in a sentence",
@@ -787,13 +562,6 @@ pub(crate) mod tests {
     /// only an author or a reviewer runs a check, because it is the one
     /// place all three are told the same thing at once.
     ///
-    /// The cap rises to 850 for one more rule of the same shape: find code
-    /// with `search_code` and `symbol` before you read a file. The knowledge
-    /// tools are served to every seat (022), and a seat that reads a file it
-    /// could have asked for by name pays for the whole file. Each skill
-    /// names the tool its own step needs; this is the one line that holds
-    /// wherever a seat reaches for a file.
-    ///
     /// The cap rises to 1000 for the load rule: load a deferred tool before
     /// the first call. Claude Code defers MCP tools, and an agent that was
     /// told to call a tool it never loaded did not call it. The rule holds
@@ -803,7 +571,7 @@ pub(crate) mod tests {
     fn the_shared_rules_stay_small() {
         const CAP: usize = 1000;
         for seat in SEATS {
-            let rules = session_rules(&seat, true);
+            let rules = session_rules(&seat);
             assert!(
                 rules.len() <= CAP,
                 "the {seat:?} session rules are {} characters, over their {CAP}",
@@ -829,12 +597,10 @@ pub(crate) mod tests {
 
         let mut texts = Vec::new();
         for seat in SEATS {
-            for knowledge in [true, false] {
-                texts.push((
-                    format!("the {} session rules", seat.as_str()),
-                    session_rules(&seat, knowledge),
-                ));
-            }
+            texts.push((
+                format!("the {} session rules", seat.as_str()),
+                session_rules(&seat),
+            ));
             let mcp = server_at(
                 seat.clone(),
                 Client::resolve(Some("http://127.0.0.1:1"), None),
@@ -942,29 +708,6 @@ pub(crate) mod tests {
         answer: &'static str,
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
         recording_daemon_with_answers("200 OK", vec![answer.to_string()], true).await
-    }
-
-    /// The same daemon, refusing every call with one status line and one
-    /// error envelope.
-    pub(crate) async fn refusing_daemon(
-        status: &'static str,
-        code: &str,
-        message: &str,
-    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
-        let envelope = serde_json::json!({"error": {"code": code, "message": message}});
-        recording_daemon_with_answers(status, vec![envelope.to_string()], true).await
-    }
-
-    /// The same daemon, with one answer per request in order.
-    pub(crate) async fn recording_daemon_answering_in_order(
-        answers: &[&str],
-    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
-        recording_daemon_with_answers(
-            "200 OK",
-            answers.iter().map(|answer| answer.to_string()).collect(),
-            false,
-        )
-        .await
     }
 
     async fn recording_daemon_with_answers(

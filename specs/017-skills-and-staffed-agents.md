@@ -108,29 +108,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
     state one more rule, in their own words and place:
     run a check in the foreground and never poll a background one, and send
     its full output to a log file outside the worktree, so only the summary
-    and the failures reach the agent. Every skill that reads code names the
-    knowledge tool of its own step (022): `coding` finds code with
-    `search_code`, `outline` and `symbol` before it opens a file, asks
-    `impact` what a changed signature reaches, and does not search with the
-    shell for what `search_code` found; `code-review` calls `impact`,
-    `symbol --detail context` and `path` only for a question the diff leaves
-    open; `refactoring` reads the callers and the tests of what it moves;
-    and `orchestration` explores a goal with `repo_map` and, where the goal
-    names several repositories, with `ariadne knowledge interactions`.
-    `debugging` names none: its tools came after the agent had found the
-    code, and the session rule to find code first already holds for it.
+    and the failures reach the agent. No shipped skill names a knowledge
+    command or tool.
     `coding` ends its search step when the agent can name each definition
     it changes and its callers, not when a tool named every file it opened.
 
-    One skill document holds two texts: one for the knowledge base on, and
-    one for it off. A line `<!-- knowledge on -->` opens the text of the
-    knowledge base on, `<!-- knowledge off -->` the text that replaces it,
-    and `<!-- knowledge end -->` closes either one. The launcher writes each
-    skill as the text for the daemon's `knowledge_enabled`, without the
-    marker lines. With the knowledge base off, no text names a knowledge
-    tool or `ariadne knowledge`. A document with no marker, which is every
-    skill a user wrote without them, reads the same either way. The size
-    cap holds the longer of the two texts.
+    A skill document holds one text. The launcher writes that whole text to
+    disk for the agent to read.
 12. The orchestrator staffs each task: it names the skills of each agent and
     the model each runs on (011), may size the effort beside it, and may add
     a brief that the task itself does not carry. How the task ends is agreed
@@ -185,20 +169,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
   foreground and send its output to a log file outside the worktree, rather
   than poll a background run
   (`defaults.rs::checks_run_in_the_foreground_and_print_only_failures`).
-- `coding`, `code-review`, `refactoring` and `orchestration` each name the
-  knowledge tool of the step that needs it while the knowledge base is on
-  (`defaults.rs::every_skill_that_reads_code_names_the_knowledge_tools`), and
-  `coding` ends its search step on what the agent knows
+- `coding` ends its search step on what the agent knows
   (`::the_coding_search_step_ends_on_what_the_agent_knows`).
-- A skill document gives the text of its knowledge setting, and a document
-  with no marker gives the same text either way
-  (`defaults.rs::a_skill_text_keeps_the_half_of_its_knowledge_setting`); with
-  the knowledge base off no skill names a knowledge tool
-  (`::a_skill_names_no_knowledge_tool_when_the_knowledge_base_is_off`,
-  `mcp.rs::the_knowledge_tools_are_not_listed_when_the_knowledge_base_is_off`),
-  and the launcher writes the text of the daemon's setting
-  (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`,
-  `skill_documents.rs::a_daemon_with_the_knowledge_base_off_writes_skills_without_the_knowledge_tools`).
+- A skill document is written whole for its agent, and no shipped skill names
+  a removed knowledge command or tool
+  (`defaults.rs::a_shipped_skill_names_no_knowledge_command_or_tool`).
 - No shipped skill divides a task, and `coding` and `refactoring` each name
   one commit
   (`defaults.rs::a_task_is_one_commit_and_a_review_answer_is_one_more`).

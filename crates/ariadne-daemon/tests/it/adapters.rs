@@ -23,7 +23,6 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
         model: "test-model".into(),
         effort: None,
         extra_flags,
-        knowledge_enabled: true,
     }
 }
 
@@ -118,7 +117,6 @@ fn every_launch_carries_the_session_context() {
     assert_eq!(env["ARIADNE_TASK_ID"], "01taskxxxxxxxxxxxxxxxxxxxx");
     assert_eq!(env["ARIADNE_SEAT"], "author");
     assert_eq!(env["ARIADNE_SOCKET"], "/tmp/ariadne.sock");
-    assert_eq!(env["ARIADNE_KNOWLEDGE_ENABLED"], "true");
 
     let mcp: Vec<(String, String)> = plan.config.mcp_servers[0]
         .env
@@ -129,20 +127,6 @@ fn every_launch_carries_the_session_context() {
         "ARIADNE_SESSION_ID".into(),
         "01sessionxxxxxxxxxxxxxxxxx".into()
     )));
-}
-
-/// A daemon with the knowledge base off tells every session so, which is how
-/// its MCP server knows to list neither knowledge tool.
-#[test]
-fn a_launch_says_when_the_knowledge_base_is_off() {
-    let dir = tempfile::tempdir().unwrap();
-    let ctx = SpawnCtx {
-        knowledge_enabled: false,
-        ..ctx_with_flags(dir.path().into(), vec![])
-    };
-    let plan = plan_spawn(&ctx).unwrap();
-    let env: std::collections::HashMap<_, _> = plan.env.into_iter().collect();
-    assert_eq!(env["ARIADNE_KNOWLEDGE_ENABLED"], "false");
 }
 
 /// The configured flags reach the launch once, spawn and resume alike, and
