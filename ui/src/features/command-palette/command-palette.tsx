@@ -38,7 +38,6 @@ import {
   RadioTowerIcon,
   RefreshCwIcon,
   ScrollTextIcon,
-  SearchCodeIcon,
   SettingsIcon,
   SunIcon,
   TargetIcon,
@@ -226,14 +225,6 @@ export function CommandPalette({
                   </CommandShortcut>
                 </CommandItem>
               ) : null}
-              <CommandItem
-                value="Find symbol"
-                keywords={["knowledge", "code", "definition"]}
-                onSelect={() => run(() => void navigate(`${paths.knowledge()}?tab=symbols`))}
-              >
-                <SearchCodeIcon />
-                Find symbol
-              </CommandItem>
               <CommandItem
                 value="Open daemon logs"
                 keywords={["ariadned", "stderr", "diagnostics", "trace"]}

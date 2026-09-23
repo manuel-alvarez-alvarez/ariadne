@@ -127,23 +127,10 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
     }
     case "knowledge_indexed":
     case "knowledge_failed": {
-      // An index run changes every read the knowledge screen makes of the
-      // repository, and each read has a key of its own: status, interactions,
-      // impact and path walks, file graphs, outlines, symbol searches and
-      // symbol definitions. Search and symbol reads must be here too: a search
-      // made while the index was empty holds "no match" until it is refetched.
-      const { repository_id } = event.data
-      for (const queryKey of [
-        qk.repositories.knowledgeStatus(repository_id),
-        qk.repositories.knowledgeSearchAll(repository_id),
-        qk.repositories.knowledgeSymbolAll(repository_id),
-        qk.repositories.knowledgeInteractionsAll(repository_id),
-        qk.repositories.knowledgeWalksAll(repository_id),
-        qk.repositories.knowledgeGraphAll(repository_id),
-        qk.repositories.knowledgeOutlineAll(repository_id),
-      ]) {
-        void queryClient.invalidateQueries({ queryKey })
-      }
+      // Nothing reads a knowledge base any more: the screen and its query keys
+      // are gone, so this invalidates nothing. The case stays until T3 takes
+      // the two kinds out of the daemon and regenerates `schema.d.ts`; until
+      // then the app takes them and does nothing, rather than warning.
       break
     }
     default: {

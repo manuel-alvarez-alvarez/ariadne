@@ -6,8 +6,7 @@
  * variable where it is used: the theme is a set of colour values, read off
  * the document when the pane opens and again when the app's theme changes.
  * The tokens are `oklch()`, which xterm.js parses only through a canvas the
- * test runner does not have, so they are converted to hex
- * (`@/lib/tokens.ts`, which the knowledge graph reads its colours through too).
+ * test runner does not have, so they are converted to hex (`@/lib/tokens.ts`).
  *
  * The console draws with the six named colours a terminal has — red, green,
  * yellow, blue, magenta, cyan — and each maps onto the step of the status

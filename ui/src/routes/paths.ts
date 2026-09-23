@@ -57,12 +57,6 @@ export const paths = {
   agents: () => "/agents",
   repositories: () => "/repositories",
   /**
-   * What the knowledge base holds for every repository (022), opened on one
-   * repository's pick when given: see `features/knowledge/knowledge-screen.tsx`.
-   */
-  knowledge: (repositoryId?: string) =>
-    repositoryId ? `/knowledge?repository=${repositoryId}` : "/knowledge",
-  /**
    * The goals board with this goal's panel open on one of its sessions.
    *
    * The only way to show an orchestrator session, which belongs to no task: the goal

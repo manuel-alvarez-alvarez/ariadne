@@ -7,18 +7,12 @@
 
 import { screen } from "@testing-library/react"
 import { RouterProvider } from "react-router-dom"
-import { expect, it, vi } from "vitest"
+import { expect, it } from "vitest"
 
 import { stubEventSource } from "@/test/event-source"
 import { renderScreen } from "@/test/harness"
 
 import { router } from "./router"
-
-// jsdom has no WebGL, and sigma.js reads `WebGLRenderingContext` as its module
-// loads: the graph is drawn by the stand-in in `@/test/sigma-canvas.tsx`. It is
-// mocked here, in the files that draw a graph, and not in `@/test/setup`: a
-// mock in the setup file slows every test file in the suite.
-vi.mock("@/features/knowledge/graph/sigma-canvas", () => import("@/test/sigma-canvas"))
 
 async function open(hash: string) {
   stubEventSource()
@@ -26,14 +20,14 @@ async function open(hash: string) {
   renderScreen(<RouterProvider router={router} />, { route: null })
 }
 
-it("mounts the knowledge screen at #/knowledge", async () => {
-  await open("/knowledge")
+it("mounts the repositories screen at #/repositories", async () => {
+  await open("/repositories")
 
-  expect(await screen.findByRole("heading", { name: "Knowledge", level: 1 })).toBeDefined()
+  expect(await screen.findByRole("heading", { name: "Repositories", level: 1 })).toBeDefined()
 })
 
-it("leads nowhere from a repository's old knowledge page", async () => {
-  await open("/repositories/01JREPO00000000000000ARI/knowledge")
+it("leads nowhere from a screen the app no longer has", async () => {
+  await open("/graphs")
 
   expect(await screen.findByText("Nothing here")).toBeDefined()
 })

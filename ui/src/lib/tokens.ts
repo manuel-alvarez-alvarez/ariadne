@@ -1,9 +1,8 @@
 /**
  * The app's tokens in `index.css`, read off the document for a surface that
- * cannot read a CSS variable where it draws: the session console (xterm.js)
- * and the knowledge graph (sigma.js). Both parse hex and not the `oklch()` the
- * tokens are written in, so a colour is converted here — a short, exact
- * conversion rather than a dependency.
+ * cannot read a CSS variable where it draws: the session console (xterm.js).
+ * It parses hex and not the `oklch()` the tokens are written in, so a colour
+ * is converted here — a short, exact conversion rather than a dependency.
  */
 
 /**

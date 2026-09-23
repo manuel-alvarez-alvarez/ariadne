@@ -16,7 +16,7 @@
  * nothing about the rail depends on one.
  */
 
-import { screen } from "@testing-library/react"
+import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { beforeEach, expect, it } from "vitest"
@@ -55,12 +55,19 @@ it("shows the navigation in full until it is folded away", () => {
   expect(screen.getByRole("link", { name: "Repositories" }).textContent).toBe("Repositories")
 })
 
-it("lists the knowledge screen right after repositories", () => {
+it("ends the navigation with repositories, right after agents", () => {
   mountShell()
 
-  const links = screen.getAllByRole("link").map((link) => link.getAttribute("aria-label"))
-  expect(links.indexOf("Knowledge")).toBe(links.indexOf("Repositories") + 1)
-  expect(screen.getByRole("link", { name: "Knowledge" }).getAttribute("href")).toBe("/knowledge")
+  // Scoped to the navigation, so a link anywhere else in the shell cannot
+  // stand in for an entry of its own.
+  const nav = screen.getByRole("navigation", { name: "Main" })
+  const links = within(nav)
+    .getAllByRole("link")
+    .map((link) => link.getAttribute("aria-label"))
+  expect(links).toEqual(["Goals", "Sessions", "Skills", "Agents", "Repositories"])
+  expect(screen.getByRole("link", { name: "Repositories" }).getAttribute("href")).toBe(
+    "/repositories",
+  )
 })
 
 it("folds down to an icon rail from the header, and back", async () => {

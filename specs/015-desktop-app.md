@@ -35,7 +35,7 @@ Out: the daemon endpoints themselves (012).
 3. Screens: the goals board (swimlanes plus an attention strip), the task
    panel (facts, diff, messages, history), sessions, each shown in its
    console, outside sessions that a ready task can adopt as its author,
-   skills, repositories, the knowledge screen (below), the
+   skills, repositories, the
    agents of the daemon's ACP registry with their launch flags and the models
    each may be staffed on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
@@ -179,103 +179,10 @@ Out: the daemon endpoints themselves (012).
 30. A session panel shows a reported context window as `<used> / <size>`,
     using the compact spelling of token figures. It shows no context fact
     before the agent reports one, and it never shows a cost.
-31. The knowledge screen (022) is a sidebar entry after Repositories, at
-    `#/knowledge`. A repository picker and a ref picker lead it, and tabs
-    follow: `overview`, `repositories`, `symbols`, `impact` and `files`. The
-    URL keeps all three as `?repository=`, `?ref=` and `?tab=`; without them
-    the screen reads the first repository, at its base branch, on the
-    Overview tab. The refs offered are the ones
-    `GET /v1/repositories/{id}/knowledge` lists, and the base branch. The
-    tabs are one list in `ui/src/features/knowledge/knowledge-tabs.tsx`, one
-    entry per tab.
-32. The Overview tab shows one card per registered repository: its state,
-    each ref whose last run failed beside its error (022, rule 17), its
-    files and symbols, its languages, its indexed refs and a Reindex
-    button. Reindex posts the reindex and shows `indexing` at once; it is off
-    while the state is `disabled`.
-33. Every knowledge graph is drawn by one component,
-    `ui/src/features/knowledge/graph/knowledge-graph.tsx`, with sigma.js v3
-    over a graphology graph and a ForceAtlas2 layout in a web worker. It
-    zooms, pans and fits the graph to the view; a hovered node keeps its
-    neighbours and fades the rest; a click on a node or an edge goes back to
-    the caller by its key; labels stay on at every size; and a legend names
-    each colour. The layout stops once the nodes barely move between two
-    checks, and after ten seconds at most. The caller can hide nodes and
-    edges by key: a filter redraws and never builds the model again. The model names a tone of the status ramp, and the colours
-    are read off the tokens in `index.css` for the theme on screen. sigma.js
-    needs WebGL, which jsdom lacks, so each test file that draws a graph
-    mocks the renderer with a stand-in that lists what sigma would be told
-    (`ui/src/test/sigma-canvas.tsx`).
-34. The Repositories tab draws one node per repository, named by its folder,
-    from `GET /v1/knowledge/interactions` for each repository: the picked
-    one at the picked ref, every other at its base. An edge that both
-    repositories report is counted once. The edges of one pair and one kind
-    are one graph edge with their count, in the kind's colour, and dashed
-    where every one of them is `heuristic`. Kind and confidence filters
-    narrow it. A click on an edge lists its file-level ends (`path:line` and
-    symbol, with the confidence and the step); a click on a node picks that
-    repository. With no interaction at all, the tab says so.
-35. A repository has no knowledge page of its own and its row has no
-    Knowledge button; the command palette opens `#/knowledge?repository=<id>`
-    for a repository.
-36. The Symbols tab searches the selected repository and ref by name, kind,
-    and path. Kind uses the index's known kinds. A result shows its name,
-    kind, and `path:line`. Picking one draws its callers, callees,
-    implementations, references, and tests around it. Each relation has its
-    own colour. Heuristic edges are dashed. A foreign node carries an arrow.
-    Each relation has one `+N more` node when the daemon reports hidden ends.
-    A node click centres that definition. Back and Forward move through the
-    symbol history. `?symbol=` keeps the current name. A definition picker
-    separates equal names. The side pane shows the signature, documentation,
-    line range, and numbered source. The palette's Find symbol action opens
-    `#/knowledge?tab=symbols`. `knowledge_indexed` and `knowledge_failed`
-    refetch its searches and symbol reads for their repository.
-37. The Impact & path tab (`ui/src/features/knowledge/impact-tab.tsx`) has
-    two modes, kept in the URL as `?mode=impact|path` with the inputs
-    `?symbol=`, `?from=`, `?to=` and `?depth=`. A typed symbol is written on
-    submit, and a depth as soon as it is picked; a depth the mode does not
-    allow reads as its default. A symbol field suggests names from
-    `GET /v1/knowledge/search` in the picked repository and ref.
-    - Impact reads `GET /v1/knowledge/impact` for a symbol and a depth from
-      1 to 4 (2 by default). Each changed definition is in the first layer
-      and each caller in the layer of its depth, left to right. The daemon
-      names a caller's depth and not its callee, so an edge is drawn only
-      where it is certain: from a definition to its direct callers, and
-      from the one node of a layer to the callers of the next. An edge is
-      dashed where the call is `heuristic`. A definition in `stopped` is a
-      node that says the walk stopped there, with more than 200 callers.
-    - Path reads `GET /v1/knowledge/path` for a from symbol, a to symbol and
-      a depth from 1 to 10 (6 by default). The hops are a chain, each edge
-      labelled by its `edge_kind` and dashed where it is `heuristic`. With
-      no hop, the tab says there is no path within the depth.
-    - The layers are laid out by ELK (`elkjs`) in its web worker, and given
-      to the shared graph component as `layout="fixed"`, which draws the
-      positions the model holds. A click on a node opens the Symbols tab on
-      that symbol, as `?tab=symbols&symbol=<name>` at the same repository
-      and ref.
-    - `knowledge_indexed` and `knowledge_failed` refetch the walks of their
-      repository.
-38. The Files tab draws one repository ref's files from
-    `GET /v1/knowledge/graph`: a node per file, sized by its symbols and
-    coloured by its top-level directory (the seven largest have a colour
-    each and the legend names them; the rest share one, named Other), and
-    an edge per `(from, to, kind)` weighted by its `count`, dashed where it
-    is `heuristic`. A level switch draws files or directories: at directory
-    level the files of each directory, cut to a depth of path segments, are
-    one node, and their edges are summed, from the same response. Path text,
-    edge kinds and Hide unlinked hide nodes and edges without a rebuild.
-    When the response is `truncated`, the tab says "Showing N of
-    total_nodes files." and offers to double `limit`, up to 10000. A click
-    on a file opens a pane with its outline (`GET /v1/knowledge/outline`),
-    its incoming and outgoing edges, and a link per symbol to
-    `?tab=symbols&symbol=<name>`. The URL keeps `?level=`, `?depth=`,
-    `?filter=`, `?hidden_kinds=`, `?isolated=hide`, `?limit=` and `?file=`.
-    `knowledge_indexed` and `knowledge_failed` refetch its graph and
-    outlines.
 
 ## Acceptance criteria
 
-- 77 test files cover the features, the API layer and the event stream; each
+- 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
 - A task staffed with several authors shows each one's branch and its own
   vote count, marks the one the reviewers picked, and lists what each
@@ -286,79 +193,13 @@ Out: the daemon endpoints themselves (012).
   `::lists what each reviewer picked, oldest first`,
   `::keeps the singular Author fact and shows no pick on a one-author task`)
   — parity with `ariadne task inspect`'s own author and picks lines (004).
-- The sidebar lists Knowledge right after Repositories, and `#/knowledge` mounts
-  the knowledge screen
-  (`ui/src/components/app-shell.test.tsx::lists the knowledge screen right after repositories`,
-  `ui/src/routes/router.test.tsx::mounts the knowledge screen at #/knowledge`).
-- The screen opens on the Overview tab, the first repository and its base
-  branch; it reads the repository, the ref and the tab back from the URL,
-  so they survive a reload; and a pick writes them into it
-  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the pickers and the tab`).
-- The Overview tab shows a card per repository in every state the daemon
-  answers with, names each ref that failed beside its error, turns Reindex
-  off for a disabled one, posts a reindex and
-  shows `indexing` at once, and refetches once the daemon says indexing
-  finished
-  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Overview tab`,
-  `ui/src/events/dispatch.test.ts::knowledge events (022)`) — parity with
-  `ariadne knowledge status|reindex` (022).
-- The shared graph places what the model left unplaced, keeps a hovered
-  node's neighbourhood and fades the rest, colours nodes, edges and the
-  legend from the status tokens, draws dashed edges dashed, leaves out what
-  it is told to hide, calls a layout settled once its nodes barely move, and
-  hands a clicked node and a clicked edge back by their keys
-  (`ui/src/features/knowledge/graph/knowledge-graph.test.tsx`).
-- The Symbols graph holds the centre and every relation in its own colour.
-  It includes hidden-count nodes, foreign markers, and dashed heuristic edges
-  (`ui/src/features/knowledge/symbols-graph.test.ts`).
-- The Symbols tab sends the selected repository, ref, kind, and path.
-  It opens a result and keeps `?symbol=` through reloads. Node clicks,
-  Back, and Forward change the centre. The pane shows numbered source.
-  Equal names offer a definition picker
-  (`ui/src/features/knowledge/symbols-tab.test.tsx::the Symbols tab`).
-- Find symbol opens the Symbols tab
-  (`ui/src/features/command-palette/command-palette.test.tsx::opens symbol search from the palette`).
-- The Repositories graph has one node per repository named by its folder,
-  one edge per pair and kind with its count and its kind's colour, counts an
-  edge both repositories report once, dashes an edge that is heuristic only,
-  and filters by kind and confidence
-  (`ui/src/features/knowledge/repositories-graph.test.ts`); on screen, a
-  click on an edge lists its ends, a click on a node picks its repository,
-  and a tab with no interaction says so
-  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Repositories tab`)
-  — parity with `ariadne knowledge interactions` (022).
-- The Impact graph puts the changed definition in the first layer and each
-  caller in the layer of its depth, dashes a heuristic call and marks a
-  stopped definition; the Path graph is the hops as a chain with each edge
-  named by its kind; ELK lays the layers out left to right
-  (`ui/src/features/knowledge/impact-graph.test.ts`,
-  `ui/src/features/knowledge/path-graph.test.ts`,
-  `ui/src/features/knowledge/graph/layered-layout.test.ts`). On screen, each
-  mode draws the daemon's answer, an empty path says so, the mode and its
-  inputs survive a reload, a depth outside the mode's range reads as its
-  default, and a click on a node opens the Symbols tab on it
-  (`ui/src/features/knowledge/impact-tab.test.tsx`) — parity with
-  `ariadne knowledge impact|path` (022).
-- The Files graph has a node per file sized by its symbols and coloured by
-  its top-level directory, with the legend naming each colour, and edges
-  weighted by their count; at directory level it merges files by a depth
-  of segments and sums their edges; the path text, kind and Hide unlinked
-  filters hide without changing the model; and both levels of 5000 files
-  build and filter within a second
-  (`ui/src/features/knowledge/files-graph.test.ts`). On screen it draws the
-  route's files, switches level, filters, keeps all of it in the URL, opens
-  a clicked file's outline and edges with links to the Symbols tab, and
-  says "Showing N of total_nodes files." with a control that raises the
-  limit when the response is truncated
-  (`ui/src/features/knowledge/knowledge-screen.test.tsx::the Files tab`);
-  the knowledge events refetch the graph and the outlines
-  (`ui/src/events/dispatch.test.ts::knowledge events (022)`) — parity with
-  `ariadne knowledge graph` (022).
-- `#/repositories/:id/knowledge` leads nowhere, a repository row has no
-  Knowledge button, and the palette opens `#/knowledge?repository=<id>`
-  (`ui/src/routes/router.test.tsx::leads nowhere from a repository's old knowledge page`,
-  `ui/src/features/repositories/repositories-page.test.tsx::offers no Knowledge button on a row, which is on the knowledge screen`,
-  `ui/src/features/command-palette/command-palette.test.tsx::opens the knowledge screen on a repository from the palette`).
+- The sidebar lists Repositories last, right after Agents, and `#/repositories`
+  mounts the repositories screen, while a screen the app dropped leads nowhere
+  (`ui/src/components/app-shell.test.tsx::ends the navigation with repositories, right after agents`,
+  `ui/src/routes/router.test.tsx::mounts the repositories screen at #/repositories`,
+  `ui/src/routes/router.test.tsx::leads nowhere from a screen the app no longer has`).
+- The palette opens `#/repositories` on a picked repository
+  (`ui/src/features/command-palette/command-palette.test.tsx::opens the repositories screen on a repository from the palette`).
 - The task's channel reads as one list, every kind is told apart, and both
   ends of a message are named by the skills they work with
   (`ui/src/features/tasks/task-messages.test.tsx`).

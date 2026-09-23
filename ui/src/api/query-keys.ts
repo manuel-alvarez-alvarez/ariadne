@@ -51,60 +51,6 @@ interface OutsideSessionFilters {
   q?: string
 }
 
-/** `GET /v1/knowledge/search`, always narrowed to one repository from its page (022). */
-interface KnowledgeSearchFilters {
-  repository: string
-  q?: string
-  git_ref?: string
-  kind?: string
-  path?: string
-}
-
-/** `GET /v1/knowledge/interactions`, narrowed to one repository from its page (022). */
-interface KnowledgeInteractionFilters {
-  repository: string
-  git_ref?: string
-}
-
-/** One name from `GET /v1/knowledge/symbol`, at one level of detail (022). */
-interface KnowledgeSymbolFilters {
-  repository: string
-  git_ref: string
-  name: string
-  detail: "context" | "source"
-}
-
-/** `GET /v1/knowledge/impact`, for one changed symbol of one repository (022). */
-interface KnowledgeImpactFilters {
-  repository: string
-  git_ref: string
-  symbol: string
-  depth: number
-}
-
-/** `GET /v1/knowledge/path`, between two symbols of one repository (022). */
-interface KnowledgePathFilters {
-  repository: string
-  git_ref: string
-  from: string
-  to: string
-  depth: number
-}
-
-/** `GET /v1/knowledge/graph`, for one repository from its page (022). */
-interface KnowledgeGraphFilters {
-  repository: string
-  git_ref?: string
-  limit?: number
-}
-
-/** `GET /v1/knowledge/outline`: one file of one repository (022). */
-interface KnowledgeOutlineFilters {
-  repository: string
-  path: string
-  git_ref?: string
-}
-
 export const qk = {
   goals: {
     all: () => ["goals"] as const,
@@ -158,51 +104,6 @@ export const qk = {
     list: (filters?: PageFilters) => ["repositories", "list", filters ?? {}] as const,
     details: () => ["repositories", "detail"] as const,
     detail: (id: string) => ["repositories", "detail", id] as const,
-    /** One repository's knowledge-base status (022): state, refs, counts, languages. */
-    knowledgeStatus: (id: string) => ["repositories", "detail", id, "knowledge"] as const,
-    /** Every search of one repository, whatever its ref and filters: the prefix events invalidate. */
-    knowledgeSearchAll: (id: string) => ["repositories", "detail", id, "knowledge-search"] as const,
-    /** Search over one repository's knowledge base, `q`/`kind`/`path` included. */
-    knowledgeSearch: (id: string, filters?: KnowledgeSearchFilters) =>
-      ["repositories", "detail", id, "knowledge-search", filters ?? { repository: id }] as const,
-    /** Every symbol read of one repository, whatever its name and detail: the prefix events invalidate. */
-    knowledgeSymbolAll: (id: string) => ["repositories", "detail", id, "knowledge-symbol"] as const,
-    knowledgeSymbol: (id: string, filters: KnowledgeSymbolFilters) =>
-      ["repositories", "detail", id, "knowledge-symbol", filters] as const,
-    /**
-     * Every filtered interactions list for one repository. Shorter than
-     * {@link knowledgeInteractions}'s own key on purpose — invalidating this
-     * prefix catches a list under any `git_ref` without knowing which one is
-     * open, the way `tasks.lists()` catches every filter of that list.
-     */
-    knowledgeInteractionsAll: (id: string) =>
-      ["repositories", "detail", id, "knowledge-interactions"] as const,
-    /**
-     * Every impact and path walk for one repository, under any ref and
-     * symbols: what an indexing run makes stale.
-     */
-    knowledgeWalksAll: (id: string) => ["repositories", "detail", id, "knowledge-walk"] as const,
-    knowledgeImpact: (id: string, filters: KnowledgeImpactFilters) =>
-      ["repositories", "detail", id, "knowledge-walk", "impact", filters] as const,
-    knowledgePath: (id: string, filters: KnowledgePathFilters) =>
-      ["repositories", "detail", id, "knowledge-walk", "path", filters] as const,
-    knowledgeInteractions: (id: string, filters?: KnowledgeInteractionFilters) =>
-      [
-        "repositories",
-        "detail",
-        id,
-        "knowledge-interactions",
-        filters ?? { repository: id },
-      ] as const,
-    /** Every file graph of one repository, whatever its ref and limit: the prefix events invalidate. */
-    knowledgeGraphAll: (id: string) => ["repositories", "detail", id, "knowledge-graph"] as const,
-    knowledgeGraph: (id: string, filters: KnowledgeGraphFilters) =>
-      ["repositories", "detail", id, "knowledge-graph", filters] as const,
-    /** Every file outline of one repository: the prefix events invalidate. */
-    knowledgeOutlineAll: (id: string) =>
-      ["repositories", "detail", id, "knowledge-outline"] as const,
-    knowledgeOutline: (id: string, filters: KnowledgeOutlineFilters) =>
-      ["repositories", "detail", id, "knowledge-outline", filters] as const,
   },
   /**
    * How each registry agent is launched (`GET /v1/agents`): one unfiltered

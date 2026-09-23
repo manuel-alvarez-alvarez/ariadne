@@ -42,6 +42,9 @@ const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   repository_created: true,
   repository_updated: true,
   repository_deleted: true,
+  // The knowledge base is gone from the app, and T3 takes these two kinds out
+  // of the daemon and the generated types. They stay listed until then,
+  // because this record must cover every kind `schema.d.ts` still declares.
   knowledge_indexed: true,
   knowledge_failed: true,
 }

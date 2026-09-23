@@ -119,15 +119,12 @@ describe("buildPaletteEntries", () => {
     expect(entry?.target).toEqual({ kind: "page", path: "/skills?skill=security-review" })
   })
 
-  it("lists a repository by the last segment of its path, opening the knowledge screen on it", () => {
+  it("lists a repository by the last segment of its path, opening the repositories screen", () => {
     const [entry] = buildPaletteEntries(SOURCE).repositories
     expect(entry?.label).toBe("ariadne")
     expect(entry?.keywords).toContain(REPOSITORY.id)
     expect(entry?.keywords).toContain(REPOSITORY.path)
-    expect(entry?.target).toEqual({
-      kind: "page",
-      path: `/knowledge?repository=${REPOSITORY.id}`,
-    })
+    expect(entry?.target).toEqual({ kind: "page", path: "/repositories" })
   })
 })
 
