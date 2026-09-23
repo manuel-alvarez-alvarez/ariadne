@@ -24,6 +24,8 @@ tokio = { version = "1", features = ["full"] }
 # `ws`: the daemon serves a session's console as terminal bytes over a
 # WebSocket (`/v1/sessions/{id}/console/terminal`).
 axum = { version = "0.8", features = ["ws"] }
+# Download the ACP registry index over HTTPS on an explicit refresh.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 # The WebSocket client the daemon tests connect to that console with.
 tokio-tungstenite = "0.29"
 # A terminal emulator for the tests: what the console's bytes draw, read

@@ -19,6 +19,8 @@ prevent_sleep = true               # hold a system sleep inhibition while any ag
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
 permission_mode = "auto"           # auto, ask, or learn; the default for new tasks
+acp_registry_url = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
+                                   # download the index only on an explicit refresh
 
 [[acp_agents]]                     # an agent of your own, or one the registry
 id = "my-agent"                    # names under another command
@@ -32,6 +34,17 @@ its `PATH`: Ariadne ships a snapshot of that index — `claude-acp`,
 id the registry does name replaces it, command and all. The daemon probes
 every entry at startup. See [Installing Ariadne](install.md) to add an agent,
 and [Permission modes](permissions.md) to choose how it handles tool requests.
+
+`POST /v1/acp-agents/refresh` downloads the index from `acp_registry_url`,
+then searches `PATH` again and probes every agent. The download has a
+30-second timeout. The database keeps the last accepted document, its URL,
+and its fetch time in one row. A failed download or refused document logs a
+warning and keeps that row. Refresh still searches `PATH`, probes agents,
+and returns the agent list.
+
+Startup downloads nothing. It uses the kept index only when its fetch time
+is after the snapshot date at midnight UTC. Otherwise, it uses the shipped
+snapshot. Changing the URL does not discard the last good copy.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

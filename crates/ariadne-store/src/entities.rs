@@ -174,6 +174,14 @@ impl AcpCatalog {
     }
 }
 
+/// The last accepted index download and its source.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct AcpRegistryIndex {
+    pub url: String,
+    pub document: String,
+    pub fetched_at: String,
+}
+
 /// A git repository registered once, globally, and named by id from there on.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Repository {

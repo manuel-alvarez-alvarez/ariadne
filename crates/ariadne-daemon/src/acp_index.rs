@@ -26,6 +26,11 @@ pub(crate) struct Installed {
     pub(crate) program: PathBuf,
 }
 
+/// Accept a downloaded document only when the discovery parser can read it.
+pub(crate) fn validate(document: &str) -> Result<(), serde_json::Error> {
+    serde_json::from_str::<Index>(document).map(|_| ())
+}
+
 /// Every agent of `index` that `path` holds, in index order.
 ///
 /// An index that cannot be read leaves the registry with the configured

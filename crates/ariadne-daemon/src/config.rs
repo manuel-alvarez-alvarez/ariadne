@@ -32,6 +32,8 @@ pub struct Config {
     pub permission_mode: PermissionMode,
     /// User-defined ACP agent commands appended to the built-in registry.
     pub acp_agents: Vec<AcpAgentConfig>,
+    /// ACP registry index URL, fetched only on an explicit refresh.
+    pub acp_registry_url: String,
 }
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
@@ -78,6 +80,9 @@ impl Config {
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
             permission_mode: file.permission_mode.unwrap_or(PermissionMode::Auto),
             acp_agents: file.acp_agents,
+            acp_registry_url: file.acp_registry_url.unwrap_or_else(|| {
+                "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json".into()
+            }),
             root,
         };
 
@@ -132,6 +137,10 @@ mod tests {
         assert!(config.delete_merged_branches);
         assert!(config.prevent_sleep);
         assert_eq!(config.permission_mode, PermissionMode::Auto);
+        assert_eq!(
+            config.acp_registry_url,
+            "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
+        );
     }
 
     /// A key the daemon no longer has stops the daemon rather than being ignored.

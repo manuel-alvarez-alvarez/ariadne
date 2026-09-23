@@ -95,7 +95,12 @@ pub(super) mod acp_agents {
     pub(crate) async fn refresh(
         State(state): State<AppState>,
     ) -> ApiResult<Json<Vec<AcpAgentDto>>> {
-        Ok(Json(state.agent_registry.refresh().await))
+        Ok(Json(
+            state
+                .agent_registry
+                .download_and_refresh(&state.launcher.cfg.acp_registry_url)
+                .await,
+        ))
     }
 }
 

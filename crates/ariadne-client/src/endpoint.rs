@@ -65,6 +65,8 @@ pub struct FileConfig {
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).
     pub prevent_sleep: Option<bool>,
+    /// ACP registry index URL, fetched only on an explicit refresh.
+    pub acp_registry_url: Option<String>,
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,
@@ -239,11 +241,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_config(
             dir.path(),
-            "db_path = \"/scratch/ariadne.db\"\nprevent_sleep = false\n",
+            "db_path = \"/scratch/ariadne.db\"\nprevent_sleep = false\nacp_registry_url = \"http://127.0.0.1/index.json\"\n",
         );
         let config = parse_config(dir.path()).unwrap().expect("a config");
         assert_eq!(config.db_path, Some(PathBuf::from("/scratch/ariadne.db")));
         assert_eq!(config.prevent_sleep, Some(false));
+        assert_eq!(
+            config.acp_registry_url.as_deref(),
+            Some("http://127.0.0.1/index.json")
+        );
         assert_eq!(config.permission_mode, None);
         assert_eq!(config.socket_path, None);
     }

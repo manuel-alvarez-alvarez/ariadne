@@ -59,6 +59,14 @@ CREATE TABLE acp_catalogs (
     read_at  TEXT NOT NULL
 );
 
+-- The last accepted registry download. A refresh replaces this one row.
+CREATE TABLE acp_registry_index (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    url        TEXT NOT NULL,
+    document   TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+
 -- The models the user has turned off. A model is available unless a row here
 -- says otherwise, so the catalog — discovered live from each registry agent —
 -- keeps every entry it grows usable without a write here.

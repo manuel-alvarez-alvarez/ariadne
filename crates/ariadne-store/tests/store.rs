@@ -13,6 +13,29 @@ async fn test_store() -> (Store, tempfile::TempDir) {
     (store, dir)
 }
 
+#[tokio::test]
+async fn one_acp_index_survives_reopen_and_each_download_replaces_it() {
+    let (store, dir) = test_store().await;
+    assert!(store.acp_registry_index().await.unwrap().is_none());
+    store
+        .put_acp_registry_index("https://first.example/index", r#"{"agents":[]}"#)
+        .await
+        .unwrap();
+    let first = store.acp_registry_index().await.unwrap().unwrap();
+    store.close().await;
+    let store = Store::open(dir.path().join("test.db")).await.unwrap();
+    assert_eq!(store.acp_registry_index().await.unwrap().unwrap(), first);
+    let document = r#"{"agents":[{"id":"new"}]}"#;
+    store
+        .put_acp_registry_index("https://second.example/index", document)
+        .await
+        .unwrap();
+    let second = store.acp_registry_index().await.unwrap().unwrap();
+    assert_eq!(second.url, "https://second.example/index");
+    assert_eq!(second.document, document);
+    assert!(chrono::DateTime::parse_from_rfc3339(&second.fetched_at).is_ok());
+}
+
 /// The schema names an agent only by the registry id at the head of a pin:
 /// no table keeps an agent kind beside it, and a session is its row, its
 /// agent and its conversation — nothing names a terminal it runs in.

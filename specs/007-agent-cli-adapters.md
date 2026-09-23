@@ -77,8 +77,21 @@ skill says (017).
    under the command and the version the agent reported in `initialize`
    (`agentInfo.version`). A daemon start opens a session only on an agent
    whose command and version have no kept catalog. An agent that reports no
-   version is read on every start. `POST /v1/acp-agents/refresh` reads every
-   catalog again and replaces the cache as one snapshot. The session a read
+   version is read on every start.
+
+   Startup downloads nothing. It takes the stored index only when its fetch
+   time is after the shipped snapshot's date at midnight UTC. Otherwise,
+   it takes the snapshot. `POST /v1/acp-agents/refresh` downloads the index
+   from `acp_registry_url`, then searches `PATH` again and reads every
+   catalog again. The default URL is
+   `https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`.
+   `Timeouts::registry_download` bounds the download to 30 seconds.
+   The store keeps one row: the URL, accepted document, and fetch time.
+   Each good download replaces it. A failed download or refused document
+   logs a warning and keeps the last good copy. Refresh still searches
+   `PATH`, probes every entry, and returns the agent list.
+
+   Discovery replaces the cache as one snapshot. The session a read
    opens is closed (`session/close`) where the agent advertises it. No
    prompt is ever sent, since a prompt is a model turn the agent bills. A
    probe has five seconds; one that runs out is rejected with every
@@ -138,6 +151,22 @@ skill says (017).
     what it does next moves its session as any other work does.
 
 ## Acceptance criteria
+
+- Refresh downloads the configured index and registers its installed agent
+  (`acp_discovery.rs::refresh_downloads_the_configured_index_and_registers_its_installed_agent`).
+- A newer stored index survives a restart without a download
+  (`::a_newer_kept_index_survives_a_restart_without_a_download`). An older
+  index or one fetched at the snapshot date leaves the snapshot in use
+  (`::a_kept_index_no_newer_than_the_snapshot_does_not_replace_it`).
+- Failed downloads and refused documents keep the index, log a warning,
+  and still search `PATH` and probe agents
+  (`::a_failed_download_keeps_the_index_and_still_rescans_and_reprobes`,
+  `::a_refused_document_keeps_the_index_and_still_rescans_and_reprobes`).
+- Each good download replaces the single stored row
+  (`::each_good_download_replaces_the_single_kept_index`,
+  `store.rs::one_acp_index_survives_reopen_and_each_download_replaces_it`).
+- A stalled response body times out without replacing the kept index
+  (`acp_discovery.rs::a_stalled_index_body_times_out_and_keeps_the_last_good_copy`).
 
 - The registry lists an installed agent of the index, under the command the
   index gives it, beside a configured agent, each with its source

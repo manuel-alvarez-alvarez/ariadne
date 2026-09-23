@@ -6,6 +6,7 @@
 //! and records the audit row in the same transaction.
 
 mod acp_catalogs;
+mod acp_registry;
 mod agents;
 mod change;
 pub mod defaults;

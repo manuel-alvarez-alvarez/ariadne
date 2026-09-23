@@ -43,6 +43,8 @@ unknown key stops the daemon rather than being ignored):
   delete_merged_branches   delete a task branch once it has landed (default: true)
   delete_merged_worktrees  delete a task worktree once it has landed (default: true)
   prevent_sleep            hold off system sleep while a session is live (default: true)
+  acp_registry_url         index URL fetched on refresh (default:
+                           https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
 
   ariadned --check-config reads that file and exits.\

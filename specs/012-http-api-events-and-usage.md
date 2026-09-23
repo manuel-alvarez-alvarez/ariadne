@@ -185,7 +185,11 @@ and the ACP runtime that reports the agent events (021).
     session and a published task need (`git`, `gh`, `glab`), and a worktree
     root it cannot write.
 20. `GET /v1/acp-agents` serves the cached ACP registry. `POST
-    /v1/acp-agents/refresh` probes every entry and replaces that cache. Both
+    /v1/acp-agents/refresh` downloads the configured registry index, searches
+    `PATH` again, probes every entry, and replaces that cache. A download
+    failure or refused document logs a warning and keeps the last good
+    index. Refresh still searches `PATH`, probes agents, and answers the
+    agent list. Both
     responses include status, measured capabilities, degradation flags, and
     a rejection reason when discovery failed.
 21. `GET /v1/events` answers one page of the recorded events. `order=asc` is
@@ -350,8 +354,12 @@ and the ACP runtime that reports the agent events (021).
 - A `config.toml` that names an unknown key stops the daemon
   (`config.rs::an_unknown_key_stops_the_daemon`).
 - ACP registry endpoints expose the cached result and refresh it on demand
-  (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`,
-  `::discovery_refreshes_on_demand`).
+  (`acp_discovery.rs::the_api_lists_an_installed_index_agent_and_one_user_agent`,
+  `::discovery_refreshes_on_demand`). Refresh downloads the configured index
+  (`::refresh_downloads_the_configured_index_and_registers_its_installed_agent`)
+  and still returns the agent list after failed downloads or refused documents
+  (`::a_failed_download_keeps_the_index_and_still_rescans_and_reprobes`,
+  `::a_refused_document_keeps_the_index_and_still_rescans_and_reprobes`).
 - A descending page is the events recorded last, newest first
   (`events.rs::the_newest_page_is_the_events_recorded_last`,
   `store.rs::a_descending_page_answers_the_newest_events_newest_first`), and a

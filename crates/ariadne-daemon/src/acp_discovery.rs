@@ -1,7 +1,7 @@
 //! Runtime discovery for ACP agents and their session configuration catalogs.
 
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -34,9 +34,16 @@ use crate::timeouts::Timeouts;
 /// ACP agent is run by; the daemon's `PATH` says which of them is here.
 pub const SHIPPED_INDEX: &str = include_str!("../acp-registry/registry.json");
 
+/// Update this date with the vendored snapshot and its README.
+const SHIPPED_INDEX_DATE: &str = "2026-09-23T00:00:00Z";
+
 #[derive(Clone)]
 pub struct AgentRegistry {
-    entries: Arc<Vec<RegistryEntry>>,
+    entries: Arc<std::sync::RwLock<Vec<RegistryEntry>>>,
+    custom: Arc<Vec<AcpAgentConfig>>,
+    path: Arc<OsString>,
+    index: Arc<str>,
+    discovery: Arc<tokio::sync::Mutex<()>>,
     results: Arc<RwLock<Vec<Discovery>>>,
     probe_cwd: Arc<PathBuf>,
     /// Where each agent's catalog is kept across restarts, under its version.
@@ -147,6 +154,22 @@ impl AgentRegistry {
         path: &OsStr,
         index: &str,
     ) -> Self {
+        let entries = Self::entries(custom, path, index);
+        let results = entries.iter().map(not_probed).collect();
+        Self {
+            entries: Arc::new(std::sync::RwLock::new(entries)),
+            custom: Arc::new(custom.to_vec()),
+            path: Arc::new(path.to_os_string()),
+            index: Arc::from(index),
+            discovery: Arc::default(),
+            results: Arc::new(RwLock::new(results)),
+            probe_cwd: Arc::new(probe_cwd),
+            store,
+            timeouts: Timeouts::default(),
+        }
+    }
+
+    fn entries(custom: &[AcpAgentConfig], path: &OsStr, index: &str) -> Vec<RegistryEntry> {
         let mut found_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut entries: Vec<RegistryEntry> = acp_index::installed(index, path)
             .into_iter()
@@ -187,14 +210,7 @@ impl AgentRegistry {
                 None => entries.push(entry),
             }
         }
-        let results = entries.iter().map(not_probed).collect();
-        Self {
-            entries: Arc::new(entries),
-            results: Arc::new(RwLock::new(results)),
-            probe_cwd: Arc::new(probe_cwd),
-            store,
-            timeouts: Timeouts::default(),
-        }
+        entries
     }
 
     /// The same registry, probing and listing agents as long as `timeouts`
@@ -208,26 +224,87 @@ impl AgentRegistry {
     /// `initialize`, and only one whose version has no kept catalog opens a
     /// session to read one.
     pub async fn discover(&self) -> Vec<AcpAgentDto> {
-        self.probe_all(false).await
+        let _guard = self.discovery.lock().await;
+        self.probe_all(false, None).await
     }
 
     /// Discovery on demand: every agent opens a session and its catalog is
     /// read again, for a catalog that moved without a new version — a model
     /// configured, or installed locally.
     pub async fn refresh(&self) -> Vec<AcpAgentDto> {
-        self.probe_all(true).await
+        let _guard = self.discovery.lock().await;
+        self.probe_all(true, None).await
+    }
+
+    /// Download and keep an accepted index before searching PATH and probing.
+    pub(crate) async fn download_and_refresh(&self, url: &str) -> Vec<AcpAgentDto> {
+        let _guard = self.discovery.lock().await;
+        let index = match self.download_index(url).await {
+            Ok(index) => Some(index),
+            Err(error) => {
+                tracing::warn!(error = %error, "downloading the ACP registry index failed");
+                None
+            }
+        };
+        self.probe_all(true, index.as_deref()).await
+    }
+
+    async fn download_index(&self, url: &str) -> Result<String> {
+        let bytes = reqwest::Client::builder()
+            .timeout(self.timeouts.registry_download)
+            .build()?
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        let document = String::from_utf8(bytes.to_vec())?;
+        acp_index::validate(&document)?;
+        self.store.put_acp_registry_index(url, &document).await?;
+        Ok(document)
+    }
+
+    /// A start reads the kept index without contacting its source.
+    async fn selected_index(&self) -> String {
+        let kept = match self.store.acp_registry_index().await {
+            Ok(kept) => kept,
+            Err(error) => {
+                tracing::warn!(error = %error, "reading the kept ACP registry index failed");
+                None
+            }
+        };
+        if let Some(kept) = kept {
+            let fetched = chrono::DateTime::parse_from_rfc3339(&kept.fetched_at);
+            let snapshot = chrono::DateTime::parse_from_rfc3339(SHIPPED_INDEX_DATE)
+                .expect("the shipped index date is valid");
+            if fetched.is_ok_and(|fetched| fetched > snapshot) {
+                match acp_index::validate(&kept.document) {
+                    Ok(()) => return kept.document,
+                    Err(error) => {
+                        tracing::warn!(error = %error, "reading the kept ACP registry index failed");
+                    }
+                }
+            }
+        }
+        self.index.to_string()
     }
 
     /// Probe every command concurrently, replace the results as one snapshot,
     /// and keep every catalog read afresh under its agent's version.
-    async fn probe_all(&self, reread: bool) -> Vec<AcpAgentDto> {
+    async fn probe_all(&self, reread: bool, downloaded: Option<&str>) -> Vec<AcpAgentDto> {
+        let index = match downloaded {
+            Some(index) => index.to_string(),
+            None => self.selected_index().await,
+        };
+        let entries = Self::entries(&self.custom, &self.path, &index);
         let kept = if reread {
             BTreeMap::new()
         } else {
             self.kept_catalogs().await
         };
         let cwd = self.probe_cwd.clone();
-        let probes = self.entries.iter().cloned().map(|entry| {
+        let probes = entries.iter().cloned().map(|entry| {
             let cwd = cwd.clone();
             let cached = kept
                 .get(&entry.id)
@@ -260,7 +337,9 @@ impl AgentRegistry {
             .iter()
             .map(|result| result.agent.clone())
             .collect();
-        *self.results.write().await = discovered;
+        let mut results = self.results.write().await;
+        *self.entries.write().unwrap() = entries;
+        *results = discovered;
         agents
     }
 
@@ -376,10 +455,13 @@ impl AgentRegistry {
         self.entry_of(id).map(|entry| entry.program.clone())
     }
 
-    fn entry_of(&self, id: &str) -> Option<&RegistryEntry> {
+    fn entry_of(&self, id: &str) -> Option<RegistryEntry> {
         self.entries
+            .read()
+            .unwrap()
             .iter()
             .find(|entry| entry.id == id && entry.refused.is_none())
+            .cloned()
     }
 
     /// The cached capabilities of one agent, by id: what the last probe

@@ -11,3 +11,5 @@ Ariadne installs nothing, so a newer index adds agents a user can run, never
 agents Ariadne downloads.
 
 Refresh it by fetching that URL again and committing the file as it arrived.
+Update this date and `SHIPPED_INDEX_DATE` in `src/acp_discovery.rs` together.
+The daemon compares the stored index's fetch time with that date at midnight UTC.
