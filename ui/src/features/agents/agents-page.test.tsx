@@ -18,9 +18,9 @@
 
 import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { AgentConfigDto, ModelDto } from "@/api"
+import { type AgentConfigDto, type ModelDto, qk } from "@/api"
 import { Toaster } from "@/components/ui/sonner"
 import { aModel, anAgentConfig } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
@@ -452,5 +452,93 @@ describe("the models under each agent", () => {
     expect(screen.getByText("ariadne models ls")).toBeDefined()
     // The flags are still there: only the catalog was empty.
     expect(screen.getByText("--verbose")).toBeDefined()
+  })
+})
+
+/**
+ * `POST /v1/acp-agents/refresh` reprobes the registry, so this is the one
+ * control on the screen that is not a read of a query — the daemon answers
+ * with the ACP registry alone, and it is the agent configs and the model
+ * catalog behind the tabs that have to be asked again on its say.
+ */
+describe("refreshing the ACP agents", () => {
+  it("posts to the refresh endpoint once, and reloads the configs, the ACP agents and the models", async () => {
+    const user = userEvent.setup()
+    const { queryClient } = renderScreen(<AgentsPage />)
+    await screen.findByRole("tab", { name: /^claude-agent-acp/ })
+    requests = []
+    const invalidated = vi.spyOn(queryClient, "invalidateQueries")
+
+    await user.click(screen.getByRole("button", { name: "Refresh" }))
+
+    await waitFor(() => {
+      expect(requests.filter((one) => one.path === "/v1/acp-agents/refresh")).toHaveLength(1)
+    })
+    // Reloaded because the refresh can move them, not because they were asked
+    // for their own sake — a GET beside the POST is the proof of that.
+    await waitFor(() => {
+      expect(requests.some((one) => one.method === "GET" && one.path === "/v1/agents")).toBe(true)
+    })
+    expect(requests.some((one) => one.method === "GET" && one.path === "/v1/models")).toBe(true)
+    // The ACP registry is not otherwise read by this screen, so its own
+    // reload shows only as the invalidation the mutation asked for.
+    const keys = invalidated.mock.calls.map((call) => call[0]?.queryKey)
+    expect(keys).toContainEqual(qk.acpAgents.lists())
+    expect(keys).toContainEqual(qk.agents.lists())
+    expect(keys).toContainEqual(qk.models.lists())
+  })
+
+  it("shows a pending state while the call is running", async () => {
+    const user = userEvent.setup()
+    let resolveRefresh: (() => void) | undefined
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const { pathname } = new URL(request.url)
+      if (pathname === "/v1/acp-agents/refresh") {
+        await new Promise<void>((resolve) => {
+          resolveRefresh = resolve
+        })
+        return jsonResponse([])
+      }
+      if (pathname === "/v1/models") return jsonResponse([OPUS, LOCAL])
+      return jsonResponse([CLAUDE_CODE, CODEX, OPENCODE])
+    })
+    renderScreen(<AgentsPage />)
+    await screen.findByRole("tab", { name: /^claude-agent-acp/ })
+
+    const button = screen.getByRole("button", { name: "Refresh" })
+    await user.click(button)
+
+    await waitFor(() => expect(button.getAttribute("aria-busy")).toBe("true"))
+    resolveRefresh?.()
+    await waitFor(() => expect(button.getAttribute("aria-busy")).not.toBe("true"))
+  })
+
+  it("shows an error on a failed call, and keeps the screen as it was", async () => {
+    const user = userEvent.setup()
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const { pathname } = new URL(request.url)
+      if (pathname === "/v1/acp-agents/refresh") {
+        return errorResponse(500, "internal", "the registry is not answering")
+      }
+      if (pathname === "/v1/models") return jsonResponse([OPUS, LOCAL])
+      return jsonResponse([CLAUDE_CODE, CODEX, OPENCODE])
+    })
+    renderScreen(
+      <>
+        <Toaster />
+        <AgentsPage />
+      </>,
+    )
+    await screen.findByRole("tab", { name: /^claude-agent-acp/ })
+
+    await user.click(screen.getByRole("button", { name: "Refresh" }))
+
+    expect(await screen.findByText(/the registry is not answering/)).toBeDefined()
+    // Still the same three tabs — the failed refresh took nothing with it.
+    expect(screen.getByRole("tab", { name: /^claude-agent-acp/ })).toBeDefined()
+    expect(screen.getByRole("tab", { name: /^codex-acp/ })).toBeDefined()
+    expect(screen.getByRole("tab", { name: /^opencode-acp/ })).toBeDefined()
   })
 })

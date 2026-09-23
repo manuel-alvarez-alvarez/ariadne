@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-19
+updated: 2026-09-23
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -175,7 +175,13 @@ Out: the daemon endpoints themselves (012).
 29. The agents screen has one tab per registry agent from `GET /v1/agents`,
     in the daemon's order, named by its agent id. Each tab holds that agent's
     extra flags and the models of the catalog whose `agent_id` is that agent.
-    A flag edit replaces the list whole through `PUT /v1/agents/{id}`.
+    A flag edit replaces the list whole through `PUT /v1/agents/{id}`. A
+    Refresh control above the tabs calls `POST /v1/acp-agents/refresh` once,
+    which reprobes every registry agent and picks up one installed since the
+    daemon started; on its answer the agent configs, the ACP agents and the
+    models are all reloaded, since a rediscovered agent can move any of the
+    three. The control shows a pending state while the call runs, and a
+    failed call is toasted, leaving the screen as it was.
 30. A session panel shows a reported context window as `<used> / <size>`,
     using the compact spelling of token figures. It shows no context fact
     before the agent reports one, and it never shows a cost.
@@ -221,6 +227,13 @@ Out: the daemon endpoints themselves (012).
   one (`ui/src/features/agents/agents-page.test.tsx::turns a model off`,
   `::says why, where the daemon refuses to turn a model off`) — the rule of
   011 read from the surface that acts on it.
+- Refresh calls the reprobe endpoint once, reloads the agent configs, the ACP
+  agents and the models, shows a pending state while it runs, and a failed
+  call leaves every tab as it was
+  (`ui/src/features/agents/agents-page.test.tsx::posts to the refresh
+  endpoint once, and reloads the configs, the ACP agents and the models`,
+  `::shows a pending state while the call is running`,
+  `::shows an error on a failed call, and keeps the screen as it was`).
 - The skills screen groups the shipped skills apart from the user's own
   (`ui/src/features/skills/skills-page.test.tsx`), and offers reset for the
   first and delete for the second and never the other way round

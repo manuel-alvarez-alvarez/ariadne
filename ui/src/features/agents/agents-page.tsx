@@ -27,8 +27,9 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { PencilIcon } from "lucide-react"
+import { PencilIcon, RefreshCwIcon } from "lucide-react"
 import { useState } from "react"
+import { toast } from "sonner"
 
 import { type AgentConfigDto, ApiError, type ModelDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
@@ -39,13 +40,21 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ModelTable } from "@/features/models/model-table"
 import { modelsQueryOptions } from "@/features/models/queries"
-import { plural } from "@/lib/format"
+import { describeError, plural } from "@/lib/format"
 
 import { AgentFlagsDialog } from "./agent-flags-dialog"
 import { sameFlags } from "./agent-flags-values"
-import { agentConfigsQueryOptions } from "./queries"
+import { agentConfigsQueryOptions, useRefreshAcpAgents } from "./queries"
+
+/**
+ * What refreshing does, in the one sentence it takes to say it — on the
+ * button's tooltip and nowhere else, since there is no dialog to put it in.
+ */
+const REFRESH_HINT =
+  "The daemon reprobes every agent, and picks up an agent installed since it started."
 
 export function AgentsPage() {
   // The dialog keeps its subject after closing so the exit animation still has
@@ -58,6 +67,7 @@ export function AgentsPage() {
 
   const configs = useQuery(agentConfigsQueryOptions())
   const models = useQuery(modelsQueryOptions())
+  const refresh = useRefreshAcpAgents()
 
   function openEdit(config: AgentConfigDto) {
     setEditing(config)
@@ -71,6 +81,30 @@ export function AgentsPage() {
       <PageHeader
         title="Agents"
         description="The ACP agents Ariadne spawns sessions with. The flags are appended to every launch of that agent, whichever profile is running on it, and a model turned off is taken out of the catalog the orchestrator sizes a plan from."
+        actions={
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="outline"
+                  pending={refresh.isPending}
+                  onClick={() =>
+                    refresh.mutate(undefined, {
+                      onError: (error) =>
+                        toast.error("Could not refresh agents", {
+                          description: describeError(error),
+                        }),
+                    })
+                  }
+                />
+              }
+            >
+              <RefreshCwIcon />
+              Refresh
+            </TooltipTrigger>
+            <TooltipContent>{REFRESH_HINT}</TooltipContent>
+          </Tooltip>
+        }
       />
 
       {configs.data && models.data ? (
