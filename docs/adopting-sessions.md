@@ -47,7 +47,7 @@ conversation to the author:
 ariadne session adopt <session-id> --agent codex-acp \
   --new-goal "Finish the rate limiter" --repo ~/projects/api \
   --author coding,testing=codex-acp:gpt-5.6-sol@xhigh \
-  --reviewer code-review=claude-agent-acp:claude-opus-5@high
+  --reviewer code-review=claude-acp:claude-opus-5@high
 ```
 
 It prints where each of the three got to:

@@ -20,16 +20,18 @@ prevent_sleep = true               # hold a system sleep inhibition while any ag
                                    # out from under a working agent (default)
 permission_mode = "auto"           # auto, ask, or learn; the default for new tasks
 
-[[acp_agents]]                     # extend the built-in ACP agent registry
-id = "my-agent"                    # stable model-id prefix
+[[acp_agents]]                     # an agent of your own, or one the registry
+id = "my-agent"                    # names under another command
 command = ["my-agent", "acp"]      # program followed by its arguments
 ```
 
-The built-in registry contains the ids `claude-agent-acp`, `codex-acp`, and
-`opencode-acp`. They launch the commands `claude-agent-acp`, `codex-acp`, and
-`opencode acp`, respectively. The daemon probes every entry at startup. See
-[Installing Ariadne](install.md) to add an agent, and
-[Permission modes](permissions.md) to choose how it handles tool requests.
+The agents of a daemon are the agents of the ACP registry whose command is on
+its `PATH`: Ariadne ships a snapshot of that index — `claude-acp`,
+`codex-acp`, `goose`, `opencode` and 37 more — and installs none of them. An
+`[[acp_agents]]` entry adds an agent the registry does not name, and one whose
+id the registry does name replaces it, command and all. The daemon probes
+every entry at startup. See [Installing Ariadne](install.md) to add an agent,
+and [Permission modes](permissions.md) to choose how it handles tool requests.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

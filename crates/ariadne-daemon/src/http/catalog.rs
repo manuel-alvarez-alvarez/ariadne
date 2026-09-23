@@ -82,7 +82,7 @@ pub(super) mod acp_agents {
     use crate::http::AppState;
     use crate::http::error::{ApiResult, Json};
 
-    /// Every built-in and configured ACP agent with its cached probe result.
+    /// Every discovered and configured ACP agent with its cached probe result.
     #[utoipa::path(get, path = "/v1/acp-agents", tag = "acp-agents",
         responses((status = 200, body = [AcpAgentDto])))]
     pub(crate) async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<AcpAgentDto>>> {

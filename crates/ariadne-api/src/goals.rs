@@ -17,7 +17,7 @@ pub struct GoalDto {
     pub orchestrated: bool,
     /// What the orchestrator or adopted author runs on, `<agent>:<model>`:
     /// the registry agent and, after the `:`, the model of it.
-    #[schema(example = "claude-agent-acp:claude-opus-5")]
+    #[schema(example = "claude-acp:claude-opus-5")]
     pub model: String,
     /// The reasoning effort that model is run at, pinned like `model`. None =
     /// whatever the agent runs it at on its own.
@@ -72,7 +72,7 @@ pub struct CreateGoalRequest {
     pub repository_ids: Vec<String>,
     /// What the orchestrator runs on, `<agent>:<model>` — the id of an agent
     /// in the ACP registry and, after the `:`, the model of it:
-    /// `codex-acp:gpt-5.3-codex`, `opencode-acp:ollama/llama3:8b`. Required —
+    /// `codex-acp:gpt-5.3-codex`, `opencode:ollama/llama3:8b`. Required —
     /// a model is required, and no agent default stands in for one. The model
     /// half is free text, handed to that agent as typed; a string naming no
     /// registry agent is refused, and so are the empty string and the word

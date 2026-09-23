@@ -1,6 +1,7 @@
 //! Runtime discovery for ACP agents and their session configuration catalogs.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -14,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::RwLock;
 
-use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus, AcpCapabilitiesDto, AcpDegradation};
+use ariadne_api::agents::{
+    AcpAgentDto, AcpAgentSource, AcpAgentStatus, AcpCapabilitiesDto, AcpDegradation,
+};
 use ariadne_api::models::{EffortDto, ModelDto};
 use ariadne_api::sessions::OutsideSessionDto;
 use ariadne_client::endpoint::AcpAgentConfig;
@@ -22,15 +25,14 @@ use ariadne_store::Store;
 
 use crate::acp::{apply_agent_launch_environment, find_config_option};
 use crate::acp_calls::call;
+use crate::acp_index;
 use crate::acp_transport::pipes;
 use crate::timeouts::Timeouts;
 
-/// The ACP commands Ariadne knows without configuration.
-const BUILTINS: [(&str, &[&str]); 3] = [
-    ("claude-agent-acp", &["claude-agent-acp"]),
-    ("codex-acp", &["codex-acp"]),
-    ("opencode-acp", &["opencode", "acp"]),
-];
+/// The snapshot of the published ACP registry index Ariadne ships, vendored
+/// under `acp-registry/` on the date its README records. It says what every
+/// ACP agent is run by; the daemon's `PATH` says which of them is here.
+pub const SHIPPED_INDEX: &str = include_str!("../acp-registry/registry.json");
 
 #[derive(Clone)]
 pub struct AgentRegistry {
@@ -46,8 +48,10 @@ pub struct AgentRegistry {
 struct RegistryEntry {
     id: String,
     command: Vec<String>,
-    builtin: bool,
-    probe: bool,
+    /// The file a probe starts: the one discovery found on the `PATH` it
+    /// searched, or the program of a configured command.
+    program: PathBuf,
+    source: AcpAgentSource,
     /// Why this entry is refused outright, where it is: a configuration
     /// error, permanent until the config changes. A duplicate id is already
     /// another entry's, and only that one may answer for it. A refused entry
@@ -56,9 +60,14 @@ struct RegistryEntry {
     refused: Option<String>,
 }
 
-/// Why a configured entry is refused, or `None` for one in good standing:
-/// its id is empty or carries the catalog's `:` delimiter, or an earlier
-/// entry — a built-in, or one configured before it — already holds it.
+/// Why an entry is refused, or `None` for one in good standing: its id is
+/// empty or carries the catalog's `:` delimiter, or an entry before it
+/// already holds it. The rule is the id's, not the config's, so an index that
+/// names an agent Ariadne could never pin is refused the same way.
+///
+/// The ids an index entry takes are counted apart from the configured ones:
+/// a configured entry replaces the agent of a discovered id rather than
+/// duplicating it.
 fn refusal(id: &str, taken: &std::collections::HashSet<String>) -> Option<String> {
     if id.trim().is_empty() {
         return Some("the id is empty; give the agent a stable id".into());
@@ -110,49 +119,74 @@ struct Choice {
 }
 
 impl AgentRegistry {
-    /// The registry of a daemon: probes run in `probe_cwd`, and the catalogs
-    /// they read are kept in `store`.
-    pub fn new(custom: &[AcpAgentConfig], probe_cwd: PathBuf, store: Store) -> Self {
-        Self::build(custom, probe_cwd, store, true)
+    /// The registry of a daemon: every agent of the shipped index that `path`
+    /// holds, and the configured agents over them. Probes run in `probe_cwd`,
+    /// and the catalogs they read are kept in `store`.
+    pub fn new(custom: &[AcpAgentConfig], probe_cwd: PathBuf, store: Store, path: &OsStr) -> Self {
+        Self::build(custom, probe_cwd, store, path, SHIPPED_INDEX)
     }
 
-    /// Build the real registry without launching installed agents from tests.
+    /// The same registry over an index the caller writes, so a test says
+    /// which agents there are to find rather than depending on what the
+    /// shipped snapshot names today.
     #[doc(hidden)]
-    pub fn test_registry(custom: &[AcpAgentConfig], probe_cwd: PathBuf, store: Store) -> Self {
-        Self::build(custom, probe_cwd, store, false)
+    pub fn test_registry(
+        custom: &[AcpAgentConfig],
+        probe_cwd: PathBuf,
+        store: Store,
+        path: &OsStr,
+        index: &str,
+    ) -> Self {
+        Self::build(custom, probe_cwd, store, path, index)
     }
 
     fn build(
         custom: &[AcpAgentConfig],
         probe_cwd: PathBuf,
         store: Store,
-        probe_builtins: bool,
+        path: &OsStr,
+        index: &str,
     ) -> Self {
-        // The first holder of an id keeps it: built-ins first, then the
-        // configured entries in configuration order.
-        let mut taken: std::collections::HashSet<String> =
-            BUILTINS.iter().map(|(id, _)| (*id).to_string()).collect();
-        let entries = BUILTINS
+        let mut found_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut entries: Vec<RegistryEntry> = acp_index::installed(index, path)
             .into_iter()
-            .map(|(id, command)| RegistryEntry {
-                id: id.into(),
-                command: command.iter().map(|part| (*part).to_string()).collect(),
-                builtin: true,
-                probe: probe_builtins,
-                refused: None,
-            })
-            .chain(custom.iter().map(|agent| {
-                let refused = refusal(&agent.id, &taken);
-                taken.insert(agent.id.clone());
+            .map(|found| {
+                let refused = refusal(&found.id, &found_ids);
+                found_ids.insert(found.id.clone());
                 RegistryEntry {
-                    id: agent.id.clone(),
-                    command: agent.command.clone(),
-                    builtin: false,
-                    probe: refused.is_none(),
+                    id: found.id,
+                    command: found.command,
+                    program: found.program,
+                    source: AcpAgentSource::Registry,
                     refused,
                 }
-            }))
-            .collect::<Vec<_>>();
+            })
+            .collect();
+        // A configured entry with a discovered id replaces it, wherever the
+        // discovered agent stands: the user's command is the one to run.
+        // Every other id is kept by the first entry that holds it, in
+        // configuration order.
+        let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for agent in custom {
+            let refused = refusal(&agent.id, &taken);
+            taken.insert(agent.id.clone());
+            let replaces = refused.is_none();
+            let entry = RegistryEntry {
+                id: agent.id.clone(),
+                command: agent.command.clone(),
+                program: agent.command.first().cloned().unwrap_or_default().into(),
+                source: AcpAgentSource::Config,
+                refused,
+            };
+            let discovered = entries
+                .iter_mut()
+                .find(|discovered| discovered.id == agent.id)
+                .filter(|_| replaces);
+            match discovered {
+                Some(discovered) => *discovered = entry,
+                None => entries.push(entry),
+            }
+        }
         let results = entries.iter().map(not_probed).collect();
         Self {
             entries: Arc::new(entries),
@@ -202,9 +236,6 @@ impl AgentRegistry {
             async move {
                 if let Some(reason) = &entry.refused {
                     return rejected(&entry, reason.clone());
-                }
-                if !entry.probe {
-                    return rejected(&entry, "not probed by the test harness".into());
                 }
                 probe(entry, &cwd, cached, self.timeouts.probe).await
             }
@@ -291,7 +322,7 @@ impl AgentRegistry {
     /// whole listing.
     pub(crate) async fn stored_sessions(&self) -> Vec<OutsideSessionDto> {
         let cwd = self.probe_cwd.clone();
-        let capable: Vec<AcpAgentDto> = self
+        let capable: Vec<(AcpAgentDto, PathBuf)> = self
             .results
             .read()
             .await
@@ -300,8 +331,12 @@ impl AgentRegistry {
             .filter(|agent| {
                 agent.status == AcpAgentStatus::Ready && agent.capabilities.session_list
             })
+            .filter_map(|agent| {
+                let program = self.program_of(&agent.id)?;
+                Some((agent, program))
+            })
             .collect();
-        let calls = capable.into_iter().map(|agent| {
+        let calls = capable.into_iter().map(|(agent, program)| {
             let cwd = cwd.clone();
             async move {
                 // One budget over every page of the agent, and the pages that
@@ -309,7 +344,7 @@ impl AgentRegistry {
                 let mut sessions = Vec::new();
                 match tokio::time::timeout(
                     self.timeouts.probe,
-                    list_stored_sessions(&agent, &cwd, &mut sessions),
+                    list_stored_sessions(&agent, &program, &cwd, &mut sessions),
                 )
                 .await
                 {
@@ -333,10 +368,18 @@ impl AgentRegistry {
     /// duplicate of an earlier entry's — never answers: the id belongs to
     /// its first holder.
     pub fn command_of(&self, id: &str) -> Option<Vec<String>> {
+        self.entry_of(id).map(|entry| entry.command.clone())
+    }
+
+    /// The file a probe of that agent starts, by its stable id.
+    fn program_of(&self, id: &str) -> Option<PathBuf> {
+        self.entry_of(id).map(|entry| entry.program.clone())
+    }
+
+    fn entry_of(&self, id: &str) -> Option<&RegistryEntry> {
         self.entries
             .iter()
             .find(|entry| entry.id == id && entry.refused.is_none())
-            .map(|entry| entry.command.clone())
     }
 
     /// The cached capabilities of one agent, by id: what the last probe
@@ -401,7 +444,7 @@ fn rejected_with(
         agent: AcpAgentDto {
             id: entry.id.clone(),
             command: entry.command.clone(),
-            builtin: entry.builtin,
+            source: entry.source,
             status: AcpAgentStatus::Rejected,
             capabilities,
             degraded: Vec::new(),
@@ -420,10 +463,10 @@ async fn probe(
     cached: Option<CachedCatalog>,
     timeout: Duration,
 ) -> Discovery {
-    let Some((program, args)) = entry.command.split_first() else {
+    let Some((_, args)) = entry.command.split_first() else {
         return rejected(&entry, "command is empty".into());
     };
-    let mut command = Command::new(program);
+    let mut command = Command::new(&entry.program);
     command
         .args(args)
         .current_dir(cwd)
@@ -532,7 +575,7 @@ async fn probe_protocol(
         agent: AcpAgentDto {
             id: entry.id.clone(),
             command: entry.command.clone(),
-            builtin: entry.builtin,
+            source: entry.source,
             status: AcpAgentStatus::Ready,
             capabilities: capabilities.clone(),
             degraded,
@@ -618,10 +661,11 @@ fn initialize() -> v1::InitializeRequest {
 /// arrives, so a caller that gives up on the rest still holds what came.
 async fn list_stored_sessions(
     agent: &AcpAgentDto,
+    program: &Path,
     cwd: &Path,
     sessions: &mut Vec<OutsideSessionDto>,
 ) -> Result<()> {
-    let Some((program, args)) = agent.command.split_first() else {
+    let Some((_, args)) = agent.command.split_first() else {
         bail!("command is empty");
     };
     let mut command = Command::new(program);

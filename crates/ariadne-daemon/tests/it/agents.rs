@@ -12,20 +12,26 @@ use axum::http::StatusCode;
 
 use ariadne_api::agents::AgentConfigDto;
 
+use common::acp::{script, stub_acp_agent};
 use common::{STUB, TIMEOUT, eventually, get, harness, put_json};
 
-/// Every agent the registry holds is listed, in registry order, and one
-/// nobody configured is launched with nothing of ours.
+/// Every agent the registry holds is listed, in registry order — the agents
+/// of the index the `PATH` holds, then the configured ones — and one nobody
+/// configured is launched with nothing of ours.
 #[tokio::test]
 async fn every_registry_agent_is_listed_with_its_flags_and_its_defaults() {
-    let h = harness().await;
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let h = harness()
+        .agents_on_path(agent.path_with(&["goose", "opencode"]))
+        .await;
     let configs: Vec<AgentConfigDto> = h.json(get("/v1/agents"), StatusCode::OK).await;
     assert_eq!(
         configs
             .iter()
             .map(|c| c.agent_id.as_str())
             .collect::<Vec<_>>(),
-        ["claude-agent-acp", "codex-acp", "opencode-acp", STUB]
+        ["goose", "opencode", STUB]
     );
     for config in &configs {
         assert!(config.extra_flags.is_empty(), "{}", config.agent_id);
@@ -38,24 +44,28 @@ async fn every_registry_agent_is_listed_with_its_flags_and_its_defaults() {
 /// sends.
 #[tokio::test]
 async fn flags_are_replaced_whole_and_the_defaults_stay_readable() {
-    let h = harness().await;
+    let dir = tempfile::tempdir().unwrap();
+    let agent = stub_acp_agent(dir.path(), script());
+    let h = harness()
+        .agents_on_path(agent.path_with(&["goose", "opencode"]))
+        .await;
     let updated: AgentConfigDto = h
         .json(
             put_json(
-                "/v1/agents/claude-agent-acp",
+                "/v1/agents/goose",
                 serde_json::json!({"extra_flags": ["--verbose"]}),
             ),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(updated.agent_id, "claude-agent-acp");
+    assert_eq!(updated.agent_id, "goose");
     assert_eq!(updated.extra_flags, ["--verbose"]);
     assert!(updated.default_flags.is_empty());
 
     let set: AgentConfigDto = h
         .json(
             put_json(
-                "/v1/agents/codex-acp",
+                "/v1/agents/opencode",
                 serde_json::json!({"extra_flags": ["--quiet"]}),
             ),
             StatusCode::OK,
@@ -65,7 +75,7 @@ async fn flags_are_replaced_whole_and_the_defaults_stay_readable() {
     let restored: AgentConfigDto = h
         .json(
             put_json(
-                "/v1/agents/codex-acp",
+                "/v1/agents/opencode",
                 serde_json::json!({"extra_flags": set.default_flags}),
             ),
             StatusCode::OK,
@@ -74,12 +84,12 @@ async fn flags_are_replaced_whole_and_the_defaults_stay_readable() {
     assert!(restored.extra_flags.is_empty());
 
     let configs: Vec<AgentConfigDto> = h.json(get("/v1/agents"), StatusCode::OK).await;
-    let claude = configs
+    let goose = configs
         .iter()
-        .find(|config| config.agent_id == "claude-agent-acp")
+        .find(|config| config.agent_id == "goose")
         .unwrap();
     assert_eq!(
-        claude.extra_flags,
+        goose.extra_flags,
         ["--verbose"],
         "the edit survived the round trip"
     );

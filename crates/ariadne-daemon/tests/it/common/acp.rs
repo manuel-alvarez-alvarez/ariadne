@@ -23,6 +23,7 @@
 //! test reads everything the daemon sent back out of its log — each message
 //! tagged with the Ariadne session the agent process ran under.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -169,6 +170,22 @@ impl StubAcpAgent {
     /// unreaped zombie still would.
     pub(crate) fn process_is_alive(&self) -> bool {
         self.pid().is_some_and(pid_is_alive)
+    }
+
+    /// A `PATH` holding this stub under each of `names`: the machine the
+    /// registry searches, with those agents installed on it.
+    ///
+    /// Every name is a link to the one launcher the stubs share, so no new
+    /// executable is created — macOS checks each of those alone, and the
+    /// tests then wait for each other.
+    pub(crate) fn path_with(&self, names: &[&str]) -> OsString {
+        let dir = Path::new(&self.bin).parent().unwrap();
+        for name in names {
+            let link = dir.join(name);
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(&self.bin, &link).unwrap();
+        }
+        dir.as_os_str().to_os_string()
     }
 }
 

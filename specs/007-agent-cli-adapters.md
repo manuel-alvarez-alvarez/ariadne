@@ -1,7 +1,7 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-09-20
+updated: 2026-09-23
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
@@ -38,18 +38,40 @@ skill says (017).
 
 ## Behavior
 
-1. The registry holds three built-in agents — `claude-agent-acp`
-   (`claude-agent-acp`), `codex-acp` (`codex-acp`) and `opencode-acp`
-   (`opencode acp`) — and every `[[acp_agents]]` entry of the daemon config,
-   each an `id` and a `command`. `GET /v1/acp-agents` lists them all, the
-   built-ins first.
+1. The registry holds the agents of the ACP registry index that the daemon's
+   `PATH` holds, and every `[[acp_agents]]` entry of the daemon config, each
+   an `id` and a `command`. `GET /v1/acp-agents` lists them all, the
+   discovered ones first, each with the `source` it came from — `registry` or
+   `config`. Ariadne installs nothing: the index is vendored as a snapshot
+   (`crates/ariadne-daemon/acp-registry/`), and what exists here is whatever
+   `PATH` answers for.
+
+   An agent of the index takes the id the index gives it, and the command it
+   is looked up and started by comes from its distribution. A `binary`
+   distribution gives one name: the basename of the `cmd` of this platform's
+   build (`darwin-aarch64`, `darwin-x86_64`, `linux-aarch64` or
+   `linux-x86_64`), with its arguments behind it — `./goose` with `["acp"]`
+   is `goose acp`. An `npx` or `uvx` distribution gives two, tried in order:
+   the entry id, then the package without its `@scope/` and without its
+   version — `@google/gemini-cli` is `gemini` first and `gemini-cli` after
+   it. The first name the `PATH` holds as an executable is the agent's
+   command, and an entry that no name of it finds is registered as nothing at
+   all. Only the absolute entries of the `PATH` are searched, in their own
+   order: an empty entry — and an empty `PATH` is one — or a relative one
+   names the directory the daemon was started in, which is not where its
+   agents come from. Such an entry is dropped, and the entries behind it are
+   searched as they always were.
 2. A registry id is any non-empty word without `:`, the delimiter that splits
-   a pin into its agent and its model. The first holder of an id keeps it:
-   built-ins first, then the configured entries in configuration order. A
-   later entry with a taken id, an empty id, or an id with `:` is listed as
-   rejected with the reason on it, is never probed, and never answers for its
-   id.
-3. Discovery probes every entry at once: it starts the command, runs
+   a pin into its agent and its model. A configured entry whose id an agent of
+   the index already holds replaces that agent, where it stands: the
+   configured command is the one that is probed and launched. Between
+   configured entries the first holder of an id keeps it, in configuration
+   order, and between index entries the first holder keeps it too. An entry
+   with a taken id of its own kind, an empty id, or an id with `:` is listed
+   as rejected with the reason on it, is never probed, and never answers for
+   its id — an index entry as much as a configured one.
+3. Discovery probes every entry at once: it starts the command — for a
+   discovered agent, the very file the `PATH` search found — runs
    `initialize`, and caches what it measured. An agent's catalog — its
    models and efforts — comes off a `session/new`, and the store keeps it
    under the command and the version the agent reported in `initialize`
@@ -117,13 +139,31 @@ skill says (017).
 
 ## Acceptance criteria
 
-- The registry lists the three built-ins and a configured agent
-  (`acp_discovery.rs::the_api_lists_the_three_known_agents_and_one_user_agent`).
+- The registry lists an installed agent of the index, under the command the
+  index gives it, beside a configured agent, each with its source
+  (`acp_discovery.rs::the_api_lists_an_installed_index_agent_and_one_user_agent`).
+- A `PATH` holding no agent of the index registers none
+  (`acp_discovery.rs::an_empty_path_registers_no_agent`), a relative entry of
+  a `PATH` is not searched
+  (`::a_relative_path_entry_registers_no_agent`) and does not hide an
+  absolute entry behind it
+  (`::an_absolute_entry_behind_a_relative_one_is_still_searched`), a package
+  entry is
+  found under the name of its package where its id finds nothing
+  (`::an_npx_agent_is_found_under_the_name_of_its_package`), and the index
+  decides which name is tried first and what follows it
+  (`::the_index_maps_an_entry_to_the_first_name_the_path_holds`).
+- A configured entry replaces the discovered agent of its id, and a launch
+  runs the configured command
+  (`acp_discovery.rs::a_configured_agent_replaces_the_discovered_agent_of_its_id`).
 - An id that spells a CLI name is an agent like any other
   (`acp_discovery.rs::a_registry_id_that_spells_a_cli_name_is_an_agent_like_any_other`),
   a taken id is rejected and its first holder keeps it
   (`::a_registry_id_already_taken_is_rejected`), and an id with `:` is
-  rejected (`::a_registry_id_with_the_catalog_delimiter_is_rejected`).
+  rejected, configured
+  (`::a_registry_id_with_the_catalog_delimiter_is_rejected`) or of the index
+  (`::an_index_id_that_cannot_be_pinned_is_rejected`, which takes an empty
+  index id too).
 - Discovery refreshes on demand and replaces the cache
   (`acp_discovery.rs::discovery_refreshes_on_demand`), sends no prompt
   (`::discovery_sends_no_prompt`), and a probe that runs out its time keeps
@@ -194,6 +234,8 @@ binary, so the suite proves that probe only through the refresh endpoint.
 ## Sources
 
 `crates/ariadne-daemon/src/acp_discovery.rs` (the registry and discovery),
+`crates/ariadne-daemon/src/acp_index.rs` (the index and what it maps to),
+`crates/ariadne-daemon/acp-registry/` (the vendored snapshot and its date),
 `crates/ariadne-daemon/src/agents/` (the launch plan and the launch file),
 `crates/ariadne-core/src/acp.rs` (the launch-file format),
 `crates/ariadne-daemon/src/launcher.rs` (the launch, the flags, the resume

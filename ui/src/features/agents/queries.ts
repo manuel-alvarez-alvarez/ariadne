@@ -28,7 +28,7 @@ export function agentConfigsQueryOptions() {
 }
 
 /**
- * `GET /v1/acp-agents` — every built-in and configured ACP agent with its
+ * `GET /v1/acp-agents` — every discovered and configured ACP agent with its
  * cached discovery result: whether it is `ready` or `rejected`, and — the
  * `session_list` capability among them — whether it can list its own stored
  * sessions for adoption.

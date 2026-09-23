@@ -4,6 +4,7 @@
 pub mod acp;
 mod acp_calls;
 pub mod acp_discovery;
+mod acp_index;
 mod acp_schema;
 pub mod acp_sessions;
 mod acp_transport;

@@ -95,10 +95,15 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("opening database {}", config.db_path.display()))?;
 
+    // The daemon's own `PATH`, which is the one its agents are started from:
+    // a service carries the `PATH` its service file was written with, not the
+    // user's.
+    let path = std::env::var_os("PATH").unwrap_or_default();
     let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::new(
         &config.acp_agents,
         config.root.clone(),
         store.clone(),
+        &path,
     );
     // Installed before anything writes, so no state change goes unannounced.
     let events = ariadne_daemon::bus::start(store.clone());

@@ -62,8 +62,8 @@ pub(super) fn acp_agents(agents: &[AcpAgentDto]) -> Vec<Check> {
     {
         checks.push(
             Check::fail("any agent", "no ACP agent is ready on the daemon's PATH").hint(
-                "install claude-agent-acp, codex-acp or opencode, or add an [[acp_agents]] entry \
-                 to config.toml — sessions cannot be spawned without one",
+                "install an agent of the ACP registry on the daemon's PATH, or add an \
+                 [[acp_agents]] entry to config.toml — sessions cannot be spawned without one",
             ),
         );
     }
@@ -144,7 +144,7 @@ pub(super) fn daemon_environment(daemon: Option<&DaemonReportDto>) -> Vec<Check>
 mod tests {
     use super::*;
 
-    use ariadne_api::agents::{AcpCapabilitiesDto, AcpDegradation};
+    use ariadne_api::agents::{AcpAgentSource, AcpCapabilitiesDto, AcpDegradation};
     use ariadne_api::doctor::PathStateDto;
 
     use super::super::Status;
@@ -164,7 +164,7 @@ mod tests {
         let rejected = AcpAgentDto {
             id: "broken".into(),
             command: vec!["broken".into()],
-            builtin: false,
+            source: AcpAgentSource::Config,
             status: AcpAgentStatus::Rejected,
             capabilities: capabilities.clone(),
             degraded: Vec::new(),
@@ -173,7 +173,7 @@ mod tests {
         let degraded = AcpAgentDto {
             id: "limited".into(),
             command: vec!["limited".into()],
-            builtin: false,
+            source: AcpAgentSource::Config,
             status: AcpAgentStatus::Ready,
             capabilities,
             degraded: vec![
@@ -194,19 +194,25 @@ mod tests {
 
     /// A registry with no ready agent is a failure: nothing can be spawned.
     /// One ready agent is enough, and a rejected one beside it is a warning.
+    /// The advice says where an agent comes from — the ACP registry — and
+    /// where the daemon looks for one: its `PATH`.
     #[test]
     fn no_ready_agent_fails_the_report_and_one_is_enough() {
         let agent = |id: &str, status| AcpAgentDto {
             id: id.into(),
             command: vec![id.into()],
-            builtin: true,
+            source: AcpAgentSource::Registry,
             status,
             capabilities: AcpCapabilitiesDto::default(),
             degraded: Vec::new(),
             rejection_reason: None,
         };
         let checks = acp_agents(&[agent("gone", AcpAgentStatus::Rejected)]);
-        assert_eq!(by_name(&checks, "any agent").status, Status::Fail);
+        let none = by_name(&checks, "any agent");
+        assert_eq!(none.status, Status::Fail);
+        let hint = none.hint.as_deref().unwrap();
+        assert!(hint.contains("ACP registry"), "{hint}");
+        assert!(hint.contains("PATH"), "{hint}");
 
         let checks = acp_agents(&[
             agent("gone", AcpAgentStatus::Rejected),

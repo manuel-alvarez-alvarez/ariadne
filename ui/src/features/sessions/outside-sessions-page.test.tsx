@@ -73,7 +73,7 @@ function anAcpAgent(overrides: Partial<AcpAgentDto> = {}): AcpAgentDto {
   return {
     id: "claude-agent-acp",
     command: ["claude-agent-acp"],
-    builtin: true,
+    source: "registry",
     status: "ready",
     capabilities: {
       stdio: true,

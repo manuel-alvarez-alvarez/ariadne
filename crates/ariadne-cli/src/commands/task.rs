@@ -82,24 +82,24 @@ const HISTORY: &[Column] = &[
 const CREATE_EXAMPLES: &str = "\
 Examples:
   ariadne task create <goal-id> --title \"Add the rate limiter middleware\" \\
-      --author coding,testing=claude-agent-acp:claude-sonnet-5 \\
+      --author coding,testing=claude-acp:claude-sonnet-5 \\
       --reviewer code-review=codex-acp:gpt-5.6-luna
 
   # after another task, reasoned deeply
   ariadne task create <goal-id> --title \"Wire it up\" --depends-on <task-id> \\
       --author coding,testing=codex-acp:gpt-5.6-sol@xhigh \\
-      --reviewer code-review=claude-agent-acp:claude-opus-5@high
+      --reviewer code-review=claude-acp:claude-opus-5@high
 
   # nothing to review: approved as soon as the author asks
   ariadne task create <goal-id> --title \"Write the 0.6.0 release notes\" \\
-      --author documentation=claude-agent-acp:claude-sonnet-5 --no-reviewer
+      --author documentation=claude-acp:claude-sonnet-5 --no-reviewer
 ";
 
 /// What `task update --help` ends with.
 const UPDATE_EXAMPLES: &str = "\
 Examples:
   ariadne task update <task-id> --title \"Add the rate limiter middleware\"
-  ariadne task update <task-id> --model claude-agent-acp:claude-opus-5 --effort xhigh
+  ariadne task update <task-id> --model claude-acp:claude-opus-5 --effort xhigh
   ariadne task update <task-id> --reviewer code-review=codex-acp:gpt-5.6-luna@high
   ariadne task update <task-id> --no-reviewer          # nothing left to review
   ariadne task update <task-id> --effort default       # at whatever the agent reasons it at

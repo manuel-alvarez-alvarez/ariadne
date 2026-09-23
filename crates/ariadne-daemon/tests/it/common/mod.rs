@@ -110,6 +110,8 @@ pub(crate) struct HarnessBuilder {
     logs: Option<LogBuffer>,
     discover_agents: bool,
     timeouts: Timeouts,
+    path: std::ffi::OsString,
+    index: String,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -124,6 +126,11 @@ pub(crate) fn test_pin() -> AgentPin {
 
 /// A daemon in a temporary directory, its registry holding the stub agent,
 /// and no scheduler.
+///
+/// The `PATH` its registry searches is empty, so no agent of the ACP registry
+/// index is found on the machine running the tests: the agents of a harness
+/// are the ones it registers itself, unless a test hands it a `PATH` of its
+/// own ([`HarnessBuilder::agents_on_path`]).
 pub(crate) fn harness() -> HarnessBuilder {
     HarnessBuilder {
         home: None,
@@ -133,6 +140,8 @@ pub(crate) fn harness() -> HarnessBuilder {
         logs: None,
         discover_agents: false,
         timeouts: Timeouts::default(),
+        path: std::ffi::OsString::new(),
+        index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
     }
 }
 
@@ -190,6 +199,21 @@ impl HarnessBuilder {
         self
     }
 
+    /// Search `path` for the agents of the registry index, as a daemon
+    /// searches its own: what the machine running the daemon holds.
+    /// [`acp::StubAcpAgent::path_with`] makes one out of the stub.
+    pub(crate) fn agents_on_path(mut self, path: impl Into<std::ffi::OsString>) -> Self {
+        self.path = path.into();
+        self
+    }
+
+    /// Read `index` as the registry index, rather than the snapshot Ariadne
+    /// ships: for a test about what the mapping makes of an entry.
+    pub(crate) fn acp_index(mut self, index: impl Into<String>) -> Self {
+        self.index = index.into();
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -222,6 +246,8 @@ impl HarnessBuilder {
             &config.acp_agents,
             config.root.clone(),
             store.clone(),
+            &self.path,
+            &self.index,
         )
         .with_timeouts(self.timeouts);
         // Installed before anything writes, exactly as the daemon does at

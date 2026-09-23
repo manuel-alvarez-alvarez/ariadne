@@ -15,7 +15,7 @@
         "tags": [
           "acp-agents"
         ],
-        "summary": "Every built-in and configured ACP agent with its cached probe result.",
+        "summary": "Every discovered and configured ACP agent with its cached probe result.",
         "operationId": "list",
         "responses": {
           "200": {
@@ -2382,16 +2382,12 @@
         "required": [
           "id",
           "command",
-          "builtin",
+          "source",
           "status",
           "capabilities",
           "degraded"
         ],
         "properties": {
-          "builtin": {
-            "type": "boolean",
-            "description": "Whether Ariadne supplied this entry."
-          },
           "capabilities": {
             "$ref": "#/components/schemas/AcpCapabilitiesDto"
           },
@@ -2420,10 +2416,22 @@
             ],
             "description": "Why discovery rejected this agent."
           },
+          "source": {
+            "$ref": "#/components/schemas/AcpAgentSource",
+            "description": "Where the entry came from."
+          },
           "status": {
             "$ref": "#/components/schemas/AcpAgentStatus"
           }
         }
+      },
+      "AcpAgentSource": {
+        "type": "string",
+        "description": "Where one registry entry came from: an agent of the ACP registry index\nfound on the daemon's `PATH`, or an `[[acp_agents]]` entry of its config.",
+        "enum": [
+          "registry",
+          "config"
+        ]
       },
       "AcpAgentStatus": {
         "type": "string",
@@ -2837,7 +2845,7 @@
           },
           "model": {
             "type": "string",
-            "description": "What the orchestrator runs on, `<agent>:<model>` — the id of an agent\nin the ACP registry and, after the `:`, the model of it:\n`codex-acp:gpt-5.3-codex`, `opencode-acp:ollama/llama3:8b`. Required —\na model is required, and no agent default stands in for one. The model\nhalf is free text, handed to that agent as typed; a string naming no\nregistry agent is refused, and so are the empty string and the word\n\"default\".",
+            "description": "What the orchestrator runs on, `<agent>:<model>` — the id of an agent\nin the ACP registry and, after the `:`, the model of it:\n`codex-acp:gpt-5.3-codex`, `opencode:ollama/llama3:8b`. Required —\na model is required, and no agent default stands in for one. The model\nhalf is free text, handed to that agent as typed; a string naming no\nregistry agent is refused, and so are the empty string and the word\n\"default\".",
             "example": "codex-acp:gpt-5.3-codex"
           },
           "repository_ids": {
@@ -3415,7 +3423,7 @@
           "model": {
             "type": "string",
             "description": "What the orchestrator or adopted author runs on, `<agent>:<model>`:\nthe registry agent and, after the `:`, the model of it.",
-            "example": "claude-agent-acp:claude-opus-5"
+            "example": "claude-acp:claude-opus-5"
           },
           "orchestrated": {
             "type": "boolean",
@@ -3656,7 +3664,7 @@
       },
       "ModelDto": {
         "type": "object",
-        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: a\nregistry agent on a model discovery found it offering\n(`claude-agent-acp:claude-opus-5`). Every entry names both halves — there\nis no bare-agent entry, because a model is required wherever an agent is\npinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. The rest is what the agent itself said when discovery\nasked: one line about the model, and the efforts it can be run at.",
+        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: a\nregistry agent on a model discovery found it offering\n(`claude-acp:claude-opus-5`). Every entry names both halves — there\nis no bare-agent entry, because a model is required wherever an agent is\npinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. The rest is what the agent itself said when discovery\nasked: one line about the model, and the efforts it can be run at.",
         "required": [
           "id",
           "agent_id",
@@ -3688,7 +3696,7 @@
           },
           "id": {
             "type": "string",
-            "example": "claude-agent-acp:claude-opus-5"
+            "example": "claude-acp:claude-opus-5"
           }
         }
       },
@@ -4072,7 +4080,7 @@
       },
       "SetModelEnabledRequest": {
         "type": "object",
-        "description": "Body of `PUT /v1/models/enabled`: one model of the catalog, turned on or\noff.\n\nThe id is a field rather than a path segment because a model id carries\n`:` and often `/` (`opencode-acp:anthropic/claude-sonnet-4`) — which is a\npath of its own, not a segment of one.",
+        "description": "Body of `PUT /v1/models/enabled`: one model of the catalog, turned on or\noff.\n\nThe id is a field rather than a path segment because a model id carries\n`:` and often `/` (`opencode:anthropic/claude-sonnet-4`) — which is a\npath of its own, not a segment of one.",
         "required": [
           "id",
           "enabled"
@@ -4085,7 +4093,7 @@
           "id": {
             "type": "string",
             "description": "The entry, as `GET /v1/models` spells its `id`.",
-            "example": "claude-agent-acp:claude-opus-5"
+            "example": "claude-acp:claude-opus-5"
           }
         }
       },

@@ -1513,12 +1513,12 @@ mod tests {
     /// that can list sessions is left off the notes entirely.
     #[test]
     fn an_agent_without_the_capability_is_named_with_its_reason() {
-        use ariadne_api::agents::{AcpAgentStatus, AcpCapabilitiesDto};
+        use ariadne_api::agents::{AcpAgentSource, AcpAgentStatus, AcpCapabilitiesDto};
 
         let agent = |id: &str, status, session_list, rejection_reason: Option<&str>| AcpAgentDto {
             id: id.to_string(),
             command: vec![id.to_string()],
-            builtin: false,
+            source: AcpAgentSource::Registry,
             status,
             capabilities: AcpCapabilitiesDto {
                 session_list,

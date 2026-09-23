@@ -11,7 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every built-in and configured ACP agent with its cached probe result. */
+        /** Every discovered and configured ACP agent with its cached probe result. */
         get: operations["acp-agents_list"];
         put?: never;
         post?: never;
@@ -996,8 +996,6 @@ export interface components {
     schemas: {
         /** @description One ACP agent known to the daemon and its latest discovery result. */
         AcpAgentDto: {
-            /** @description Whether Ariadne supplied this entry. */
-            builtin: boolean;
             capabilities: components["schemas"]["AcpCapabilitiesDto"];
             /** @description Program followed by its arguments. */
             command: string[];
@@ -1007,8 +1005,16 @@ export interface components {
             id: string;
             /** @description Why discovery rejected this agent. */
             rejection_reason?: string | null;
+            /** @description Where the entry came from. */
+            source: components["schemas"]["AcpAgentSource"];
             status: components["schemas"]["AcpAgentStatus"];
         };
+        /**
+         * @description Where one registry entry came from: an agent of the ACP registry index
+         *     found on the daemon's `PATH`, or an `[[acp_agents]]` entry of its config.
+         * @enum {string}
+         */
+        AcpAgentSource: "registry" | "config";
         /** @enum {string} */
         AcpAgentStatus: "ready" | "rejected";
         /** @description Required and optional ACP capabilities measured by discovery. */
@@ -1226,7 +1232,7 @@ export interface components {
             /**
              * @description What the orchestrator runs on, `<agent>:<model>` — the id of an agent
              *     in the ACP registry and, after the `:`, the model of it:
-             *     `codex-acp:gpt-5.3-codex`, `opencode-acp:ollama/llama3:8b`. Required —
+             *     `codex-acp:gpt-5.3-codex`, `opencode:ollama/llama3:8b`. Required —
              *     a model is required, and no agent default stands in for one. The model
              *     half is free text, handed to that agent as typed; a string naming no
              *     registry agent is refused, and so are the empty string and the word
@@ -1436,7 +1442,7 @@ export interface components {
             /**
              * @description What the orchestrator or adopted author runs on, `<agent>:<model>`:
              *     the registry agent and, after the `:`, the model of it.
-             * @example claude-agent-acp:claude-opus-5
+             * @example claude-acp:claude-opus-5
              */
             model: string;
             /** @description Whether this goal has an orchestrator for its lifetime. */
@@ -1587,7 +1593,7 @@ export interface components {
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: a
          *     registry agent on a model discovery found it offering
-         *     (`claude-agent-acp:claude-opus-5`). Every entry names both halves — there
+         *     (`claude-acp:claude-opus-5`). Every entry names both halves — there
          *     is no bare-agent entry, because a model is required wherever an agent is
          *     pinned.
          *
@@ -1611,7 +1617,7 @@ export interface components {
              *     where it is shown as off and refused as a pin.
              */
             enabled: boolean;
-            /** @example claude-agent-acp:claude-opus-5 */
+            /** @example claude-acp:claude-opus-5 */
             id: string;
         };
         /** @description A new active, unorchestrated goal for the adopted session. */
@@ -1795,7 +1801,7 @@ export interface components {
          *     off.
          *
          *     The id is a field rather than a path segment because a model id carries
-         *     `:` and often `/` (`opencode-acp:anthropic/claude-sonnet-4`) — which is a
+         *     `:` and often `/` (`opencode:anthropic/claude-sonnet-4`) — which is a
          *     path of its own, not a segment of one.
          */
         SetModelEnabledRequest: {
@@ -1803,7 +1809,7 @@ export interface components {
             enabled: boolean;
             /**
              * @description The entry, as `GET /v1/models` spells its `id`.
-             * @example claude-agent-acp:claude-opus-5
+             * @example claude-acp:claude-opus-5
              */
             id: string;
         };

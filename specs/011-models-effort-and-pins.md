@@ -1,7 +1,7 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-09-11
+updated: 2026-09-23
 areas: [core, api, daemon, cli]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
@@ -62,15 +62,17 @@ orchestrator decides (003).
     the task staffs (017), one per author and per reviewer.
 11. A session freezes its pin at its first launch: a re-pin steers the next
     spawn, never the conversation already running.
-12. The registry holds three built-in agents — `claude-agent-acp` (command
-    `claude-agent-acp`), `codex-acp` (`codex-acp`) and `opencode-acp`
-    (`opencode acp`) — plus every entry configured under `acp_agents`. Each
-    entry's id is the agent half of every pin on it.
+12. The registry holds the agents of the shipped ACP registry index that the
+    daemon's `PATH` holds — `claude-acp` (command `claude-agent-acp`),
+    `codex-acp` (`codex-acp`) and `opencode` (`opencode acp`) among them —
+    plus every entry configured under `acp_agents` (007). Each entry's id is
+    the agent half of every pin on it.
 13. A registry id is any word without the `:` delimiter. An id that spells a
-    CLI's own name is an agent like any other. The first entry with an id
-    keeps it — built-ins first, then configuration order. A later entry with
-    a taken id, or an entry whose id carries `:`, stays listed, rejected with
-    the reason, and is never resolved.
+    CLI's own name is an agent like any other. A configured entry replaces
+    the discovered agent of its id; between configured entries the first
+    with an id keeps it, in configuration order. A later entry with a taken
+    id, or an entry whose id carries `:`, stays listed, rejected with the
+    reason, and is never resolved.
 14. The daemon probes every registry entry at startup and caches the result.
     `POST /v1/acp-agents/refresh` replaces that cache on demand. A probe
     speaks ACP version 1 over standard input and output. It creates a

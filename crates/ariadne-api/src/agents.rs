@@ -10,14 +10,23 @@ pub struct AcpAgentDto {
     pub id: String,
     /// Program followed by its arguments.
     pub command: Vec<String>,
-    /// Whether Ariadne supplied this entry.
-    pub builtin: bool,
+    /// Where the entry came from.
+    pub source: AcpAgentSource,
     pub status: AcpAgentStatus,
     pub capabilities: AcpCapabilitiesDto,
     /// One flag for every optional capability that is absent.
     pub degraded: Vec<AcpDegradation>,
     /// Why discovery rejected this agent.
     pub rejection_reason: Option<String>,
+}
+
+/// Where one registry entry came from: an agent of the ACP registry index
+/// found on the daemon's `PATH`, or an `[[acp_agents]]` entry of its config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AcpAgentSource {
+    Registry,
+    Config,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

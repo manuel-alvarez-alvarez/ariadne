@@ -32,8 +32,9 @@
 <p align="center">
   Every agent runs as an ACP session, and every task gets its own git worktree. Connect to an
   agent console at any moment to read events, send a prompt, or answer a permission question.
-  Built-in registry entries start <b>Claude Code ACP</b>, <b>Codex ACP</b>, and <b>OpenCode
-  ACP</b>; you can add any compatible agent. A goal picks each agent's model and effort.
+  Ariadne ships the ACP registry and runs whichever of its 41 agents — <b>Claude Code ACP</b>,
+  <b>Codex ACP</b>, <b>OpenCode</b>, <b>goose</b> and the rest — you have installed; you can add
+  any compatible agent. A goal picks each agent's model and effort.
 </p>
 
 <p align="center">

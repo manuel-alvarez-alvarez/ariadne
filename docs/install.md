@@ -19,14 +19,20 @@ Run `scripts/install.sh --help` for the complete flag list.
 ## Connect an agent
 
 Every agent runs through the [Agent Client Protocol][ACP] (ACP). Ariadne
-includes these registry entries. Install the command you want to use and make
-it available on the daemon's `PATH`.
+ships a snapshot of the ACP registry — the index of every agent that speaks
+the protocol, and of the command each one is run by — and installs none of
+them: the daemon registers the agents whose command is on its `PATH`. Install
+the one you want to use, and it is there at the daemon's next start.
 
 | Agent id | Command Ariadne starts | Where it comes from |
 | --- | --- | --- |
-| `claude-agent-acp` | `claude-agent-acp` | `npm install -g @agentclientprotocol/claude-agent-acp` |
+| `claude-acp` | `claude-agent-acp` | `npm install -g @agentclientprotocol/claude-agent-acp` |
 | `codex-acp` | `codex-acp` | `npm install -g @agentclientprotocol/codex-acp` |
-| `opencode-acp` | `opencode acp` | [OpenCode](https://opencode.ai) itself |
+| `opencode` | `opencode acp` | [OpenCode](https://opencode.ai) itself |
+
+The registry names 41 agents, and those three are only the ones this page
+walks through. An agent takes the id the registry gives it, which is the half
+of a `<agent-id>:<model-id>` pin before the `:`.
 
 Start the daemon, then check which agents and models it found:
 
@@ -36,12 +42,15 @@ ariadne doctor
 ariadne models ls
 ```
 
-`ariadne doctor` reports an unavailable command or an agent that does not meet
-the ACP contract. `ariadne models ls` lists only models that a ready agent
-offered. Use the printed `<agent-id>:<model-id>` value in `--model`; there is
-no implicit agent or model default.
+`ariadne doctor` reports an agent that does not meet the ACP contract, and
+says so where no agent at all is ready. An agent it does not name is an agent
+whose command is not on the daemon's `PATH` — a service carries the `PATH` of
+the service file it was installed with, which is not always the shell's.
+`ariadne models ls` lists only models that a ready agent offered. Use the
+printed `<agent-id>:<model-id>` value in `--model`; there is no implicit agent
+or model default.
 
-### Add another ACP agent
+### Add an agent the registry does not name
 
 Add a `[[acp_agents]]` entry to `~/.ariadne/config.toml`, then restart the
 daemon so it discovers the command:
@@ -59,8 +68,9 @@ ariadne models ls --agent my-agent
 ```
 
 The id must be non-empty, unique, and contain no `:`. It becomes the model
-prefix, for example `my-agent:my-model`. Ariadne starts the command exactly as
-the list gives it. To pass flags to every session of a registered agent, use
+prefix, for example `my-agent:my-model`. An entry whose id is one the registry
+found replaces that agent: the configured command is the one Ariadne starts,
+exactly as the list gives it. To pass flags to every session of an agent, use
 `ariadne agent update my-agent --flag --my-agent-flag`; `ariadne agent ls`
 shows the active flags. The next launch uses the new flags.
 
