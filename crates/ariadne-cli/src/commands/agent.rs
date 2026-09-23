@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use clap::Subcommand;
 
-use ariadne_api::agents::AgentConfigDto;
+use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus, AgentConfigDto};
 use ariadne_client::Client;
 
 use crate::output::{
@@ -16,6 +16,14 @@ const LS: &[Column] = &[
     col("agent", UNCAPPED).title(),
     col("flags", 44),
     col("defaults", 44).rank(1),
+];
+
+/// Columns of `agent refresh`: the registry's current discovery result.
+const REFRESH: &[Column] = &[
+    col("agent", UNCAPPED).id(),
+    col("status", UNCAPPED).check(),
+    col("command", 44).title().rank(1),
+    col("reason", 44).rank(0),
 ];
 
 /// What an empty flag list looks like in a table: a cell nobody can mistake
@@ -31,6 +39,8 @@ const EMPTY: &str = "-";
 pub(crate) enum AgentCommand {
     /// List the registry agents, their flags and the defaults they came from
     Ls,
+    /// Reprobe every agent and list its current status
+    Refresh,
     /// Replace an agent's flags
     ///
     /// The list is replaced whole: `--flag` names every flag the agent is to
@@ -100,6 +110,7 @@ pub(crate) async fn run(client: &Client, cmd: AgentCommand, format: Format) -> R
                 empty_state("No agents are in the registry.", Some("ariadne doctor")),
             )?;
         }
+        AgentCommand::Refresh => refresh(client, format).await?,
         AgentCommand::Update {
             agent,
             flags,
@@ -125,9 +136,61 @@ pub(crate) async fn run(client: &Client, cmd: AgentCommand, format: Format) -> R
     Ok(())
 }
 
+/// Reprobe the ACP registry, then show exactly the snapshot the daemon
+/// answered with. A rejected entry keeps its reason in the table rather than
+/// disappearing: installing or correcting its command is what refresh is for.
+async fn refresh(client: &Client, format: Format) -> Result<()> {
+    let agents = client.refresh_acp_agents().await?;
+    print_list(
+        format,
+        &agents,
+        REFRESH,
+        refresh_row,
+        empty_state("No ACP agents are in the registry.", Some("ariadne doctor")),
+    )
+}
+
+fn refresh_row(agent: &AcpAgentDto) -> Vec<String> {
+    refresh_row_values(
+        &agent.id,
+        agent.status,
+        &agent.command,
+        agent.rejection_reason.as_deref(),
+    )
+}
+
+fn refresh_row_values(
+    id: &str,
+    status: AcpAgentStatus,
+    command: &[String],
+    rejection_reason: Option<&str>,
+) -> Vec<String> {
+    vec![
+        id.into(),
+        match status {
+            AcpAgentStatus::Ready => "ok",
+            AcpAgentStatus::Rejected => "warn",
+        }
+        .into(),
+        command.join(" "),
+        rejection_reason.unwrap_or(EMPTY).into(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use axum::routing::post;
+    use axum::{Json, Router};
+
+    use ariadne_api::error::ErrorBody;
+    use ariadne_client::ClientError;
 
     #[test]
     fn a_flag_list_reads_as_a_command_line_and_an_empty_one_as_a_dash() {
@@ -149,5 +212,66 @@ mod tests {
         let header = table.lines().next().expect("header");
         assert!(header.contains("AGENT"), "{table}");
         assert!(!header.contains("TITLE"), "{table}");
+    }
+
+    #[test]
+    fn a_rejected_agent_keeps_its_reason_in_the_refresh_row() {
+        let reason = "the program is not on PATH";
+        let row = refresh_row_values(
+            "rejected",
+            AcpAgentStatus::Rejected,
+            &["missing-agent".into(), "acp".into()],
+            Some(reason),
+        );
+        assert_eq!(row, ["rejected", "warn", "missing-agent acp", reason]);
+        assert_eq!(REFRESH[1].cell, crate::output::table::Cell::Check);
+    }
+
+    #[tokio::test]
+    async fn refresh_calls_the_reprobe_endpoint_once() {
+        async fn handler(State(calls): State<Arc<AtomicUsize>>) -> Json<Vec<serde_json::Value>> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Json(vec![])
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/v1/acp-agents/refresh", post(handler))
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        refresh(&Client::tcp(format!("http://{address}")), Format::Json)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn refresh_keeps_the_daemon_error_message() {
+        async fn handler() -> (StatusCode, Json<ErrorBody>) {
+            (
+                StatusCode::CONFLICT,
+                Json(ErrorBody::new("refresh_refused", "the registry is busy")),
+            )
+        }
+
+        let app = Router::new().route("/v1/acp-agents/refresh", post(handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let error = refresh(&Client::tcp(format!("http://{address}")), Format::Table)
+            .await
+            .unwrap_err();
+        server.abort();
+
+        assert_eq!(
+            error.downcast_ref::<ClientError>().unwrap().human(),
+            "the registry is busy"
+        );
     }
 }

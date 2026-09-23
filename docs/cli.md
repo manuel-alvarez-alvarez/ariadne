@@ -22,6 +22,19 @@ ariadne goal attach <goal-id>
 The final command opens the orchestrator console. Answer its questions there;
 it writes the plan and starts the agreed tasks.
 
+## Refresh ACP agents
+
+When an ACP agent is installed or its command changes after the daemon has
+started, reprobe the whole registry:
+
+```sh
+ariadne agent refresh
+```
+
+The listing shows every agent's id, status and command. A rejected agent also
+shows why it could not be used. Use `--format json` when a script needs the
+unchanged list returned by the daemon.
+
 ## Connect to a session
 
 `ariadne attach` is an interactive console, not a shell inside the agent. It

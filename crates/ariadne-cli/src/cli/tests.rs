@@ -82,6 +82,7 @@ fn an_empty_description_is_not_advertised_as_a_default() {
 /// is global, so it reaches them whether or not anyone meant it to.
 const LEAVES: &[(&str, bool)] = &[
     ("agent ls", true),
+    ("agent refresh", true),
     ("agent update", true),
     ("attach", false),
     ("attention", true),
@@ -1252,6 +1253,20 @@ fn an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is() {
     };
     assert_eq!(agent, "claude-agent-acp");
     assert_eq!(flags, ["--model-config", "--verbose"]);
+}
+
+#[test]
+fn refresh_reprobes_every_agent() {
+    let cmd = built();
+    assert!(advertises(&cmd, &["agent", "refresh"], "format"));
+    assert!(long_help(&["agent", "refresh"]).contains("Reprobe every agent"));
+
+    let Command::Agent {
+        command: AgentCommand::Refresh,
+    } = parse(&["ariadne", "agent", "refresh"]).command
+    else {
+        panic!("agent refresh");
+    };
 }
 
 /// A skill is one document, so its lines are the four things one does to a

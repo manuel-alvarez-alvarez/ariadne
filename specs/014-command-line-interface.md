@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-19
+updated: 2026-09-23
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -137,7 +137,10 @@ same binary also serves (013).
 25. `ariadne agent ls|update` lists and edits the flags each registry agent
     is launched with, keyed by its registry id. `update` takes a flag list, a
     clear, or a reset, and only one of them, and a flag value that reads like
-    a flag of the CLI's own is taken as it is.
+    a flag of the CLI's own is taken as it is. `ariadne agent refresh` reprobes
+    every ACP registry agent, then lists the daemon's result with each id,
+    status and command, plus the reason of every rejected agent. Its JSON is
+    the daemon's list unchanged.
 26. `ariadne session discover` lists filtered pages of the stored sessions of
     every ACP agent that can list them, and names each agent that cannot with
     its reason. It sends `--agent`, `--dir`, `--since`, `--until`, `--search`,
@@ -293,7 +296,11 @@ same binary also serves (013).
   (`cli/tests.rs::updating_an_agent_takes_flags_or_clear_or_reset_but_only_one`,
   `::an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is`), and its
   listing keeps the `agent` column name
-  (`agent.rs::the_agent_keeps_the_agent_column_name`).
+  (`agent.rs::the_agent_keeps_the_agent_column_name`). `agent refresh` is in
+  the command tree, calls its reprobe endpoint once, and preserves a rejected
+  agent's reason (`cli/tests.rs::refresh_reprobes_every_agent`,
+  `agent.rs::refresh_calls_the_reprobe_endpoint_once`,
+  `::a_rejected_agent_keeps_its_reason_in_the_refresh_row`).
 - `session discover` sends every filter and page flag with UTC date bounds,
   follows all pages without repeating a session, prints the count and the
   reusable next-page command only when one exists, and refuses `--all` with

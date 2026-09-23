@@ -47,6 +47,7 @@ Examples:
 const AGENT_EXAMPLES: &str = "\
 Examples:
   ariadne agent ls                         # the flags every agent is launched with
+  ariadne agent refresh                    # reprobe every ACP agent
   ariadne agent update codex-acp --flag --verbose
   ariadne agent update codex-acp --reset   # back to what Ariadne ships
 ";
@@ -477,6 +478,7 @@ const NO_FORMAT: &[&[&str]] = &[
 /// otherwise advertise `--columns` on `task cancel`.
 const LISTINGS: &[&str] = &[
     "agent ls",
+    "agent refresh",
     "attention",
     "goal ls",
     "models ls",
@@ -492,6 +494,7 @@ const LISTINGS: &[&str] = &[
 /// Commands where `-q` prints only each affected row's subject.
 const QUIET_OUTPUT: &[&str] = &[
     "agent ls",
+    "agent refresh",
     "agent update",
     "attention",
     "goal cancel",

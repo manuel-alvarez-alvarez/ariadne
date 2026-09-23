@@ -18,7 +18,7 @@ use hyperlocal::{UnixClientExt, UnixConnector, Uri as UnixUri};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use ariadne_api::agents::{AgentConfigDto, UpdateAgentConfigRequest};
+use ariadne_api::agents::{AcpAgentDto, AgentConfigDto, UpdateAgentConfigRequest};
 use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::skills::SkillDto;
@@ -274,6 +274,11 @@ impl Client {
             &UpdateAgentConfigRequest { extra_flags },
         )
         .await
+    }
+
+    /// Reprobe every ACP registry agent and return the new discovery result.
+    pub async fn refresh_acp_agents(&self) -> Result<Vec<AcpAgentDto>, ClientError> {
+        self.post_empty("/v1/acp-agents/refresh").await
     }
 
     /// Put a built-in skill back on the document Ariadne ships.
