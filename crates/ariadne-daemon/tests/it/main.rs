@@ -13,7 +13,7 @@ mod common;
 mod acp_console;
 mod acp_discovery;
 mod acp_runtime;
-mod acp_session_adoption;
+mod acp_session_resume;
 mod acp_terminal;
 mod adapters;
 mod agent_messages;

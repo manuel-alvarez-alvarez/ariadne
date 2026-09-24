@@ -225,7 +225,7 @@ impl super::Scheduler {
         Some(
             sessions
                 .into_iter()
-                .filter(|s| s.seat() == Seat::Orchestrator)
+                .filter(|s| s.seat() == Some(Seat::Orchestrator))
                 .collect(),
         )
     }

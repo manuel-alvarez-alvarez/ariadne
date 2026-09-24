@@ -40,9 +40,10 @@ pub(super) async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<Ca
         .await
         .map_err(|_| ApiError::forbidden(format!("unknown agent session: {session_id}")))?;
     let actor = match session.seat() {
-        Seat::Orchestrator => Actor::Orchestrator,
-        Seat::Author => Actor::Author,
-        Seat::Reviewer => Actor::Reviewer,
+        None => return Err(ApiError::forbidden("a loose session has no task authority")),
+        Some(Seat::Orchestrator) => Actor::Orchestrator,
+        Some(Seat::Author) => Actor::Author,
+        Some(Seat::Reviewer) => Actor::Reviewer,
     };
     Ok(CallCtx {
         actor,
@@ -54,7 +55,7 @@ pub(super) async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<Ca
 pub(super) fn ensure_task_scope(ctx: &CallCtx, task_id: &str) -> ApiResult<()> {
     if let Some(session) = &ctx.session
         && session.task_id.as_deref() != Some(task_id)
-        && session.seat() != Seat::Orchestrator
+        && session.seat() != Some(Seat::Orchestrator)
     {
         return Err(ApiError::forbidden(format!(
             "session {} is not assigned to task {task_id}",

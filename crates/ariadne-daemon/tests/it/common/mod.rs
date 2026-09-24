@@ -487,7 +487,7 @@ impl Harness {
             Some(task) => self.store.get_task(task).await.unwrap().repo_id,
             None => {
                 self.store
-                    .list_goal_repositories(&session.goal_id)
+                    .list_goal_repositories(session.goal_id.as_deref().unwrap())
                     .await
                     .unwrap()
                     .remove(0)
@@ -897,9 +897,9 @@ impl Harness {
         std::fs::create_dir_all(&worktree).unwrap();
         self.store
             .create_session(NewSession {
-                goal_id: goal.id.clone(),
+                goal_id: Some(goal.id.clone()),
                 task_id: task.map(|t| t.id.clone()),
-                seat,
+                seat: Some(seat),
                 task_agent_id: agent_id.map(str::to_string),
                 model: test_pin().model,
                 effort: None,
@@ -1170,7 +1170,7 @@ impl Harness {
     /// agent answers its briefing at once and sits at its prompt.
     pub(crate) async fn running_session(&self, task_id: &str, seat: Seat) -> Option<AgentSession> {
         self.sessions_of(task_id).await.into_iter().find(|s| {
-            s.seat() == seat
+            s.seat() == Some(seat)
                 && matches!(s.status(), SessionStatus::Running | SessionStatus::Idle)
                 && s.launched_at.is_some()
         })

@@ -72,7 +72,7 @@ pub(crate) async fn resolve_live(
     let (sessions, wanted) = candidates(client, id, seat).await?;
     sessions
         .into_iter()
-        .find(|s| s.seat == wanted && s.status.is_live())
+        .find(|s| s.seat == Some(wanted) && s.status.is_live())
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no live {} session found for {id} (is the agent running?)",
@@ -88,7 +88,7 @@ async fn revive(client: &Client, id: &str, seat: Option<Seat>) -> Result<Session
     let target = sessions
         .into_iter()
         .rev() // ids are time-sortable: last = most recent
-        .find(|s| s.seat == wanted && s.internal_session_id.is_some())
+        .find(|s| s.seat == Some(wanted) && s.internal_session_id.is_some())
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no {} session (live or finished) found for {id} that can be resumed",
@@ -178,7 +178,7 @@ pub(crate) async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) ->
             bail!(
                 "--seat does not apply to a session id: {id} is already the {} session of that agent \
                  (pass the task or goal id to pick a seat)",
-                session.seat.as_str()
+                session.seat.map_or("-", |seat| seat.as_str())
             );
         }
         return attach_session(client, session).await;
@@ -191,7 +191,7 @@ async fn attach_to(client: &Client, session: &SessionDto) -> Result<()> {
         "{}",
         hint(&format!(
             "attaching to the console ({} / {})",
-            session.seat.as_str(),
+            session.seat.map_or("-", |seat| seat.as_str()),
             agent_of(&session.model)
         ))
     );

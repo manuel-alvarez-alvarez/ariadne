@@ -129,7 +129,7 @@ pub(super) async fn record_pull_request(
 ) -> ApiResult<Json<TaskDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
-    let Some(author) = ctx.session.filter(|s| s.seat() == Seat::Author) else {
+    let Some(author) = ctx.session.filter(|s| s.seat() == Some(Seat::Author)) else {
         return Err(ApiError::forbidden(
             "only the author of a task may record its pull request",
         ));
@@ -217,7 +217,7 @@ pub(super) async fn read_channel(
             "`deliver` hands the caller its own messages, so it needs an agent session",
         ));
     };
-    if session.goal_id != goal_id {
+    if session.goal_id.as_deref() != Some(goal_id) {
         return Err(ApiError::forbidden(format!(
             "session {} does not belong to goal {goal_id}",
             session.id
@@ -227,7 +227,7 @@ pub(super) async fn read_channel(
     // delivery stamps what it returns, and no agent may spend another's.
     filter.undelivered_only = true;
     match session.seat() {
-        Seat::Orchestrator => filter.to_actor = Some(Actor::Orchestrator),
+        Some(Seat::Orchestrator) => filter.to_actor = Some(Actor::Orchestrator),
         _ => {
             let Some(agent_id) = session.task_agent_id.clone() else {
                 return Err(ApiError::bad_request(format!(
@@ -529,7 +529,7 @@ pub(super) async fn pick_winner(
     let Some(reviewer_id) = ctx
         .session
         .as_ref()
-        .filter(|s| s.seat() == Seat::Reviewer)
+        .filter(|s| s.seat() == Some(Seat::Reviewer))
         .and_then(|s| s.task_agent_id.clone())
     else {
         return Err(ApiError::forbidden(

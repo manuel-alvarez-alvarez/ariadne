@@ -81,7 +81,7 @@ pub(super) async fn create(
         ));
     }
     if let Some(session) = &ctx.session
-        && session.goal_id != goal_id
+        && session.goal_id.as_deref() != Some(goal_id.as_str())
     {
         return Err(ApiError::forbidden("session belongs to a different goal"));
     }

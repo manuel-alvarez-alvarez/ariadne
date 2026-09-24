@@ -1,24 +1,19 @@
 //! Agent-session DTOs.
 
-use ariadne_core::{AttentionReason, Landing, PermissionMode, Seat, SessionStatus};
+use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::usage::TokenUsageDto;
-use crate::{
-    goals::GoalDto,
-    tasks::{AgentAssignment, TaskDto},
-};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SessionDto {
     pub id: String,
-    pub goal_id: String,
-    /// None = orchestrator session.
+    pub goal_id: Option<String>,
+    /// None for an orchestrator or a loose session.
     pub task_id: Option<String>,
-    pub seat: Seat,
-    /// The staffed agent this session runs; None for an orchestrator,
-    /// which no task staffs.
+    pub seat: Option<Seat>,
+    /// The staffed agent this session runs; None for an orchestrator or loose session.
     pub task_agent_id: Option<String>,
     /// Model requested at launch, `<agent>:<model>`: the registry agent the
     /// session runs on, and the model of it.
@@ -29,6 +24,7 @@ pub struct SessionDto {
     pub effort: Option<String>,
     /// The ACP agent's own session id.
     pub internal_session_id: Option<String>,
+    /// The worktree, or the recorded working directory of a loose session.
     pub worktree_path: Option<String>,
     pub status: SessionStatus,
     /// Why this session needs the user's attention, if it does. Orthogonal to
@@ -106,62 +102,12 @@ pub struct OutsideSessionPageDto {
     pub snapshot_at: String,
 }
 
-/// Adopt one outside session into a new task and goal, or an active goal.
+/// Resume a stored conversation without a goal, task or seat.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct AdoptOutsideSessionRequest {
-    /// Which registry agent the session belongs to.
+pub struct ResumeOutsideSessionRequest {
     pub agent_id: String,
     pub internal_session_id: String,
-    pub goal: OutsideSessionGoal,
-    /// Omitted uses the session's first prompt, cut at 120 characters.
-    pub title: Option<String>,
-    #[serde(default)]
-    pub description: String,
-    /// Id of one of the goal's repositories. Omit it when one repository or
-    /// the session's working directory settles the choice.
-    pub repo_id: Option<String>,
-    /// The author first, then the reviewers.
-    pub agents: Vec<AgentAssignment>,
-    #[serde(default)]
-    pub landing: Option<Landing>,
-    #[serde(default)]
-    pub permission_mode: Option<PermissionMode>,
-}
-
-/// The goal that receives an adopted outside session.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum OutsideSessionGoal {
-    Existing(ExistingOutsideSessionGoal),
-    New(NewOutsideSessionGoal),
-}
-
-/// An active goal that receives the new task.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ExistingOutsideSessionGoal {
-    pub id: String,
-}
-
-/// A new active, unorchestrated goal for the adopted session.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NewOutsideSessionGoal {
-    pub title: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    /// Registered repository ids. Omitted infers one from the session's
-    /// working directory.
-    pub repository_ids: Option<Vec<String>>,
-}
-
-/// The resources created or joined by an outside-session adoption.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct AdoptOutsideSessionResponse {
-    pub goal: GoalDto,
-    pub task: TaskDto,
-    pub session: SessionDto,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]

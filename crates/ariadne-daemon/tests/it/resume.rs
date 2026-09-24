@@ -465,7 +465,7 @@ async fn a_reviewer_reuses_its_session_across_reviews() {
         .resume_reviewer(&task.id, &reviewer, "(unused: no session yet)")
         .await
         .unwrap();
-    assert_eq!(first.seat(), Seat::Reviewer);
+    assert_eq!(first.seat(), Some(Seat::Reviewer));
     let internal = heard(&h, &first)
         .await
         .internal_session_id
@@ -500,7 +500,7 @@ async fn a_reviewer_reuses_its_session_across_reviews() {
         .sessions_of(&task.id)
         .await
         .into_iter()
-        .filter(|s| s.seat() == Seat::Reviewer)
+        .filter(|s| s.seat() == Some(Seat::Reviewer))
         .collect();
     assert_eq!(
         sessions.len(),
@@ -645,31 +645,41 @@ async fn a_session_without_an_agent_id_is_not_revived() {
     assert_eq!(h.sessions_of(&task.id).await.len(), 1);
 }
 
-/// A finished goal has nothing left for an agent to come back to, and the
-/// scheduler kills what is live under one — so a revive here would put a
-/// session up for the next tick to take straight down. Refused instead, and
-/// the session stays as it ended.
 #[tokio::test]
-async fn a_session_of_a_finished_goal_is_not_revived() {
-    for finished in [GoalStatus::Completed, GoalStatus::Cancelled] {
-        let h = harness().await;
-        let (_cast, session) = h.resumable_author().await;
-        h.store
-            .set_goal_status(&session.goal_id, finished)
-            .await
-            .unwrap();
+async fn a_session_of_a_completed_goal_revives_and_the_goal_stays_completed() {
+    let h = harness().scheduler().await;
+    let (cast, session) = h.resumable_author().await;
+    h.store
+        .set_goal_status(&cast.goal.id, GoalStatus::Completed)
+        .await
+        .unwrap();
+    h.notify_goal(&cast.goal.id);
+    h.flush_scheduler().await;
+    let revived = h.launcher.revive_session(&session.id, None).await.unwrap();
+    h.notify_goal(&cast.goal.id);
+    h.flush_scheduler().await;
+    assert_eq!(revived.id, session.id);
+    assert!(h.launcher.acp.is_running(&session.id));
+    assert_eq!(
+        h.store.get_goal(&cast.goal.id).await.unwrap().status(),
+        GoalStatus::Completed
+    );
+}
 
-        let error = h
-            .launcher
-            .revive_session(&session.id, None)
-            .await
-            .expect_err("a finished goal revives nothing")
-            .to_string();
-        assert!(
-            error.contains(finished.as_str()),
-            "the refusal says what the goal is: {error}"
-        );
-        let after = h.store.get_session(&session.id).await.unwrap();
-        assert_eq!(after.status(), SessionStatus::Exited);
-    }
+#[tokio::test]
+async fn a_session_with_a_deleted_worktree_revives_in_the_repository_checkout() {
+    let h = harness().await;
+    let (cast, session) = h.resumable_author().await;
+    let worktree = session.worktree_path.as_deref().unwrap();
+    h.git_repo("repo");
+    std::fs::remove_dir(worktree).unwrap();
+    let revived = h.launcher.revive_session(&session.id, None).await.unwrap();
+    eventually(TIMEOUT, "the replacement agent to resume", || async {
+        !h.agent.calls_of("session/resume").is_empty()
+    })
+    .await;
+    assert_eq!(revived.id, session.id);
+    let call = h.agent.calls_of("session/resume").pop().unwrap();
+    assert_eq!(call["cwd"], cast.repo.path);
+    assert!(!std::path::Path::new(worktree).exists());
 }

@@ -1,30 +1,27 @@
 ---
-id: session-adoption
+id: outside-session-resume
 status: current
-updated: 2026-09-12
-areas: [api, daemon, cli]
+updated: 2026-09-24
+areas: [api, daemon, store]
 commits: []
 tests:
-  - crates/ariadne-daemon/tests/it/acp_session_adoption.rs
+  - crates/ariadne-daemon/tests/it/acp_session_resume.rs
   - crates/ariadne-daemon/tests/it/outside_sessions.rs
-  - crates/ariadne-cli/src/commands/session.rs
-  - crates/ariadne-cli/src/cli/tests.rs
+  - crates/ariadne-store/tests/store.rs
 ---
 
-# Session adoption
+# Outside session resume
 
-Ariadne can take over a conversation that started outside it: a session an
-ACP agent stored itself, which becomes the author of a new task.
+An outside conversation resumes as a loose session.
+A loose session has no goal, task, staffed agent or seat.
 
 ## Scope
 
-In: finding the stored sessions of the registry agents that can list them,
-what a listed session says about itself, and adopting one into a new task as
-its author.
+In: discovering stored ACP conversations and resuming one in its recorded working directory.
 
-Out: changing a task's author pin (011), importing a transcript, sessions
-that Ariadne started itself (007, 021), and the desktop screen over this
-(015).
+Out: merged session listing, CLI commands, desktop screens, and task staffing.
+Session controls and revival belong to 008.
+The ACP runtime belongs to 021.
 
 ## Behavior
 
@@ -42,14 +39,14 @@ that Ariadne started itself (007, 021), and the desktop screen over this
    belongs to, its `internal_session_id`, its `working_directory`, its
    `last_activity_at`, and its title as `first_prompt`. The daemon keeps one
    in-memory snapshot of every agent's stored sessions and the moment it was
-   taken, adopted ones included; nothing of it is written to disk. The
+   taken, resumed ones included; nothing of it is written to disk. The
    snapshot is taken on the first listing request, again when a request
    carries `refresh=true`, and again when it is older than 60 seconds at
    request time. A request inside that minute asks no agent.
 3. A session whose agent and internal id already occur on an Ariadne session
    row is not an outside session and is never listed. A row's agent is read
    off its `model` column, which always holds `<agent>:<model>`. The rows
-   are read at query time, so a session adopted after the snapshot was
+   are read at query time, so a session resumed after the snapshot was
    taken is gone from the next page without a refresh.
 4. `GET /v1/outside-sessions` answers one page of the snapshot, as an
    `OutsideSessionPageDto`: `sessions`, `next_cursor` (null on the last
@@ -64,48 +61,35 @@ that Ariadne started itself (007, 021), and the desktop screen over this
    id. The cursor is an opaque keyset over the sort key of the page's last
    row, so a page cut after a refresh continues from that key. A cursor the
    daemon cannot read is refused with a 400 envelope, code `invalid_cursor`.
-5. `POST /v1/outside-sessions/adopt` is a user-only call. It takes the
-   session's `agent_id` and `internal_session_id`; a new goal's title,
-   optional description and optional repositories, or an existing goal id;
-   and the new task's optional title, description, optional repository,
-   agents, landing and permission mode. The reply carries the goal, task and
-   adopted author session. Adoption looks in the daemon snapshot first. A
-   miss takes one fresh snapshot but refuses that call with 404.
-6. An existing goal must be active. Where it has several repositories, the
-   request's `repo_id` selects one, or the session working directory selects
-   the repository that contains it. A new goal with no repository ids takes
-   the registered repository containing that directory. No match is a
-   conflict naming the directory. The first task agent is its author, and
-   its pin must name the outside session's agent. An omitted task title is
-   the first prompt, cut at 120 characters; an empty title is refused.
-7. New adopted goals open active and unorchestrated. Their model and effort
-   record the adopted author's pin. Adoption creates the goal where needed,
-   creates and staffs the task, moves it to ready, creates its worktree and
-   author row, and loads the outside internal id before waking the scheduler.
-   The author starts through `session/load`, the task becomes `in_progress`,
-   and no scheduler pass creates an orchestrator for that goal. The user
-   completes or cancels it. The author is reached afterwards through
-   `POST /v1/sessions/{id}/console/input` (008).
-8. `ariadne session discover` filters and pages the outside sessions, prints
-   the shown and total counts with a reusable next-page command, or follows
-   every page with `--all`; below the table it names why each unavailable
-   registry agent cannot list sessions. `ariadne session adopt <session-id>
-   --agent <agent-id>` creates the task for one of them over `POST
-   /v1/outside-sessions/adopt`: in a new goal with `--new-goal <title>`,
-   `--goal-description` and a repeatable `--repo`, or in an active one with
-   `--goal`, exactly one of the two. It takes the task flags of `task create`
-   — an optional `--title`, `-d`, one required `--author`, the `--reviewer`
-   slots in review order, `--no-reviewer`, `--landing` and
-   `--permission-mode` — and prints a status line each for the goal, the task
-   and the session, or the task id alone with `-q` (014).
+5. `POST /v1/outside-sessions/resume` takes `{agent_id, internal_session_id}` and returns a live `SessionDto`.
+   Only the user can call it.
+   An agent session receives 403.
+6. Resume finds the conversation in the daemon snapshot.
+   A miss takes one fresh snapshot and refuses that call with 404.
+7. The agent starts through `session/load` in its recorded working directory.
+   Resume creates no goal, task, worktree or branch.
+   The row stores that directory in `worktree_path`.
+   It stores the agent's internal session id.
+8. The session uses the daemon's default permission mode.
+   Its model is `<agent>:<model>`, from the load response's model configuration option.
+   Without that option, the row records the agent's discovered default model.
+   Resume does not replace the loaded model with a task pin.
+9. Concurrent or repeated resumes of a live loose session return the same row.
+   They start one agent process.
+   A later resume of an ended loose row reopens that row through the usual session revival path.
+10. A loose session supports the console snapshot, console stream, input, cancel, kill, resume, and events.
+    Its loaded transcript appears in the console.
+    The scheduler creates no task or orchestrator for it.
+11. The adoption endpoint no longer exists.
+    The OpenAPI document contains the resume endpoint.
 
 ## Acceptance criteria
 
 - An agent's stored sessions appear in the listing with their recorded
   fields, named by their registry agent id
-  (`acp_session_adoption.rs::an_acp_agents_stored_sessions_appear_in_the_listing`).
+  (`acp_session_resume.rs::an_acp_agents_stored_sessions_appear_in_the_listing`).
 - An agent without `session_list` lists no sessions, and the catalog says why
-  (`acp_session_adoption.rs::an_agent_without_the_capability_lists_nothing_and_shows_the_reason`).
+  (`acp_session_resume.rs::an_agent_without_the_capability_lists_nothing_and_shows_the_reason`).
 - An agent that pages its list in three pages has every session in the
   listing
   (`outside_sessions.rs::a_paging_agents_every_session_is_in_the_listing`).
@@ -127,87 +111,47 @@ that Ariadne started itself (007, 021), and the desktop screen over this
 - A second request within 60 seconds asks no agent again, and a request with
   `refresh=true` does
   (`outside_sessions.rs::a_second_request_asks_no_agent_again_but_a_refresh_does`).
-- A session adopted after the snapshot was taken is absent from the next
+- A session resumed after the snapshot was taken is absent from the next
   page without a refresh
-  (`outside_sessions.rs::a_session_adopted_after_the_snapshot_is_absent_without_a_refresh`).
+  (`outside_sessions.rs::a_session_resumed_after_the_snapshot_is_absent_without_a_refresh`).
 - A cursor the daemon cannot read is refused with `invalid_cursor`
   (`outside_sessions.rs::an_unreadable_cursor_is_refused`).
 - The endpoint's query parameters and page DTO are in the OpenAPI document
   (`outside_sessions.rs::the_query_and_the_page_are_in_the_openapi_document`).
-- Adoption into a new goal returns an active, unorchestrated goal, an
-  in-progress task and the loaded author session, bound to that task's
-  author seat and resumed through `session/load` rather than `session/new`.
-  A scheduler pass leaves exactly that author and no orchestrator
-  (`acp_session_adoption.rs::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`).
-- The new goal takes the registered repository containing the working
-  directory; no matching repository is refused by directory
-  (`acp_session_adoption.rs::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`,
-  `::a_new_goal_without_a_matching_repository_is_refused_by_directory`).
-- An active goal receives the task, while planning and completed goals refuse
-  it (`acp_session_adoption.rs::adoption_into_an_active_goal_adds_the_task_to_that_goal`,
-  `::adoption_into_a_goal_that_is_not_active_is_refused`).
-- Another agent in the author pin is refused
-  (`acp_session_adoption.rs::adoption_is_refused_when_the_author_pin_names_another_agent`).
+- A row with no goal, task or seat survives a store reopen
+  (`store.rs::a_loose_session_round_trips_without_a_goal_task_or_seat`).
+- Resume loads the recorded directory and internal id, records the loaded model, and creates no scheduled work or worktree
+  (`acp_session_resume.rs::an_outside_session_loads_in_its_directory_without_scheduled_work`).
+- Concurrent resumes return one row and start one process
+  (`acp_session_resume.rs::concurrent_resumes_return_one_row_and_start_one_process`).
+- A load without a model option records the agent's default model
+  (`acp_session_resume.rs::no_loaded_model_uses_the_agents_default_model`).
+- A catalog kept before default models were recorded is refreshed without a
+  manual registry refresh. Resume then records the loaded model or the default
+  (`acp_session_resume.rs::an_old_catalog_does_not_block_the_loaded_model`,
+  `::an_old_catalog_recovers_the_default_when_load_has_no_model`).
 - A snapshot miss refreshes once and returns 404
-  (`acp_session_adoption.rs::a_session_missing_from_the_snapshot_is_refused_after_one_fresh_snapshot`),
-  and an agent-session caller is refused
-  (`::an_agent_session_cannot_adopt_an_outside_session`).
-- A message to an unorchestrated goal's orchestrator is refused with the
-  console instruction
-  (`acp_session_adoption.rs::a_message_to_an_unorchestrated_goals_orchestrator_is_refused`).
-- An adopted session is not listed as outside again
-  (`acp_session_adoption.rs::adoption_into_a_new_goal_creates_and_loads_the_author_without_an_orchestrator`).
-- `session discover` sends every filter and page flag with UTC date bounds,
-  follows all pages without repeating a session, prints the count and the
-  reusable next-page command only when one exists, and refuses `--all` with
-  `--cursor`
-  (`commands/session.rs::every_discover_flag_reaches_its_query_parameter`,
-  `::a_date_is_the_utc_day_boundary_for_discovery`,
-  `::all_fetches_every_page_and_keeps_each_session_once`,
-  `::a_next_cursor_prints_the_command_for_the_next_page`,
-  `::the_last_page_prints_no_next_command`,
-  `::the_discovery_count_is_shown_over_the_total`,
-  `cli/tests.rs::discover_takes_filters_pages_refresh_and_all`,
-  `::discover_all_and_cursor_are_exclusive`). It names each agent that cannot
-  list sessions with its reason
-  (`commands/session.rs::an_agent_without_the_capability_is_named_with_its_reason`).
-- `session adopt` sends the goal it was given — one by id, or a new one with
-  its title, description and repositories — and no repository ids where the
-  line named none
-  (`commands/session.rs::a_goal_id_adopts_the_session_into_that_goal`,
-  `::a_new_goal_carries_its_title_description_and_repositories`,
-  `::no_repository_named_sends_no_repository_ids`). The author leads the agents
-  and the reviewers follow in review order
-  (`::the_author_leads_the_agents_and_the_reviewers_follow_in_review_order`),
-  an omitted title is no title (`::an_omitted_title_sends_no_title`), and the
-  output names the goal, the task and the session
-  (`::the_adoption_output_names_the_goal_the_task_and_the_session`). Every flag
-  lands in its field, and a line that names both goals, neither, or no author
-  is refused
-  (`cli/tests.rs::adopt_takes_the_session_the_new_goal_and_the_task_flags`,
-  `::adopt_takes_a_goal_or_a_new_goal_and_exactly_one`).
-- The new endpoint and its request, response and goal orchestration flag are
-  in OpenAPI, and the retired task-first endpoint is not
-  (`acp_session_adoption.rs::the_goal_and_task_adoption_endpoint_is_in_the_openapi_document`).
-- An empty task title is refused
-  (`acp_session_adoption.rs::adoption_with_an_empty_task_title_is_refused`),
-  and unknown request fields are refused
-  (`::the_adoption_request_denies_unknown_fields`).
+  (`acp_session_resume.rs::a_session_missing_from_the_snapshot_is_refused_after_one_fresh_snapshot`).
+- An agent caller receives 403
+  (`acp_session_resume.rs::an_agent_session_cannot_resume_an_outside_session`).
+- The console serves loaded history, takes input, cancels a turn, and survives kill followed by resume
+  (`acp_session_resume.rs::a_loose_console_serves_history_takes_input_and_cancels`).
+- A loose session uses the configured permission mode and accepts its answer through console input
+  (`acp_session_resume.rs::a_loose_session_uses_the_daemons_permission_mode`).
+- OpenAPI contains resume and omits adoption
+  (`acp_session_resume.rs::the_resume_endpoint_replaces_adoption_in_openapi`).
 
 ## Known gap
 
-No test sends a follow-up console prompt to a session adopted through
-`POST /v1/outside-sessions/adopt`; the follow-up path is exercised only for
-a session bound directly (008), not one bound through adoption.
+Outside resumes share one lock through the load handshake. Different
+conversations wait for each other, up to the load timeout. The lock prevents
+duplicate processes and prevents a second caller receiving a row before load completes.
 
 ## Sources
 
-`crates/ariadne-api/src/sessions.rs` (`OutsideSessionListQuery`,
-`OutsideSessionPageDto`),
-`crates/ariadne-daemon/src/acp_sessions.rs` (the snapshot, the filtered
-pages, and the snapshot adoption checks),
-`crates/ariadne-daemon/src/acp_discovery.rs` (`AgentRegistry::stored_sessions`),
+`crates/ariadne-api/src/sessions.rs`,
+`crates/ariadne-daemon/src/acp_sessions.rs`,
+`crates/ariadne-daemon/src/acp_discovery.rs`,
 `crates/ariadne-daemon/src/http/sessions.rs`,
-`crates/ariadne-daemon/src/http/tasks.rs`,
-`crates/ariadne-daemon/src/launcher.rs` (`adopt_author`),
-`crates/ariadne-cli/src/commands/session.rs`.
+`crates/ariadne-daemon/src/launcher.rs`,
+`crates/ariadne-daemon/src/acp.rs`.

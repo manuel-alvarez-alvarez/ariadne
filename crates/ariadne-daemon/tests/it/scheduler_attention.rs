@@ -1166,7 +1166,7 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
         .await
         .unwrap()
         .into_iter()
-        .filter(|session| session.seat() == Seat::Reviewer)
+        .filter(|session| session.seat() == Some(Seat::Reviewer))
         .collect();
     assert_eq!(
         reviewer_starts_of(&w, &w.task),

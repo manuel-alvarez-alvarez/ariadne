@@ -95,7 +95,7 @@ pub(super) fn group(
     }
     for session in sessions {
         if let Some(reason) = session_reason(&session) {
-            let i = index_of(&mut groups, &session.goal_id);
+            let i = index_of(&mut groups, session.goal_id.as_deref().unwrap_or("-"));
             groups[i]
                 .sessions
                 .push(AttentionSession { reason, session });
@@ -163,7 +163,7 @@ pub(super) fn rows(
         let s = &item.session;
         vec![
             s.id.clone(),
-            format!("{} session", s.seat.as_str()),
+            format!("{} session", s.seat.map_or("-", |seat| seat.as_str())),
             item.reason.label().into(),
             // An orchestrator belongs to no task, and the goal heading above is
             // already what it is about.
@@ -185,6 +185,22 @@ mod tests {
 
     use crate::commands::attention::reason_label;
     use crate::commands::attention::tests::{dead, flagged, goal, session, task};
+
+    #[test]
+    fn a_loose_session_keeps_its_attention_row() {
+        let session = SessionDto {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            ..dead("01LOOSE", "01GOAL", None)
+        };
+        let attention = group(Vec::new(), Vec::new(), vec![session]);
+        assert_eq!(attention.count, 1);
+        assert_eq!(attention.goals[0].goal_id, "-");
+        let rows = rows(&attention.goals[0], &HashMap::new(), chrono::Utc::now());
+        assert_eq!(rows[0][1], "- session");
+        assert_eq!(rows[0][3], "-");
+    }
 
     #[test]
     fn groups_follow_the_goal_order_the_ui_shows() {
@@ -213,7 +229,7 @@ mod tests {
         );
         assert_eq!(
             attention.goals[0].sessions[0].session.seat,
-            Seat::Orchestrator
+            Some(Seat::Orchestrator)
         );
         assert!(attention.goals[2].goal.is_none());
 

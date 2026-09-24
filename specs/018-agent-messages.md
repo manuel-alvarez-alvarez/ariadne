@@ -1,7 +1,7 @@
 ---
 id: agent-messages
 status: current
-updated: 2026-09-23
+updated: 2026-09-24
 areas: [core, store, api, daemon, mcp, cli, ui]
 commits: [1b09ac10]
 tests:
@@ -39,10 +39,8 @@ and the wording of the text a message arrives in (006).
    one reader, and one row with three of them could not answer it.
 4. A recipient is the orchestrator of the goal, or one staffed agent of a task
    named by the id `get_task` lists. An agent has no name, so the id is the
-   address; the orchestrator needs none, since an orchestrated goal has one.
-   A message addressed to an unorchestrated goal's orchestrator is refused:
-   the goal has no orchestrator, and the user answers in the console
-   (`acp_session_adoption.rs::a_message_to_an_unorchestrated_goals_orchestrator_is_refused`).
+   address; the orchestrator needs none, since the goal has one.
+   A loose session has no goal or staffed agent and is not a recipient (020).
 5. One verb (`send_message`) and one kind, for asking and for answering.
    There is no `answer` kind and no `reply`: an answer is a message to
    whoever asked, addressed the way the question was, so nothing threads and

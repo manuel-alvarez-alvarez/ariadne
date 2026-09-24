@@ -14,7 +14,7 @@
 //! vocabulary, which is what moves a session's status, attention and internal
 //! id.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
@@ -132,6 +132,8 @@ struct Inner {
     transcripts: TranscriptHomes,
     /// Live agents by Ariadne session id.
     running: Mutex<HashMap<String, RunningAgent>>,
+    /// Sessions the user reopened after their work ended.
+    user_resumed: Mutex<HashSet<String>>,
     /// Agents taken down whose driver has not reaped them yet, by Ariadne
     /// session id, each beside its launch id. A launch waits on these as
     /// well as on the agent it takes down itself: a kill followed by a
@@ -205,6 +207,8 @@ impl Run {
 /// the updates the agent sent about it.
 #[derive(Default)]
 struct Turn {
+    /// A load replay: keep the first transcript, skip later copies.
+    replay: Option<bool>,
     running: bool,
     /// The agent's own session id, as the turn's events name it.
     agent_session: Option<String>,
@@ -324,6 +328,7 @@ struct DriverIo {
     turn: Arc<tokio::sync::Mutex<Turn>>,
     task_id: Option<String>,
     reports: Followers,
+    ready: Option<oneshot::Sender<()>>,
 }
 
 impl AcpRuntime {
@@ -349,11 +354,28 @@ impl AcpRuntime {
                 timeouts,
                 transcripts,
                 running: Mutex::new(HashMap::new()),
+                user_resumed: Mutex::default(),
                 ending: Mutex::new(HashMap::new()),
                 scheduler: OnceLock::new(),
                 consoles: Mutex::new(HashMap::new()),
             }),
         }
+    }
+
+    pub(crate) fn preserve_user_resume(&self, session_id: &str) {
+        self.inner
+            .user_resumed
+            .lock()
+            .expect("user resumes lock")
+            .insert(session_id.to_string());
+    }
+
+    pub(crate) fn is_user_resumed(&self, session_id: &str) -> bool {
+        self.inner
+            .user_resumed
+            .lock()
+            .expect("user resumes lock")
+            .contains(session_id)
     }
 
     /// Give the runtime the scheduler's waker. Called once, from the
@@ -608,13 +630,9 @@ impl AcpRuntime {
         let reports: Followers = Arc::default();
         let permission = Arc::new(Mutex::new(None));
         let turn = Arc::new(tokio::sync::Mutex::new(Turn::default()));
-        let task_id = self
-            .inner
-            .store
-            .get_session(&launch.session_id)
-            .await
-            .ok()
-            .and_then(|session| session.task_id);
+        let session = self.inner.store.get_session(&launch.session_id).await?;
+        let loose = session.seat.is_none();
+        let task_id = session.task_id;
         let outbound = Outbound::default();
         self.inner
             .running
@@ -634,6 +652,8 @@ impl AcpRuntime {
                     ended: ended.shared(),
                 },
             );
+        let (ready, loaded) = oneshot::channel();
+        let session_id = launch.session_id.clone();
         let runtime = self.clone();
         tokio::spawn(async move {
             runtime
@@ -648,6 +668,7 @@ impl AcpRuntime {
                         turn,
                         task_id,
                         reports,
+                        ready: loose.then_some(ready),
                     },
                     stopped,
                     queued,
@@ -655,6 +676,15 @@ impl AcpRuntime {
                 .await;
             drop(reaped);
         });
+        if loose {
+            match tokio::time::timeout(self.inner.timeouts.session_load, loaded).await {
+                Ok(Ok(())) => {}
+                result => {
+                    self.kill(&session_id);
+                    bail!("loading the outside session failed: {result:?}");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -805,8 +835,10 @@ impl AcpRuntime {
                         closing.clone(),
                         turn_ended.clone(),
                     );
-                    protocol_outcome =
-                        Some(run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts).await);
+                    protocol_outcome = Some(
+                        run_protocol(&mut rpc, &launch.cwd, &launch.config, prompts, io.ready)
+                            .await,
+                    );
                     Ok(())
                 }),
         );
@@ -1121,6 +1153,9 @@ struct RuntimeIncoming {
 
 impl RuntimeIncoming {
     async fn handle_update(&mut self, params: &Value) -> Result<()> {
+        if self.turn.lock().await.replay == Some(false) {
+            return Ok(());
+        }
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let update = params.get("update").cloned().unwrap_or_default();
         let update_kind = update.get("sessionUpdate").and_then(Value::as_str);
@@ -1131,10 +1166,14 @@ impl RuntimeIncoming {
             // kind, or of another message, ends the run before it; so does
             // every update below that reports something, which is stored
             // after the text before it.
-            Some(kind @ ("agent_message_chunk" | "agent_thought_chunk")) => {
+            Some(kind @ ("agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk")) => {
+                if kind == "user_message_chunk" && self.turn.lock().await.replay != Some(true) {
+                    return Ok(());
+                }
                 if let Some(text) = update.pointer("/content/text").and_then(Value::as_str) {
                     let whole = match kind {
                         "agent_thought_chunk" => "agent_thought",
+                        "user_message_chunk" => "user_prompt_submit",
                         _ => "agent_message",
                     };
                     let message_id = update.get("messageId").and_then(Value::as_str);
@@ -1268,6 +1307,7 @@ impl RuntimeIncoming {
             None => approved_option(params),
         };
         if self.permission_mode == PermissionMode::Learn
+            && !self.repository_id.is_empty()
             && selected
                 .as_deref()
                 .is_some_and(|option| allowing_option(params, option))
@@ -1322,13 +1362,38 @@ async fn run_protocol(
     cwd: &Path,
     config: &LaunchConfig,
     prompts: mpsc::UnboundedReceiver<Prompt>,
+    ready: Option<oneshot::Sender<()>>,
 ) -> Result<()> {
     let initialized = rpc.call("initialize", initialize()).await?;
     if initialized.protocol_version != ProtocolVersion::V1 {
         bail!("ACP agent did not negotiate protocol version 1");
     }
 
-    let setup = session_setup(rpc, cwd, config, &initialized).await?;
+    let loose = ready.is_some();
+    if loose {
+        let first_load = rpc
+            .sink
+            .runtime
+            .inner
+            .store
+            .get_session(&rpc.sink.session_id)
+            .await?
+            .launched_at
+            .is_none();
+        let mut turn = rpc.turn.lock().await;
+        turn.replay = Some(first_load);
+        turn.running = first_load;
+        turn.agent_session = config.resume_session_id.clone();
+    }
+    let setup = session_setup(rpc, cwd, config, &initialized, loose).await?;
+    if loose {
+        let mut turn = rpc.turn.lock().await;
+        if let Some((kind, payload)) = turn.end_text() {
+            rpc.sink.emit(kind, payload).await;
+        }
+        turn.running = false;
+        turn.replay = None;
+    }
     let session_id = setup.session_id;
     let _ = rpc.sink.agent_session.set(session_id.clone());
     let (homes, internal, cwd_owned) = (
@@ -1343,16 +1408,29 @@ async fn run_protocol(
     .await
     .ok()
     .map(|transcript| Arc::new(Mutex::new(transcript)));
-    let options = set_pinned_option(
-        rpc,
-        &session_id,
-        setup.config_options,
-        &["model"],
-        &["model"],
-        "model",
-        &config.model,
-    )
-    .await?;
+    let options = if loose {
+        let model = find_config_option(&setup.config_options, &["model"], &["model"])
+            .and_then(current_value)
+            .unwrap_or(&config.model);
+        let store = &rpc.sink.runtime.inner.store;
+        let row = store.get_session(&rpc.sink.session_id).await?;
+        let agent = ariadne_core::models::agent_of(&row.model);
+        store
+            .set_loose_session_model(&row.id, &format!("{agent}:{model}"))
+            .await?;
+        setup.config_options
+    } else {
+        set_pinned_option(
+            rpc,
+            &session_id,
+            setup.config_options,
+            &["model"],
+            &["model"],
+            "model",
+            &config.model,
+        )
+        .await?
+    };
     if let Some(effort) = &config.effort {
         set_pinned_option(
             rpc,
@@ -1369,6 +1447,9 @@ async fn run_protocol(
     rpc.sink
         .emit("session_start", json!({"session_id": session_id}))
         .await;
+    if let Some(ready) = ready {
+        let _ = ready.send(());
+    }
     if let Some(prompt) = config.initial_prompt.as_deref() {
         let prompt = Prompt {
             text: prompt.to_string(),
@@ -1457,6 +1538,7 @@ async fn session_setup(
     cwd: &Path,
     config: &LaunchConfig,
     initialized: &v1::InitializeResponse,
+    force_load: bool,
 ) -> Result<OpenedSession> {
     let mcp_servers = crate::acp_schema::mcp_servers(config);
     let Some(session_id) = &config.resume_session_id else {
@@ -1475,7 +1557,7 @@ async fn session_setup(
     let capabilities = &initialized.agent_capabilities;
     // Neither answer carries the id it reopened: it is the one that was
     // asked for, and every caller reads one off the result.
-    let config_options = if capabilities.session_capabilities.resume.is_some() {
+    let config_options = if !force_load && capabilities.session_capabilities.resume.is_some() {
         let request =
             v1::ResumeSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers);
         rpc.call("session/resume", request).await?.config_options

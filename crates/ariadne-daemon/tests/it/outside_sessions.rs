@@ -12,7 +12,6 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use ariadne_api::sessions::OutsideSessionPageDto;
-use ariadne_store::AgentPin;
 
 use common::acp::{StubAcpAgent, discovery_accepted, script, stub_acp_agent};
 use common::{Harness, get, harness, post_json};
@@ -296,36 +295,30 @@ async fn a_second_request_asks_no_agent_again_but_a_refresh_does() {
     assert_eq!(stub.calls_of("session/list").len(), 2);
 }
 
-/// A session adopted after the snapshot was taken is gone from the next
+/// A session resumed after the snapshot was taken is gone from the next
 /// page without a refresh: what a row already holds is subtracted at query
 /// time, not at snapshot time.
 #[tokio::test]
-async fn a_session_adopted_after_the_snapshot_is_absent_without_a_refresh() {
+async fn a_session_resumed_after_the_snapshot_is_absent_without_a_refresh() {
     let dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(dir.path(), listing_script(five_sessions(), None));
     let h = harness_with(&stub).await;
-    let repo = h.repository(&h.git_repo("author-repo")).await;
-    let pin = AgentPin {
-        model: "test-agent:old-model".into(),
-        effort: None,
-    };
-    let goal = h.goal_on(&repo, pin).await;
-    let goal = h.activate(&goal).await;
+    let mut setup = listing_script(five_sessions(), None);
+    setup["session_list"][2]["cwd"] = json!(dir.path().to_str().unwrap());
+    stub.reprogram(setup);
 
     let before = listing(&h, "").await;
     assert!(ids(&before).contains(&"s3"));
 
     h.json::<Value>(
         post_json(
-            "/v1/outside-sessions/adopt",
+            "/v1/outside-sessions/resume",
             json!({
                 "agent_id": "test-agent",
                 "internal_session_id": "s3",
-                "goal": {"id": goal.id},
-                "agents": [{"seat": "author", "model": "test-agent:old-model"}],
             }),
         ),
-        StatusCode::CREATED,
+        StatusCode::OK,
     )
     .await;
     stub.clear_messages();

@@ -311,7 +311,7 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
         }
         Change::AgentEventCreated(agent_event) => {
             let goal_id = match &agent_event.session_id {
-                Some(id) => Some(store.get_session(id).await?.goal_id),
+                Some(id) => store.get_session(id).await?.goal_id,
                 None => None,
             };
             let task_id = agent_event.task_id.clone();
@@ -369,7 +369,7 @@ async fn session_event(
 ) -> Result<BusEvent> {
     let (goal_id, task_id) = (session.goal_id.clone(), session.task_id.clone());
     Ok(BusEvent {
-        goal_id: Some(goal_id),
+        goal_id,
         task_id,
         recorded: None,
         event: wrap(session_dto_of(store, session).await?),
@@ -422,9 +422,9 @@ mod tests {
             .unwrap();
         let session = store
             .create_session(NewSession {
-                goal_id: goal.id.clone(),
+                goal_id: Some(goal.id.clone()),
                 task_id: None,
-                seat: ariadne_core::Seat::Orchestrator,
+                seat: Some(ariadne_core::Seat::Orchestrator),
                 task_agent_id: None,
                 model: "stub:test-model".into(),
                 effort: None,

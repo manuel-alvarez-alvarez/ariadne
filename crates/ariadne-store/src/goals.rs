@@ -12,7 +12,7 @@ pub struct NewGoal {
     /// Ids of registered repositories the goal works in; each must exist.
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
-    /// What this goal's orchestrator or adopted author runs on: its model,
+    /// What this goal's orchestrator runs on: its model,
     /// `<agent>:<model>`, and the effort where one was chosen.
     pub pin: AgentPin,
 }
@@ -20,11 +20,6 @@ pub struct NewGoal {
 impl Store {
     pub async fn create_goal(&self, new: NewGoal) -> Result<Goal> {
         self.create_goal_as(new, GoalStatus::Planning, true).await
-    }
-
-    /// Create the active, unorchestrated goal that adopts an outside session.
-    pub async fn create_adopted_goal(&self, new: NewGoal) -> Result<Goal> {
-        self.create_goal_as(new, GoalStatus::Active, false).await
     }
 
     async fn create_goal_as(

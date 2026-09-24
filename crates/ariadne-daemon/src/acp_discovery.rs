@@ -115,6 +115,8 @@ struct Discovery {
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Catalog {
     models: Vec<Choice>,
+    #[serde(default)]
+    default_model: Option<String>,
     thought_level: bool,
     efforts: Vec<Choice>,
     default_effort: Option<String>,
@@ -358,7 +360,9 @@ impl AgentRegistry {
             };
             let unchanged = !reread
                 && kept.get(&result.agent.id).is_some_and(|cached| {
-                    &cached.version == version && cached.command == result.agent.command
+                    &cached.version == version
+                        && cached.command == result.agent.command
+                        && cached.catalog.default_model.is_some()
                 });
             if !unchanged {
                 self.keep_catalog(&result.agent, version, &result.catalog)
@@ -507,6 +511,16 @@ impl AgentRegistry {
             .iter()
             .find(|result| result.agent.id == id)
             .map(|result| result.agent.capabilities.clone())
+    }
+
+    /// The model selected by the agent's discovery session.
+    pub(crate) async fn default_model(&self, agent_id: &str) -> Option<String> {
+        self.results
+            .read()
+            .await
+            .iter()
+            .find(|result| result.agent.id == agent_id)
+            .and_then(|result| result.catalog.default_model.clone())
     }
 
     /// Convert every accepted discovery choice into the shared model catalog.
@@ -693,7 +707,11 @@ async fn probe_protocol(
         .agent_info
         .as_ref()
         .map(|info| info.version.clone());
-    let catalog = match cached.filter(|cached| version.as_deref() == Some(&cached.version)) {
+    // Older stored catalogs have no default model. Read them again even when
+    // the agent version is unchanged, so loose-session resume has its fallback.
+    let catalog = match cached.filter(|cached| {
+        version.as_deref() == Some(&cached.version) && cached.catalog.default_model.is_some()
+    }) {
         // `session/new` answered for this command at this version already.
         Some(cached) => {
             capabilities.session_new = true;
@@ -776,6 +794,7 @@ async fn read_catalog(
     );
     capabilities.thought_level = thought.is_some();
     Ok(Catalog {
+        default_model: crate::acp::current_value(model).map(str::to_string),
         models,
         thought_level: thought.is_some(),
         efforts: thought.map(choices).unwrap_or_default(),

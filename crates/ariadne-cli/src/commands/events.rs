@@ -420,7 +420,7 @@ fn task_line(kind: String, t: &TaskDto, state: String) -> Line {
 fn session_line(kind: String, s: &SessionDto) -> Line {
     let mut detail = format!(
         "{} {} [{}]",
-        s.seat.as_str(),
+        s.seat.map_or("-", |seat| seat.as_str()),
         agent_of(&s.model),
         s.status.as_str()
     );

@@ -131,7 +131,7 @@ impl Header {
                 usage: TokenUsageDto::default(),
             },
             |session| Self {
-                seat: session.seat.as_str().into(),
+                seat: session.seat.map_or("-", |seat| seat.as_str()).into(),
                 model: Some(session.model.clone()),
                 effort: session.effort.clone(),
                 id: Some(session.id.clone()),

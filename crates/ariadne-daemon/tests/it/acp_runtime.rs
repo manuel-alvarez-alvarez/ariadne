@@ -605,10 +605,9 @@ async fn a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt() {
 
     // The scheduler starts the author; its first turn ends idle.
     let idle_author = || async {
-        h.sessions_of(&cast.task.id)
-            .await
-            .into_iter()
-            .find(|s| s.seat() == ariadne_core::Seat::Author && s.status() == SessionStatus::Idle)
+        h.sessions_of(&cast.task.id).await.into_iter().find(|s| {
+            s.seat() == Some(ariadne_core::Seat::Author) && s.status() == SessionStatus::Idle
+        })
     };
     eventually(TIMEOUT, "the author's first turn to end", || async {
         idle_author().await.is_some()

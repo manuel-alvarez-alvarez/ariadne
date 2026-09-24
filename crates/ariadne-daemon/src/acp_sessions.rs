@@ -90,6 +90,7 @@ impl Snapshot {
 #[derive(Clone, Default)]
 pub struct OutsideSessions {
     snapshot: Arc<Mutex<Option<Arc<Snapshot>>>>,
+    pub(crate) resumes: Arc<Mutex<()>>,
 }
 
 impl OutsideSessions {

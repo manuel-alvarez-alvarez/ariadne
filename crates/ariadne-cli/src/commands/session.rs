@@ -8,25 +8,23 @@ use clap::Subcommand;
 use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus};
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{
-    AdoptOutsideSessionRequest, AdoptOutsideSessionResponse, ConsoleInputRequest,
-    ExistingOutsideSessionGoal, NewOutsideSessionGoal, OutsideSessionGoal, OutsideSessionListQuery,
-    OutsideSessionPageDto, SessionDto, SessionListQuery,
+    ConsoleInputRequest, OutsideSessionListQuery, OutsideSessionPageDto, SessionDto,
+    SessionListQuery,
 };
 use ariadne_api::stream::EventStreamQuery;
-use ariadne_api::tasks::{AgentAssignment, TaskDto};
+use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent};
 use ariadne_core::models::agent_of;
-use ariadne_core::{AttentionReason, Landing, PermissionMode, Seat, SessionStatus};
+use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use super::attention::reason_label;
 use super::follow;
 use super::resolve::{self, Kind};
-use super::task::edit::{parse_author, parse_reviewer};
 use super::{Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, Kv, UNCAPPED, View, age, at, col, dash, empty_state, moment, note, ok_id_line,
-    print, print_kv, print_list, short_id, status_line, tokens, usage_block, usage_cell, view,
+    Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, note, ok_id_line, print,
+    print_kv, print_list, short_id, status_line, tokens, usage_block, usage_cell, view,
 };
 use ariadne_console::transcript::{Filters, Since};
 
@@ -54,8 +52,7 @@ const LS: &[Column] = &[
     col("tokens", UNCAPPED).rank(0),
 ];
 
-/// Columns of `session discover`. The internal id is first because it is the
-/// value `session adopt` takes and therefore what quiet output must print.
+/// Columns of `session discover`. Quiet output prints the internal id.
 const DISCOVER: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("agent", UNCAPPED).rank(3),
@@ -141,71 +138,6 @@ pub(crate) enum SessionCommand {
         /// Fetch every page
         #[arg(long, conflicts_with = "cursor")]
         all: bool,
-    },
-    /// Resume an outside session as the author of a new task
-    ///
-    /// Creates the task in a new goal or in an active one, staffs it, and
-    /// loads the conversation the agent already holds. The task is the
-    /// author's from the start: no orchestrator plans a new goal of this
-    /// kind. `--author` must pin the agent the session belongs to.
-    ///
-    /// The work has to land somewhere, and it lands in one place: exactly one
-    /// of `--goal` and `--new-goal`.
-    #[command(group = clap::ArgGroup::new("adopting-goal").args(["goal", "new_goal"]).required(true))]
-    Adopt {
-        /// Internal session id from `ariadne session discover`
-        session_id: String,
-        /// The agent the session belongs to (`session discover`'s `agent`
-        /// column)
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
-        agent: String,
-        /// Active goal the new task belongs to
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
-        goal: Option<String>,
-        /// Title of a new goal for the task, opened active and with no
-        /// orchestrator over it
-        #[arg(long = "new-goal", value_name = "TITLE")]
-        new_goal: Option<String>,
-        /// Description of that new goal (what should be achieved)
-        #[arg(long, value_name = "TEXT", conflicts_with = "goal")]
-        goal_description: Option<String>,
-        /// Registered repository, by id or by the path it was added with
-        /// (`ariadne repo add`); repeatable. A new goal is opened on all of
-        /// them, and one named repository is the one the task works in.
-        /// Default: the registered repository holding the session's directory
-        #[arg(long = "repo", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
-        repos: Vec<String>,
-        /// Short task title. Default: the session's first prompt
-        #[arg(long)]
-        title: Option<String>,
-        /// Task description: the brief the author works from
-        #[arg(short = 'd', long, default_value = "", hide_default_value = true)]
-        description: String,
-        /// The author's skills, comma-separated, then `=MODEL` — the agent
-        /// and model it runs on, required — and `@EFFORT` to say how deeply
-        /// it reasons there
-        /// (`--author coding,testing=codex-acp:gpt-5.6-sol@xhigh`). Its agent
-        /// is the one the adopted session belongs to
-        #[arg(long, value_name = "SKILLS=MODEL[@EFFORT]", value_parser = parse_author)]
-        author: AgentAssignment,
-        /// One reviewer's skills and its model, in review order; repeatable.
-        /// Spelled the same way as `--author`
-        /// (`--reviewer code-review=codex-acp:gpt-5.6-luna@high`)
-        #[arg(long = "reviewer", value_name = "SKILLS=MODEL[@EFFORT]", conflicts_with = "no_reviewer", value_parser = parse_reviewer)]
-        reviewers: Vec<AgentAssignment>,
-        /// Staff no reviewer: the task is approved as soon as its author asks
-        /// for review
-        #[arg(long)]
-        no_reviewer: bool,
-        /// How the task ends: merge on the base branch, pull-request opened
-        /// and seen through to its merge, or none where there is nothing to
-        /// land. Default: the way the repository takes a change
-        #[arg(long, value_enum)]
-        landing: Option<Landing>,
-        /// How its ACP permission requests are handled: auto approves, ask
-        /// waits for a console answer, learn remembers approvals per repo
-        #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
-        permission_mode: Option<PermissionMode>,
     },
     /// Show a session
     Inspect {
@@ -304,56 +236,6 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
             )
             .await?
         }
-        SessionCommand::Adopt {
-            session_id,
-            agent,
-            goal,
-            new_goal,
-            goal_description,
-            repos,
-            title,
-            description,
-            author,
-            reviewers,
-            no_reviewer,
-            landing,
-            permission_mode,
-        } => {
-            let goal = match goal {
-                Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
-                None => None,
-            };
-            let request = adopt_request(AdoptOptions {
-                session_id,
-                agent,
-                goal,
-                new_goal,
-                goal_description,
-                // A line that named no repository asks the daemon for none:
-                // the session's working directory picks it.
-                repos: match repos.is_empty() {
-                    true => Vec::new(),
-                    false => super::goal::resolve_repositories(client, &repos).await?,
-                },
-                title,
-                description,
-                author,
-                reviewers: match no_reviewer {
-                    true => Vec::new(),
-                    false => reviewers,
-                },
-                landing,
-                permission_mode,
-            });
-            let adopted: AdoptOutsideSessionResponse = client
-                .post_json("/v1/outside-sessions/adopt", &request)
-                .await?;
-            print(format, &adopted, || {
-                for line in adopt_lines(&adopted, view()) {
-                    println!("{line}");
-                }
-            })?;
-        }
         SessionCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
             let s: SessionDto = client.get_json(&session_path(&id)).await?;
@@ -442,98 +324,6 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
         }
     }
     Ok(())
-}
-
-/// What one `session adopt` line asks for, with its ids resolved: the outside
-/// session, the goal that receives the work, and the task itself.
-///
-/// `--no-reviewer` is spent before this: it says the reviewers are none, and
-/// an empty list is how that reaches the daemon.
-#[derive(Debug)]
-struct AdoptOptions {
-    session_id: String,
-    agent: String,
-    goal: Option<String>,
-    new_goal: Option<String>,
-    goal_description: Option<String>,
-    /// Registered repository ids, in the order they were named.
-    repos: Vec<String>,
-    title: Option<String>,
-    description: String,
-    author: AgentAssignment,
-    reviewers: Vec<AgentAssignment>,
-    landing: Option<Landing>,
-    permission_mode: Option<PermissionMode>,
-}
-
-/// The request one `session adopt` line makes.
-///
-/// A title nobody gave is no title: the daemon writes the session's first
-/// prompt in its place, and a title made up here would hide that.
-fn adopt_request(options: AdoptOptions) -> AdoptOutsideSessionRequest {
-    let repo_id = task_repo(&options.repos);
-    // Clap's group leaves exactly one of the two: a goal by id, or a new one
-    // by title.
-    let goal = match (options.goal, options.new_goal) {
-        (Some(id), _) => OutsideSessionGoal::Existing(ExistingOutsideSessionGoal { id }),
-        (None, title) => OutsideSessionGoal::New(NewOutsideSessionGoal {
-            title: title.unwrap_or_default(),
-            description: options.goal_description,
-            // No repository named is no repository sent: the daemon takes the
-            // registered one holding the session's directory (020).
-            repository_ids: (!options.repos.is_empty()).then_some(options.repos),
-        }),
-    };
-    // The author first, then the reviewers in review order: that is the order
-    // the daemon reads a staffing in, and the seat of the first is the one the
-    // session is adopted into.
-    let mut agents = vec![options.author];
-    agents.extend(options.reviewers);
-    AdoptOutsideSessionRequest {
-        agent_id: options.agent,
-        internal_session_id: options.session_id,
-        goal,
-        title: options.title,
-        description: options.description,
-        repo_id,
-        agents,
-        landing: options.landing,
-        permission_mode: options.permission_mode,
-    }
-}
-
-/// Which repository the task itself works in: the one a line named, and
-/// nothing where it named several or none — the session's working directory
-/// picks one of those (020).
-fn task_repo(repos: &[String]) -> Option<String> {
-    match repos {
-        [only] => Some(only.clone()),
-        _ => None,
-    }
-}
-
-/// What an adoption prints: the goal that holds the work, the task that was
-/// created, and the author session carrying the conversation on.
-///
-/// Quiet output is the task id alone. It is the id every command after this
-/// one takes — `task inspect`, `task diff`, `attach` — and the goal and the
-/// session are read off it.
-fn adopt_lines(adopted: &AdoptOutsideSessionResponse, view: &View) -> Vec<String> {
-    if view.quiet {
-        return vec![adopted.task.id.clone()];
-    }
-    [
-        ("goal", &adopted.goal.id, adopted.goal.status.as_str()),
-        ("task", &adopted.task.id, adopted.task.status.as_str()),
-        (
-            "session",
-            &adopted.session.id,
-            adopted.session.status.as_str(),
-        ),
-    ]
-    .into_iter()
-    .map(|(kind, id, status)| status_line(view.color, false, kind, id, status))
-    .collect()
 }
 
 #[derive(Debug)]
@@ -831,7 +621,7 @@ async fn render(
                 s.status.as_str().into(),
                 attention_label(s.attention_reason),
                 age(&s.created_at, now),
-                s.seat.as_str().into(),
+                s.seat.map_or("-", |seat| seat.as_str()).into(),
                 agent_of(&s.model).into(),
                 usage_cell(&s.usage),
             ]
@@ -870,7 +660,7 @@ fn visible(
         .into_iter()
         .filter(|s| all || !statuses.is_empty() || s.status.is_live())
         .filter(|s| statuses.is_empty() || statuses.contains(&s.status))
-        .filter(|s| seat.is_none_or(|r| s.seat == r))
+        .filter(|s| seat.is_none_or(|r| s.seat == Some(r)))
         .collect()
 }
 
@@ -910,7 +700,10 @@ impl SessionContext {
                 .get(task)
                 .cloned()
                 .unwrap_or_else(|| task.clone()),
-            None => format!("goal: {}", self.goals.get(&s.goal_id).unwrap_or(&s.goal_id)),
+            None => s.goal_id.as_ref().map_or_else(
+                || "-".into(),
+                |goal| format!("goal: {}", self.goals.get(goal).unwrap_or(goal)),
+            ),
         }
     }
 }
@@ -927,9 +720,9 @@ fn attention_label(reason: Option<AttentionReason>) -> String {
 fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
     let mut pairs = vec![
         ("id", Kv::id(s.id.clone())),
-        ("goal", Kv::id(s.goal_id.clone())),
+        ("goal", Kv::id(dash(s.goal_id.as_deref()))),
         ("task", Kv::id(dash(s.task_id.as_deref()))),
-        ("seat", s.seat.as_str().into()),
+        ("seat", s.seat.map_or("-", |seat| seat.as_str()).into()),
         ("agent id", Kv::id(dash(s.task_agent_id.as_deref()))),
         ("agent", agent_of(&s.model).into()),
         // Recorded at launch, so it is what this session runs on even if the
@@ -972,8 +765,19 @@ fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
 /// of work it was spawned for are what stand in for one.
 fn what_for(s: &SessionDto) -> String {
     match &s.task_id {
-        Some(task) => format!("{} on task {}", s.seat.as_str(), short_id(task)),
-        None => format!("{} of goal {}", s.seat.as_str(), short_id(&s.goal_id)),
+        Some(task) => format!(
+            "{} on task {}",
+            s.seat.map_or("-", |seat| seat.as_str()),
+            short_id(task)
+        ),
+        None => format!(
+            "{} of goal {}",
+            s.seat.map_or("-", |seat| seat.as_str()),
+            s.goal_id
+                .as_deref()
+                .map(short_id)
+                .unwrap_or_else(|| "-".into())
+        ),
     }
 }
 
@@ -993,191 +797,8 @@ mod tests {
 
     use ariadne_core::Seat;
 
-    use crate::commands::fixtures::{self, session};
-    use crate::output::{kv_block, style};
-
-    /// One `session adopt` line, as the arm hands it on: an outside session of
-    /// `codex-acp` into a new goal, written by one author.
-    fn adopt_options() -> AdoptOptions {
-        AdoptOptions {
-            session_id: "codex-outside-1".into(),
-            agent: "codex-acp".into(),
-            goal: None,
-            new_goal: Some("Finish the rate limiter".into()),
-            goal_description: None,
-            repos: Vec::new(),
-            title: Some("Wire the limiter in".into()),
-            description: String::new(),
-            author: parse_author("coding=codex-acp:gpt-5.6-sol@xhigh").expect("an author"),
-            reviewers: Vec::new(),
-            landing: None,
-            permission_mode: None,
-        }
-    }
-
-    /// The goal a `--goal` line adopts into is that goal, by id — nothing
-    /// about a new one travels with it.
-    #[test]
-    fn a_goal_id_adopts_the_session_into_that_goal() {
-        let request = adopt_request(AdoptOptions {
-            goal: Some("01GOAL".into()),
-            new_goal: None,
-            ..adopt_options()
-        });
-
-        assert_eq!(request.agent_id, "codex-acp");
-        assert_eq!(request.internal_session_id, "codex-outside-1");
-        let OutsideSessionGoal::Existing(goal) = request.goal else {
-            panic!("an existing goal");
-        };
-        assert_eq!(goal.id, "01GOAL");
-    }
-
-    /// `--new-goal` sends a goal to open: its title, the description under it,
-    /// and every repository the line named, in that order.
-    #[test]
-    fn a_new_goal_carries_its_title_description_and_repositories() {
-        let request = adopt_request(AdoptOptions {
-            goal_description: Some("What the outside session started".into()),
-            repos: vec!["01REPO".into(), "01UI".into()],
-            ..adopt_options()
-        });
-
-        let OutsideSessionGoal::New(goal) = request.goal else {
-            panic!("a new goal");
-        };
-        assert_eq!(goal.title, "Finish the rate limiter");
-        assert_eq!(
-            goal.description.as_deref(),
-            Some("What the outside session started")
-        );
-        assert_eq!(
-            goal.repository_ids,
-            Some(vec!["01REPO".to_string(), "01UI".to_string()])
-        );
-        assert_eq!(
-            request.repo_id, None,
-            "several repositories leave the task's own to the session directory"
-        );
-    }
-
-    /// A line that names no repository carries none: the daemon takes the
-    /// registered repository holding the session's directory. One repository
-    /// is the goal's and the task's both.
-    #[test]
-    fn no_repository_named_sends_no_repository_ids() {
-        let request = adopt_request(adopt_options());
-        let OutsideSessionGoal::New(goal) = request.goal else {
-            panic!("a new goal");
-        };
-        assert_eq!(goal.repository_ids, None);
-        assert_eq!(goal.description, None);
-        assert_eq!(request.repo_id, None);
-
-        let one = adopt_request(AdoptOptions {
-            repos: vec!["01REPO".into()],
-            ..adopt_options()
-        });
-        assert_eq!(one.repo_id.as_deref(), Some("01REPO"));
-    }
-
-    /// The author is the first agent staffed — the seat the session is adopted
-    /// into — and the reviewers follow it in review order, each with the
-    /// skills, model and effort it was pinned to.
-    #[test]
-    fn the_author_leads_the_agents_and_the_reviewers_follow_in_review_order() {
-        let reviewer = |spec: &str| parse_reviewer(spec).expect("a reviewer");
-        let request = adopt_request(AdoptOptions {
-            author: parse_author("coding,testing=codex-acp:gpt-5.6-sol@xhigh").expect("an author"),
-            reviewers: vec![
-                reviewer("code-review=claude-agent-acp:claude-opus-5@high"),
-                reviewer("security-review=codex-acp:gpt-5.6-luna"),
-            ],
-            ..adopt_options()
-        });
-
-        assert_eq!(
-            request
-                .agents
-                .iter()
-                .map(|a| (
-                    a.seat,
-                    a.skills.join(","),
-                    a.model.as_str(),
-                    a.effort.as_deref()
-                ))
-                .collect::<Vec<_>>(),
-            [
-                (
-                    Seat::Author,
-                    "coding,testing".to_string(),
-                    "codex-acp:gpt-5.6-sol",
-                    Some("xhigh")
-                ),
-                (
-                    Seat::Reviewer,
-                    "code-review".to_string(),
-                    "claude-agent-acp:claude-opus-5",
-                    Some("high")
-                ),
-                (
-                    Seat::Reviewer,
-                    "security-review".to_string(),
-                    "codex-acp:gpt-5.6-luna",
-                    None
-                ),
-            ]
-        );
-    }
-
-    /// A title nobody gave is no title: the daemon writes the session's first
-    /// prompt in its place, and a title invented here would hide that.
-    #[test]
-    fn an_omitted_title_sends_no_title() {
-        assert_eq!(
-            adopt_request(AdoptOptions {
-                title: None,
-                ..adopt_options()
-            })
-            .title,
-            None
-        );
-        assert_eq!(
-            adopt_request(adopt_options()).title.as_deref(),
-            Some("Wire the limiter in")
-        );
-    }
-
-    /// Adoption creates or joins three things at once, so it says where each
-    /// one got to. Quiet output is the task id, which is what the commands
-    /// after it take.
-    #[test]
-    fn the_adoption_output_names_the_goal_the_task_and_the_session() {
-        let adopted = AdoptOutsideSessionResponse {
-            goal: fixtures::goal("01GOAL", "Finish the rate limiter"),
-            task: fixtures::task("01TASK", "01GOAL"),
-            session: session("01SESS", "01GOAL", Some("01TASK")),
-        };
-
-        assert_eq!(
-            adopt_lines(&adopted, &View::plain()),
-            [
-                "goal 01GOAL is now active",
-                "task 01TASK is now in_progress",
-                "session 01SESS is now running",
-            ]
-        );
-        assert_eq!(
-            adopt_lines(
-                &adopted,
-                &View {
-                    quiet: true,
-                    ..View::plain()
-                }
-            ),
-            ["01TASK"]
-        );
-    }
+    use crate::commands::fixtures::session;
+    use crate::output::{View, kv_block, style};
 
     fn discover_options() -> DiscoverOptions {
         DiscoverOptions {
@@ -1360,6 +981,27 @@ mod tests {
             discovery_count(&outside_page(&["one", "two"], Some("more"), 17)),
             "2 of 17 sessions"
         );
+    }
+
+    #[test]
+    fn a_loose_session_prints_dashes_for_missing_fields() {
+        let loose = SessionDto {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            ..session("01LOOSE", "01GOAL", None)
+        };
+        let block = kv_block(&inspect_pairs(&loose), &View::plain());
+        for field in ["goal", "task", "seat"] {
+            let line = block
+                .lines()
+                .find(|line| line.starts_with(field))
+                .expect(field);
+            assert_eq!(line.split_whitespace().collect::<Vec<_>>(), [field, "-"]);
+        }
+        assert_eq!(context().label(&loose), "-");
+        assert_eq!(visible(vec![loose.clone()], false, &[], None).len(), 1);
+        assert!(visible(vec![loose], false, &[], Some(Seat::Author)).is_empty());
     }
 
     fn context() -> SessionContext {

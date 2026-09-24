@@ -67,7 +67,7 @@ impl Launcher {
             })
             .await?;
         for s in live {
-            if s.seat() == seat
+            if s.seat() == Some(seat)
                 && agent_id.is_none_or(|a| Some(a) == s.task_agent_id.as_deref())
                 && self.session_process_alive(&s).await
             {
@@ -106,13 +106,14 @@ impl Launcher {
         initial_prompt: String,
     ) -> Result<SpawnCtx> {
         let extra_flags = self.store.agent_flags(agent_of(&session.model)).await?;
+        let seat = session.seat().context("a staffed session needs a seat")?;
         // What this agent knows, read here rather than passed in: one place
         // decides what a session is briefed with, and the index in the prompt
         // and the documents on disk are then the same list by construction.
         // The orchestrator is staffed by nobody, so its one skill — the
         // playbook — is named in code, and an edit to it reaches the next
         // launch the way any task agent's skill does.
-        let skills = match session.seat() {
+        let skills = match seat {
             Seat::Orchestrator => vec![
                 self.store
                     .get_skill(ariadne_store::defaults::ORCHESTRATION_SKILL)
@@ -141,7 +142,7 @@ impl Launcher {
                 Some(write_skills(&run_dir, &documents)?)
             }
         };
-        let system_prompt = prompts::system_prompt(session.seat(), &skills, skills_dir.as_deref());
+        let system_prompt = prompts::system_prompt(seat, &skills, skills_dir.as_deref());
         // The pin is `<agent>:<model>`; the agent is told only its own half.
         let model = session
             .model
@@ -153,9 +154,12 @@ impl Launcher {
             // Minted here, once per launch: the row is told it in
             // [`Self::launch`], before the agent it belongs to exists.
             launch_id: ariadne_core::id::new_id(),
-            goal_id: session.goal_id.clone(),
+            goal_id: session
+                .goal_id
+                .clone()
+                .context("a staffed session needs a goal")?,
             task_id: session.task_id.clone(),
-            seat: session.seat(),
+            seat,
             run_dir,
             cwd,
             socket_path: self.cfg.socket_path.clone(),
@@ -196,15 +200,30 @@ impl Launcher {
                 let permission_mode = task.permission_mode().unwrap_or(self.cfg.permission_mode);
                 (task.repo_id, permission_mode)
             }
-            None => {
+            None if session.goal_id.is_some() => {
                 let repo = self
                     .store
-                    .list_goal_repositories(&session.goal_id)
+                    .list_goal_repositories(
+                        session.goal_id.as_deref().context("session has no goal")?,
+                    )
                     .await?
                     .into_iter()
                     .next()
                     .context("the session's goal has no repository")?;
                 (repo.id, self.cfg.permission_mode)
+            }
+            None => {
+                let repository = self
+                    .store
+                    .list_repositories()
+                    .await?
+                    .into_iter()
+                    .filter(|repo| plan.cwd.starts_with(&repo.path))
+                    .max_by_key(|repo| repo.path.len());
+                (
+                    repository.map(|repo| repo.id).unwrap_or_default(),
+                    self.cfg.permission_mode,
+                )
             }
         };
         let agent_id = agent_of(&session.model);
@@ -318,7 +337,7 @@ impl Launcher {
             .into_iter()
             .rev()
             .find(|s| {
-                s.seat() == seat
+                s.seat() == Some(seat)
                     && agent_id.is_none_or(|wanted| s.task_agent_id.as_deref() == Some(wanted))
                     && s.internal_session_id.is_some()
             });
@@ -363,7 +382,7 @@ impl Launcher {
         let Ok(siblings) = self
             .store
             .list_sessions(SessionFilter {
-                goal_id: Some(session.goal_id.clone()),
+                goal_id: session.goal_id.clone(),
                 task_id: session.task_id.clone(),
                 ..Default::default()
             })
@@ -375,7 +394,7 @@ impl Launcher {
             if previous.id != session.id
                 && previous.task_id == session.task_id
                 && previous.seat() == session.seat()
-                && (previous.seat() != Seat::Reviewer
+                && (previous.seat() != Some(Seat::Reviewer)
                     || previous.task_agent_id == session.task_agent_id)
                 && previous.attention_reason().is_some()
             {
@@ -400,9 +419,9 @@ impl Launcher {
         let session = self
             .store
             .create_session(NewSession {
-                goal_id: goal.id.clone(),
+                goal_id: Some(goal.id.clone()),
                 task_id: None,
-                seat: Seat::Orchestrator,
+                seat: Some(Seat::Orchestrator),
                 task_agent_id: None,
                 model: goal.model.clone(),
                 effort: goal.effort.clone(),
@@ -444,7 +463,7 @@ impl Launcher {
             .await?
             .into_iter()
             .rev()
-            .find(|s| s.seat() == Seat::Orchestrator && s.internal_session_id.is_some());
+            .find(|s| s.seat() == Some(Seat::Orchestrator) && s.internal_session_id.is_some());
         let Some(previous) = previous else {
             return self.spawn_orchestrator(goal_id).await;
         };
@@ -520,9 +539,9 @@ impl Launcher {
         let session = self
             .store
             .create_session(NewSession {
-                goal_id: goal.id.clone(),
+                goal_id: Some(goal.id.clone()),
                 task_id: Some(task.id.clone()),
-                seat: Seat::Author,
+                seat: Some(Seat::Author),
                 task_agent_id: Some(seat.author.id.clone()),
                 model: seat.author.model.clone(),
                 effort: seat.author.effort.clone(),
@@ -550,63 +569,80 @@ impl Launcher {
             .map_err(Into::into)
     }
 
-    /// Give a ready task an author session that continues a stored ACP
-    /// session in the task's worktree, through `session/load`.
-    ///
-    /// The adopted conversation becomes the task's first author. A task
-    /// staffed with several authors adopts into that seat alone; its
-    /// siblings are spawned by the scheduler as usual.
-    pub(crate) async fn adopt_author(
+    /// Resume an outside conversation in its recorded directory.
+    pub(crate) async fn resume_outside(
         &self,
-        task_id: &str,
-        agent_id: &str,
-        internal_session_id: &str,
+        outside: &ariadne_api::sessions::OutsideSessionDto,
     ) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
-        if task.status() != TaskStatus::Ready {
-            anyhow::bail!("task {task_id} is {}, not ready", task.status);
-        }
-        let goal = self.store.get_goal(&task.goal_id).await?;
-        let repo = self.store.get_repository(&task.repo_id).await?;
-        let author = self.store.task_author(task_id).await?;
-        // Which agent this is is part of the pin, `<agent>:<model>`, so the
-        // outside session's agent has to be the one the author is pinned to.
-        let pinned = agent_of(&author.model);
-        if agent_id != pinned {
-            anyhow::bail!(
-                "outside session belongs to agent {agent_id}, but task author uses {pinned}"
-            );
-        }
-        let seat = self.author_seat(&task, &author.id).await?;
-        let guard = seat.sibling_tail().map(|_| author.id.clone());
-        self.assert_no_live_session(&goal.id, Some(task_id), Seat::Author, guard.as_deref())
-            .await?;
-        let worktree = self.author_worktree(&task, &repo, None, &seat).await?;
+        let model = self
+            .registry
+            .default_model(&outside.agent_id)
+            .await
+            .context("the agent has no discovered default model")?;
         let session = self
             .store
             .create_session(NewSession {
-                goal_id: goal.id.clone(),
-                task_id: Some(task.id.clone()),
-                seat: Seat::Author,
-                task_agent_id: Some(author.id.clone()),
-                model: author.model.clone(),
-                effort: author.effort.clone(),
-                worktree_path: Some(worktree.display().to_string()),
+                goal_id: None,
+                task_id: None,
+                seat: None,
+                task_agent_id: None,
+                model: format!("{}:{model}", outside.agent_id),
+                effort: None,
+                worktree_path: Some(outside.working_directory.clone()),
             })
             .await?;
         self.store
-            .set_session_internal_id(&session.id, internal_session_id)
+            .set_session_internal_id(&session.id, &outside.internal_session_id)
             .await?;
-        let task = self.store.get_task(task_id).await?;
-        let mut deps = Vec::new();
-        for dep_id in self.store.list_task_dependencies(&task.id).await? {
-            deps.push(self.store.get_task(&dep_id).await?);
+        let result = self
+            .launch_loose(
+                &session,
+                PathBuf::from(&outside.working_directory),
+                &outside.internal_session_id,
+                "",
+            )
+            .await;
+        if result.is_err() {
+            self.store
+                .set_session_status(&session.id, SessionStatus::Failed)
+                .await?;
         }
-        let template = prompts::template_for(PromptKind::AuthorBriefing);
-        let seen = seat.task_as_seen(&task, Some(worktree.display().to_string()));
-        let briefing = prompts::author_briefing(template, &seen, &goal, &repo, &deps);
-        self.launch_resumed(&session, worktree, internal_session_id, &briefing)
-            .await
+        result
+    }
+
+    async fn launch_loose(
+        &self,
+        session: &AgentSession,
+        cwd: PathBuf,
+        internal: &str,
+        instruction: &str,
+    ) -> Result<AgentSession> {
+        let launch_id = ariadne_core::id::new_id();
+        let plan = SpawnPlan {
+            args: self.store.agent_flags(agent_of(&session.model)).await?,
+            env: vec![
+                ("ARIADNE_SESSION_ID".into(), session.id.clone()),
+                ("ARIADNE_LAUNCH_ID".into(), launch_id.clone()),
+            ],
+            cwd,
+            internal_session_id: Some(internal.to_string()),
+            config: ariadne_core::acp::LaunchConfig {
+                version: ariadne_core::acp::VERSION,
+                system_prompt: String::new(),
+                initial_prompt: (!instruction.is_empty()).then(|| instruction.to_string()),
+                model: session
+                    .model
+                    .split_once(':')
+                    .context("session has no agent pin")?
+                    .1
+                    .to_string(),
+                effort: None,
+                resume_session_id: Some(internal.to_string()),
+                mcp_servers: Vec::new(),
+            },
+        };
+        self.launch(session, plan, &launch_id).await?;
+        Ok(self.store.get_session(&session.id).await?)
     }
 
     /// One author's place on a task: the agent row, its branch, and whether
@@ -771,9 +807,9 @@ impl Launcher {
         let session = self
             .store
             .create_session(NewSession {
-                goal_id: goal.id.clone(),
+                goal_id: Some(goal.id.clone()),
                 task_id: Some(task.id.clone()),
-                seat: Seat::Reviewer,
+                seat: Some(Seat::Reviewer),
                 task_agent_id: Some(reviewer.id.clone()),
                 model: reviewer.model.clone(),
                 effort: reviewer.effort.clone(),
@@ -983,52 +1019,66 @@ impl Launcher {
             // Already alive — attaching needs nothing from us.
             return Ok(previous);
         }
-        // A finished goal has no work left for an agent to come back to, and
-        // the scheduler kills what is live under one: reviving here would put
-        // a session up only for the next tick to take it down again. Refused
-        // at the source instead, so nobody watches an agent start and vanish.
-        let goal = self.store.get_goal(&previous.goal_id).await?;
-        if goal.status().is_terminal() {
-            anyhow::bail!(
-                "cannot revive session {}: its goal is {}",
-                previous.id,
-                goal.status
-            );
+        let internal = previous
+            .internal_session_id
+            .as_deref()
+            .context("session has no internal agent id to resume from")?;
+        let goal = match previous.goal_id.as_deref() {
+            Some(id) => Some(self.store.get_goal(id).await?),
+            None => None,
+        };
+        if goal
+            .as_ref()
+            .is_some_and(|goal| goal.status() == ariadne_core::GoalStatus::Cancelled)
+        {
+            anyhow::bail!("cannot revive a session of a cancelled goal");
         }
-        let internal = previous.internal_session_id.clone().with_context(|| {
-            format!(
-                "session {} has no internal agent id to resume from",
-                previous.id
-            )
-        })?;
-        let seat = previous.seat();
-
-        let cwd = match seat {
-            Seat::Orchestrator => {
-                let repos = self.store.list_goal_repositories(&previous.goal_id).await?;
-                PathBuf::from(&repos.first().context("goal has no repos")?.path)
-            }
-            Seat::Author | Seat::Reviewer => PathBuf::from(
-                previous
-                    .worktree_path
-                    .clone()
-                    .context("session has no worktree to revive in")?,
-            ),
+        let task = match previous.task_id.as_deref() {
+            Some(id) => Some(self.store.get_task(id).await?),
+            None => None,
+        };
+        let cwd = match previous.worktree_path.as_deref().map(PathBuf::from) {
+            Some(path) if path.is_dir() => path,
+            _ => match &task {
+                Some(task) => PathBuf::from(self.store.get_repository(&task.repo_id).await?.path),
+                None => match &goal {
+                    Some(goal) => PathBuf::from(
+                        &self
+                            .store
+                            .list_goal_repositories(&goal.id)
+                            .await?
+                            .first()
+                            .context("goal has no repositories")?
+                            .path,
+                    ),
+                    None => anyhow::bail!("the loose session's working directory is gone"),
+                },
+            },
         };
         if !cwd.is_dir() {
             anyhow::bail!(
-                "cannot revive session {}: its working directory {} is gone \
-                 (task finished and was cleaned up?)",
-                previous.id,
+                "session working directory does not exist: {}",
                 cwd.display()
             );
         }
-
-        // Neither the worktree nor (for a reviewer) the round changes: this is
-        // the same session put back on its feet, not a new round of work.
+        // A user can continue the conversation after its scheduled work ended.
+        if goal
+            .as_ref()
+            .is_some_and(|goal| goal.status().is_terminal())
+            || task
+                .as_ref()
+                .is_some_and(|task| task.status().is_terminal())
+        {
+            self.acp.preserve_user_resume(&previous.id);
+        }
         let session = self.store.restart_session(&previous.id, None).await?;
-        self.launch_resumed(&session, cwd, &internal, instruction.unwrap_or(""))
-            .await
+        if session.seat.is_none() {
+            self.launch_loose(&session, cwd, internal, instruction.unwrap_or(""))
+                .await
+        } else {
+            self.launch_resumed(&session, cwd, internal, instruction.unwrap_or(""))
+                .await
+        }
     }
 
     /// Kill a session's agent process — the daemon-owned child — and mark
@@ -1119,13 +1169,26 @@ impl Launcher {
             })
             .await?
         {
+            if self.acp.is_user_resumed(&session.id) {
+                continue;
+            }
             if self.acp.is_running(&session.id) {
                 tracing::info!(task = %task.id, session = %session.id, "cleanup: killing agent session");
             }
             self.kill_session(&session.id).await.ok();
         }
 
-        if !remove_worktrees {
+        if !remove_worktrees
+            || self
+                .store
+                .list_sessions(SessionFilter {
+                    task_id: Some(task.id.clone()),
+                    ..Default::default()
+                })
+                .await?
+                .iter()
+                .any(|session| self.acp.is_user_resumed(&session.id))
+        {
             return Ok(());
         }
 
@@ -1137,6 +1200,9 @@ impl Launcher {
             })
             .await?
         {
+            if self.acp.is_user_resumed(&session.id) {
+                continue;
+            }
             if let Some(wt) = &session.worktree_path {
                 let wt = PathBuf::from(wt);
                 if wt.exists() {

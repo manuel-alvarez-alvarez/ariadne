@@ -110,7 +110,7 @@ async fn live_authors(h: &Harness, task_id: &str) -> Vec<AgentSession> {
         .await
         .unwrap()
         .into_iter()
-        .filter(|s| s.seat() == Seat::Author)
+        .filter(|s| s.seat() == Some(Seat::Author))
         .collect()
 }
 
@@ -1016,7 +1016,7 @@ async fn each_contested_reviewer_is_briefed_once_when_its_request_row_lands_late
         let session = sessions
             .iter()
             .find(|s| {
-                s.seat() == Seat::Reviewer
+                s.seat() == Some(Seat::Reviewer)
                     && s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
             })
             .expect("a session per reviewer");
@@ -1218,7 +1218,8 @@ async fn eventually_reviewer_session(
 ) -> AgentSession {
     let of = async |h: &Harness| {
         h.sessions_of(&c.task.id).await.into_iter().find(|s| {
-            s.seat() == Seat::Reviewer && s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
+            s.seat() == Some(Seat::Reviewer)
+                && s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
         })
     };
     eventually(TIMEOUT, "the reviewer to be started", async || {

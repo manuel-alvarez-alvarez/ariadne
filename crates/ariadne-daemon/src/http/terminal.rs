@@ -92,7 +92,11 @@ async fn header(state: &AppState, session: &ariadne_api::sessions::SessionDto) -
             }
             Err(_) => (None, None),
         },
-        None => match state.store.get_goal(&session.goal_id).await {
+        None if session.goal_id.is_some() => match state
+            .store
+            .get_goal(session.goal_id.as_deref().unwrap())
+            .await
+        {
             Ok(goal) => {
                 let repository = state
                     .store
@@ -105,6 +109,7 @@ async fn header(state: &AppState, session: &ariadne_api::sessions::SessionDto) -
             }
             Err(_) => (None, None),
         },
+        None => (None, None),
     };
     Header::of(Some(session)).with_task(title, repository)
 }

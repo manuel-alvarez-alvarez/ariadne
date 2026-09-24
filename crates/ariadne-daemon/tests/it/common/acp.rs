@@ -472,6 +472,9 @@ def respond(request):
         wanted = request.get("params", {}).get("sessionId")
         if wanted in script.get("stored_sessions", []):
             claim_writer(wanted, resumed=True)
+            for update in script.get("load_updates", []):
+                send({"jsonrpc": "2.0", "method": "session/update",
+                      "params": {"sessionId": wanted, "update": update}})
             return {"configOptions": options}
         raise Failure(-32001, "unknown session %s" % wanted)
     if method == "session/close":

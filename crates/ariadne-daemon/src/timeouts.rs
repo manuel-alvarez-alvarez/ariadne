@@ -22,6 +22,8 @@ pub struct Timeouts {
     /// How long one discovery probe of an agent may take, and how long one
     /// agent's `session/list` pages may take together.
     pub probe: Duration,
+    /// How long an outside conversation can take to load before resume fails.
+    pub session_load: Duration,
     /// How long a registry download may take, including its response body.
     pub registry_download: Duration,
     /// How often a running turn's transcript is read again for what the
@@ -63,6 +65,7 @@ impl Default for Timeouts {
         Self {
             cancel_grace: Duration::from_secs(5),
             probe: Duration::from_secs(5),
+            session_load: Duration::from_secs(60),
             registry_download: Duration::from_secs(30),
             transcript_poll: Duration::from_secs(15),
             session_wake: Duration::from_millis(250),

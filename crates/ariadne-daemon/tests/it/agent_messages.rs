@@ -1154,7 +1154,7 @@ async fn reviewer_sessions(
         .iter()
         .filter_map(|reviewer| {
             sessions.iter().find(|s| {
-                s.seat() == Seat::Reviewer
+                s.seat() == Some(Seat::Reviewer)
                     && s.task_agent_id.as_deref() == Some(reviewer.id.as_str())
                     && s.launched_at.is_some()
             })

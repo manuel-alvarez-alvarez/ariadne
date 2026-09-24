@@ -61,7 +61,7 @@ impl super::Scheduler {
             .set_session_status(&session.id, SessionStatus::Exited)
             .await;
         if attention::work_is_active(&self.store, session).await {
-            warn!(session = %session.id, seat = %session.seat, "agent disconnected with work still active");
+            warn!(session = %session.id, seat = ?session.seat, "agent disconnected with work still active");
             let _ = self
                 .store
                 .set_session_attention(&session.id, AttentionReason::Disconnected)
@@ -98,6 +98,9 @@ impl super::Scheduler {
             return;
         };
         for session in flagged {
+            if self.launcher.acp.is_user_resumed(&session.id) && session.status().is_live() {
+                continue;
+            }
             let prompt = session.attention_reason().is_some_and(|r| r.is_prompt());
             let why = if !session.status().is_live() && prompt {
                 "the session ended on a prompt nobody can answer"
@@ -106,7 +109,7 @@ impl super::Scheduler {
             } else {
                 continue;
             };
-            info!(session = %session.id, seat = %session.seat, why, "dropping attention");
+            info!(session = %session.id, seat = ?session.seat, why, "dropping attention");
             let _ = self.store.clear_session_attention(&session.id).await;
         }
     }

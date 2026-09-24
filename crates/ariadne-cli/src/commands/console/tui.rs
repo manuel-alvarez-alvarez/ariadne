@@ -91,8 +91,8 @@ fn farewell(console: &Console, id: &str) -> String {
 /// Read the context the session row does not carry. A missing description
 /// leaves its line out, but never prevents an otherwise healthy attach.
 async fn header(client: &Client, session: SessionDto) -> Header {
-    let (title, repository) = match &session.task_id {
-        Some(id) => match client.get_json::<TaskDto>(&format!("/v1/tasks/{id}")).await {
+    let (title, repository) = match (&session.task_id, &session.goal_id) {
+        (Some(id), _) => match client.get_json::<TaskDto>(&format!("/v1/tasks/{id}")).await {
             Ok(task) => {
                 let repository = client
                     .get_json::<RepositoryDto>(&format!("/v1/repositories/{}", task.repo_id))
@@ -103,10 +103,7 @@ async fn header(client: &Client, session: SessionDto) -> Header {
             }
             Err(_) => (None, None),
         },
-        None => match client
-            .get_json::<GoalDto>(&format!("/v1/goals/{}", session.goal_id))
-            .await
-        {
+        (None, Some(id)) => match client.get_json::<GoalDto>(&format!("/v1/goals/{id}")).await {
             Ok(goal) => (
                 Some(goal.title),
                 goal.repos
@@ -115,6 +112,7 @@ async fn header(client: &Client, session: SessionDto) -> Header {
             ),
             Err(_) => (None, None),
         },
+        (None, None) => (None, None),
     };
     Header::of(Some(&session)).with_task(title, repository)
 }
@@ -463,10 +461,10 @@ mod tests {
         let (client, server) = serve(stub(true, false)).await;
         let session = SessionDto {
             id: "01m2x2gbzj5c1234".into(),
-            goal_id: "goal".into(),
+            goal_id: Some("goal".into()),
             task_id: Some("task".into()),
             task_agent_id: None,
-            seat: Seat::Author,
+            seat: Some(Seat::Author),
             model: "stub:model".into(),
             effort: Some("high".into()),
             internal_session_id: None,
@@ -488,6 +486,25 @@ mod tests {
         let shown = format!("{header:?}");
         assert!(shown.contains("Input box"), "{shown}");
         assert!(shown.contains("ariadne"), "{shown}");
+    }
+
+    #[tokio::test]
+    async fn a_loose_session_banner_has_no_goal_or_task() {
+        let (client, server) = serve(stub(true, false)).await;
+        let session = SessionDto {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            ..crate::commands::fixtures::session("01LOOSE", "01GOAL", None)
+        };
+
+        let header = super::header(&client, session).await;
+        server.abort();
+
+        let shown = format!("{header:?}");
+        assert!(shown.contains("seat: \"-\""), "{shown}");
+        assert!(shown.contains("task: None"), "{shown}");
+        assert!(shown.contains("repository: None"), "{shown}");
     }
 
     /// What a frame reads as: the kinds a snapshot holds, an event's kind,

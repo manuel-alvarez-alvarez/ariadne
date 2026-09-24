@@ -283,7 +283,7 @@ impl super::Scheduler {
                     // a reviewer whose agent died is started again.
                     let mut running = None;
                     for s in &live {
-                        if s.seat() == Seat::Reviewer
+                        if s.seat() == Some(Seat::Reviewer)
                             && s.task_agent_id.as_deref() == Some(agent_id.as_str())
                             && self.launcher.session_process_alive(s).await
                         {
@@ -686,7 +686,7 @@ impl super::Scheduler {
         let Some(session) = self.live_author_session(&task.id, &author.id).await? else {
             let last = self
                 .last_session(&task.id, |s| {
-                    s.seat() == Seat::Author
+                    s.seat() == Some(Seat::Author)
                         && s.task_agent_id.as_deref() == Some(author.id.as_str())
                 })
                 .await;
@@ -757,7 +757,7 @@ impl super::Scheduler {
             })
             .await?;
         for session in live {
-            if session.seat() == seat
+            if session.seat() == Some(seat)
                 && session.task_agent_id.as_deref() == Some(agent_id)
                 && self.launcher.session_process_alive(&session).await
             {
@@ -1016,7 +1016,7 @@ impl super::Scheduler {
             .await?;
         let mut out = Vec::new();
         for s in sessions {
-            if s.seat() == seat && self.launcher.session_process_alive(&s).await {
+            if s.seat() == Some(seat) && self.launcher.session_process_alive(&s).await {
                 out.push(s);
             }
         }
@@ -1065,7 +1065,7 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await?;
-        let Some(agent) = sessions.iter().find(|s| s.seat() == Seat::Author) else {
+        let Some(agent) = sessions.iter().find(|s| s.seat() == Some(Seat::Author)) else {
             // An author that came up and was never heard from spends an
             // attempt like a launch that never got off the ground. Without
             // that, a CLI that exits the moment it starts — a dialog nobody
@@ -1073,7 +1073,7 @@ impl super::Scheduler {
             // agent every tick for as long as its goal is active, and says so
             // to nobody.
             let last = self
-                .last_session(&task.id, |s| s.seat() == Seat::Author)
+                .last_session(&task.id, |s| s.seat() == Some(Seat::Author))
                 .await;
             if let Some(last) = &last
                 && self.spent_on_a_dead_launch(&task.id, &task.id, last)
@@ -1167,14 +1167,14 @@ impl super::Scheduler {
     ) -> anyhow::Result<()> {
         let mut owed = carried.is_some_and(|reason| reason.is_for_the_user());
         if !owed
-            && back.seat() == Seat::Author
+            && back.seat() == Some(Seat::Author)
             && let Some(task_id) = back.task_id.as_deref()
         {
             let task = self.store.get_task(task_id).await?;
             owed = task.status() == TaskStatus::Approved && task.pr_url.is_some();
         }
         if owed {
-            info!(session = %back.id, seat = %back.seat, "the agent is back on its feet and the user is still owed, raising it again");
+            info!(session = %back.id, seat = ?back.seat, "the agent is back on its feet and the user is still owed, raising it again");
             self.store
                 .set_session_attention(&back.id, AttentionReason::WaitingUser)
                 .await?;
@@ -1253,7 +1253,11 @@ impl super::Scheduler {
         else {
             return;
         };
-        if let Some(previous) = sessions.iter().rev().find(|s| s.seat() == Seat::Author) {
+        if let Some(previous) = sessions
+            .iter()
+            .rev()
+            .find(|s| s.seat() == Some(Seat::Author))
+        {
             warn!(task = %task.id, session = %previous.id, "starting the author failed, flagging its last session disconnected");
             let _ = self
                 .store

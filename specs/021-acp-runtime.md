@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-09-20
+updated: 2026-09-24
 areas: [daemon]
 commits: []
 tests:
@@ -70,6 +70,8 @@ gone (009).
    the session with `session/new` — or, for a resume, `session/resume` where
    the agent advertises it and `session/load` where it only advertises
    loading — and passes the MCP servers of the launch file every time.
+   An outside loose session always opens through `session/load` (020).
+   A loose session receives no task MCP server or seat instructions.
 3. The model is set through `session/set_config_option` on the option of
    category `model`, or, where no option has that category, on the option
    whose id or name is `model`. The effort is set the same way, on category
@@ -77,6 +79,7 @@ gone (009).
    id-or-name fallback, and only when the launch carries one. An agent that
    offers no matching option fails the launch rather than run on a default
    (see Known gap).
+   Loose sessions instead retain and record the loaded model (020).
 4. Every prompt the runtime sends is the system prompt, a blank line, and
    the text of the prompt. The first prompt of a launch is the one its launch
    file carries, if any. `user_prompt_submit` carries the whole as `prompt`,

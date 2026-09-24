@@ -14,6 +14,36 @@ async fn test_store() -> (Store, tempfile::TempDir) {
 }
 
 #[tokio::test]
+async fn a_loose_session_round_trips_without_a_goal_task_or_seat() {
+    let (store, dir) = test_store().await;
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:test-model".into(),
+            effort: None,
+            worktree_path: Some("/work/outside".into()),
+        })
+        .await
+        .unwrap();
+    store
+        .set_session_internal_id(&session.id, "outside-1")
+        .await
+        .unwrap();
+    store.close().await;
+    let store = Store::open(dir.path().join("test.db")).await.unwrap();
+    let session = store.get_session(&session.id).await.unwrap();
+    assert_eq!(session.model, "stub:test-model");
+    assert_eq!(session.goal_id, None);
+    assert_eq!(session.task_id, None);
+    assert_eq!(session.seat(), None);
+    assert_eq!(session.internal_session_id.as_deref(), Some("outside-1"));
+    assert_eq!(session.worktree_path.as_deref(), Some("/work/outside"));
+}
+
+#[tokio::test]
 async fn model_ranks_survive_reopen_and_clear_independently_of_enabled() {
     use ariadne_core::models::ModelRank;
 
@@ -198,9 +228,9 @@ impl World {
     ) -> AgentSession {
         self.store
             .create_session(NewSession {
-                goal_id: self.goal.id.clone(),
+                goal_id: Some(self.goal.id.clone()),
                 task_id: task_id.map(str::to_string),
-                seat,
+                seat: Some(seat),
                 task_agent_id: agent_id.map(str::to_string),
                 model: "stub:test-model".into(),
                 effort: None,

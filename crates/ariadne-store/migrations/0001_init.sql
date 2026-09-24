@@ -244,9 +244,9 @@ CREATE INDEX idx_task_deps_on ON task_dependencies (depends_on_task_id);
 -- names another one is a dead process talking.
 CREATE TABLE agent_sessions (
     id                  TEXT PRIMARY KEY,       -- == ARIADNE_SESSION_ID env of the agent
-    goal_id             TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
-    task_id             TEXT REFERENCES tasks (id) ON DELETE CASCADE,  -- NULL = orchestrator
-    seat                TEXT NOT NULL CHECK (seat IN ('orchestrator', 'author', 'reviewer')),
+    goal_id             TEXT REFERENCES goals (id) ON DELETE CASCADE,
+    task_id             TEXT REFERENCES tasks (id) ON DELETE CASCADE,  -- NULL = orchestrator or loose session
+    seat                TEXT CHECK (seat IN ('orchestrator', 'author', 'reviewer')),
     -- Which staffed agent this session runs; NULL for an orchestrator,
     -- which is the one agent type Ariadne defines rather than one a task
     -- staffs.

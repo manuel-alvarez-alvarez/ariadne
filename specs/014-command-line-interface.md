@@ -130,8 +130,9 @@ same binary also serves (013).
     every row of every group, and nothing else — and, like every other `-q`
     listing, it reads no `--columns` and so refuses none.
 24. Human mutation output is one styled line. Quiet mutation output is only
-    the affected id. Inspect keys use lowercase space-separated words. A row's
-    subject column is `title`, except that the agent listing keeps `agent`.
+    the affected id. Inspect keys use lowercase space-separated words.
+    Missing session goals, tasks and seats print a dash.
+    A row's subject column is `title`, except that the agent listing keeps `agent`.
     Boolean columns use the shared `yes_no` wording. Every empty listing states
     what is empty, then gives the next command when one exists.
 25. `ariadne agent ls|update` lists and edits the flags each registry agent
@@ -151,19 +152,6 @@ same binary also serves (013).
     command when the daemon returns a cursor. `--all` follows every cursor
     into one table and cannot be combined with `--cursor`. JSON preserves the
     page object, while quiet output prints its session ids.
-    `ariadne session adopt <session-id> --agent <agent-id>` creates a task for
-    one of them and adopts it as that task's author, through the same REST
-    surface (020). The task lands in exactly one goal: a new one with
-    `--new-goal <title>`, `--goal-description` and a repeatable `--repo`, or an
-    active one with `--goal`. The two are exclusive and one is required, and
-    `--goal-description` is refused beside `--goal`. The rest are the task
-    flags of `task create`: an omitted `--title` leaves the title to the
-    daemon, one `--author` is required and leads the `agents` the `--reviewer`
-    slots follow in review order, and `--repo` names registered repositories
-    by id or by path, as `goal create` takes them. `--goal` completes goal
-    ids, `--repo` repository ids and `--agent` registry agent ids. The
-    command prints a status line each for the goal, the task and the session;
-    JSON preserves all three, and quiet output prints the task id.
 27. `ariadne attach`, `goal attach` and `task attach` open the console of the
     session an id names, revived first when it is gone. On a terminal it is an
     inline pane (008); with stdin or stdout redirected it is the plain line
@@ -299,6 +287,8 @@ same binary also serves (013).
   `yes` or `no` (`session.rs::the_session_subject_column_is_title`,
   `models.rs::the_description_drops_before_the_efforts_do`,
   `::a_row_stars_the_default_effort_and_dashes_what_is_unsaid`).
+- A loose session prints dashes for absent goal, task and seat fields
+  (`session.rs::a_loose_session_prints_dashes_for_missing_fields`).
 - `session inspect` shows a reported context window with compact token counts
   and omits an unreported one
   (`session.rs::the_inspect_block_shows_the_reported_context_window`,
@@ -327,21 +317,6 @@ same binary also serves (013).
   `::discover_all_and_cursor_are_exclusive`). It names each agent that cannot
   list sessions with its reason
   (`session.rs::an_agent_without_the_capability_is_named_with_its_reason`).
-- `session adopt` sends the goal it was given — one by id, or a new one with
-  its title, description and repositories — and no repository ids where the
-  line named none
-  (`session.rs::a_goal_id_adopts_the_session_into_that_goal`,
-  `::a_new_goal_carries_its_title_description_and_repositories`,
-  `::no_repository_named_sends_no_repository_ids`). The author leads the
-  agents and the reviewers follow in review order
-  (`::the_author_leads_the_agents_and_the_reviewers_follow_in_review_order`),
-  an omitted title is no title (`::an_omitted_title_sends_no_title`), and the
-  output names the goal, the task and the session
-  (`::the_adoption_output_names_the_goal_the_task_and_the_session`). Every
-  flag lands in its field, and a line that names both goals, neither, or no
-  author is refused
-  (`cli/tests.rs::adopt_takes_the_session_the_new_goal_and_the_task_flags`,
-  `::adopt_takes_a_goal_or_a_new_goal_and_exactly_one`).
 - The console renders a stub-agent transcript and submits typed input, and
   its permission question submits the selected option
   (`commands/console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,

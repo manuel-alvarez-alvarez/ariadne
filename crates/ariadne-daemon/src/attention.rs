@@ -18,19 +18,23 @@ use ariadne_store::{AgentSession, Store, Task};
 /// that has already voted is done however long the round runs on.
 pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
     match session.seat() {
+        None => session.status().is_live(),
         // The goal is the orchestrator's whole job, and it holds that job
         // for the whole goal: the plan is a hand-off, not an ending. It is
         // the agent the user talks to about work already running, and the
         // one the daemon tells when a task needs a decision, so an agent of
         // its own that vanishes under a goal still going is news.
-        Seat::Orchestrator => matches!(
-            store.get_goal(&session.goal_id).await.map(|g| g.status()),
+        Some(Seat::Orchestrator) => matches!(
+            store
+                .get_goal(session.goal_id.as_deref().unwrap_or_default())
+                .await
+                .map(|g| g.status()),
             Ok(GoalStatus::Planning | GoalStatus::Active)
         ),
         // Every status the author is working in or about to be woken for;
         // `pending` has no author yet and `under_review` is not its turn.
         // `approved` is: landing the change is the author's last job.
-        Seat::Author => match task_of(store, session).await {
+        Some(Seat::Author) => match task_of(store, session).await {
             Some(task) => matches!(
                 task.status(),
                 TaskStatus::Ready
@@ -41,7 +45,7 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
             None => false,
         },
         // A reviewer is only owed to a review it has not voted on.
-        Seat::Reviewer => match task_of(store, session).await {
+        Some(Seat::Reviewer) => match task_of(store, session).await {
             Some(task) if task.status() == TaskStatus::UnderReview => {
                 store.open_verdicts(&task.id).await.is_ok_and(|verdicts| {
                     !verdicts

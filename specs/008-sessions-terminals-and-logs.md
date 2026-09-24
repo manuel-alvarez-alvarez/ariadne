@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-20
+updated: 2026-09-24
 areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
@@ -31,7 +31,7 @@ tests:
 
 # Sessions and the console
 
-An agent session is a row the daemon keeps for one agent on one seat, and the
+An agent session is a row the daemon keeps for one agent, optionally on a seat, and the
 agent behind it is a daemon-owned ACP child process (021). This is what a
 session holds, what may be done to it, and how a client reads it and speaks
 to it: through the session's console.
@@ -45,14 +45,14 @@ terminal over a WebSocket for the desktop app.
 
 Out: the ACP runtime itself — the child process, the protocol conversation,
 permission modes and the event vocabulary (021); sessions started outside
-Ariadne and adopted as authors (020); when the daemon hands an agent a prompt
+Ariadne and resumed as loose sessions (020); when the daemon hands an agent a prompt
 (009) and what the prompt says (006); how `ariadne attach` resolves a task or
 goal id to a seat (014).
 
 ## Behavior
 
-1. A session belongs to a goal, a seat and — for authors and reviewers — a
-   task.
+1. A staffed session belongs to a goal and seat, and authors and reviewers also belong to a task.
+   A loose session has no goal, task or seat (020).
 2. A session holds its worktree, the model it runs on, the effort where one
    was pinned, and the agent's own session id once the agent reports one.
 3. The model is one `<agent>:<model>` pin (011), frozen off the seat's pin
@@ -81,8 +81,12 @@ goal id to a seat (014).
     read (012).
 11. Resuming a session revives it in place: the same row, the same id, the
     same model, on the conversation its agent id names.
-12. A session with no agent id to resume from is not revived. A session whose
-    goal is finished is not revived either, and it stays as it ended.
+    A missing worktree falls back to the repository checkout.
+    The daemon creates no replacement worktree for this revival.
+12. A session with no agent id to resume from is not revived.
+    A session of a completed goal can revive, and the goal stays completed.
+    The scheduler leaves that revived conversation running until the daemon stops.
+    A session of a cancelled goal is not revived.
 13. A session's console snapshot (`GET /v1/sessions/{id}/console`) is the
     newest page of the session's events, in order: at most two hundred of
     them, the recent past rather than every turn the session ever ran. A
@@ -498,8 +502,10 @@ goal id to a seat (014).
 - Reviving a session revives it in place
   (`resume.rs::reviving_a_session_revives_it_in_place`); a session without an
   agent id is not revived (`::a_session_without_an_agent_id_is_not_revived`),
-  and neither is a session of a finished goal
-  (`::a_session_of_a_finished_goal_is_not_revived`).
+  a completed goal's session revives without changing the goal
+  (`::a_session_of_a_completed_goal_revives_and_the_goal_stays_completed`),
+  and a deleted worktree falls back to the repository checkout
+  (`::a_session_with_a_deleted_worktree_revives_in_the_repository_checkout`).
 - The console stream gives the snapshot, then deltas
   (`acp_console.rs::the_console_stream_gives_the_snapshot_then_deltas`).
 - A console opens on a page: a session of thousands of events gives its
@@ -976,6 +982,9 @@ goal id to a seat (014).
 
 ## Known gap
 
+- Protection for a user-revived session is in memory only. A daemon restart
+  loses it. The user must revive the conversation again after restart.
+  The runtime retains these session ids until the daemon exits.
 - The launcher refuses a second live session on one seat, and no test pins
   that refusal on its own.
 - No test pins the `409` a finished session gives to console input.

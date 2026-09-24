@@ -907,9 +907,9 @@ mod tests {
             .unwrap();
         store
             .create_session(ariadne_store::NewSession {
-                goal_id: goal.id.clone(),
+                goal_id: Some(goal.id.clone()),
                 task_id: None,
-                seat: ariadne_core::Seat::Orchestrator,
+                seat: Some(ariadne_core::Seat::Orchestrator),
                 task_agent_id: None,
                 model: "stub:test-model".into(),
                 effort: None,

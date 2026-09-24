@@ -24,9 +24,9 @@ const NOT_OVER_THE_USER: &str = " AND (attention_reason IS NULL OR attention_rea
 
 #[derive(Debug, Clone)]
 pub struct NewSession {
-    pub goal_id: String,
+    pub goal_id: Option<String>,
     pub task_id: Option<String>,
-    pub seat: Seat,
+    pub seat: Option<Seat>,
     /// The staffed agent this session runs; None for an orchestrator.
     pub task_agent_id: Option<String>,
     /// Model to launch with, `<agent>:<model>`.
@@ -59,7 +59,7 @@ impl Store {
         .bind(&id)
         .bind(&new.goal_id)
         .bind(&new.task_id)
-        .bind(new.seat.as_str())
+        .bind(new.seat.map(|seat| seat.as_str()))
         .bind(&new.task_agent_id)
         .bind(&new.model)
         .bind(&new.effort)
@@ -337,6 +337,18 @@ impl Store {
         let session = self.get_session(id).await?;
         self.publish(Change::SessionUpdated(session.clone()));
         Ok(session)
+    }
+
+    /// Record the model returned when an outside conversation is loaded.
+    pub async fn set_loose_session_model(&self, id: &str, model: &str) -> Result<()> {
+        self.write_session(
+            id,
+            sqlx::query("UPDATE agent_sessions SET model = ? WHERE id = ? AND seat IS NULL")
+                .bind(model)
+                .bind(id),
+        )
+        .await?;
+        self.publish_session_update(id).await
     }
 
     /// Record the agent-internal id (claude session uuid / codex thread id /

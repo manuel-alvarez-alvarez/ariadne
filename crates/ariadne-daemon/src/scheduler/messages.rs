@@ -146,7 +146,7 @@ impl super::Scheduler {
         };
         let live = self.store.list_sessions(filter).await.ok()?;
         live.into_iter().find(|s| match message.to_actor() {
-            Some(Actor::Orchestrator) => s.seat() == Seat::Orchestrator,
+            Some(Actor::Orchestrator) => s.seat() == Some(Seat::Orchestrator),
             // Addressed to one staffed agent, and to no other in its seat:
             // two reviewers on a task are two recipients.
             _ => s.task_agent_id.is_some() && s.task_agent_id == message.to_agent_id,

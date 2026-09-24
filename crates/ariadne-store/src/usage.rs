@@ -86,7 +86,9 @@ impl Store {
         if let Some(task_id) = &session.task_id {
             self.publish_task_update(task_id, 1).await?;
         }
-        self.publish_goal_update(&session.goal_id).await?;
+        if let Some(goal_id) = &session.goal_id {
+            self.publish_goal_update(goal_id).await?;
+        }
         Ok(true)
     }
 

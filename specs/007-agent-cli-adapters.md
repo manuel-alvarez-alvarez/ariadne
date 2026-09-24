@@ -1,13 +1,14 @@
 ---
 id: agent-cli-adapters
 status: current
-updated: 2026-09-23
+updated: 2026-09-24
 areas: [daemon, core]
 commits: [ed1c40d3, 03fbf02d, 090c5158, e94647fd, a69b953f, 03f9c8b7]
 tests:
   - crates/ariadne-daemon/tests/it/adapters.rs
   - crates/ariadne-daemon/tests/it/agents.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
+  - crates/ariadne-daemon/tests/it/acp_session_resume.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
   - crates/ariadne-daemon/tests/it/resume.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
@@ -87,8 +88,9 @@ skill says (017).
    models and efforts — comes off a `session/new`, and the store keeps it
    under the command and the version the agent reported in `initialize`
    (`agentInfo.version`). A daemon start opens a session only on an agent
-   whose command and version have no kept catalog. An agent that reports no
-   version is read on every start.
+   whose command and version have no kept catalog, or whose catalog lacks a
+   default model. The store keeps the repaired catalog. An agent that reports
+   no version is read on every start.
 
    Startup downloads nothing. It takes the stored index only when its fetch
    time is after the shipped snapshot's date at midnight UTC. Otherwise,
@@ -171,9 +173,9 @@ skill says (017).
 16. A resume is gated on discovery: an agent whose cached capabilities lack
     `session_load` is refused as not resumable, and no process starts.
 17. A session with no agent session id is not revived, and the next launch of
-    its seat is a fresh spawn. A session of a finished goal is not revived at
-    all. A revive brings back the very row it names, on the same agent and
-    model.
+    its seat is a fresh spawn. A session of a cancelled goal is not revived.
+    A completed goal permits revival without changing the goal (008).
+    A revive brings back the very row it names, on the same agent and model.
 18. The daemon asks no agent to compact, and does not listen for one. An
     agent that compacts near its context limit carries on afterwards, and
     what it does next moves its session as any other work does.
@@ -241,6 +243,10 @@ skill says (017).
   (`::an_agent_without_a_version_is_read_on_every_start`), and the store
   keeps one catalog per agent
   (`store.rs::an_acp_catalog_is_kept_per_agent_and_replaced_by_a_newer_read`).
+- A kept catalog without a default model is repaired at startup and permits
+  outside-session resume with the loaded model or the default fallback
+  (`acp_session_resume.rs::an_old_catalog_does_not_block_the_loaded_model`,
+  `::an_old_catalog_recovers_the_default_when_load_has_no_model`).
 - Every required capability is enforced
   (`acp_discovery.rs::every_required_acp_capability_is_enforced`), and an agent
   with no model option is rejected with the reason shown
@@ -286,8 +292,8 @@ skill says (017).
   (`resume.rs::a_session_without_an_agent_id_is_not_revived`), a reviewer
   without one is spawned afresh
   (`::a_reviewer_without_an_agent_id_is_spawned_afresh`), a session of a
-  finished goal is not revived
-  (`::a_session_of_a_finished_goal_is_not_revived`), and a revive brings back
+  completed goal revives without reopening the goal
+  (`::a_session_of_a_completed_goal_revives_and_the_goal_stays_completed`), and a revive brings back
   the row it names (`::reviving_a_session_revives_it_in_place`).
 - The daemon advertises no compaction support on `initialize`
   (`acp.rs::initialize_tells_the_agent_what_the_daemon_supports`).

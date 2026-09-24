@@ -364,10 +364,13 @@ impl Scheduler {
             }
         };
         for session in sessions {
-            if seat.is_some_and(|wanted| session.seat() != wanted) {
+            if self.launcher.acp.is_user_resumed(&session.id) {
                 continue;
             }
-            info!(session = %session.id, seat = %session.seat, why, "killing session");
+            if seat.is_some_and(|wanted| session.seat() != Some(wanted)) {
+                continue;
+            }
+            info!(session = %session.id, seat = ?session.seat, why, "killing session");
             if let Err(e) = self.launcher.kill_session(&session.id).await {
                 warn!(session = %session.id, error = %e, "killing the session failed");
             }
@@ -447,9 +450,16 @@ impl Scheduler {
         let Ok(session) = self.store.get_session(session_id).await else {
             return;
         };
+        if self.launcher.acp.is_user_resumed(&session.id) {
+            return;
+        }
         match &session.task_id {
             Some(task) => self.reconcile(Target::Task(task)).await,
-            None => self.reconcile(Target::Goal(&session.goal_id)).await,
+            None => {
+                if let Some(goal_id) = &session.goal_id {
+                    self.reconcile(Target::Goal(goal_id)).await;
+                }
+            }
         }
     }
 }

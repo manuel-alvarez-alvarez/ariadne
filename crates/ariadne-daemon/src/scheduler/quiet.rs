@@ -114,7 +114,7 @@ impl super::Scheduler {
             if std::mem::replace(&mut done.flagged, true) {
                 return Ok(());
             }
-            warn!(session = %session.id, seat = %session.seat, quiet_secs, "the agent has reported nothing, flagging for user attention");
+            warn!(session = %session.id, seat = ?session.seat, quiet_secs, "the agent has reported nothing, flagging for user attention");
             self.store
                 .set_session_attention(&session.id, AttentionReason::Stalled)
                 .await?;
@@ -128,7 +128,7 @@ impl super::Scheduler {
         if session.status() == SessionStatus::Running {
             return Ok(());
         }
-        info!(session = %session.id, seat = %session.seat, quiet_secs, "nudging idle agent");
+        info!(session = %session.id, seat = ?session.seat, quiet_secs, "nudging idle agent");
         // Spent as the prompt goes out. One the runtime would not take — no
         // agent runs for the session — is given back by `hand_prompt`, so
         // the next pass over this session sends it again.
@@ -203,7 +203,7 @@ impl super::Scheduler {
         done.flagged = false;
         let spent = done.relaunches;
         if spent >= SPAWN_RETRY_BUDGET {
-            warn!(session = %session.id, seat = %session.seat, relaunches = spent - 1, "the agent went quiet again after every relaunch");
+            warn!(session = %session.id, seat = ?session.seat, relaunches = spent - 1, "the agent went quiet again after every relaunch");
             let Some(task_id) = session.task_id.clone() else {
                 return Ok(());
             };
@@ -224,11 +224,11 @@ impl super::Scheduler {
                 .await;
             return Ok(());
         }
-        info!(session = %session.id, seat = %session.seat, relaunch = spent, "the agent has reported nothing for too long, relaunching it");
+        info!(session = %session.id, seat = ?session.seat, relaunch = spent, "the agent has reported nothing for too long, relaunching it");
         let carried = session.attention_reason();
         self.launcher.kill_session(&session.id).await?;
         if let Some(task_id) = session.task_id.clone()
-            && session.seat() == Seat::Author
+            && session.seat() == Some(Seat::Author)
         {
             let task = self.store.get_task(&task_id).await?;
             self.start_author(&task).await?;
@@ -247,7 +247,10 @@ impl super::Scheduler {
     /// resort — a relaunch that left nothing running is not a row to lose the
     /// flag over.
     async fn relaunched_session(&self, session: &AgentSession) -> AgentSession {
-        self.live_sessions(&session.goal_id, session.task_id.as_deref(), session.seat())
+        let (Some(goal), Some(seat)) = (session.goal_id.as_deref(), session.seat()) else {
+            return session.clone();
+        };
+        self.live_sessions(goal, session.task_id.as_deref(), seat)
             .await
             .ok()
             .and_then(|mut live| live.pop())

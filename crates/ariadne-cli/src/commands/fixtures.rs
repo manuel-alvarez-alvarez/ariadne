@@ -67,12 +67,12 @@ pub(crate) fn task(id: &str, goal_id: &str) -> TaskDto {
 pub(crate) fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
     SessionDto {
         id: id.into(),
-        goal_id: goal_id.into(),
+        goal_id: Some(goal_id.into()),
         task_id: task_id.map(Into::into),
-        seat: match task_id {
+        seat: Some(match task_id {
             Some(_) => Seat::Author,
             None => Seat::Orchestrator,
-        },
+        }),
         task_agent_id: Some("01AUTHOR".into()),
         model: "stub:test-model".into(),
         effort: None,

@@ -499,7 +499,7 @@ async fn an_approval_during_the_authors_start_still_briefs_it_to_land() {
             && h.sessions_of(&task.id)
                 .await
                 .iter()
-                .any(|s| s.seat() == Seat::Author && s.launched_at.is_some())
+                .any(|s| s.seat() == Some(Seat::Author) && s.launched_at.is_some())
     })
     .await;
     approve(&h, &task, &cast.reviewer.id).await;

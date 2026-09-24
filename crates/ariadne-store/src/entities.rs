@@ -47,7 +47,7 @@ enum_columns! {
     Task { status: TaskStatus }
     TaskAgent { seat: Seat }
     AgentSession {
-        seat: Seat,
+        seat: [Seat],
         status: SessionStatus,
         attention_reason: [AttentionReason],
     }
@@ -331,9 +331,9 @@ pub struct TaskPick {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AgentSession {
     pub id: String,
-    pub goal_id: String,
+    pub goal_id: Option<String>,
     pub task_id: Option<String>,
-    pub seat: String,
+    pub seat: Option<String>,
     /// The staffed agent this session runs, or None for an orchestrator,
     /// which no task staffs.
     pub task_agent_id: Option<String>,
