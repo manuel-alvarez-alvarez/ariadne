@@ -8,11 +8,15 @@
 
 use anyhow::{Result, bail};
 
-use ariadne_api::sessions::SessionDto;
+use ariadne_api::sessions::{
+    ResumeOutsideSessionRequest, SessionDto, SessionEntryDto, SessionKind, SessionPageDto,
+    SessionPageQuery,
+};
 use ariadne_client::{Client, ClientError};
 use ariadne_core::Seat;
 use ariadne_core::models::agent_of;
 
+use crate::commands::query_path;
 use crate::output::{style, view};
 
 /// A hint about what this command is doing on the caller's behalf — reviving
@@ -32,11 +36,20 @@ async fn candidates(
     client: &Client,
     id: &str,
     seat: Option<Seat>,
-) -> Result<(Vec<SessionDto>, Seat)> {
+) -> Result<(Vec<SessionEntryDto>, Seat)> {
     for (query, default) in [("task", Seat::Author), ("goal", Seat::Orchestrator)] {
-        let sessions: Vec<SessionDto> = client
-            .get_json(&format!("/v1/sessions?{query}={id}"))
+        let page: SessionPageDto = client
+            .get_json(&query_path(
+                "/v1/sessions",
+                &SessionPageQuery {
+                    all: Some(true),
+                    task: (query == "task").then(|| id.to_string()),
+                    goal: (query == "goal").then(|| id.to_string()),
+                    ..SessionPageQuery::default()
+                },
+            )?)
             .await?;
+        let sessions = page.sessions;
         if !sessions.is_empty() {
             return Ok((sessions, seat.unwrap_or(default)));
         }
@@ -70,15 +83,19 @@ pub(crate) async fn resolve_live(
     seat: Option<Seat>,
 ) -> Result<SessionDto> {
     let (sessions, wanted) = candidates(client, id, seat).await?;
-    sessions
+    let session = sessions
         .into_iter()
-        .find(|s| s.seat == Some(wanted) && s.status.is_live())
+        .find(|s| s.seat == Some(wanted) && s.status.is_some_and(|status| status.is_live()))
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no live {} session found for {id} (is the agent running?)",
                 wanted.as_str()
             )
-        })
+        })?;
+    client
+        .get_json(&format!("/v1/sessions/{}", session.id))
+        .await
+        .map_err(Into::into)
 }
 
 /// No live session: revive the most recent resumable session of the wanted
@@ -87,7 +104,6 @@ async fn revive(client: &Client, id: &str, seat: Option<Seat>) -> Result<Session
     let (sessions, wanted) = candidates(client, id, seat).await?;
     let target = sessions
         .into_iter()
-        .rev() // ids are time-sortable: last = most recent
         .find(|s| s.seat == Some(wanted) && s.internal_session_id.is_some())
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -99,38 +115,13 @@ async fn revive(client: &Client, id: &str, seat: Option<Seat>) -> Result<Session
         "{}",
         hint(&format!(
             "no live session for {id} — reviving session {} ({})",
-            target.id,
-            agent_of(&target.model)
+            target.id, target.agent_id
         ))
     );
     client
         .post_empty(&format!("/v1/sessions/{}/resume", target.id))
         .await
         .map_err(Into::into)
-}
-
-/// A terminal task whose worktrees were removed — the normal end of a merged
-/// task, since `delete_merged_worktrees` defaults to true — has no agents left
-/// to attach to: fail with pointers to the history instead of a raw revive
-/// conflict. With the policy off the worktree is kept and a revive is allowed.
-async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
-    use ariadne_api::tasks::TaskDto;
-    use ariadne_core::TaskStatus;
-    if let Ok(task) = client.get_json::<TaskDto>(&format!("/v1/tasks/{id}")).await
-        && matches!(task.status, TaskStatus::Finished | TaskStatus::Cancelled)
-        && task.worktree_path.is_none()
-    {
-        return Err(crate::error::Failure::conflict(format!(
-            "task {id} is {status} — its agents and worktrees have been cleaned up",
-            status = task.status.as_str()
-        ))
-        .hint(format!(
-            "inspect with: ariadne task history {id}; ariadne task messages {id}; ariadne \
-             session ls --all --task {id} (then: ariadne session logs <session-id>)"
-        ))
-        .err());
-    }
-    Ok(())
 }
 
 /// Attach to one specific session: its console when it is live, else revive
@@ -159,16 +150,96 @@ async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
 pub(crate) async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
     let session = match resolve_live(client, id, seat).await {
         Ok(session) => session,
-        Err(_) => {
-            ensure_task_not_finished(client, id).await?;
-            revive(client, id, seat).await?
-        }
+        Err(_) => revive(client, id, seat).await?,
     };
     attach_to(client, &session).await
 }
 
-/// `ariadne attach <id>`: session, task or goal id.
-pub(crate) async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
+async fn outside_matches(
+    client: &Client,
+    id: &str,
+    agent: Option<&str>,
+) -> Result<Vec<SessionEntryDto>> {
+    let mut page: SessionPageDto = client
+        .get_json(&query_path(
+            "/v1/sessions",
+            &SessionPageQuery {
+                kind: Some(SessionKind::Outside),
+                agent: agent.map(str::to_string),
+                all: Some(true),
+                limit: Some(200),
+                ..SessionPageQuery::default()
+            },
+        )?)
+        .await?;
+    let mut sessions = page.sessions;
+    while let Some(cursor) = page.next_cursor {
+        page = client
+            .get_json(&query_path(
+                "/v1/sessions",
+                &SessionPageQuery {
+                    kind: Some(SessionKind::Outside),
+                    agent: agent.map(str::to_string),
+                    all: Some(true),
+                    limit: Some(200),
+                    cursor: Some(cursor),
+                    ..SessionPageQuery::default()
+                },
+            )?)
+            .await?;
+        sessions.extend(page.sessions.clone());
+    }
+    Ok(sessions
+        .into_iter()
+        .filter(|session| session.id == id)
+        .collect())
+}
+
+fn choose_outside_session(
+    id: &str,
+    matches: Vec<SessionEntryDto>,
+) -> Result<Option<SessionEntryDto>> {
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.into_iter().next()),
+        count => bail!("outside session {id} belongs to {count} agents; pass --agent <agent-id>"),
+    }
+}
+
+async fn resume_outside(client: &Client, outside: SessionEntryDto) -> Result<SessionDto> {
+    client
+        .post_json(
+            "/v1/outside-sessions/resume",
+            &ResumeOutsideSessionRequest {
+                agent_id: outside.agent_id,
+                internal_session_id: outside.id,
+            },
+        )
+        .await
+        .map_err(Into::into)
+}
+
+async fn attach_outside(client: &Client, outside: SessionEntryDto) -> Result<()> {
+    let session = resume_outside(client, outside).await?;
+    attach_to(client, &session).await
+}
+
+/// `ariadne attach <id>`: session, outside session, task or goal id.
+pub(crate) async fn attach_any(
+    client: &Client,
+    id: &str,
+    seat: Option<Seat>,
+    agent: Option<&str>,
+) -> Result<()> {
+    if let Some(outside) = choose_outside_session(id, outside_matches(client, id, agent).await?)? {
+        if seat.is_some() {
+            bail!("--seat does not apply to an outside session id: {id}");
+        }
+        return attach_outside(client, outside).await;
+    }
+    if agent.is_some() {
+        bail!("--agent applies only to an outside session id: {id}");
+    }
     // Which of the three it is decides everything below, so a short id that
     // names one of each is refused here rather than resolved to whichever
     // list happens to be probed first.
@@ -196,4 +267,142 @@ async fn attach_to(client: &Client, session: &SessionDto) -> Result<()> {
         ))
     );
     crate::commands::console::attach(client, &session.id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use ariadne_core::SessionStatus;
+
+    use crate::commands::fixtures::session;
+
+    fn outside(id: &str, agent_id: &str) -> SessionEntryDto {
+        SessionEntryDto {
+            kind: SessionKind::Outside,
+            id: id.into(),
+            agent_id: agent_id.into(),
+            title: Some("Continue this work".into()),
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: None,
+            effort: None,
+            internal_session_id: Some(id.into()),
+            working_directory: Some("/work/api".into()),
+            status: None,
+            attention_reason: None,
+            attention_since: None,
+            last_activity_at: Some("2026-09-12T12:00:00Z".into()),
+            usage: None,
+            context_used: None,
+            context_size: None,
+            created_at: None,
+            ended_at: None,
+        }
+    }
+
+    #[test]
+    fn an_outside_id_shared_by_agents_requires_an_agent_flag() {
+        let error = choose_outside_session(
+            "outside-id",
+            vec![
+                outside("outside-id", "codex-acp"),
+                outside("outside-id", "claude-acp"),
+            ],
+        )
+        .expect_err("an ambiguous outside id");
+        assert!(error.to_string().contains("--agent"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_outside_id_resumes_through_the_resume_endpoint() {
+        use axum::extract::State;
+        use axum::routing::post;
+        use axum::{Json, Router};
+
+        async fn resume(
+            State(session): State<SessionDto>,
+            Json(request): Json<ResumeOutsideSessionRequest>,
+        ) -> Json<SessionDto> {
+            assert_eq!(request.agent_id, "codex-acp");
+            assert_eq!(request.internal_session_id, "outside-id");
+            Json(session)
+        }
+
+        let live = SessionDto {
+            status: SessionStatus::Running,
+            ..session("01LOOSE", "01GOAL", None)
+        };
+        let app = Router::new()
+            .route("/v1/outside-sessions/resume", post(resume))
+            .with_state(live.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let resumed = resume_outside(
+            &Client::tcp(format!("http://{address}")),
+            outside("outside-id", "codex-acp"),
+        )
+        .await
+        .unwrap();
+        server.abort();
+        assert_eq!(resumed.id, live.id);
+        assert!(resumed.status.is_live());
+    }
+
+    #[tokio::test]
+    async fn revival_uses_the_newest_resumable_session() {
+        use axum::extract::{Path, State};
+        use axum::routing::{get, post};
+        use axum::{Json, Router};
+
+        #[derive(Clone)]
+        struct Api(std::sync::Arc<std::sync::Mutex<Option<String>>>);
+
+        fn ended(id: &str) -> SessionEntryDto {
+            let mut entry = outside(id, "codex-acp");
+            entry.kind = SessionKind::Ariadne;
+            entry.status = Some(SessionStatus::Exited);
+            entry.seat = Some(Seat::Author);
+            entry.model = Some("codex-acp:model".into());
+            entry
+        }
+
+        async fn listed() -> Json<SessionPageDto> {
+            Json(SessionPageDto {
+                sessions: vec![ended("newest"), ended("oldest")],
+                next_cursor: None,
+                total: 2,
+                snapshot_at: "2026-09-12T12:00:00Z".into(),
+            })
+        }
+
+        async fn resumed(State(api): State<Api>, Path(id): Path<String>) -> Json<SessionDto> {
+            *api.0.lock().unwrap() = Some(id.clone());
+            Json(SessionDto {
+                status: SessionStatus::Running,
+                ..session(&id, "01GOAL", Some("01TASK"))
+            })
+        }
+
+        let resumed_id = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let app = Router::new()
+            .route("/v1/sessions", get(listed))
+            .route("/v1/sessions/{id}/resume", post(resumed))
+            .with_state(Api(resumed_id.clone()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let resumed = revive(&Client::tcp(format!("http://{address}")), "01TASK", None)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(resumed.id, "newest");
+        assert_eq!(resumed_id.lock().unwrap().as_deref(), Some("newest"));
+    }
 }

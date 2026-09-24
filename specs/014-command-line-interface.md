@@ -142,18 +142,24 @@ same binary also serves (013).
     every ACP registry agent, then lists the daemon's result with each id,
     status and command, plus the reason of every rejected agent. Its JSON is
     the daemon's list unchanged.
-26. `ariadne session discover` lists filtered pages of the stored sessions of
-    every ACP agent that can list them, and names each agent that cannot with
-    its reason. It sends `--agent`, `--dir`, `--since`, `--until`, `--search`,
-    `--limit`, `--cursor` and `--refresh` to the daemon; `--search` becomes
-    `q`, and `--agent` completes registry agent ids. A date activity bound is
-    the start of its UTC day for `--since` and the end for `--until`.
-    The table ends with `<shown> of <total> sessions` and a reusable next-page
-    command when the daemon returns a cursor. `--all` follows every cursor
-    into one table and cannot be combined with `--cursor`. JSON preserves the
-    page object, while quiet output prints its session ids.
+26. `ariadne session ls` lists one filtered page of Ariadne sessions and
+    outside ACP sessions. Its columns are `id`, `title`, `status`, `goal`,
+    `task`, `agent`, `age` and `tokens`; `directory` is available with
+    `--columns`. An outside row leaves status, goal and task empty. It sends
+    `--kind`, `--agent`, `--status`, `--seat`, `--goal`, `--task`, `--attention`,
+    `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`,
+    `--refresh` and `--all` to the daemon; `--search` becomes `q`, and agent
+    flags complete registry agent ids. A date activity bound is the start of
+    its UTC day for `--since` and the end for `--until`. The table ends with
+    `<shown> of <total> sessions` and a reusable next-page command when the
+    daemon returns a cursor. `--all` follows every cursor into one table and
+    cannot be combined with `--cursor`. JSON preserves the page object, while
+    quiet output prints its session ids. `session discover` does not exist.
 27. `ariadne attach`, `goal attach` and `task attach` open the console of the
-    session an id names, revived first when it is gone. On a terminal it is an
+    session an id names, revived first when it is gone. `ariadne attach` also
+    takes an outside internal id: it resumes the conversation, then opens its
+    console. An outside id shared by agents requires `--agent`. A finished
+    task whose worktree is gone revives its session. On a terminal it is an
     inline pane (008); with stdin or stdout redirected it is the plain line
     protocol — one `kind · summary` per event, numbered permission choices,
     and one prompt per line read. `session send` posts one line to that same
@@ -303,20 +309,19 @@ same binary also serves (013).
   agent's reason (`cli/tests.rs::refresh_reprobes_every_agent`,
   `agent.rs::refresh_calls_the_reprobe_endpoint_once`,
   `::a_rejected_agent_keeps_its_reason_in_the_refresh_row`).
-- `session discover` sends every filter and page flag with UTC date bounds,
-  follows all pages without repeating a session, prints the count and the
+- `session ls` sends every combined-session filter and page flag with UTC date
+  bounds, follows all pages without repeating a session, prints the count and
   reusable next-page command only when one exists, and refuses `--all` with
-  `--cursor`
-  (`session.rs::every_discover_flag_reaches_its_query_parameter`,
-  `::a_date_is_the_utc_day_boundary_for_discovery`,
+  `--cursor` (`session.rs::every_session_flag_reaches_its_query_parameter`,
+  `::a_date_is_the_utc_day_boundary_for_session_listing`,
   `::all_fetches_every_page_and_keeps_each_session_once`,
-  `::a_next_cursor_prints_the_command_for_the_next_page`,
-  `::the_last_page_prints_no_next_command`,
-  `::the_discovery_count_is_shown_over_the_total`,
-  `cli/tests.rs::discover_takes_filters_pages_refresh_and_all`,
-  `::discover_all_and_cursor_are_exclusive`). It names each agent that cannot
-  list sessions with its reason
-  (`session.rs::an_agent_without_the_capability_is_named_with_its_reason`).
+  `::a_next_cursor_prints_the_session_command_for_the_next_page`,
+  `::the_session_table_has_the_unified_columns_and_empty_outside_fields`,
+  `cli/tests.rs::session_ls_takes_filters_pages_refresh_and_all`,
+  `::session_ls_all_and_cursor_are_exclusive`). Outside ids resume through
+  the resume endpoint and a shared id requires `--agent`
+  (`attach.rs::an_outside_id_resumes_through_the_resume_endpoint`,
+  `::an_outside_id_shared_by_agents_requires_an_agent_flag`).
 - The console renders a stub-agent transcript and submits typed input, and
   its permission question submits the selected option
   (`commands/console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,

@@ -223,6 +223,9 @@ pub(crate) fn deletable_goal_ids() -> Vec<CompletionCandidate> {
 // ---- sessions ------------------------------------------------------------
 
 fn session_help(x: &Value) -> String {
+    if s(x, "kind") == "outside" {
+        return format!("[outside] {}", s(x, "agent_id"));
+    }
     format!(
         "[{}] {} {}",
         s(x, "status"),
@@ -231,22 +234,54 @@ fn session_help(x: &Value) -> String {
     )
 }
 
+fn session_rows(value: Option<Value>) -> Vec<Value> {
+    value
+        .and_then(|page| page.get("sessions").and_then(Value::as_array).cloned())
+        .unwrap_or_default()
+}
+
+/// Sessions arrive newest-first from their paged endpoint, unlike the older
+/// entity lists that [`ids`] reverses before offering their oldest-first rows.
+fn session_candidates(rows: &[Value], help: impl Fn(&Value) -> String) -> Vec<CompletionCandidate> {
+    rows.iter()
+        .map(|row| candidate(s(row, "id"), help(row)))
+        .collect()
+}
+
 /// Session ids, newest first (`session inspect`, `session logs`).
 pub(crate) fn session_ids() -> Vec<CompletionCandidate> {
-    by_id("/v1/sessions", anything, session_help)
+    session_candidates(
+        &session_rows(fetch_value("/v1/sessions"))
+            .into_iter()
+            .filter(|row| s(row, "kind") != "outside")
+            .collect::<Vec<_>>(),
+        session_help,
+    )
 }
 
 /// What `session kill` can act on: a session with an agent process to kill.
 /// Three statuses are live against a query that takes one, so the narrowing
 /// is here.
 pub(crate) fn live_session_ids() -> Vec<CompletionCandidate> {
-    by_id("/v1/sessions", session_is_live, session_help)
+    session_candidates(
+        &session_rows(fetch_value("/v1/sessions"))
+            .into_iter()
+            .filter(session_is_live)
+            .collect::<Vec<_>>(),
+        session_help,
+    )
 }
 
 /// What `session resume` can act on: a session that has ended, which is what
 /// it revives.
 pub(crate) fn ended_session_ids() -> Vec<CompletionCandidate> {
-    by_id("/v1/sessions", session_has_ended, session_help)
+    session_candidates(
+        &session_rows(fetch_value("/v1/sessions"))
+            .into_iter()
+            .filter(session_has_ended)
+            .collect::<Vec<_>>(),
+        session_help,
+    )
 }
 
 fn session_is_live(row: &Value) -> bool {
@@ -274,7 +309,7 @@ pub(crate) fn attach_ids() -> Vec<CompletionCandidate> {
     }) else {
         return Vec::new();
     };
-    attach_order(rows(sessions), rows(tasks), rows(goals))
+    attach_order(session_rows(sessions), rows(tasks), rows(goals))
 }
 
 /// Live sessions, then tasks and goals, then the sessions that have ended —
@@ -285,10 +320,10 @@ fn attach_order(
     goals: Vec<Value>,
 ) -> Vec<CompletionCandidate> {
     let (live, ended): (Vec<Value>, Vec<Value>) = sessions.into_iter().partition(session_is_live);
-    let mut out = ids(&live, session_help);
+    let mut out = session_candidates(&live, session_help);
     out.extend(ids(&tasks, task_help));
     out.extend(ids(&goals, goal_help));
-    out.extend(ids(&ended, session_help));
+    out.extend(session_candidates(&ended, session_help));
     out
 }
 

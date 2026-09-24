@@ -109,7 +109,9 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                 commands::daemon::logs(&client, home, follow).await
             }
         },
-        Command::Attach { id, seat } => commands::attach::attach_any(&client, &id, seat).await,
+        Command::Attach { id, seat, agent } => {
+            commands::attach::attach_any(&client, &id, seat, agent.as_deref()).await
+        }
         Command::Agent { command } => commands::agent::run(&client, command, format).await,
         Command::Skill { command } => commands::skill::run(&client, command, format).await,
         Command::Repo { command } => commands::repo::run(&client, command, format).await,

@@ -15,8 +15,10 @@
 use anyhow::Result;
 use serde_json::Value;
 
+use ariadne_api::sessions::{SessionPageDto, SessionPageQuery};
 use ariadne_client::Client;
 
+use super::query_path;
 use crate::error::Failure;
 
 /// What kind of thing an id names, which is what decides the list to look
@@ -274,7 +276,36 @@ async fn catalog(client: &Client, kind: Kind) -> Result<Catalog> {
 /// One list endpoint, read as rows — the same fetch every listing command
 /// makes, with only the fields a lookup needs read out of it.
 async fn list(client: &Client, kind: Kind) -> Result<Vec<Row>> {
-    let rows: Vec<Value> = client.get_json(kind.path()).await?;
+    let rows: Vec<Value> = match kind {
+        Kind::Session => {
+            let query = SessionPageQuery {
+                all: Some(true),
+                limit: Some(200),
+                ..SessionPageQuery::default()
+            };
+            let mut page: SessionPageDto = client
+                .get_json(&query_path("/v1/sessions", &query)?)
+                .await?;
+            let mut sessions = page.sessions;
+            while let Some(cursor) = page.next_cursor {
+                page = client
+                    .get_json(&query_path(
+                        "/v1/sessions",
+                        &SessionPageQuery {
+                            cursor: Some(cursor),
+                            ..query.clone()
+                        },
+                    )?)
+                    .await?;
+                sessions.extend(page.sessions.clone());
+            }
+            sessions
+                .into_iter()
+                .map(serde_json::to_value)
+                .collect::<serde_json::Result<_>>()?
+        }
+        _ => client.get_json(kind.path()).await?,
+    };
     Ok(rows.iter().map(|v| kind.row(v)).collect())
 }
 
@@ -307,7 +338,102 @@ fn field(v: &Value, key: &str) -> String {
 mod tests {
     use super::*;
 
+    use ariadne_api::sessions::{SessionEntryDto, SessionKind};
+    use ariadne_core::SessionStatus;
+
     use crate::error::Exit;
+
+    #[tokio::test]
+    async fn the_session_catalog_fetches_every_all_page() {
+        use axum::Router;
+        use axum::extract::{RawQuery, State};
+        use axum::routing::get;
+
+        fn session(id: &str) -> SessionEntryDto {
+            SessionEntryDto {
+                kind: SessionKind::Ariadne,
+                id: id.into(),
+                agent_id: "codex-acp".into(),
+                title: Some("Continue work".into()),
+                goal_id: None,
+                task_id: None,
+                seat: None,
+                task_agent_id: None,
+                model: Some("codex-acp:model".into()),
+                effort: None,
+                internal_session_id: Some(id.into()),
+                working_directory: None,
+                status: Some(SessionStatus::Exited),
+                attention_reason: None,
+                attention_since: None,
+                last_activity_at: Some("2026-09-12T12:00:00Z".into()),
+                usage: Some(Default::default()),
+                context_used: None,
+                context_size: None,
+                created_at: Some("2026-09-12T12:00:00Z".into()),
+                ended_at: Some("2026-09-12T12:00:00Z".into()),
+            }
+        }
+
+        #[derive(Clone)]
+        struct Api {
+            pages: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<SessionPageDto>>>,
+            queries: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        }
+
+        async fn listed(
+            State(api): State<Api>,
+            RawQuery(query): RawQuery,
+        ) -> axum::Json<SessionPageDto> {
+            api.queries.lock().unwrap().push(query.unwrap_or_default());
+            axum::Json(api.pages.lock().unwrap().pop_front().expect("page"))
+        }
+
+        let queries = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let api = Api {
+            pages: std::sync::Arc::new(std::sync::Mutex::new(
+                vec![
+                    SessionPageDto {
+                        sessions: vec![session("newer")],
+                        next_cursor: Some("after-newer".into()),
+                        total: 2,
+                        snapshot_at: "2026-09-12T12:00:00Z".into(),
+                    },
+                    SessionPageDto {
+                        sessions: vec![session("older")],
+                        next_cursor: None,
+                        total: 2,
+                        snapshot_at: "2026-09-12T12:00:00Z".into(),
+                    },
+                ]
+                .into(),
+            )),
+            queries: queries.clone(),
+        };
+        let app = Router::new()
+            .route("/v1/sessions", get(listed))
+            .with_state(api);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let rows = list(&Client::tcp(format!("http://{address}")), Kind::Session)
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(
+            rows.into_iter().map(|row| row.id).collect::<Vec<_>>(),
+            ["newer", "older"]
+        );
+        assert_eq!(
+            *queries.lock().unwrap(),
+            [
+                "all=true&limit=200",
+                "all=true&limit=200&cursor=after-newer"
+            ]
+        );
+    }
 
     /// Two tasks that share their first eight characters and differ in their
     /// last eight, plus one that shares neither: the three cases a short id

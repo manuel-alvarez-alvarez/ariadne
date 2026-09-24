@@ -113,7 +113,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("repo ls", true),
     ("repo rm", true),
     ("repo update", true),
-    ("session discover", true),
     ("session inspect", true),
     ("session kill", true),
     ("session logs", true),
@@ -364,10 +363,11 @@ fn quiet_parses_after_a_mutation() {
 }
 
 #[test]
-fn discover_takes_filters_pages_refresh_and_all() {
+fn session_ls_takes_filters_pages_refresh_and_all() {
     let Command::Session {
         command:
-            SessionCommand::Discover {
+            SessionCommand::Ls {
+                kind,
                 agent,
                 dir,
                 since,
@@ -377,11 +377,14 @@ fn discover_takes_filters_pages_refresh_and_all() {
                 cursor,
                 refresh,
                 all,
+                ..
             },
     } = parse(&[
         "ariadne",
         "session",
-        "discover",
+        "ls",
+        "--kind",
+        "outside",
         "--agent",
         "codex-acp",
         "--dir",
@@ -399,9 +402,10 @@ fn discover_takes_filters_pages_refresh_and_all() {
     ])
     .command
     else {
-        panic!("session discover");
+        panic!("session ls");
     };
 
+    assert_eq!(kind.as_deref(), Some("outside"));
     assert_eq!(agent.as_deref(), Some("codex-acp"));
     assert_eq!(dir.as_deref(), Some("/work/api"));
     assert_eq!(since.as_deref(), Some("2026-09-01T00:00:00Z"));
@@ -414,18 +418,8 @@ fn discover_takes_filters_pages_refresh_and_all() {
 }
 
 #[test]
-fn discover_all_and_cursor_are_exclusive() {
-    assert!(
-        try_parse(&[
-            "ariadne",
-            "session",
-            "discover",
-            "--all",
-            "--cursor",
-            "next-page",
-        ])
-        .is_err()
-    );
+fn session_ls_all_and_cursor_are_exclusive() {
+    assert!(try_parse(&["ariadne", "session", "ls", "--all", "--cursor", "next-page",]).is_err());
 }
 
 /// Every `ls` that hides finished work behind `--all` takes the same short

@@ -1,18 +1,12 @@
 //! `ariadne session ...`
 
-use std::collections::HashMap;
-
 use anyhow::Result;
 use clap::Subcommand;
 
-use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus};
-use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{
-    ConsoleInputRequest, OutsideSessionListQuery, OutsideSessionPageDto, SessionDto,
-    SessionListQuery,
+    ConsoleInputRequest, SessionDto, SessionEntryDto, SessionKind, SessionPageDto, SessionPageQuery,
 };
 use ariadne_api::stream::EventStreamQuery;
-use ariadne_api::tasks::TaskDto;
 use ariadne_client::{Client, SseEvent};
 use ariadne_core::models::agent_of;
 use ariadne_core::{AttentionReason, Seat, SessionStatus};
@@ -28,38 +22,40 @@ use crate::output::{
 };
 use ariadne_console::transcript::{Filters, Since};
 
-/// Columns of `session ls`. `title` is the one written by a human, so it is
-/// capped the way `task ls` caps its titles. `attention` is next to `status`
-/// because the two are orthogonal: an agent blocked on a permission prompt is
-/// still `running`, and the status alone says nothing about it.
-///
-/// `tokens` is what the session spent, in over an up arrow and out over a
-/// down one, with the share of the input the prompt cache served; the counts
-/// to the digit are in `session inspect`, since a column is scanned rather
-/// than read.
-///
-/// The worktree and the agent's own internal id are not here: they are what
-/// one goes to `session inspect` for, and they cost a lot of a row nobody
-/// reads them from.
+/// Columns of `session ls`.
 const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 40).title(),
     col("status", UNCAPPED).status(),
-    col("attention", UNCAPPED).attention().rank(4),
-    col("age", UNCAPPED).rank(3),
-    col("seat", UNCAPPED).rank(2),
-    col("agent", UNCAPPED).rank(1),
+    col("goal", UNCAPPED).id().rank(4),
+    col("task", UNCAPPED).id().rank(3),
+    col("agent", UNCAPPED).rank(2),
+    col("age", UNCAPPED).rank(1),
     col("tokens", UNCAPPED).rank(0),
 ];
 
-/// Columns of `session discover`. Quiet output prints the internal id.
-const DISCOVER: &[Column] = &[
+const LS_WITH_DIRECTORY: &[Column] = &[
     col("id", UNCAPPED).id(),
-    col("agent", UNCAPPED).rank(3),
-    col("directory", 40).title().rank(2),
-    col("activity", UNCAPPED).rank(1),
-    col("prompt", 50).rank(0),
+    col("title", 40).title(),
+    col("status", UNCAPPED).status(),
+    col("goal", UNCAPPED).id().rank(4),
+    col("task", UNCAPPED).id().rank(3),
+    col("agent", UNCAPPED).rank(2),
+    col("age", UNCAPPED).rank(1),
+    col("tokens", UNCAPPED).rank(0),
+    col("directory", 40).rank(5),
 ];
+
+fn session_columns(columns: &[String]) -> &'static [Column] {
+    if columns
+        .iter()
+        .any(|column| column.eq_ignore_ascii_case("directory"))
+    {
+        LS_WITH_DIRECTORY
+    } else {
+        LS
+    }
+}
 
 /// Where a continuation line of `session inspect` starts: [`print_kv`] pads
 /// its keys to the longest one — `attention since` — and then two spaces, and
@@ -69,17 +65,23 @@ const INDENT: &str = "\n                 ";
 /// What `session ls --help` ends with.
 const LS_EXAMPLES: &str = "\
 Examples:
-  ariadne session ls                            # every live session
-  ariadne session ls --all --task <task-id>     # that task's, history included
-  ariadne session ls --status idle,exited       # named statuses, live or not
-  ariadne session ls --goal <goal-id> --seat reviewer
+  ariadne session ls                                  # recent live and outside sessions
+  ariadne session ls --all --task <task-id>           # that task's history
+  ariadne session ls --kind outside --agent codex-acp # stored agent sessions
+  ariadne session ls --cursor <token>
 ";
 
 #[derive(Subcommand)]
 pub(crate) enum SessionCommand {
-    /// List live agent sessions (docker-style; --all includes history)
+    /// List Ariadne and outside agent sessions
     #[command(after_help = LS_EXAMPLES)]
     Ls {
+        /// Only Ariadne or outside sessions
+        #[arg(long, value_parser = ["ariadne", "outside"])]
+        kind: Option<String>,
+        /// Filter by registry agent id
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
+        agent: Option<String>,
         /// Filter by task id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         task: Option<String>,
@@ -92,28 +94,13 @@ pub(crate) enum SessionCommand {
         /// comma-separated
         #[arg(long = "status", value_parser = Spelling::<SessionStatus>::new(), value_delimiter = ',')]
         statuses: Vec<SessionStatus>,
-        /// Filter by seat, once the rows are here: `GET /v1/sessions` takes
-        /// no seat, so this narrows what it answered — as the UI's own seat
-        /// filter does. Composes with the rest: it never widens the list
+        /// Filter by seat
         #[arg(long, value_parser = Spelling::<Seat>::new())]
         seat: Option<Seat>,
         /// Only sessions the daemon has flagged as needing a human: the
         /// same filter the UI's Attention page is built on
         #[arg(long)]
         attention: bool,
-        /// Include finished sessions (exited/failed), not just live ones;
-        /// nothing to add once --status names one
-        #[arg(short, long)]
-        all: bool,
-        /// Redraw the table whenever a session changes, until Ctrl-C
-        #[arg(long)]
-        watch: bool,
-    },
-    /// List agent sessions Ariadne did not start
-    Discover {
-        /// Filter by registry agent id
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_ids))]
-        agent: Option<String>,
         /// Filter by absolute working directory and its descendants
         #[arg(long, value_name = "PATH")]
         dir: Option<String>,
@@ -123,7 +110,7 @@ pub(crate) enum SessionCommand {
         /// Filter by activity at or before an RFC 3339 time or date
         #[arg(long, value_name = "TIME", value_parser = parse_until)]
         until: Option<String>,
-        /// Filter by text in the first prompt
+        /// Filter by text in the session title
         #[arg(long, value_name = "TEXT")]
         search: Option<String>,
         /// Maximum sessions in one page (default 50, maximum 200)
@@ -135,9 +122,12 @@ pub(crate) enum SessionCommand {
         /// Refresh the daemon's session snapshot before listing
         #[arg(long)]
         refresh: bool,
-        /// Fetch every page
-        #[arg(long, conflicts_with = "cursor")]
+        /// Fetch every page, including ended Ariadne sessions
+        #[arg(short, long, conflicts_with = "cursor")]
         all: bool,
+        /// Redraw the table whenever a session changes, until Ctrl-C
+        #[arg(long)]
+        watch: bool,
     },
     /// Show a session
     Inspect {
@@ -195,21 +185,13 @@ pub(crate) enum SessionCommand {
 pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result<()> {
     match cmd {
         SessionCommand::Ls {
+            kind,
+            agent,
             task,
             goal,
             statuses,
             seat,
             attention,
-            all,
-            watch,
-        } => {
-            ls(
-                client, task, goal, statuses, seat, attention, all, watch, format,
-            )
-            .await?
-        }
-        SessionCommand::Discover {
-            agent,
             dir,
             since,
             until,
@@ -218,11 +200,18 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
             cursor,
             refresh,
             all,
+            watch,
         } => {
-            discover(
+            ls(
                 client,
-                DiscoverOptions {
+                ListOptions {
+                    kind,
                     agent,
+                    task,
+                    goal,
+                    statuses,
+                    seat,
+                    attention,
                     dir,
                     since,
                     until,
@@ -232,6 +221,7 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                     refresh,
                     all,
                 },
+                watch,
                 format,
             )
             .await?
@@ -327,8 +317,14 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
 }
 
 #[derive(Debug)]
-struct DiscoverOptions {
+struct ListOptions {
+    kind: Option<String>,
     agent: Option<String>,
+    task: Option<String>,
+    goal: Option<String>,
+    statuses: Vec<SessionStatus>,
+    seat: Option<Seat>,
+    attention: bool,
     dir: Option<String>,
     since: Option<String>,
     until: Option<String>,
@@ -340,14 +336,14 @@ struct DiscoverOptions {
 }
 
 fn parse_since(value: &str) -> Result<String, String> {
-    parse_discovery_time(value, false)
+    parse_day_bound(value, false)
 }
 
 fn parse_until(value: &str) -> Result<String, String> {
-    parse_discovery_time(value, true)
+    parse_day_bound(value, true)
 }
 
-fn parse_discovery_time(value: &str, end_of_day: bool) -> Result<String, String> {
+fn parse_day_bound(value: &str, end_of_day: bool) -> Result<String, String> {
     if chrono::DateTime::parse_from_rfc3339(value).is_ok() {
         return Ok(value.to_string());
     }
@@ -362,72 +358,106 @@ fn parse_discovery_time(value: &str, end_of_day: bool) -> Result<String, String>
     Ok(time.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
 }
 
-fn outside_sessions_path(options: &DiscoverOptions, cursor: Option<&str>) -> Result<String> {
+fn session_kind(kind: Option<&str>) -> Option<SessionKind> {
+    match kind {
+        Some("ariadne") => Some(SessionKind::Ariadne),
+        Some("outside") => Some(SessionKind::Outside),
+        None => None,
+        Some(_) => unreachable!("clap validates session kinds"),
+    }
+}
+
+fn sessions_path(options: &ListOptions, cursor: Option<&str>) -> Result<String> {
     let follows_all_page = cursor.is_some() && options.cursor.is_none();
     query_path(
-        "/v1/outside-sessions",
-        &OutsideSessionListQuery {
+        "/v1/sessions",
+        &SessionPageQuery {
+            kind: session_kind(options.kind.as_deref()),
             agent: options.agent.clone(),
+            goal: options.goal.clone(),
+            task: options.task.clone(),
+            status: one_of(&options.statuses),
+            seat: options.seat,
+            attention: options.attention.then_some(true),
             dir: options.dir.clone(),
             since: options.since.clone(),
             until: options.until.clone(),
             q: options.search.clone(),
+            all: (options.all || options.statuses.len() > 1).then_some(true),
             limit: options.limit,
             cursor: cursor
                 .map(str::to_string)
                 .or_else(|| options.cursor.clone()),
-            // Refresh once before an --all traversal. Following pages read
-            // that fresh snapshot instead of replacing it each time.
             refresh: (options.refresh && !follows_all_page).then_some(true),
         },
     )
 }
 
-async fn fetch_outside_sessions(
-    client: &Client,
-    options: &DiscoverOptions,
-) -> Result<OutsideSessionPageDto> {
-    let mut page: OutsideSessionPageDto = client
-        .get_json(&outside_sessions_path(options, None)?)
-        .await?;
-    if !options.all {
+async fn fetch_sessions(client: &Client, options: &ListOptions) -> Result<SessionPageDto> {
+    let mut page: SessionPageDto = client.get_json(&sessions_path(options, None)?).await?;
+    let needs_status_filter = options.statuses.len() > 1;
+    if !options.all && !needs_status_filter {
         return Ok(page);
     }
     while let Some(cursor) = page.next_cursor.clone() {
-        let next: OutsideSessionPageDto = client
-            .get_json(&outside_sessions_path(options, Some(&cursor))?)
+        let next: SessionPageDto = client
+            .get_json(&sessions_path(options, Some(&cursor))?)
             .await?;
         page.sessions.extend(next.sessions);
         page.next_cursor = next.next_cursor;
     }
+    if needs_status_filter {
+        narrow_statuses(&mut page, &options.statuses);
+    }
     Ok(page)
 }
 
-fn discovery_count(page: &OutsideSessionPageDto) -> String {
+fn narrow_statuses(page: &mut SessionPageDto, statuses: &[SessionStatus]) {
+    page.sessions.retain(|session| {
+        session
+            .status
+            .is_some_and(|status| statuses.contains(&status))
+    });
+    page.total = page.sessions.len();
+}
+
+fn session_count(page: &SessionPageDto) -> String {
     format!("{} of {} sessions", page.sessions.len(), page.total)
 }
 
-fn next_discovery_note(page: &OutsideSessionPageDto, options: &DiscoverOptions) -> Option<String> {
+fn next_session_note(page: &SessionPageDto, options: &ListOptions) -> Option<String> {
     page.next_cursor
         .as_deref()
-        .map(|cursor| format!("Next: {}", next_discovery_command(options, cursor)))
+        .map(|cursor| format!("Next: {}", next_session_command(options, cursor)))
 }
 
-fn next_discovery_command(options: &DiscoverOptions, cursor: &str) -> String {
-    let mut args = vec!["ariadne".to_string(), "session".into(), "discover".into()];
-    push_discovery_option(&mut args, "--agent", options.agent.as_deref());
-    push_discovery_option(&mut args, "--dir", options.dir.as_deref());
-    push_discovery_option(&mut args, "--since", options.since.as_deref());
-    push_discovery_option(&mut args, "--until", options.until.as_deref());
-    push_discovery_option(&mut args, "--search", options.search.as_deref());
-    if let Some(limit) = options.limit {
-        push_discovery_option(&mut args, "--limit", Some(&limit.to_string()));
+fn next_session_command(options: &ListOptions, cursor: &str) -> String {
+    let mut args = vec!["ariadne".to_string(), "session".into(), "ls".into()];
+    push_option(&mut args, "--kind", options.kind.as_deref());
+    push_option(&mut args, "--agent", options.agent.as_deref());
+    push_option(&mut args, "--goal", options.goal.as_deref());
+    push_option(&mut args, "--task", options.task.as_deref());
+    if let Some(status) = one_of(&options.statuses) {
+        push_option(&mut args, "--status", Some(status.as_str()));
     }
-    push_discovery_option(&mut args, "--cursor", Some(cursor));
+    if let Some(seat) = options.seat {
+        push_option(&mut args, "--seat", Some(seat.as_str()));
+    }
+    if options.attention {
+        args.push("--attention".into());
+    }
+    push_option(&mut args, "--dir", options.dir.as_deref());
+    push_option(&mut args, "--since", options.since.as_deref());
+    push_option(&mut args, "--until", options.until.as_deref());
+    push_option(&mut args, "--search", options.search.as_deref());
+    if let Some(limit) = options.limit {
+        push_option(&mut args, "--limit", Some(&limit.to_string()));
+    }
+    push_option(&mut args, "--cursor", Some(cursor));
     args.join(" ")
 }
 
-fn push_discovery_option(args: &mut Vec<String>, flag: &str, value: Option<&str>) {
+fn push_option(args: &mut Vec<String>, flag: &str, value: Option<&str>) {
     if let Some(value) = value {
         args.push(flag.to_string());
         args.push(shell_arg(value));
@@ -445,62 +475,48 @@ fn shell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-/// `session discover`: the stored sessions of every ACP agent that can list
-/// them, minus the ones the daemon already owns.
-async fn discover(client: &Client, options: DiscoverOptions, format: Format) -> Result<()> {
-    let page = fetch_outside_sessions(client, &options).await?;
+fn session_row(session: &SessionEntryDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
+    vec![
+        session.id.clone(),
+        session.title.clone().unwrap_or_default(),
+        session
+            .status
+            .map_or_else(String::new, |status| status.as_str().into()),
+        session.goal_id.clone().unwrap_or_default(),
+        session.task_id.clone().unwrap_or_default(),
+        session.agent_id.clone(),
+        session
+            .last_activity_at
+            .as_deref()
+            .or(session.created_at.as_deref())
+            .map_or_else(String::new, |at| age(at, now)),
+        session.usage.as_ref().map_or_else(String::new, usage_cell),
+        session.working_directory.clone().unwrap_or_default(),
+    ]
+}
+
+async fn render_page(client: &Client, options: &ListOptions, format: Format) -> Result<()> {
+    let page = fetch_sessions(client, options).await?;
     if format == Format::Json {
         return crate::output::print_json(&page);
     }
     print_list(
         format,
         &page.sessions,
-        DISCOVER,
-        |session| {
-            vec![
-                session.internal_session_id.clone(),
-                session.agent_id.clone(),
-                session.working_directory.clone(),
-                at(Some(&session.last_activity_at)),
-                session.first_prompt.clone(),
-            ]
-        },
+        session_columns(&view().columns),
+        |session| session_row(session, chrono::Utc::now()),
         empty_state(
-            "No outside sessions found.",
-            Some("start an ACP agent that can list its sessions in a project"),
+            "No sessions match that filter.",
+            Some("ariadne session ls --all"),
         ),
     )?;
     if !view().quiet {
-        println!("{}", discovery_count(&page));
-        if let Some(line) = next_discovery_note(&page, &options) {
+        println!("{}", session_count(&page));
+        if let Some(line) = next_session_note(&page, options) {
             note(&line);
         }
     }
-    let agents: Vec<AcpAgentDto> = client.get_json("/v1/acp-agents").await?;
-    for line in unavailable_acp_agents(&agents) {
-        note(&line);
-    }
     Ok(())
-}
-
-/// Why each ACP agent that cannot list its sessions is missing from the
-/// table above: rejected outright, or ready but without the capability.
-fn unavailable_acp_agents(agents: &[AcpAgentDto]) -> Vec<String> {
-    agents
-        .iter()
-        .filter(|agent| !agent.capabilities.session_list)
-        .map(|agent| {
-            let reason = match agent.status {
-                AcpAgentStatus::Rejected => agent
-                    .rejection_reason
-                    .as_deref()
-                    .unwrap_or("rejected")
-                    .to_string(),
-                AcpAgentStatus::Ready => "the agent does not support listing sessions".to_string(),
-            };
-            format!("{}: adoption unavailable — {reason}", agent.id)
-        })
-        .collect()
 }
 
 fn session_path(id: &str) -> String {
@@ -537,175 +553,25 @@ fn watch_path(goal: Option<&str>) -> Result<String> {
 
 /// `session ls [--watch]`: the table, and with `--watch` the table again
 /// every time a session changes.
-#[allow(clippy::too_many_arguments)]
-async fn ls(
-    client: &Client,
-    task: Option<String>,
-    goal: Option<String>,
-    statuses: Vec<SessionStatus>,
-    seat: Option<Seat>,
-    attention: bool,
-    all: bool,
-    watch: bool,
-    format: Format,
-) -> Result<()> {
+async fn ls(client: &Client, mut options: ListOptions, watch: bool, format: Format) -> Result<()> {
     // Resolved once rather than per redraw: what the caller typed names the
     // same goal and task every time round, and a watch is not a new question.
-    let goal = match goal {
+    options.goal = match options.goal {
         Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
         None => None,
     };
-    let task = match task {
+    options.task = match options.task {
         Some(task) => Some(resolve::id(client, Kind::Task, &task).await?),
         None => None,
     };
     if !watch {
-        return render(client, goal, task, &statuses, seat, attention, all, format).await;
+        return render_page(client, &options, format).await;
     }
-    let path = watch_path(goal.as_deref())?;
+    let path = watch_path(options.goal.as_deref())?;
     follow::watch(client, &path, relevant, async || {
-        render(
-            client,
-            goal.clone(),
-            task.clone(),
-            &statuses,
-            seat,
-            attention,
-            all,
-            format,
-        )
-        .await
+        render_page(client, &options, format).await
     })
     .await
-}
-
-/// The table as it stands, read afresh.
-#[allow(clippy::too_many_arguments)]
-async fn render(
-    client: &Client,
-    goal: Option<String>,
-    task: Option<String>,
-    statuses: &[SessionStatus],
-    seat: Option<Seat>,
-    attention: bool,
-    all: bool,
-    format: Format,
-) -> Result<()> {
-    let filtered =
-        goal.is_some() || task.is_some() || !statuses.is_empty() || seat.is_some() || attention;
-    let query = SessionListQuery {
-        goal,
-        task,
-        status: one_of(statuses),
-        // A flag that is not set is not a filter for sessions that want
-        // nobody: it is no filter at all.
-        attention: attention.then_some(true),
-    };
-    let sessions: Vec<SessionDto> = client
-        .get_json(&query_path("/v1/sessions", &query)?)
-        .await?;
-    let sessions = visible(sessions, all, statuses, seat);
-    let context = match format {
-        Format::Table => SessionContext::fetch_for(client, &sessions).await,
-        Format::Json => SessionContext::default(),
-    };
-    let now = chrono::Utc::now();
-    print_list(
-        format,
-        &sessions,
-        LS,
-        |s| {
-            vec![
-                s.id.clone(),
-                context.label(s),
-                s.status.as_str().into(),
-                attention_label(s.attention_reason),
-                age(&s.created_at, now),
-                s.seat.map_or("-", |seat| seat.as_str()).into(),
-                agent_of(&s.model).into(),
-                usage_cell(&s.usage),
-            ]
-        },
-        // A named status already says which sessions were asked for, so
-        // --all has nothing left to offer.
-        match (filtered, all || !statuses.is_empty()) {
-            (true, true) => {
-                empty_state("No sessions match that filter.", Some("ariadne session ls"))
-            }
-            (true, false) => empty_state(
-                "No live sessions match that filter.",
-                Some("ariadne session ls --all"),
-            ),
-            (false, true) => empty_state("No sessions yet.", Some("ariadne goal create --help")),
-            (false, false) => empty_state("No live sessions.", Some("ariadne session ls --all")),
-        },
-    )
-}
-
-/// Which of the sessions the daemon answered with `session ls` shows.
-///
-/// The default is docker's: live sessions, history behind --all. Named
-/// statuses are that same choice made precisely, so they take over —
-/// `--status exited` that then dropped every row for not being live would
-/// answer nothing. The seat narrows whatever those settled on: `GET
-/// /v1/sessions` takes none, so it is applied to the answer rather than asked
-/// for, and so is a second status, since it takes only one.
-fn visible(
-    sessions: Vec<SessionDto>,
-    all: bool,
-    statuses: &[SessionStatus],
-    seat: Option<Seat>,
-) -> Vec<SessionDto> {
-    sessions
-        .into_iter()
-        .filter(|s| all || !statuses.is_empty() || s.status.is_live())
-        .filter(|s| statuses.is_empty() || statuses.contains(&s.status))
-        .filter(|s| seat.is_none_or(|r| s.seat == Some(r)))
-        .collect()
-}
-
-/// The goal and task titles behind a table's sessions: which piece of work
-/// each agent was run for, which the ids cannot say. One list call each, and a
-/// title is a courtesy — a daemon that will not answer leaves the ids in
-/// place.
-#[derive(Default)]
-struct SessionContext {
-    goals: HashMap<String, String>,
-    tasks: HashMap<String, String>,
-}
-
-impl SessionContext {
-    /// The titles for these sessions, or nothing to look up when there are no
-    /// sessions — an empty table asks the daemon nothing.
-    async fn fetch_for(client: &Client, sessions: &[SessionDto]) -> Self {
-        if sessions.is_empty() {
-            return Self::default();
-        }
-        let goals: Vec<GoalDto> = client.get_json("/v1/goals").await.unwrap_or_default();
-        let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await.unwrap_or_default();
-        Self {
-            goals: goals.into_iter().map(|g| (g.id, g.title)).collect(),
-            tasks: tasks.into_iter().map(|t| (t.id, t.title)).collect(),
-        }
-    }
-
-    /// What one session was run for: its task, or — for an orchestrator
-    /// session, which has none — the goal itself, prefixed so a whole goal is
-    /// never read as a task of that name. An id stands in for a title the
-    /// daemon did not answer with.
-    fn label(&self, s: &SessionDto) -> String {
-        match &s.task_id {
-            Some(task) => self
-                .tasks
-                .get(task)
-                .cloned()
-                .unwrap_or_else(|| task.clone()),
-            None => s.goal_id.as_ref().map_or_else(
-                || "-".into(),
-                |goal| format!("goal: {}", self.goals.get(goal).unwrap_or(goal)),
-            ),
-        }
-    }
 }
 
 /// Why this session wants the user, in `ariadne attention`'s own words — and
@@ -795,14 +661,18 @@ fn kill_question(s: &SessionDto, subject: &Subject) -> String {
 mod tests {
     use super::*;
 
-    use ariadne_core::Seat;
-
     use crate::commands::fixtures::session;
-    use crate::output::{View, kv_block, style};
+    use crate::output::{View, kv_block};
 
-    fn discover_options() -> DiscoverOptions {
-        DiscoverOptions {
+    fn options() -> ListOptions {
+        ListOptions {
+            kind: None,
             agent: None,
+            task: None,
+            goal: None,
+            statuses: Vec::new(),
+            seat: None,
+            attention: false,
             dir: None,
             since: None,
             until: None,
@@ -814,10 +684,61 @@ mod tests {
         }
     }
 
+    fn outside(id: &str) -> SessionEntryDto {
+        SessionEntryDto {
+            kind: SessionKind::Outside,
+            id: id.into(),
+            agent_id: "codex-acp".into(),
+            title: Some(format!("Prompt for {id}")),
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: None,
+            effort: None,
+            internal_session_id: Some(id.into()),
+            working_directory: Some("/work/api".into()),
+            status: None,
+            attention_reason: None,
+            attention_since: None,
+            last_activity_at: Some("2026-09-12T12:00:00Z".into()),
+            usage: None,
+            context_used: None,
+            context_size: None,
+            created_at: None,
+            ended_at: None,
+        }
+    }
+
+    fn page(ids: &[&str], next_cursor: Option<&str>, total: usize) -> SessionPageDto {
+        SessionPageDto {
+            sessions: ids.iter().map(|id| outside(id)).collect(),
+            next_cursor: next_cursor.map(str::to_string),
+            total,
+            snapshot_at: "2026-09-12T12:00:00Z".into(),
+        }
+    }
+
+    fn ariadne(id: &str, status: SessionStatus) -> SessionEntryDto {
+        let mut session = outside(id);
+        session.kind = SessionKind::Ariadne;
+        session.status = Some(status);
+        session.model = Some("codex-acp:model".into());
+        session.usage = Some(Default::default());
+        session.created_at = Some("2026-09-12T12:00:00Z".into());
+        session
+    }
+
     #[test]
-    fn every_discover_flag_reaches_its_query_parameter() {
-        let options = DiscoverOptions {
+    fn every_session_flag_reaches_its_query_parameter() {
+        let options = ListOptions {
+            kind: Some("outside".into()),
             agent: Some("codex-acp".into()),
+            goal: Some("01GOAL".into()),
+            task: Some("01TASK".into()),
+            statuses: vec![SessionStatus::Idle],
+            seat: Some(Seat::Author),
+            attention: true,
             dir: Some("/work/api".into()),
             since: Some("2026-09-01T00:00:00Z".into()),
             until: Some("2026-09-12T12:30:00+02:00".into()),
@@ -827,15 +748,14 @@ mod tests {
             refresh: true,
             all: false,
         };
-
         assert_eq!(
-            outside_sessions_path(&options, None).unwrap(),
-            "/v1/outside-sessions?agent=codex-acp&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
+            sessions_path(&options, None).unwrap(),
+            "/v1/sessions?kind=outside&agent=codex-acp&goal=01GOAL&task=01TASK&status=idle&seat=author&attention=true&dir=%2Fwork%2Fapi&since=2026-09-01T00%3A00%3A00Z&until=2026-09-12T12%3A30%3A00%2B02%3A00&q=rate+limit&limit=25&cursor=next%2Fpage&refresh=true"
         );
     }
 
     #[test]
-    fn a_date_is_the_utc_day_boundary_for_discovery() {
+    fn a_date_is_the_utc_day_boundary_for_session_listing() {
         assert_eq!(parse_since("2026-09-12").unwrap(), "2026-09-12T00:00:00Z");
         assert_eq!(
             parse_until("2026-09-12").unwrap(),
@@ -848,91 +768,83 @@ mod tests {
         assert!(parse_until("12/09/2026").is_err());
     }
 
-    fn outside_session(id: &str) -> ariadne_api::sessions::OutsideSessionDto {
-        ariadne_api::sessions::OutsideSessionDto {
-            agent_id: "codex-acp".into(),
-            internal_session_id: id.into(),
-            working_directory: "/work/api".into(),
-            last_activity_at: "2026-09-12T12:00:00Z".into(),
-            first_prompt: format!("Prompt for {id}"),
-        }
-    }
-
-    fn outside_page(
-        ids: &[&str],
-        next_cursor: Option<&str>,
-        total: usize,
-    ) -> OutsideSessionPageDto {
-        OutsideSessionPageDto {
-            sessions: ids.iter().map(|id| outside_session(id)).collect(),
-            next_cursor: next_cursor.map(str::to_string),
-            total,
+    #[test]
+    fn several_statuses_narrow_the_combined_page() {
+        let mut page = SessionPageDto {
+            sessions: vec![
+                ariadne("running", SessionStatus::Running),
+                ariadne("idle", SessionStatus::Idle),
+                ariadne("exited", SessionStatus::Exited),
+                outside("outside"),
+            ],
+            next_cursor: None,
+            total: 4,
             snapshot_at: "2026-09-12T12:00:00Z".into(),
-        }
+        };
+
+        narrow_statuses(&mut page, &[SessionStatus::Idle, SessionStatus::Exited]);
+
+        assert_eq!(
+            page.sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            ["idle", "exited"]
+        );
+        assert_eq!(page.total, 2);
     }
 
-    async fn outside_api(
-        pages: Vec<OutsideSessionPageDto>,
-    ) -> (
-        Client,
-        tokio::task::JoinHandle<()>,
-        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-    ) {
+    #[tokio::test]
+    async fn all_fetches_every_page_and_keeps_each_session_once() {
         use axum::Router;
         use axum::extract::{RawQuery, State};
         use axum::routing::get;
 
         #[derive(Clone)]
         struct Api {
-            pages:
-                std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<OutsideSessionPageDto>>>,
+            pages: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<SessionPageDto>>>,
             queries: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
         }
-
         async fn list(
             State(api): State<Api>,
             RawQuery(query): RawQuery,
-        ) -> axum::Json<OutsideSessionPageDto> {
+        ) -> axum::Json<SessionPageDto> {
             api.queries.lock().unwrap().push(query.unwrap_or_default());
             axum::Json(api.pages.lock().unwrap().pop_front().expect("page"))
         }
 
         let queries = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let api = Api {
-            pages: std::sync::Arc::new(std::sync::Mutex::new(pages.into())),
+            pages: std::sync::Arc::new(std::sync::Mutex::new(
+                vec![
+                    page(&["one", "two"], Some("after-two"), 3),
+                    page(&["three"], None, 3),
+                ]
+                .into(),
+            )),
             queries: queries.clone(),
         };
         let app = Router::new()
-            .route("/v1/outside-sessions", get(list))
+            .route("/v1/sessions", get(list))
             .with_state(api);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        (Client::tcp(format!("http://{address}")), server, queries)
-    }
-
-    #[tokio::test]
-    async fn all_fetches_every_page_and_keeps_each_session_once() {
-        let (client, server, queries) = outside_api(vec![
-            outside_page(&["one", "two"], Some("after-two"), 3),
-            outside_page(&["three"], None, 3),
-        ])
-        .await;
-        let options = DiscoverOptions {
+        let client = Client::tcp(format!("http://{address}"));
+        let options = ListOptions {
             agent: Some("codex-acp".into()),
             limit: Some(2),
             refresh: true,
             all: true,
-            ..discover_options()
+            ..options()
         };
-
-        let page = fetch_outside_sessions(&client, &options).await.unwrap();
+        let page = fetch_sessions(&client, &options).await.unwrap();
         server.abort();
 
         assert_eq!(
             page.sessions
                 .iter()
-                .map(|session| session.internal_session_id.as_str())
+                .map(|session| session.id.as_str())
                 .collect::<Vec<_>>(),
             ["one", "two", "three"]
         );
@@ -941,45 +853,74 @@ mod tests {
         assert_eq!(
             *queries.lock().unwrap(),
             [
-                "agent=codex-acp&limit=2&refresh=true",
-                "agent=codex-acp&limit=2&cursor=after-two",
+                "agent=codex-acp&all=true&limit=2&refresh=true",
+                "agent=codex-acp&all=true&limit=2&cursor=after-two"
             ]
         );
     }
 
     #[test]
-    fn a_next_cursor_prints_the_command_for_the_next_page() {
-        let options = DiscoverOptions {
+    fn a_next_cursor_prints_the_session_command_for_the_next_page() {
+        let options = ListOptions {
+            kind: Some("outside".into()),
             agent: Some("codex-acp".into()),
             dir: Some("/work/api service".into()),
             search: Some("rate limit".into()),
             limit: Some(25),
             refresh: true,
-            ..discover_options()
+            ..options()
         };
-        let page = outside_page(&["one"], Some("after-one"), 8);
-
         assert_eq!(
-            next_discovery_note(&page, &options).as_deref(),
+            next_session_note(&page(&["one"], Some("after-one"), 8), &options).as_deref(),
             Some(
-                "Next: ariadne session discover --agent codex-acp --dir '/work/api service' --search 'rate limit' --limit 25 --cursor after-one"
+                "Next: ariadne session ls --kind outside --agent codex-acp --dir '/work/api service' --search 'rate limit' --limit 25 --cursor after-one"
             )
         );
-    }
-
-    #[test]
-    fn the_last_page_prints_no_next_command() {
+        assert_eq!(next_session_note(&page(&["one"], None, 1), &options), None);
         assert_eq!(
-            next_discovery_note(&outside_page(&["one"], None, 1), &discover_options()),
-            None
+            session_count(&page(&["one", "two"], Some("more"), 17)),
+            "2 of 17 sessions"
         );
     }
 
     #[test]
-    fn the_discovery_count_is_shown_over_the_total() {
+    fn the_session_table_has_the_unified_columns_and_empty_outside_fields() {
+        let table = crate::output::render_table(
+            LS,
+            &[session_row(&outside("outside-id"), chrono::Utc::now())],
+            &View::plain(),
+        )
+        .unwrap();
+        let header: Vec<_> = table.lines().next().unwrap().split_whitespace().collect();
         assert_eq!(
-            discovery_count(&outside_page(&["one", "two"], Some("more"), 17)),
-            "2 of 17 sessions"
+            header[..8],
+            [
+                "ID", "TITLE", "STATUS", "GOAL", "TASK", "AGENT", "AGE", "TOKENS"
+            ]
+        );
+        assert_eq!(
+            session_row(&outside("outside-id"), chrono::Utc::now())[2..5],
+            ["", "", ""]
+        );
+    }
+
+    #[test]
+    fn directory_is_available_as_a_session_column() {
+        assert_eq!(session_columns(&[]).len(), LS.len());
+        assert_eq!(
+            session_columns(&["directory".into()])
+                .last()
+                .map(|column| column.header),
+            Some("directory")
+        );
+    }
+
+    #[test]
+    fn the_watch_stream_is_scoped_to_the_goal_alone_never_the_task() {
+        assert_eq!(watch_path(None).unwrap(), "/v1/events/stream");
+        assert_eq!(
+            watch_path(Some("01GOAL")).unwrap(),
+            "/v1/events/stream?goal=01GOAL"
         );
     }
 
@@ -993,281 +934,9 @@ mod tests {
         };
         let block = kv_block(&inspect_pairs(&loose), &View::plain());
         for field in ["goal", "task", "seat"] {
-            let line = block
-                .lines()
-                .find(|line| line.starts_with(field))
-                .expect(field);
+            let line = block.lines().find(|line| line.starts_with(field)).unwrap();
             assert_eq!(line.split_whitespace().collect::<Vec<_>>(), [field, "-"]);
         }
-        assert_eq!(context().label(&loose), "-");
-        assert_eq!(visible(vec![loose.clone()], false, &[], None).len(), 1);
-        assert!(visible(vec![loose], false, &[], Some(Seat::Author)).is_empty());
-    }
-
-    fn context() -> SessionContext {
-        SessionContext {
-            goals: HashMap::from([("01GOAL".to_string(), "Ship the board".to_string())]),
-            tasks: HashMap::from([("01TASK".to_string(), "Wire the screen".to_string())]),
-        }
-    }
-
-    #[test]
-    fn the_session_subject_column_is_title() {
-        let table = crate::output::render_table(
-            LS,
-            &[vec![String::new(); LS.len()]],
-            &crate::output::View::plain(),
-        )
-        .expect("table");
-        assert!(
-            table
-                .lines()
-                .next()
-                .is_some_and(|line| line.contains("TITLE")),
-            "{table}"
-        );
-        assert!(
-            !table
-                .lines()
-                .next()
-                .is_some_and(|line| line.contains("CONTEXT")),
-            "{table}"
-        );
-    }
-
-    #[test]
-    fn a_session_on_a_task_is_named_by_the_task() {
-        assert_eq!(
-            context().label(&session("01SESS", "01GOAL", Some("01TASK"))),
-            "Wire the screen"
-        );
-    }
-
-    /// The orchestrator runs for the goal itself, and the row says so rather
-    /// than leaving a goal title where every other row carries a task.
-    #[test]
-    fn an_orchestrator_session_is_named_by_its_goal() {
-        assert_eq!(
-            context().label(&session("01SESS", "01GOAL", None)),
-            "goal: Ship the board"
-        );
-    }
-
-    /// Titles are a courtesy — a daemon that would not answer the lists, or a
-    /// task created since they were read, still leaves a usable row.
-    #[test]
-    fn an_unknown_id_stands_in_for_its_title() {
-        let empty = SessionContext::default();
-        assert_eq!(
-            empty.label(&session("01SESS", "01GOAL", Some("01OTHER"))),
-            "01OTHER"
-        );
-        assert_eq!(
-            empty.label(&session("01SESS", "01GOAL", None)),
-            "goal: 01GOAL"
-        );
-    }
-
-    /// The `--watch` stream is scoped to the goal alone: the daemon's routing
-    /// filter drops a `goal_deleted` event for any subscriber that named a
-    /// task, since the event carries no task id of its own, and a watch that
-    /// missed it would show a goal's sessions long after the goal — and the
-    /// task and its sessions with it — was deleted. Taking no `task` at all
-    /// is what keeps that mistake from being made again.
-    #[test]
-    fn the_watch_stream_is_scoped_to_the_goal_alone_never_the_task() {
-        assert_eq!(watch_path(None).unwrap(), "/v1/events/stream");
-        assert_eq!(
-            watch_path(Some("01GOAL")).unwrap(),
-            "/v1/events/stream?goal=01GOAL"
-        );
-    }
-
-    /// One session per seat and per liveness, as `session ls` receives them
-    /// from the daemon: the orchestrator is running, the author has exited.
-    fn listed() -> Vec<SessionDto> {
-        let author = SessionDto {
-            status: SessionStatus::Exited,
-            ..session("01ENG", "01GOAL", Some("01TASK"))
-        };
-        vec![session("01PLAN", "01GOAL", None), author]
-    }
-
-    fn ids(sessions: Vec<SessionDto>) -> Vec<String> {
-        sessions.into_iter().map(|s| s.id).collect()
-    }
-
-    /// The default view is unchanged: live sessions, and history only once
-    /// --all or a named --status asks for it.
-    #[test]
-    fn the_default_view_is_the_live_one() {
-        assert_eq!(ids(visible(listed(), false, &[], None)), ["01PLAN"]);
-        assert_eq!(ids(visible(listed(), true, &[], None)), ["01PLAN", "01ENG"]);
-        assert_eq!(
-            ids(visible(listed(), false, &[SessionStatus::Exited], None)),
-            ["01ENG"],
-            "a named status takes over from the live/finished split"
-        );
-    }
-
-    /// Several statuses list a session in any of them: `GET /v1/sessions`
-    /// takes one, so this is the narrowing the CLI does itself.
-    #[test]
-    fn several_statuses_list_a_session_in_any_of_them() {
-        assert_eq!(
-            ids(visible(
-                listed(),
-                false,
-                &[SessionStatus::Running, SessionStatus::Exited],
-                None
-            )),
-            ["01PLAN", "01ENG"]
-        );
-    }
-
-    /// The seat narrows whatever the rest of the flags settled on, and never
-    /// widens it: a finished author stays behind --all even when --seat
-    /// names authors.
-    #[test]
-    fn a_seat_narrows_the_view_it_is_used_with() {
-        assert_eq!(
-            ids(visible(listed(), false, &[], Some(Seat::Orchestrator))),
-            ["01PLAN"]
-        );
-        assert_eq!(
-            ids(visible(listed(), false, &[], Some(Seat::Author))),
-            [] as [String; 0],
-            "the only author here has exited"
-        );
-        assert_eq!(
-            ids(visible(listed(), true, &[], Some(Seat::Author))),
-            ["01ENG"]
-        );
-        assert_eq!(
-            ids(visible(listed(), false, &[], Some(Seat::Reviewer))),
-            [] as [String; 0]
-        );
-    }
-
-    /// An agent this discovery run cannot list sessions for is named with why:
-    /// its own rejection reason where discovery rejected it outright, and a
-    /// fixed line where it is ready but simply lacks the capability. An agent
-    /// that can list sessions is left off the notes entirely.
-    #[test]
-    fn an_agent_without_the_capability_is_named_with_its_reason() {
-        use ariadne_api::agents::{AcpAgentSource, AcpAgentStatus, AcpCapabilitiesDto};
-
-        let agent = |id: &str, status, session_list, rejection_reason: Option<&str>| AcpAgentDto {
-            id: id.to_string(),
-            command: vec![id.to_string()],
-            source: AcpAgentSource::Registry,
-            status,
-            capabilities: AcpCapabilitiesDto {
-                session_list,
-                ..Default::default()
-            },
-            degraded: Vec::new(),
-            rejection_reason: rejection_reason.map(str::to_string),
-        };
-        let agents = [
-            agent("listable", AcpAgentStatus::Ready, true, None),
-            agent("degraded", AcpAgentStatus::Ready, false, None),
-            agent(
-                "broken",
-                AcpAgentStatus::Rejected,
-                false,
-                Some("no model option"),
-            ),
-        ];
-
-        let notes = unavailable_acp_agents(&agents);
-
-        assert_eq!(notes.len(), 2, "{notes:?}");
-        assert!(
-            notes.iter().any(|line| line.contains("degraded")
-                && line.contains("does not support listing sessions")),
-            "{notes:?}"
-        );
-        assert!(
-            notes
-                .iter()
-                .any(|line| line.contains("broken") && line.contains("no model option")),
-            "{notes:?}"
-        );
-        assert!(
-            !notes.iter().any(|line| line.contains("listable")),
-            "{notes:?}"
-        );
-    }
-
-    /// `ls` and `inspect` spell a reason the way `ariadne attention` does —
-    /// which is the UI's wording — and say nothing at all when there is none.
-    #[test]
-    fn a_session_carries_the_attention_wording_of_the_attention_list() {
-        assert_eq!(
-            attention_label(Some(AttentionReason::WaitingPermission)),
-            "waiting for permission"
-        );
-        assert_eq!(
-            attention_label(Some(AttentionReason::WaitingInput)),
-            "waiting for input"
-        );
-        assert_eq!(
-            attention_label(Some(AttentionReason::AgentError)),
-            "agent error"
-        );
-        assert_eq!(
-            attention_label(Some(AttentionReason::Disconnected)),
-            "disconnected"
-        );
-        assert_eq!(attention_label(Some(AttentionReason::Stalled)), "stalled");
-        assert_eq!(attention_label(None), "-");
-    }
-
-    /// `session inspect` types its id, its goal, its task and its status the
-    /// way a row of `session ls` would: the ids dimmed, the status carrying
-    /// its glyph inside its colour, a waiting attention carrying its own.
-    /// Colour is escapes and nothing else — strip them and the block reads
-    /// exactly as it does with `--color never`.
-    #[test]
-    fn the_inspect_block_types_its_ids_status_and_attention() {
-        let s = SessionDto {
-            attention_reason: Some(AttentionReason::WaitingInput),
-            ..session("01SESS", "01GOAL", Some("01TASK"))
-        };
-        let pairs = inspect_pairs(&s);
-
-        let coloured = kv_block(
-            &pairs,
-            &View {
-                color: true,
-                ..View::plain()
-            },
-        );
-        assert!(
-            coloured.contains(&style::paint(true, style::ID, &s.id)),
-            "{coloured}"
-        );
-        assert!(
-            coloured.contains(&style::paint(true, style::ID, "01TASK")),
-            "the task id is dimmed too: {coloured}"
-        );
-        assert!(
-            coloured.contains(&style::paint(true, style::status("running").0, "● running")),
-            "{coloured}"
-        );
-        assert!(
-            coloured.contains(&style::paint(
-                true,
-                style::attention("waiting for input").0,
-                "? waiting for input"
-            )),
-            "{coloured}"
-        );
-
-        let plain = kv_block(&pairs, &View::plain());
-        assert!(!plain.contains('\u{1b}'), "{plain}");
-        assert_eq!(strip_escapes(&coloured), plain, "colour adds only escapes");
     }
 
     #[test]
@@ -1277,36 +946,6 @@ mod tests {
             context_size: Some(1_000_000),
             ..session("01SESS", "01GOAL", Some("01TASK"))
         };
-
-        let block = kv_block(&inspect_pairs(&s), &View::plain());
-
-        assert!(block.contains("context"), "{block}");
-        assert!(block.contains("21k / 1M"), "{block}");
-    }
-
-    #[test]
-    fn the_inspect_block_hides_an_unreported_context_window() {
-        let block = kv_block(
-            &inspect_pairs(&session("01SESS", "01GOAL", Some("01TASK"))),
-            &View::plain(),
-        );
-
-        assert!(!block.contains("context"), "{block}");
-    }
-
-    /// The escapes taken back out of a line, the way a reader's terminal
-    /// would show it: what is left is what `--color never` prints outright.
-    fn strip_escapes(line: &str) -> String {
-        let mut out = String::new();
-        let mut escaped = false;
-        for c in line.chars() {
-            match (escaped, c) {
-                (false, '\u{1b}') => escaped = true,
-                (true, 'm') => escaped = false,
-                (true, _) => {}
-                (false, c) => out.push(c),
-            }
-        }
-        out
+        assert!(kv_block(&inspect_pairs(&s), &View::plain()).contains("21k / 1M"));
     }
 }
