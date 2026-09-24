@@ -1,11 +1,12 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-23
+updated: 2026-09-24
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4, a69b953f, 1b09ac10]
 tests:
   - crates/ariadne-daemon/tests/it/events.rs
+  - crates/ariadne-daemon/tests/it/session_list.rs
   - crates/ariadne-daemon/tests/it/unknown_fields.rs
   - crates/ariadne-daemon/tests/it/logs.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
@@ -73,6 +74,10 @@ and the ACP runtime that reports the agent events (021).
    into, resizes or reads an agent's own terminal, and no endpoint is one an
    agent reports events to: the daemon's own ACP runtime is the one
    reporter, and it ingests in process.
+   `GET /v1/sessions` is the one listing over both kinds of session (020):
+   one cursor page of Ariadne's own sessions and of the conversations the
+   ACP agents stored, as a `SessionPageDto`. There is no second listing
+   endpoint for the outside ones.
 9. An ingested event is recorded whole, then read in the runtime's one
    vocabulary. `session_start`, `user_prompt_submit`, `pre_tool_use`,
    `post_tool_use` and `permission.replied` mark the session running; `stop`
@@ -231,6 +236,9 @@ and the ACP runtime that reports the agent events (021).
 - A body with a field its DTO does not declare is refused, and the refusal
   names the field
   (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).
+- The session listing's query and its page DTO are in the OpenAPI document,
+  and the outside listing it replaced is not
+  (`session_list.rs::the_query_and_the_page_are_in_the_openapi_document`).
 - Every event the runtime reports is acted on, a lifecycle event moves the
   status and raises nothing, and a wait on the user is raised and never
   reads as liveness

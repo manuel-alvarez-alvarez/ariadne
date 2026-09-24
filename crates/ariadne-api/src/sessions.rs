@@ -58,11 +58,9 @@ pub struct OutsideSessionDto {
     pub first_prompt: String,
 }
 
-/// Query of `GET /v1/outside-sessions`: what the daemon's snapshot of the
-/// outside sessions is narrowed to, and which page of it is wanted.
-///
-/// The snapshot is taken on the first request, again on `refresh=true`, and
-/// again when it is older than a minute; nothing here asks an agent otherwise.
+/// Query of the outside-session listing the CLI still sends. No endpoint
+/// answers it: `GET /v1/sessions` lists both kinds of session now, and the
+/// CLI moves onto it in a task of its own.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 pub struct OutsideSessionListQuery {
     /// Only sessions of this registry agent (`GET /v1/acp-agents`).
@@ -90,7 +88,9 @@ impl OutsideSessionListQuery {
     }
 }
 
-/// One page of `GET /v1/outside-sessions`, newest activity first.
+/// One page of the outside-session listing the CLI still reads, newest
+/// activity first. Nothing answers it either: see
+/// [`OutsideSessionListQuery`].
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OutsideSessionPageDto {
     pub sessions: Vec<OutsideSessionDto>,
@@ -110,6 +110,75 @@ pub struct ResumeOutsideSessionRequest {
     pub internal_session_id: String,
 }
 
+/// Which half of the listing a row came from: a session Ariadne runs, or a
+/// conversation an ACP agent stored that Ariadne did not start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionKind {
+    Ariadne,
+    Outside,
+}
+
+/// One row of `GET /v1/sessions`: a session of either kind.
+///
+/// An outside conversation carries no goal, task, seat or status, because
+/// Ariadne runs no work behind it; what it does carry is the agent it belongs
+/// to, the id that agent loads it back by, where it ran and when it last did.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SessionEntryDto {
+    pub kind: SessionKind,
+    /// Ariadne's session id, or the agent's own session id on an outside row.
+    pub id: String,
+    /// The registry agent this conversation runs on (`GET /v1/acp-agents`).
+    pub agent_id: String,
+    /// What this session is about: its task's title, the goal's title behind
+    /// an orchestrator, or the first prompt of an outside conversation.
+    pub title: Option<String>,
+    pub goal_id: Option<String>,
+    pub task_id: Option<String>,
+    pub seat: Option<Seat>,
+    /// The staffed agent this session runs; None for an orchestrator, a loose
+    /// session or an outside one.
+    pub task_agent_id: Option<String>,
+    /// Model requested at launch, `<agent>:<model>`; None on an outside row.
+    pub model: Option<String>,
+    /// Effort that model was launched at, off the same pin as `model`.
+    #[schema(example = "high")]
+    pub effort: Option<String>,
+    /// The ACP agent's own session id, which is `id` on an outside row.
+    pub internal_session_id: Option<String>,
+    /// The worktree, or the recorded working directory.
+    pub working_directory: Option<String>,
+    /// None on an outside row: Ariadne runs no process behind it.
+    pub status: Option<SessionStatus>,
+    pub attention_reason: Option<AttentionReason>,
+    pub attention_since: Option<String>,
+    /// When this session was last active, which the page is ordered by.
+    pub last_activity_at: Option<String>,
+    /// What this session's agent has spent; None on an outside row.
+    pub usage: Option<TokenUsageDto>,
+    pub context_used: Option<u64>,
+    pub context_size: Option<u64>,
+    /// When Ariadne created the row; None on an outside row.
+    pub created_at: Option<String>,
+    pub ended_at: Option<String>,
+}
+
+/// One page of `GET /v1/sessions`, newest activity first.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SessionPageDto {
+    pub sessions: Vec<SessionEntryDto>,
+    /// The `cursor` that continues after this page; null on the last one.
+    pub next_cursor: Option<String>,
+    /// How many sessions the filters leave, over every page.
+    pub total: usize,
+    /// When the outside snapshot this page was cut from was taken, RFC 3339.
+    pub snapshot_at: String,
+}
+
+/// Query of the session listing the CLI still sends. `GET /v1/sessions`
+/// takes a [`SessionPageQuery`] now, and the CLI moves onto it in a task of
+/// its own.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 pub struct SessionListQuery {
     /// Filter by goal id.
@@ -120,6 +189,56 @@ pub struct SessionListQuery {
     pub status: Option<SessionStatus>,
     /// Only sessions currently flagged as needing attention.
     pub attention: Option<bool>,
+}
+
+/// Query of `GET /v1/sessions`: what the listing of both kinds is narrowed
+/// to, and which page of it is wanted.
+///
+/// The outside half is served off one snapshot, taken on the first request,
+/// again on `refresh=true`, and again when it is older than a minute; nothing
+/// here asks an agent otherwise.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+pub struct SessionPageQuery {
+    /// Only sessions of this kind. Omitted lists both.
+    pub kind: Option<SessionKind>,
+    /// Only sessions of this registry agent (`GET /v1/acp-agents`).
+    pub agent: Option<String>,
+    /// Filter by goal id. No outside session has one.
+    pub goal: Option<String>,
+    /// Filter by task id. No outside session has one.
+    pub task: Option<String>,
+    /// Filter by status. No outside session has one. A named status also
+    /// lists sessions that have ended, as `all` does.
+    pub status: Option<SessionStatus>,
+    /// Filter by seat. No outside session has one.
+    pub seat: Option<Seat>,
+    /// Only sessions currently flagged as needing attention. No outside
+    /// session is.
+    pub attention: Option<bool>,
+    /// Only sessions whose directory is this absolute path, or a path under
+    /// it.
+    pub dir: Option<String>,
+    /// Only sessions last active at or after this moment, RFC 3339.
+    pub since: Option<String>,
+    /// Only sessions last active at or before this moment, RFC 3339.
+    pub until: Option<String>,
+    /// Only sessions whose title contains this text, case-insensitive.
+    pub q: Option<String>,
+    /// List every session, whatever its age and whether it has ended, rather
+    /// than the live ones of the last 7 days.
+    pub all: Option<bool>,
+    /// Max sessions in the page (default 50, cap 200).
+    pub limit: Option<usize>,
+    /// The `next_cursor` of the page before this one; opaque.
+    pub cursor: Option<String>,
+    /// Ask every agent again before answering, whatever the snapshot's age.
+    pub refresh: Option<bool>,
+}
+
+impl SessionPageQuery {
+    pub fn limit(&self) -> usize {
+        self.limit.unwrap_or(50).clamp(1, 200)
+    }
 }
 
 /// Body of `POST /v1/sessions/{id}/console/input`.

@@ -9,12 +9,13 @@ use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
 use ariadne_api::messages::MessageDto;
 use ariadne_api::repositories::RepositoryDto;
-use ariadne_api::sessions::SessionDto;
+use ariadne_api::sessions::{OutsideSessionDto, SessionDto, SessionEntryDto, SessionKind};
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{
     AgentUsageDto, TaskAgentDto, TaskDto, TaskPickDto, TaskTransitionDto, TaskUsageDto,
 };
 use ariadne_api::usage::TokenUsageDto;
+use ariadne_core::models::agent_of;
 use ariadne_core::{Actor, MessageKind, Seat, TokenUsage};
 use ariadne_store::{self as store, AgentUsage, Store, StoreError};
 
@@ -211,6 +212,70 @@ pub(crate) async fn session_dto_of(
 ) -> Result<SessionDto, StoreError> {
     let usage = store.session_usage(&session.id).await?;
     Ok(session_dto(session, usage.into()))
+}
+
+/// One row of the session listing: the session as its own endpoint answers
+/// it, under the title of the work behind it, which the row does not hold.
+pub(crate) async fn session_entry_of(
+    store: &Store,
+    session: store::AgentSession,
+    title: Option<String>,
+) -> Result<SessionEntryDto, StoreError> {
+    let session = session_dto_of(store, session).await?;
+    Ok(SessionEntryDto {
+        kind: SessionKind::Ariadne,
+        agent_id: agent_of(&session.model).to_string(),
+        title,
+        working_directory: session.worktree_path,
+        status: Some(session.status),
+        usage: Some(session.usage),
+        created_at: Some(session.created_at),
+        id: session.id,
+        goal_id: session.goal_id,
+        task_id: session.task_id,
+        seat: session.seat,
+        task_agent_id: session.task_agent_id,
+        model: Some(session.model),
+        effort: session.effort,
+        internal_session_id: session.internal_session_id,
+        attention_reason: session.attention_reason,
+        attention_since: session.attention_since,
+        last_activity_at: session.last_activity_at,
+        context_used: session.context_used,
+        context_size: session.context_size,
+        ended_at: session.ended_at,
+    })
+}
+
+/// The same row for a conversation Ariadne did not start: the agent, the id
+/// it loads back by, where it ran and when, and its first prompt as its
+/// title. It has no goal, task, seat or status, because Ariadne runs no work
+/// behind it.
+pub(crate) fn outside_entry(outside: &OutsideSessionDto) -> SessionEntryDto {
+    let text = |value: &String| (!value.is_empty()).then(|| value.clone());
+    SessionEntryDto {
+        kind: SessionKind::Outside,
+        id: outside.internal_session_id.clone(),
+        agent_id: outside.agent_id.clone(),
+        title: text(&outside.first_prompt),
+        internal_session_id: Some(outside.internal_session_id.clone()),
+        working_directory: Some(outside.working_directory.clone()),
+        last_activity_at: text(&outside.last_activity_at),
+        goal_id: None,
+        task_id: None,
+        seat: None,
+        task_agent_id: None,
+        model: None,
+        effort: None,
+        status: None,
+        attention_reason: None,
+        attention_since: None,
+        usage: None,
+        context_used: None,
+        context_size: None,
+        created_at: None,
+        ended_at: None,
+    }
 }
 
 /// [`goal_dto`] with everything it needs loaded: the repositories the goal

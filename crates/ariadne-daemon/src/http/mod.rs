@@ -65,8 +65,8 @@ pub struct AppState {
     pub logs: LogBuffer,
     /// ACP commands and their cached discovery snapshot.
     pub agent_registry: AgentRegistry,
-    /// The snapshot of every agent's stored sessions that
-    /// `/v1/outside-sessions` pages.
+    /// The snapshot of every agent's stored sessions that the outside half
+    /// of `/v1/sessions` pages.
     pub outside_sessions: OutsideSessions,
 }
 
@@ -125,7 +125,7 @@ impl AppState {
         landing::list_task_messages, landing::post_task_message,
         goals::list_goal_messages, goals::post_goal_message, landing::diff,
         landing::record_pull_request, landing::pick_winner,
-        sessions::list, sessions::list_outside, sessions::resume_outside,
+        sessions::list, sessions::resume_outside,
         sessions::get, sessions::kill, sessions::resume,
         console::snapshot, console::stream, console::input, console::cancel,
         terminal::terminal,
@@ -222,7 +222,6 @@ pub fn router(state: AppState) -> Router {
         )
         // sessions
         .route("/v1/sessions", get(sessions::list))
-        .route("/v1/outside-sessions", get(sessions::list_outside))
         .route(
             "/v1/outside-sessions/resume",
             post(sessions::resume_outside),

@@ -6,7 +6,7 @@ areas: [api, daemon, store]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/acp_session_resume.rs
-  - crates/ariadne-daemon/tests/it/outside_sessions.rs
+  - crates/ariadne-daemon/tests/it/session_list.rs
   - crates/ariadne-store/tests/store.rs
 ---
 
@@ -17,9 +17,10 @@ A loose session has no goal, task, staffed agent or seat.
 
 ## Scope
 
-In: discovering stored ACP conversations and resuming one in its recorded working directory.
+In: discovering stored ACP conversations, listing them beside Ariadne's own
+sessions, and resuming one in its recorded working directory.
 
-Out: merged session listing, CLI commands, desktop screens, and task staffing.
+Out: CLI commands, desktop screens, and task staffing.
 Session controls and revival belong to 008.
 The ACP runtime belongs to 021.
 
@@ -48,40 +49,58 @@ The ACP runtime belongs to 021.
    off its `model` column, which always holds `<agent>:<model>`. The rows
    are read at query time, so a session resumed after the snapshot was
    taken is gone from the next page without a refresh.
-4. `GET /v1/outside-sessions` answers one page of the snapshot, as an
-   `OutsideSessionPageDto`: `sessions`, `next_cursor` (null on the last
-   page), `total` (the count after filters) and `snapshot_at`. Its
-   `OutsideSessionListQuery` narrows the snapshot — `agent` (a registry
-   agent id), `dir` (an absolute path; a session matches when its working
-   directory is that path or a path under it), `since` and `until` (RFC
-   3339, inclusive bounds on last activity), `q` (a case-insensitive
-   substring of the first prompt) — and picks the page: `limit` (default
-   50, cap 200), `cursor` and `refresh`. The sessions are ordered by last
-   activity, newest first, ties broken by agent id, then internal session
-   id. The cursor is an opaque keyset over the sort key of the page's last
-   row, so a page cut after a refresh continues from that key. A cursor the
-   daemon cannot read is refused with a 400 envelope, code `invalid_cursor`.
-5. `POST /v1/outside-sessions/resume` takes `{agent_id, internal_session_id}` and returns a live `SessionDto`.
+4. `GET /v1/sessions` answers one page over both kinds of session, as a
+   `SessionPageDto`: `sessions`, `next_cursor` (null on the last page),
+   `total` (the count after filters) and `snapshot_at`. An outside entry
+   carries its agent id, the internal session id as its own id, its working
+   directory, its last activity and its first prompt as its title, and no
+   goal, task, seat or status. An Ariadne entry carries its row, and its
+   title is its task's, or its goal's where no task staffs it.
+5. Its `SessionPageQuery` narrows the page: `kind` (`ariadne` or `outside`;
+   omitted lists both), `agent` (a registry agent id, which an Ariadne row
+   carries in its `model`), `status`, `seat`, `goal`, `task` and `attention`
+   as they narrow an Ariadne session, `dir` (an absolute path; a session
+   matches when its directory is that path or a path under it), `since` and
+   `until` (RFC 3339, inclusive bounds on last activity), and `q` (a
+   case-insensitive substring of the title). An outside session has no goal,
+   task, seat, status or attention, so a filter over one of those leaves none
+   of them. `limit` (default 50, cap 200), `cursor`, `refresh` and `all` pick
+   the page.
+6. The page holds the sessions active in the last 7 days, and of Ariadne's
+   own the live ones alone. `since` and `until` replace that window with the
+   caller's own, and `all` drops it and lists the ended Ariadne sessions too,
+   as a named `status` does. A session whose last activity cannot be read is
+   inside no window; an Ariadne session nothing has been heard from is as old
+   as its row.
+7. The sessions are ordered by last activity, newest first, ties broken by
+   agent id, then session id. The cursor is an opaque keyset over the sort
+   key of the page's last row, so a page cut after a refresh continues from
+   that key. It carries that row's moment word for word, so a moment an agent
+   dated finer than a millisecond loses nothing, and the next page skips no
+   row inside that millisecond. A cursor the daemon cannot read is refused
+   with a 400 envelope, code `invalid_cursor`.
+8. `POST /v1/outside-sessions/resume` takes `{agent_id, internal_session_id}` and returns a live `SessionDto`.
    Only the user can call it.
    An agent session receives 403.
-6. Resume finds the conversation in the daemon snapshot.
+9. Resume finds the conversation in the daemon snapshot.
    A miss takes one fresh snapshot and refuses that call with 404.
-7. The agent starts through `session/load` in its recorded working directory.
-   Resume creates no goal, task, worktree or branch.
-   The row stores that directory in `worktree_path`.
-   It stores the agent's internal session id.
-8. The session uses the daemon's default permission mode.
-   Its model is `<agent>:<model>`, from the load response's model configuration option.
-   Without that option, the row records the agent's discovered default model.
-   Resume does not replace the loaded model with a task pin.
-9. Concurrent or repeated resumes of a live loose session return the same row.
-   They start one agent process.
-   A later resume of an ended loose row reopens that row through the usual session revival path.
-10. A loose session supports the console snapshot, console stream, input, cancel, kill, resume, and events.
+10. The agent starts through `session/load` in its recorded working directory.
+    Resume creates no goal, task, worktree or branch.
+    The row stores that directory in `worktree_path`.
+    It stores the agent's internal session id.
+11. The session uses the daemon's default permission mode.
+    Its model is `<agent>:<model>`, from the load response's model configuration option.
+    Without that option, the row records the agent's discovered default model.
+    Resume does not replace the loaded model with a task pin.
+12. Concurrent or repeated resumes of a live loose session return the same row.
+    They start one agent process.
+    A later resume of an ended loose row reopens that row through the usual session revival path.
+13. A loose session supports the console snapshot, console stream, input, cancel, kill, resume, and events.
     Its loaded transcript appears in the console.
     The scheduler creates no task or orchestrator for it.
-11. The adoption endpoint no longer exists.
-    The OpenAPI document contains the resume endpoint.
+14. The adoption endpoint no longer exists, and neither does the
+    outside-session listing.
+    The OpenAPI document contains the resume endpoint and the one listing.
 
 ## Acceptance criteria
 
@@ -92,32 +111,52 @@ The ACP runtime belongs to 021.
   (`acp_session_resume.rs::an_agent_without_the_capability_lists_nothing_and_shows_the_reason`).
 - An agent that pages its list in three pages has every session in the
   listing
-  (`outside_sessions.rs::a_paging_agents_every_session_is_in_the_listing`).
+  (`session_list.rs::a_paging_agents_every_session_is_in_the_listing`).
 - An agent whose budget ends mid-list is listed with the pages that arrived
-  (`outside_sessions.rs::the_pages_that_arrived_are_kept_when_an_agents_budget_ends`).
+  (`session_list.rs::the_pages_that_arrived_are_kept_when_an_agents_budget_ends`).
+- One page holds both kinds, ordered by last activity, newest first
+  (`session_list.rs::a_page_holds_both_kinds_newest_first`), and `kind`
+  narrows it to one of them
+  (`::kind_narrows_the_page_to_one_of_the_two`).
+- An outside row carries an empty goal, task, seat and status
+  (`session_list.rs::an_outside_row_carries_no_goal_task_seat_or_status`).
 - A cursor continues from the same row after a refresh
-  (`outside_sessions.rs::a_cursor_continues_from_the_same_row_after_a_refresh`).
-- A listing of 5 sessions with `limit=2` is three pages through
-  `next_cursor`, newest first, with `total=5` on each and a null cursor on
-  the last
-  (`outside_sessions.rs::five_sessions_at_limit_two_are_three_pages_newest_first`).
-- `agent`, `dir`, `since`, `until` and `q` each narrow the listing, and
-  `dir` matches a directory under the given path
-  (`outside_sessions.rs::agent_narrows_the_listing_to_one_agents_sessions`,
+  (`session_list.rs::a_cursor_continues_from_the_same_row_after_a_refresh`),
+  and a moment finer than a millisecond survives it
+  (`::a_cursor_keeps_a_moment_finer_than_a_millisecond`).
+- A page of 5 sessions with `limit=2` is three pages through `next_cursor`,
+  newest first, with `total=5` on each and a null cursor on the last
+  (`session_list.rs::five_sessions_at_limit_two_are_three_pages_newest_first`).
+- `agent`, `dir`, `since`, `until` and `q` each narrow the page, and `dir`
+  matches a directory under the given path, of either kind
+  (`session_list.rs::agent_narrows_the_listing_to_one_agents_sessions`,
   `::dir_narrows_the_listing_to_a_path_and_what_is_under_it`,
+  `::dir_narrows_the_listing_by_an_ariadne_sessions_worktree`,
   `::since_narrows_the_listing_to_activity_at_or_after_it`,
   `::until_narrows_the_listing_to_activity_at_or_before_it`,
-  `::q_narrows_the_listing_by_first_prompt_case_insensitively`).
+  `::q_narrows_the_listing_by_title_case_insensitively`).
+- `goal`, `task`, `seat`, `status` and `attention` each narrow the page to
+  Ariadne's own sessions
+  (`session_list.rs::goal_narrows_the_listing_to_one_goals_sessions`,
+  `::task_narrows_the_listing_to_one_tasks_sessions`,
+  `::seat_narrows_the_listing_to_one_seat`,
+  `::status_narrows_the_listing_to_one_status`,
+  `::attention_narrows_the_listing_to_the_sessions_waiting_on_somebody`).
+- The default page holds the last 7 days, `all` widens it, and `all` lists
+  the sessions that have ended
+  (`session_list.rs::the_default_page_holds_the_last_seven_days_and_all_widens_it`,
+  `::all_lists_an_ended_ariadne_session`).
 - A second request within 60 seconds asks no agent again, and a request with
   `refresh=true` does
-  (`outside_sessions.rs::a_second_request_asks_no_agent_again_but_a_refresh_does`).
-- A session resumed after the snapshot was taken is absent from the next
-  page without a refresh
-  (`outside_sessions.rs::a_session_resumed_after_the_snapshot_is_absent_without_a_refresh`).
+  (`session_list.rs::a_second_request_asks_no_agent_again_but_a_refresh_does`).
+- A resumed outside session is in the page once, as an Ariadne session, and
+  without a refresh
+  (`session_list.rs::a_resumed_outside_session_is_listed_once_as_an_ariadne_session`).
 - A cursor the daemon cannot read is refused with `invalid_cursor`
-  (`outside_sessions.rs::an_unreadable_cursor_is_refused`).
-- The endpoint's query parameters and page DTO are in the OpenAPI document
-  (`outside_sessions.rs::the_query_and_the_page_are_in_the_openapi_document`).
+  (`session_list.rs::an_unreadable_cursor_is_refused`).
+- The query parameters and the page DTO are in the OpenAPI document, and the
+  outside listing is gone from it
+  (`session_list.rs::the_query_and_the_page_are_in_the_openapi_document`).
 - A row with no goal, task or seat survives a store reopen
   (`store.rs::a_loose_session_round_trips_without_a_goal_task_or_seat`).
 - Resume loads the recorded directory and internal id, records the loaded model, and creates no scheduled work or worktree
@@ -153,5 +192,6 @@ duplicate processes and prevents a second caller receiving a row before load com
 `crates/ariadne-daemon/src/acp_sessions.rs`,
 `crates/ariadne-daemon/src/acp_discovery.rs`,
 `crates/ariadne-daemon/src/http/sessions.rs`,
+`crates/ariadne-daemon/src/http/convert.rs`,
 `crates/ariadne-daemon/src/launcher.rs`,
 `crates/ariadne-daemon/src/acp.rs`.

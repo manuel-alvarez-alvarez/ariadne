@@ -7,7 +7,7 @@ use crate::common;
 use serde_json::json;
 
 use ariadne_api::error::ErrorBody;
-use ariadne_api::sessions::{OutsideSessionPageDto, SessionDto};
+use ariadne_api::sessions::{SessionDto, SessionKind, SessionPageDto};
 use ariadne_core::{Seat, SessionStatus};
 use ariadne_store::{SessionFilter, TaskFilter};
 
@@ -68,25 +68,31 @@ async fn harness_with_agent(id: &str, bin: &str) -> Harness {
     h
 }
 
-/// The stub agent's stored sessions appear in `GET /v1/outside-sessions`,
-/// named by the registry agent they belong to.
+/// The stub agent's stored sessions appear in `GET /v1/sessions`, named by
+/// the registry agent they belong to. The listing holds the last seven days
+/// by default, and this conversation is dated further back, so the request
+/// asks for all of them.
 #[tokio::test]
 async fn an_acp_agents_stored_sessions_appear_in_the_listing() {
     let dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(dir.path(), outside_script());
     let h = harness_with_agent("test-agent", &stub.bin).await;
 
-    let page: OutsideSessionPageDto = h.get("/v1/outside-sessions").await;
+    let page: SessionPageDto = h.get("/v1/sessions?all=true").await;
 
     let sessions = page.sessions;
     let found = sessions
         .iter()
-        .find(|session| session.internal_session_id == "outside-1")
+        .find(|session| session.internal_session_id.as_deref() == Some("outside-1"))
         .unwrap_or_else(|| panic!("outside-1 not in {sessions:#?}"));
+    assert_eq!(found.kind, SessionKind::Outside);
     assert_eq!(found.agent_id, "test-agent");
-    assert_eq!(found.working_directory, "/work/outside");
-    assert_eq!(found.first_prompt, "fix the outstanding bug");
-    assert_eq!(found.last_activity_at, "2026-01-01T00:00:00Z");
+    assert_eq!(found.working_directory.as_deref(), Some("/work/outside"));
+    assert_eq!(found.title.as_deref(), Some("fix the outstanding bug"));
+    assert_eq!(
+        found.last_activity_at.as_deref(),
+        Some("2026-01-01T00:00:00Z")
+    );
 }
 
 /// An agent without the session-listing capability contributes nothing to
@@ -101,7 +107,7 @@ async fn an_agent_without_the_capability_lists_nothing_and_shows_the_reason() {
     let stub = stub_acp_agent(dir.path(), setup);
     let h = harness_with_agent("no-listing", &stub.bin).await;
 
-    let page: OutsideSessionPageDto = h.get("/v1/outside-sessions").await;
+    let page: SessionPageDto = h.get("/v1/sessions?all=true").await;
     assert!(
         page.sessions
             .iter()
@@ -299,7 +305,7 @@ async fn a_session_missing_from_the_snapshot_is_refused_after_one_fresh_snapshot
     let dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(dir.path(), outside_script());
     let h = harness_with_agent("test-agent", &stub.bin).await;
-    let _: OutsideSessionPageDto = h.get("/v1/outside-sessions").await;
+    let _: SessionPageDto = h.get("/v1/sessions?all=true").await;
     stub.clear_messages();
     let error: ErrorBody = h
         .error(

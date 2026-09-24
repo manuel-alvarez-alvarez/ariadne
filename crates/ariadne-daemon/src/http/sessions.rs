@@ -4,8 +4,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::sessions::{
-    OutsideSessionListQuery, OutsideSessionPageDto, ResumeOutsideSessionRequest, SessionDto,
-    SessionListQuery,
+    ResumeOutsideSessionRequest, SessionDto, SessionPageDto, SessionPageQuery,
 };
 use ariadne_core::models::agent_of;
 use ariadne_store::SessionFilter;
@@ -15,39 +14,6 @@ use super::caller::call_ctx;
 use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
 use crate::acp_sessions::{Filter, QueryError};
-
-/// List sessions Ariadne did not start: one filtered page of the daemon's
-/// snapshot of every ACP agent's stored sessions, newest first.
-#[utoipa::path(get, path = "/v1/outside-sessions", tag = "sessions",
-    params(OutsideSessionListQuery),
-    responses((status = 200, body = OutsideSessionPageDto), (status = 400)))]
-pub(super) async fn list_outside(
-    State(state): State<AppState>,
-    Query(q): Query<OutsideSessionListQuery>,
-) -> ApiResult<Json<OutsideSessionPageDto>> {
-    // Read the query before any agent is asked for a snapshot it would
-    // not answer from.
-    let filter = Filter::parse(&q).map_err(|error| match error {
-        QueryError::InvalidCursor => {
-            ApiError::new(StatusCode::BAD_REQUEST, "invalid_cursor", error.to_string())
-        }
-        QueryError::InvalidFilter(_) => ApiError::bad_request(error.to_string()),
-    })?;
-    let snapshot = state
-        .outside_sessions
-        .snapshot(&state.agent_registry, q.refresh.unwrap_or(false))
-        .await;
-    let page = crate::acp_sessions::page(&snapshot, &state.store, &filter)
-        .await
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                error.to_string(),
-            )
-        })?;
-    Ok(Json(page))
-}
 
 /// Resume an outside conversation without creating a goal or task.
 #[utoipa::path(post, path = "/v1/outside-sessions/resume", tag = "sessions",
@@ -107,29 +73,37 @@ pub(super) async fn resume_outside(
     Ok(Json(session_dto_of(&state.store, session).await?))
 }
 
-/// List agent sessions.
+/// List sessions: one page of the sessions Ariadne runs and the
+/// conversations the ACP agents stored themselves, newest activity first.
 #[utoipa::path(get, path = "/v1/sessions", tag = "sessions",
-    params(SessionListQuery),
-    responses((status = 200, body = [SessionDto])))]
+    params(SessionPageQuery),
+    responses((status = 200, body = SessionPageDto), (status = 400)))]
 pub(super) async fn list(
     State(state): State<AppState>,
-    Query(q): Query<SessionListQuery>,
-) -> ApiResult<Json<Vec<SessionDto>>> {
-    let sessions = state
-        .store
-        .list_sessions(SessionFilter {
-            goal_id: q.goal,
-            task_id: q.task,
-            status: q.status,
-            live_only: false,
-            attention_only: q.attention.unwrap_or(false),
-        })
-        .await?;
-    let mut out = Vec::with_capacity(sessions.len());
-    for session in sessions {
-        out.push(session_dto_of(&state.store, session).await?);
-    }
-    Ok(Json(out))
+    Query(q): Query<SessionPageQuery>,
+) -> ApiResult<Json<SessionPageDto>> {
+    // Read the query before any agent is asked for a snapshot it would
+    // not answer from.
+    let filter = Filter::parse(&q).map_err(|error| match error {
+        QueryError::InvalidCursor => {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_cursor", error.to_string())
+        }
+        QueryError::InvalidFilter(_) => ApiError::bad_request(error.to_string()),
+    })?;
+    let snapshot = state
+        .outside_sessions
+        .snapshot(&state.agent_registry, q.refresh.unwrap_or(false))
+        .await;
+    let page = crate::acp_sessions::page(&snapshot, &state.store, &filter)
+        .await
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                error.to_string(),
+            )
+        })?;
+    Ok(Json(page))
 }
 
 /// Inspect a session.
