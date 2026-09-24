@@ -18,7 +18,8 @@
  *
  * A drop is retried on the event stream's backoff, and the pane says so
  * meanwhile; a close the daemon meant — the session ended, Ctrl-C twice,
- * Ctrl-D — ends this console, and a button opens another. Every open is a
+ * Ctrl-D — ends this console, and a button opens another while the session
+ * is live. An ended session's console opens again when it is resumed. Every open is a
  * fresh console redrawn whole, so the terminal is reset first rather than
  * left holding a second copy of the transcript.
  */
@@ -218,8 +219,23 @@ function TerminalPane({
   function reopen() {
     setSocketStatus("connecting")
     setError(null)
+    setReported(null)
     socket.current?.start()
   }
+
+  // The cache's status is newer than what the daemon said as the console
+  // closed once it moves: a resume brings an ended session back under the
+  // same id, and the console it closed opens again on its own, since the
+  // daemon has one to draw again.
+  const cacheLive = isLiveStatus(status)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a move of the cached status counts, not every render of a closed pane
+  useEffect(() => {
+    if (!cacheLive) return
+    setReported(null)
+    if (socketStatus === "closed") reopen()
+  }, [cacheLive])
+
+  const live = isLiveStatus(reported ?? status)
 
   return (
     <div
@@ -230,13 +246,12 @@ function TerminalPane({
     >
       <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5 text-muted-foreground">
         <span role="status" className="min-w-0">
-          <TerminalStatusLine
-            status={socketStatus}
-            error={error}
-            live={isLiveStatus(reported ?? status)}
-          />
+          <TerminalStatusLine status={socketStatus} error={error} live={live} />
         </span>
-        {socketStatus === "closed" ? (
+        {/* An ended session's console draws its transcript and closes again
+            at once, so only a live one's is worth opening again; an ended
+            one comes back by resuming the session. */}
+        {socketStatus === "closed" && live ? (
           <Button size="xs" variant="outline" onClick={reopen} className="font-mono">
             Reopen
           </Button>
@@ -322,7 +337,11 @@ function TerminalStatusLine({
     )
   }
   if (status === "closed") {
-    return <span>{live ? "The console closed." : "This session has ended."}</span>
+    return (
+      <span>
+        {live ? "The console closed." : "This session has ended. Resume it to talk to it."}
+      </span>
+    )
   }
   return (
     <span className="flex items-center gap-1.5">

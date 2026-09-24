@@ -123,16 +123,36 @@ it("ends the console on a close the daemon meant, and a button opens another", a
   const user = userEvent.setup()
   const socket = await renderPane()
   socket.succeed()
-  socket.deliverText({ type: "status", status: "exited" })
 
   socket.end()
 
-  await screen.findByText("This session has ended.")
+  await screen.findByText("The console closed.")
   expect(FakeWebSocket.instances).toHaveLength(1)
 
   await user.click(screen.getByRole("button", { name: "Reopen" }))
 
   expect(FakeWebSocket.instances).toHaveLength(2)
+})
+
+it("offers no reopen once the session has ended, and opens again when it is resumed", async () => {
+  const { rerender } = renderScreen(<SessionTerminal sessionId={SESSION_ID} status="running" />)
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+  const socket = latestSocket()
+  socket.succeed()
+  socket.deliverText({ type: "status", status: "exited" })
+  socket.end()
+
+  await screen.findByText(/This session has ended/)
+  expect(screen.queryByRole("button", { name: "Reopen" })).toBeNull()
+
+  rerender(<SessionTerminal sessionId={SESSION_ID} status="exited" />)
+  expect(FakeWebSocket.instances).toHaveLength(1)
+
+  rerender(<SessionTerminal sessionId={SESSION_ID} status="running" />)
+
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2))
+  act(() => latestSocket().succeed())
+  screen.getByText("Live")
 })
 
 it("expands the console into a near-fullscreen modal", async () => {
