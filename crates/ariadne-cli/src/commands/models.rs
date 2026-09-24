@@ -6,8 +6,10 @@ use clap::Subcommand;
 
 use ariadne_api::models::{EffortDto, ModelDto, SetModelEnabledRequest};
 use ariadne_client::Client;
+use ariadne_core::models::ModelRank;
 
 use super::parse_model;
+use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, col, empty_state, note, print, print_kv, print_list, status_line,
     view, yes_no,
@@ -28,6 +30,7 @@ const LS: &[Column] = &[
     // Never dropped: a row a reader cannot pin is a row they have to be able
     // to tell apart, whatever the terminal is wide enough for.
     col("on", UNCAPPED),
+    col("rank", UNCAPPED),
     col("efforts", 36).rank(1),
     col("description", 60).rank(0),
 ];
@@ -69,6 +72,25 @@ pub(crate) enum ModelsCommand {
               add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: String,
     },
+    /// Set or clear the user's rank of a model
+    ///
+    /// The rank is independent of discovery: it is what the orchestrator
+    /// staffs the smallest of, not what a model can do. `frontier` is the
+    /// agent's most capable model, `balanced` its everyday one, `fast` its
+    /// quick and cheap one, and `local` runs on the user's own machine.
+    #[command(group = clap::ArgGroup::new("rank-value").args(["rank", "clear"]).required(true))]
+    Rank {
+        /// Model id, as `models ls` spells it
+        #[arg(value_parser = parse_model,
+              add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: String,
+        /// The new rank: frontier, balanced, fast or local
+        #[arg(value_parser = Spelling::<ModelRank>::new())]
+        rank: Option<ModelRank>,
+        /// Clear the rank, leaving the model unranked
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 pub(crate) async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<()> {
@@ -77,6 +99,9 @@ pub(crate) async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> 
         ModelsCommand::Show { model } => show(client, &model, format).await,
         ModelsCommand::Enable { model } => set_enabled(client, &model, true, format).await,
         ModelsCommand::Disable { model } => set_enabled(client, &model, false, format).await,
+        ModelsCommand::Rank { model, rank, clear } => {
+            set_rank(client, &model, if clear { None } else { rank }, format).await
+        }
     }
 }
 
@@ -102,6 +127,30 @@ async fn set_enabled(client: &Client, model: &str, enabled: bool, format: Format
                 } else {
                     "disabled"
                 },
+            )
+        )
+    })?;
+    Ok(())
+}
+
+/// Set or clear one entry's rank. The daemon answers with the entry as it now
+/// stands, printed the same way `enable`/`disable` print theirs.
+async fn set_rank(
+    client: &Client,
+    model: &str,
+    rank: Option<ModelRank>,
+    format: Format,
+) -> Result<()> {
+    let updated: ModelDto = client.set_model_rank(model, rank).await?;
+    print(format, &updated, || {
+        println!(
+            "{}",
+            status_line(
+                view().color,
+                view().quiet,
+                "model",
+                &updated.id,
+                &rank_word(updated.rank),
             )
         )
     })?;
@@ -148,9 +197,19 @@ fn row(m: &ModelDto) -> Vec<String> {
         m.agent_id.clone(),
         m.id.clone(),
         yes_no(m.enabled, "no"),
+        rank_word(m.rank),
         effort_cell(&m.efforts),
         m.description.clone().unwrap_or_else(|| "-".into()),
     ]
+}
+
+/// The rank cell of `models ls`: the user's word for it, or `-` when the
+/// model is unranked.
+fn rank_word(rank: Option<ModelRank>) -> String {
+    match rank {
+        Some(rank) => rank.as_str().to_string(),
+        None => "-".into(),
+    }
 }
 
 /// The entry `models show` names, by exact id — the only match worth making:
@@ -346,7 +405,7 @@ mod tests {
                     },
                 ],
                 enabled: true,
-                rank: None,
+                rank: Some(ModelRank::Balanced),
             },
             // Turned off, which is the one thing a row says whatever the
             // terminal is wide enough for.
@@ -358,8 +417,8 @@ mod tests {
     }
 
     /// `models ls` carries what the agent said about a model — its efforts,
-    /// the default one starred, and its description — and `-` where it said
-    /// nothing.
+    /// the default one starred, and its description — its rank, and `-`
+    /// where it said nothing or has none.
     #[test]
     fn a_row_stars_the_default_effort_and_dashes_what_is_unsaid() {
         assert_eq!(
@@ -368,14 +427,23 @@ mod tests {
                 "codex-acp",
                 "codex-acp:gpt-5.6-luna",
                 "yes",
+                "balanced",
                 "low, medium*",
                 "balanced coding model",
             ]
         );
         assert_eq!(
             row(&fixture()[1]),
-            ["opencode-acp", "opencode-acp:llama3", "no", "-", "-"]
+            ["opencode-acp", "opencode-acp:llama3", "no", "-", "-", "-"]
         );
+    }
+
+    /// A model's rank prints as its word, and an unranked one as a dash.
+    #[test]
+    fn the_rank_word_names_the_rank_or_dashes_when_there_is_none() {
+        assert_eq!(rank_word(Some(ModelRank::Frontier)), "frontier");
+        assert_eq!(rank_word(Some(ModelRank::Local)), "local");
+        assert_eq!(rank_word(None), "-");
     }
 
     /// The description is the first column dropped on a narrow terminal, and
@@ -396,7 +464,7 @@ mod tests {
         };
         assert_eq!(
             headers(&View::plain()),
-            ["AGENT", "TITLE", "ON", "EFFORTS", "DESCRIPTION"]
+            ["AGENT", "TITLE", "ON", "RANK", "EFFORTS", "DESCRIPTION"]
         );
         let narrow = headers(&View::at(40));
         assert!(!narrow.contains(&"DESCRIPTION".to_string()), "{narrow:?}");
@@ -476,5 +544,131 @@ mod tests {
         assert_eq!(card_calls, 0, "json prints the payload, not the card");
         print(Format::Table, &m, || card_calls += 1).expect("table");
         assert_eq!(card_calls, 1, "table renders the card exactly once");
+    }
+
+    /// `models rank <id> <rank>` puts the id and the rank, whole, to the
+    /// daemon's own endpoint.
+    #[tokio::test]
+    async fn rank_puts_the_id_and_the_rank_to_the_daemon() {
+        use std::sync::{Arc, Mutex};
+
+        async fn handler(
+            axum::extract::State(captured): axum::extract::State<
+                Arc<Mutex<Option<serde_json::Value>>>,
+            >,
+            axum::Json(body): axum::Json<serde_json::Value>,
+        ) -> axum::Json<ModelDto> {
+            *captured.lock().unwrap() = Some(body);
+            axum::Json(ModelDto {
+                rank: Some(ModelRank::Fast),
+                ..model("codex-acp:o3", "codex-acp")
+            })
+        }
+
+        let captured = Arc::new(Mutex::new(None));
+        let app = axum::Router::new()
+            .route("/v1/models/rank", axum::routing::put(handler))
+            .with_state(captured.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        set_rank(
+            &Client::tcp(format!("http://{address}")),
+            "codex-acp:o3",
+            Some(ModelRank::Fast),
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(
+            captured.lock().unwrap().take(),
+            Some(serde_json::json!({"id": "codex-acp:o3", "rank": "fast"}))
+        );
+    }
+
+    /// `--clear` puts the id with a `null` rank, which is what clears it.
+    #[tokio::test]
+    async fn rank_clear_puts_a_null_rank_to_the_daemon() {
+        use std::sync::{Arc, Mutex};
+
+        async fn handler(
+            axum::extract::State(captured): axum::extract::State<
+                Arc<Mutex<Option<serde_json::Value>>>,
+            >,
+            axum::Json(body): axum::Json<serde_json::Value>,
+        ) -> axum::Json<ModelDto> {
+            *captured.lock().unwrap() = Some(body);
+            axum::Json(model("codex-acp:o3", "codex-acp"))
+        }
+
+        let captured = Arc::new(Mutex::new(None));
+        let app = axum::Router::new()
+            .route("/v1/models/rank", axum::routing::put(handler))
+            .with_state(captured.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        // `--clear` is read as `rank: None` before `set_rank` is ever called
+        // (see `ModelsCommand::Rank`'s handling in `run`), so this is what it
+        // sends.
+        set_rank(
+            &Client::tcp(format!("http://{address}")),
+            "codex-acp:o3",
+            None,
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(
+            captured.lock().unwrap().take(),
+            Some(serde_json::json!({"id": "codex-acp:o3", "rank": null}))
+        );
+    }
+
+    /// `models rank` keeps the daemon's own refusal of a model id it does not
+    /// know, the way `agent refresh` keeps a refusal of its own.
+    #[tokio::test]
+    async fn rank_keeps_the_daemons_refusal_of_an_unknown_model() {
+        async fn handler() -> (
+            axum::http::StatusCode,
+            axum::Json<ariadne_api::error::ErrorBody>,
+        ) {
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                axum::Json(ariadne_api::error::ErrorBody::new(
+                    "not_found",
+                    "no model `codex-acp:nope` in the catalog",
+                )),
+            )
+        }
+
+        let app = axum::Router::new().route("/v1/models/rank", axum::routing::put(handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let error = set_rank(
+            &Client::tcp(format!("http://{address}")),
+            "codex-acp:nope",
+            Some(ModelRank::Fast),
+            Format::Table,
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+
+        assert_eq!(
+            error
+                .downcast_ref::<ariadne_client::ClientError>()
+                .unwrap()
+                .human(),
+            "no model `codex-acp:nope` in the catalog"
+        );
     }
 }

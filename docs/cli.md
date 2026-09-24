@@ -262,8 +262,20 @@ ariadne task diff <task-id>               # proposed change
 ```
 
 Models and effort are always supplied by ACP discovery. `ariadne models ls`
-shows the available values. A task can change its permission handling before
-it starts:
+shows the available values, and its `rank` column shows the rank each has, or
+a dash for a model nobody ranked.
+
+Rank a model so the orchestrator staffs the smallest one a task earns:
+
+```sh
+ariadne models rank codex-acp:<model-id> frontier
+ariadne models rank codex-acp:<model-id> --clear   # back to unranked
+```
+
+The four ranks: `frontier` is the agent's most capable model, `balanced` is
+its everyday one, `fast` is its quick and cheap one, and `local` runs on the
+user's own machine. A task can change its permission handling before it
+starts:
 
 ```sh
 ariadne task update <task-id> --model codex-acp:<model-id> --effort high

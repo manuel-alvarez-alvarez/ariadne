@@ -106,6 +106,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("models disable", true),
     ("models enable", true),
     ("models ls", true),
+    ("models rank", true),
     ("models show", true),
     ("repo add", true),
     ("repo inspect", true),
@@ -1463,6 +1464,50 @@ fn models_show_takes_a_model_in_the_spelling_dash_dash_model_takes() {
         panic!("a bare agent names no model");
     };
     assert!(err.to_string().contains("names no agent"), "{err}");
+}
+
+/// `models rank` takes each of the four ranks, and `--clear` in place of one.
+#[test]
+fn models_rank_takes_each_of_the_four_ranks_or_clears_it() {
+    let rank = |argv: &[&str]| {
+        let Command::Models {
+            command: ModelsCommand::Rank { rank, clear, .. },
+        } = parse(argv).command
+        else {
+            panic!("models rank");
+        };
+        (rank, clear)
+    };
+    for word in ["frontier", "balanced", "fast", "local"] {
+        let (parsed, clear) = rank(&["ariadne", "models", "rank", "codex-acp:o3", word]);
+        assert_eq!(
+            parsed.map(|r| r.as_str().to_string()).as_deref(),
+            Some(word)
+        );
+        assert!(!clear, "{word}");
+    }
+    let (parsed, clear) = rank(&["ariadne", "models", "rank", "codex-acp:o3", "--clear"]);
+    assert_eq!(parsed, None);
+    assert!(clear);
+}
+
+/// A rank word that is none of the four is refused by name, and the refusal
+/// lists what would have worked. Naming neither a rank nor `--clear` is
+/// refused too: there is nothing to set the model to.
+#[test]
+fn models_rank_refuses_an_unknown_word_and_naming_neither_rank_nor_clear() {
+    let Err(err) = try_parse(&["ariadne", "models", "rank", "codex-acp:o3", "urgent"]) else {
+        panic!("not one of the four ranks");
+    };
+    let err = err.to_string();
+    for word in ["frontier", "balanced", "fast", "local"] {
+        assert!(err.contains(word), "{err}");
+    }
+
+    let Err(err) = try_parse(&["ariadne", "models", "rank", "codex-acp:o3"]) else {
+        panic!("names neither a rank nor --clear");
+    };
+    assert!(err.to_string().contains("required"), "{err}");
 }
 
 fn parse(argv: &[&str]) -> Cli {

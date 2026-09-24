@@ -1,7 +1,7 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-23
+updated: 2026-09-24
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
@@ -209,6 +209,18 @@ same binary also serves (013).
   the way `--model` does
   (`cli/tests.rs::models_ls_takes_an_agent_to_narrow_the_catalogue`,
   `::models_show_takes_a_model_in_the_spelling_dash_dash_model_takes`).
+- `models rank` takes each of the four ranks or `--clear` in place of one, and
+  refuses an unknown word by name and naming neither
+  (`cli/tests.rs::models_rank_takes_each_of_the_four_ranks_or_clears_it`,
+  `::models_rank_refuses_an_unknown_word_and_naming_neither_rank_nor_clear`).
+  Setting a rank puts the id and the rank whole, `--clear` puts a `null`
+  rank, and an unknown model id keeps the daemon's own refusal
+  (`models.rs::rank_puts_the_id_and_the_rank_to_the_daemon`,
+  `::rank_clear_puts_a_null_rank_to_the_daemon`,
+  `::rank_keeps_the_daemons_refusal_of_an_unknown_model`).
+- A row's rank is its word, or a dash for a model nobody ranked
+  (`models.rs::the_rank_word_names_the_rank_or_dashes_when_there_is_none`,
+  `::a_row_stars_the_default_effort_and_dashes_what_is_unsaid`).
 - Completion offers the efforts an entry lists and no others
   (`complete.rs::an_entry_offers_the_efforts_it_lists_and_no_others`).
 - Only a terminal on both ends gets the inline console

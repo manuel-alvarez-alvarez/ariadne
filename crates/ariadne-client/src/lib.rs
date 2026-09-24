@@ -21,6 +21,7 @@ use serde::de::DeserializeOwned;
 use ariadne_api::agents::{AcpAgentDto, AgentConfigDto, UpdateAgentConfigRequest};
 use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
+use ariadne_api::models::{ModelDto, SetModelRankRequest};
 use ariadne_api::skills::SkillDto;
 use ariadne_api::{HealthResponse, VersionResponse};
 
@@ -285,6 +286,22 @@ impl Client {
     pub async fn reset_skill(&self, skill: &str) -> Result<SkillDto, ClientError> {
         self.post_empty(&format!("/v1/skills/{skill}/document/reset"))
             .await
+    }
+
+    /// Set or clear a catalog entry's user rank. `None` clears it.
+    pub async fn set_model_rank(
+        &self,
+        id: &str,
+        rank: Option<ariadne_core::models::ModelRank>,
+    ) -> Result<ModelDto, ClientError> {
+        self.put_json(
+            "/v1/models/rank",
+            &SetModelRankRequest {
+                id: id.to_string(),
+                rank,
+            },
+        )
+        .await
     }
 
     // ---- generic verbs ---------------------------------------------------

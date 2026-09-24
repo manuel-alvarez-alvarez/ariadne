@@ -14,6 +14,11 @@ use std::str::FromStr;
 /// A user-set rank, independent of discovery and model availability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(
+    feature = "clap",
+    derive(clap::ValueEnum),
+    value(rename_all = "kebab-case")
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelRank {
     Frontier,
