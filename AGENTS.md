@@ -33,6 +33,25 @@ is a file an agent may never see.
 Before changing anything, read the surrounding code and match its style,
 naming and tooling.
 
+## Processes you leave behind
+
+Every agent and every check shares one machine. A process you start in the
+background outlives your shell: a session can end, time out or be killed at
+any line, so a `kill` at the end of the script may never run. Whatever it
+started then keeps going, and every later task pays for it. Leftover busy
+loops once held the load at 200 on 16 cores for three days, and every
+`cargo` and `vitest` run crawled.
+
+- To prove a flaky test holds under load, make each busy loop end with the
+  shell that started it: `(while kill -0 $$ 2>/dev/null; do :; done) &`,
+  never `(while :; do :; done) &`. `$$` is the starting shell even inside
+  the subshell, so the loop stops within a moment when that shell dies,
+  even by `kill -9`. Kill the loops yourself when the proof is done, too.
+- To wait for a process, wait on its pid (`while kill -0 $pid; do sleep 5;
+  done`), not on `pgrep -f '<pattern>'`. The pattern is in the waiting
+  shell's own command line, so `pgrep -f` finds the waiter itself and the
+  wait never ends.
+
 ## Commit messages
 
 This is the one place the commit types are written down: `README.md` and
