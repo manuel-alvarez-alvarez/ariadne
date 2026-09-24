@@ -496,6 +496,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn task_on(repo: &Path, n: usize) -> Task {
         let mut task = task(repo);
         task.id = format!("task-{n}");
