@@ -43,7 +43,9 @@ The ACP runtime belongs to 021.
    taken, resumed ones included; nothing of it is written to disk. The
    snapshot is taken on the first listing request, again when a request
    carries `refresh=true`, and again when it is older than 60 seconds at
-   request time. A request inside that minute asks no agent.
+   request time. A request inside that minute asks no agent, and neither
+   does a request no outside session can answer: `kind=ariadne`, or one
+   narrowed by a goal, task, status, seat or attention.
 3. A session whose agent and internal id already occur on an Ariadne session
    row is not an outside session and is never listed. A row's agent is read
    off its `model` column, which always holds `<agent>:<model>`. The rows
@@ -149,6 +151,9 @@ The ACP runtime belongs to 021.
 - A second request within 60 seconds asks no agent again, and a request with
   `refresh=true` does
   (`session_list.rs::a_second_request_asks_no_agent_again_but_a_refresh_does`).
+- A request no outside session can answer asks no agent, even with
+  `refresh=true`
+  (`session_list.rs::a_page_with_no_room_for_an_outside_session_asks_no_agent`).
 - A resumed outside session is in the page once, as an Ariadne session, and
   without a refresh
   (`session_list.rs::a_resumed_outside_session_is_listed_once_as_an_ariadne_session`).

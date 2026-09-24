@@ -609,6 +609,29 @@ async fn a_second_request_asks_no_agent_again_but_a_refresh_does() {
     assert_eq!(stub.calls_of("session/list").len(), 2);
 }
 
+/// A page no outside session can be in — one kind of Ariadne's, or narrowed
+/// by a goal, task, status, seat or attention — asks no agent for one.
+#[tokio::test]
+async fn a_page_with_no_room_for_an_outside_session_asks_no_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(dir.path(), listing_script(five_sessions(Utc::now()), None));
+    let h = harness_with(&stub).await;
+    let session = ariadne_session(&h, "Ship the UI", "stub").await;
+
+    let ariadne = listing(&h, "kind=ariadne&refresh=true").await;
+    assert_eq!(ids(&ariadne), [session.id.as_str()]);
+    let goal = session.goal_id.clone().expect("the session has a goal");
+    for query in [
+        format!("goal={goal}"),
+        "status=running".to_owned(),
+        "seat=author".to_owned(),
+        "attention=true".to_owned(),
+    ] {
+        listing(&h, &query).await;
+    }
+    assert!(stub.calls_of("session/list").is_empty());
+}
+
 /// A resumed conversation is in the page once, as the Ariadne session it
 /// became: what a row already holds is subtracted from the outside half at
 /// query time, without a new snapshot.

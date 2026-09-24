@@ -90,10 +90,15 @@ pub(super) async fn list(
         }
         QueryError::InvalidFilter(_) => ApiError::bad_request(error.to_string()),
     })?;
-    let snapshot = state
-        .outside_sessions
-        .snapshot(&state.agent_registry, q.refresh.unwrap_or(false))
-        .await;
+    // A page no outside session can be in asks no agent for one.
+    let snapshot = if filter.takes_outside() {
+        state
+            .outside_sessions
+            .snapshot(&state.agent_registry, q.refresh.unwrap_or(false))
+            .await
+    } else {
+        state.outside_sessions.cached().await
+    };
     let page = crate::acp_sessions::page(&snapshot, &state.store, &filter)
         .await
         .map_err(|error| {

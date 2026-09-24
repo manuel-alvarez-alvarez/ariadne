@@ -121,6 +121,20 @@ impl OutsideSessions {
         *current = Some(snapshot.clone());
         snapshot
     }
+
+    /// The snapshot as it stands, however old, or an empty one where none
+    /// has been taken yet — for a page no outside session can be in, which
+    /// has no reason to ask an agent anything.
+    pub(crate) async fn cached(&self) -> Arc<Snapshot> {
+        if let Some(snapshot) = self.snapshot.lock().await.as_ref() {
+            return snapshot.clone();
+        }
+        Arc::new(Snapshot {
+            sessions: Vec::new(),
+            taken_at: Utc::now(),
+            taken: Instant::now(),
+        })
+    }
 }
 
 /// Why a query cannot be answered: which value, and what is wrong with it.
@@ -241,7 +255,7 @@ impl Filter {
     /// Whether an outside session can be in this page at all. It carries no
     /// goal, task, seat, status or attention, so a filter over one of those
     /// leaves none of them.
-    fn takes_outside(&self) -> bool {
+    pub(crate) fn takes_outside(&self) -> bool {
         self.kind != Some(SessionKind::Ariadne)
             && self.goal.is_none()
             && self.task.is_none()
