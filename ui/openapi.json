@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
     },
-    "version": "0.8.0"
+    "version": "0.9.0"
   },
   "paths": {
     "/v1/acp-agents": {
@@ -893,8 +893,7 @@
         "tags": [
           "models"
         ],
-        "summary": "Rank one entry of the catalog, or clear its rank.",
-        "description": "The catalog is discovery, so this writes only the exception: an id\nnothing in the catalog carries is a 404.",
+        "summary": "Set or clear a catalog entry's rank without changing its enabled flag.",
         "operationId": "set_rank",
         "requestBody": {
           "content": {
@@ -919,6 +918,9 @@
           },
           "404": {
             "description": "no such model in the catalog"
+          },
+          "422": {
+            "description": "rank must be frontier, balanced, fast or local"
           }
         }
       }
@@ -1046,36 +1048,33 @@
         }
       }
     },
-    "/v1/outside-sessions/adopt": {
+    "/v1/outside-sessions/resume": {
       "post": {
         "tags": [
           "sessions"
         ],
-        "summary": "Create a task for one outside session, in a new goal or an active goal,\nand adopt that session as its author before the scheduler can start one.",
-        "operationId": "adopt_outside",
+        "summary": "Resume an outside conversation without creating a goal or task.",
+        "operationId": "resume_outside",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AdoptOutsideSessionRequest"
+                "$ref": "#/components/schemas/ResumeOutsideSessionRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "201": {
+          "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdoptOutsideSessionResponse"
+                  "$ref": "#/components/schemas/SessionDto"
                 }
               }
             }
-          },
-          "400": {
-            "description": ""
           },
           "403": {
             "description": ""
@@ -1592,7 +1591,7 @@
           "sessions"
         ],
         "summary": "Revive an ended session: a new agent process, same agent conversation\n(resumed via the stored internal session id). Returns the session to\nattach to, which is this one either way — relaunched under its own id, or\nuntouched when its agent turned out to be alive already.",
-        "description": "`409` when there is nothing to come back to: no stored agent id, a\nworktree that was cleaned up — or a goal that has finished, whose live\nsessions the scheduler takes down anyway.",
+        "description": "A missing worktree falls back to the repository checkout. A completed\ngoal stays completed while its session runs again.",
         "operationId": "resume",
         "parameters": [
           {
@@ -2531,93 +2530,6 @@
           "user"
         ]
       },
-      "AdoptOutsideSessionRequest": {
-        "type": "object",
-        "description": "Adopt one outside session into a new task and goal, or an active goal.",
-        "required": [
-          "agent_id",
-          "internal_session_id",
-          "goal",
-          "agents"
-        ],
-        "properties": {
-          "agent_id": {
-            "type": "string",
-            "description": "Which registry agent the session belongs to."
-          },
-          "agents": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AgentAssignment"
-            },
-            "description": "The author first, then the reviewers."
-          },
-          "description": {
-            "type": "string"
-          },
-          "goal": {
-            "$ref": "#/components/schemas/OutsideSessionGoal"
-          },
-          "internal_session_id": {
-            "type": "string"
-          },
-          "landing": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/Landing"
-              }
-            ]
-          },
-          "permission_mode": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/PermissionMode"
-              }
-            ]
-          },
-          "repo_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Id of one of the goal's repositories. Omit it when one repository or\nthe session's working directory settles the choice."
-          },
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Omitted uses the session's first prompt, cut at 120 characters."
-          }
-        },
-        "additionalProperties": false
-      },
-      "AdoptOutsideSessionResponse": {
-        "type": "object",
-        "description": "The resources created or joined by an outside-session adoption.",
-        "required": [
-          "goal",
-          "task",
-          "session"
-        ],
-        "properties": {
-          "goal": {
-            "$ref": "#/components/schemas/GoalDto"
-          },
-          "session": {
-            "$ref": "#/components/schemas/SessionDto"
-          },
-          "task": {
-            "$ref": "#/components/schemas/TaskDto"
-          }
-        }
-      },
       "AgentAssignment": {
         "type": "object",
         "description": "One agent to staff on a task: where it sits, the skills it loads, and what\nit is to run on.\n\nThe model is written `<agent>:<model>`: the id of an agent in the ACP\nregistry, and after the `:` one model of it. Both halves are required — a\nmodel is required, and no agent default stands in for one — and a string\nnaming no registry agent is refused: nothing here derives one from the\nother.",
@@ -3405,19 +3317,6 @@
           "desc"
         ]
       },
-      "ExistingOutsideSessionGoal": {
-        "type": "object",
-        "description": "An active goal that receives the new task.",
-        "required": [
-          "id"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
       "FinalizePlanRequest": {
         "type": "object",
         "description": "Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and\nexecution starts. The orchestrator's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote.",
@@ -3699,13 +3598,12 @@
       },
       "ModelDto": {
         "type": "object",
-        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: a\nregistry agent on a model discovery found it offering\n(`claude-acp:claude-opus-5`). Every entry names both halves — there\nis no bare-agent entry, because a model is required wherever an agent is\npinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. The rest is what the agent itself said when discovery\nasked: one line about the model, and the efforts it can be run at.",
+        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: a\nregistry agent on a model discovery found it offering\n(`claude-acp:claude-opus-5`). Every entry names both halves — there\nis no bare-agent entry, because a model is required wherever an agent is\npinned.\n\nThe id is what a request writes as its `model`, whole. `agent_id` is its\nregistry prefix. Discovery supplies the description and efforts.\nThe user sets the enabled flag and optional rank independently.",
         "required": [
           "id",
           "agent_id",
           "efforts",
-          "enabled",
-          "rank"
+          "enabled"
         ],
         "properties": {
           "agent_id": {
@@ -3737,54 +3635,25 @@
           "rank": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ModelRank"
+                "type": "null"
               },
               {
-                "type": "null"
+                "$ref": "#/components/schemas/ModelRank",
+                "description": "The user-set rank, or `null` when the model is unranked."
               }
-            ],
-            "description": "The user's rank of this entry, or null where it is unranked. The\norchestrator staffs the smallest ranked model a task earns."
+            ]
           }
         }
       },
       "ModelRank": {
         "type": "string",
-        "description": "How the user ranks a model against the others its agent offers, so the\norchestrator staffs the smallest rank a task earns.",
+        "description": "A user-set rank, independent of discovery and model availability.",
         "enum": [
           "frontier",
           "balanced",
           "fast",
           "local"
         ]
-      },
-      "NewOutsideSessionGoal": {
-        "type": "object",
-        "description": "A new active, unorchestrated goal for the adopted session.",
-        "required": [
-          "title"
-        ],
-        "properties": {
-          "description": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "repository_ids": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            },
-            "description": "Registered repository ids. Omitted infers one from the session's\nworking directory."
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
       },
       "OutsideSessionDto": {
         "type": "object",
@@ -3815,17 +3684,6 @@
             "type": "string"
           }
         }
-      },
-      "OutsideSessionGoal": {
-        "oneOf": [
-          {
-            "$ref": "#/components/schemas/ExistingOutsideSessionGoal"
-          },
-          {
-            "$ref": "#/components/schemas/NewOutsideSessionGoal"
-          }
-        ],
-        "description": "The goal that receives an adopted outside session."
       },
       "OutsideSessionPageDto": {
         "type": "object",
@@ -3952,6 +3810,23 @@
           }
         }
       },
+      "ResumeOutsideSessionRequest": {
+        "type": "object",
+        "description": "Resume a stored conversation without a goal, task or seat.",
+        "required": [
+          "agent_id",
+          "internal_session_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "internal_session_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "ResyncDto": {
         "type": "object",
         "description": "Payload of the `resync` control event.\n\nSent as the last message of a connection that fell too far behind: the\ndaemon dropped `missed` events for it and closes the stream. The client\nmust refetch its REST state before following the stream again (an\n`EventSource` reconnects on its own).",
@@ -4009,8 +3884,6 @@
         "type": "object",
         "required": [
           "id",
-          "goal_id",
-          "seat",
           "model",
           "status",
           "usage",
@@ -4070,7 +3943,10 @@
             ]
           },
           "goal_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "id": {
             "type": "string"
@@ -4093,7 +3969,14 @@
             "description": "Model requested at launch, `<agent>:<model>`: the registry agent the\nsession runs on, and the model of it."
           },
           "seat": {
-            "$ref": "#/components/schemas/Seat"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Seat"
+              }
+            ]
           },
           "status": {
             "$ref": "#/components/schemas/SessionStatus"
@@ -4103,14 +3986,14 @@
               "string",
               "null"
             ],
-            "description": "The staffed agent this session runs; None for an orchestrator,\nwhich no task staffs."
+            "description": "The staffed agent this session runs; None for an orchestrator or loose session."
           },
           "task_id": {
             "type": [
               "string",
               "null"
             ],
-            "description": "None = orchestrator session."
+            "description": "None for an orchestrator or a loose session."
           },
           "usage": {
             "$ref": "#/components/schemas/TokenUsageDto",
@@ -4120,7 +4003,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The worktree, or the recorded working directory of a loose session."
           }
         }
       },
@@ -4156,27 +4040,25 @@
       },
       "SetModelRankRequest": {
         "type": "object",
-        "description": "Body of `PUT /v1/models/rank`: one model of the catalog, ranked or\ncleared.\n\nThe id is a field rather than a path segment because a model id carries\n`:` and often `/` (`opencode:anthropic/claude-sonnet-4`) — which is a\npath of its own, not a segment of one.",
+        "description": "Body of `PUT /v1/models/rank`. The id can contain colons and slashes.",
         "required": [
-          "id",
-          "rank"
+          "id"
         ],
         "properties": {
           "id": {
             "type": "string",
-            "description": "The entry, as `GET /v1/models` spells its `id`.",
-            "example": "claude-acp:claude-opus-5"
+            "description": "The entry, as `GET /v1/models` spells its `id`."
           },
           "rank": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ModelRank"
+                "type": "null"
               },
               {
-                "type": "null"
+                "$ref": "#/components/schemas/ModelRank",
+                "description": "The new rank. `null` clears it."
               }
-            ],
-            "description": "The rank to set, or null to clear it."
+            ]
           }
         }
       },

@@ -33,11 +33,11 @@ Out: the daemon endpoints themselves (012).
 2. The shell is a sidebar and a main area; a panel opens beside a list rather
    than replacing it, and the URL carries which panel is open.
 3. Screens: the goals board (swimlanes plus an attention strip), the task
-   panel (facts, diff, messages, history), sessions, each shown in its
-   console, outside sessions that a ready task can adopt as its author,
-   skills, repositories, the
-   agents of the daemon's ACP registry with their launch flags and the models
-   each may be staffed on, and a daemon-logs drawer.
+   panel (facts, diff, messages, history), sessions — Ariadne's own and every
+   outside conversation an ACP agent stored on its own, merged into one
+   listing, each shown in its console — skills, repositories, the agents of
+   the daemon's ACP registry with their launch flags and the models each may
+   be staffed on, and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -82,34 +82,50 @@ Out: the daemon endpoints themselves (012).
     mark, staying editable and resettable like any other shipped skill.
 17. The agent activity feed shows each event's one-line summary from the
     daemon; its raw payload stays available under the row.
-18. The outside-sessions view lists each stored session of an ACP agent from
-    `GET /v1/outside-sessions`: its registry agent id, working directory,
-    last activity and first prompt. A filter bar above the table narrows it by
-    agent — the registry of `GET /v1/acp-agents` — working directory, a since
-    day, an until day, and a search over the first prompts. Each filter is a
-    URL search param under the daemon's own name for it (`?agent=`, `?dir=`,
-    `?since=`, `?until=`, `?q=`), so a narrowed screen is what its URL says
-    and opens again with those filters set; a typed one reaches the daemon
-    once the typing has settled rather than on every keystroke, and a day
-    reaches it as the moment that bounds it — the first instant of the day as
-    `since`, its finest last moment as `until` (`23:59:59.999999999Z`), in UTC,
-    so a day holds every session active on it whatever precision the agent
-    reported. The table takes one page at a time:
-    Load more asks for the `next_cursor` the last page carried and appends
-    what comes back, and one count line reads `<shown> of <total>`. Refresh
-    refetches from the first page with `refresh=true`, which is what asks
-    every agent again. Adopt opens one form that creates a task in an active
-    goal or creates a new, unorchestrated goal for it. Only active goals are
-    offered. A new goal takes its title, description and registered
-    repositories there; the repository whose path contains the session's
-    working directory starts selected. The task starts with the session's
-    first prompt as its title and takes its description, author skills, model
-    and effort, reviewers, landing, repository and permission mode. Its author
-    stays on the session's agent, so that model picker offers only that agent's
-    catalog. Submit calls `POST /v1/outside-sessions/adopt` once, with the
-    author first, then opens the returned task's panel. The goal panel says
-    `No orchestrator` for the new goal. Below the table the view names every
-    ACP agent from `GET /v1/acp-agents` that cannot list its sessions, with why.
+18. The sessions screen lists both kinds of session in one table, newest
+    activity first: the title, the status, the goal, the task, the agent, the
+    age and the tokens. The daemon answers the two kinds over two endpoints —
+    `GET /v1/sessions` whole, for every session Ariadne started, `GET
+    /v1/outside-sessions` a page at a time, for every conversation an ACP
+    agent stored on its own — and the screen merges them client-side into the
+    one table. An outside row leaves its status, goal and task empty, and
+    names its registry agent and its working directory instead, under its
+    title. A filter bar above the table narrows the listing by kind, agent —
+    the registry of `GET /v1/acp-agents` — status, seat, a since day, an
+    until day, and a search over the titles; `?goal=` and `?task=` narrow it
+    further, as a chip above the table. Each filter is a URL search param
+    under the daemon's own name for it (`?kind=`, `?agent=`, `?status=`,
+    `?seat=`, `?dir=`, `?since=`, `?until=`, `?q=`), so a narrowed screen is
+    what its URL says and opens again with those filters set; a typed one
+    reaches the daemon once the typing has settled rather than on every
+    keystroke, and a day reaches it as the moment that bounds it — the first
+    instant of the day as `since`, its finest last moment as `until`
+    (`23:59:59.999999999Z`), in UTC, so a day holds every session active on
+    it whatever precision the agent reported. `status`, `seat`, `goal` and
+    `task` only ever reach `GET /v1/sessions`, being things an outside
+    session has none of; a goal or a task is therefore a structural
+    impossibility for one, and the outside half of the screen is skipped
+    rather than asked for an answer that can only be empty. `agent`, `dir`,
+    `since`, `until` and `q` reach `GET /v1/outside-sessions` the way they
+    always did, and narrow the Ariadne rows here, so a filter reads as one
+    filter over the whole table rather than one that only works on half of
+    it; a real status or a seat leaves an Ariadne row's half fetching but
+    takes it out of the merged rows, since neither is something an outside
+    session could match either. `status` and `seat` are remembered between
+    visits, the way this screen's filters always were; the rest are not,
+    since they are for finding one conversation. The Ariadne half arrives
+    whole, so only the outside half pages: Load more asks for the
+    `next_cursor` the last page carried and appends what comes back, and one
+    count line — shown only while the outside half is part of the merged
+    rows — reads `<shown> of <total>` over both halves together. Refresh
+    refetches the outside half from its first page with `refresh=true`,
+    which is what asks every outside agent again. Picking an Ariadne row
+    opens its own panel (`?session=`) directly. Picking an outside row calls
+    `POST /v1/outside-sessions/resume` once, with its registry agent id and
+    internal session id, then opens the panel of the live session the daemon
+    hands back — which is what turns a stored conversation into one Ariadne
+    can show a console for. That session is loose: no goal, task or seat of
+    its own, same as any other session the screen has none of a fact for.
 19. On a task staffed with several authors (004) the task panel shows every
     one of them — its skills, its model, its own branch, and its status in the
     pick: the votes it has so far, or "Picked" once it is the one that won —
@@ -302,32 +318,36 @@ Out: the daemon endpoints themselves (012).
   and hides an unreported one
   (`ui/src/features/sessions/session-detail-view.test.tsx::shows the reported context window with compact token figures`,
   `::hides context when the agent has not reported a window`).
-- The outside-sessions view lists each stored session named by its registry
-  agent id and shows why an ACP agent without the session-listing capability
-  offers none
-  (`ui/src/features/sessions/outside-sessions-page.test.tsx::lists each outside session with its agent, directory, activity, and first prompt`,
-  `::shows why an ACP agent without the session-listing capability offers no adoption`).
-- Its adoption form offers only active goals, prefills a new goal with the
-  containing repository, and restricts the author model to the session's agent
-  (`ui/src/features/sessions/outside-sessions-page.test.tsx::offers only active goals`,
-  `::prefills a new goal with the repository containing the working directory`,
-  `::offers only models from the outside session's agent`).
-- Adoption sends the outside identifiers, an existing or new goal, and the
-  author before its reviewers, then opens the returned task's panel
-  (`ui/src/features/sessions/outside-sessions-page.test.tsx::sends the outside session, existing goal, and author before reviewers`,
-  `::sends a new goal with its description and repositories`,
-  `::opens the adopted task's panel after success`).
+- One table lists Ariadne sessions and outside sessions together, newest
+  activity first, and an outside row's empty status, goal and task, naming
+  its agent and its directory instead
+  (`ui/src/features/sessions/sessions-page.test.tsx::lists Ariadne sessions and outside sessions together, newest activity first`,
+  `::shows an outside row's empty status, goal and task, and names its agent and directory`).
+- Every filter — kind, agent, status, seat, a day's activity window and a
+  search over the titles — reaches the daemon under its own name, on the
+  endpoint that takes it, and a day is sent as the moments that bound it, in
+  UTC
+  (`ui/src/features/sessions/sessions-page.test.tsx::sends each filter to the daemon under the name that filter has, on the endpoint that takes it`,
+  `::sends a day's activity window as the moments that bound it, in UTC`).
+- The outside half pages through `next_cursor`, keeping the Ariadne rows
+  already shown, and counts both halves together out of the total; Refresh
+  asks every outside agent again
+  (`ui/src/features/sessions/sessions-page.test.tsx::pages the outside half through next_cursor, keeping the Ariadne rows, and counts the total`,
+  `::asks every outside agent again when Refresh is pressed`).
+- Picking an Ariadne row opens its panel directly, asking the resume endpoint
+  for nothing; picking an outside row resumes it once, then opens the console
+  of the session the daemon answers
+  (`ui/src/features/sessions/sessions-page.test.tsx::opens an Ariadne row's own panel directly, asking the resume endpoint for nothing`,
+  `::resumes an outside row once, then opens the console of the session it answers`).
+- A goal chip narrows the screen and the daemon's own list alike, skips the
+  outside half, clears from the chip, and the status and seat filters are
+  what the screen is opened with next
+  (`ui/src/features/sessions/sessions-page.test.tsx::narrows to one goal from a scope chip, skipping the outside half, and clears it`,
+  `::comes back to the status and seat filters the screen was left with`).
+- The outside-sessions page, its route and the adoption dialog are gone
+  (`ui/src/routes/router.test.tsx::leads nowhere from the outside-sessions screen the merge dropped`).
 - An unorchestrated goal names no orchestrator in its panel
   (`ui/src/features/goals/goal-panel.test.tsx::says an unorchestrated goal has no orchestrator`).
-- The outside-sessions view sends every filter under the daemon's own name for
-  it, opens on the filters its URL carries, grows by the page the cursor names,
-  asks every agent again on Refresh, and counts what is on screen out of the
-  total
-  (`ui/src/features/sessions/outside-sessions-page.test.tsx::sends each filter to the daemon under the name that filter has`,
-  `::opens on the filters its URL carries, and asks the daemon for them`,
-  `::loads the page after the cursor the daemon gave, keeping the rows above it`,
-  `::asks every agent again when Refresh is pressed`,
-  `::counts the sessions on screen out of every one the filters leave`).
 - The terminal pane sends its size before anything else, and nothing typed
   before the socket is open
   (`ui/src/features/sessions/session-terminal.test.tsx::sends its size before anything else`).
@@ -360,8 +380,7 @@ Out: the daemon endpoints themselves (012).
   `::takes its tab from the URL, and puts a switch back into it`,
   `::falls back to the console for a tab that is not one of its own`).
 - A session shows its pin whole
-  (`ui/src/features/sessions/session-detail-view.test.tsx::shows the model the session was launched with, once`,
-  `ui/src/features/sessions/sessions-page.test.tsx::says what each session runs on, without repeating the seat beside it`).
+  (`ui/src/features/sessions/session-detail-view.test.tsx::shows the model the session was launched with, once`).
 - A blocked agent's row opens its console focused
   (`ui/src/features/goals/attention-strip.test.tsx::sends a blocked agent to its console, focused`).
 - The blocked banner says where to answer, says to resume an agent that is

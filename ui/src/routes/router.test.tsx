@@ -31,3 +31,9 @@ it("leads nowhere from a screen the app no longer has", async () => {
 
   expect(await screen.findByText("Nothing here")).toBeDefined()
 })
+
+it("leads nowhere from the outside-sessions screen the merge dropped", async () => {
+  await open("/sessions/outside")
+
+  expect(await screen.findByText("Nothing here")).toBeDefined()
+})

@@ -23,10 +23,11 @@ import { sessionsQueryOptions } from "@/features/sessions/queries"
 import {
   SESSION_ATTENTION_META,
   type SessionAttention,
+  seatLabel,
   sessionAttention,
 } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features/tasks"
-import { SEAT_LABELS, shortId } from "@/lib/format"
+import { shortId } from "@/lib/format"
 import { sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
 
 import { goalsQueryOptions } from "./queries"
@@ -118,7 +119,9 @@ export function useAttention(): Attention {
   // rows usually cost no extra request, where `GET /v1/sessions?attention=true`
   // would be a second list of its own. Filtering here is also what keeps the
   // rule — "the daemon raised a reason for it" — in one place for both this
-  // strip and `ariadne attention`.
+  // strip and `ariadne attention`. A loose session — one resumed from an
+  // outside conversation — has no goal, task or seat, and every reader below
+  // falls back accordingly.
   const sessions = useQuery(sessionsQueryOptions())
 
   const items = useMemo(
@@ -205,8 +208,11 @@ function collectAttention(
     flaggedAt.set(key, at)
     rows.set(key, {
       id: key,
-      goalId: session.goal_id,
-      goal: goalsById.get(session.goal_id),
+      // A loose session — one resumed from an outside conversation — has no
+      // goal at all; the fallback is what keeps this row's id total even for
+      // one of those, on the rare chance its agent process disconnects.
+      goalId: session.goal_id ?? "",
+      goal: goalsById.get(session.goal_id ?? ""),
       // The row is as recent as its most recent reason, whichever raised it.
       at: row && row.at.localeCompare(at) > 0 ? row.at : at,
       taskId,
@@ -231,7 +237,7 @@ function collectAttention(
  * same three.
  */
 function sessionAttentionAt(session: SessionDto): string {
-  return session.attention_since ?? session.ended_at ?? session.created_at
+  return session.attention_since ?? session.ended_at ?? session.created_at ?? ""
 }
 
 /**
@@ -279,7 +285,7 @@ function collectBoardAttention(sessions: SessionDto[] | undefined): BoardAttenti
     const at = sessionAttentionAt(session)
     // A session with no task is an orchestrator's, and lands on its goal's lane.
     const index = session.task_id ? byTask : byGoal
-    const key = session.task_id ?? session.goal_id
+    const key = session.task_id ?? session.goal_id ?? ""
     const held = index.get(key)
     if (!held || held.at.localeCompare(at) < 0) index.set(key, { reason, at })
   }
@@ -342,7 +348,7 @@ export function attentionSubject(item: AttentionItem): string {
   if (item.task) return item.task.title
   if (item.taskId) return `Task ${shortId(item.taskId)}`
   return item.session
-    ? `${SEAT_LABELS[item.session.seat]} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
+    ? `${seatLabel(item.session.seat)} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
     : `Goal ${shortId(item.goalId)}`
 }
 
@@ -359,7 +365,7 @@ export function attentionDetail(item: AttentionItem): string {
   if (item.session && item.sessionReason) {
     const hint = SESSION_ATTENTION_META[item.sessionReason].hint
     // A task-less session already says its seat in the subject.
-    return item.taskId ? `${SEAT_LABELS[item.session.seat]} · ${hint}` : hint
+    return item.taskId ? `${seatLabel(item.session.seat)} · ${hint}` : hint
   }
   const reason = item.taskReason
   return `Task · ${reason === "stalled" ? STALLED_META.hint : TASK_STATUS_META.failed.hint}`

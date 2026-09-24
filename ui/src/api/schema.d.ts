@@ -431,11 +431,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /**
-         * Rank one entry of the catalog, or clear its rank.
-         * @description The catalog is discovery, so this writes only the exception: an id
-         *     nothing in the catalog carries is a 404.
-         */
+        /** Set or clear a catalog entry's rank without changing its enabled flag. */
         put: operations["models_set_rank"];
         post?: never;
         delete?: never;
@@ -464,7 +460,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/outside-sessions/adopt": {
+    "/v1/outside-sessions/resume": {
         parameters: {
             query?: never;
             header?: never;
@@ -473,11 +469,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Create a task for one outside session, in a new goal or an active goal,
-         *     and adopt that session as its author before the scheduler can start one.
-         */
-        post: operations["sessions_adopt_outside"];
+        /** Resume an outside conversation without creating a goal or task. */
+        post: operations["sessions_resume_outside"];
         delete?: never;
         options?: never;
         head?: never;
@@ -723,9 +716,8 @@ export interface paths {
          *     (resumed via the stored internal session id). Returns the session to
          *     attach to, which is this one either way — relaunched under its own id, or
          *     untouched when its agent turned out to be alive already.
-         * @description `409` when there is nothing to come back to: no stored agent id, a
-         *     worktree that was cleaned up — or a goal that has finished, whose live
-         *     sessions the scheduler takes down anyway.
+         * @description A missing worktree falls back to the repository checkout. A completed
+         *     goal stays completed while its session runs again.
          */
         post: operations["sessions_resume"];
         delete?: never;
@@ -1058,31 +1050,6 @@ export interface components {
          * @enum {string}
          */
         Actor: "orchestrator" | "author" | "reviewer" | "daemon" | "user";
-        /** @description Adopt one outside session into a new task and goal, or an active goal. */
-        AdoptOutsideSessionRequest: {
-            /** @description Which registry agent the session belongs to. */
-            agent_id: string;
-            /** @description The author first, then the reviewers. */
-            agents: components["schemas"]["AgentAssignment"][];
-            description?: string;
-            goal: components["schemas"]["OutsideSessionGoal"];
-            internal_session_id: string;
-            landing?: null | components["schemas"]["Landing"];
-            permission_mode?: null | components["schemas"]["PermissionMode"];
-            /**
-             * @description Id of one of the goal's repositories. Omit it when one repository or
-             *     the session's working directory settles the choice.
-             */
-            repo_id?: string | null;
-            /** @description Omitted uses the session's first prompt, cut at 120 characters. */
-            title?: string | null;
-        };
-        /** @description The resources created or joined by an outside-session adoption. */
-        AdoptOutsideSessionResponse: {
-            goal: components["schemas"]["GoalDto"];
-            session: components["schemas"]["SessionDto"];
-            task: components["schemas"]["TaskDto"];
-        };
         /**
          * @description One agent to staff on a task: where it sits, the skills it loads, and what
          *     it is to run on.
@@ -1440,10 +1407,6 @@ export interface components {
          * @enum {string}
          */
         EventOrder: "asc" | "desc";
-        /** @description An active goal that receives the new task. */
-        ExistingOutsideSessionGoal: {
-            id: string;
-        };
         /**
          * @description Body of `POST /v1/goals/{id}/finalize`: the orchestrator ends planning and
          *     execution starts. The orchestrator's call, not the user's, and it carries
@@ -1619,8 +1582,8 @@ export interface components {
          *     pinned.
          *
          *     The id is what a request writes as its `model`, whole. `agent_id` is its
-         *     registry prefix. The rest is what the agent itself said when discovery
-         *     asked: one line about the model, and the efforts it can be run at.
+         *     registry prefix. Discovery supplies the description and efforts.
+         *     The user sets the enabled flag and optional rank independently.
          */
         ModelDto: {
             /** @description Stable registry agent id. */
@@ -1640,28 +1603,13 @@ export interface components {
             enabled: boolean;
             /** @example claude-acp:claude-opus-5 */
             id: string;
-            /**
-             * @description The user's rank of this entry, or null where it is unranked. The
-             *     orchestrator staffs the smallest ranked model a task earns.
-             */
-            rank: components["schemas"]["ModelRank"] | null;
+            rank?: null | components["schemas"]["ModelRank"];
         };
         /**
-         * @description How the user ranks a model against the others its agent offers, so the
-         *     orchestrator staffs the smallest rank a task earns.
+         * @description A user-set rank, independent of discovery and model availability.
          * @enum {string}
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
-        /** @description A new active, unorchestrated goal for the adopted session. */
-        NewOutsideSessionGoal: {
-            description?: string | null;
-            /**
-             * @description Registered repository ids. Omitted infers one from the session's
-             *     working directory.
-             */
-            repository_ids?: string[] | null;
-            title: string;
-        };
         /**
          * @description A stored session of an ACP agent that Ariadne did not start, listed over
          *     `session/list`.
@@ -1678,8 +1626,6 @@ export interface components {
             last_activity_at: string;
             working_directory: string;
         };
-        /** @description The goal that receives an adopted outside session. */
-        OutsideSessionGoal: components["schemas"]["ExistingOutsideSessionGoal"] | components["schemas"]["NewOutsideSessionGoal"];
         /** @description One page of `GET /v1/outside-sessions`, newest activity first. */
         OutsideSessionPageDto: {
             /** @description The `cursor` that continues after this page; null on the last one. */
@@ -1733,6 +1679,11 @@ export interface components {
             /** @description Absolute path of the checkout. */
             path: string;
             updated_at: string;
+        };
+        /** @description Resume a stored conversation without a goal, task or seat. */
+        ResumeOutsideSessionRequest: {
+            agent_id: string;
+            internal_session_id: string;
         };
         /**
          * @description Payload of the `resync` control event.
@@ -1797,7 +1748,7 @@ export interface components {
              */
             effort?: string | null;
             ended_at?: string | null;
-            goal_id: string;
+            goal_id?: string | null;
             id: string;
             /** @description The ACP agent's own session id. */
             internal_session_id?: string | null;
@@ -1807,20 +1758,18 @@ export interface components {
              *     session runs on, and the model of it.
              */
             model: string;
-            seat: components["schemas"]["Seat"];
+            seat?: null | components["schemas"]["Seat"];
             status: components["schemas"]["SessionStatus"];
-            /**
-             * @description The staffed agent this session runs; None for an orchestrator,
-             *     which no task staffs.
-             */
+            /** @description The staffed agent this session runs; None for an orchestrator or loose session. */
             task_agent_id?: string | null;
-            /** @description None = orchestrator session. */
+            /** @description None for an orchestrator or a loose session. */
             task_id?: string | null;
             /**
              * @description What this session's agent has spent, summed over every transcript it
              *     reported under. Zeros while nothing has been reported.
              */
             usage: components["schemas"]["TokenUsageDto"];
+            /** @description The worktree, or the recorded working directory of a loose session. */
             worktree_path?: string | null;
         };
         /**
@@ -1845,22 +1794,11 @@ export interface components {
              */
             id: string;
         };
-        /**
-         * @description Body of `PUT /v1/models/rank`: one model of the catalog, ranked or
-         *     cleared.
-         *
-         *     The id is a field rather than a path segment because a model id carries
-         *     `:` and often `/` (`opencode:anthropic/claude-sonnet-4`) — which is a
-         *     path of its own, not a segment of one.
-         */
+        /** @description Body of `PUT /v1/models/rank`. The id can contain colons and slashes. */
         SetModelRankRequest: {
-            /**
-             * @description The entry, as `GET /v1/models` spells its `id`.
-             * @example claude-acp:claude-opus-5
-             */
+            /** @description The entry, as `GET /v1/models` spells its `id`. */
             id: string;
-            /** @description The rank to set, or null to clear it. */
-            rank: components["schemas"]["ModelRank"] | null;
+            rank?: null | components["schemas"]["ModelRank"];
         };
         SkillDto: {
             /**
@@ -2832,6 +2770,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description rank must be frontier, balanced, fast or local */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     sessions_list_outside: {
@@ -2879,7 +2824,7 @@ export interface operations {
             };
         };
     };
-    sessions_adopt_outside: {
+    sessions_resume_outside: {
         parameters: {
             query?: never;
             header?: never;
@@ -2888,23 +2833,17 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AdoptOutsideSessionRequest"];
+                "application/json": components["schemas"]["ResumeOutsideSessionRequest"];
             };
         };
         responses: {
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdoptOutsideSessionResponse"];
+                    "application/json": components["schemas"]["SessionDto"];
                 };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             403: {
                 headers: {

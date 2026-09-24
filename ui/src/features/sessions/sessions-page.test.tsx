@@ -1,133 +1,177 @@
 // @vitest-environment jsdom
 
 /**
- * The sessions screen: the one place the list is mounted with no goal and no
- * task around it.
+ * The sessions screen: the merged table over `GET /v1/sessions` (Ariadne's
+ * own, whole) and `GET /v1/outside-sessions` (a page at a time).
  *
- * What is worth pinning is exactly what that unscoped mounting buys, and none
- * of it shows without rendering the screen: the Context column saying which
- * work each row belongs to (a task's title, an orchestrator session's goal), a pick
- * turning into `?session=` over the screen rather than a navigation away from
- * it, the order the rows come in, and the filters — one of which the daemon
- * answers (`?status=failed`), two of which it cannot (`live` is three statuses
- * and `attention` is a cut across all of them, so both are narrowed here) and
- * two of which are this screen's claim on params that open panels everywhere
- * else (`?goal=`, `?task=`) — including what a second visit to the screen opens
- * on, which is the one thing about them that no single render shows.
- *
- * The tokens column is here because it is the row's own figure and the table
- * is where sessions are compared: a compact `in/out`, and a `0/0` — never a
- * blank — on a session whose agent has reported nothing.
- *
- * And the shape of the row, which is the screen's and not the panels': seven
- * columns, one of which folds away on a window too narrow for them.
+ * What is worth pinning: the two kinds read down one list, newest activity
+ * first; an outside row's empty status, goal and task, and its agent and
+ * directory shown instead; every filter reaching the daemon under its own
+ * name, on the endpoint that takes it; paging through `next_cursor` with the
+ * total kept in view, the Ariadne half never asked to page since it never
+ * arrives in pages; and picking a row — which resumes an outside session
+ * first, then opens the console of the session the daemon hands back, where
+ * an Ariadne row opens straight away.
  */
 
-import { cleanup, screen, waitFor, within } from "@testing-library/react"
+import { cleanup, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
-import type { GoalDto, SessionDto, TaskDto } from "@/api"
-import { formatAbsolute, shortId } from "@/lib/format"
+import type { components, GoalDto, OutsideSessionDto, SessionDto, TaskDto } from "@/api"
+import { shortId } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
-import { aGoal, aSession, aTask } from "@/test/fixtures"
+import { aGoal, anOutsideSession, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+
 import { SessionsPage } from "./sessions-page"
 
+type AcpAgentDto = components["schemas"]["AcpAgentDto"]
+type OutsideSessionPageDto = components["schemas"]["OutsideSessionPageDto"]
+
 const GOAL: GoalDto = aGoal()
+const TASK: TaskDto = aTask({ goal_id: GOAL.id, title: "Wire the review flow" })
 
-const TASK: TaskDto = aTask({
-  goal_id: GOAL.id,
-})
-
-/**
- * An author at work, and the orchestrator that has no task of its own. The
- * orchestrator moved last and is the one asking for a person, so one list orders
- * and narrows differently from the other.
- */
-const ENGINEER = aSession({
+const ENGINEER: SessionDto = aSession({
   id: "01JSESS0000000000000000ENG",
-  last_activity_at: "2026-01-01T00:00:00Z",
-  usage: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
+  goal_id: GOAL.id,
+  task_id: TASK.id,
+  last_activity_at: "2026-01-03T00:00:00Z",
 })
-const PLANNER = aSession({
+
+const PLANNER: SessionDto = aSession({
   id: "01JSESS0000000000000000PLA",
+  goal_id: GOAL.id,
   task_id: null,
   seat: "orchestrator",
   status: "failed",
   attention_reason: "disconnected",
-  attention_since: "2026-01-02T00:00:00Z",
   last_activity_at: "2026-01-02T00:00:00Z",
 })
 
-/** A session of another goal entirely, for the scope chip to exclude. */
-const ELSEWHERE = aSession({
-  id: "01JSESS0000000000000000OTH",
-  goal_id: "01JGOAL0000000000000OTHER1",
-  task_id: null,
-  seat: "orchestrator",
-  last_activity_at: "2026-01-03T00:00:00Z",
+const OUTSIDE: OutsideSessionDto = anOutsideSession({
+  agent_id: "claude-agent-acp",
+  internal_session_id: "acp-session-1",
+  working_directory: "/Users/me/dev/ariadne",
+  last_activity_at: "2026-01-01T00:00:00Z",
+  first_prompt: "Fix the flaky test.",
 })
 
-/** The daemon, answering the four lists the screen reads. */
-function stubDaemon(sessions: SessionDto[] = [ENGINEER, PLANNER]) {
-  daemonFetch.mockImplementation((input: Request | string | URL) => {
-    const url = new URL(typeof input === "string" ? input : (input as Request).url)
-    const status = url.searchParams.get("status")
-    const goal = url.searchParams.get("goal")
-    const task = url.searchParams.get("task")
-    const body =
-      url.pathname === "/v1/sessions"
-        ? sessions.filter(
-            (one) =>
-              (!status || one.status === status) &&
-              (!goal || one.goal_id === goal) &&
-              (!task || one.task_id === task),
-          )
-        : url.pathname === "/v1/goals"
-          ? [GOAL]
-          : url.pathname === "/v1/tasks"
-            ? [TASK]
-            : []
-    return Promise.resolve(jsonResponse(body))
+/** The live session `POST /v1/outside-sessions/resume` hands back. */
+const RESUMED: SessionDto = aSession({
+  id: "01JSESS0000000000RESUMED1",
+  goal_id: null,
+  task_id: null,
+  seat: null,
+  task_agent_id: null,
+  model: "claude-agent-acp:claude-sonnet-5",
+  internal_session_id: OUTSIDE.internal_session_id,
+  worktree_path: OUTSIDE.working_directory,
+  status: "running",
+})
+
+function anAcpAgent(overrides: Partial<AcpAgentDto> = {}): AcpAgentDto {
+  return {
+    id: "claude-agent-acp",
+    command: ["claude-agent-acp"],
+    source: "registry",
+    status: "ready",
+    capabilities: {
+      stdio: true,
+      protocol_v1: true,
+      session_new: true,
+      model: true,
+      thought_level: true,
+      session_list: true,
+      session_load: true,
+    },
+    degraded: [],
+    rejection_reason: null,
+    ...overrides,
+  }
+}
+
+function anOutsidePage(
+  sessions: OutsideSessionDto[],
+  page: Partial<OutsideSessionPageDto> = {},
+): OutsideSessionPageDto {
+  return {
+    sessions,
+    next_cursor: null,
+    total: sessions.length,
+    snapshot_at: "2026-01-03T00:30:00Z",
+    ...page,
+  }
+}
+
+function stubDaemon({
+  sessions = [ENGINEER, PLANNER],
+  outside = [OUTSIDE],
+  outsidePage,
+  goals = [GOAL],
+  tasks = [TASK],
+  acpAgents = [],
+  resumed = RESUMED,
+}: {
+  sessions?: SessionDto[]
+  outside?: OutsideSessionDto[]
+  outsidePage?: (query: URLSearchParams) => OutsideSessionPageDto
+  goals?: GoalDto[]
+  tasks?: TaskDto[]
+  acpAgents?: AcpAgentDto[]
+  resumed?: SessionDto
+} = {}) {
+  daemonFetch.mockImplementation((input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const url = new URL(request.url)
+    if (url.pathname === "/v1/sessions" && request.method === "GET") {
+      const status = url.searchParams.get("status")
+      const goal = url.searchParams.get("goal")
+      const task = url.searchParams.get("task")
+      const filtered = sessions.filter(
+        (session) =>
+          (!status || session.status === status) &&
+          (!goal || session.goal_id === goal) &&
+          (!task || session.task_id === task),
+      )
+      return Promise.resolve(jsonResponse(filtered))
+    }
+    if (url.pathname === "/v1/outside-sessions" && request.method === "GET") {
+      return Promise.resolve(
+        jsonResponse(outsidePage ? outsidePage(url.searchParams) : anOutsidePage(outside)),
+      )
+    }
+    if (url.pathname === "/v1/outside-sessions/resume" && request.method === "POST") {
+      return Promise.resolve(jsonResponse(resumed))
+    }
+    if (url.pathname === "/v1/goals") return Promise.resolve(jsonResponse(goals))
+    if (url.pathname === "/v1/tasks") return Promise.resolve(jsonResponse(tasks))
+    if (url.pathname === "/v1/acp-agents") return Promise.resolve(jsonResponse(acpAgents))
+    return Promise.resolve(jsonResponse([]))
   })
 }
 
-/** What `GET /v1/sessions` was asked to filter by, oldest request first. */
-function sessionRequests(): (string | null)[] {
-  return sessionParams("status")
-}
-
-/** The same, for the goal the list was asked to narrow to. */
-function sessionGoals(): (string | null)[] {
-  return sessionParams("goal")
-}
-
-function sessionParams(param: string): (string | null)[] {
+/** The query of every request to one path, oldest first. */
+function queriesTo(pathname: string): URLSearchParams[] {
   return daemonFetch.mock.calls
-    .map(([input]) => new URL(typeof input === "string" ? input : (input as Request).url))
-    .filter((url) => url.pathname === "/v1/sessions")
-    .map((url) => url.searchParams.get(param))
+    .map(([input, init]) => (input instanceof Request ? input : new Request(input, init)))
+    .filter((request) => request.method === "GET")
+    .map(({ url }) => new URL(url))
+    .filter((url) => url.pathname === pathname)
+    .map((url) => url.searchParams)
 }
 
 function renderPage(entry = "/sessions") {
   return renderScreen(<SessionsPage />, { route: entry }).location
 }
 
-/** The row a session is on, found by the seat button that opens it. */
-async function row(name: string): Promise<HTMLElement> {
-  const button = await screen.findByRole("button", { name })
-  const found = button.closest("tr")
-  if (!found) throw new Error(`no row around ${name}`)
+/** The row a session is on, found by its title cell's own `title=` attribute
+ * — distinct from the goal or task cell, which can show the same text. */
+function row(title: string): HTMLElement {
+  const cell = screen.getByTitle(title)
+  const found = cell.closest("tr")
+  if (!found) throw new Error(`no row around ${title}`)
   return found
-}
-
-/** A row's tokens figure, which is also the element the hint hangs off. */
-function tokens(row: HTMLElement): HTMLElement {
-  const cell = within(row).getAllByRole("cell").at(-2)
-  const figure = cell?.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
-  if (!figure) throw new Error("no tokens figure in the row")
-  return figure
 }
 
 beforeEach(() => {
@@ -141,404 +185,198 @@ beforeEach(() => {
   })
 })
 
-it("says which work each session belongs to, and narrows the list to it", async () => {
+it("lists Ariadne sessions and outside sessions together, newest activity first", async () => {
   renderPage()
 
-  // A session on a task is named by the task; the orchestrator, which has none, by
-  // its goal. Both links are this screen's own scope params — "and what else
-  // has run for this?" — which come back as the chip above the table. Awaited,
-  // because the names arrive after the rows do: the sessions come from one
-  // request and the two lists this column reads them against from two more, so
-  // a row is on screen wearing an id for as long as those are in flight.
-  const author = await within(await row("Open Author session")).findByRole("link", {
-    name: TASK.title,
-  })
-  expect(author.getAttribute("href")).toBe(`/sessions?task=${TASK.id}`)
+  await waitFor(() => row(TASK.title))
+  const titles = screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((tr) => tr.textContent ?? "")
 
-  const orchestrator = await within(await row("Open Orchestrator session")).findByRole("link", {
-    name: GOAL.title,
-  })
-  expect(orchestrator.getAttribute("href")).toBe(`/sessions?goal=${GOAL.id}`)
+  // TASK.title (ENGINEER) moved last, OUTSIDE's first prompt first: the
+  // order the two lists merge into.
+  const engineerIndex = titles.findIndex((text) => text.includes(TASK.title))
+  const outsideIndex = titles.findIndex((text) => text.includes(OUTSIDE.first_prompt))
+  expect(engineerIndex).toBeGreaterThanOrEqual(0)
+  expect(outsideIndex).toBeGreaterThan(engineerIndex)
 })
 
-it("opens the picked session as a panel over the screen", async () => {
+it("shows an outside row's empty status, goal and task, and names its agent and directory", async () => {
+  renderPage()
+
+  const found = await waitFor(() => row(OUTSIDE.first_prompt))
+  expect(found.textContent).toContain(OUTSIDE.agent_id)
+  expect(found.textContent).toContain(OUTSIDE.working_directory)
+  // No status badge, and no goal or task title or id: the cells read as the
+  // dash every other empty fact in the app does.
+  expect(found.textContent).toContain("—")
+})
+
+it("sends each filter to the daemon under the name that filter has, on the endpoint that takes it", async () => {
+  stubDaemon({ acpAgents: [anAcpAgent()] })
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => row(TASK.title))
+
+  await user.click(screen.getByRole("button", { name: "Filter by agent" }))
+  await user.click(await screen.findByRole("menuitemradio", { name: OUTSIDE.agent_id }))
+  await user.click(screen.getByRole("button", { name: "Filter by status" }))
+  await user.click(await screen.findByRole("menuitemradio", { name: "Failed" }))
+  await user.type(screen.getByLabelText("Working directory"), "/Users/me/dev")
+  await user.type(screen.getByLabelText("Search titles"), "flaky")
+
+  await waitFor(
+    () => {
+      const ariadneQuery = queriesTo("/v1/sessions").at(-1)
+      expect(ariadneQuery?.get("status")).toBe("failed")
+      const outsideQuery = queriesTo("/v1/outside-sessions").at(-1)
+      expect(outsideQuery?.get("agent")).toBe(OUTSIDE.agent_id)
+      expect(outsideQuery?.get("dir")).toBe("/Users/me/dev")
+      expect(outsideQuery?.get("q")).toBe("flaky")
+    },
+    { timeout: 3000 },
+  )
+})
+
+it("sends a day's activity window as the moments that bound it, in UTC", async () => {
+  const { fireEvent } = await import("@testing-library/react")
+  renderPage()
+  await waitFor(() => row(TASK.title))
+
+  fireEvent.change(screen.getByLabelText("Active since"), { target: { value: "2026-01-01" } })
+  fireEvent.change(screen.getByLabelText("Active until"), { target: { value: "2026-01-03" } })
+
+  await waitFor(() => {
+    const query = queriesTo("/v1/outside-sessions").at(-1)
+    expect(query?.get("since")).toBe("2026-01-01T00:00:00Z")
+    expect(query?.get("until")).toBe("2026-01-03T23:59:59.999999999Z")
+  })
+})
+
+it("pages the outside half through next_cursor, keeping the Ariadne rows, and counts the total", async () => {
+  const LATER = anOutsideSession({
+    agent_id: "codex-acp",
+    internal_session_id: "acp-session-2",
+    first_prompt: "Rename the store module.",
+  })
+  stubDaemon({
+    outsidePage: (query) =>
+      query.get("cursor") === "cursor-1"
+        ? anOutsidePage([LATER], { total: 2 })
+        : anOutsidePage([OUTSIDE], { next_cursor: "cursor-1", total: 2 }),
+  })
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => row(TASK.title))
+  // Two Ariadne rows plus the one outside page loaded so far, out of the
+  // two Ariadne rows plus the outside total.
+  expect(await screen.findByText("3 of 4")).toBeTruthy()
+
+  await user.click(screen.getByRole("button", { name: "Load more" }))
+
+  expect(await screen.findByText(LATER.first_prompt)).toBeTruthy()
+  expect(screen.getByText(OUTSIDE.first_prompt)).toBeTruthy()
+  expect(await screen.findByText("4 of 4")).toBeTruthy()
+  expect(queriesTo("/v1/outside-sessions").at(-1)?.get("cursor")).toBe("cursor-1")
+})
+
+it("asks every outside agent again when Refresh is pressed", async () => {
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => row(TASK.title))
+  expect(queriesTo("/v1/outside-sessions").at(-1)?.get("refresh")).toBeNull()
+
+  await user.click(screen.getByRole("button", { name: "Refresh" }))
+
+  await waitFor(() => expect(queriesTo("/v1/outside-sessions").at(-1)?.get("refresh")).toBe("true"))
+})
+
+it("opens an Ariadne row's own panel directly, asking the resume endpoint for nothing", async () => {
   const user = userEvent.setup()
   const seen = renderPage()
+  await waitFor(() => row(TASK.title))
 
-  await user.click(await screen.findByRole("button", { name: "Open Author session" }))
+  await user.click(row(TASK.title))
 
   await waitFor(() => expect(seen.url).toBe(`/sessions?session=${ENGINEER.id}`))
+  expect(
+    daemonFetch.mock.calls.some(([input]) => {
+      const url = new URL(input instanceof Request ? input.url : String(input))
+      return url.pathname === "/v1/outside-sessions/resume"
+    }),
+  ).toBe(false)
 })
 
-it("asks the daemon for one status and keeps it in the URL", async () => {
+it("resumes an outside row once, then opens the console of the session it answers", async () => {
   const user = userEvent.setup()
   const seen = renderPage()
-  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
-  expect(sessionRequests()).toEqual([null])
+  await waitFor(() => row(OUTSIDE.first_prompt))
+
+  await user.click(row(OUTSIDE.first_prompt))
+
+  const resumeRequests = () =>
+    daemonFetch.mock.calls
+      .map(([input, init]) => (input instanceof Request ? input : new Request(input, init)))
+      .filter((request) => new URL(request.url).pathname === "/v1/outside-sessions/resume")
+  await waitFor(() => expect(resumeRequests()).toHaveLength(1))
+  const [request] = resumeRequests()
+  if (!request) throw new Error("no resume request")
+  const body = JSON.parse(await request.text())
+  expect(body).toEqual({
+    agent_id: OUTSIDE.agent_id,
+    internal_session_id: OUTSIDE.internal_session_id,
+  })
+  await waitFor(() => expect(seen.url).toBe(`/sessions?session=${RESUMED.id}`))
+})
+
+it("narrows to one goal from a scope chip, skipping the outside half, and clears it", async () => {
+  // Only the task-titled row: the orchestrator's own row's title falls back
+  // to the goal's name too, which would otherwise collide with the chip.
+  stubDaemon({ sessions: [ENGINEER] })
+  const user = userEvent.setup()
+  const seen = renderPage(`/sessions?goal=${GOAL.id}`)
+  await waitFor(() => row(TASK.title))
+
+  const clear = await screen.findByRole("button", { name: "Show sessions for every goal" })
+  expect(screen.getByTitle(GOAL.title)).toBeTruthy()
+  await waitFor(() => expect(queriesTo("/v1/sessions").at(-1)?.get("goal")).toBe(GOAL.id))
+  // A goal filter leaves nothing an outside row could match, so its half is
+  // never asked for.
+  expect(queriesTo("/v1/outside-sessions")).toHaveLength(0)
+
+  await user.click(clear)
+
+  await waitFor(() => expect(seen.url).toBe("/sessions"))
+})
+
+it("comes back to the status and seat filters the screen was left with", async () => {
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => row(TASK.title))
 
   await user.click(screen.getByRole("button", { name: "Filter by status" }))
   await user.click(await screen.findByRole("menuitemradio", { name: "Failed" }))
+  await waitFor(() => expect(queriesTo("/v1/sessions").at(-1)?.get("status")).toBe("failed"))
+
+  cleanup()
+  daemonFetch.mockClear()
+  stubDaemon()
+  const seen = renderPage()
 
   await waitFor(() => expect(seen.url).toBe("/sessions?status=failed"))
-  await waitFor(() => expect(sessionRequests()).toContain("failed"))
-  expect(await screen.findByRole("button", { name: "Open Orchestrator session" })).toBeTruthy()
-  expect(screen.queryByRole("button", { name: "Open Author session" })).toBeNull()
-})
-
-it("narrows live sessions itself, without asking for a status", async () => {
-  const user = userEvent.setup()
-  const seen = renderPage()
-  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
-
-  await user.click(screen.getByRole("button", { name: "Filter by status" }))
-  await user.click(await screen.findByRole("menuitemradio", { name: "Live" }))
-
-  await waitFor(() => expect(seen.url).toBe("/sessions?status=live"))
-  expect(await screen.findByRole("button", { name: "Open Author session" })).toBeTruthy()
-  // The failed orchestrator is gone, and the daemon was never asked for a status:
-  // "live" is three of them, so the same unfiltered response was reused.
-  await waitFor(() =>
-    expect(screen.queryByRole("button", { name: "Open Orchestrator session" })).toBeNull(),
-  )
-  expect(sessionRequests().every((status) => status === null)).toBe(true)
-})
-
-it("filters by seat, and blames the filters when nothing is left", async () => {
-  const user = userEvent.setup()
-  const seen = renderPage("/sessions?status=failed")
-  await waitFor(() => expect(sessionRequests()).toContain("failed"))
-
-  await user.click(screen.getByRole("button", { name: "Filter by seat" }))
-  await user.click(await screen.findByRole("menuitemradio", { name: "Author" }))
-
-  await waitFor(() => expect(seen.url).toBe("/sessions?status=failed&seat=author"))
-  expect(await screen.findByText("No sessions match these filters")).toBeTruthy()
 })
 
 it("calls an empty list empty when nothing is filtered", async () => {
-  stubDaemon([])
+  stubDaemon({ sessions: [], outside: [] })
   renderPage()
 
-  expect(await screen.findByText("No sessions yet")).toBeTruthy()
+  expect(await screen.findByText("No sessions found.")).toBeTruthy()
 })
 
-/**
- * The table is the one surface that keeps the compact age as its text — the
- * heading says what it is the age of, and a column of "N minutes ago" is a
- * column of repeated words. Everything the column has no room for is the hint
- * behind it, and the hint opens on focus: both of these were a `title=`, which
- * a keyboard never reaches.
- */
-it("puts the stamps behind the table's columns in reach of a keyboard", async () => {
-  const user = userEvent.setup()
-  renderPage()
-  const author = await row("Open Author session")
-
-  // The Context cell's link is the trigger, so the pair it names costs no
-  // focus stop of its own.
-  within(author).getByRole("link", { name: TASK.title }).focus()
-  expect(await screen.findByText(`Goal: ${GOAL.title}`)).not.toBeNull()
-
-  // The age column is further along the row; Tab walks to it.
-  for (let stop = 0; stop < 8; stop++) {
-    await user.tab()
-    if (screen.queryByText(`last activity ${formatAbsolute(ENGINEER.last_activity_at)}`)) {
-      // The two columns the table dropped ride along in the same hint.
-      expect(screen.getByText(`started ${formatAbsolute(ENGINEER.created_at)}`)).not.toBeNull()
-      return
-    }
-  }
-  throw new Error("the last-activity stamp is not reachable by keyboard")
-})
-
-/** Leaving the screen for another one, and coming back to the sidebar's `/sessions`. */
-function leaveAndComeBack() {
-  cleanup()
-  daemonFetch.mockClear()
-  return renderPage()
-}
-
-/** The trigger of one filter, which doubles as the summary of what is selected. */
-function trigger(name: "Filter by status" | "Filter by seat") {
-  return screen.getByRole("button", { name })
-}
-
-/** Pick one value out of one filter's menu. */
-async function pick(
-  user: ReturnType<typeof userEvent.setup>,
-  filter: "Filter by status" | "Filter by seat",
-  value: string,
-) {
-  await user.click(trigger(filter))
-  await user.click(await screen.findByRole("menuitemradio", { name: value }))
-}
-
-it("comes back to the filters the screen was left with", async () => {
-  const user = userEvent.setup()
-  renderPage()
-  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
-
-  await pick(user, "Filter by status", "Failed")
-  await pick(user, "Filter by seat", "Orchestrator")
-  await waitFor(() => expect(sessionRequests()).toContain("failed"))
-
-  const seen = leaveAndComeBack()
-
-  await waitFor(() => expect(seen.url).toBe("/sessions?status=failed&seat=orchestrator"))
-  // The screen is narrowed again, not just the URL: the daemon is asked for
-  // the status, and the seat is applied here.
-  await waitFor(() => expect(sessionRequests()).toContain("failed"))
-  expect(trigger("Filter by status").textContent).toContain("Failed")
-  expect(trigger("Filter by seat").textContent).toContain("Orchestrator")
-  expect(await screen.findByRole("button", { name: "Open Orchestrator session" })).toBeTruthy()
-})
-
-it("keeps the filters where a restart can find them", async () => {
-  const user = userEvent.setup()
-  renderPage()
-  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
-
-  await pick(user, "Filter by status", "Live")
-  await pick(user, "Filter by seat", "Author")
-
-  await waitFor(() =>
-    expect(JSON.parse(localStorage.getItem("ariadne.settings") ?? "{}")).toMatchObject({
-      state: { sessionStatusFilter: "live", sessionRoleFilter: "author" },
-    }),
-  )
-})
-
-it("shows what an explicit filter asks for, not what is remembered", async () => {
-  useSettingsStore.setState({ sessionStatusFilter: "live", sessionRoleFilter: "author" })
-  const seen = renderPage("/sessions?status=failed&seat=orchestrator")
-
-  await waitFor(() => expect(sessionRequests()).toContain("failed"))
-  expect(seen.url).toBe("/sessions?status=failed&seat=orchestrator")
-  expect(trigger("Filter by status").textContent).toContain("Failed")
-  expect(trigger("Filter by seat").textContent).toContain("Orchestrator")
-
-  // ...and that is what the next visit opens on: the screen remembers what it
-  // is showing, however it was asked to show it.
-  const back = leaveAndComeBack()
-  await waitFor(() => expect(back.url).toBe("/sessions?status=failed&seat=orchestrator"))
-})
-
-it("restores the one filter a deep link says nothing about", async () => {
-  useSettingsStore.setState({ sessionStatusFilter: "failed", sessionRoleFilter: "orchestrator" })
-  const seen = renderPage("/sessions?status=live")
-
-  await waitFor(() => expect(seen.url).toBe("/sessions?status=live&seat=orchestrator"))
-})
-
-it("drops a remembered value the daemon no longer defines", async () => {
-  useSettingsStore.setState({ sessionStatusFilter: "nonsense", sessionRoleFilter: "nobody" })
-  const seen = renderPage()
-
-  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
-  expect(seen.url).toBe("/sessions")
-  expect(sessionRequests().every((status) => status === null)).toBe(true)
-  expect(trigger("Filter by status").textContent).toContain("All statuses")
-  expect(trigger("Filter by seat").textContent).toContain("All roles")
-})
-
-it("leaves a cleared filter cleared", async () => {
-  const user = userEvent.setup()
-  renderPage("/sessions?status=failed&seat=orchestrator")
-  await waitFor(() => expect(sessionRequests()).toContain("failed"))
-
-  await pick(user, "Filter by status", "All statuses")
-  await pick(user, "Filter by seat", "All roles")
-  await waitFor(() => expect(sessionRequests()).toContain(null))
-
-  const seen = leaveAndComeBack()
-
-  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
-  expect(seen.url).toBe("/sessions")
-  expect(sessionRequests()).not.toContain("failed")
-  expect(trigger("Filter by status").textContent).toContain("All statuses")
-  expect(trigger("Filter by seat").textContent).toContain("All roles")
-})
-
-it("restores the filters under a panel the entry opened", async () => {
-  useSettingsStore.setState({ sessionStatusFilter: "failed", sessionRoleFilter: "orchestrator" })
-  const seen = renderPage(`/sessions?session=${ENGINEER.id}`)
-
-  await waitFor(() =>
-    expect(seen.url).toBe(`/sessions?session=${ENGINEER.id}&status=failed&seat=orchestrator`),
-  )
-})
-
-it("carries each session's tokens, and zero for one that has reported none", async () => {
-  renderPage()
-
-  expect(tokens(await row("Open Author session")).textContent).toBe(
-    "1.2M in, 89.1% cached, 45k out",
-  )
-  // The orchestrator has spent nothing yet, which is a figure of its own — both
-  // halves of it: a blank cell would read as a column the daemon has no
-  // answer for.
-  expect(tokens(await row("Open Orchestrator session")).textContent).toBe(
-    "0 in, 0.0% cached, 0 out",
-  )
-})
-
-it("names the two halves behind the tokens column in reach of a keyboard", async () => {
-  renderPage()
-
-  // Which half is which is what the arrows in the column leave unsaid; the
-  // hint opens on focus, like the table's other two.
-  tokens(await row("Open Author session")).focus()
-  const label = await screen.findByText("Input")
-  const popup = label.closest<HTMLElement>("[data-slot='tooltip-content']")
-  if (!popup) throw new Error("no hint around the named halves")
-
-  const total = within(popup)
-  const input = total.getByText("Input")
-  expect(input.nextElementSibling?.textContent).toBe("1.2M")
-  // The share rides beside the input count, part of it rather than a count of
-  // its own — the same share the figure itself shows.
-  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89.1%")
-  expect(total.getByText("Output").nextElementSibling?.textContent).toBe("45k")
-  // The counts are the figure's own rounded form, to the digit nowhere.
-  expect(popup.textContent).not.toMatch(/\d,\d/)
-})
-
-/**
- * The column is the model and nothing else. An agent has no name of its own
- * any more — no profile stands behind it — so what a row is scanned down this
- * column for is what the session was launched on, and the seat it sits in is
- * already a column of its own two cells to the left.
- */
-it("says what each session runs on, without repeating the seat beside it", async () => {
-  stubDaemon([
-    aSession({
-      ...ENGINEER,
-      model: "claude-agent-acp:claude-opus-5",
-      effort: "xhigh",
-    }),
-  ])
-  renderPage()
-
-  const cells = within(await row("Open Author session")).getAllByRole("cell")
-  // The agent and the model of it are one id, and the effort it is run at
-  // follows the model it belongs to.
-  expect(cells[3]?.textContent).toBe("claude-agent-acp:claude-opus-5 @ xhigh")
-})
-
-it("keeps a column each, and folds the two a narrow window can spare", async () => {
-  renderPage()
-  const author = await row("Open Author session")
-  const cells = within(author).getAllByRole("cell")
-
-  // Seven, where a panel folds the same row down to four: this screen has a
-  // window's width and needs the context column a panel does not.
-  expect(cells).toHaveLength(7)
-  expect(cells[0]?.textContent).toContain(shortId(ENGINEER.id))
-
-  // Two of them go below `lg`, so that what is left — the work, the seat, the
-  // model, the status and the age — fits rather than being cut off the right
-  // edge. The id says nothing about the work a row is about (the panel it
-  // opens carries it in full), and the figure is in the hint either way.
-  const folded = "hidden lg:table-cell"
-  expect(cells[0]?.className).toContain(folded)
-  expect(tokens(author).closest("td")?.className).toContain(folded)
-})
-
-it("carries the tokens figure in the row's hint, folded column or not", async () => {
-  renderPage()
-  const author = await row("Open Author session")
-  const age = within(author).getAllByRole("cell").at(-1)
-  const trigger = age?.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
-  if (!trigger) throw new Error("no last-activity hint in the row")
-
-  // Below `lg` the column is gone, so the hint behind the age is where the
-  // figure is read — as the plain pair, since a hint cannot hold a hint.
-  trigger.focus()
-  const popup = await waitFor(() => {
-    const hint = document.querySelector<HTMLElement>("[data-slot='tooltip-content']")
-    if (!hint) throw new Error("no hint behind the last activity")
-    return hint
-  })
-  expect(popup.textContent).toContain("1.2M in, 89.1% cached, 45k out")
-})
-
-it("shows only the sessions the daemon has raised a reason on", async () => {
-  const user = userEvent.setup()
-  const seen = renderPage()
-  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
-
-  await user.click(screen.getByRole("button", { name: "Filter by status" }))
-  await user.click(await screen.findByRole("menuitemradio", { name: "Needs attention" }))
-
-  await waitFor(() => expect(seen.url).toBe("/sessions?status=attention"))
-  expect(await screen.findByRole("button", { name: "Open Orchestrator session" })).toBeTruthy()
-  // The author is running fine, which is not a state this filter is about —
-  // and, like `live`, it cost no request of its own.
-  await waitFor(() =>
-    expect(screen.queryByRole("button", { name: "Open Author session" })).toBeNull(),
-  )
-  expect(sessionRequests().every((status) => status === null)).toBe(true)
-})
-
-it("reads down from whatever moved last", async () => {
-  stubDaemon([ENGINEER, PLANNER, ELSEWHERE])
-  renderPage()
-  await screen.findByRole("button", { name: "Open Author session" })
-
-  // The daemon lists them oldest first; the table is read for what is
-  // happening, so it turns them round.
-  const ids = screen
-    .getAllByRole("button", { name: /^Open .* session$/ })
-    .map((button) => button.closest("tr"))
-    // The session's own id leads the row; the Context column shows a short id
-    // too where the app has no title for the work.
-    .map((row) => row && within(row).getAllByRole("cell")[0]?.textContent)
-  expect(ids).toEqual([shortId(ELSEWHERE.id), shortId(PLANNER.id), shortId(ENGINEER.id)])
-})
-
-it("narrows to one goal, and says which one", async () => {
-  stubDaemon([ENGINEER, PLANNER, ELSEWHERE])
-  const seen = renderPage(`/sessions?goal=${GOAL.id}`)
-
-  // The chip names the goal, and the session of the other goal is gone.
-  expect(await screen.findByText(GOAL.title)).toBeTruthy()
-  expect(await screen.findByRole("button", { name: "Open Author session" })).toBeTruthy()
-  await waitFor(() => expect(sessionGoals()).toContain(GOAL.id))
-  expect(seen.url).toBe(`/sessions?goal=${GOAL.id}`)
-
-  // The panel scheme does not claim the param here: the screen is on screen,
-  // rather than the goals board it would have redirected to.
-  expect(screen.queryByRole("dialog")).toBeNull()
-})
-
-it("clears the scope from the chip", async () => {
-  const user = userEvent.setup()
-  const seen = renderPage(`/sessions?goal=${GOAL.id}`)
-  await screen.findByRole("button", { name: "Open Author session" })
-
-  await user.click(screen.getByRole("button", { name: "Show sessions for every goal" }))
-
-  await waitFor(() => expect(seen.url).toBe("/sessions"))
-  await waitFor(() => expect(sessionGoals()).toContain(null))
-})
-
-it("names the scope by its id while the app has no title for it", async () => {
-  const gone = "01JTASK0000000000000GONE01"
-  renderPage(`/sessions?task=${gone}`)
+it("names the scope by its short id while the app has no title for it", async () => {
+  const gone = "01JGOAL0000000000000GONE01"
+  renderPage(`/sessions?goal=${gone}`)
 
   expect(await screen.findByText(shortId(gone))).toBeTruthy()
-  expect(await screen.findByText("No sessions match these filters")).toBeTruthy()
-})
-
-it("comes back to the scope the screen was left with", async () => {
-  const user = userEvent.setup()
-  renderPage(`/sessions?goal=${GOAL.id}`)
-  await screen.findByRole("button", { name: "Open Author session" })
-  // Picking a session must not drop the scope it was picked out of.
-  await user.click(screen.getByRole("button", { name: "Open Author session" }))
-
-  const seen = leaveAndComeBack()
-
-  await waitFor(() => expect(seen.url).toBe(`/sessions?goal=${GOAL.id}`))
-  expect(await screen.findByText(GOAL.title)).toBeTruthy()
 })

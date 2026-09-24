@@ -45,15 +45,16 @@ import { When } from "@/components/when"
 // leads back here, and the round trip is an import cycle.
 import { goalQueryOptions } from "@/features/goals/queries"
 import { SeatSummary } from "@/features/models/agent-summary"
+import { pinLabel } from "@/features/models/model-ref"
 import { taskQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
-import { formatTokens, SEAT_LABELS } from "@/lib/format"
+import { formatTokens } from "@/lib/format"
 import { paths, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
 import { SessionBlockedBanner } from "./session-blocked-banner"
-import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
+import { SessionAttentionBadge, SessionStatusBadge, sessionHeading } from "./session-display"
 import { SessionTerminal } from "./session-terminal"
 
 /**
@@ -78,7 +79,10 @@ export function SessionDetailView({
   /** Where to go once a resume hands the session back; see {@link SessionActions}. */
   onResumed?: (session: SessionDto) => void
 }) {
-  const goal = useQuery(goalQueryOptions(session.goal_id))
+  const goal = useQuery({
+    ...goalQueryOptions(session.goal_id ?? ""),
+    enabled: Boolean(session.goal_id),
+  })
   const task = useQuery({
     ...taskQueryOptions(session.task_id ?? ""),
     enabled: Boolean(session.task_id),
@@ -103,7 +107,7 @@ export function SessionDetailView({
     <div className="space-y-4">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="font-heading text-xl font-semibold tracking-tight">
-          {SEAT_LABELS[session.seat]} session
+          {sessionHeading(session.seat)}
         </h1>
         <SessionStatusBadge status={session.status} />
         {/* Next to the status rather than instead of it: the two are
@@ -128,14 +132,14 @@ export function SessionDetailView({
       <SessionBlockedBanner session={session} />
 
       <FactList>
-        {context === "goal" ? null : (
+        {context === "goal" || !session.goal_id ? null : (
           <Fact label="Goal">
             <Link to={paths.goal(session.goal_id)} className="block truncate hover:underline">
               {goal.data?.title ?? <Mono>{session.goal_id}</Mono>}
             </Link>
           </Fact>
         )}
-        {context === "task" ? null : (
+        {context === "task" || !session.goal_id ? null : (
           <Fact label="Task">
             {session.task_id ? (
               <Link to={taskTo} className="block truncate hover:underline">
@@ -150,13 +154,23 @@ export function SessionDetailView({
             (`claude-agent-acp:claude-opus-5`), and a Model row under it repeated
             that tail with the agent half taken off. The session's own snapshot,
             not the profile's current fields — the profile may have been edited
-            since this agent was launched. */}
+            since this agent was launched. A loose session — one resumed from
+            an outside conversation — names its agent the same way, having no
+            seat to lead with. */}
         <Fact label="Agent">
-          <SeatSummary seat={session.seat} model={session.model} effort={session.effort} />
+          {session.seat ? (
+            <SeatSummary seat={session.seat} model={session.model} effort={session.effort} />
+          ) : (
+            <span className="text-muted-foreground">{pinLabel(session.model, session.effort)}</span>
+          )}
         </Fact>
-        <Fact label="Worktree">
+        <Fact label="Directory">
           {session.worktree_path ? (
-            <CopyableId value={session.worktree_path} label="worktree path" className="text-xs" />
+            <CopyableId
+              value={session.worktree_path}
+              label="working directory"
+              className="text-xs"
+            />
           ) : (
             <Dash />
           )}

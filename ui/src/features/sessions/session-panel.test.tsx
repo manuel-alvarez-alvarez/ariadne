@@ -11,7 +11,7 @@ import { SessionPanel } from "./session-panel"
 
 const SESSION_ID = "01JSESS0000000000000000001"
 const SESSION = aSession({ id: SESSION_ID })
-const GOAL = aGoal({ id: SESSION.goal_id })
+const GOAL = aGoal({ id: SESSION.goal_id ?? "" })
 const TASK = aTask({ id: SESSION.task_id ?? "01JTASK0000000000000000001", goal_id: GOAL.id })
 
 beforeEach(() => {

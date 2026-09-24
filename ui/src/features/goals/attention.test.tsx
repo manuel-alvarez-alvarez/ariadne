@@ -142,9 +142,9 @@ describe("attention", () => {
     const target = attentionTarget(
       {
         id: session.id,
-        goalId: session.goal_id,
+        goalId: session.goal_id ?? "",
         goal: undefined,
-        at: session.created_at,
+        at: session.created_at ?? "",
         taskId: null,
         task: undefined,
         taskReason: null,

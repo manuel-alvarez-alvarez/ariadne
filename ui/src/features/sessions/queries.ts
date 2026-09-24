@@ -25,12 +25,12 @@ import {
 } from "@tanstack/react-query"
 
 import {
-  type AdoptOutsideSessionRequest,
   api,
   type CacheSnapshot,
   cacheRow,
   optimisticStatus,
   qk,
+  type ResumeOutsideSessionRequest,
   restoreCache,
   type Seat,
   type SessionDto,
@@ -93,14 +93,14 @@ export function sessionQueryOptions(id: string) {
 export interface OutsideSessionListFilters {
   agent?: string
   dir?: string
-  /** RFC 3339, not a day: see `outside-filters.ts`. */
+  /** RFC 3339, not a day: see `filters.ts`. */
   since?: string
   until?: string
   q?: string
 }
 
 /**
- * CLI conversations Ariadne did not start, ready for the user to adopt: the
+ * Conversations Ariadne did not start, ready for the user to resume: the
  * pages the daemon cuts from its snapshot, under one filter.
  *
  * `next_cursor` is the next page's parameter and a null one is the last page,
@@ -136,18 +136,13 @@ export function outsideSessionsQueryOptions(
   })
 }
 
-/** Adopt an outside conversation as the author of a new task. */
-export function useAdoptOutsideSession() {
+/** Resume an outside conversation as a live session, without a goal, task or seat. */
+export function useResumeOutsideSession() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: AdoptOutsideSessionRequest) =>
-      unwrap(api().POST("/v1/outside-sessions/adopt", { body })),
-    onSuccess: ({ goal, task, session }) => {
-      cacheRow(queryClient, qk.goals, goal)
-      cacheRow(queryClient, qk.tasks, task)
-      cacheRow(queryClient, qk.sessions, session)
-      void queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() })
-    },
+    mutationFn: (body: ResumeOutsideSessionRequest) =>
+      unwrap(api().POST("/v1/outside-sessions/resume", { body })),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
   })
 }
 

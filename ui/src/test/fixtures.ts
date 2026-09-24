@@ -18,6 +18,7 @@ import type {
   EffortDto,
   GoalDto,
   ModelDto,
+  OutsideSessionDto,
   RepositoryDto,
   SessionDto,
   SkillDto,
@@ -112,6 +113,22 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     context_size: null,
     created_at: STAMP,
     ended_at: null,
+    ...overrides,
+  }
+}
+
+/**
+ * A stored session an ACP agent holds on its own, listed over
+ * `GET /v1/outside-sessions` — Ariadne did not start it, and it carries no
+ * goal, task or seat, having none of its own.
+ */
+export function anOutsideSession(overrides: Partial<OutsideSessionDto> = {}): OutsideSessionDto {
+  return {
+    agent_id: "claude-agent-acp",
+    internal_session_id: "outside-internal-id-1",
+    working_directory: "/Users/me/dev/ariadne",
+    last_activity_at: STAMP,
+    first_prompt: "Fix the flaky test.",
     ...overrides,
   }
 }

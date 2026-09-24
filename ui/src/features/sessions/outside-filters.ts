@@ -1,13 +1,17 @@
 /**
- * The outside-sessions screen's filters, as URL search params.
+ * The sessions screen's own filters over the merged listing's outside half —
+ * everything `GET /v1/outside-sessions` takes — plus `kind`, which the daemon
+ * has no filter for at all: the two listings are two separate requests (see
+ * `queries.ts`), and `kind` decides client-side which of them the table
+ * includes.
  *
- * Each one is a parameter of `GET /v1/outside-sessions` and travels under the
- * daemon's own name for it — `?agent=`, `?dir=`, `?since=`, `?until=`, `?q=` —
- * so the URL says both what the screen shows and what it asked for. They live
- * there for the reason the sessions screen's do: a reload is routine in a
- * hash-router desktop app, and a narrowed screen is worth linking to. Unlike
- * that screen's they are not remembered between visits, because this screen is
- * opened to find one conversation rather than left standing on a view.
+ * The five daemon ones travel under its own name for each — `?agent=`,
+ * `?dir=`, `?since=`, `?until=`, `?q=` — so the URL says both what the screen
+ * shows and what it asked for. They live there for the reason the sessions
+ * screen's status and seat do: a reload is routine in a hash-router desktop
+ * app, and a narrowed screen is worth linking to. Unlike those two they are
+ * not remembered between visits, because this half of the bar is for finding
+ * one conversation rather than for a monitoring view left standing open.
  *
  * The date fields are the one place the URL and the request differ. A date
  * field names a day and the daemon takes a moment (RFC 3339), so a day is sent
@@ -21,19 +25,35 @@ import { useSearchParams } from "react-router-dom"
 import { ALL } from "./filters"
 import type { OutsideSessionListFilters } from "./queries"
 
-/** The params the filters travel in, in the order the bar shows them. */
-const OUTSIDE_FILTER_PARAMS = ["agent", "dir", "since", "until", "q"] as const
+/** What kind of session the merged table shows, client-side only. */
+type SessionKind = "ariadne" | "outside"
 
-/** The params this screen reads, and the only ones `filterBy` writes. */
+const KINDS: SessionKind[] = ["ariadne", "outside"]
+
+export const KIND_LABELS: Record<SessionKind, string> = {
+  ariadne: "Ariadne",
+  outside: "Outside",
+}
+
+/** The params the filters travel in, in the order the bar shows them. */
+const OUTSIDE_FILTER_PARAMS = ["kind", "agent", "dir", "since", "until", "q"] as const
+
+/** The params this half of the bar reads, and the only ones `filterBy` writes. */
 export type OutsideFilterParam = (typeof OUTSIDE_FILTER_PARAMS)[number]
 
 interface OutsideFiltersState {
   /** What each field shows: the param exactly as the URL carries it. */
   values: Record<OutsideFilterParam, string>
-  /** What the daemon is asked for: the same, with each day as a moment. */
+  /** Which kind the table is narrowed to, or `null` for both. */
+  kind: SessionKind | null
+  /** What the daemon's outside-sessions endpoint is asked for. */
   filters: OutsideSessionListFilters
   /** Apply one selection. "All" and an empty field drop the param. */
   filterBy: (param: OutsideFilterParam, value: string) => void
+}
+
+function parseKindFilter(value: string): SessionKind | null {
+  return KINDS.find((known) => known === value) ?? null
 }
 
 export function useOutsideSessionFilters(): OutsideFiltersState {
@@ -56,11 +76,11 @@ export function useOutsideSessionFilters(): OutsideFiltersState {
     if (value === "" || value === ALL) next.delete(param)
     else next.set(param, value)
     // A filter is not a place: Back leaves the screen rather than walking back
-    // through every narrowing, as on the sessions screen.
+    // through every narrowing, as the status and seat filters do.
     setSearch(next, { replace: true })
   }
 
-  return { values, filters, filterBy }
+  return { values, kind: parseKindFilter(values.kind), filters, filterBy }
 }
 
 /**

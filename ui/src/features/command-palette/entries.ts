@@ -14,9 +14,9 @@
 
 import type { GoalDto, RepositoryDto, SessionDto, SkillDto, TaskDto } from "@/api"
 import { type AttentionItem, attentionSubject, attentionTarget } from "@/features/goals/attention"
-import { SESSION_ATTENTION_META } from "@/features/sessions/session-display"
+import { SESSION_ATTENTION_META, seatLabel } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
-import { folderName, SEAT_LABELS, shortId } from "@/lib/format"
+import { folderName, shortId } from "@/lib/format"
 import { paths, taskPanelFrom, taskSessionPanelFrom } from "@/routes/paths"
 
 /** Where a palette entry goes when it is picked. */
@@ -106,20 +106,23 @@ export function buildPaletteEntries({
     })),
 
     // A session has no name of its own: it is "the reviewer of <task>", and
-    // that is also how somebody looking for one describes it.
+    // that is also how somebody looking for one describes it. A loose
+    // session — one resumed from an outside conversation — has no goal, task
+    // or seat, so the label falls back the way every other reader does.
     sessions: (sessions ?? []).map((session) => {
       const of =
         (session.task_id ? taskTitles.get(session.task_id) : undefined) ??
-        goalTitles.get(session.goal_id)
+        goalTitles.get(session.goal_id ?? "")
+      const seat = seatLabel(session.seat)
       return {
-        value: `${SEAT_LABELS[session.seat]} ${of ?? ""} ${shortId(session.id)}`,
-        label: of ? `${SEAT_LABELS[session.seat]} · ${of}` : SEAT_LABELS[session.seat],
+        value: `${seat} ${of ?? ""} ${shortId(session.id)}`,
+        label: of ? `${seat} · ${of}` : seat,
         detail: shortId(session.id),
         keywords: [session.id, session.status, session.model],
         target: {
           kind: "session",
           sessionId: session.id,
-          goalId: session.goal_id,
+          goalId: session.goal_id ?? "",
           taskId: session.task_id ?? null,
         },
       }
@@ -209,7 +212,7 @@ export function attentionEntries(items: AttentionItem[]): PaletteEntry[] {
       item.session?.id ?? "",
       item.taskReason ?? "",
       item.sessionReason ?? "",
-      item.session ? SEAT_LABELS[item.session.seat] : "",
+      item.session ? seatLabel(item.session.seat) : "",
       item.task?.branch ?? "",
       item.goal?.title ?? "",
     ],

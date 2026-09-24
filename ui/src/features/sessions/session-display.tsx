@@ -13,8 +13,9 @@
  * timestamps come from `@/lib/format`.
  */
 
-import type { AttentionReason, SessionDto, SessionStatus } from "@/api"
+import type { AttentionReason, Seat, SessionDto, SessionStatus } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
+import { SEAT_LABELS } from "@/lib/format"
 
 /**
  * Mirrors `SessionStatus::is_live` in `ariadne-core`: a session with an agent
@@ -162,6 +163,20 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
 export function sessionAttention(session: SessionDto): SessionAttention | null {
   const reason = session.attention_reason
   return reason && reason !== "waiting_user" ? reason : null
+}
+
+/**
+ * `seat` as `SEAT_LABELS` spells it, or what a loose session is instead — one
+ * resumed from an outside conversation, which belongs to no goal, task or
+ * seat.
+ */
+export function seatLabel(seat: Seat | null | undefined): string {
+  return seat ? SEAT_LABELS[seat] : "Loose session"
+}
+
+/** The session panel's own heading: the seat it ran as, or what a loose session is instead. */
+export function sessionHeading(seat: Seat | null | undefined): string {
+  return seat ? `${SEAT_LABELS[seat]} session` : "Loose session"
 }
 
 /**
