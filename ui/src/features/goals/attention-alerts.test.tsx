@@ -149,6 +149,9 @@ it("raises one toast for an agent that gets stuck on another screen", async () =
   // which jsdom does not implement.
   fireEvent.click(screen.getByRole("button", { name: "Open" }))
   expect(location.url).toBe(`/profiles?session=${BLOCKED.id}&tab=terminal&focus=terminal`)
+  // Open also dismisses the toast. Sonner's exit timer survives unmount, so
+  // finish that dismissal before cleanup can remove the browser environment.
+  await waitFor(() => expect(screen.queryByText("Waiting for permission")).toBeNull())
 })
 
 // Re-asking for the same lists — a reconnect, a refetch, any other event —

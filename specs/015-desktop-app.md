@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-23
+updated: 2026-09-24
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -273,6 +273,9 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/repositories/repository-form-dialog.test.tsx`).
 - The attention strip holds a placeholder while its lists load and survives a
   partial failure (`ui/src/features/goals/attention-strip.test.tsx`).
+- An attention toast opens the blocked session and finishes dismissal before
+  the test removes its browser environment
+  (`ui/src/features/goals/attention-alerts.test.tsx::raises one toast for an agent that gets stuck on another screen`).
 - Unused declared dependencies, exports only tests import, and orphan source files fail `npm run check:unused`.
 - The goal dialog and task dialog refuse a missing model and a pin that is
   one half only
