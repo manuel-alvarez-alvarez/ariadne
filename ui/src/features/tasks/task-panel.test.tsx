@@ -35,7 +35,7 @@ import { expect, it } from "vitest"
 
 import { type components, type MessageDto, qk, type SessionDto, type TaskDto } from "@/api"
 import { shortId } from "@/lib/format"
-import { aSession } from "@/test/fixtures"
+import { aSession, aSessionPage } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
 
@@ -139,7 +139,8 @@ const MESSAGES: MessageDto[] = ["01AGENTSTRICT", "01AGENTAUTO"].map((reviewer, i
 function stubSessions() {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const url = new URL(typeof input === "string" ? input : (input as Request).url)
-    if (url.pathname === "/v1/sessions") return Promise.resolve(jsonResponse([SESSION]))
+    if (url.pathname === "/v1/sessions")
+      return Promise.resolve(jsonResponse(aSessionPage([SESSION])))
     return new Promise(() => {})
   })
 }
@@ -152,7 +153,8 @@ function stubSessions() {
 function stubTabLists(sessions: SessionDto[] = [SESSION], messages: MessageDto[] = MESSAGES) {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const url = new URL(typeof input === "string" ? input : (input as Request).url)
-    if (url.pathname === "/v1/sessions") return Promise.resolve(jsonResponse(sessions))
+    if (url.pathname === "/v1/sessions")
+      return Promise.resolve(jsonResponse(aSessionPage(sessions)))
     if (url.pathname === `/v1/tasks/${TASK.id}/messages`) {
       return Promise.resolve(jsonResponse(messages))
     }

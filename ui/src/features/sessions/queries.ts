@@ -34,6 +34,7 @@ import {
   restoreCache,
   type Seat,
   type SessionDto,
+  type SessionEntryDto,
   type SessionStatus,
   unwrap,
 } from "@/api"
@@ -76,10 +77,90 @@ export function sessionsQueryOptions({ seat, live, attention, ...query }: Sessio
     (!attention || sessionAttention(session) !== null)
   return queryOptions({
     queryKey: qk.sessions.list(query),
-    queryFn: () => unwrap(api().GET("/v1/sessions", { params: { query } })),
+    queryFn: () => everyAriadneSession(query),
     select:
       seat || live || attention ? (sessions: SessionDto[]) => sessions.filter(narrowed) : undefined,
   })
+}
+
+/** The most `GET /v1/sessions` hands back in one page. */
+const PAGE_LIMIT = 200
+
+/**
+ * Every session Ariadne runs under these filters, ended ones too, as
+ * `SessionDto` rows: the whole list, followed page by page.
+ *
+ * `GET /v1/sessions` pages Ariadne's sessions together with the outside
+ * conversations, and leaves out what ended or went quiet over a week ago
+ * unless `all` is set. Every view reading this list wants the lot — a task's
+ * sessions, a goal's orchestrators, every stuck agent — so it asks for one
+ * kind, sets `all`, and reads on until the last page.
+ */
+async function everyAriadneSession(query: Omit<SessionListFilters, "seat" | "live" | "attention">) {
+  const sessions: SessionDto[] = []
+  let cursor: string | undefined
+  do {
+    const page = await unwrap(
+      api().GET("/v1/sessions", {
+        params: { query: { ...query, kind: "ariadne", all: true, limit: PAGE_LIMIT, cursor } },
+      }),
+    )
+    sessions.push(...page.sessions.map(ariadneSession))
+    cursor = page.next_cursor ?? undefined
+  } while (cursor)
+  return sessions
+}
+
+/**
+ * A listing row of an Ariadne session, as the `SessionDto` that
+ * `GET /v1/sessions/{id}` answers for it — the shape the detail cache and
+ * every session view read. The fields a listing row leaves optional are ones
+ * an Ariadne session always has; only an outside row goes without them.
+ */
+function ariadneSession(entry: SessionEntryDto): SessionDto {
+  return {
+    id: entry.id,
+    goal_id: entry.goal_id,
+    task_id: entry.task_id,
+    seat: entry.seat,
+    task_agent_id: entry.task_agent_id,
+    model: entry.model ?? "",
+    effort: entry.effort,
+    internal_session_id: entry.internal_session_id,
+    worktree_path: entry.working_directory,
+    status: entry.status ?? "exited",
+    attention_reason: entry.attention_reason,
+    attention_since: entry.attention_since,
+    last_activity_at: entry.last_activity_at,
+    usage: entry.usage ?? { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+    context_used: entry.context_used,
+    context_size: entry.context_size,
+    created_at: entry.created_at ?? "",
+    ended_at: entry.ended_at,
+  }
+}
+
+/**
+ * A conversation Ariadne did not start: what the outside rows of
+ * `GET /v1/sessions` carry.
+ */
+export interface OutsideSessionDto {
+  agent_id: string
+  /** The id the agent loads this conversation back by. */
+  internal_session_id: string
+  working_directory: string
+  last_activity_at: string
+  first_prompt: string
+}
+
+function outsideSession(entry: SessionEntryDto): OutsideSessionDto {
+  return {
+    agent_id: entry.agent_id,
+    internal_session_id: entry.internal_session_id ?? entry.id,
+    working_directory: entry.working_directory ?? "",
+    last_activity_at: entry.last_activity_at ?? "",
+    first_prompt: entry.title ?? "",
+  }
 }
 
 export function sessionQueryOptions(id: string) {
@@ -121,16 +202,17 @@ export function outsideSessionsQueryOptions(
     queryKey: qk.outsideSessions.list(filters),
     queryFn: ({ pageParam }) =>
       unwrap(
-        api().GET("/v1/outside-sessions", {
+        api().GET("/v1/sessions", {
           params: {
             query: {
               ...filters,
+              kind: "outside",
               cursor: pageParam ?? undefined,
               refresh: takeRefresh() || undefined,
             },
           },
         }),
-      ),
+      ).then((page) => ({ ...page, sessions: page.sessions.map(outsideSession) })),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.next_cursor ?? null,
   })

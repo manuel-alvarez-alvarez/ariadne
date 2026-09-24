@@ -2,7 +2,7 @@
 
 /**
  * The sessions screen: the merged table over `GET /v1/sessions` (Ariadne's
- * own, whole) and `GET /v1/outside-sessions` (a page at a time).
+ * own, whole) and `GET /v1/sessions?kind=outside` (a page at a time).
  *
  * What is worth pinning: the two kinds read down one list, newest activity
  * first; an outside row's empty status, goal and task, and its agent and
@@ -18,16 +18,24 @@ import { cleanup, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
-import type { components, GoalDto, OutsideSessionDto, SessionDto, TaskDto } from "@/api"
+import type { components, GoalDto, SessionDto, TaskDto } from "@/api"
 import { shortId } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
-import { aGoal, anOutsideSession, aSession, aTask } from "@/test/fixtures"
+import {
+  aGoal,
+  anOutsideSession,
+  anOutsideSessionPage,
+  aSession,
+  aSessionPage,
+  aTask,
+} from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 
+import type { OutsideSessionDto } from "./queries"
 import { SessionsPage } from "./sessions-page"
 
 type AcpAgentDto = components["schemas"]["AcpAgentDto"]
-type OutsideSessionPageDto = components["schemas"]["OutsideSessionPageDto"]
+type SessionPageDto = components["schemas"]["SessionPageDto"]
 
 const GOAL: GoalDto = aGoal()
 const TASK: TaskDto = aTask({ goal_id: GOAL.id, title: "Wire the review flow" })
@@ -93,15 +101,9 @@ function anAcpAgent(overrides: Partial<AcpAgentDto> = {}): AcpAgentDto {
 
 function anOutsidePage(
   sessions: OutsideSessionDto[],
-  page: Partial<OutsideSessionPageDto> = {},
-): OutsideSessionPageDto {
-  return {
-    sessions,
-    next_cursor: null,
-    total: sessions.length,
-    snapshot_at: "2026-01-03T00:30:00Z",
-    ...page,
-  }
+  page: Partial<SessionPageDto> = {},
+): SessionPageDto {
+  return anOutsideSessionPage(sessions, { snapshot_at: "2026-01-03T00:30:00Z", ...page })
 }
 
 function stubDaemon({
@@ -115,7 +117,7 @@ function stubDaemon({
 }: {
   sessions?: SessionDto[]
   outside?: OutsideSessionDto[]
-  outsidePage?: (query: URLSearchParams) => OutsideSessionPageDto
+  outsidePage?: (query: URLSearchParams) => SessionPageDto
   goals?: GoalDto[]
   tasks?: TaskDto[]
   acpAgents?: AcpAgentDto[]
@@ -124,7 +126,8 @@ function stubDaemon({
   daemonFetch.mockImplementation((input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const url = new URL(request.url)
-    if (url.pathname === "/v1/sessions" && request.method === "GET") {
+    const kind = url.searchParams.get("kind")
+    if (url.pathname === "/v1/sessions" && request.method === "GET" && kind === "ariadne") {
       const status = url.searchParams.get("status")
       const goal = url.searchParams.get("goal")
       const task = url.searchParams.get("task")
@@ -134,9 +137,9 @@ function stubDaemon({
           (!goal || session.goal_id === goal) &&
           (!task || session.task_id === task),
       )
-      return Promise.resolve(jsonResponse(filtered))
+      return Promise.resolve(jsonResponse(aSessionPage(filtered)))
     }
-    if (url.pathname === "/v1/outside-sessions" && request.method === "GET") {
+    if (url.pathname === "/v1/sessions" && request.method === "GET" && kind === "outside") {
       return Promise.resolve(
         jsonResponse(outsidePage ? outsidePage(url.searchParams) : anOutsidePage(outside)),
       )
@@ -151,13 +154,13 @@ function stubDaemon({
   })
 }
 
-/** The query of every request to one path, oldest first. */
-function queriesTo(pathname: string): URLSearchParams[] {
+/** The query of every listing of one kind of session, oldest first. */
+function queriesTo(kind: "ariadne" | "outside"): URLSearchParams[] {
   return daemonFetch.mock.calls
     .map(([input, init]) => (input instanceof Request ? input : new Request(input, init)))
     .filter((request) => request.method === "GET")
     .map(({ url }) => new URL(url))
-    .filter((url) => url.pathname === pathname)
+    .filter((url) => url.pathname === "/v1/sessions" && url.searchParams.get("kind") === kind)
     .map((url) => url.searchParams)
 }
 
@@ -228,9 +231,9 @@ it("sends each filter to the daemon under the name that filter has, on the endpo
 
   await waitFor(
     () => {
-      const ariadneQuery = queriesTo("/v1/sessions").at(-1)
+      const ariadneQuery = queriesTo("ariadne").at(-1)
       expect(ariadneQuery?.get("status")).toBe("failed")
-      const outsideQuery = queriesTo("/v1/outside-sessions").at(-1)
+      const outsideQuery = queriesTo("outside").at(-1)
       expect(outsideQuery?.get("agent")).toBe(OUTSIDE.agent_id)
       expect(outsideQuery?.get("dir")).toBe("/Users/me/dev")
       expect(outsideQuery?.get("q")).toBe("flaky")
@@ -248,7 +251,7 @@ it("sends a day's activity window as the moments that bound it, in UTC", async (
   fireEvent.change(screen.getByLabelText("Active until"), { target: { value: "2026-01-03" } })
 
   await waitFor(() => {
-    const query = queriesTo("/v1/outside-sessions").at(-1)
+    const query = queriesTo("outside").at(-1)
     expect(query?.get("since")).toBe("2026-01-01T00:00:00Z")
     expect(query?.get("until")).toBe("2026-01-03T23:59:59.999999999Z")
   })
@@ -278,18 +281,18 @@ it("pages the outside half through next_cursor, keeping the Ariadne rows, and co
   expect(await screen.findByText(LATER.first_prompt)).toBeTruthy()
   expect(screen.getByText(OUTSIDE.first_prompt)).toBeTruthy()
   expect(await screen.findByText("4 of 4")).toBeTruthy()
-  expect(queriesTo("/v1/outside-sessions").at(-1)?.get("cursor")).toBe("cursor-1")
+  expect(queriesTo("outside").at(-1)?.get("cursor")).toBe("cursor-1")
 })
 
 it("asks every outside agent again when Refresh is pressed", async () => {
   const user = userEvent.setup()
   renderPage()
   await waitFor(() => row(TASK.title))
-  expect(queriesTo("/v1/outside-sessions").at(-1)?.get("refresh")).toBeNull()
+  expect(queriesTo("outside").at(-1)?.get("refresh")).toBeNull()
 
   await user.click(screen.getByRole("button", { name: "Refresh" }))
 
-  await waitFor(() => expect(queriesTo("/v1/outside-sessions").at(-1)?.get("refresh")).toBe("true"))
+  await waitFor(() => expect(queriesTo("outside").at(-1)?.get("refresh")).toBe("true"))
 })
 
 it("opens an Ariadne row's own panel directly, asking the resume endpoint for nothing", async () => {
@@ -340,10 +343,10 @@ it("narrows to one goal from a scope chip, skipping the outside half, and clears
 
   const clear = await screen.findByRole("button", { name: "Show sessions for every goal" })
   expect(screen.getByTitle(GOAL.title)).toBeTruthy()
-  await waitFor(() => expect(queriesTo("/v1/sessions").at(-1)?.get("goal")).toBe(GOAL.id))
+  await waitFor(() => expect(queriesTo("ariadne").at(-1)?.get("goal")).toBe(GOAL.id))
   // A goal filter leaves nothing an outside row could match, so its half is
   // never asked for.
-  expect(queriesTo("/v1/outside-sessions")).toHaveLength(0)
+  expect(queriesTo("outside")).toHaveLength(0)
 
   await user.click(clear)
 
@@ -357,7 +360,7 @@ it("comes back to the status and seat filters the screen was left with", async (
 
   await user.click(screen.getByRole("button", { name: "Filter by status" }))
   await user.click(await screen.findByRole("menuitemradio", { name: "Failed" }))
-  await waitFor(() => expect(queriesTo("/v1/sessions").at(-1)?.get("status")).toBe("failed"))
+  await waitFor(() => expect(queriesTo("ariadne").at(-1)?.get("status")).toBe("failed"))
 
   cleanup()
   daemonFetch.mockClear()

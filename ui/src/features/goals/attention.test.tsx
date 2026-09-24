@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest"
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { sessionAttention } from "@/features/sessions/session-display"
 import { paths } from "@/routes/paths"
-import { aGoal, aSession, aTask } from "@/test/fixtures"
+import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse } from "@/test/harness"
 
 import { attentionTarget, taskAttentionReason, useAttention, useBoardAttention } from "./attention"
@@ -42,7 +42,11 @@ function stubLists({
     if (fails === "all" || fails === url.pathname)
       return Promise.resolve(new Response("boom", { status: 500 }))
     const body =
-      url.pathname === "/v1/goals" ? goals : url.pathname === "/v1/tasks" ? tasks : sessions
+      url.pathname === "/v1/goals"
+        ? goals
+        : url.pathname === "/v1/tasks"
+          ? tasks
+          : aSessionPage(sessions)
     return Promise.resolve(jsonResponse(body))
   })
 }

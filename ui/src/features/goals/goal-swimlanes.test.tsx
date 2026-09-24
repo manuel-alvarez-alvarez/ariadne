@@ -32,7 +32,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
-import { aGoal, aRepository, aSession, aTask } from "@/test/fixtures"
+import { aGoal, aRepository, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalSwimlanes } from "./goal-swimlanes"
 
@@ -86,7 +86,7 @@ function stubDaemon({
     const url = new URL(
       typeof input === "string" ? input : input instanceof URL ? input : input.url,
     )
-    const body = url.pathname === "/v1/tasks" ? tasks : sessions
+    const body = url.pathname === "/v1/tasks" ? tasks : aSessionPage(sessions)
     return Promise.resolve(jsonResponse(body))
   })
 }

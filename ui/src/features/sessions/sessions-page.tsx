@@ -37,7 +37,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
-import type { GoalDto, OutsideSessionDto, SessionDto, TaskDto } from "@/api"
+import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { DataTable } from "@/components/data-table"
 import { PageHeader } from "@/components/page-header"
 import { TokenFigure } from "@/components/token-figure"
@@ -79,6 +79,7 @@ import {
 import { KIND_LABELS, type OutsideFilterParam, useOutsideSessionFilters } from "./outside-filters"
 import {
   byId,
+  type OutsideSessionDto,
   outsideSessionsQueryOptions,
   type SessionListFilters,
   sessionsQueryOptions,

@@ -15,15 +15,19 @@
 import type {
   AgentConfigDto,
   AgentEventDto,
+  components,
   EffortDto,
   GoalDto,
   ModelDto,
-  OutsideSessionDto,
   RepositoryDto,
   SessionDto,
+  SessionEntryDto,
   SkillDto,
   TaskDto,
 } from "@/api"
+import type { OutsideSessionDto } from "@/features/sessions/queries"
+
+type SessionPageDto = components["schemas"]["SessionPageDto"]
 
 /** The instant everything the daemon holds was created and last touched. */
 const STAMP = "2026-01-01T00:00:00Z"
@@ -119,8 +123,8 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
 
 /**
  * A stored session an ACP agent holds on its own, listed over
- * `GET /v1/outside-sessions` — Ariadne did not start it, and it carries no
- * goal, task or seat, having none of its own.
+ * `GET /v1/sessions?kind=outside` — Ariadne did not start it, and it carries
+ * no goal, task or seat, having none of its own.
  */
 export function anOutsideSession(overrides: Partial<OutsideSessionDto> = {}): OutsideSessionDto {
   return {
@@ -130,6 +134,62 @@ export function anOutsideSession(overrides: Partial<OutsideSessionDto> = {}): Ou
     last_activity_at: STAMP,
     first_prompt: "Fix the flaky test.",
     ...overrides,
+  }
+}
+
+/**
+ * One page of `GET /v1/sessions` holding these Ariadne sessions, as the
+ * daemon answers it: every one a listing row of kind `ariadne`.
+ */
+export function aSessionPage(
+  sessions: SessionDto[],
+  page: Partial<SessionPageDto> = {},
+): SessionPageDto {
+  return aPage(
+    sessions.map(
+      ({ worktree_path, ...session }): SessionEntryDto => ({
+        ...session,
+        kind: "ariadne",
+        agent_id: session.model.split(":")[0] ?? "",
+        title: null,
+        working_directory: worktree_path,
+      }),
+    ),
+    page,
+  )
+}
+
+/**
+ * One page of `GET /v1/sessions?kind=outside` holding these conversations,
+ * as the daemon answers it.
+ */
+export function anOutsideSessionPage(
+  sessions: OutsideSessionDto[],
+  page: Partial<SessionPageDto> = {},
+): SessionPageDto {
+  return aPage(
+    sessions.map(
+      (session): SessionEntryDto => ({
+        kind: "outside",
+        id: session.internal_session_id,
+        agent_id: session.agent_id,
+        internal_session_id: session.internal_session_id,
+        working_directory: session.working_directory,
+        last_activity_at: session.last_activity_at,
+        title: session.first_prompt,
+      }),
+    ),
+    page,
+  )
+}
+
+function aPage(sessions: SessionEntryDto[], page: Partial<SessionPageDto>): SessionPageDto {
+  return {
+    sessions,
+    next_cursor: null,
+    total: sessions.length,
+    snapshot_at: STAMP,
+    ...page,
   }
 }
 

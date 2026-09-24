@@ -440,26 +440,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/outside-sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List sessions Ariadne did not start: one filtered page of the daemon's
-         *     snapshot of every ACP agent's stored sessions, newest first.
-         */
-        get: operations["sessions_list_outside"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/outside-sessions/resume": {
         parameters: {
             query?: never;
@@ -521,7 +501,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List agent sessions. */
+        /**
+         * List sessions: one page of the sessions Ariadne runs and the
+         *     conversations the ACP agents stored themselves, newest activity first.
+         */
         get: operations["sessions_list"];
         put?: never;
         post?: never;
@@ -1610,32 +1593,6 @@ export interface components {
          * @enum {string}
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
-        /**
-         * @description A stored session of an ACP agent that Ariadne did not start, listed over
-         *     `session/list`.
-         */
-        OutsideSessionDto: {
-            /**
-             * @description Which ACP registry agent this session belongs to (`GET
-             *     /v1/acp-agents`).
-             */
-            agent_id: string;
-            first_prompt: string;
-            /** @description The id the agent loads this conversation back by. */
-            internal_session_id: string;
-            last_activity_at: string;
-            working_directory: string;
-        };
-        /** @description One page of `GET /v1/outside-sessions`, newest activity first. */
-        OutsideSessionPageDto: {
-            /** @description The `cursor` that continues after this page; null on the last one. */
-            next_cursor?: string | null;
-            sessions: components["schemas"]["OutsideSessionDto"][];
-            /** @description When the snapshot this page was cut from was taken, RFC 3339. */
-            snapshot_at: string;
-            /** @description How many sessions the filters leave, over every page. */
-            total: number;
-        };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
             exists: boolean;
@@ -1771,6 +1728,73 @@ export interface components {
             usage: components["schemas"]["TokenUsageDto"];
             /** @description The worktree, or the recorded working directory of a loose session. */
             worktree_path?: string | null;
+        };
+        /**
+         * @description One row of `GET /v1/sessions`: a session of either kind.
+         *
+         *     An outside conversation carries no goal, task, seat or status, because
+         *     Ariadne runs no work behind it; what it does carry is the agent it belongs
+         *     to, the id that agent loads it back by, where it ran and when it last did.
+         */
+        SessionEntryDto: {
+            /** @description The registry agent this conversation runs on (`GET /v1/acp-agents`). */
+            agent_id: string;
+            attention_reason?: null | components["schemas"]["AttentionReason"];
+            attention_since?: string | null;
+            /** Format: int64 */
+            context_size?: number | null;
+            /** Format: int64 */
+            context_used?: number | null;
+            /** @description When Ariadne created the row; None on an outside row. */
+            created_at?: string | null;
+            /**
+             * @description Effort that model was launched at, off the same pin as `model`.
+             * @example high
+             */
+            effort?: string | null;
+            ended_at?: string | null;
+            goal_id?: string | null;
+            /** @description Ariadne's session id, or the agent's own session id on an outside row. */
+            id: string;
+            /** @description The ACP agent's own session id, which is `id` on an outside row. */
+            internal_session_id?: string | null;
+            kind: components["schemas"]["SessionKind"];
+            /** @description When this session was last active, which the page is ordered by. */
+            last_activity_at?: string | null;
+            /** @description Model requested at launch, `<agent>:<model>`; None on an outside row. */
+            model?: string | null;
+            seat?: null | components["schemas"]["Seat"];
+            status?: null | components["schemas"]["SessionStatus"];
+            /**
+             * @description The staffed agent this session runs; None for an orchestrator, a loose
+             *     session or an outside one.
+             */
+            task_agent_id?: string | null;
+            task_id?: string | null;
+            /**
+             * @description What this session is about: its task's title, the goal's title behind
+             *     an orchestrator, or the first prompt of an outside conversation.
+             */
+            title?: string | null;
+            usage?: null | components["schemas"]["TokenUsageDto"];
+            /** @description The worktree, or the recorded working directory. */
+            working_directory?: string | null;
+        };
+        /**
+         * @description Which half of the listing a row came from: a session Ariadne runs, or a
+         *     conversation an ACP agent stored that Ariadne did not start.
+         * @enum {string}
+         */
+        SessionKind: "ariadne" | "outside";
+        /** @description One page of `GET /v1/sessions`, newest activity first. */
+        SessionPageDto: {
+            /** @description The `cursor` that continues after this page; null on the last one. */
+            next_cursor?: string | null;
+            sessions: components["schemas"]["SessionEntryDto"][];
+            /** @description When the outside snapshot this page was cut from was taken, RFC 3339. */
+            snapshot_at: string;
+            /** @description How many sessions the filters leave, over every page. */
+            total: number;
         };
         /**
          * @description Agent session lifecycle status.
@@ -2779,51 +2803,6 @@ export interface operations {
             };
         };
     };
-    sessions_list_outside: {
-        parameters: {
-            query?: {
-                /** @description Only sessions of this registry agent (`GET /v1/acp-agents`). */
-                agent?: string | null;
-                /**
-                 * @description Only sessions whose working directory is this absolute path, or a
-                 *     path under it.
-                 */
-                dir?: string | null;
-                /** @description Only sessions last active at or after this moment, RFC 3339. */
-                since?: string | null;
-                /** @description Only sessions last active at or before this moment, RFC 3339. */
-                until?: string | null;
-                /** @description Only sessions whose first prompt contains this text, case-insensitive. */
-                q?: string | null;
-                /** @description Max sessions in the page (default 50, cap 200). */
-                limit?: number | null;
-                /** @description The `next_cursor` of the page before this one; opaque. */
-                cursor?: string | null;
-                /** @description Ask every agent again before answering, whatever the snapshot's age. */
-                refresh?: boolean | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OutsideSessionPageDto"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     sessions_resume_outside: {
         parameters: {
             query?: never;
@@ -3024,14 +3003,48 @@ export interface operations {
     sessions_list: {
         parameters: {
             query?: {
-                /** @description Filter by goal id. */
+                /** @description Only sessions of this kind. Omitted lists both. */
+                kind?: null | components["schemas"]["SessionKind"];
+                /** @description Only sessions of this registry agent (`GET /v1/acp-agents`). */
+                agent?: string | null;
+                /** @description Filter by goal id. No outside session has one. */
                 goal?: string | null;
-                /** @description Filter by task id. */
+                /** @description Filter by task id. No outside session has one. */
                 task?: string | null;
-                /** @description Filter by status. */
+                /**
+                 * @description Filter by status. No outside session has one. A named status also
+                 *     lists sessions that have ended, as `all` does.
+                 */
                 status?: null | components["schemas"]["SessionStatus"];
-                /** @description Only sessions currently flagged as needing attention. */
+                /** @description Filter by seat. No outside session has one. */
+                seat?: null | components["schemas"]["Seat"];
+                /**
+                 * @description Only sessions currently flagged as needing attention. No outside
+                 *     session is.
+                 */
                 attention?: boolean | null;
+                /**
+                 * @description Only sessions whose directory is this absolute path, or a path under
+                 *     it.
+                 */
+                dir?: string | null;
+                /** @description Only sessions last active at or after this moment, RFC 3339. */
+                since?: string | null;
+                /** @description Only sessions last active at or before this moment, RFC 3339. */
+                until?: string | null;
+                /** @description Only sessions whose title contains this text, case-insensitive. */
+                q?: string | null;
+                /**
+                 * @description List every session, whatever its age and whether it has ended, rather
+                 *     than the live ones of the last 7 days.
+                 */
+                all?: boolean | null;
+                /** @description Max sessions in the page (default 50, cap 200). */
+                limit?: number | null;
+                /** @description The `next_cursor` of the page before this one; opaque. */
+                cursor?: string | null;
+                /** @description Ask every agent again before answering, whatever the snapshot's age. */
+                refresh?: boolean | null;
             };
             header?: never;
             path?: never;
@@ -3044,8 +3057,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionDto"][];
+                    "application/json": components["schemas"]["SessionPageDto"];
                 };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

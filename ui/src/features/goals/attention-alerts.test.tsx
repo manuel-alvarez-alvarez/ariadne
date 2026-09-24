@@ -23,7 +23,7 @@ import { beforeEach, expect, it, vi } from "vitest"
 import type { SessionDto } from "@/api"
 
 import { Toaster } from "@/components/ui/sonner"
-import { aGoal, aSession, aTask } from "@/test/fixtures"
+import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 
 import { AttentionAlerts, AttentionBadge } from "./attention-alerts"
@@ -52,7 +52,11 @@ function stubDaemon() {
       typeof input === "string" ? input : input instanceof URL ? input : input.url,
     )
     const body =
-      url.pathname === "/v1/goals" ? [GOAL] : url.pathname === "/v1/tasks" ? [TASK] : sessions
+      url.pathname === "/v1/goals"
+        ? [GOAL]
+        : url.pathname === "/v1/tasks"
+          ? [TASK]
+          : aSessionPage(sessions)
     return Promise.resolve(jsonResponse(body))
   })
 }

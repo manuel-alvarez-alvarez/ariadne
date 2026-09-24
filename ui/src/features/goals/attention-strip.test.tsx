@@ -18,7 +18,7 @@ import { expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { formatAbsolute } from "@/lib/format"
-import { aGoal, aSession, aTask } from "@/test/fixtures"
+import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { AttentionStrip } from "./attention-strip"
 
@@ -82,7 +82,11 @@ function stubDaemon({
       return Promise.resolve(new Response("boom", { status: 500 }))
     }
     const body =
-      url.pathname === "/v1/goals" ? goals : url.pathname === "/v1/tasks" ? tasks : sessions
+      url.pathname === "/v1/goals"
+        ? goals
+        : url.pathname === "/v1/tasks"
+          ? tasks
+          : aSessionPage(sessions)
     return Promise.resolve(jsonResponse(body))
   })
 }
