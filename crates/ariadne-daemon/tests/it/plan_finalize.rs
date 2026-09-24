@@ -18,7 +18,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::goals::GoalDto;
-use ariadne_core::{GoalStatus, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::attention::work_is_active;
 
 use common::{Cast, Harness, as_session, eventually, harness, post_json};
@@ -228,14 +228,30 @@ async fn an_orchestrator_is_the_agent_work_waits_on_until_the_goal_is_over() {
 /// The hand-off used to be a message: the daemon asked the orchestrator to
 /// compact the conversation that wrote the plan. It asks nothing now, and an
 /// idle agent that nothing has happened on is sent nothing.
+///
+/// The plan's task really starts, in a git repository of its own, and the
+/// passes below run over a goal whose work is under way: what the daemon says
+/// to an orchestrator is what its tasks need, and a task nothing could start
+/// needs it very much. Without the repository the author cannot be launched,
+/// so every pass over that task spends an attempt, and after three of them
+/// the task fails and the daemon rightly says so — which is a prompt this
+/// assertion reads as the defect it is watching for.
 #[tokio::test]
 async fn a_scheduler_pass_keeps_the_orchestrator_of_an_active_goal_and_types_nothing() {
     let h = harness().scheduler().await;
+    h.git_repo("repo");
     let cast = h.cast().await;
     let orchestrator = orchestrator_session(&h, &cast).await;
     h.agent_runs(&orchestrator).await;
     h.set_status(&orchestrator, SessionStatus::Idle).await;
     finalize(&h, &cast, &orchestrator.id).await;
+    eventually(TIMEOUT, "the plan's task to be under way", async || {
+        h.status(&cast.task.id).await == TaskStatus::InProgress
+            && h.running_session(&cast.task.id, Seat::Author)
+                .await
+                .is_some()
+    })
+    .await;
 
     for _ in 0..3 {
         h.notify_goal(&cast.goal.id);

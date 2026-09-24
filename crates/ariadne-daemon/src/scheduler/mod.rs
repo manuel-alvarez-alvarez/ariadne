@@ -335,20 +335,14 @@ impl Scheduler {
             }
             Target::Task(id) => {
                 warn!(task = %id, error = %format!("{e:#}"), "task reconciliation failed");
-                // A store that would not answer says nothing about whether an
-                // agent can be started, so it is waited out rather than
-                // counted. Under load the write pool hands out a timeout
-                // instead of a connection, and every task's reconciliation
-                // fails together for as long as that lasts: counted as spawn
-                // attempts, three ticks of it fail a task whose agent was
-                // never asked for.
-                if !unanswered(&e) {
-                    let failure = spawn_failure(&e);
-                    let exhausted = self.record_spawn_failure(id, failure.reason).await;
-                    if !exhausted && let Some(delay) = failure.retry {
-                        self.spawn_retry_at
-                            .insert(id.to_string(), tokio::time::Instant::now() + delay);
-                    }
+                let cost = cost_of(&e, out_of_descriptors());
+                let exhausted = match cost.attempt {
+                    Some(reason) => self.record_spawn_failure(id, reason).await,
+                    None => false,
+                };
+                if !exhausted && let Some(delay) = cost.wait {
+                    self.spawn_retry_at
+                        .insert(id.to_string(), tokio::time::Instant::now() + delay);
                 }
             }
         }
@@ -521,6 +515,57 @@ fn unanswered(error: &anyhow::Error) -> bool {
     )
 }
 
+/// What a failed task reconciliation costs the task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Cost {
+    /// The attempt to count against the spawn-retry budget, and what the task
+    /// will say if it was the last one, or `None` where nothing was spent.
+    attempt: Option<&'static str>,
+    /// How long before this task is reconciled again, where the failure is one
+    /// the next wake cannot do better on.
+    wait: Option<Duration>,
+}
+
+/// What this failure costs the task it happened on.
+///
+/// A store that would not answer says nothing about whether an agent can be
+/// started, so it spends no attempt. Under load the write pool hands out a
+/// timeout instead of a connection, and every task's reconciliation fails
+/// together for as long as that lasts: counted as spawn attempts, three ticks
+/// of it fail a task whose agent was never asked for.
+///
+/// A descriptor shortage is waited out whichever layer noticed it, and
+/// `short_of_descriptors` is that state asked of the machine rather than read
+/// off the error. The store opens files too: a shortage arrives at a pass
+/// worded by whichever layer met it first — a spawn that could not fork, a
+/// skill file the adapter could not write, or SQLite answering "unable to open
+/// database file" — and only the first of those carries an error a reader can
+/// recognise. The state is the daemon's own either way, and it cannot clear
+/// between two adjacent wakes, so the wait is taken from it and the attempt
+/// from who failed.
+fn cost_of(error: &anyhow::Error, short_of_descriptors: bool) -> Cost {
+    let failure = spawn_failure(error);
+    let descriptors = failure.retry.is_some() || short_of_descriptors;
+    Cost {
+        attempt: (!unanswered(error)).then_some(match descriptors {
+            true => DESCRIPTOR_LIMIT_REASON,
+            false => failure.reason,
+        }),
+        wait: descriptors.then_some(DESCRIPTOR_RETRY),
+    }
+}
+
+/// Whether the daemon has no descriptor left to open a file with, asked of the
+/// operating system on the failure path: one open of `/dev/null`, which costs
+/// nothing where there is one to spare and answers the question where there is
+/// not.
+fn out_of_descriptors() -> bool {
+    match std::fs::File::open("/dev/null") {
+        Ok(_) => false,
+        Err(e) => e.raw_os_error() == Some(rustix::io::Errno::MFILE.raw_os_error()),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SpawnFailure {
     reason: &'static str,
@@ -551,7 +596,17 @@ mod tests {
     use ariadne_core::{TaskStatus, TransitionError};
     use ariadne_store::StoreError;
 
-    use super::{DESCRIPTOR_LIMIT_REASON, DESCRIPTOR_RETRY, spawn_failure, unanswered};
+    use super::{
+        DESCRIPTOR_LIMIT_REASON, DESCRIPTOR_RETRY, SPAWN_FAILURE_REASON, cost_of, spawn_failure,
+        unanswered,
+    };
+
+    /// The descriptor limit reached, as each layer that opens a file reports
+    /// it: the launch that could not spawn, and the store that could not open
+    /// a connection.
+    fn descriptor_limit() -> std::io::Error {
+        std::io::Error::from_raw_os_error(rustix::io::Errno::MFILE.raw_os_error())
+    }
 
     /// The spawn-retry budget is for a task whose agent will not start. A
     /// store that would not answer is the daemon failing to read, not the
@@ -588,14 +643,92 @@ mod tests {
 
     #[test]
     fn an_open_file_limit_failure_names_the_limit_and_waits_before_retrying() {
-        let error = anyhow::Error::new(std::io::Error::from_raw_os_error(
-            rustix::io::Errno::MFILE.raw_os_error(),
-        ))
-        .context("starting the ACP agent");
+        let error = anyhow::Error::new(descriptor_limit()).context("starting the ACP agent");
 
         let failure = spawn_failure(&error);
 
         assert_eq!(failure.reason, DESCRIPTOR_LIMIT_REASON);
         assert_eq!(failure.retry, Some(DESCRIPTOR_RETRY));
+    }
+
+    /// A descriptor shortage cannot clear between two adjacent wakes, and only
+    /// the layer that spawns words it as the limit: SQLite says "unable to open
+    /// database file" and git says nothing of the kind. So the shortage is
+    /// asked of the machine, and a failure that met it is waited out and named
+    /// by it, whichever error carried it here.
+    #[test]
+    fn a_descriptor_shortage_is_waited_out_whichever_layer_noticed_it() {
+        let launch = anyhow::Error::new(descriptor_limit()).context("starting the ACP agent");
+        let read = anyhow::Error::from(StoreError::Db(sqlx::Error::Database(Box::new(CannotOpen))));
+        let timed_out = anyhow::Error::from(StoreError::Db(sqlx::Error::PoolTimedOut));
+        let git = anyhow::anyhow!("git could not start");
+
+        // The launch error says the limit itself, with no descriptor to spare
+        // needed to know it.
+        assert_eq!(cost_of(&launch, false).wait, Some(DESCRIPTOR_RETRY));
+        assert_eq!(
+            cost_of(&launch, false).attempt,
+            Some(DESCRIPTOR_LIMIT_REASON)
+        );
+        // A read that could not open its file, while the machine has none to
+        // spare: waited out, and no attempt spent, since no agent was asked
+        // for.
+        assert_eq!(cost_of(&read, true).wait, Some(DESCRIPTOR_RETRY));
+        assert_eq!(
+            cost_of(&read, true).attempt,
+            None,
+            "the store was asked, not an agent"
+        );
+        // The same read with descriptors to spare is the store not answering,
+        // and the next wake may do better.
+        assert_eq!(cost_of(&read, false).wait, None);
+        assert_eq!(cost_of(&timed_out, false).wait, None);
+        assert_eq!(cost_of(&timed_out, false).attempt, None);
+        // And a spawn that said nothing about descriptors is named by the
+        // shortage it ran into.
+        assert_eq!(cost_of(&git, true).attempt, Some(DESCRIPTOR_LIMIT_REASON));
+        assert_eq!(cost_of(&git, true).wait, Some(DESCRIPTOR_RETRY));
+        assert_eq!(cost_of(&git, false).attempt, Some(SPAWN_FAILURE_REASON));
+        assert_eq!(cost_of(&git, false).wait, None);
+    }
+
+    /// SQLite's answer when it cannot open its file, which is what a descriptor
+    /// shortage looks like from the store: code 14, and nothing in it that
+    /// names a limit.
+    #[derive(Debug)]
+    struct CannotOpen;
+
+    impl std::fmt::Display for CannotOpen {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "unable to open database file")
+        }
+    }
+
+    impl std::error::Error for CannotOpen {}
+
+    impl sqlx::error::DatabaseError for CannotOpen {
+        fn message(&self) -> &str {
+            "unable to open database file"
+        }
+
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            Some(std::borrow::Cow::Borrowed("14"))
+        }
+
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> sqlx::error::ErrorKind {
+            sqlx::error::ErrorKind::Other
+        }
     }
 }

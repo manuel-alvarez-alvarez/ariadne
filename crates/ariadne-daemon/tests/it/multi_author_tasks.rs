@@ -394,16 +394,20 @@ async fn exactly_one_branch_lands_and_the_losers_are_gone() {
         winner_branch
     );
     // The landing resumes the winner's own session; the loser has none left.
+    // The row is the one the wait itself found, rather than one read again
+    // after it: the landing's own resume puts that session back into
+    // `starting` while it launches an agent, and a second read can land in
+    // exactly that window and find no session at all.
+    let mut winners_session = None;
     eventually(TIMEOUT, "the winner to be briefed to land it", async || {
-        h.running_session(&c.task.id, Seat::Author)
+        winners_session = h
+            .running_session(&c.task.id, Seat::Author)
             .await
-            .is_some_and(|s| s.task_agent_id.as_deref() == Some(winner.id.as_str()))
+            .filter(|s| s.task_agent_id.as_deref() == Some(winner.id.as_str()));
+        winners_session.is_some()
     })
     .await;
-    let author_session = h
-        .running_session(&c.task.id, Seat::Author)
-        .await
-        .expect("the winner's session is the one landing it");
+    let author_session = winners_session.expect("the winner's session is the one landing it");
 
     sh(&winner_worktree, "git rebase -q main");
     sh(

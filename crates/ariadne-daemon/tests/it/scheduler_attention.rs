@@ -74,6 +74,11 @@ const LONG_WINDOW: Duration = Duration::from_secs(2);
 /// test about a pass that outlives its own window: launching an agent starts
 /// a process, which no machine does in ten milliseconds.
 const BRIEF_WINDOW: Duration = Duration::from_millis(10);
+/// A tick for a test about what the liveness sweep concludes, which runs on
+/// the tick and on nothing else. Short so that the sweep comes round while
+/// the test watches, rather than five seconds into it; nothing the test waits
+/// for is waited out on it.
+const SWEEPS_SOON: Duration = Duration::from_millis(100);
 #[cfg(unix)]
 const DESCRIPTOR_RETRY_CHILD: &str = "ARIADNE_DESCRIPTOR_RETRY_CHILD";
 
@@ -95,6 +100,20 @@ fn reconciles_of(h: &Harness, session: &AgentSession) -> usize {
             line.message
                 .starts_with("reconciling what a session's wake is about")
                 && line.message.contains(&session.id)
+        })
+        .count()
+}
+
+/// How many attempts at starting this task's reviewer the scheduler has made:
+/// what a retry held off by the descriptor delay is measured by, read from the
+/// line `Scheduler::reconcile_task` logs before each attempt. It covers a
+/// resume of a row that is already there as well as a spawn that writes one.
+fn reviewer_starts_of(h: &Harness, task: &Task) -> usize {
+    h.logs
+        .snapshot()
+        .iter()
+        .filter(|line| {
+            line.message.starts_with("starting reviewer") && line.message.contains(&task.id)
         })
         .count()
 }
@@ -532,12 +551,18 @@ async fn a_vanished_agent_with_work_still_active_is_flagged_disconnected() {
     // Launched and running in the database, with no agent process under it.
     // Launched rather than merely written, since a row whose start is still
     // in front of it has no agent yet for reasons that are nobody's alarm —
-    // which is the grace window's own test below.
+    // which is the grace window's own test below. And heard from since that
+    // launch, because an agent that had been working and lost its process is
+    // what this is about: one that came up and was never heard from at all is
+    // a death on arrival, which the goal reads as a launch of its own that
+    // failed (rule 27).
     let session = h.orchestrator_session(&goal).await;
     h.launched_ago(&session, 60).await;
+    h.store.touch_session(&session.id).await.unwrap();
     // And a second one that was sitting on a question that died with it.
     let on_a_prompt = h.orchestrator_session(&goal).await;
     h.launched_ago(&on_a_prompt, 60).await;
+    h.store.touch_session(&on_a_prompt.id).await.unwrap();
     h.raise(&on_a_prompt, AttentionReason::WaitingPermission)
         .await;
 
@@ -729,10 +754,15 @@ async fn an_orchestrator_whose_agent_went_away_is_resumed_in_its_own_row() {
         h.timeouts,
     ));
     sched.goal(&goal);
+    // Waited for through the agent rather than the row's own status: a resume
+    // writes the row back into `starting` and names its launch before the
+    // process exists, so a read taken on the status alone catches the
+    // orchestrator on its way up — with the launch this test reads below not
+    // written yet.
     eventually(
         TIMEOUT,
         "the orchestrator to be running again",
-        async || h.session_status(&session).await.is_live(),
+        async || h.relaunched(&session, &None).await,
     )
     .await;
 
@@ -1055,6 +1085,15 @@ async fn a_task_that_could_never_be_started_fails_with_the_reason_on_it() {
 
 /// A descriptor shortage receives one attempt, not one attempt per adjacent
 /// wake. Once descriptors return, the task still waits for the retry delay.
+///
+/// The attempts are counted from the line the scheduler logs before each one,
+/// and what is asserted is that the adjacent wakes add none. The session rows
+/// cannot carry that count: where in the launch the shortage bites is the
+/// machine's to decide — the worktree git runs before the row is written, the
+/// skills and the launch file after it — so an attempt leaves one row here and
+/// none there, and a resume of a row that already exists leaves no new row at
+/// all. The count is read twice, so the shortage's own attempt is not confused
+/// with an adjacent wake's, whichever of them the machine let through.
 #[tokio::test]
 #[cfg(unix)]
 async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
@@ -1101,9 +1140,15 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
     while let Ok(file) = std::fs::File::open("/dev/null") {
         held.push(file);
     }
+    // Everything the scheduler logs from here is this test's to count.
+    let _capture = capture(&w);
     let sched = w.scheduler();
     sched.task(&w.task);
     sched.flush().await;
+    // What the shortage itself bought: one attempt, or none where it bit
+    // before the attempt was made.
+    let spent = reviewer_starts_of(&w, &w.task);
+    assert!(spent <= 1, "the shortage spent {spent} attempts");
     drop(held);
     setrlimit(Resource::Nofile, original).unwrap();
 
@@ -1123,8 +1168,9 @@ async fn a_descriptor_shortage_does_not_spend_adjacent_retry_attempts() {
         .into_iter()
         .filter(|session| session.seat() == Seat::Reviewer)
         .collect();
-    assert!(
-        reviewers.is_empty(),
+    assert_eq!(
+        reviewer_starts_of(&w, &w.task),
+        spent,
         "an adjacent wake retried the reviewer: {reviewers:#?}"
     );
     assert_eq!(
@@ -1270,9 +1316,22 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
 /// the ground, and it ends where that one ends: one alarm, on one row, and
 /// nothing started again. Here every launch works — the agent process is
 /// started — and it exits at once, never heard from.
+///
+/// One alarm however the deaths are noticed. Each of these rows is a dead
+/// agent, and the liveness sweep raises `disconnected` on any it finds before
+/// the retirement the runtime is about to write — which under load is a
+/// second alarm on a goal that has already given up, since the count that
+/// cleared the others is not spent again. So the goal is swept while a
+/// retirement lags behind it, and it still leaves the user one alarm.
 #[tokio::test]
 async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
-    let h = harness().dying_agent().await;
+    let h = harness()
+        .dying_agent()
+        .timeouts(Timeouts {
+            full_reconcile: SWEEPS_SOON,
+            ..Timeouts::default()
+        })
+        .await;
     let goal = h.planning_goal().await;
     // The cwd of a launch has to exist for the launch to be performed at all.
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
@@ -1303,12 +1362,26 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
 
     let rows = orchestrators(&h, &goal).await;
     assert_eq!(
-        rows.iter()
-            .filter(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
-            .count(),
+        alarms(&rows),
         1,
         "one goal, one row that says anything: {rows:?}"
     );
+
+    // A retirement that lagged: a row whose agent is long gone and whose
+    // status has not caught up with it, which is what the sweep finds under
+    // load. The sweep retires it and raises its own alarm, and the goal takes
+    // that one down again — waited for as one state, since the sweep and the
+    // pass that answers it are one tick.
+    let lagging = rows
+        .iter()
+        .find(|s| s.attention_reason().is_none())
+        .expect("a death the alarm is not on")
+        .clone();
+    h.set_status(&lagging, SessionStatus::Running).await;
+    eventually(TIMEOUT, "the swept row to leave one alarm", async || {
+        !h.session_status(&lagging).await.is_live() && alarms(&orchestrators(&h, &goal).await) == 1
+    })
+    .await;
 
     // And nothing has been started again: given up on, rather than between
     // two launches. Three more passes over the same goal is what "a tick
@@ -1324,13 +1397,17 @@ async fn an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on() {
         "an orchestrator that was given up on is not spawned again: {after:?}"
     );
     assert_eq!(
-        after
-            .iter()
-            .filter(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
-            .count(),
+        alarms(&after),
         1,
         "and the alarm the user answers stands: {after:?}"
     );
+}
+
+/// How many of these rows are asking for the user.
+fn alarms(rows: &[AgentSession]) -> usize {
+    rows.iter()
+        .filter(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
+        .count()
 }
 
 /// The same for the agent of a task, which has a task to fail rather than an
@@ -1919,9 +1996,21 @@ async fn a_failed_task_wakes_the_orchestrator_once() {
 /// connection ending leaves behind for a few awaits before it is
 /// deregistered — and `hand_prompt` says so by failing. Marked told at that
 /// failed attempt regardless, the situation would never be said again.
+///
+/// The passes are the ones this test sends and no others: the agent it puts
+/// back under the session is launched from outside the daemon, and a tick
+/// landing inside that launch finds a session whose row is live with no agent
+/// behind it — which is an orchestrator to resume, spending attempts on a
+/// seat the test is about to fill itself.
 #[tokio::test]
 async fn a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass() {
-    let w = World::active().await;
+    let h = harness()
+        .timeouts(Timeouts {
+            full_reconcile: NO_TICK,
+            ..Timeouts::default()
+        })
+        .await;
+    let w = World::build(h, 1).await;
     let orchestrator = w.orchestrator_session(&w.goal).await;
     w.agent_runs(&orchestrator).await;
     w.set_status(&orchestrator, SessionStatus::Idle).await;

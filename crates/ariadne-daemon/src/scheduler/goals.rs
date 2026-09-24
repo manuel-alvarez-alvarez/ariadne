@@ -135,6 +135,11 @@ impl super::Scheduler {
         let Some(orchestrators) = self.orchestrator_sessions(&goal.id).await else {
             return false;
         };
+        // Held on every pass that finds the daemon holding off, not only where
+        // an attempt is counted: nothing is counted again once the budget is
+        // out, and the sweep can still flag another of these dead rows on any
+        // tick.
+        self.one_alarm_between_them(&orchestrators).await;
         match alarm_row(&orchestrators) {
             Some(alarm) if alarm.attention_reason() == Some(AttentionReason::Disconnected) => false,
             None => false,
@@ -149,14 +154,9 @@ impl super::Scheduler {
     /// Count an orchestrator spawn that did not get off the ground, and leave
     /// one row per goal saying anything about it.
     ///
-    /// The row this attempt wrote is retired here rather than left for the
-    /// liveness sweep to find, and so is every row an earlier attempt left:
-    /// what the user has to see is an orchestrator that will not start, once,
-    /// not a line per attempt. Only rows that never launched are touched — a
-    /// session that really had an agent and lost it is news of its own, and
-    /// the sweep's to tell. While the budget lasts nothing new is raised, the
-    /// next pass being about to try again; when it runs out the alarm goes up
-    /// on the row that is left, and the goal's own thread says why.
+    /// While the budget lasts nothing new is raised, the next pass being about
+    /// to try again; when it runs out the alarm goes up on the row that is
+    /// left, and the goal's own thread says why.
     async fn orchestrator_could_not_start(&mut self, goal: &Goal) {
         let failures = self.spawn_failures.entry(goal.id.clone()).or_insert(0);
         *failures += 1;
@@ -164,10 +164,38 @@ impl super::Scheduler {
         let Some(orchestrators) = self.orchestrator_sessions(&goal.id).await else {
             return;
         };
-        let Some(alarm) = alarm_row(&orchestrators).map(|s| s.id.clone()) else {
+        let Some(alarm) = self.one_alarm_between_them(&orchestrators).await else {
             return;
         };
-        for session in orchestrators.iter().filter(|s| s.launched_at.is_none()) {
+        if failures < SPAWN_RETRY_BUDGET {
+            return;
+        }
+        warn!(goal = %goal.id, session = %alarm, failures, "the orchestrator will not start, giving up");
+        let _ = self
+            .store
+            .set_session_attention(&alarm, AttentionReason::Disconnected)
+            .await;
+    }
+
+    /// Leave one row of this goal saying anything about an orchestrator that
+    /// will not start, and answer which row that is.
+    ///
+    /// The rows a failed attempt leaves are retired here rather than left for
+    /// the liveness sweep to find: what the user has to see is an orchestrator
+    /// that will not start, once, not a line per attempt. Two kinds of row are
+    /// that same attempt — one that never launched, and one that came up and
+    /// died without a word (rule 27) — and the second of them is the sweep's
+    /// as much as this pass's, since a dead agent is retired wherever the
+    /// scheduler notices it first. So a sweep landing between two deaths
+    /// raises an alarm of its own on a row this goal has already given up on,
+    /// and it is taken down here. A session that was heard from and then lost
+    /// its agent is news of its own, and the sweep's to tell.
+    async fn one_alarm_between_them(&self, orchestrators: &[AgentSession]) -> Option<String> {
+        let alarm = alarm_row(orchestrators).map(|s| s.id.clone())?;
+        for session in orchestrators
+            .iter()
+            .filter(|s| s.launched_at.is_none() || s.died_on_arrival())
+        {
             if session.status().is_live() {
                 let _ = self
                     .store
@@ -180,14 +208,7 @@ impl super::Scheduler {
                 let _ = self.store.clear_session_attention(&session.id).await;
             }
         }
-        if failures < SPAWN_RETRY_BUDGET {
-            return;
-        }
-        warn!(goal = %goal.id, session = %alarm, failures, "the orchestrator will not start, giving up");
-        let _ = self
-            .store
-            .set_session_attention(&alarm, AttentionReason::Disconnected)
-            .await;
+        Some(alarm)
     }
 
     /// The goal's orchestrator sessions, oldest first, or `None` when the store

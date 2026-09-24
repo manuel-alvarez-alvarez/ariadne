@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-21
+updated: 2026-09-24
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -132,6 +132,15 @@ the ACP runtime that takes a prompt (021).
     failing. A goal whose orchestrator dies on arrival every time is left
     with one alarm and nothing started again. A task whose author or
     reviewer does fails, saying its agent stopped as soon as it started.
+    That one alarm stands however the deaths were noticed: each of those rows
+    is a dead agent, so the liveness sweep raises `disconnected` on any it
+    reaches before the runtime's own retirement, which is this same trouble
+    seen a moment earlier rather than news of its own. So every pass that
+    finds the daemon holding off leaves one row carrying the alarm and takes
+    the rest down — a row that never launched, and a row that came up and
+    died without a word (rule 27) — since the count that cleared the others
+    is never spent again after the give-up. A session that was heard from and
+    then lost its agent keeps an alarm of its own.
 30. A goal whose tasks have all landed wakes its orchestrator, which decides
     whether the goal is met. A session that outlived its completed goal is
     killed on every pass. A situation is counted as told only once the
@@ -163,6 +172,13 @@ the ACP runtime that takes a prompt (021).
     retry budget before another task can release descriptors. A git process
     that cannot inspect a reviewer branch keeps its start error, so this same
     retry applies instead of refusing the review as an empty branch.
+35. A shortage is asked of the machine rather than read off the error. Only
+    the spawn says "too many open files": the store answers "unable to open
+    database file", and a file the adapter could not write says neither. So a
+    failed pass asks the operating system for one descriptor, and a failure
+    that met the shortage carries the 30-second wait and the limit as its
+    reason, whichever layer reported it. A read that failed spends no attempt
+    all the same, by rule 26, since no agent was asked for.
 
 ## Acceptance criteria
 
@@ -248,14 +264,19 @@ the ACP runtime that takes a prompt (021).
   (`::an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm`).
 - An open-file-limit launch failure names the descriptor limit and carries a
   30-second retry delay
-  (`scheduler/mod.rs::an_open_file_limit_failure_names_the_limit_and_waits_before_retrying`).
-- Adjacent wakes during an open-file shortage neither retry the reviewer nor
-  spend the task's retry budget
+  (`scheduler/mod.rs::an_open_file_limit_failure_names_the_limit_and_waits_before_retrying`),
+  and a failure that met the shortage carries that same delay and the limit as
+  its reason, whichever layer reported it — a read that failed spending no
+  attempt
+  (`::a_descriptor_shortage_is_waited_out_whichever_layer_noticed_it`).
+- An open-file shortage buys one attempt at the reviewer, and the adjacent
+  wakes add none, whether that attempt left a session row or not
   (`scheduler_attention.rs::a_descriptor_shortage_does_not_spend_adjacent_retry_attempts`).
 - A reviewer ref check that cannot start git reports the start error
   (`managers.rs::a_git_start_failure_is_not_reported_as_an_empty_review`).
 - An orchestrator that dies the moment it starts is given up on, with one
-  alarm and nothing started again
+  alarm and nothing started again — one alarm still after a sweep found a
+  death whose retirement lagged behind it and raised its own
   (`::an_orchestrator_that_dies_the_moment_it_starts_is_given_up_on`), and a
   task whose agent does fails with the reason on it
   (`::a_task_whose_agent_dies_the_moment_it_starts_fails_with_the_reason_on_it`).
