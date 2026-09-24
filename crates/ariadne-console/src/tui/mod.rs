@@ -263,6 +263,19 @@ impl Console {
     /// viewport across a reconnect. It is in the scrollback, where it was
     /// printed, and the next block redraws the viewport.
     pub fn snapshot(&mut self, events: &[AgentEventDto]) {
+        self.snapshot_at(events, chrono::Utc::now());
+    }
+
+    /// [`Console::snapshot`], with the wall clock behind each event's turn
+    /// read as `now` rather than at the moment the event is folded in. Two
+    /// consoles folding the same events with the same `now` start their
+    /// turn's clock at the same instant, so comparing their renders never
+    /// turns on which one read the wall clock first.
+    pub(crate) fn snapshot_at(
+        &mut self,
+        events: &[AgentEventDto],
+        now: chrono::DateTime<chrono::Utc>,
+    ) {
         self.input.sync_history(
             events
                 .iter()
@@ -290,7 +303,7 @@ impl Console {
         let mut items = Vec::new();
         for event in events {
             absorb(&mut items, event);
-            self.follow_turn(event);
+            self.follow_turn(event, now);
             self.follow_usage(event);
         }
         self.committed = self.committed.min(items.len());
@@ -300,7 +313,14 @@ impl Console {
 
     /// Fold one streamed event into the transcript.
     pub fn apply(&mut self, event: &AgentEventDto) {
-        self.follow_turn(event);
+        self.apply_at(event, chrono::Utc::now());
+    }
+
+    /// [`Console::apply`], with the wall clock behind the event's turn read
+    /// as `now` rather than at the moment the event is folded in. See
+    /// [`Console::snapshot_at`].
+    pub(crate) fn apply_at(&mut self, event: &AgentEventDto, now: chrono::DateTime<chrono::Utc>) {
+        self.follow_turn(event, now);
         self.follow_usage(event);
         // A daemon that predates `source` and `text` (021) names neither.
         // Its prompt event is the typed prompt's confirmation where the
@@ -369,7 +389,7 @@ impl Console {
 
     /// What the status line says the agent is doing, and what the session's
     /// status is.
-    fn follow_turn(&mut self, event: &AgentEventDto) {
+    fn follow_turn(&mut self, event: &AgentEventDto, now: chrono::DateTime<chrono::Utc>) {
         // The session's status follows its events the way the daemon moves
         // the row on them (021): the header read at attach is what it was
         // then, and every later event the daemon stores moves it here too —
@@ -406,7 +426,7 @@ impl Console {
             | "permission.replied" => Turn::Thinking,
             _ => return,
         };
-        self.set_turn(turn, instant_of(&event.created_at));
+        self.set_turn(turn, instant_of(&event.created_at, now));
     }
 
     /// Move the turn on, starting the clock at `began` as it begins and
@@ -749,17 +769,13 @@ fn status_of(kind: &str) -> Option<&'static str> {
 /// running at attach counts from its prompt, not from the attach. An event
 /// whose time cannot be read, or that a clock ahead of this one dated in the
 /// future, counts from now.
-fn instant_of(created_at: &str) -> Instant {
-    let now = Instant::now();
+fn instant_of(created_at: &str, now: chrono::DateTime<chrono::Utc>) -> Instant {
+    let anchor = Instant::now();
     chrono::DateTime::parse_from_rfc3339(created_at)
         .ok()
-        .and_then(|at| {
-            (chrono::Utc::now() - at.with_timezone(&chrono::Utc))
-                .to_std()
-                .ok()
-        })
-        .and_then(|age| now.checked_sub(age))
-        .unwrap_or(now)
+        .and_then(|at| (now - at.with_timezone(&chrono::Utc)).to_std().ok())
+        .and_then(|age| anchor.checked_sub(age))
+        .unwrap_or(anchor)
 }
 
 /// Fold one event into a live transcript.

@@ -495,12 +495,26 @@ mod tests {
     /// the bottom rows as it is in a session under way: a block of `filler`
     /// lines in the scrollback, and the prompt of the next turn.
     fn under_way<B: Screen>(terminal: &mut Terminal<Anchored<B>>) -> Console {
+        under_way_at(terminal, chrono::Utc::now())
+    }
+
+    /// [`under_way`], with the wall clock behind the filled turn's start
+    /// fixed to `now`: two consoles built with the same `now` start their
+    /// clock at the same instant, so comparing their renders never turns on
+    /// which one read the wall clock first.
+    fn under_way_at<B: Screen>(
+        terminal: &mut Terminal<Anchored<B>>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Console {
         let filler: String = (1..=60).map(|n| format!("- filler-{n:03}\n")).collect();
         let mut console = Console::new(header());
-        console.snapshot(&[
-            event("agent_message", "filler", json!({"text": filler})),
-            prompt("go"),
-        ]);
+        console.snapshot_at(
+            &[
+                event("agent_message", "filler", json!({"text": filler})),
+                prompt("go"),
+            ],
+            now,
+        );
         console.show(terminal).unwrap();
         console
     }
@@ -767,21 +781,23 @@ mod tests {
     }
 
     /// The daemon's host draws the pane as the CLI's does: a terminal that
-    /// reads the bytes shows the rows ratatui's own test backend holds. The
-    /// clock is stopped, so both status lines count the same turn the same.
+    /// reads the bytes shows the rows ratatui's own test backend holds. Both
+    /// renders fold every event under the same `now`, so the turn's clock
+    /// reads the same on each side regardless of when the test itself runs.
     #[tokio::test(start_paused = true)]
     async fn the_ansi_backend_shows_the_rows_the_test_backend_shows_after_a_grow_and_a_shrink() {
         let tap = Tap::default();
         let window = Window::new(72, 40);
+        let now = chrono::Utc::now();
         let mut ansi = super::open(|| AnsiBackend::new(tap.clone(), window.clone())).unwrap();
         let mut test = pane();
-        let mut on_ansi = under_way(&mut ansi);
-        let mut on_test = under_way(&mut test);
+        let mut on_ansi = under_way_at(&mut ansi, now);
+        let mut on_test = under_way_at(&mut test, now);
 
         for written in 1..=50 {
-            on_ansi.apply(&row(written));
+            on_ansi.apply_at(&row(written), now);
             on_ansi.show(&mut ansi).unwrap();
-            on_test.apply(&row(written));
+            on_test.apply_at(&row(written), now);
             on_test.show(&mut test).unwrap();
         }
         let grown = shown(&test);
@@ -791,9 +807,9 @@ mod tests {
         );
         assert_eq!(tap.screen(), grown.trim_end(), "after the grow");
 
-        on_ansi.apply(&prompt("next"));
+        on_ansi.apply_at(&prompt("next"), now);
         on_ansi.show(&mut ansi).unwrap();
-        on_test.apply(&prompt("next"));
+        on_test.apply_at(&prompt("next"), now);
         on_test.show(&mut test).unwrap();
         let shrunk = shown(&test);
         assert_eq!(
