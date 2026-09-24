@@ -43,12 +43,16 @@ conversation with the user.
 6. Ask the user how each task ends. `merge` puts it on the base branch.
    `pull_request` opens a request and sees it through. `none` lands nothing.
    Done when every task carries one ending.
-7. Give each agent one model from `list_models`. Size it from the model's
-   description and the task, and the effort from what each effort buys.
-   Give a top effort only where the task earns it.
+7. Give each agent one model from `list_models`. The ranks make a ladder:
+   `fast`, then `balanced`, then `frontier`. Take the lowest rank that does
+   the task, and the lowest effort that finishes it. Keep `local` off the
+   ladder: staff it only where the user names it. Compare a rank with the
+   same rank of another agent. Prefer a rank, and size an unranked model from
+   its description. Balance power, cost and time. Step up a rank or an effort
+   only for a reason you state.
    Mix the agents evenly over the tasks.
-   Take only an agent that suits the task. Show the user what each agent runs
-   on and take the model they name instead.
+   Take only an agent that suits the task. Show the user each model you sized
+   and take the one they name instead.
    Done when every agent carries one model.
 8. Show the user the tasks you wrote. Ask whether the tracers are too coarse
    or too fine. Ask whether each `depends_on` edge is a true gate.

@@ -512,7 +512,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the agents and models a slot can run on. Each entry gives:\n- its `id`, `<agent>:<model>`, and the description its agent gave\n- `efforts`, each an id and what it buys, one `default`"
+        description = "List the agents and models a slot can run on. Each entry gives:\n- its `id`, `<agent>:<model>`, and the description its agent gave\n- `efforts`, each an id and what it buys, one `default`\n- `rank`, the standing the user set: `frontier`, `balanced`, `fast`, `local` or `null`, a ladder from `fast` up"
     )]
     async fn list_models(
         &self,
@@ -1391,7 +1391,7 @@ mod tests {
     async fn the_catalog_reaches_the_orchestrator_with_the_efforts_on_it() {
         const CATALOG: &str = r#"[
             {"id": "codex-acp:gpt-5.6-sol", "agent_id": "codex-acp",
-             "description": "frontier",
+             "description": "frontier", "rank": "frontier",
              "efforts": [
                {"id": "low", "description": "lighter reasoning", "default": false},
                {"id": "high", "description": "greater depth", "default": true},
@@ -1451,6 +1451,65 @@ mod tests {
                 );
                 assert_eq!(models[1]["efforts"], serde_json::json!([]));
             }
+        }
+    }
+
+    /// The rank the user gave a model reaches the orchestrator, and the tool
+    /// says what a rank is.
+    ///
+    /// The rank is the only thing in the catalog about cost, so a staffing
+    /// rule that reads it needs both halves: the value on every entry, and a
+    /// description that names the four ranks and the direction of the ladder.
+    /// An unranked entry comes through as `null`, which is the orchestrator's
+    /// cue to size that model from its description instead.
+    #[tokio::test]
+    async fn the_rank_of_each_model_reaches_the_orchestrator() {
+        const CATALOG: &str = r#"[
+            {"id": "codex-acp:gpt-5.6-sol", "agent_id": "codex-acp",
+             "rank": "frontier", "efforts": []},
+            {"id": "codex-acp:gpt-5.6-mini", "agent_id": "codex-acp",
+             "rank": "fast", "efforts": []},
+            {"id": "opencode-acp:ollama/llama3", "agent_id": "opencode-acp",
+             "rank": "local", "efforts": []},
+            {"id": "claude-agent-acp:claude-haiku-4-5",
+             "agent_id": "claude-agent-acp", "efforts": []}
+        ]"#;
+        let (endpoint, _) = recording_daemon_answering(CATALOG).await;
+        let answered = orchestrator_at(&endpoint)
+            .list_models(Parameters(ListModelsReq { agent_id: None }))
+            .await
+            .expect("list the models");
+
+        let ContentBlock::Text(text) = &answered.content[0] else {
+            panic!("the catalog came back as something other than text");
+        };
+        let models: Vec<serde_json::Value> =
+            serde_json::from_str(&text.text).expect("the catalog is json");
+        assert_eq!(
+            models.iter().map(|m| m["rank"].clone()).collect::<Vec<_>>(),
+            [
+                serde_json::json!("frontier"),
+                serde_json::json!("fast"),
+                serde_json::json!("local"),
+                serde_json::Value::Null,
+            ]
+        );
+
+        let tool = AriadneMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "list_models")
+            .expect("the tool");
+        let description = tool.description.expect("the description").to_string();
+        for part in [
+            "`rank`, the standing the user set",
+            "`frontier`, `balanced`, `fast`, `local` or `null`",
+            "a ladder from `fast` up",
+        ] {
+            assert!(
+                description.contains(part),
+                "the description says nothing of \"{part}\": {description}"
+            );
         }
     }
 

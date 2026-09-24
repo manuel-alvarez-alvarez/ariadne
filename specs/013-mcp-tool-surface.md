@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-09-21
+updated: 2026-09-24
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -50,8 +50,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      (which replaces the author list whole through `authors`, and refuses
      `default` as a model — a model is required, and `default` stays legal
      for the effort alone), `list_models` (which holds only the models it
-     can staff an agent on, each with its `agent_id`, and narrows to one
-     `agent_id` on request: 011),
+     can staff an agent on, each with its `agent_id`, its efforts and the
+     user-set `rank` the staffing ladder reads — `null` where the user set
+     none — and narrows to one `agent_id` on request: 011),
      `list_skills`, `finalize_plan`, `list_tasks`, `retry_task`,
      `cancel_task`, `complete_goal` — the last four are what it supervises the
      goal with once the plan is under way (003)
@@ -102,6 +103,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - `list_models` holds only the models an agent can be staffed on, narrowed to
   an `agent_id` on request
   (`tools.rs::the_catalog_an_agent_sees_holds_only_the_models_it_can_be_staffed_on`).
+- The catalog reaches the orchestrator with the efforts on it
+  (`tools.rs::the_catalog_reaches_the_orchestrator_with_the_efforts_on_it`), and
+  with the rank of each model, under a description that names the four ranks
+  and the direction of the ladder
+  (`tools.rs::the_rank_of_each_model_reaches_the_orchestrator`).
 - Every seat has the tools its playbook names and no others
   (`mcp.rs::every_seat_has_the_tools_its_playbook_names_and_no_others`), and
   every allowed tool is one the router actually serves

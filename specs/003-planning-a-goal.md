@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-09-12
+updated: 2026-09-24
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -53,6 +53,13 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
    so no agent is staffed without one. Across a plan it spreads the agents
    evenly over the tasks, and never onto a task the agent does not suit:
    fit is the first question, and an even mix is the second.
+   It sizes each agent down the ladder of the user-set ranks (011): `fast`,
+   then `balanced`, then `frontier`, taking the lowest rank that does the task
+   and the lowest effort that finishes it. `local` is off the ladder and
+   staffed only where the user names it. A rank compares with the same rank of
+   another agent, and a model the user left unranked is sized from its
+   description. What it balances is power against cost and time, so a step up
+   a rank or an effort carries a reason it states.
 7. Four things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
@@ -102,6 +109,10 @@ reads (011), the skills the staffing names (017), and the MCP tools' shapes
   reviewer by default (`defaults.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
   and it staffs a plan on a mix of agents rather than on one
   (`defaults.rs::the_orchestrator_staffs_a_plan_on_a_mix_of_agents`).
+- The playbook states the staffing ladder — the rank order from `fast` upward,
+  `local` off it, the lowest effort that finishes the task, and the balance of
+  power against cost and time
+  (`defaults.rs::the_orchestrator_staffs_the_lowest_rank_the_task_earns`).
 - The orchestrator is briefed to end planning with `finalize_plan` and with no
   other plan call
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).

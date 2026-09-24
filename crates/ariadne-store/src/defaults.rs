@@ -1652,6 +1652,46 @@ mod tests {
         );
     }
 
+    /// The orchestrator staffs the lowest rank and the lowest effort the task
+    /// earns.
+    ///
+    /// A model description says what a model can do and nothing about what it
+    /// costs, so an orchestrator sized on the description alone staffed a
+    /// frontier model on a one-line fix. The user-set ranks are the cost
+    /// order, and the skill states them as a ladder from `fast` upward, with
+    /// `local` off it: a local model runs on the user's own machine, so it is
+    /// a choice the user makes rather than a cheaper rung.
+    #[test]
+    fn the_orchestrator_staffs_the_lowest_rank_the_task_earns() {
+        // Read on one line, so where the document wraps holds nothing.
+        let prompt = default_skill_document(ORCHESTRATION_SKILL)
+            .unwrap()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for sentence in [
+            "The ranks make a ladder: `fast`, then `balanced`, then `frontier`.",
+            "Take the lowest rank that does the task, and the lowest effort that finishes it.",
+            "Keep `local` off the ladder: staff it only where the user names it.",
+            "Compare a rank with the same rank of another agent.",
+            "Prefer a rank, and size an unranked model from its description.",
+            "Balance power, cost and time.",
+            "Step up a rank or an effort only for a reason you state.",
+        ] {
+            assert!(
+                prompt.contains(sentence),
+                "the skill and the staffing rule \"{sentence}\""
+            );
+        }
+        // The ladder is stated in its own order, cheapest first: an
+        // orchestrator reading it takes the first rung that does the work.
+        let rung = |rank: &str| prompt.find(rank).expect(rank);
+        assert!(
+            rung("`fast`") < rung("`balanced`") && rung("`balanced`") < rung("`frontier`"),
+            "the ladder does not run from `fast` upward"
+        );
+    }
+
     /// An orchestrator is nudged in the situation its goal stands in, and
     /// there are two: a plan being agreed, and a goal under way. A resume
     /// that asked for `finalize_plan` alone would push an orchestrator past a
@@ -1914,7 +1954,14 @@ mod tests {
             // for most tasks, several where the reviewers pick a winner —
             // and the contract rule that keeps a frontend task and its
             // backend task off a false `depends_on`.
-            ORCHESTRATION_SKILL => 4100,
+            // Step 7 rose from two sentences about the model description to
+            // the staffing ladder: the rank order, `local` off it, the
+            // per-agent comparison, the unranked fallback, the effort rule,
+            // the balance of power against cost and time, and the reason a
+            // step up costs. The rule it replaces let an orchestrator staff a
+            // frontier model on a one-line fix, so the 100 characters here
+            // buy a goal's token bill back many times over.
+            ORCHESTRATION_SKILL => 4200,
             "debugging" => 3400,
             "code-review" => 4000,
             "coding" => 5400,
