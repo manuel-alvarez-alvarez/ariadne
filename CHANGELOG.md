@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.9.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.8.0...v0.9.0) (2026-09-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **daemon:** add user-set model ranks
+* **daemon:** download and keep the ACP registry on refresh
+* two agent ids move, so a pin that names them must be written again: `claude-agent-acp` is now `claude-acp`, and `opencode-acp` is now `opencode`. `AcpAgentDto.builtin` is replaced by `source`, which is `registry` or `config`.
+* remove the knowledge base crate and its manual
+* **daemon:** drop the knowledge base from the daemon and the API
+* **ui:** drop the knowledge screen
+* **cli:** drop the knowledge commands and tools
+* **daemon:** refuse a knowledge read of a ref that is not ready
+
+### Features
+
+* **cli:** drop the knowledge commands and tools ([7c6e1e4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7c6e1e445390c4e453c5c3009ed8d703a58585b3))
+* **cli:** rank a model from the command line ([2c1ab57](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2c1ab576282150ad36b16a4723bc2ce76ecf452f))
+* **cli:** refresh ACP agents ([d5763d2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d5763d26f7e7414f8db336e486a37ceb4b762cc5))
+* **daemon:** add user-set model ranks ([a01f4ed](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a01f4ed01b542dba7cd30c6ea48bdc91e9ba0f2a))
+* **daemon:** download and keep the ACP registry on refresh ([c72d60e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c72d60e6da7c782a0acf5c2dca73d7ab02dfd34d))
+* **daemon:** drop the knowledge base from the daemon and the API ([e2002a9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e2002a9ad3e968be4f66b5fb98eedcf9efea6dc8))
+* discover the ACP agents installed on the daemon's PATH ([99c90ce](https://github.com/manuel-alvarez-alvarez/ariadne/commit/99c90ce93c96a51a9d14536dc3e848a7f747183b))
+* **prompts:** staff the smallest model a task earns ([6fe35d1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6fe35d1510efa75801eff45210c47e4986c356e8))
+* remove the knowledge base crate and its manual ([89ffa9b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/89ffa9b27cfa1e7c6109f7dcc0a7a4ebe1dcc681))
+* **ui:** drop the knowledge screen ([ee9f3fb](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ee9f3fb92fbddf58769db0f117d7f36fe475ba64))
+* **ui:** rank a model on the agents screen ([e379b7e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e379b7eafd8ac2a092bfffac869d40eb96bdf9ec))
+* **ui:** refresh the ACP agents from the agents screen ([511d061](https://github.com/manuel-alvarez-alvarez/ariadne/commit/511d0612e8fdc78426af428e9c4c8e13dfe48ad4))
+
+
+### Bug Fixes
+
+* **daemon:** gate a macOS-only branch watcher test helper ([ac726d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ac726d902fb6a41a6809fef74e48cbb200bf716c))
+* **daemon:** make a knowledge index run survive a bad file ([abb6c91](https://github.com/manuel-alvarez-alvarez/ariadne/commit/abb6c91038dfd14db4b1842204922db660623793))
+* **daemon:** prevent branch watches from exhausting descriptors ([7be2cb0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7be2cb0a2ebed91eebf06054967f080d13e9c392))
+* **daemon:** read knowledge from the correct branch ([7f6966c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7f6966c447b61de1c0ce789d730e3dce20765685))
+* **daemon:** refuse a knowledge read of a ref that is not ready ([1e3dd4a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1e3dd4ad88f47d5fe4bb4ce59ce05ac677423ac2))
+* **daemon:** restore the knowledge ref-readiness change that a landing undid ([87be29f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/87be29f9542674ac31d88e33beb5833d1922c6ef))
+* **daemon:** stop a dying orchestrator raising two alarms ([6db96f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6db96f71073d5110218e62316a2449d624b0a4f0))
+* **daemon:** stop taking a program that shares a package name for an agent ([1bf3982](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1bf3982e869a9a9198f2462bbaff3cc49dc13b6b))
+* **install:** use Linux desktop tarballs and host WebKitGTK ([b6e03ba](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b6e03ba2e7d574d13b9f238c944c5d3c86972329))
+* **knowledge:** bound parser work on hostile input ([2356222](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2356222f5efca988088eef928a2aa4d3854a64da))
+* **knowledge:** bound the hostile-input test on CPU time, not wall time ([dd9b72e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dd9b72e8cfee88756afaccd4f7a0d09627122fc8))
+* **knowledge:** complete the restore of the readiness check and the safe index run ([7b13ac2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7b13ac23c1f5b38da7919fe292a90861a7c2abc0))
+* **knowledge:** correct knowledge surface answers ([dee8c3c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/dee8c3c1d369fcde927677b3b44181e29b743616))
+* **knowledge:** give symbols their correct kind, edges and docs ([fff6ea2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fff6ea21d055c28ed12eb5d554dd9111fcfa9079))
+* **knowledge:** read manifests and routes correctly ([e76b2be](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e76b2bef60cc81c6eb21f847adaf1fb9c37357df))
+* **knowledge:** restore the parser fixes that a landing undid ([0988479](https://github.com/manuel-alvarez-alvarez/ariadne/commit/098847906396a815da11eec873a4ed602805ada4))
+* **prompts:** make the knowledge tool texts reachable and switch them off ([5e35154](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5e351543201924b46d93b6bf3d4e88b24966c107))
+* **prompts:** squash a landing onto the base its rebase used ([f9df8a6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f9df8a619310a1f9113288be797124635ea50041))
+* stop the viewport backend test racing the wall clock ([13c473a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/13c473a649b4748e4612d718164557fbaa9b8d61))
+* **store:** restore the knowledge pruning that the resolve batches reverted ([52bafac](https://github.com/manuel-alvarez-alvarez/ariadne/commit/52bafac08f79a1c2a5ad1c4e8e48791c7de8a77c))
+* **ui:** refetch symbol searches and reads once indexing ends ([d7dd36d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d7dd36d190d04af84fa483f55c303c3b92b922b1))
+* **ui:** restore the changes the last commit undid ([f47940d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f47940d177adaeee250cd73422177ff3f449afa9))
+
+
+### Performance Improvements
+
+* **daemon:** derive the symbol edges of an index in bounded batches ([2962697](https://github.com/manuel-alvarez-alvarez/ariadne/commit/296269781c3129e2159fa84bbbcf2d3d9d9e32b3))
+* **store:** bound knowledge pruning and checkpoint its WAL ([bd8d5e0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bd8d5e06d11a4cf455bbca6591379fff01bac72b))
+
 ## [0.8.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.7.0...v0.8.0) (2026-09-20)
 
 
