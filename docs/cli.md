@@ -35,18 +35,50 @@ The listing shows every agent's id, status and command. A rejected agent also
 shows why it could not be used. Use `--format json` when a script needs the
 unchanged list returned by the daemon.
 
+## List every session
+
+`ariadne session ls` lists Ariadne's own sessions — an orchestrator's, an
+author's, a reviewer's — next to outside sessions: conversations an ACP agent
+holds that Ariadne never started. Rows come newest activity first.
+
+```sh
+ariadne session ls
+ariadne session ls --kind outside --agent codex-acp --dir ~/projects/api
+ariadne session ls --status running --attention
+```
+
+Its columns are `id`, `title`, `status`, `goal`, `task`, `agent`, `age` and
+`tokens`; add `directory` with `--columns`. An outside session leaves
+`status`, `goal` and `task` empty. `--kind`, `--agent`, `--status`, `--seat`,
+`--goal`, `--task` and `--attention` narrow which rows show; `--dir`, `--since`,
+`--until` and `--search` narrow by working directory, activity window and
+text; `--limit`, `--cursor` and `--refresh` page the table, and `--all`
+fetches every page into one instead. Without `--since` or `--until`, the
+table holds only the last 7 days of activity. See [Resuming a
+session](resuming-sessions.md) for finding and continuing one of these.
+
 ## Connect to a session
 
 `ariadne attach` is an interactive console, not a shell inside the agent. It
 shows the session's recorded events and sends each line you type as the next
-prompt. The agent keeps working after you leave.
+prompt. The agent keeps working after you leave. It takes a session id, a
+task id, a goal id, or an outside session's internal id, from the table
+above.
 
 ```sh
 ariadne attach <goal-id>                 # the orchestrator
 ariadne attach <task-id>                 # the task's author
 ariadne attach <task-id> --seat reviewer # that task's reviewer
-ariadne attach <session-id>              # one specific session
+ariadne attach <session-id>              # one specific session, live or ended
+ariadne attach <internal-id> --agent codex-acp  # an outside session
 ```
+
+Attaching an outside id resumes the conversation and opens the console on it
+in one step. Attaching an ended Ariadne session revives it the same way,
+whether its goal completed or its worktree was already removed. `--agent`
+breaks the tie on the rare internal id two agents both hold; otherwise the id
+alone is enough. [Resuming a session](resuming-sessions.md) says what a
+resumed or revived session can and cannot do.
 
 In a terminal the console is an inline pane. The transcript scrolls in
 the terminal's own buffer, so it is still there in your scrollback after you
@@ -285,7 +317,7 @@ ariadne task create <goal-id> --title "Write the release notes" \
 ```
 
 `task update` applies only while a task is pending or ready. See
-[Permission modes](permissions.md) and [Adopting a session](adopting-sessions.md)
+[Permission modes](permissions.md) and [Resuming a session](resuming-sessions.md)
 for the related session workflows.
 
 ## Output and troubleshooting

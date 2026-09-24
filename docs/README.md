@@ -12,7 +12,7 @@ reads.
 | [Following what happens](following-events.md) | `ariadne events`, the log streams and the `--watch` tables |
 | [Configuration](configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
 | [Permission modes](permissions.md) | automatic, prompted, and remembered ACP permission answers |
-| [Adopting a session](adopting-sessions.md) | finding an ACP agent's stored session and using it as a task author |
+| [Resuming a session](resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
 | [How Ariadne works](how-it-works.md) | a goal from planning to landing, task lifecycle, and ACP sessions |
 
 Ariadne Desktop has its own page: [`ui/README.md`](../ui/README.md).

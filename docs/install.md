@@ -91,8 +91,9 @@ without upgrading the agent, for example by pulling a local one, re-read
 every catalog with `POST /v1/acp-agents/refresh`.
 
 An agent may omit `thought_level`; Ariadne can run it, but the model has no
-selectable effort. `session/list` enables session discovery and adoption.
-`loadSession` enables restoring a conversation after the daemon restarts.
+selectable effort. `session/list` enables listing that agent's outside
+sessions in `ariadne session ls`. `loadSession` enables resuming one of them,
+and reviving an ended Ariadne session, including after the daemon restarts.
 `ariadne doctor` names a missing required capability as an error and an absent
 optional capability as a limitation.
 

@@ -185,7 +185,7 @@ ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the dae
 | [Following what happens](docs/following-events.md) | events, the log streams and the `--watch` tables |
 | [Configuration](docs/configuration.md) | every key of `~/.ariadne/config.toml`, and the environment that addresses a daemon |
 | [Permission modes](docs/permissions.md) | automatic, prompted, and remembered ACP permission answers |
-| [Adopting a session](docs/adopting-sessions.md) | finding an ACP agent's stored session and using it as a task author |
+| [Resuming a session](docs/resuming-sessions.md) | listing every session and continuing one, live, ended, or started outside Ariadne |
 | [How Ariadne works](docs/how-it-works.md) | planning, authoring, review, landing, and ACP sessions |
 | [Ariadne Desktop](ui/README.md) | running the desktop app |
 

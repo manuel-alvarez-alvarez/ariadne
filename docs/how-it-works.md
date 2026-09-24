@@ -26,13 +26,19 @@ each task author works in its own git worktree.
 ## Sessions and attention
 
 A session is the conversation an ACP agent holds for an orchestrator, author,
-or reviewer. `ariadne session ls` shows live sessions and `ariadne attention`
-shows those waiting for a person. Connect with `ariadne attach <id>` to read
-events and send a prompt: in a terminal it is an inline pane with the
-transcript above and a status line and input box pinned under it. Escape
-cancels the running turn, and Ctrl-C twice disconnects your console without
-stopping the agent. `ariadne session resume <session-id>` starts a new agent
-process for an ended conversation when its agent can restore it.
+or reviewer, or one you started directly with an ACP agent outside Ariadne.
+`ariadne session ls` lists every one of them, newest activity first, and
+`ariadne attention` shows those waiting for a person. Connect with `ariadne
+attach <id>` to read events and send a prompt: in a terminal it is an inline
+pane with the transcript above and a status line and input box pinned under
+it. Escape cancels the running turn, and Ctrl-C twice disconnects your
+console without stopping the agent.
+
+`attach` also resumes a stored outside conversation and revives an ended
+Ariadne session, each with no separate step first. A resumed outside session
+has no goal, no task and no worktree: the agent keeps working in the
+directory the original conversation already used. [Resuming a
+session](resuming-sessions.md) has the commands.
 
 Permission requests can pause a session. In the CLI or desktop console, select
 one of the displayed options. Configure whether Ariadne approves, asks, or
@@ -49,11 +55,3 @@ review history, and ending details.
 An author can report that a task cannot be completed as written. Ariadne keeps
 the reason with the task so the orchestrator and user can decide whether to
 retry, change the task, or cancel it.
-
-## Continue an existing conversation
-
-An ACP agent can list conversations that it stored outside Ariadne. Use
-`ariadne session discover` to find them, then `ariadne session adopt` to create
-a task for one — in a new goal or in a goal already under way — with that
-conversation as its author. [Adopting a session](adopting-sessions.md) has the
-compatibility rules and commands.
