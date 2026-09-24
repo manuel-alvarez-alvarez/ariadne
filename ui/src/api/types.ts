@@ -51,8 +51,10 @@ export type Actor = Schemas["Actor"]
 export type MessageDto = Schemas["MessageDto"]
 export type MessageKind = Schemas["MessageKind"]
 export type ModelDto = Schemas["ModelDto"]
+export type ModelRank = Schemas["ModelRank"]
 export type EffortDto = Schemas["EffortDto"]
 export type SetModelEnabledRequest = Schemas["SetModelEnabledRequest"]
+export type SetModelRankRequest = Schemas["SetModelRankRequest"]
 
 export type AgentConfigDto = Schemas["AgentConfigDto"]
 

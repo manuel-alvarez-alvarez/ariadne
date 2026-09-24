@@ -888,6 +888,41 @@
         }
       }
     },
+    "/v1/models/rank": {
+      "put": {
+        "tags": [
+          "models"
+        ],
+        "summary": "Rank one entry of the catalog, or clear its rank.",
+        "description": "The catalog is discovery, so this writes only the exception: an id\nnothing in the catalog carries is a 404.",
+        "operationId": "set_rank",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetModelRankRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such model in the catalog"
+          }
+        }
+      }
+    },
     "/v1/outside-sessions": {
       "get": {
         "tags": [
@@ -3669,7 +3704,8 @@
           "id",
           "agent_id",
           "efforts",
-          "enabled"
+          "enabled",
+          "rank"
         ],
         "properties": {
           "agent_id": {
@@ -3697,8 +3733,29 @@
           "id": {
             "type": "string",
             "example": "claude-acp:claude-opus-5"
+          },
+          "rank": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelRank"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The user's rank of this entry, or null where it is unranked. The\norchestrator staffs the smallest ranked model a task earns."
           }
         }
+      },
+      "ModelRank": {
+        "type": "string",
+        "description": "How the user ranks a model against the others its agent offers, so the\norchestrator staffs the smallest rank a task earns.",
+        "enum": [
+          "frontier",
+          "balanced",
+          "fast",
+          "local"
+        ]
       },
       "NewOutsideSessionGoal": {
         "type": "object",
@@ -4094,6 +4151,32 @@
             "type": "string",
             "description": "The entry, as `GET /v1/models` spells its `id`.",
             "example": "claude-acp:claude-opus-5"
+          }
+        }
+      },
+      "SetModelRankRequest": {
+        "type": "object",
+        "description": "Body of `PUT /v1/models/rank`: one model of the catalog, ranked or\ncleared.\n\nThe id is a field rather than a path segment because a model id carries\n`:` and often `/` (`opencode:anthropic/claude-sonnet-4`) — which is a\npath of its own, not a segment of one.",
+        "required": [
+          "id",
+          "rank"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The entry, as `GET /v1/models` spells its `id`.",
+            "example": "claude-acp:claude-opus-5"
+          },
+          "rank": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelRank"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The rank to set, or null to clear it."
           }
         }
       },

@@ -423,6 +423,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/models/rank": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Rank one entry of the catalog, or clear its rank.
+         * @description The catalog is discovery, so this writes only the exception: an id
+         *     nothing in the catalog carries is a 404.
+         */
+        put: operations["models_set_rank"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/outside-sessions": {
         parameters: {
             query?: never;
@@ -1619,7 +1640,18 @@ export interface components {
             enabled: boolean;
             /** @example claude-acp:claude-opus-5 */
             id: string;
+            /**
+             * @description The user's rank of this entry, or null where it is unranked. The
+             *     orchestrator staffs the smallest ranked model a task earns.
+             */
+            rank: components["schemas"]["ModelRank"] | null;
         };
+        /**
+         * @description How the user ranks a model against the others its agent offers, so the
+         *     orchestrator staffs the smallest rank a task earns.
+         * @enum {string}
+         */
+        ModelRank: "frontier" | "balanced" | "fast" | "local";
         /** @description A new active, unorchestrated goal for the adopted session. */
         NewOutsideSessionGoal: {
             description?: string | null;
@@ -1812,6 +1844,23 @@ export interface components {
              * @example claude-acp:claude-opus-5
              */
             id: string;
+        };
+        /**
+         * @description Body of `PUT /v1/models/rank`: one model of the catalog, ranked or
+         *     cleared.
+         *
+         *     The id is a field rather than a path segment because a model id carries
+         *     `:` and often `/` (`opencode:anthropic/claude-sonnet-4`) — which is a
+         *     path of its own, not a segment of one.
+         */
+        SetModelRankRequest: {
+            /**
+             * @description The entry, as `GET /v1/models` spells its `id`.
+             * @example claude-acp:claude-opus-5
+             */
+            id: string;
+            /** @description The rank to set, or null to clear it. */
+            rank: components["schemas"]["ModelRank"] | null;
         };
         SkillDto: {
             /**
@@ -2748,6 +2797,36 @@ export interface operations {
             };
             /** @description it is the last model left enabled */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    models_set_rank: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetModelRankRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDto"];
+                };
+            };
+            /** @description no such model in the catalog */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

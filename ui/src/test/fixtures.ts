@@ -182,6 +182,7 @@ export function aModel(overrides: Partial<ModelDto> = {}): ModelDto {
     description: null,
     efforts: [],
     enabled: true,
+    rank: null,
     ...overrides,
   }
 }

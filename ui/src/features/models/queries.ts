@@ -1,6 +1,13 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 
-import { api, type ModelDto, qk, type SetModelEnabledRequest, unwrap } from "@/api"
+import {
+  api,
+  type ModelDto,
+  qk,
+  type SetModelEnabledRequest,
+  type SetModelRankRequest,
+  unwrap,
+} from "@/api"
 
 /**
  * The catalog an agent can be pinned to: every model of every registry agent, with
@@ -33,6 +40,25 @@ export function useSetModelEnabled() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: SetModelEnabledRequest) => unwrap(api().PUT("/v1/models/enabled", { body })),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(qk.models.list(), (models: ModelDto[] | undefined) =>
+        models?.map((model) => (model.id === updated.id ? updated : model)),
+      )
+      void queryClient.invalidateQueries({ queryKey: qk.models.lists() })
+    },
+  })
+}
+
+/**
+ * Ranks one model of the catalog, or clears its rank with a `null`.
+ *
+ * The id rides in the body for the same reason as {@link useSetModelEnabled}:
+ * a model id carries `:` and, for opencode's, `/`.
+ */
+export function useSetModelRank() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: SetModelRankRequest) => unwrap(api().PUT("/v1/models/rank", { body })),
     onSuccess: (updated) => {
       queryClient.setQueryData(qk.models.list(), (models: ModelDto[] | undefined) =>
         models?.map((model) => (model.id === updated.id ? updated : model)),

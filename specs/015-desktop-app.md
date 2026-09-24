@@ -185,6 +185,18 @@ Out: the daemon endpoints themselves (012).
 30. A session panel shows a reported context window as `<used> / <size>`,
     using the compact spelling of token figures. It shows no context fact
     before the agent reports one, and it never shows a cost.
+31. Beside each model's switch, a picker shows its `rank` from `GET
+    /v1/models`: `frontier`, `balanced`, `fast`, `local`, or unranked where it
+    is `null`. Picking one of the four, or Unranked to clear it, sends `PUT
+    /v1/models/rank` with the model's id and the lowercase rank word (or
+    `null`) in the body — never the id in the path, since a model id carries
+    `:` and, for opencode's, `/`. The picker's own list says what each rank
+    means, in one line apiece: the orchestrator staffs the smallest ranked
+    model a task earns, with `local` off that ladder — staffed only where a
+    task names it — and an unranked model still usable. A write patches the
+    row from the daemon's answer through the same `models` query key a switch
+    write uses, and a refusal is toasted rather than swallowed, springing the
+    picker back to what the daemon still says.
 
 ## Acceptance criteria
 
@@ -234,6 +246,17 @@ Out: the daemon endpoints themselves (012).
   endpoint once, and reloads the configs, the ACP agents and the models`,
   `::shows a pending state while the call is running`,
   `::shows an error on a failed call, and keeps the screen as it was`).
+- Each model's rank picker shows its rank or Unranked, names what each of the
+  four ranks means in its own list, sends each pick as its lowercase word and
+  a clear as `null` with the model's id in the body, refreshes through the
+  models query key, and the screen says why where the daemon refuses a change
+  (`ui/src/features/agents/agents-page.test.tsx::shows the rank of a ranked
+  model, and an unranked model as unranked`,
+  `::says what each rank means, in the picker's own list`,
+  `::sends each rank as its lowercase word, with the id in the body`,
+  `::sends null to clear a rank back to unranked`,
+  `::refreshes the catalog through the models query key after a change`,
+  `::says why, where the daemon refuses to rank a model`).
 - The skills screen groups the shipped skills apart from the user's own
   (`ui/src/features/skills/skills-page.test.tsx`), and offers reset for the
   first and delete for the second and never the other way round

@@ -45,6 +45,7 @@ const OPENCODE = anAgentConfig({ agent_id: "opencode-acp", default_flags: ["--au
 const OPUS = aModel({
   id: "claude-agent-acp:claude-opus-5",
   description: "the frontier model",
+  rank: "frontier",
 })
 /** Offered by opencode-acp, so its id carries a `/` of its own. */
 const LOCAL = aModel({
@@ -56,7 +57,12 @@ const LOCAL = aModel({
 interface Recorded {
   method: string
   path: string
-  body: { extra_flags?: string[]; id?: string; enabled?: boolean } | null
+  body: {
+    extra_flags?: string[]
+    id?: string
+    enabled?: boolean
+    rank?: string | null
+  } | null
 }
 
 let requests: Recorded[] = []
@@ -78,6 +84,8 @@ function stubDaemon(
   models: ModelDto[] = [OPUS, LOCAL],
   /** Stands in for the one refusal there is: the last model left on. */
   refuse?: string,
+  /** The one refusal a rank write can get: no such model in the catalog. */
+  refuseRank?: string,
 ) {
   const stored = configs.map((config) => ({ ...config }))
   const catalog = models.map((model) => ({ ...model }))
@@ -93,6 +101,13 @@ function stubDaemon(
       const model = catalog.find((one) => one.id === body?.id)
       if (!model) return jsonResponse({})
       model.enabled = body?.enabled ?? true
+      return jsonResponse(model)
+    }
+    if (pathname === "/v1/models/rank" && request.method === "PUT") {
+      if (refuseRank !== undefined) return errorResponse(409, "conflict", refuseRank)
+      const model = catalog.find((one) => one.id === body?.id)
+      if (!model) return jsonResponse({})
+      model.rank = (body?.rank ?? null) as ModelDto["rank"]
       return jsonResponse(model)
     }
     if (pathname === "/v1/models") return jsonResponse(catalog)
@@ -111,6 +126,17 @@ function stubDaemon(
 /** The switch on one model's row, by the accessible name it carries. */
 function toggle(id: string): Promise<HTMLElement> {
   return screen.findByRole("switch", { name: `${id} available` })
+}
+
+/** The rank picker on one model's row, by the accessible name it carries. */
+function rankPicker(id: string): Promise<HTMLElement> {
+  return screen.findByRole("combobox", { name: `${id} rank` })
+}
+
+/** Opens a rank picker and picks the option whose label starts with `label`. */
+async function pickRank(user: ReturnType<typeof userEvent.setup>, id: string, label: string) {
+  await user.click(await rankPicker(id))
+  await user.click(await screen.findByRole("option", { name: new RegExp(`^${label}`) }))
 }
 
 /**
@@ -452,6 +478,110 @@ describe("the models under each agent", () => {
     expect(screen.getByText("ariadne models ls")).toBeDefined()
     // The flags are still there: only the catalog was empty.
     expect(screen.getByText("--verbose")).toBeDefined()
+  })
+})
+
+/**
+ * The rank beside the switch: the user's own ordering of a model against the
+ * others its agent offers, so the orchestrator staffs the smallest one a task
+ * earns. `PUT /v1/models/rank` mirrors the enabled write in every way that
+ * matters here — the id in the body, the row patched from the daemon's
+ * answer, a refusal shown rather than swallowed — so these tests are the same
+ * shape as "the models under each agent" above, for the picker instead of the
+ * switch.
+ */
+describe("ranking a model", () => {
+  it("shows the rank of a ranked model, and an unranked model as unranked", async () => {
+    renderScreen(<AgentsPage />)
+
+    // OPUS is fixtured with rank "frontier", LOCAL with none.
+    expect((await rankPicker(OPUS.id)).textContent).toContain("Frontier")
+    const user = userEvent.setup()
+    await selectAgent(user, "opencode-acp")
+    expect((await rankPicker(LOCAL.id)).textContent).toContain("Unranked")
+  })
+
+  it("says what each rank means, in the picker's own list", async () => {
+    const user = userEvent.setup()
+    renderScreen(<AgentsPage />)
+
+    await user.click(await rankPicker(OPUS.id))
+
+    expect(await screen.findByText("the strongest model, when a task earns it")).toBeDefined()
+    expect(screen.getByText("the default for most tasks")).toBeDefined()
+    expect(screen.getByText("the cheapest model that still earns a task")).toBeDefined()
+    expect(screen.getByText("off the ladder — staffed only where a task names it")).toBeDefined()
+  })
+
+  it("sends each rank as its lowercase word, with the id in the body", async () => {
+    const user = userEvent.setup()
+    renderScreen(<AgentsPage />)
+    // LOCAL rather than OPUS: its id carries a `/`, the same reason the
+    // enabled-switch tests pick it for their own round trip.
+    await selectAgent(user, "opencode-acp")
+
+    const picks: [string, string][] = [
+      ["Frontier", "frontier"],
+      ["Balanced", "balanced"],
+      ["Fast", "fast"],
+      ["Local", "local"],
+    ]
+    for (const [label, word] of picks) {
+      await pickRank(user, LOCAL.id, label)
+      await waitFor(() => expect(lastWrite()).toBeDefined())
+      // Not just the body: the endpoint and the method are the acceptance
+      // criterion's own words, and a wrong one would still leave this body
+      // looking right.
+      expect(lastWrite()).toMatchObject({ method: "PUT", path: "/v1/models/rank" })
+      expect(lastWrite()?.body).toEqual({ id: LOCAL.id, rank: word })
+    }
+  })
+
+  it("sends null to clear a rank back to unranked", async () => {
+    const user = userEvent.setup()
+    renderScreen(<AgentsPage />)
+
+    await pickRank(user, OPUS.id, "Unranked")
+
+    await waitFor(() => expect(lastWrite()).toBeDefined())
+    expect(lastWrite()).toMatchObject({ method: "PUT", path: "/v1/models/rank" })
+    expect(lastWrite()?.body).toEqual({ id: OPUS.id, rank: null })
+    expect((await rankPicker(OPUS.id)).textContent).toContain("Unranked")
+  })
+
+  it("refreshes the catalog through the models query key after a change", async () => {
+    const { queryClient } = renderScreen(<AgentsPage />)
+    const user = userEvent.setup()
+    const invalidated = vi.spyOn(queryClient, "invalidateQueries")
+
+    await pickRank(user, OPUS.id, "Fast")
+
+    await waitFor(() => expect(lastWrite()).toBeDefined())
+    const keys = invalidated.mock.calls.map((call) => call[0]?.queryKey)
+    expect(keys).toContainEqual(qk.models.lists())
+  })
+
+  /**
+   * The one refusal a rank write can get: no such model in the catalog. Said
+   * here rather than swallowed, the same way a refused enable/disable is —
+   * springing the picker back with nothing said would read as a pick that
+   * never registered.
+   */
+  it("says why, where the daemon refuses to rank a model", async () => {
+    const refusal = "no such model in the catalog"
+    stubDaemon([CLAUDE_CODE], [OPUS, LOCAL], undefined, refusal)
+    const user = userEvent.setup()
+    renderScreen(
+      <>
+        <Toaster />
+        <AgentsPage />
+      </>,
+    )
+
+    await pickRank(user, OPUS.id, "Fast")
+
+    expect(await screen.findByText(refusal)).toBeDefined()
+    expect((await rankPicker(OPUS.id)).textContent).toContain("Frontier")
   })
 })
 
