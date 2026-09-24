@@ -2,8 +2,8 @@
 //!
 //! The catalog itself is not in the database: it is what ACP discovery finds
 //! each registry agent offering at runtime. So what is stored here is the
-//! user's subtraction from it — the models they turned off — and everything
-//! else is available.
+//! user's subtraction from it — the models they turned off — and their ranks.
+//! Everything else is available and unranked.
 //!
 //! That way round on purpose. A catalog that grows (an agent ships a model,
 //! a discovery finds one) hands the new entry over usable, rather than
@@ -14,11 +14,48 @@
 //! (`ariadne_core::models::ModelRef`) — the same spelling `--model` takes, so
 //! the id in a row is the id a request is refused by.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{Result, Store, now};
+use ariadne_core::models::ModelRank;
+
+use crate::{Result, Store, StoreError, now};
 
 impl Store {
+    /// User-set ranks keyed by catalog id. An absent entry is unranked.
+    pub async fn model_ranks(&self) -> Result<BTreeMap<String, ModelRank>> {
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, rank FROM model_ranks")
+            .fetch_all(self.r())
+            .await?;
+        rows.into_iter()
+            .map(|(id, rank)| Ok((id, rank.parse().map_err(StoreError::Invalid)?)))
+            .collect()
+    }
+
+    /// Set or clear a rank. The caller checks that discovery carries the id.
+    pub async fn set_model_rank(&self, id: &str, rank: Option<ModelRank>) -> Result<()> {
+        match rank {
+            Some(rank) => {
+                sqlx::query(
+                    "INSERT INTO model_ranks (id, rank, updated_at) VALUES (?, ?, ?)
+                     ON CONFLICT(id) DO UPDATE
+                     SET rank = excluded.rank, updated_at = excluded.updated_at",
+                )
+                .bind(id)
+                .bind(rank.as_str())
+                .bind(now())
+                .execute(self.w())
+                .await?;
+            }
+            None => {
+                sqlx::query("DELETE FROM model_ranks WHERE id = ?")
+                    .bind(id)
+                    .execute(self.w())
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// The models that have been turned off, as the set a catalog is read
     /// against. Sorted, since it is also what `ariadne models ls --disabled`
     /// and the desktop app list.

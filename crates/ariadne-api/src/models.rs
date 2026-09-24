@@ -1,5 +1,6 @@
 //! Model catalog DTOs.
 
+use ariadne_core::models::ModelRank;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -10,8 +11,8 @@ use utoipa::ToSchema;
 /// pinned.
 ///
 /// The id is what a request writes as its `model`, whole. `agent_id` is its
-/// registry prefix. The rest is what the agent itself said when discovery
-/// asked: one line about the model, and the efforts it can be run at.
+/// registry prefix. Discovery supplies the description and efforts.
+/// The user sets the enabled flag and optional rank independently.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ModelDto {
     #[schema(example = "claude-acp:claude-opus-5")]
@@ -27,6 +28,17 @@ pub struct ModelDto {
     /// until the user turns it off; a disabled one stays in the catalog,
     /// where it is shown as off and refused as a pin.
     pub enabled: bool,
+    /// The user-set rank, or `null` when the model is unranked.
+    pub rank: Option<ModelRank>,
+}
+
+/// Body of `PUT /v1/models/rank`. The id can contain colons and slashes.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SetModelRankRequest {
+    /// The entry, as `GET /v1/models` spells its `id`.
+    pub id: String,
+    /// The new rank. `null` clears it.
+    pub rank: Option<ModelRank>,
 }
 
 /// Body of `PUT /v1/models/enabled`: one model of the catalog, turned on or

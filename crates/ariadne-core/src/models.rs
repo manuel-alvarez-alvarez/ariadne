@@ -11,6 +11,24 @@ use std::iter::Sum;
 use std::ops::{Add, AddAssign};
 use std::str::FromStr;
 
+/// A user-set rank, independent of discovery and model availability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum ModelRank {
+    Frontier,
+    Balanced,
+    Fast,
+    Local,
+}
+
+crate::wire_enum! { ModelRank, "model rank", [
+    Frontier = "frontier",
+    Balanced = "balanced",
+    Fast = "fast",
+    Local = "local",
+] }
+
 /// What an agent runs on, as the single string that names it:
 /// `<agent>:<model>` — the id of an agent in the ACP registry, and after the
 /// `:` one model of it.

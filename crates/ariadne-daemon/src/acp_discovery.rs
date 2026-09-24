@@ -539,6 +539,7 @@ impl AgentRegistry {
                         })
                         .collect(),
                     enabled: true,
+                    rank: None,
                 })
             })
             .collect()

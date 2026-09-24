@@ -1,8 +1,8 @@
 ---
 id: models-effort-and-pins
 status: current
-updated: 2026-09-23
-areas: [core, api, daemon, cli]
+updated: 2026-09-24
+areas: [core, api, store, daemon, cli]
 commits: [090c5158, e94647fd, d94042f4, c42ebeee, 305ad2fb, a69b953f, 03f9c8b7]
 tests:
   - crates/ariadne-core/src/models.rs
@@ -90,10 +90,16 @@ orchestrator decides (003).
     option become each model's efforts, in the order offered, with the one it
     runs at flagged as the default. An option whose id or name says model or
     effort counts as one when its category does not.
-17. A discovered model carries only what the agent said about it: its
-    description and its efforts. Nothing ranks a model — no tier, cost,
-    speed or task shapes. An agent discovery has not accepted offers no
-    model. No agent is listed bare.
+17. Discovery supplies a model's description and efforts. The user can set
+    its rank to `frontier`, `balanced`, `fast` or `local`.
+    `GET /v1/models` returns that rank, or `null` for an unranked model.
+    `PUT /v1/models/rank` takes the model `id` and `rank` in its body.
+    A `null` rank clears the stored rank. An unknown id is refused by name.
+    An unknown rank is refused with the four allowed words.
+    The store keeps ranks separately from discovery and the enabled flag.
+    Turning a model off and on preserves its rank. A newly discovered model
+    arrives unranked. Rank does not change how the orchestrator chooses models.
+    An agent discovery has not accepted offers no model. No agent is listed bare.
 18. Each entry of the catalog can be turned off, and every model is on until
     it is. What is stored is the subtraction from discovery, so a model an
     agent gains arrives usable.
@@ -110,6 +116,24 @@ orchestrator decides (003).
 
 ## Acceptance criteria
 
+- The catalog lists user ranks and explicit nulls for unranked models
+  (`models.rs::the_catalog_lists_user_ranks_and_null_for_unranked_models`).
+- The rank endpoint sets each of the four ranks
+  (`models.rs::each_of_the_four_ranks_can_be_set`).
+- A null rank clears the stored rank
+  (`models.rs::a_null_rank_clears_the_stored_rank`).
+- A model outside the catalog cannot be ranked or cleared, and the refusal names its id
+  (`models.rs::a_model_outside_the_catalog_cannot_be_ranked`).
+- An unknown rank is refused with the four allowed words
+  (`models.rs::an_unknown_rank_is_refused_with_the_four_allowed_words`).
+- A rank survives turning a model off and on; setting rank preserves enabled
+  (`models.rs::a_rank_survives_turning_a_model_off_and_on`).
+- A model gained on refresh arrives unranked; existing ranks survive refresh
+  (`models.rs::a_model_gained_on_refresh_arrives_unranked`).
+- OpenAPI describes the rank endpoint, nullable fields and four rank words
+  (`models.rs::the_rank_contract_is_in_the_openapi_document`).
+- Stored ranks survive reopening and clear independently of enabled
+  (`store.rs::model_ranks_survive_reopen_and_clear_independently_of_enabled`).
 - A model is the agent and then the model, split at the first colon
   (`models.rs (core)::a_model_is_the_agent_and_then_the_model`).
 - A model naming no agent, one with no agent before the colon, and one with

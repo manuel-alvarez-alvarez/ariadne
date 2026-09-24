@@ -14,6 +14,36 @@ async fn test_store() -> (Store, tempfile::TempDir) {
 }
 
 #[tokio::test]
+async fn model_ranks_survive_reopen_and_clear_independently_of_enabled() {
+    use ariadne_core::models::ModelRank;
+
+    let (store, dir) = test_store().await;
+    let id = "stub:provider/model:1";
+    assert!(store.model_ranks().await.unwrap().is_empty());
+    store
+        .set_model_rank(id, Some(ModelRank::Frontier))
+        .await
+        .unwrap();
+    store
+        .set_model_rank(id, Some(ModelRank::Fast))
+        .await
+        .unwrap();
+    store.set_model_enabled(id, false).await.unwrap();
+    store.close().await;
+    let store = Store::open(dir.path().join("test.db")).await.unwrap();
+    let ranks = store.model_ranks().await.unwrap();
+    assert_eq!(ranks.len(), 1);
+    assert_eq!(ranks.get(id), Some(&ModelRank::Fast));
+    assert!(store.disabled_models().await.unwrap().contains(id));
+    store.set_model_rank(id, None).await.unwrap();
+    store.set_model_rank(id, None).await.unwrap();
+    store.close().await;
+    let store = Store::open(dir.path().join("test.db")).await.unwrap();
+    assert!(store.model_ranks().await.unwrap().is_empty());
+    assert!(store.disabled_models().await.unwrap().contains(id));
+}
+
+#[tokio::test]
 async fn one_acp_index_survives_reopen_and_each_download_replaces_it() {
     let (store, dir) = test_store().await;
     assert!(store.acp_registry_index().await.unwrap().is_none());

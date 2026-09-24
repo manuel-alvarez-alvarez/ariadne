@@ -247,6 +247,7 @@ mod tests {
             description: None,
             efforts: Vec::new(),
             enabled: true,
+            rank: None,
         }
     }
 
@@ -345,6 +346,7 @@ mod tests {
                     },
                 ],
                 enabled: true,
+                rank: None,
             },
             // Turned off, which is the one thing a row says whatever the
             // terminal is wide enough for.

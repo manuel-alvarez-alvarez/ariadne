@@ -79,6 +79,14 @@ CREATE TABLE disabled_models (
     disabled_at TEXT NOT NULL
 );
 
+-- User-set ranks overlay discovery independently of disabled models.
+-- An absent row means that the model is unranked.
+CREATE TABLE model_ranks (
+    id         TEXT PRIMARY KEY,
+    rank       TEXT NOT NULL CHECK (rank IN ('frontier', 'balanced', 'fast', 'local')),
+    updated_at TEXT NOT NULL
+);
+
 -- A checkout, registered once globally and named by id from there on, so that
 -- editing it moves every goal that works in it.
 --

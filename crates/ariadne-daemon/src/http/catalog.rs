@@ -108,7 +108,7 @@ pub(super) mod acp_agents {
 pub(super) mod models {
     use axum::extract::State;
 
-    use ariadne_api::models::{ModelDto, SetModelEnabledRequest};
+    use ariadne_api::models::{ModelDto, SetModelEnabledRequest, SetModelRankRequest};
 
     use crate::http::AppState;
     use crate::http::error::{ApiError, ApiResult, Json};
@@ -128,8 +128,10 @@ pub(super) mod models {
     pub(crate) async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<ModelDto>>> {
         let mut out = catalog(&state).await;
         let off = state.store.disabled_models().await?;
+        let ranks = state.store.model_ranks().await?;
         for entry in &mut out {
             entry.enabled = !off.contains(&entry.id);
+            entry.rank = ranks.get(&entry.id).copied();
         }
         Ok(Json(out))
     }
@@ -176,6 +178,36 @@ pub(super) mod models {
             .find(|entry| entry.id == req.id)
             .expect("the entry was found above");
         entry.enabled = req.enabled;
+        entry.rank = state.store.model_ranks().await?.get(&entry.id).copied();
+        Ok(Json(entry))
+    }
+
+    /// Set or clear a catalog entry's rank without changing its enabled flag.
+    #[utoipa::path(put, path = "/v1/models/rank", tag = "models",
+        request_body = SetModelRankRequest,
+        responses(
+            (status = 200, body = ModelDto),
+            (status = 404, description = "no such model in the catalog"),
+            (status = 422, description = "rank must be frontier, balanced, fast or local")
+        ))]
+    pub(crate) async fn set_rank(
+        State(state): State<AppState>,
+        Json(req): Json<SetModelRankRequest>,
+    ) -> ApiResult<Json<ModelDto>> {
+        let mut entry = catalog(&state)
+            .await
+            .into_iter()
+            .find(|entry| entry.id == req.id)
+            .ok_or_else(|| {
+                ApiError::new(
+                    axum::http::StatusCode::NOT_FOUND,
+                    "not_found",
+                    format!("no model `{}` in the catalog", req.id),
+                )
+            })?;
+        state.store.set_model_rank(&req.id, req.rank).await?;
+        entry.rank = req.rank;
+        entry.enabled = !state.store.disabled_models().await?.contains(&entry.id);
         Ok(Json(entry))
     }
 

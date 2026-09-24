@@ -102,8 +102,218 @@ async fn every_discovered_model_is_listed_as_its_agent_runs_it() {
     fields.sort_unstable();
     assert_eq!(
         fields,
-        ["agent_id", "description", "efforts", "enabled", "id"]
+        [
+            "agent_id",
+            "description",
+            "efforts",
+            "enabled",
+            "id",
+            "rank"
+        ]
     );
+}
+
+#[tokio::test]
+async fn the_catalog_lists_user_ranks_and_null_for_unranked_models() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    let _: serde_json::Value = h
+        .json(
+            put_json(
+                "/v1/models/rank",
+                serde_json::json!({"id": "stub:old-model", "rank": "balanced"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let got: Vec<serde_json::Value> = h.get("/v1/models").await;
+    assert_eq!(got[0]["rank"], "balanced");
+    assert_eq!(got[1].get("rank"), Some(&serde_json::Value::Null));
+}
+
+#[tokio::test]
+async fn each_of_the_four_ranks_can_be_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    for rank in ["frontier", "balanced", "fast", "local"] {
+        let got: serde_json::Value = h
+            .json(
+                put_json(
+                    "/v1/models/rank",
+                    serde_json::json!({"id": "stub:old-model", "rank": rank}),
+                ),
+                StatusCode::OK,
+            )
+            .await;
+        assert_eq!(got["id"], "stub:old-model");
+        assert_eq!(got["rank"], rank);
+        let listed: Vec<serde_json::Value> = h.get("/v1/models").await;
+        assert_eq!(listed[0]["rank"], rank);
+    }
+}
+
+#[tokio::test]
+async fn a_null_rank_clears_the_stored_rank() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    let _: serde_json::Value = h
+        .json(
+            put_json(
+                "/v1/models/rank",
+                serde_json::json!({"id": "stub:old-model", "rank": "fast"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let got: serde_json::Value = h
+        .json(
+            put_json(
+                "/v1/models/rank",
+                serde_json::json!({"id": "stub:old-model", "rank": null}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(got.get("rank"), Some(&serde_json::Value::Null));
+    let listed: Vec<serde_json::Value> = h.get("/v1/models").await;
+    assert_eq!(listed[0].get("rank"), Some(&serde_json::Value::Null));
+}
+
+#[tokio::test]
+async fn a_model_outside_the_catalog_cannot_be_ranked() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    for rank in [serde_json::json!("fast"), serde_json::Value::Null] {
+        let err: ErrorBody = h
+            .json(
+                put_json(
+                    "/v1/models/rank",
+                    serde_json::json!({"id": "stub:missing/model", "rank": rank}),
+                ),
+                StatusCode::NOT_FOUND,
+            )
+            .await;
+        assert!(err.error.message.contains("stub:missing/model"), "{err:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_rank_is_refused_with_the_four_allowed_words() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    let err: ErrorBody = h
+        .json(
+            put_json(
+                "/v1/models/rank",
+                serde_json::json!({"id": "stub:old-model", "rank": "turbo"}),
+            ),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    for word in ["frontier", "balanced", "fast", "local"] {
+        assert!(err.error.message.contains(word), "{err:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_rank_survives_turning_a_model_off_and_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    let _: serde_json::Value = h
+        .json(
+            put_json(
+                "/v1/models/rank",
+                serde_json::json!({"id": "stub:old-model", "rank": "local"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    for enabled in [false, true] {
+        let got: serde_json::Value = h
+            .json(
+                put_json(
+                    "/v1/models/enabled",
+                    serde_json::json!({"id": "stub:old-model", "enabled": enabled}),
+                ),
+                StatusCode::OK,
+            )
+            .await;
+        assert_eq!(got["rank"], "local");
+        assert_eq!(got["enabled"], enabled);
+        let listed: Vec<serde_json::Value> = h.get("/v1/models").await;
+        assert_eq!(listed[0]["rank"], "local");
+        assert_eq!(listed[0]["enabled"], enabled);
+        let ranked: serde_json::Value = h
+            .json(
+                put_json(
+                    "/v1/models/rank",
+                    serde_json::json!({"id": "stub:old-model", "rank": "local"}),
+                ),
+                StatusCode::OK,
+            )
+            .await;
+        assert_eq!(ranked["enabled"], enabled);
+    }
+}
+
+#[tokio::test]
+async fn a_model_gained_on_refresh_arrives_unranked() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = two_model_harness(dir.path()).await;
+    let _: serde_json::Value = h
+        .json(
+            put_json(
+                "/v1/models/rank",
+                serde_json::json!({"id": "stub:old-model", "rank": "fast"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let mut offer = script();
+    offer["config_options"] = serde_json::json!([{
+        "id": "model", "name": "Model", "category": "model", "type": "select",
+        "currentValue": "old-model", "options": [
+            {"value": "old-model", "name": "Old"},
+            {"value": "gained/model:1", "name": "Gained"}
+        ]
+    }]);
+    let _replacement = stub_acp_agent(dir.path(), offer);
+    h.launcher.registry.refresh().await;
+    let got: Vec<serde_json::Value> = h.get("/v1/models").await;
+    assert_eq!(got[0]["rank"], "fast");
+    assert_eq!(got[1]["id"], "stub:gained/model:1");
+    assert_eq!(got[1].get("rank"), Some(&serde_json::Value::Null));
+    let ranked: serde_json::Value = h
+        .json(
+            put_json(
+                "/v1/models/rank",
+                serde_json::json!({"id": "stub:gained/model:1", "rank": "local"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(ranked["id"], "stub:gained/model:1");
+    assert_eq!(ranked["rank"], "local");
+}
+
+#[tokio::test]
+async fn the_rank_contract_is_in_the_openapi_document() {
+    let h = harness().await;
+    let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
+    assert!(doc["paths"]["/v1/models/rank"]["put"]["requestBody"].is_object());
+    let schemas = &doc["components"]["schemas"];
+    assert_eq!(
+        schemas["ModelRank"]["enum"],
+        serde_json::json!(["frontier", "balanced", "fast", "local"])
+    );
+    for name in ["ModelDto", "SetModelRankRequest"] {
+        let rank = &schemas[name]["properties"]["rank"];
+        assert!(
+            rank.to_string().contains("#/components/schemas/ModelRank"),
+            "{rank}"
+        );
+        assert!(rank.to_string().contains("null"), "{rank}");
+    }
 }
 
 /// An agent discovery has not accepted offers nothing: the catalog is what
