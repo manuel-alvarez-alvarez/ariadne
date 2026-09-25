@@ -8,7 +8,7 @@ use serde_json::json;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::sessions::{SessionDto, SessionKind, SessionPageDto};
-use ariadne_core::{Seat, SessionStatus};
+use ariadne_core::{PermissionMode, Seat, SessionStatus};
 use ariadne_store::{SessionFilter, TaskFilter};
 
 use common::acp::{script, stub_acp_agent};
@@ -522,8 +522,10 @@ async fn the_first_prompt_typed_into_an_untitled_loose_session_titles_it() {
     let kept: SessionDto = h.get(&row).await;
     assert_eq!(kept.title.as_deref(), Some("Tidy the release notes"));
 }
+/// A loose session answers its permission requests the way the registered
+/// repository its directory lies in does.
 #[tokio::test]
-async fn a_loose_session_uses_the_daemons_permission_mode() {
+async fn a_loose_session_uses_its_repositorys_permission_mode() {
     let dir = tempfile::tempdir().unwrap();
     let mut setup = outside_script_at(dir.path().to_str().unwrap(), "continue");
     setup["prompts"] = json!([{
@@ -538,10 +540,9 @@ async fn a_loose_session_uses_the_daemons_permission_mode() {
     }]);
     let stub = stub_acp_agent(dir.path(), setup);
     let home = home_with_agent("test-agent", &stub.bin);
-    let path = home.join("config.toml");
-    let config = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(path, format!("permission_mode = \"ask\"\n{config}")).unwrap();
     let h = harness().scheduler().home(home).discover_agents().await;
+    let repo = h.repository(dir.path()).await;
+    h.set_permission_mode(&repo, PermissionMode::Ask).await;
     let session: SessionDto = h
         .json(
             post_json("/v1/outside-sessions/resume", resume_request()),

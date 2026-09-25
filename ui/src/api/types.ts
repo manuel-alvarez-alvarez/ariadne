@@ -19,6 +19,7 @@ export type CreateGoalRequest = Schemas["CreateGoalRequest"]
 export type RepositoryDto = Schemas["RepositoryDto"]
 export type CreateRepositoryRequest = Schemas["CreateRepositoryRequest"]
 export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
+export type PermissionMode = Schemas["PermissionMode"]
 
 export type TaskDto = Schemas["TaskDto"]
 export type TaskAgentDto = Schemas["TaskAgentDto"]

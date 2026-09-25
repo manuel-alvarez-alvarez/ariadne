@@ -12,8 +12,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use ariadne_core::PermissionMode;
-
 /// One additional ACP agent command configured by the user.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,8 +68,6 @@ pub struct FileConfig {
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,
-    /// How ACP permission requests are handled (default auto).
-    pub permission_mode: Option<PermissionMode>,
 }
 
 /// Why `<home>/config.toml` could not be read as configuration.
@@ -250,7 +246,6 @@ mod tests {
             config.acp_registry_url.as_deref(),
             Some("http://127.0.0.1/index.json")
         );
-        assert_eq!(config.permission_mode, None);
         assert_eq!(config.socket_path, None);
     }
 

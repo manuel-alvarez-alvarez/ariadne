@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use ariadne_client::endpoint::{self, AcpAgentConfig};
-use ariadne_core::PermissionMode;
 
 /// Fully resolved daemon configuration.
 #[derive(Debug, Clone)]
@@ -28,8 +27,6 @@ pub struct Config {
     pub delete_merged_branches: bool,
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
-    /// The default for ACP task permission requests. A task may override it.
-    pub permission_mode: PermissionMode,
     /// User-defined ACP agent commands appended to the built-in registry.
     pub acp_agents: Vec<AcpAgentConfig>,
     /// ACP registry index URL, fetched only on an explicit refresh.
@@ -78,7 +75,6 @@ impl Config {
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
-            permission_mode: file.permission_mode.unwrap_or(PermissionMode::Auto),
             acp_agents: file.acp_agents,
             acp_registry_url: file.acp_registry_url.unwrap_or_else(|| {
                 "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json".into()
@@ -136,7 +132,6 @@ mod tests {
         assert!(config.delete_merged_worktrees);
         assert!(config.delete_merged_branches);
         assert!(config.prevent_sleep);
-        assert_eq!(config.permission_mode, PermissionMode::Auto);
         assert_eq!(
             config.acp_registry_url,
             "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
@@ -182,13 +177,10 @@ mod tests {
 
     #[test]
     fn a_config_file_is_read_into_the_daemons_own_shape() {
-        let dir = home_with(
-            "log_filter = \"debug\"\nprevent_sleep = false\npermission_mode = \"learn\"\n",
-        );
+        let dir = home_with("log_filter = \"debug\"\nprevent_sleep = false\n");
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
         assert_eq!(config.log_filter, "debug");
         assert!(!config.prevent_sleep);
-        assert_eq!(config.permission_mode, PermissionMode::Learn);
         assert!(
             config.delete_merged_worktrees,
             "and what the file does not say keeps its default"

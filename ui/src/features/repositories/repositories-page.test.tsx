@@ -31,12 +31,14 @@ const ARIADNE: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
 })
 
-// The other row: another checkout, on another branch, with no description.
+// The other row: another checkout, on another branch, with no description,
+// whose agents learn their permissions.
 const SANDBOX: RepositoryDto = aRepository({
   id: "01JREPO00000000000000SND",
   path: "/home/me/dev/sandbox",
   base_branch: "trunk",
   description: null,
+  permission_mode: "learn",
 })
 
 /** `DELETE /v1/repositories/{id}` answers this instead of 204, when set. */
@@ -80,6 +82,8 @@ describe("RepositoriesPage", () => {
     expect(screen.getByText("The orchestrator itself.")).toBeDefined()
     expect(screen.getByTitle(SANDBOX.path)).toBeDefined()
     expect(screen.getByText("no description")).toBeDefined()
+    expect(screen.getByText("Auto")).toBeDefined()
+    expect(screen.getByText("Learn")).toBeDefined()
     expect(screen.getByText("2 repositories")).toBeDefined()
   })
 

@@ -101,6 +101,10 @@ CREATE TABLE repositories (
     description TEXT,                           -- NULL = none given
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
+    -- How the ACP permission requests of every session in this checkout are
+    -- answered; `learn` keeps its approvals in `learned_permissions`.
+    permission_mode TEXT NOT NULL DEFAULT 'auto'
+                    CHECK (permission_mode IN ('auto', 'ask', 'learn')),
     -- The same checkout can be registered once per base branch.
     UNIQUE (path, base_branch)
 );
@@ -149,8 +153,6 @@ CREATE TABLE tasks (
     -- strategy unless whoever wrote the task said otherwise.
     landing             TEXT NOT NULL DEFAULT 'merge'
                         CHECK (landing IN ('merge', 'pull_request', 'none')),
-    -- NULL takes the daemon's configured default.
-    permission_mode     TEXT CHECK (permission_mode IN ('auto', 'ask', 'learn')),
     worktree_path       TEXT,
     stalled             INTEGER NOT NULL DEFAULT 0,
     merge_commit        TEXT,

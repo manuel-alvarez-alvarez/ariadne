@@ -210,7 +210,6 @@ impl World {
                 ],
                 depends_on: vec![],
                 landing: None,
-                permission_mode: None,
             })
             .await
             .unwrap()

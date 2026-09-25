@@ -232,6 +232,7 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
     path: "/home/me/dev/ariadne",
     base_branch: "main",
     description: "The orchestrator itself.",
+    permission_mode: "auto",
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,

@@ -18,7 +18,6 @@ delete_merged_branches = true      # only applies when worktrees are deleted too
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
-permission_mode = "auto"           # auto, ask, or learn; the default for new tasks
 acp_registry_url = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
                                    # download the index only on an explicit refresh
 
@@ -37,7 +36,8 @@ rather than its own — `claude-acp` is installed as `claude-agent-acp` — the
 command has to be the file that package installed, and it has to answer as an
 ACP agent: a program that only shares the name, as Visual Studio Code's `code`
 shares MiniMax Code's, is not started and is not listed. See [Installing Ariadne](install.md) to add an agent,
-and [Permission modes](permissions.md) to choose how it handles tool requests.
+and [Permission modes](permissions.md) to choose, per repository, how it
+handles tool requests.
 
 `POST /v1/acp-agents/refresh` downloads the index from `acp_registry_url`,
 then searches `PATH` again and probes every agent. The download has a

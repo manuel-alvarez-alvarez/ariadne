@@ -110,19 +110,14 @@ fn permission_script() -> serde_json::Value {
     scripted
 }
 
-/// A home whose configured ACP permission policy is read as the daemon would
-/// read it, with the stub registered as the agent `stub`.
-fn home_with_permission_mode(
-    dir: &tempfile::TempDir,
-    mode: &str,
-    stub: &StubAcpAgent,
-) -> std::path::PathBuf {
+/// A home with the stub registered as the agent `stub`.
+fn home_with_stub(dir: &tempfile::TempDir, stub: &StubAcpAgent) -> std::path::PathBuf {
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
         home.join("config.toml"),
         format!(
-            "permission_mode = \"{mode}\"\n\n[[acp_agents]]\nid = \"stub\"\ncommand = [{:?}]\n",
+            "[[acp_agents]]\nid = \"stub\"\ncommand = [{:?}]\n",
             stub.bin
         ),
     )
@@ -343,10 +338,9 @@ async fn a_key_answers_a_pending_permission_question() {
     let root = tempfile::tempdir().unwrap();
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), permission_script());
-    let h = harness()
-        .home(home_with_permission_mode(&root, "auto", &stub))
-        .await;
+    let h = harness().home(home_with_stub(&root, &stub)).await;
     let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
     let task = h
         .store
         .create_task(NewTask {
@@ -360,7 +354,6 @@ async fn a_key_answers_a_pending_permission_question() {
             ],
             depends_on: vec![],
             landing: None,
-            permission_mode: Some(PermissionMode::Ask),
         })
         .await
         .unwrap();

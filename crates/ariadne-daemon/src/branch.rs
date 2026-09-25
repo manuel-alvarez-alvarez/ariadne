@@ -485,7 +485,6 @@ mod tests {
             status: "in_progress".into(),
             branch: "work".into(),
             landing: "merge".into(),
-            permission_mode: None,
             worktree_path: Some(repo.display().to_string()),
             stalled: 0,
             merge_commit: None,

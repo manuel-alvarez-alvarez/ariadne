@@ -2,10 +2,10 @@
  * Create and edit dialog for a repository — one form for both, because the two
  * differ only in where they post and in what an omitted base branch means.
  *
- * A repository is a checkout and a base branch. How work *ends* in it is not
- * here: that is the task's own ending, agreed with the user task by task, and
- * the procedure it names is Ariadne's. So there are three fields, and none of
- * them is about landing.
+ * A repository is a checkout, a base branch, and how its agents' permission
+ * requests are answered. How work *ends* in it is not here: that is the task's
+ * own ending, agreed with the user task by task, and the procedure it names is
+ * Ariadne's. So none of the fields is about landing.
  *
  * The client only catches what it can know on its own: a missing or relative
  * path. Everything else is the daemon's to say — it opens the checkout and
@@ -16,7 +16,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useEffect } from "react"
-import { useForm } from "react-hook-form"
+import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -24,10 +24,20 @@ import { ApiError, type RepositoryDto } from "@/api"
 import { FormDialog, FormDialogBody, FormDialogContent } from "@/components/form-dialog"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { describeError } from "@/lib/format"
 
+import { PERMISSION_MODES } from "./permission-modes"
 import { useCreateRepository, useUpdateRepository } from "./queries"
+
+const PERMISSION_ITEMS = PERMISSION_MODES.map(({ value, label }) => ({ value, label }))
 
 const formSchema = z.object({
   path: z
@@ -37,6 +47,7 @@ const formSchema = z.object({
     .refine((value) => value.startsWith("/"), { message: "The path must be absolute." }),
   base_branch: z.string().trim(),
   description: z.string(),
+  permission_mode: z.enum(["auto", "ask", "learn"]),
 })
 
 type RepositoryFormValues = z.infer<typeof formSchema>
@@ -45,6 +56,7 @@ const EMPTY_VALUES: RepositoryFormValues = {
   path: "",
   base_branch: "",
   description: "",
+  permission_mode: "auto",
 }
 
 export function RepositoryFormDialog({
@@ -66,7 +78,7 @@ export function RepositoryFormDialog({
     resolver: zodResolver(formSchema),
     defaultValues: EMPTY_VALUES,
   })
-  const { formState, handleSubmit, register, reset, setError } = form
+  const { control, formState, handleSubmit, register, reset, setError } = form
 
   // Every open starts from what is actually stored, never from the previous
   // attempt. Keyed off the dialog opening rather than the prop: a
@@ -78,6 +90,7 @@ export function RepositoryFormDialog({
         path: repository.path,
         base_branch: repository.base_branch,
         description: repository.description ?? "",
+        permission_mode: repository.permission_mode,
       })
       return
     }
@@ -99,6 +112,7 @@ export function RepositoryFormDialog({
             base_branch: branch,
             // Empty is how the daemon spells "clear the description".
             description,
+            permission_mode: values.permission_mode,
           },
         })
         toast.success("Repository updated", { description: path })
@@ -108,6 +122,7 @@ export function RepositoryFormDialog({
           // Absent, not empty: that is what asks for the repo's current branch.
           base_branch: branch || null,
           description: description || null,
+          permission_mode: values.permission_mode,
         })
         toast.success("Repository registered", { description: created.path })
       }
@@ -204,6 +219,47 @@ export function RepositoryFormDialog({
             />
             <FieldDescription>
               Optional. Shown next to the path wherever the repo is picked.
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor="repository-permission-mode">Permission requests</FieldLabel>
+            <Controller
+              control={control}
+              name="permission_mode"
+              render={({ field }) => (
+                <Select
+                  value={field.value}
+                  onValueChange={(value) => field.onChange(value)}
+                  // Without this the trigger shows the stored value (`learn`)
+                  // rather than the option's label ("Learn").
+                  items={PERMISSION_ITEMS}
+                >
+                  <SelectTrigger
+                    id="repository-permission-mode"
+                    aria-label="Permission requests"
+                    className="w-full"
+                    onBlur={field.onBlur}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    {PERMISSION_MODES.map((mode) => (
+                      <SelectItem key={mode.value} value={mode.value}>
+                        <span className="flex flex-col py-0.5">
+                          <span>{mode.label}</span>
+                          <span className="text-muted-foreground text-xs whitespace-normal">
+                            {mode.meaning}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            <FieldDescription>
+              How every agent working in this checkout has its tool permission requests answered.
             </FieldDescription>
           </Field>
         </FormDialogBody>

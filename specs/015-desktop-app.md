@@ -311,6 +311,12 @@ Out: the daemon endpoints themselves (012).
 - The repository dialog puts a placeholder refusal on the landing-briefing
   field rather than on the branch its message also names
   (`ui/src/features/repositories/repository-form-dialog.test.tsx`).
+- The repository dialog sends the permission mode picked for a new
+  repository, starts an edit from the stored one, and the repositories
+  screen shows each one's
+  (`ui/src/features/repositories/repository-form-dialog.test.tsx::sends the permission mode picked for it`,
+  `::starts from the stored permission mode, and sends a new one`,
+  `ui/src/features/repositories/repositories-page.test.tsx::lists what the daemon holds, and says so where a description is missing`).
 - The attention strip holds a placeholder while its lists load and survives a
   partial failure (`ui/src/features/goals/attention-strip.test.tsx`).
 - An attention toast opens the blocked session and finishes dismissal before

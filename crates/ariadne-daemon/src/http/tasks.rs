@@ -117,7 +117,6 @@ pub(super) async fn create(
             agents,
             depends_on: req.depends_on,
             landing: req.landing,
-            permission_mode: req.permission_mode,
         })
         .await?;
     let dto = task_dto_of(&state.store, task).await?;

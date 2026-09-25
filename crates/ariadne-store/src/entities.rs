@@ -192,6 +192,19 @@ pub struct Repository {
     pub description: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// How the ACP permission requests of its sessions are answered, as
+    /// [`PermissionMode`] spells it. Read through
+    /// [`Repository::permission_mode`].
+    pub permission_mode: String,
+}
+
+impl Repository {
+    /// How the ACP permission requests of its sessions are answered. A row
+    /// written by a future build that spells it some other way reads as
+    /// `ask`, the one mode that approves nothing on its own.
+    pub fn permission_mode(&self) -> PermissionMode {
+        self.permission_mode.parse().unwrap_or(PermissionMode::Ask)
+    }
 }
 
 /// The model, and optionally the effort, that a goal's orchestrator or one
@@ -245,8 +258,6 @@ pub struct Task {
     /// How this task ends, as [`Landing`] spells it. Read through
     /// [`Task::landing`].
     pub landing: String,
-    /// An optional override of the daemon's permission-mode default.
-    pub permission_mode: Option<String>,
     pub worktree_path: Option<String>,
     pub stalled: i64,
     pub merge_commit: Option<String>,
@@ -271,13 +282,6 @@ impl Task {
     /// answer that asks nothing of git.
     pub fn landing(&self) -> Landing {
         self.landing.parse().unwrap_or(Landing::None)
-    }
-
-    /// The task's own ACP permission mode, if it overrides the daemon.
-    pub fn permission_mode(&self) -> Option<PermissionMode> {
-        self.permission_mode
-            .as_deref()
-            .and_then(|mode| mode.parse().ok())
     }
 
     /// The procedure the author of this task is briefed to end it with: the

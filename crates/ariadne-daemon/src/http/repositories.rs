@@ -34,6 +34,7 @@ pub(super) async fn create(
             path: req.path,
             base_branch,
             description: req.description,
+            permission_mode: req.permission_mode,
         })
         .await?;
     Ok((StatusCode::CREATED, Json(repository_dto(repository))))
@@ -98,6 +99,7 @@ pub(super) async fn update(
                     true => None,
                     false => Some(d),
                 }),
+                permission_mode: req.permission_mode,
             },
         )
         .await?;

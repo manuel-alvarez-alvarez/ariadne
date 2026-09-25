@@ -418,7 +418,6 @@ mod tests {
             status: status.into(),
             branch: title.into(),
             landing: "merge".into(),
-            permission_mode: None,
             worktree_path: None,
             stalled: stalled as i64,
             merge_commit: None,

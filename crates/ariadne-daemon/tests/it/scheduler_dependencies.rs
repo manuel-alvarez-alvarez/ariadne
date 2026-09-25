@@ -62,7 +62,6 @@ impl World {
                 ],
                 depends_on: vec![first.id.clone()],
                 landing: None,
-                permission_mode: None,
             })
             .await
             .unwrap();

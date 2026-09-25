@@ -1,5 +1,6 @@
 //! Repository repository: the git checkouts Ariadne knows about.
 
+use ariadne_core::PermissionMode;
 use ariadne_core::id::new_id;
 
 use crate::skills::plural_list;
@@ -11,6 +12,8 @@ pub struct NewRepository {
     pub path: String,
     pub base_branch: String,
     pub description: Option<String>,
+    /// None = `auto`.
+    pub permission_mode: Option<PermissionMode>,
 }
 
 /// Partial update; `None` leaves a field alone.
@@ -20,6 +23,7 @@ pub struct RepositoryUpdate {
     pub base_branch: Option<String>,
     /// Some(None) clears the description.
     pub description: Option<Option<String>>,
+    pub permission_mode: Option<PermissionMode>,
 }
 
 impl Store {
@@ -27,13 +31,15 @@ impl Store {
         let id = new_id();
         let ts = now();
         sqlx::query(
-            "INSERT INTO repositories (id, path, base_branch, description, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO repositories (id, path, base_branch, description, permission_mode,
+                                       created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.path)
         .bind(&new.base_branch)
         .bind(&new.description)
+        .bind(new.permission_mode.unwrap_or(PermissionMode::Auto).as_str())
         .bind(&ts)
         .bind(&ts)
         .execute(self.w())
@@ -64,16 +70,21 @@ impl Store {
         update: RepositoryUpdate,
     ) -> Result<Repository> {
         let current = self.get_repository(id).await?;
+        let permission_mode = update
+            .permission_mode
+            .unwrap_or_else(|| current.permission_mode());
         let path = update.path.unwrap_or(current.path);
         let base_branch = update.base_branch.unwrap_or(current.base_branch);
         let description = update.description.unwrap_or(current.description);
         sqlx::query(
-            "UPDATE repositories SET path = ?, base_branch = ?, description = ?, updated_at = ?
+            "UPDATE repositories SET path = ?, base_branch = ?, description = ?,
+                                     permission_mode = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&path)
         .bind(&base_branch)
         .bind(&description)
+        .bind(permission_mode.as_str())
         .bind(now())
         .bind(id)
         .execute(self.w())

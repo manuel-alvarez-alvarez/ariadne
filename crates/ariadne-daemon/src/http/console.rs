@@ -896,6 +896,7 @@ mod tests {
                 path: "/tmp/probe".into(),
                 base_branch: "main".into(),
                 description: None,
+                permission_mode: None,
             })
             .await
             .unwrap();

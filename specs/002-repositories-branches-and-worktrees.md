@@ -20,8 +20,8 @@ task is given, and the worktree each agent stands in.
 
 ## Scope
 
-In: registering a repository, its base branch and description, the merge
-strategy field, task branch naming, the worktree per seat, worktree cleanup,
+In: registering a repository, its base branch, description and permission
+mode, the merge strategy field, task branch naming, the worktree per seat, worktree cleanup,
 and the watch on a task branch's head.
 
 Out: how a task ends in it (005), and what an
@@ -30,9 +30,9 @@ agent is briefed with in its worktree (006).
 ## Behavior
 
 1. A repository is registered once and referenced by every goal that works in
-   it. It carries a path, a base branch and an optional description, and
-   nothing else. How work *ends* in it is not a repository field: that is the
-   task's own ending (005).
+   it. It carries a path, a base branch, an optional description and a
+   permission mode, and nothing else. How work *ends* in it is not a
+   repository field: that is the task's own ending (005).
 2. The base branch defaults to the branch the checkout is on at registration.
 3. A path and branch pair is unique: the same one cannot be registered twice.
    A path or branch the daemon cannot use is refused at creation. A checkout
@@ -75,6 +75,12 @@ agent is briefed with in its worktree (006).
     recreates that watch, so refs deleted by git pack-refs remain neither
     watched nor open. A repository wake still resolves each followed branch
     once, and only a moved branch emits an event.
+12. The permission mode — `auto`, `ask` or `learn` — says how every ACP
+    session that works in the repository answers its permission requests
+    (021). It defaults to `auto`, is set when the repository is registered
+    and changed by editing it, from the CLI and the desktop app alike, and
+    an edit that does not name it keeps it. It is set nowhere else: not per
+    task, not in the daemon's configuration.
 
 ## Acceptance criteria
 
@@ -87,6 +93,10 @@ agent is briefed with in its worktree (006).
   commits registers on its unborn branch
   (`::a_repository_with_no_commits_can_be_registered`), and the same pair
   cannot be registered twice (`::the_same_path_and_branch_cannot_be_registered_twice`).
+- A repository is `auto` until told otherwise, takes a mode at registration
+  and on an edit that names only the mode, and refuses a mode it does not
+  know (`repositories.rs::a_repository_carries_its_permission_mode`,
+  `store.rs::repository_crud_and_unique_path_branch`).
 - A task branches from the repository its goal references
   (`goal_repositories.rs::a_task_branches_from_the_repository_its_goal_references`),
   and editing the base branch moves only what new tasks branch from

@@ -191,8 +191,10 @@ same binary also serves (013).
   honoured (`::format_is_advertised_exactly_where_it_is_honored`,
   `::the_listing_flags_are_advertised_exactly_where_they_are_honored`), and
   parse on either side (`::the_display_flags_parse_on_either_side_of_the_subcommand`).
-- A status is spelled in kebab or snake, several ride on one flag, and a
-  non-status lists the real ones
+- A status is spelled in kebab or snake, and so is every other enum a flag
+  takes — `repo add --permission-mode` among them, while `task create` takes
+  no permission mode; several statuses ride on one flag, and a non-status
+  lists the real ones
   (`::a_status_is_spelled_in_kebab_or_in_snake`, `::several_statuses_ride_on_one_flag`,
   `::a_status_that_is_no_spelling_of_one_lists_the_real_ones`).
 - A model and an effort can be chosen for every agent on the line

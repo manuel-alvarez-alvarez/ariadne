@@ -51,7 +51,7 @@ use ariadne_daemon::timeouts::Timeouts;
 use ariadne_daemon::transcript::TranscriptHomes;
 use ariadne_store::{
     AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewMessage, NewRepository, NewSession,
-    NewTask, NewTaskAgent, Repository, SessionFilter, Store, Task, TaskAgent,
+    NewTask, NewTaskAgent, Repository, RepositoryUpdate, SessionFilter, Store, Task, TaskAgent,
 };
 
 /// How long a test waits for something the daemon does off the request path —
@@ -665,9 +665,24 @@ impl Harness {
                 path: path.display().to_string(),
                 base_branch: "main".into(),
                 description: None,
+                permission_mode: None,
             })
             .await
             .unwrap()
+    }
+
+    /// Set how a repository's sessions answer their permission requests.
+    pub(crate) async fn set_permission_mode(&self, repo: &Repository, mode: PermissionMode) {
+        self.store
+            .update_repository(
+                &repo.id,
+                RepositoryUpdate {
+                    permission_mode: Some(mode),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
     }
 
     /// One reviewer's verdict on the round a task stands in, as the reviewer
@@ -770,7 +785,6 @@ impl Harness {
                 agents,
                 depends_on: vec![],
                 landing: None,
-                permission_mode: None,
             })
             .await
             .unwrap()

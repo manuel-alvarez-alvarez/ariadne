@@ -34,6 +34,7 @@ interface Recorded {
     path?: string
     base_branch?: string | null
     description?: string | null
+    permission_mode?: string
   } | null
 }
 
@@ -97,7 +98,23 @@ describe("registering a repository", () => {
       path: "/home/me/dev/new",
       base_branch: null,
       description: null,
+      permission_mode: "auto",
     })
+  })
+
+  it("sends the permission mode picked for it", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
+    await user.click(screen.getByRole("combobox", { name: "Permission requests" }))
+    await user.click(await screen.findByRole("option", { name: /^Learn/ }))
+    await user.click(screen.getByRole("button", { name: "Register repository" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.permission_mode).toBe("learn")
   })
 
   it("refuses a relative path itself, without asking the daemon", async () => {
@@ -168,12 +185,13 @@ describe("registering a repository", () => {
  * fed them.
  */
 describe("what a repository is", () => {
-  it("takes a path, a base branch and a description, and nothing about landing", async () => {
+  it("takes a path, a base branch, a description and a permission mode, and nothing about landing", async () => {
     renderDialog(null)
 
     expect(await screen.findByLabelText("Path")).toBeDefined()
     expect(screen.getByLabelText("Base branch")).toBeDefined()
     expect(screen.getByLabelText("Description")).toBeDefined()
+    expect(screen.getByRole("combobox", { name: "Permission requests" })).toBeDefined()
 
     expect(screen.queryByLabelText("Merge strategy")).toBeNull()
     expect(screen.queryByLabelText("Landing briefing")).toBeNull()
@@ -212,7 +230,25 @@ describe("editing a repository", () => {
       path: REPOSITORY.path,
       base_branch: "main",
       description: "The orchestrator itself. Now with repositories.",
+      permission_mode: "auto",
     })
+  })
+
+  it("starts from the stored permission mode, and sends a new one", async () => {
+    const user = userEvent.setup()
+    renderDialog({ ...REPOSITORY, permission_mode: "learn" })
+
+    const picker = screen.getByRole("combobox", { name: "Permission requests" })
+    expect(picker.textContent).toContain("Learn")
+
+    await user.click(picker)
+    await user.click(await screen.findByRole("option", { name: /^Ask/ }))
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.permission_mode).toBe("ask")
   })
 
   it("clears a description with the empty string the daemon spells it as", async () => {

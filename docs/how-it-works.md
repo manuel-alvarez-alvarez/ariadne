@@ -41,8 +41,8 @@ directory the original conversation already used. [Resuming a
 session](resuming-sessions.md) has the commands.
 
 Permission requests can pause a session. In the CLI or desktop console, select
-one of the displayed options. Configure whether Ariadne approves, asks, or
-learns approvals in [Permission modes](permissions.md).
+one of the displayed options. Each repository says whether Ariadne approves,
+asks, or learns approvals; see [Permission modes](permissions.md).
 
 ## Task lifecycle
 

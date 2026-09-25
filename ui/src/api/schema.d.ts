@@ -1233,6 +1233,7 @@ export interface components {
              * @example /home/me/dev/ariadne
              */
             path: string;
+            permission_mode?: null | components["schemas"]["PermissionMode"];
         };
         CreateSkillRequest: {
             /**
@@ -1257,7 +1258,6 @@ export interface components {
             depends_on?: string[];
             description?: string;
             landing?: null | components["schemas"]["Landing"];
-            permission_mode?: null | components["schemas"]["PermissionMode"];
             /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
@@ -1660,6 +1660,11 @@ export interface components {
             id: string;
             /** @description Absolute path of the checkout. */
             path: string;
+            /**
+             * @description How the ACP permission requests of every session in this checkout are
+             *     answered.
+             */
+            permission_mode: components["schemas"]["PermissionMode"];
             updated_at: string;
         };
         /** @description Resume a stored conversation without a goal, task or seat. */
@@ -2093,6 +2098,7 @@ export interface components {
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
             path?: string | null;
+            permission_mode?: null | components["schemas"]["PermissionMode"];
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateSkillRequest: {

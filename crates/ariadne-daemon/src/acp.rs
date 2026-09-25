@@ -110,7 +110,7 @@ pub struct AcpLaunch {
     pub config: LaunchConfig,
     /// Repository this session works in. Learned approvals are scoped here.
     pub repository_id: String,
-    /// The task override, or daemon default, resolved before the launch.
+    /// The repository's permission mode, resolved before the launch.
     pub permission_mode: PermissionMode,
 }
 

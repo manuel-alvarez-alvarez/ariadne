@@ -4,6 +4,7 @@
 //! base branch is not here: that is the task's own `landing`, agreed with the
 //! user task by task, and the procedure it names is Ariadne's own.
 
+use ariadne_core::PermissionMode;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -14,6 +15,9 @@ pub struct RepositoryDto {
     pub path: String,
     pub base_branch: String,
     pub description: Option<String>,
+    /// How the ACP permission requests of every session in this checkout are
+    /// answered.
+    pub permission_mode: PermissionMode,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -27,6 +31,9 @@ pub struct CreateRepositoryRequest {
     /// Omit for the repo's currently checked-out branch.
     pub base_branch: Option<String>,
     pub description: Option<String>,
+    /// Omit for `auto`.
+    #[serde(default)]
+    pub permission_mode: Option<PermissionMode>,
 }
 
 /// Partial update; absent fields stay unchanged.
@@ -37,4 +44,7 @@ pub struct UpdateRepositoryRequest {
     pub base_branch: Option<String>,
     /// New description, or empty to clear it. Absent = unchanged.
     pub description: Option<String>,
+    /// Absent = unchanged.
+    #[serde(default)]
+    pub permission_mode: Option<PermissionMode>,
 }

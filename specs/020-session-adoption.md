@@ -99,7 +99,8 @@ The ACP runtime belongs to 021.
     Resume creates no goal, task, worktree or branch.
     The row stores that directory in `worktree_path`.
     It stores the agent's internal session id.
-11. The session uses the daemon's default permission mode.
+11. The session uses the permission mode of the registered repository its
+    directory lies deepest in, and `auto` when it lies in none (021).
     Its model is `<agent>:<model>`, from the load response's model configuration option.
     Without that option, the row records the agent's discovered default model.
     Resume does not replace the loaded model with a task pin.
@@ -307,8 +308,8 @@ The ACP runtime belongs to 021.
   (`acp_session_resume.rs::an_agent_session_cannot_resume_an_outside_session`).
 - The console serves loaded history, takes input, cancels a turn, and survives kill followed by resume
   (`acp_session_resume.rs::a_loose_console_serves_history_takes_input_and_cancels`).
-- A loose session uses the configured permission mode and accepts its answer through console input
-  (`acp_session_resume.rs::a_loose_session_uses_the_daemons_permission_mode`).
+- A loose session uses its repository's permission mode and accepts its answer through console input
+  (`acp_session_resume.rs::a_loose_session_uses_its_repositorys_permission_mode`).
 - A resumed conversation keeps its first prompt as its title, on its row
   and in the listing, where `q` finds it
   (`acp_session_resume.rs::an_outside_session_loads_in_its_directory_without_scheduled_work`,

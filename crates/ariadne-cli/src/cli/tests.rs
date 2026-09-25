@@ -534,12 +534,7 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
     assert_eq!(task_statuses(&["in-progress"]), [TaskStatus::InProgress]);
     assert_eq!(task_statuses(&["in_progress"]), [TaskStatus::InProgress]);
     let Command::Task {
-        command:
-            TaskCommand::Create {
-                landing,
-                permission_mode,
-                ..
-            },
+        command: TaskCommand::Create { landing, .. },
     } = parse(&[
         "ariadne",
         "task",
@@ -551,8 +546,6 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
         "coding=claude-agent-acp:claude-sonnet-5",
         "--landing",
         "pull-request",
-        "--permission-mode",
-        "learn",
     ])
     .command
     else {
@@ -563,7 +556,31 @@ fn a_status_is_spelled_in_kebab_or_in_snake() {
         Some(Landing::PullRequest),
         "and so is every other enum a flag takes"
     );
+    let Command::Repo {
+        command: RepoCommand::Add {
+            permission_mode, ..
+        },
+    } = parse(&["ariadne", "repo", "add", "/r", "--permission-mode", "learn"]).command
+    else {
+        panic!("repo add");
+    };
     assert_eq!(permission_mode, Some(PermissionMode::Learn));
+    // A permission mode is the repository's alone: no task takes one.
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "task",
+            "create",
+            "01GOAL",
+            "--title",
+            "t",
+            "--author",
+            "coding=claude-agent-acp:claude-sonnet-5",
+            "--permission-mode",
+            "learn",
+        ])
+        .is_err()
+    );
 }
 
 /// Several statuses ride on one `ls`, comma-separated or on a flag each, and
@@ -1004,6 +1021,7 @@ fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing()
                 path,
                 branch,
                 description,
+                permission_mode,
             },
     } = parse(&[
         "ariadne",
@@ -1022,6 +1040,7 @@ fn a_repository_is_a_checkout_and_a_base_branch_and_says_nothing_about_landing()
     assert_eq!(path, "/tmp/repo");
     assert_eq!(branch.as_deref(), Some("next"));
     assert_eq!(description.as_deref(), Some("the API"));
+    assert_eq!(permission_mode, None, "the daemon's `auto` stands in");
 
     // The flags that used to say how landing works are gone, not ignored.
     for gone in [

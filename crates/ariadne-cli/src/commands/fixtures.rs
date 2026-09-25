@@ -14,7 +14,7 @@ use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::skills::{SkillDto, SkillSeat};
 use ariadne_api::tasks::{TaskAgentDto, TaskDto};
-use ariadne_core::{GoalStatus, Landing, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
 
 /// A stamp every fixture is created and updated at, so a rendered row is
 /// reproducible.
@@ -125,6 +125,7 @@ pub(crate) fn repository(id: &str, path: &str, base_branch: &str) -> RepositoryD
         path: path.into(),
         base_branch: base_branch.into(),
         description: None,
+        permission_mode: PermissionMode::Auto,
         created_at: NOW.into(),
         updated_at: NOW.into(),
     }

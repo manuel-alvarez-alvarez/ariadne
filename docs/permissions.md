@@ -1,38 +1,38 @@
 # Permission modes
 
-Choose how Ariadne handles an ACP agent's tool-permission questions. The
+Choose how Ariadne handles an ACP agent's tool-permission questions. The mode
+belongs to a repository, and every agent that works in it follows it. The
 default is `auto`, which keeps routine work moving. Choose `ask` when you want
 to decide each request, or `learn` when repeated approved requests in one
 repository should stop interrupting you.
 
-## Set the default
+## Set a repository's mode
 
-Set `permission_mode` in `~/.ariadne/config.toml`, then restart the daemon.
-This applies to every task that does not select its own mode.
-
-```toml
-permission_mode = "ask"
-```
+Pass `--permission-mode` when you register a repository, or change it later:
 
 ```sh
-ariadne daemon restart
+ariadne repo add ~/projects/api --permission-mode learn
+ariadne repo update <repo-id> --permission-mode ask
 ```
 
-Leave the key out to use `auto`.
+In the desktop app, open **Repositories**, then register or edit a repository
+and choose **Permission requests**. The repositories table shows each
+repository's mode, and so does `ariadne repo ls`.
 
-## Set a task's mode
+The accepted values are `auto`, `ask`, and `learn`. A repository registered
+without one uses `auto`. The change applies to the next agent launched in the
+repository; an agent already running keeps the mode it started with.
 
-Pass `--permission-mode` when creating a task. It overrides the daemon default
-for that task.
+Which repository applies:
 
-```sh
-ariadne task create <goal-id> --title "Update dependencies" \
-    --author coding=codex-acp:<model-id> --no-reviewer \
-    --permission-mode learn
-```
+- A task's author and reviewers use the task's repository.
+- A goal's orchestrator uses the goal's first repository.
+- A resumed outside conversation uses the registered repository its directory
+  is in. Outside every registered repository, it uses `auto`.
 
-The accepted values are `auto`, `ask`, and `learn`. A task with no
-`--permission-mode` uses the configured default.
+The mode cannot be set per task or in `~/.ariadne/config.toml`. A
+`permission_mode` key left in `config.toml` stops the daemon from starting, so
+remove it.
 
 ## What each mode does
 
@@ -59,4 +59,4 @@ answer. A denial is never saved.
 `learn` keeps an approval per repository, tool name, and tool kind. An approval
 for one repository does not grant it in another. The memory survives a daemon
 restart and is used only for later requests with the same three values. Change
-the task to `ask` when you want to review a matching request again.
+the repository to `ask` when you want to review a matching request again.

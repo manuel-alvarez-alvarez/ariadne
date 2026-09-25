@@ -14,6 +14,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
+use ariadne_core::PermissionMode;
 
 use common::{delete, get, harness, next_event, post_json, put_json, sh};
 
@@ -278,4 +279,56 @@ async fn a_repository_refuses_anything_about_how_work_ends() {
     let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
     assert!(doc["paths"]["/v1/merge-strategies"].is_null());
     assert!(doc["components"]["schemas"]["MergeStrategyDto"].is_null());
+}
+
+/// A repository answers its sessions' permission requests with `auto` until
+/// someone says otherwise, and an update that names only the mode moves only
+/// the mode.
+#[tokio::test]
+async fn a_repository_carries_its_permission_mode() {
+    let h = harness().await;
+    let repo = h.git_repo("repo");
+
+    let created: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string()}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created.permission_mode, PermissionMode::Auto);
+
+    let learning: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string(), "base_branch": "next",
+                                   "permission_mode": "learn"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(learning.permission_mode, PermissionMode::Learn);
+
+    let edited: RepositoryDto = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{}", created.id),
+                serde_json::json!({"permission_mode": "ask"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(edited.permission_mode, PermissionMode::Ask);
+    assert_eq!(edited.base_branch, created.base_branch);
+
+    let (status, _) = h
+        .send(put_json(
+            &format!("/v1/repositories/{}", created.id),
+            serde_json::json!({"permission_mode": "sometimes"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }

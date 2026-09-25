@@ -90,20 +90,14 @@ fn permission_script() -> serde_json::Value {
     scripted
 }
 
-/// A home whose configured ACP permission policy is read as the daemon would
-/// read it, before the harness starts the runtime around it, with the stub
-/// registered as the agent `stub`.
-fn home_with_permission_mode(
-    dir: &tempfile::TempDir,
-    mode: &str,
-    stub: &StubAcpAgent,
-) -> std::path::PathBuf {
+/// A home with the stub registered as the agent `stub`.
+fn home_with_stub(dir: &tempfile::TempDir, stub: &StubAcpAgent) -> std::path::PathBuf {
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
         home.join("config.toml"),
         format!(
-            "permission_mode = \"{mode}\"\n\n[[acp_agents]]\nid = \"stub\"\ncommand = [{:?}]\n",
+            "[[acp_agents]]\nid = \"stub\"\ncommand = [{:?}]\n",
             stub.bin
         ),
     )
@@ -937,10 +931,9 @@ async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
     let root = tempfile::tempdir().unwrap();
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), permission_script());
-    let h = harness()
-        .home(home_with_permission_mode(&root, "auto", &stub))
-        .await;
+    let h = harness().home(home_with_stub(&root, &stub)).await;
     let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Ask).await;
     let task = h
         .store
         .create_task(NewTask {
@@ -954,7 +947,6 @@ async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
             ],
             depends_on: vec![],
             landing: None,
-            permission_mode: Some(PermissionMode::Ask),
         })
         .await
         .unwrap();
@@ -996,10 +988,10 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     let root = tempfile::tempdir().unwrap();
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), permission_script());
-    let h = harness()
-        .home(home_with_permission_mode(&root, "learn", &stub))
-        .await;
+    let h = harness().home(home_with_stub(&root, &stub)).await;
     let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Learn)
+        .await;
     ready(&h, &cast.task.id).await;
 
     let denied = h.launcher.spawn_author(&cast.task.id).await.unwrap();

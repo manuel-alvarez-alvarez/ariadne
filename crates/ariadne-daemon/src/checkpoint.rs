@@ -57,6 +57,7 @@ mod tests {
                     path: format!("/tmp/repo-{n}"),
                     base_branch: "main".to_string(),
                     description: None,
+                    permission_mode: None,
                 })
                 .await
                 .unwrap();

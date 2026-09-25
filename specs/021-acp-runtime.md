@@ -143,8 +143,10 @@ gone (009).
    one. The turn an author asked for its review in is ended that way
    (004): its own launch's report of the review call ended, then the cancel,
    which never lands on the next launch's briefing.
-9. ACP permission mode defaults to `auto` from daemon configuration, and a
-   task may override it with `auto`, `ask` or `learn`. `auto` selects the
+9. The ACP permission mode is the repository's (002), read at launch: a
+   task's sessions take its repository's, an orchestrator its goal's first
+   repository's, and a loose session (020) the registered repository its
+   directory lies deepest in — `auto` when it lies in none. `auto` selects the
    first allowing option, then the first option, and cancels only an empty
    list. `ask` records the request in the console, raises session attention
    and blocks until console input selects an option. `learn` does the same on
@@ -213,10 +215,11 @@ gone (009).
   (`acp_runtime.rs::auto_approves_a_permission_request_with_the_allowing_option`),
   and the allowing option is selected wherever it stands
   (`acp.rs::the_allowing_option_is_selected_wherever_it_stands`).
-- `ask` raises session attention and console input unblocks the turn
+- A repository set to `ask` raises session attention and console input
+  unblocks the turn
   (`acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`).
-- `learn` remembers an approval per repository across a daemon restart, and
-  does not remember a denial
+- A repository set to `learn` remembers an approval across a daemon restart,
+  and does not remember a denial
   (`acp_console.rs::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
 - Console input reaches the agent and queues behind a running turn
   (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).

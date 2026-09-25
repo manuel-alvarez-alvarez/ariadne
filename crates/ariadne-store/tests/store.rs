@@ -1,8 +1,8 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, Landing, MessageKind, Seat, SessionStatus, TaskStatus,
-    TokenUsage,
+    Actor, AttentionReason, GoalStatus, Landing, MessageKind, PermissionMode, Seat, SessionStatus,
+    TaskStatus, TokenUsage,
 };
 use ariadne_store::defaults::default_landing_prompt;
 use ariadne_store::*;
@@ -175,6 +175,7 @@ async fn seed_repository(store: &Store) -> Repository {
             path: format!("/tmp/repo-{}", ariadne_core::id::new_id()),
             base_branch: "main".into(),
             description: None,
+            permission_mode: None,
         })
         .await
         .unwrap()
@@ -303,7 +304,6 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             ],
             depends_on: deps,
             landing: None,
-            permission_mode: None,
         })
         .await
         .unwrap()
@@ -398,11 +398,14 @@ async fn repository_crud_and_unique_path_branch() {
             path: "/tmp/repo".into(),
             base_branch: "main".into(),
             description: Some("the one repo".into()),
+            permission_mode: None,
         })
         .await
         .unwrap();
     assert_eq!(repo.path, "/tmp/repo");
     assert_eq!(repo.description.as_deref(), Some("the one repo"));
+    // A repository registered without a mode approves on its own.
+    assert_eq!(repo.permission_mode(), PermissionMode::Auto);
 
     // The same checkout on another branch is a different repository.
     let other = store
@@ -410,10 +413,12 @@ async fn repository_crud_and_unique_path_branch() {
             path: "/tmp/repo".into(),
             base_branch: "next".into(),
             description: None,
+            permission_mode: Some(PermissionMode::Learn),
         })
         .await
         .unwrap();
     assert!(other.description.is_none());
+    assert_eq!(other.permission_mode(), PermissionMode::Learn);
     assert_eq!(store.list_repositories().await.unwrap().len(), 2);
 
     // (path, base_branch) is unique.
@@ -422,18 +427,20 @@ async fn repository_crud_and_unique_path_branch() {
             path: "/tmp/repo".into(),
             base_branch: "main".into(),
             description: None,
+            permission_mode: None,
         })
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
 
-    // Partial update: the branch moves, the description is cleared, the path
-    // stays exactly as it was.
+    // Partial update: the branch moves, the description is cleared, the
+    // mode changes, the path stays exactly as it was.
     let edited = store
         .update_repository(
             &repo.id,
             RepositoryUpdate {
                 base_branch: Some("trunk".into()),
                 description: Some(None),
+                permission_mode: Some(PermissionMode::Ask),
                 ..Default::default()
             },
         )
@@ -442,6 +449,20 @@ async fn repository_crud_and_unique_path_branch() {
     assert_eq!(edited.path, "/tmp/repo");
     assert_eq!(edited.base_branch, "trunk");
     assert!(edited.description.is_none());
+    assert_eq!(edited.permission_mode(), PermissionMode::Ask);
+
+    // An update that does not name the mode keeps it.
+    let renamed = store
+        .update_repository(
+            &repo.id,
+            RepositoryUpdate {
+                description: Some(Some("renamed".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.permission_mode(), PermissionMode::Ask);
 
     // An update onto a taken (path, base_branch) conflicts like a create.
     assert!(matches!(
@@ -506,7 +527,6 @@ async fn a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say() {
             agents: staffed(),
             depends_on: vec![],
             landing: None,
-            permission_mode: None,
         })
         .await
         .unwrap();
@@ -524,7 +544,6 @@ async fn a_task_lands_by_the_ending_it_carries_and_the_repository_has_no_say() {
                 agents: staffed(),
                 depends_on: vec![],
                 landing: Some(landing),
-                permission_mode: None,
             })
             .await
             .unwrap();
@@ -622,7 +641,6 @@ async fn a_goal_needs_repositories_that_exist() {
                 ],
                 depends_on: vec![],
                 landing: None,
-                permission_mode: None,
             })
             .await,
         Err(StoreError::Invalid(_))
@@ -666,7 +684,6 @@ async fn task_branch_is_named_after_the_title() {
             ],
             depends_on: vec![],
             landing: None,
-            permission_mode: None,
         })
         .await
         .unwrap();
@@ -2638,7 +2655,6 @@ async fn an_agent_is_written_on_the_pin_it_was_given_whole() {
             ],
             depends_on: vec![],
             landing: None,
-            permission_mode: None,
         })
         .await
         .unwrap();
@@ -3053,7 +3069,6 @@ async fn a_skill_an_agent_still_loads_cannot_be_deleted() {
             ],
             depends_on: vec![],
             landing: None,
-            permission_mode: None,
         })
         .await
         .unwrap();
@@ -3084,7 +3099,6 @@ async fn an_agent_cannot_be_staffed_on_a_skill_nothing_answers_to() {
             ],
             depends_on: vec![],
             landing: None,
-            permission_mode: None,
         })
         .await;
     let message = format!("{:?}", refused.expect_err("no such skill"));
@@ -3112,7 +3126,6 @@ async fn a_task_agent_cannot_be_staffed_on_the_orchestrators_skill() {
             ],
             depends_on: vec![],
             landing: None,
-            permission_mode: None,
         })
         .await;
     let message = format!("{:?}", refused.expect_err("the orchestrator's skill"));
@@ -3154,7 +3167,6 @@ async fn a_task_takes_several_authors_each_on_a_branch_of_its_own() {
             agents,
             depends_on: vec![],
             landing: None,
-            permission_mode: None,
         }
     };
 
@@ -3582,6 +3594,7 @@ async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
                 path: dir.path().join(format!("repo-{n}")).display().to_string(),
                 base_branch: "main".into(),
                 description: None,
+                permission_mode: None,
             })
             .await
             .unwrap();

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::models::agent_of;
-use ariadne_core::{PromptKind, Seat, SessionStatus, TaskStatus};
+use ariadne_core::{PermissionMode, PromptKind, Seat, SessionStatus, TaskStatus};
 use ariadne_store::{
     AgentSession, NewSession, Repository, SessionFilter, Store, Task, TaskAgent, TaskFilter,
     author_branch,
@@ -194,38 +194,40 @@ impl Launcher {
                 .set_session_internal_id(&session.id, internal)
                 .await?;
         }
-        let (repository_id, permission_mode) = match &session.task_id {
+        // The repository the session works in answers its permission
+        // requests, and holds what `learn` remembers.
+        let repository = match &session.task_id {
             Some(task_id) => {
                 let task = self.store.get_task(task_id).await?;
-                let permission_mode = task.permission_mode().unwrap_or(self.cfg.permission_mode);
-                (task.repo_id, permission_mode)
+                Some(self.store.get_repository(&task.repo_id).await?)
             }
-            None if session.goal_id.is_some() => {
-                let repo = self
-                    .store
+            None if session.goal_id.is_some() => Some(
+                self.store
                     .list_goal_repositories(
                         session.goal_id.as_deref().context("session has no goal")?,
                     )
                     .await?
                     .into_iter()
                     .next()
-                    .context("the session's goal has no repository")?;
-                (repo.id, self.cfg.permission_mode)
-            }
-            None => {
-                let repository = self
-                    .store
-                    .list_repositories()
-                    .await?
-                    .into_iter()
-                    .filter(|repo| plan.cwd.starts_with(&repo.path))
-                    .max_by_key(|repo| repo.path.len());
-                (
-                    repository.map(|repo| repo.id).unwrap_or_default(),
-                    self.cfg.permission_mode,
-                )
-            }
+                    .context("the session's goal has no repository")?,
+            ),
+            None => self
+                .store
+                .list_repositories()
+                .await?
+                .into_iter()
+                .filter(|repo| plan.cwd.starts_with(&repo.path))
+                .max_by_key(|repo| repo.path.len()),
         };
+        // A loose session outside every registered checkout has no
+        // repository to ask, and nowhere to remember an approval.
+        let (repository_id, permission_mode) = repository.map_or_else(
+            || (String::new(), PermissionMode::Auto),
+            |repo| {
+                let mode = repo.permission_mode();
+                (repo.id, mode)
+            },
+        );
         let agent_id = agent_of(&session.model);
         let command = self.registry.command_of(agent_id).with_context(|| {
             format!(

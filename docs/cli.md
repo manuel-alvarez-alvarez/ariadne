@@ -322,18 +322,20 @@ ariadne models rank codex-acp:<model-id> --clear   # back to unranked
 
 The four ranks: `frontier` is the agent's most capable model, `balanced` is
 its everyday one, `fast` is its quick and cheap one, and `local` runs on the
-user's own machine. A task can change its permission handling before it
-starts:
+user's own machine. A task can change its model before it starts:
 
 ```sh
 ariadne task update <task-id> --model codex-acp:<model-id> --effort high
-ariadne task create <goal-id> --title "Write the release notes" \
-    --author documentation=codex-acp:<model-id> --no-reviewer --landing none \
-    --permission-mode ask
 ```
 
-`task update` applies only while a task is pending or ready. See
-[Permission modes](permissions.md) and [Resuming a session](resuming-sessions.md)
+`task update` applies only while a task is pending or ready. How agents'
+permission requests are answered belongs to the repository, not the task:
+
+```sh
+ariadne repo update <repo-id> --permission-mode ask
+```
+
+See [Permission modes](permissions.md) and [Resuming a session](resuming-sessions.md)
 for the related session workflows.
 
 ## Output and troubleshooting

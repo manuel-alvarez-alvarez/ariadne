@@ -1,7 +1,7 @@
 /**
  * The repositories screen: the checkouts Ariadne knows about, as one table.
  *
- * A repository is three fields wide, so the rows do not expand — everything a
+ * A repository is four fields wide, so the rows do not expand — everything a
  * repository is is already in the row, and the edit dialog is where the rest of
  * it happens. That is the one deliberate difference from the profiles screen
  * this otherwise follows.
@@ -26,12 +26,14 @@ import { plural } from "@/lib/format"
 
 import { DeleteRepositoryDialog } from "./delete-repository-dialog"
 import { NoRepositories as SharedNoRepositories } from "./no-repositories"
+import { permissionModeLabel } from "./permission-modes"
 import { repositoriesQueryOptions } from "./queries"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 
 const COLUMNS = [
   { header: "Path" },
   { header: "Base branch" },
+  { header: "Permissions" },
   // Wide enough to be a sentence rather than a word per line: what made the
   // rows of this table 130px tall was a description with nothing to wrap in.
   { header: "Description", className: "min-w-48" },
@@ -67,7 +69,7 @@ export function RepositoriesPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Repositories"
-        description="The git checkouts goals are created against. Each one is a path, the branch task worktrees are cut from, and what it is for."
+        description="The git checkouts goals are created against. Each one is a path, the branch task worktrees are cut from, how its agents' permission requests are answered, and what it is for."
         actions={
           <Button onClick={openCreate}>
             <PlusIcon />
@@ -133,6 +135,7 @@ function RepositoryRow({
       <TableCell className="max-w-24 text-xs lg:max-w-56">
         <CopyableId value={repository.base_branch} label="base branch" truncate="middle" />
       </TableCell>
+      <TableCell className="text-xs">{permissionModeLabel(repository.permission_mode)}</TableCell>
       <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}
       </TableCell>

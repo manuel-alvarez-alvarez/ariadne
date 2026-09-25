@@ -414,7 +414,7 @@ mod tests {
 
     async fn repository() -> Json<serde_json::Value> {
         Json(json!({
-            "id": "repo", "path": "/work/ariadne", "base_branch": "main", "description": null,
+            "id": "repo", "path": "/work/ariadne", "base_branch": "main", "description": null, "permission_mode": "auto",
             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
         }))
     }

@@ -5,10 +5,12 @@ use clap::Subcommand;
 
 use ariadne_api::repositories::{CreateRepositoryRequest, RepositoryDto, UpdateRepositoryRequest};
 use ariadne_client::Client;
+use ariadne_core::PermissionMode;
 use serde_json::json;
 
 use super::resolve::{self, Kind};
 use super::{Subject, confirm};
+use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, empty_state, moment, ok_id_line, print, print_kv,
     print_list, view,
@@ -21,6 +23,7 @@ const LS: &[Column] = &[
     col("title", 48).title(),
     col("age", UNCAPPED).rank(4),
     col("branch", 24).rank(3),
+    col("permissions", UNCAPPED).rank(2),
     col("description", 40).rank(1),
 ];
 
@@ -36,6 +39,11 @@ pub(crate) enum RepoCommand {
         /// What this repository is, in a line
         #[arg(long)]
         description: Option<String>,
+        /// How its agents' ACP permission requests are answered: auto
+        /// approves, ask waits for a console answer, learn remembers
+        /// approvals (default: auto)
+        #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
+        permission_mode: Option<PermissionMode>,
     },
     /// List repositories
     Ls,
@@ -59,6 +67,9 @@ pub(crate) enum RepoCommand {
         /// New description, or "" to clear it
         #[arg(long)]
         description: Option<String>,
+        /// New permission mode: auto, ask or learn
+        #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
+        permission_mode: Option<PermissionMode>,
     },
     /// Delete a repository
     Rm {
@@ -77,6 +88,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             path,
             branch,
             description,
+            permission_mode,
         } => {
             let repo: RepositoryDto = client
                 .post_json(
@@ -85,6 +97,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                         path,
                         base_branch: branch,
                         description,
+                        permission_mode,
                     },
                 )
                 .await?;
@@ -108,6 +121,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                         r.path.clone(),
                         age(&r.created_at, now),
                         r.base_branch.clone(),
+                        r.permission_mode.as_str().into(),
                         r.description.clone().unwrap_or_else(|| "-".into()),
                     ]
                 },
@@ -122,6 +136,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                     ("id", Kv::id(r.id.clone())),
                     ("path", r.path.clone().into()),
                     ("branch", r.base_branch.clone().into()),
+                    ("permissions", r.permission_mode.as_str().into()),
                     (
                         "description",
                         r.description.clone().unwrap_or_else(|| "-".into()).into(),
@@ -136,6 +151,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
             path,
             branch,
             description,
+            permission_mode,
         } => {
             let id = resolve::id(client, Kind::Repo, &id).await?;
             let r: RepositoryDto = client
@@ -145,6 +161,7 @@ pub(crate) async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Re
                         path,
                         base_branch: branch,
                         description,
+                        permission_mode,
                     },
                 )
                 .await?;

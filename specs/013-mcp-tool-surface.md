@@ -137,8 +137,6 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`tools.rs::a_seat_word_addresses_the_one_agent_that_sits_in_it`).
 - A message body written as `message` is taken
   (`tools.rs::a_message_body_is_taken_as_message_too`).
-- Every permission mode the schema offers is one the tool takes
-  (`tools.rs::a_task_takes_every_permission_mode_its_schema_offers`).
 - Diff parsing ignores added source lines that resemble headers and keeps
   quoted non-ASCII paths
   (`index.rs::changed_lines_reads_plus_source_lines_and_non_ascii_paths`).
