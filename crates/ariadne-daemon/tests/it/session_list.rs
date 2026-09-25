@@ -672,6 +672,10 @@ async fn a_resumed_outside_session_is_listed_once_as_an_ariadne_session() {
     assert_eq!(of_s3.len(), 1, "{:?}", ids(&after));
     assert_eq!(of_s3[0].kind, SessionKind::Ariadne);
     assert_eq!(of_s3[0].id, resumed["id"].as_str().unwrap());
+    // It keeps the first prompt it was listed with as its title.
+    assert_eq!(of_s3[0].title.as_deref(), Some("fix the login"));
+    let found = listing(&h, "kind=ariadne&q=LOGIN").await;
+    assert_eq!(ids(&found), [of_s3[0].id.as_str()]);
     assert_eq!(after.total, 5);
     assert_eq!(after.snapshot_at, before.snapshot_at);
     assert!(stub.calls_of("session/list").is_empty());

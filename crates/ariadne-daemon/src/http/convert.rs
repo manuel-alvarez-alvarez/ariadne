@@ -147,7 +147,7 @@ dto! {
         context_size: s.context_size.and_then(|value| u64::try_from(value).ok()),
         .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
            worktree_path, attention_since,
-           last_activity_at, created_at, ended_at
+           last_activity_at, created_at, ended_at, title
     }
 }
 
@@ -221,7 +221,8 @@ pub(crate) async fn session_entry_of(
     session: store::AgentSession,
     title: Option<String>,
 ) -> Result<SessionEntryDto, StoreError> {
-    let session = session_dto_of(store, session).await?;
+    let mut session = session_dto_of(store, session).await?;
+    let title = title.or(session.title.take());
     Ok(SessionEntryDto {
         kind: SessionKind::Ariadne,
         agent_id: agent_of(&session.model).to_string(),

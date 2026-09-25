@@ -16,7 +16,12 @@ import { describe, expect, it } from "vitest"
 
 import type { SessionStatus } from "@/api"
 import { TASK_STATUS_META } from "@/features/tasks/status"
-import { isLiveStatus, SESSION_STATUS_META, SessionStatusBadge } from "./session-display"
+import {
+  isLiveStatus,
+  SESSION_STATUS_META,
+  SessionStatusBadge,
+  sessionHeading,
+} from "./session-display"
 
 /** The dot's classes, off the badge as it is actually rendered. */
 function dotClasses(status: SessionStatus): string {
@@ -55,5 +60,18 @@ describe("the session status colours", () => {
     expect(isLiveStatus("idle")).toBe(true)
     expect(isLiveStatus("exited")).toBe(false)
     expect(isLiveStatus("failed")).toBe(false)
+  })
+})
+
+describe("the session panel's heading", () => {
+  it("names a seat's session by its seat, whatever title it holds", () => {
+    expect(sessionHeading({ seat: "author", title: null })).toBe("Author session")
+  })
+
+  it("names a loose session by its own title, and by what it is until it has one", () => {
+    expect(sessionHeading({ seat: null, title: "Tidy the release notes" })).toBe(
+      "Tidy the release notes",
+    )
+    expect(sessionHeading({ seat: null, title: null })).toBe("Loose session")
   })
 })

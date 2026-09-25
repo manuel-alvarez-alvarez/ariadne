@@ -159,6 +159,8 @@ async fn an_outside_session_loads_in_its_directory_without_scheduled_work() {
     assert_eq!(session.seat, None);
     assert_eq!(session.model, "test-agent:loaded-model");
     assert_eq!(session.internal_session_id.as_deref(), Some("outside-1"));
+    let row: SessionDto = h.get(&format!("/v1/sessions/{}", session.id)).await;
+    assert_eq!(row.title.as_deref(), Some("continue"));
     assert_eq!(
         stub.calls_of("session/load")[0]["cwd"],
         dir.path().to_str().unwrap()
@@ -438,6 +440,47 @@ async fn a_loose_console_serves_history_takes_input_and_cancels() {
     );
 }
 
+/// A loose session with no title takes the first prompt typed into it as
+/// one, and keeps it: the next prompt does not rename it.
+#[tokio::test]
+async fn the_first_prompt_typed_into_an_untitled_loose_session_titles_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut setup = outside_script_at(dir.path().to_str().unwrap(), "");
+    setup["prompts"] = json!([{"updates": []}, {"updates": []}]);
+    let stub = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("test-agent", &stub.bin).await;
+    let session: SessionDto = h
+        .json(
+            post_json("/v1/outside-sessions/resume", resume_request()),
+            axum::http::StatusCode::OK,
+        )
+        .await;
+    assert_eq!(session.title, None);
+    let input = format!("/v1/sessions/{}/console/input", session.id);
+    let row = format!("/v1/sessions/{}", session.id);
+
+    let (status, _) = h
+        .send(post_json(
+            &input,
+            json!({"text": "\n  Tidy the release notes  \nand more"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let titled: SessionDto = h.get(&row).await;
+    assert_eq!(titled.title.as_deref(), Some("Tidy the release notes"));
+
+    eventually(TIMEOUT, "the first turn to end", || async {
+        let row: SessionDto = h.get(&row).await;
+        row.status == SessionStatus::Idle
+    })
+    .await;
+    let (status, _) = h
+        .send(post_json(&input, json!({"text": "now the changelog"})))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let kept: SessionDto = h.get(&row).await;
+    assert_eq!(kept.title.as_deref(), Some("Tidy the release notes"));
+}
 #[tokio::test]
 async fn a_loose_session_uses_the_daemons_permission_mode() {
     let dir = tempfile::tempdir().unwrap();

@@ -368,6 +368,10 @@ pub struct AgentSession {
     pub launch_id: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
+    /// A loose session's own title: the first prompt of the conversation it
+    /// resumed, or the first one typed into it. None on a task's or a goal's
+    /// session, which goes by its work's title.
+    pub title: Option<String>,
 }
 
 impl AgentSession {

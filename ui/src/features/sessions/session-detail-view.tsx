@@ -106,8 +106,8 @@ export function SessionDetailView({
   return (
     <div className="space-y-4">
       <header className="flex flex-wrap items-center gap-3">
-        <h1 className="font-heading text-xl font-semibold tracking-tight">
-          {sessionHeading(session.seat)}
+        <h1 className="min-w-0 truncate font-heading text-xl font-semibold tracking-tight">
+          {sessionHeading(session)}
         </h1>
         <SessionStatusBadge status={session.status} />
         {/* Next to the status rather than instead of it: the two are

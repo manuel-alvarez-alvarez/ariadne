@@ -271,9 +271,9 @@ impl Filter {
     }
 }
 
-/// The titles behind the Ariadne sessions: the task's own, or the goal's for
-/// an orchestrator, which no task staffs. Two listings, rather than a lookup
-/// for every row.
+/// The titles behind the Ariadne sessions: the task's own, the goal's for
+/// an orchestrator, which no task staffs, or a loose session's own. Two
+/// listings, rather than a lookup for every row.
 struct Titles {
     tasks: HashMap<String, String>,
     goals: HashMap<String, String>,
@@ -304,6 +304,7 @@ impl Titles {
             .and_then(|id| self.tasks.get(id))
             .or_else(|| session.goal_id.as_ref().and_then(|id| self.goals.get(id)))
             .cloned()
+            .or_else(|| session.title.clone())
     }
 }
 

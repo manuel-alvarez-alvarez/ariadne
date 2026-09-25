@@ -104,7 +104,10 @@ function movedAt(row: Row): string {
   return row.session.last_activity_at ?? row.session.created_at
 }
 
-/** The title an Ariadne row has no field of its own for: the task it ran, or the goal it planned. */
+/**
+ * What an Ariadne row is about: the task it ran, the goal it planned, or a
+ * loose session's own title.
+ */
 function ariadneTitle(
   session: SessionDto,
   goalsById: Map<string, GoalDto>,
@@ -112,7 +115,7 @@ function ariadneTitle(
 ): string {
   if (session.task_id) return tasksById.get(session.task_id)?.title ?? shortId(session.task_id)
   if (session.goal_id) return goalsById.get(session.goal_id)?.title ?? shortId(session.goal_id)
-  return "Loose session"
+  return session.title ?? "Loose session"
 }
 
 /**

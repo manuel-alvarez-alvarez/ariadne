@@ -117,6 +117,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     context_size: null,
     created_at: STAMP,
     ended_at: null,
+    title: null,
     ...overrides,
   }
 }
@@ -151,7 +152,6 @@ export function aSessionPage(
         ...session,
         kind: "ariadne",
         agent_id: session.model.split(":")[0] ?? "",
-        title: null,
         working_directory: worktree_path,
       }),
     ),

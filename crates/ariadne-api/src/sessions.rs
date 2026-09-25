@@ -42,6 +42,10 @@ pub struct SessionDto {
     pub context_size: Option<u64>,
     pub created_at: String,
     pub ended_at: Option<String>,
+    /// A loose session's own title: the first prompt of the conversation it
+    /// resumed, or the first one typed into it. Null on a task's or a goal's
+    /// session, which goes by its work's title.
+    pub title: Option<String>,
 }
 
 /// A stored session of an ACP agent that Ariadne did not start, listed over

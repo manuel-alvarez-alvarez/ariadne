@@ -57,7 +57,8 @@ The ACP runtime belongs to 021.
    carries its agent id, the internal session id as its own id, its working
    directory, its last activity and its first prompt as its title, and no
    goal, task, seat or status. An Ariadne entry carries its row, and its
-   title is its task's, or its goal's where no task staffs it.
+   title is its task's, its goal's where no task staffs it, or a loose
+   session's own (item 15).
 5. Its `SessionPageQuery` narrows the page: `kind` (`ariadne` or `outside`;
    omitted lists both), `agent` (a registry agent id, which an Ariadne row
    carries in its `model`), `status`, `seat`, `goal`, `task` and `attention`
@@ -103,6 +104,12 @@ The ACP runtime belongs to 021.
 14. The adoption endpoint no longer exists, and neither does the
     outside-session listing.
     The OpenAPI document contains the resume endpoint and the one listing.
+15. A loose session carries a `title` of its own on its row and its
+    `SessionDto`: the first line with text of the first prompt it is known
+    by, cut to 120 characters. Resume takes the conversation's first prompt;
+    a loose session without one takes the first input typed into its
+    console. Once set, it never changes. A task's or a goal's session has
+    none, and goes by its work's title.
 
 ## Acceptance criteria
 
@@ -182,6 +189,13 @@ The ACP runtime belongs to 021.
   (`acp_session_resume.rs::a_loose_console_serves_history_takes_input_and_cancels`).
 - A loose session uses the configured permission mode and accepts its answer through console input
   (`acp_session_resume.rs::a_loose_session_uses_the_daemons_permission_mode`).
+- A resumed conversation keeps its first prompt as its title, on its row
+  and in the listing, where `q` finds it
+  (`acp_session_resume.rs::an_outside_session_loads_in_its_directory_without_scheduled_work`,
+  `session_list.rs::a_resumed_outside_session_is_listed_once_as_an_ariadne_session`).
+- An untitled loose session takes the first prompt typed into it as its
+  title, and the next prompt does not rename it
+  (`acp_session_resume.rs::the_first_prompt_typed_into_an_untitled_loose_session_titles_it`).
 - OpenAPI contains resume and omits adoption
   (`acp_session_resume.rs::the_resume_endpoint_replaces_adoption_in_openapi`).
 

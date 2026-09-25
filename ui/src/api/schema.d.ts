@@ -1722,6 +1722,12 @@ export interface components {
             /** @description None for an orchestrator or a loose session. */
             task_id?: string | null;
             /**
+             * @description A loose session's own title: the first prompt of the conversation it
+             *     resumed, or the first one typed into it. Null on a task's or a goal's
+             *     session, which goes by its work's title.
+             */
+            title?: string | null;
+            /**
              * @description What this session's agent has spent, summed over every transcript it
              *     reported under. Zeros while nothing has been reported.
              */

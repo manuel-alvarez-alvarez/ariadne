@@ -216,6 +216,20 @@ it("shows an outside row's empty status, goal and task, and names its agent and 
   expect(found.textContent).toContain("—")
 })
 
+it("names a loose session by its own title, and one without a title by what it is", async () => {
+  stubDaemon({
+    sessions: [
+      aSession({ ...RESUMED, title: "Fix the flaky test." }),
+      aSession({ ...RESUMED, id: "01JSESS000000000000UNTITLED", title: null }),
+    ],
+    outside: [],
+  })
+  renderPage()
+
+  await waitFor(() => row("Fix the flaky test."))
+  expect(row("Loose session")).not.toBeNull()
+})
+
 it("sends each filter to the daemon under the name that filter has, on the endpoint that takes it", async () => {
   stubDaemon({ acpAgents: [anAcpAgent()] })
   const user = userEvent.setup()

@@ -174,9 +174,14 @@ export function seatLabel(seat: Seat | null | undefined): string {
   return seat ? SEAT_LABELS[seat] : "Loose session"
 }
 
-/** The session panel's own heading: the seat it ran as, or what a loose session is instead. */
-export function sessionHeading(seat: Seat | null | undefined): string {
-  return seat ? `${SEAT_LABELS[seat]} session` : "Loose session"
+/**
+ * The session panel's own heading: the seat it ran as, or a loose session's
+ * own title — the first prompt it is known by — and what it is where it has
+ * none yet.
+ */
+export function sessionHeading(session: Pick<SessionDto, "seat" | "title">): string {
+  if (session.seat) return `${SEAT_LABELS[session.seat]} session`
+  return session.title ?? "Loose session"
 }
 
 /**

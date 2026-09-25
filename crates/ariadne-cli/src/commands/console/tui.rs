@@ -112,7 +112,7 @@ async fn header(client: &Client, session: SessionDto) -> Header {
             ),
             Err(_) => (None, None),
         },
-        (None, None) => (None, None),
+        (None, None) => (session.title.clone(), None),
     };
     Header::of(Some(&session)).with_task(title, repository)
 }
@@ -478,6 +478,7 @@ mod tests {
             context_size: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             ended_at: None,
+            title: None,
         };
 
         let header = super::header(&client, session).await;

@@ -594,6 +594,11 @@ impl Launcher {
         self.store
             .set_session_internal_id(&session.id, &outside.internal_session_id)
             .await?;
+        if let Some(title) = loose_title(&outside.first_prompt) {
+            self.store
+                .set_session_title_if_unset(&session.id, &title)
+                .await?;
+        }
         let result = self
             .launch_loose(
                 &session,
@@ -1352,6 +1357,20 @@ pub(crate) fn verdict_addressed_to(author_id: &str, summary: Option<&str>) -> St
 /// A failed task is not terminal — the user can retry it, and the spawn that
 /// revives it takes the watch up again — but until then nobody is committing
 /// on its branch, and nothing should be said about it.
+/// The most of a prompt a loose session's title keeps.
+const TITLE_CHARS: usize = 120;
+
+/// A loose session's title, out of the prompt it is known by: the first line
+/// with anything on it, cut to [`TITLE_CHARS`]. None for a prompt with no
+/// text, which names nothing.
+pub(crate) fn loose_title(prompt: &str) -> Option<String> {
+    let line = prompt
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    Some(line.chars().take(TITLE_CHARS).collect())
+}
+
 pub(crate) fn worth_following(task: &Task) -> bool {
     task.worktree_path.is_some()
         && !task.status().is_terminal()

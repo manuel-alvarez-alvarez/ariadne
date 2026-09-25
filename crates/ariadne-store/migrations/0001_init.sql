@@ -271,7 +271,11 @@ CREATE TABLE agent_sessions (
     context_used        INTEGER,
     context_size        INTEGER,
     launched_at         TEXT,
-    launch_id           TEXT                    -- == ARIADNE_LAUNCH_ID env of that run
+    launch_id           TEXT,                   -- == ARIADNE_LAUNCH_ID env of that run
+    -- A loose session's own title: the first prompt of the conversation it
+    -- resumed, or the first one typed into it. NULL on a task's or a goal's
+    -- session, which goes by its work's title.
+    title               TEXT
 );
 CREATE INDEX idx_sessions_task ON agent_sessions (task_id);
 CREATE INDEX idx_sessions_status ON agent_sessions (status);
