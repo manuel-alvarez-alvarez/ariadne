@@ -134,8 +134,8 @@ impl Console {
                 continue;
             }
             blocks.push(match self.pending.contains(&at) {
-                true => queued(item, width),
-                false => block(item, width, None),
+                true => queued(item, width, self.whole),
+                false => block(item, width, None, self.whole),
             });
         }
         // The picker is what the keys act on, so it is drawn last, above the
@@ -249,9 +249,11 @@ impl Console {
     }
 
     /// The keys of the state the console is in, the first one the last to
-    /// go as the footer narrows, the others from the last.
+    /// go as the footer narrows, the others from the last. The fold state —
+    /// `ctrl-o unfold` or `ctrl-o fold` — is one more hint, after every
+    /// other, so it is the first dropped on a narrow pane.
     fn hints(&self) -> Vec<Part> {
-        let hints: &[&str] = match (self.armed, self.question().is_some(), self.turn.running()) {
+        let base: &[&str] = match (self.armed, self.question().is_some(), self.turn.running()) {
             (true, _, _) => &["ctrl-c again to leave"],
             (_, true, _) => &["up/down or 1-9 choose", "enter answer"],
             (_, _, true) => &[
@@ -262,8 +264,14 @@ impl Console {
             ],
             _ => &["enter send", "shift+enter newline", "ctrl-c quit"],
         };
-        hints
-            .iter()
+        let fold = if self.whole {
+            "ctrl-o fold"
+        } else {
+            "ctrl-o unfold"
+        };
+        base.iter()
+            .copied()
+            .chain(std::iter::once(fold))
             .enumerate()
             .map(|(at, hint)| {
                 let keep = if at == 0 {
@@ -271,7 +279,7 @@ impl Console {
                 } else {
                     7 - u8::try_from(at).unwrap_or(7).min(6)
                 };
-                Part::new(keep, SEPARATOR, vec![Span::styled(*hint, DIM)])
+                Part::new(keep, SEPARATOR, vec![Span::styled(hint, DIM)])
             })
             .collect()
     }
@@ -784,7 +792,12 @@ mod tests {
                 (" · ", status.to_string()),
             ]
         };
-        let idle = vec!["enter send", "shift+enter newline", "ctrl-c quit"];
+        let idle = vec![
+            "enter send",
+            "shift+enter newline",
+            "ctrl-c quit",
+            "ctrl-o unfold",
+        ];
 
         let mut thinking = Console::new(at_rest("idle"));
         thinking.apply(&prompt);
@@ -821,6 +834,7 @@ mod tests {
                     "shift+enter newline",
                     "esc cancel",
                     "ctrl-c quit",
+                    "ctrl-o unfold",
                 ],
             },
             State {
@@ -836,6 +850,7 @@ mod tests {
                     "shift+enter newline",
                     "esc cancel",
                     "ctrl-c quit",
+                    "ctrl-o unfold",
                 ],
             },
             State {
@@ -848,13 +863,13 @@ mod tests {
                 name: "armed",
                 console: armed,
                 status: seat("idle"),
-                hints: vec!["ctrl-c again to leave"],
+                hints: vec!["ctrl-c again to leave", "ctrl-o unfold"],
             },
             State {
                 name: "pending question",
                 console: asking,
                 status: [seat("running"), turn("⠋ thinking".into()).to_vec()].concat(),
-                hints: vec!["up/down or 1-9 choose", "enter answer"],
+                hints: vec!["up/down or 1-9 choose", "enter answer", "ctrl-o unfold"],
             },
         ]
     }
@@ -1015,7 +1030,10 @@ mod tests {
 
         let (_, footer) = rows_of(&mut terminal(), &console);
 
-        assert_eq!(footer, " enter send · shift+enter newline · ctrl-c quit");
+        assert_eq!(
+            footer,
+            " enter send · shift+enter newline · ctrl-c quit · ctrl-o unfold"
+        );
     }
 
     #[test]

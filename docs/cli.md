@@ -127,6 +127,17 @@ has spent, read (`↑`) and written (`↓`), such as `↑ 12.4k ↓ 3.1k`. The c
 are the whole session's, every launch of it included, and they move each time
 a turn ends. Nothing is shown there before the session has spent a token.
 
+Every fold below is one press of Ctrl-O away. It switches the pane between
+folded, which is where each attach starts, and whole, which draws every line
+of a tool's output, a diff, a thought and a daemon prompt; press it again to
+fold them back. A reconnect keeps whichever the attach had. A block that
+leaves for the scrollback while the pane is whole keeps every line there too,
+since a block already in the scrollback cannot be drawn again. The footer's
+last hint says which way the pane is set, `ctrl-o unfold` or `ctrl-o fold`,
+and is the first hint dropped on a narrow terminal. A pending permission
+question keeps its own fold, sized to the room its options leave, whichever
+way the pane is set.
+
 Neither row is ever cut off. In a narrow terminal each row leaves out whole
 items, the least important first: the status row drops the model, then the
 seat, the clock, and what the turn is doing, and keeps the session's status to
@@ -179,10 +190,11 @@ however often the pane grows or shrinks.
 The agent's text streams in as it is written and renders as markdown:
 headings, bold, code spans, fenced code under its language, lists and task
 lists, quotes, tables, and links with their URL in plain text. A thought is
-dimmed and folded to a few lines. A plan is a checklist that counts what is done
-(`plan 2/5`): `☐` pending, `◐` in progress, `☑` done and dimmed. A briefing
-or a nudge from the daemon shows under `» daemon`, folded to its first six
-lines. An error shows whole after `✗`. A note says what happened in words,
+dimmed and folded to a few lines, until Ctrl-O unfolds it. A plan is a
+checklist that counts what is done (`plan 2/5`): `☐` pending, `◐` in
+progress, `☑` done and dimmed. A briefing or a nudge from the daemon shows
+under `» daemon`, folded to its first six lines, until Ctrl-O unfolds it. An
+error shows whole after `✗`. A note says what happened in words,
 such as `turn cancelled`; a turn that simply ends adds nothing. One blank line
 separates two blocks.
 
@@ -195,9 +207,9 @@ Once the call has ended, the head says how long it took. A call that a
 cancelled turn left running keeps its `◐`, and goes to the scrollback with
 the rest of the turn.
 Its output is folded to its last lines under the head, with a count of the
-lines left out, and hangs from the head by `⎿`. A file change is a diff: the
-file's name, then the hunks with added and removed lines in colour, folded
-past a page with a count.
+lines left out, and hangs from the head by `⎿`, until Ctrl-O unfolds it. A
+file change is a diff: the file's name, then the hunks with added and removed
+lines in colour, folded past a page with a count, until Ctrl-O unfolds it.
 
 ```
 ✓ $ cargo nextest run  8.2s
@@ -224,6 +236,7 @@ past a page with a count.
 | Ctrl-W | Deletes the word before the cursor |
 | Alt+←, Alt+→ | Moves back or forward one word (Alt-B and Alt-F do the same) |
 | ↑, ↓, or 1 to 9 during a question | Chooses a permission option instead of moving through input or history |
+| Ctrl-O | Toggles the pane between folded and whole; works during a question too |
 | Escape | Cancels the running turn |
 | Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running, and the console says how to attach again |
 

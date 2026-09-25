@@ -28,7 +28,9 @@ pub(super) fn picker(
         ..
     } = item
     else {
-        return block(item, width, None);
+        // `picker` is only ever called on the pending question `live_lines`
+        // found, which is always this variant.
+        return block(item, width, None, false);
     };
     let width = width.max(8);
     let draw = |fold| {

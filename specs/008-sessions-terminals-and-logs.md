@@ -320,9 +320,11 @@ goal id to a seat (014).
     dim `queued` tag, which goes when the event comes back. A prompt the
     daemon sent (`source: daemon`: a briefing, a nudge, a message) draws
     under its own marker and label, `» daemon`, with its first 6 lines
-    beneath and a count of the rest (`… 34 more lines`), so it reads apart
-    from what was typed. Agent text is markdown chunk by chunk under one
-    marker, a thought dimmed and folded, a tool call the block of the next
+    beneath and a count of the rest (`… 34 more lines`) while the console's
+    fold state is folded, whole once Ctrl-O sets it whole for the rest of the
+    attach (rule 27), so it reads apart from what was typed. Agent text is
+    markdown chunk by chunk under one marker, a thought dimmed and folded to
+    4 lines under the same fold state, a tool call the block of the next
     rule, and a permission question a picker. Markdown tables align their
     display-width cells under bold headers — not underlined, with one dim
     rule as wide as the row beneath it — and wrap at spaces in a cell: a
@@ -371,15 +373,17 @@ goal id to a seat (014).
     call's `rawOutput` where that is text or a stdout and stderr pair, the
     text of its `content` entries otherwise, and the structure as JSON only
     where there is neither. It is folded to its last lines with a count of
-    the hidden ones, trailing blank lines trimmed; the fold is the thought's.
-    Its first row starts with `⎿ ` two columns under the head's mark, which
+    the hidden ones, trailing blank lines trimmed, under the console's fold
+    state (rule 27); the fold is the thought's. Its first row starts with
+    `⎿ ` two columns under the head's mark, which
     ties it to the call, and its next rows and the diff's rows start at the
     column of its text.
     A tab in the output takes the columns to the next stop of eight, since a
     cell drawn with a tab draws nothing. A `diff` content entry draws as a
     unified diff under a file header — the path, or the old name to the new
     where they differ — with added, removed, hunk and context lines each in
-    their own colour, folded past a line limit with a count. Where the agent
+    their own colour, folded past a line limit with a count, under the same
+    fold state. Where the agent
     sent `oldText` and `newText` rather than a patch, the diff is the hunks
     between them with three lines of context, never every old line and then
     every new one. A patch that starts at its first hunk takes its file
@@ -440,16 +444,25 @@ goal id to a seat (014).
     Ctrl-A and Ctrl-E to the start and the end of the line, Ctrl-U and Ctrl-K
     deleting to them, Ctrl-W deleting the word before the cursor, and
     Alt-Left and Alt-Right — or Alt-B and Alt-F, which is what a terminal
-    that sends the readline sequences for them gives — moving by word. On a
-    permission question the arrows and the number keys move the pick and
-    Enter posts the option's id. While it waits, the picker is the last block
+    that sends the readline sequences for them gives — moving by word.
+    Ctrl-O toggles the console's fold state, folded or whole, for the rest of
+    this attach — a fresh attach starts folded, and a reconnect keeps
+    whichever the attach had. Whole draws every fold of the pane in full: a
+    tool's output, a diff, a thought and a daemon prompt (rules 24, 25); a
+    block moved to the scrollback while the state is whole carries every
+    line of it, since a block already there cannot be drawn again. The
+    footer names the state as its last hint, after every other, in its drop
+    order (rule 23). On a permission question the arrows and the number keys
+    move the pick and Enter posts the option's id; Ctrl-O still toggles the
+    fold state there too. While it waits, the picker is the last block
     of the pane, above the box, whatever came after it — a snapshot taken
     mid-turn ends on the text so far (rule 13), which comes after the
     question in it — and its command or diff is folded to the room its
-    question, options and two rules leave, so the question and every option
-    are on the screen together. A post the daemon refuses is said on the
-    transcript, and the console stays open; a refused prompt is no longer
-    queued, and holds nothing after it out of the scrollback.
+    question, options and two rules leave, whatever the fold state says, so
+    the question and every option are on the screen together. A post the
+    daemon refuses is said on the transcript, and the console stays open; a
+    refused prompt is no longer queued, and holds nothing after it out of the
+    scrollback.
 28. Escape during a running turn posts to console cancel. Ctrl-C twice, or
     Ctrl-D, leaves the console, and the session stays alive. Every way out
     puts the terminal back: raw mode off, bracketed paste off and the cursor

@@ -32,15 +32,19 @@ const BODY_INDENT: &str = "    ";
 ///
 /// `picked` is the highlighted option of a permission question being answered
 /// right now — `None` everywhere else, including once it is in the scrollback.
+/// `whole` is the console's fold state: folded draws a tool's output, a
+/// diff, a thought and a daemon prompt to their usual limit, and whole draws
+/// every line of them (Ctrl-O).
 pub(super) fn block(
     item: &TranscriptItem,
     width: usize,
     picked: Option<usize>,
+    whole: bool,
 ) -> Vec<Line<'static>> {
     let width = width.max(8);
     match item {
         TranscriptItem::UserPrompt { text, source, .. } if source.as_deref() == Some("daemon") => {
-            daemon_prompt(text, width)
+            daemon_prompt(text, width, whole)
         }
         TranscriptItem::UserPrompt { text, .. } => typed_prompt(text, width, false),
         TranscriptItem::AgentText { text, .. } => {
@@ -54,11 +58,16 @@ pub(super) fn block(
             // line of text rides on it rather than under it.
             join_first(lines)
         }
-        TranscriptItem::Thought { text, .. } => {
-            prefixed(text, theme::THOUGHT_MARKER, DIM, DIM, width, Some(FOLD))
-        }
+        TranscriptItem::Thought { text, .. } => prefixed(
+            text,
+            theme::THOUGHT_MARKER,
+            DIM,
+            DIM,
+            width,
+            (!whole).then_some(FOLD),
+        ),
         TranscriptItem::Plan { entries, .. } => plan(entries, width),
-        TranscriptItem::ToolCall { meta, tool } => call(tool, &meta.created_at, width),
+        TranscriptItem::ToolCall { meta, tool } => call(tool, &meta.created_at, width, whole),
         TranscriptItem::PermissionQuestion {
             question,
             tool,
@@ -95,12 +104,12 @@ pub(super) fn block(
 
 /// A typed prompt that the daemon has not taken yet: the prompt, with a dim
 /// tag that says it waits.
-pub(super) fn queued(item: &TranscriptItem, width: usize) -> Vec<Line<'static>> {
+pub(super) fn queued(item: &TranscriptItem, width: usize, whole: bool) -> Vec<Line<'static>> {
     match item {
         TranscriptItem::UserPrompt { text, source, .. } if source.as_deref() != Some("daemon") => {
             typed_prompt(text, width.max(8), true)
         }
-        _ => block(item, width, None),
+        _ => block(item, width, None, whole),
     }
 }
 
@@ -140,11 +149,17 @@ fn typed_prompt(text: &str, width: usize, queued: bool) -> Vec<Line<'static>> {
 
 /// A prompt the daemon itself sent — a briefing, a nudge, a message — under
 /// its own marker and label, so it reads apart from what was typed, and
-/// folded to its first lines with a count of the rest.
-fn daemon_prompt(text: &str, width: usize) -> Vec<Line<'static>> {
+/// folded to its first lines with a count of the rest, unless `whole`.
+fn daemon_prompt(text: &str, width: usize, whole: bool) -> Vec<Line<'static>> {
     let mut rows = wrap(text, width.saturating_sub(2));
-    let hidden = rows.len().saturating_sub(DAEMON_FOLD);
-    rows.truncate(DAEMON_FOLD);
+    let hidden = if whole {
+        0
+    } else {
+        rows.len().saturating_sub(DAEMON_FOLD)
+    };
+    if !whole {
+        rows.truncate(DAEMON_FOLD);
+    }
     let mut lines = vec![Line::from(Span::styled(theme::DAEMON_MARKER, DAEMON))];
     for line in rows {
         lines.push(Line::from(vec![
@@ -248,8 +263,8 @@ fn marked(
 /// A tool call, the way a coding agent's console reads one: what it did, on
 /// what, and how it went. The head line, then the output folded to its last
 /// lines and the file change as a diff, both hung from the head by the
-/// output marker.
-fn call(tool: &Tool, started_at: &str, width: usize) -> Vec<Line<'static>> {
+/// output marker, unless `whole` draws them in full.
+fn call(tool: &Tool, started_at: &str, width: usize, whole: bool) -> Vec<Line<'static>> {
     let (glyph, style) = match tool.status.as_deref() {
         Some("completed") => (theme::CALL_DONE, AGENT),
         Some("failed") => (theme::CALL_FAILED, FAIL),
@@ -262,10 +277,14 @@ fn call(tool: &Tool, started_at: &str, width: usize) -> Vec<Line<'static>> {
         .and_then(|ended_at| elapsed(started_at, ended_at));
     let mut body = Vec::new();
     if let Some(output) = &tool.output {
-        body.extend(folded(output, width, DIM));
+        body.extend(folded(output, width, DIM, (!whole).then_some(FOLD)));
     }
     if let Some(diff) = &tool.diff {
-        body.extend(folded_diff(diff, width, DIFF_FOLD));
+        body.extend(folded_diff(
+            diff,
+            width,
+            if whole { usize::MAX } else { DIFF_FOLD },
+        ));
     }
     let mut lines = vec![head(tool, Span::styled(glyph, style), elapsed, width)];
     lines.extend(hung(body));
@@ -436,10 +455,11 @@ fn elapsed(started_at: &str, ended_at: &str) -> Option<String> {
 }
 
 /// A tool's output: indented, and folded to the last few lines, which is
-/// where a command says how it went. Trailing blank lines are not output.
-fn folded(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+/// where a command says how it went, unless `fold` is `None`. Trailing blank
+/// lines are not output.
+fn folded(text: &str, width: usize, style: Style, fold: Option<usize>) -> Vec<Line<'static>> {
     let all = wrap(text.trim_end(), width.saturating_sub(4));
-    let hidden = all.len().saturating_sub(FOLD);
+    let hidden = fold.map_or(0, |fold| all.len().saturating_sub(fold));
     let mut lines = Vec::new();
     if hidden > 0 {
         lines.push(Line::from(Span::styled(
@@ -788,6 +808,52 @@ mod tests {
         assert!(!shown.contains("+line 30"), "{shown}");
     }
 
+    /// Ctrl-O draws a tool's output and its diff whole, and a second Ctrl-O
+    /// folds them again (rule 25, 27).
+    #[test]
+    fn ctrl_o_draws_a_call_s_output_and_diff_whole_and_a_second_ctrl_o_folds_them_again() {
+        let mut console = Console::new(header());
+        let mut terminal = Terminal::new(TestBackend::new(80, 100)).unwrap();
+        let output: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+        let added: String = (1..=40).map(|n| format!("+line {n}\n")).collect();
+        let patch = format!("--- /dev/null\n+++ b/src/new.rs\n@@ -0,0 +1,40 @@\n{added}");
+        console.apply(&event(
+            "post_tool_use",
+            "write",
+            json!({"acp": {"toolCallId": "write", "kind": "edit", "status": "completed",
+                           "rawInput": {"file_path": "src/new.rs"},
+                           "rawOutput": output,
+                           "content": [{"type": "diff", "patch": {"text": patch}}]}}),
+        ));
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let folded = screen(&terminal);
+        assert!(folded.contains("… 26 more lines"), "{folded}");
+        assert!(!folded.contains("    line 1\n"), "{folded}");
+        assert!(
+            folded.contains(&format!("… {} more lines", 42 - DIFF_FOLD)),
+            "{folded}"
+        );
+        assert!(!folded.contains("+line 40"), "{folded}");
+
+        console.key(ctrl('o'));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let whole = screen(&terminal);
+        assert!(!whole.contains("more lines"), "{whole}");
+        assert!(
+            whole.contains("line 1\n") && whole.contains("line 30"),
+            "{whole}"
+        );
+        assert!(
+            whole.contains("+line 1\n") && whole.contains("+line 40"),
+            "{whole}"
+        );
+
+        console.key(ctrl('o'));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert_eq!(screen(&terminal), folded, "a second Ctrl-O folds it again");
+    }
+
     /// A tool's output with tabs in it — a numbered file read, for one — is
     /// drawn with the columns the tabs take, not with the text on either
     /// side of them run together.
@@ -962,6 +1028,51 @@ mod tests {
             "{shown}"
         );
         assert!(!shown.contains("line 7"), "{shown}");
+    }
+
+    /// Ctrl-O draws a daemon prompt and a thought whole, and a second Ctrl-O
+    /// folds them again (rule 24, 27).
+    #[test]
+    fn ctrl_o_draws_a_daemon_prompt_and_a_thought_whole_and_a_second_ctrl_o_folds_them_again() {
+        let mut console = Console::new(header());
+        let mut terminal = Terminal::new(TestBackend::new(80, 70)).unwrap();
+        let briefing: Vec<String> = (1..=20).map(|n| format!("line {n}")).collect();
+        console.apply(&event(
+            "user_prompt_submit",
+            "briefing",
+            json!({"text": briefing.join("\n"), "source": "daemon"}),
+        ));
+        let thought: Vec<String> = (1..=20).map(|n| format!("thought line {n}")).collect();
+        console.apply(&event(
+            "agent_thought",
+            "thinking",
+            json!({"text": thought.join("\n")}),
+        ));
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let folded = screen(&terminal);
+        assert!(folded.contains("» daemon\n  line 1\n"), "{folded}");
+        assert!(folded.contains("… 14 more lines"), "{folded}");
+        assert!(!folded.contains("line 20"), "{folded}");
+        assert!(
+            folded.contains("thought line 1") && folded.contains("… 16 more lines"),
+            "the thought keeps its first 4 lines: {folded}"
+        );
+        assert!(!folded.contains("thought line 5"), "{folded}");
+
+        console.key(ctrl('o'));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let whole = screen(&terminal);
+        assert!(!whole.contains("more lines"), "{whole}");
+        assert!(whole.contains("  line 20"), "{whole}");
+        assert!(
+            whole.contains("thought line 1") && whole.contains("thought line 20"),
+            "{whole}"
+        );
+
+        console.key(ctrl('o'));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert_eq!(screen(&terminal), folded, "a second Ctrl-O folds it again");
     }
 
     #[test]

@@ -188,6 +188,12 @@ pub struct Console {
     /// A resize wipes the terminal and draws the whole transcript again at
     /// the new size ([`Console::redraws_whole_on_resize`]).
     whole_on_resize: bool,
+    /// Whether a fold in the pane draws every line instead: a tool's output,
+    /// a diff, a thought and a daemon prompt. Folded at each attach, and
+    /// toggled by Ctrl-O for as long as the attach lasts. A block moved to
+    /// the scrollback while this is set carries every line of it, since a
+    /// block already there cannot be drawn again.
+    whole: bool,
 }
 
 impl Console {
@@ -208,6 +214,7 @@ impl Console {
             ended,
             launches: BTreeMap::new(),
             whole_on_resize: false,
+            whole: false,
         }
     }
 
@@ -549,6 +556,10 @@ impl Console {
         if ctrl && key.code == KeyCode::Char('d') {
             return Action::Quit;
         }
+        if ctrl && key.code == KeyCode::Char('o') {
+            self.whole = !self.whole;
+            return Action::None;
+        }
 
         if let Some(at) = self.question() {
             let count = self.options(at).len();
@@ -727,7 +738,7 @@ impl Console {
     fn emit<B: Screen>(&mut self, terminal: &mut Terminal<B>, end: usize) -> Result<()> {
         let width = usize::from(terminal.size()?.width);
         for at in self.committed..end {
-            let mut lines = block(&self.items[at], width, None);
+            let mut lines = block(&self.items[at], width, None, self.whole);
             lines.push(Line::default());
             let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
             terminal.insert_before(height, |buffer| {
@@ -1824,6 +1835,96 @@ mod tests {
             "a key between the two disarms the first"
         );
         assert_eq!(fresh.key(ctrl(KeyCode::Char('d'))), Action::Quit);
+    }
+
+    /// A fresh attach starts folded, and Ctrl-O toggles it for the rest of
+    /// the attach; a reconnect keeps whichever the attach had (rule 27).
+    #[test]
+    fn a_fresh_attach_starts_folded_and_a_reconnect_keeps_the_state_it_had() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert!(
+            screen(&terminal).contains("ctrl-o unfold"),
+            "a fresh attach starts folded"
+        );
+
+        console.key(ctrl('o'));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert!(
+            screen(&terminal).contains("ctrl-o fold"),
+            "ctrl-o sets it whole"
+        );
+
+        console.dropped();
+        console.snapshot(&[]);
+        console.live();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert!(
+            screen(&terminal).contains("ctrl-o fold"),
+            "a reconnect keeps what the attach had"
+        );
+    }
+
+    /// Ctrl-O toggles the fold state during a pending permission question
+    /// too, and the question with every option stays on the screen (rule
+    /// 27). Every other key of the picker still works after it.
+    #[test]
+    fn ctrl_o_during_a_permission_question_toggles_the_state_and_keeps_it_on_screen() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&asked());
+
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let before = screen(&terminal);
+        assert!(
+            before.contains("Write") && before.contains("❯ 1. Reject"),
+            "{before}"
+        );
+
+        console.key(ctrl('o'));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let after = screen(&terminal);
+        assert!(after.contains("ctrl-o fold"), "ctrl-o toggled: {after}");
+        assert!(
+            after.contains("Write") && after.contains("❯ 1. Reject") && after.contains("2. Allow"),
+            "the question and every option stay on the screen: {after}"
+        );
+
+        console.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        assert!(
+            screen(&terminal).contains("❯ 2. Allow"),
+            "the arrow keys still move the pick"
+        );
+    }
+
+    /// A block moved to the scrollback while the fold state is whole carries
+    /// every line of it: a block already there cannot be drawn again (rule
+    /// 27).
+    #[test]
+    fn a_block_committed_while_whole_carries_every_line_into_the_scrollback() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        let output: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+        console.apply(&event(
+            "post_tool_use",
+            "run",
+            json!({"acp": {"toolCallId": "run", "kind": "execute", "status": "completed",
+                           "rawInput": {"command": "cat file"}, "rawOutput": output}}),
+        ));
+        console.key(ctrl('o'));
+        console.apply(&event("agent_message", "done", json!({"text": "done"})));
+
+        console.commit(&mut terminal).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(!shown.contains("more lines"), "{shown}");
+        assert!(
+            shown.contains("line 1") && shown.contains("line 30"),
+            "{shown}"
+        );
     }
 
     #[test]
