@@ -47,14 +47,15 @@ ariadne session ls --kind outside --agent codex-acp --dir ~/projects/api
 ariadne session ls --status running --attention
 ```
 
-Its columns are `id`, `title`, `status`, `goal`, `task`, `agent`, `age` and
-`tokens`; add `directory` with `--columns`. An outside session leaves
-`status`, `goal` and `task` empty. `--kind`, `--agent`, `--status`, `--seat`,
-`--goal`, `--task` and `--attention` narrow which rows show; `--dir`, `--since`,
-`--until` and `--search` narrow by working directory, activity window and
-text; `--limit`, `--cursor` and `--refresh` page the table, and `--all`
-fetches every page into one instead. Without `--since` or `--until`, the
-table holds only the last 7 days of activity. See [Resuming a
+Its columns are `id`, `title`, `status`, `goal`, `task`, `agent`, `model`,
+`age` and `tokens`; add `directory` with `--columns`. An outside session
+leaves `status`, `goal` and `task` empty. By default, the table holds only the
+last 7 days of activity. Use `--since` or `--until` to set an activity bound.
+Use `--all` to remove the default 7-day window, include ended sessions, and
+fetch every page into one table.
+`--kind`, `--agent`, `--status`, `--seat`, `--goal`, `--task` and `--attention`
+narrow which rows show; `--dir` and `--search` narrow by working directory and
+text; `--limit`, `--cursor` and `--refresh` page the table. See [Resuming a
 session](resuming-sessions.md) for finding and continuing one of these.
 
 ## Start a new session

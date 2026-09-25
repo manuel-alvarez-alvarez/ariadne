@@ -144,7 +144,7 @@ same binary also serves (013).
     the daemon's list unchanged.
 26. `ariadne session ls` lists one filtered page of Ariadne sessions and
     outside ACP sessions. Its columns are `id`, `title`, `status`, `goal`,
-    `task`, `agent`, `age` and `tokens`; `directory` is available with
+    `task`, `agent`, `model`, `age` and `tokens`; `directory` is available with
     `--columns`. An outside row leaves status, goal and task empty. It sends
     `--kind`, `--agent`, `--status`, `--seat`, `--goal`, `--task`, `--attention`,
     `--dir`, `--since`, `--until`, `--search`, `--limit`, `--cursor`,
@@ -322,6 +322,10 @@ same binary also serves (013).
   `::all_fetches_every_page_and_keeps_each_session_once`,
   `::a_next_cursor_prints_the_session_command_for_the_next_page`,
   `::the_session_table_has_the_unified_columns_and_empty_outside_fields`,
+  `::an_outside_row_shows_its_model_and_token_usage`,
+  `::an_outside_row_without_model_or_usage_keeps_both_cells_empty`,
+  `::an_ariadne_row_keeps_its_agent_model_and_token_columns`,
+  `::columns_select_the_model_by_header_name`,
   `cli/tests.rs::session_ls_takes_filters_pages_refresh_and_all`,
   `::session_ls_all_and_cursor_are_exclusive`). Outside ids resume through
   the resume endpoint and a shared id requires `--agent`

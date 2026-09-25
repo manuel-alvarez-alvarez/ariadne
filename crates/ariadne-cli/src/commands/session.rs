@@ -28,9 +28,10 @@ const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 40).title(),
     col("status", UNCAPPED).status(),
-    col("goal", UNCAPPED).id().rank(4),
-    col("task", UNCAPPED).id().rank(3),
-    col("agent", UNCAPPED).rank(2),
+    col("goal", UNCAPPED).id().rank(5),
+    col("task", UNCAPPED).id().rank(4),
+    col("agent", UNCAPPED).rank(3),
+    col("model", UNCAPPED).rank(2),
     col("age", UNCAPPED).rank(1),
     col("tokens", UNCAPPED).rank(0),
 ];
@@ -39,12 +40,13 @@ const LS_WITH_DIRECTORY: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("title", 40).title(),
     col("status", UNCAPPED).status(),
-    col("goal", UNCAPPED).id().rank(4),
-    col("task", UNCAPPED).id().rank(3),
-    col("agent", UNCAPPED).rank(2),
+    col("goal", UNCAPPED).id().rank(5),
+    col("task", UNCAPPED).id().rank(4),
+    col("agent", UNCAPPED).rank(3),
+    col("model", UNCAPPED).rank(2),
     col("age", UNCAPPED).rank(1),
     col("tokens", UNCAPPED).rank(0),
-    col("directory", 40).rank(5),
+    col("directory", 40).rank(6),
 ];
 
 fn session_columns(columns: &[String]) -> &'static [Column] {
@@ -549,6 +551,7 @@ fn session_row(session: &SessionEntryDto, now: chrono::DateTime<chrono::Utc>) ->
         session.goal_id.clone().unwrap_or_default(),
         session.task_id.clone().unwrap_or_default(),
         session.agent_id.clone(),
+        session.model.clone().unwrap_or_default(),
         session
             .last_activity_at
             .as_deref()
@@ -1023,14 +1026,71 @@ mod tests {
         .unwrap();
         let header: Vec<_> = table.lines().next().unwrap().split_whitespace().collect();
         assert_eq!(
-            header[..8],
+            header,
             [
-                "ID", "TITLE", "STATUS", "GOAL", "TASK", "AGENT", "AGE", "TOKENS"
+                "ID", "TITLE", "STATUS", "GOAL", "TASK", "AGENT", "MODEL", "AGE", "TOKENS"
             ]
         );
         assert_eq!(
             session_row(&outside("outside-id"), chrono::Utc::now())[2..5],
             ["", "", ""]
+        );
+    }
+
+    #[test]
+    fn an_outside_row_shows_its_model_and_token_usage() {
+        let mut session = outside("outside-id");
+        session.model = Some("codex-acp:gpt-5".into());
+        session.usage = Some(ariadne_api::usage::TokenUsageDto {
+            input_tokens: 1_200,
+            cached_input_tokens: 800,
+            output_tokens: 300,
+        });
+
+        let row = session_row(&session, chrono::Utc::now());
+        assert_eq!(row[6], "codex-acp:gpt-5");
+        assert_eq!(row[8], "↑1.2k 66.7% ↓300");
+    }
+
+    #[test]
+    fn an_outside_row_without_model_or_usage_keeps_both_cells_empty() {
+        let row = session_row(&outside("outside-id"), chrono::Utc::now());
+
+        assert_eq!(row[6], "");
+        assert_eq!(row[8], "");
+    }
+
+    #[test]
+    fn an_ariadne_row_keeps_its_agent_model_and_token_columns() {
+        let row = session_row(
+            &ariadne("ariadne-id", SessionStatus::Running),
+            chrono::Utc::now(),
+        );
+
+        assert_eq!(row[5], "codex-acp");
+        assert_eq!(row[6], "codex-acp:model");
+        assert_eq!(row[8], "↑0 0.0% ↓0");
+    }
+
+    #[test]
+    fn columns_select_the_model_by_header_name() {
+        let mut session = outside("outside-id");
+        session.model = Some("codex-acp:gpt-5".into());
+        let view = View {
+            columns: vec!["model".into()],
+            ..View::plain()
+        };
+
+        let table =
+            crate::output::render_table(LS, &[session_row(&session, chrono::Utc::now())], &view)
+                .unwrap();
+
+        assert_eq!(table.lines().next(), Some("MODEL"));
+        assert!(
+            table
+                .lines()
+                .nth(1)
+                .is_some_and(|line| line.contains("codex-acp:gpt-5"))
         );
     }
 
