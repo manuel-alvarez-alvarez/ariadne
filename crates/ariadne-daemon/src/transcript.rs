@@ -271,10 +271,8 @@ impl CodexRollout {
 
 /// A Claude Code transcript and its subagents' files. One model request is
 /// written over as many lines as it has content blocks, each with the same
-/// usage, so requests are counted once each by `message.id`.
-///
-/// Input is `input_tokens` + `cache_read_input_tokens` +
-/// `cache_creation_input_tokens`, and cached is the cache reads alone.
+/// usage, so requests are counted once each by `message.id`
+/// ([`claude_request_usage`]).
 struct ClaudeTranscript {
     main: Tail,
     subagents_dir: PathBuf,
@@ -331,20 +329,27 @@ impl ClaudeTranscript {
             if self.baseline.contains(id) {
                 continue;
             }
-            let count = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
-            let cached_input_tokens = count("cache_read_input_tokens");
-            self.requests.insert(
-                id.to_string(),
-                TokenUsage {
-                    input_tokens: count("input_tokens")
-                        + cached_input_tokens
-                        + count("cache_creation_input_tokens"),
-                    cached_input_tokens,
-                    output_tokens: count("output_tokens"),
-                },
-            );
+            self.requests
+                .insert(id.to_string(), claude_request_usage(usage));
         }
         self.requests.values().sum()
+    }
+}
+
+/// What one model request of Claude Code's cost, off the `message.usage` of an
+/// `assistant` line.
+///
+/// Input is `input_tokens` + `cache_read_input_tokens` +
+/// `cache_creation_input_tokens`, and cached is the cache reads alone.
+pub(crate) fn claude_request_usage(usage: &Value) -> TokenUsage {
+    let count = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let cached_input_tokens = count("cache_read_input_tokens");
+    TokenUsage {
+        input_tokens: count("input_tokens")
+            + cached_input_tokens
+            + count("cache_creation_input_tokens"),
+        cached_input_tokens,
+        output_tokens: count("output_tokens"),
     }
 }
 

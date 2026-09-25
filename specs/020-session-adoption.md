@@ -8,6 +8,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_session_resume.rs
   - crates/ariadne-daemon/tests/it/session_list.rs
   - crates/ariadne-daemon/tests/it/session_start.rs
+  - crates/ariadne-daemon/tests/it/stored_conversations.rs
   - crates/ariadne-store/tests/store.rs
 ---
 
@@ -18,9 +19,9 @@ starts as one. A loose session has no goal, task, staffed agent or seat.
 
 ## Scope
 
-In: discovering stored ACP conversations, listing them beside Ariadne's own
-sessions, resuming one in its recorded working directory, and starting a new
-one in any directory.
+In: discovering stored ACP conversations, reading the conversations an agent
+keeps on disk, listing both beside Ariadne's own sessions, resuming one in its
+recorded working directory, and starting a new one in any directory.
 
 Out: CLI commands, desktop screens, and task staffing.
 Session controls and revival belong to 008.
@@ -42,7 +43,8 @@ The ACP runtime belongs to 021.
    belongs to, its `internal_session_id`, its `working_directory`, its
    `last_activity_at`, and its title as `first_prompt`. The daemon keeps one
    in-memory snapshot of every agent's stored sessions and the moment it was
-   taken, resumed ones included; nothing of it is written to disk. The
+   taken, resumed ones included, over both sources (items 17 and 18); nothing
+   of it is written to disk. The
    snapshot is taken on the first listing request, again when a request
    carries `refresh=true`, and again when it is older than 60 seconds at
    request time. A request inside that minute asks no agent, and neither
@@ -123,6 +125,37 @@ The ACP runtime belongs to 021.
     receives 403. The session comes back live with no title, and the first
     prompt typed into it becomes one (item 15). Revived later, it loads the
     conversation it opened.
+17. A stored conversation has a second source: the files the agent keeps
+    itself. One reader answers for one agent id, registered in
+    `crates/ariadne-daemon/src/stored_conversations.rs`, and `claude-acp` has
+    the only one today: `$CLAUDE_CONFIG_DIR`, else `~/.claude`, then
+    `projects/<slug>/<session id>.jsonl`, whose stem is the
+    `internal_session_id`. A listing reads the transcript from its start until
+    it holds the working directory, a turn and a title, and to the end of the
+    file where it does not: the directory is the one of the first turn, and the
+    title is the one Claude Code recorded, however far into the file that
+    stands, or the first line of the first prompt where the transcript records
+    none. The last activity is the file's modification time. An agent the last
+    discovery did not find ready is not read at all: no row of it could be
+    resumed.
+18. The two sources are merged by `(agent_id, internal_session_id)`. A session
+    `session/list` answered with is listed as it answered it, whatever the
+    disk holds; only a title it has none of is taken from the disk. A
+    transcript with neither a user turn nor an assistant turn is no
+    conversation of anybody's and is not listed, and that rule takes away no
+    row `session/list` answered with.
+19. An outside entry of the answered page carries the `model` its transcript
+    last ran, spelled `<agent>:<model>` as every other row's model is, and the
+    `usage` of the whole transcript: the `message.usage` of its `assistant`
+    lines, one model request counted once by its `message.id`, since a request
+    is written over as many lines as it has content blocks. The rows the page
+    left behind are not read.
+20. A reader knows a file by its path, its size and its modification time. A
+    listing reads a file as far as item 17 says, a page reads the whole of the
+    file of one of its own rows, and neither read is made again while the file
+    stands where it did. The two reads stand for one moment: a file a page finds
+    grown is read again for the listing as well, so the next listing shows what
+    it holds now.
 
 ## Acceptance criteria
 
@@ -179,6 +212,34 @@ The ACP runtime belongs to 021.
   (`session_list.rs::a_resumed_outside_session_is_listed_once_as_an_ariadne_session`).
 - A cursor the daemon cannot read is refused with `invalid_cursor`
   (`session_list.rs::an_unreadable_cursor_is_refused`).
+- A Claude transcript `session/list` does not answer with is listed under its
+  own directory and title, and carries the model and the tokens of that
+  transcript, one model request counted once
+  (`stored_conversations.rs::a_transcript_the_agent_does_not_list_is_listed_with_its_model_and_tokens`).
+- A conversation both sources hold is one row, under the title the agent
+  listed, with the figures of the file behind it
+  (`stored_conversations.rs::a_conversation_both_sources_hold_is_one_row_under_the_agents_title`).
+- A transcript with no turn is not listed
+  (`stored_conversations.rs::a_transcript_with_no_turn_is_not_listed`), and a
+  row the agent listed stays listed whatever the disk says of it
+  (`::a_row_the_agent_lists_stays_listed_whatever_the_disk_says`).
+- A conversation goes by the title Claude Code gave it, and by the first line
+  of its first prompt where it gave none
+  (`stored_conversations.rs::a_conversation_goes_by_the_title_claude_gave_it`).
+- A conversation whose first turn lies far into its file is listed all the same
+  (`stored_conversations.rs::a_transcript_whose_first_turn_lies_deep_in_the_file_is_listed`),
+  and a title recorded a megabyte in still names it
+  (`::a_title_a_megabyte_into_a_transcript_still_names_it`).
+- A conversation that grew after a page read its figures is listed by what it
+  holds now
+  (`stored_conversations.rs::a_transcript_that_grew_under_a_page_is_listed_by_what_it_holds_now`).
+- The disk half keeps the order, the cursor and the 7-day window of the
+  listing
+  (`stored_conversations.rs::the_disk_half_keeps_the_order_the_cursor_and_the_window`).
+- A page of 50 rows reads the transcripts of those rows alone
+  (`stored_conversations.rs::a_page_of_fifty_reads_the_transcripts_of_its_own_rows_only`),
+  and a second listing reads no unchanged transcript again
+  (`::a_second_listing_reads_no_unchanged_transcript_again`).
 - The query parameters and the page DTO are in the OpenAPI document, and the
   outside listing is gone from it
   (`session_list.rs::the_query_and_the_page_are_in_the_openapi_document`).
@@ -235,8 +296,10 @@ duplicate processes and prevents a second caller receiving a row before load com
 
 `crates/ariadne-api/src/sessions.rs`,
 `crates/ariadne-daemon/src/acp_sessions.rs`,
+`crates/ariadne-daemon/src/stored_conversations.rs`,
 `crates/ariadne-daemon/src/acp_discovery.rs`,
 `crates/ariadne-daemon/src/http/sessions.rs`,
 `crates/ariadne-daemon/src/http/convert.rs`,
 `crates/ariadne-daemon/src/launcher.rs`,
+`crates/ariadne-daemon/src/transcript.rs`,
 `crates/ariadne-daemon/src/acp.rs`.

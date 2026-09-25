@@ -18,6 +18,22 @@ started. Rows come newest activity first. The columns are `id`, `title`,
 `--columns`. An outside session has no status, goal or task of its own yet,
 so those columns are empty for it.
 
+An outside conversation comes from two places at once. Ariadne asks every
+agent for its own list over ACP, and it reads the files the agent keeps —
+for Claude Code, the transcripts under `$CLAUDE_CONFIG_DIR`, or `~/.claude`
+where that is unset. Each agent answers its list from an index of its own
+that leaves conversations out: on one machine Claude's index held 731 of the
+740 transcripts beside it. A conversation both places hold is one row, under
+the title the agent gave it. A transcript with neither a prompt nor an answer
+in it is no conversation of its own, so it reaches the table only when the
+agent's own list holds it — nothing the files say takes a row of that list
+away. Ariadne reads an agent's files only while that agent is installed and
+working, because a conversation it cannot reopen is one you cannot attach to.
+
+The files are also where an outside row's `tokens` and the model it ran come
+from: an agent's list carries neither. Ariadne reads them for the rows of the
+page it answers, so `--limit` bounds the reading as well as the table.
+
 Narrow the table to the session you want:
 
 ```sh
@@ -92,9 +108,11 @@ shows under its own row, not as an outside session a second time; `attach
 
 ## When it refuses
 
-Listing asks every registry agent that advertises `session/list`. An agent
-without that capability contributes no sessions to the table, and `ariadne
-doctor` names it as missing for that agent — check there before assuming a
+Listing asks every registry agent that advertises `session/list`, and reads
+the files of every agent whose transcripts Ariadne knows where to find. An
+agent that does neither — no such capability, and no reader for its files —
+contributes no sessions to the table, and `ariadne doctor` names the
+capability as missing for that agent — check there before assuming a
 conversation does not exist. Resuming asks the session's own agent to load
 it, over ACP's `loadSession`. An agent that does not support that capability
 cannot resume anything, outside session or ended one: `ariadne doctor` names

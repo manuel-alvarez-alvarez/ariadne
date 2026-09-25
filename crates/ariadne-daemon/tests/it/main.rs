@@ -38,6 +38,7 @@ mod scheduler_dependencies;
 mod session_list;
 mod session_start;
 mod skill_documents;
+mod stored_conversations;
 mod task_branches;
 mod task_failure;
 mod transcript_usage;

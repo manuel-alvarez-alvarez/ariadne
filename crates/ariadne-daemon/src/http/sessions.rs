@@ -142,15 +142,20 @@ pub(super) async fn list(
     } else {
         state.outside_sessions.cached().await
     };
-    let page = crate::acp_sessions::page(&snapshot, &state.store, &filter)
-        .await
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                error.to_string(),
-            )
-        })?;
+    let page = crate::acp_sessions::page(
+        &snapshot,
+        state.outside_sessions.readers(),
+        &state.store,
+        &filter,
+    )
+    .await
+    .map_err(|error| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            error.to_string(),
+        )
+    })?;
     Ok(Json(page))
 }
 

@@ -21,7 +21,7 @@ use common::acp::{StubAcpAgent, discovery_accepted, script, stub_acp_agent};
 use common::{Harness, get, harness, post_json};
 
 /// A home whose `config.toml` registers one ACP agent per `(id, bin)`.
-fn home_with_agents(agents: &[(&str, &str)]) -> std::path::PathBuf {
+pub(crate) fn home_with_agents(agents: &[(&str, &str)]) -> std::path::PathBuf {
     let home = std::path::Path::new(agents[0].1)
         .parent()
         .unwrap()
@@ -38,7 +38,7 @@ fn home_with_agents(agents: &[(&str, &str)]) -> std::path::PathBuf {
 /// A moment `hours` before `now`, RFC 3339. The listing holds the last seven
 /// days by default, so a fixture dates itself against the clock the test
 /// holds rather than against a year somebody wrote down.
-fn hours_before(now: DateTime<Utc>, hours: i64) -> String {
+pub(crate) fn hours_before(now: DateTime<Utc>, hours: i64) -> String {
     (now - TimeDelta::hours(hours)).to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
@@ -63,7 +63,7 @@ fn five_sessions(now: DateTime<Utc>) -> Value {
 
 /// A stub that lists `sessions` — whole, or `page_size` at a time — and can
 /// load any of them.
-fn listing_script(sessions: Value, page_size: Option<usize>) -> Value {
+pub(crate) fn listing_script(sessions: Value, page_size: Option<usize>) -> Value {
     let mut setup = script();
     setup["capabilities"] = json!({"loadSession": true, "sessionCapabilities": {"list": {}}});
     setup["stored_sessions"] = Value::Array(

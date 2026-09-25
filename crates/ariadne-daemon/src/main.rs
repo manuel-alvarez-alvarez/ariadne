@@ -149,7 +149,7 @@ async fn main() -> Result<()> {
         events,
         logs,
         agent_registry,
-        outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::default(),
+        outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::from_env(),
     };
     let app = http::router(state);
 

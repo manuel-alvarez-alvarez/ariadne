@@ -283,7 +283,9 @@ impl HarnessBuilder {
             events: bus.clone(),
             logs: logs.clone(),
             agent_registry,
-            outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::default(),
+            outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::with_transcripts(
+                &transcript_homes(dir.path()),
+            ),
         };
         // Lazy: most tests never write behind the store's back, and a
         // connection opened for every harness in every binary is a hundred

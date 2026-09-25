@@ -5,6 +5,12 @@
 //! is served off one in-memory snapshot of every agent's stored sessions
 //! ([`OutsideSessions`]), which a resume validates against and refreshes once
 //! on a miss. Both halves are ordered by last activity and cut into one page.
+//!
+//! The outside half has two sources, merged by `(agent, internal id)`: what
+//! each agent answered over `session/list`, and what it left on disk
+//! ([`crate::stored_conversations`]). ACP is the first of them — a row it
+//! answered with is listed however the disk reads — and the disk is where the
+//! model and the tokens of a row come from.
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -19,6 +25,7 @@ use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use ariadne_api::agents::AcpAgentStatus;
 use ariadne_api::sessions::{OutsideSessionDto, SessionKind, SessionPageDto, SessionPageQuery};
 use ariadne_core::Seat;
 use ariadne_core::models::agent_of;
@@ -26,6 +33,8 @@ use ariadne_store::{AgentSession, SessionFilter, Store, TaskFilter};
 
 use crate::acp_discovery::AgentRegistry;
 use crate::http::convert::{outside_entry, session_entry_of};
+use crate::stored_conversations::{DiskConversations, fill_page};
+use crate::transcript::TranscriptHomes;
 
 /// How old the snapshot may be before a request takes it again.
 const SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(60);
@@ -94,13 +103,36 @@ impl Snapshot {
 
 /// The daemon's one snapshot of the outside sessions. Nothing of it reaches
 /// the disk.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct OutsideSessions {
     snapshot: Arc<Mutex<Option<Arc<Snapshot>>>>,
     pub(crate) resumes: Arc<Mutex<()>>,
+    /// The second source: the conversations the agents left on disk.
+    readers: Arc<DiskConversations>,
 }
 
 impl OutsideSessions {
+    /// The listing of a daemon whose agents keep their conversations where its
+    /// own environment says.
+    pub fn from_env() -> Self {
+        Self::with_transcripts(&TranscriptHomes::from_env())
+    }
+
+    /// The same, reading the conversations under `homes` rather than where the
+    /// environment puts them.
+    pub fn with_transcripts(homes: &TranscriptHomes) -> Self {
+        Self {
+            snapshot: Arc::default(),
+            resumes: Arc::default(),
+            readers: Arc::new(DiskConversations::new(homes)),
+        }
+    }
+
+    /// The readers a page reads its rows' model and tokens with.
+    pub(crate) fn readers(&self) -> &Arc<DiskConversations> {
+        &self.readers
+    }
+
     /// The snapshot as it stands, or a new one where there is none yet, where
     /// `refresh` asks for one, or where the current one is older than
     /// [`SNAPSHOT_MAX_AGE`]. Requests that find it stale together wait on
@@ -113,13 +145,38 @@ impl OutsideSessions {
         {
             return snapshot.clone();
         }
+        let listed = registry.stored_sessions().await;
         let snapshot = Arc::new(Snapshot {
-            sessions: registry.stored_sessions().await,
+            sessions: merge(listed, self.disk_sessions(registry).await),
             taken_at: Utc::now(),
             taken: Instant::now(),
         });
         *current = Some(snapshot.clone());
         snapshot
+    }
+
+    /// The conversations on disk of every agent this daemon has, read off the
+    /// blocking pool: one listing walks an agent's whole transcript directory.
+    ///
+    /// An agent the last discovery did not find ready is not read at all: its
+    /// conversations are none of this daemon's, and no row of one could be
+    /// resumed.
+    async fn disk_sessions(&self, registry: &AgentRegistry) -> Vec<OutsideSessionDto> {
+        let ready: Vec<String> = registry
+            .agents()
+            .await
+            .into_iter()
+            .filter(|agent| agent.status == AcpAgentStatus::Ready)
+            .map(|agent| agent.id)
+            .collect();
+        let readers = self.readers.clone();
+        match tokio::task::spawn_blocking(move || readers.conversations(&ready)).await {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                tracing::warn!(error = %error, "reading the conversations on disk failed");
+                Vec::new()
+            }
+        }
     }
 
     /// The snapshot as it stands, however old, or an empty one where none
@@ -135,6 +192,37 @@ impl OutsideSessions {
             taken: Instant::now(),
         })
     }
+}
+
+/// The two sources as one: every session `listed` over ACP, and every one on
+/// disk that is not among them, by `(agent, internal id)`.
+///
+/// ACP answered from the agent itself, so its row stands: a conversation it
+/// listed stays listed however the disk reads it, and its fields are the ones
+/// the row keeps. Only a title it has none of is taken from the disk, for an
+/// agent whose index carries no title.
+fn merge(listed: Vec<OutsideSessionDto>, disk: Vec<OutsideSessionDto>) -> Vec<OutsideSessionDto> {
+    let mut sessions = listed;
+    let mut at: HashMap<(String, String), usize> = sessions
+        .iter()
+        .enumerate()
+        .map(|(at, session)| (session_key(session), at))
+        .collect();
+    for session in disk {
+        match at.get(&session_key(&session)) {
+            Some(&at) => {
+                let row = &mut sessions[at];
+                if row.first_prompt.trim().is_empty() {
+                    row.first_prompt = session.first_prompt;
+                }
+            }
+            None => {
+                at.insert(session_key(&session), sessions.len());
+                sessions.push(session);
+            }
+        }
+    }
+    sessions
 }
 
 /// Why a query cannot be answered: which value, and what is wrong with it.
@@ -399,6 +487,7 @@ async fn outside_rows<'a>(
 /// snapshot continues from the same row rather than the same offset.
 pub(crate) async fn page(
     snapshot: &Snapshot,
+    readers: &Arc<DiskConversations>,
     store: &Store,
     filter: &Filter,
 ) -> Result<SessionPageDto> {
@@ -424,6 +513,9 @@ pub(crate) async fn page(
             Row::Outside(outside) => outside_entry(outside),
         });
     }
+    // The figures of this page's rows, and of no other file: what a
+    // conversation ran on and what it spent are on disk, not in `session/list`.
+    fill_page(readers, &mut sessions).await;
     Ok(SessionPageDto {
         sessions,
         next_cursor,

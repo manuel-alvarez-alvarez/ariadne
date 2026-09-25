@@ -21,5 +21,6 @@ pub mod log;
 pub mod resource;
 pub mod scheduler;
 pub(crate) mod sleep;
+pub(crate) mod stored_conversations;
 pub mod timeouts;
 pub mod transcript;
