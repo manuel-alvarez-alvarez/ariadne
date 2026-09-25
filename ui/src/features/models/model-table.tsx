@@ -258,13 +258,18 @@ function RankPicker({ model }: { model: ModelDto }) {
       >
         <SelectValue />
       </SelectTrigger>
-      <SelectContent>
+      {/* Wider than the trigger, and dropped below it rather than laid over
+          it: the meanings are a line of prose each, and the trigger's width
+          cut them off mid-word. */}
+      <SelectContent alignItemWithTrigger={false} align="end" className="w-72">
         <SelectItem value={UNRANKED}>Unranked</SelectItem>
         {RANKS.map((rank) => (
           <SelectItem key={rank.value} value={rank.value}>
             <span className="flex flex-col py-0.5">
               <span>{rank.label}</span>
-              <span className="text-muted-foreground text-xs">{rank.meaning}</span>
+              <span className="text-muted-foreground text-xs whitespace-normal">
+                {rank.meaning}
+              </span>
             </span>
           </SelectItem>
         ))}
