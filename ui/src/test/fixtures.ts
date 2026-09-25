@@ -134,6 +134,9 @@ export function anOutsideSession(overrides: Partial<OutsideSessionDto> = {}): Ou
     working_directory: "/Users/me/dev/ariadne",
     last_activity_at: STAMP,
     first_prompt: "Fix the flaky test.",
+    model: null,
+    effort: null,
+    usage: null,
     ...overrides,
   }
 }
@@ -177,6 +180,9 @@ export function anOutsideSessionPage(
         working_directory: session.working_directory,
         last_activity_at: session.last_activity_at,
         title: session.first_prompt,
+        model: session.model,
+        effort: session.effort,
+        usage: session.usage,
       }),
     ),
     page,

@@ -38,6 +38,7 @@ import {
   type SessionDto,
   type SessionEntryDto,
   type SessionStatus,
+  type TokenUsage,
   unwrap,
 } from "@/api"
 
@@ -156,6 +157,14 @@ export interface OutsideSessionDto {
   working_directory: string
   last_activity_at: string
   first_prompt: string
+  /**
+   * The model it last ran on, `<agent>:<model>`, and the tokens it has spent
+   * — null until the daemon reports them for an outside row, which it does
+   * not do yet (see the sessions screen's Agent and Tokens columns).
+   */
+  model: string | null
+  effort: string | null
+  usage: TokenUsage | null
 }
 
 /** One page of the outside listing, its rows read as {@link OutsideSessionDto}. */
@@ -173,6 +182,9 @@ function outsideSession(entry: SessionEntryDto): OutsideSessionDto {
     working_directory: entry.working_directory ?? "",
     last_activity_at: entry.last_activity_at ?? "",
     first_prompt: entry.title ?? "",
+    model: entry.model ?? null,
+    effort: entry.effort ?? null,
+    usage: entry.usage ?? null,
   }
 }
 
@@ -191,6 +203,8 @@ export interface OutsideSessionListFilters {
   since?: string
   until?: string
   q?: string
+  /** List every outside conversation, whatever its age, in place of `since`. */
+  all?: boolean
 }
 
 /**

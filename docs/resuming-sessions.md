@@ -38,6 +38,16 @@ and `--cursor` page the table, `--all` fetches every page into one instead,
 and `--refresh` asks the agents again instead of using the daemon's current
 snapshot.
 
+## In Ariadne Desktop
+
+The Sessions screen lists the same two kinds together, in one table, with a
+window control over it: the last 7 days it opens on, the last 30, or all of
+it. An outside row's Agent column names the pin it last ran on, and its
+Tokens column what it has spent, with the detail behind a tooltip, once the
+daemon reports them; until then the Agent column keeps naming the registry
+agent it belongs to, and the Tokens column stays blank rather than showing a
+zero.
+
 ## Attach and go
 
 Copy the `id` column into `attach`:

@@ -92,27 +92,36 @@ Out: the daemon endpoints themselves (012).
     agent stored on its own — and the screen merges them client-side into the
     one table. Every row shows its working directory under its title — a
     task's worktree, a loose session's directory, an outside conversation's.
-    An outside row leaves its status, goal and task empty, and names its
-    registry agent instead. A filter bar above the table narrows the
-    listing by kind, agent — the registry of `GET /v1/acp-agents` — status,
-    seat, directory, a since day, an until day, and a search over the
-    titles; `?goal=` and `?task=` narrow it further, as a chip above the
-    table. The search leads the bar, with the count and Refresh at the other
-    end of its row; under it each filter is one compact trigger naming what
-    it filters and, once set, what it is set to, drawn dashed while unset.
-    The directory and the activity window open a popover — the window with
-    Today, Last 7 days and Last 30 days one click each, and an empty day
-    shown as "Any day" rather than as the date WebKit fills an empty date
-    field with — and Clear filters drops every filter of the bar in one
-    step, leaving the goal and task scope. Each filter is a URL search param
-    under the daemon's own name for it (`?kind=`, `?agent=`, `?status=`,
-    `?seat=`, `?dir=`, `?since=`, `?until=`, `?q=`), so a narrowed screen is
-    what its URL says and opens again with those filters set; a typed one
-    reaches the daemon once the typing has settled rather than on every
-    keystroke, and a day reaches it as the moment that bounds it — the first
-    instant of the day as `since`, its finest last moment as `until`
-    (`23:59:59.999999999Z`), in UTC, so a day holds every session active on
-    it whatever precision the agent reported. `status`, `seat`, `goal` and
+    An outside row leaves its status, goal and task empty. Its Agent and
+    Tokens columns read as an Ariadne row's do once the daemon reports its
+    model, effort and usage — the pin it last ran on, and the tokens it has
+    spent, tooltip included — and, until then, name its registry agent
+    instead and leave the Tokens cell blank rather than showing a zero. A
+    filter bar above the table narrows the listing by kind, agent — the
+    registry of `GET /v1/acp-agents` — status, seat, directory, a since day,
+    an until day, and a search over the titles; `?goal=` and `?task=` narrow
+    it further, as a chip above the table. The search leads the bar, with the
+    count and Refresh at the other end of its row; under it each filter is
+    one compact trigger naming what it filters and, once set, what it is set
+    to, drawn dashed while unset. A window control beside them sets how far
+    back the outside half looks: the last 7 days it opens on every visit —
+    the daemon's own default, asked for with neither `since` nor `all` —
+    the last 30 as a `since` bound, or all of it with `all=true`; it is its
+    own `?window=` param, not remembered between visits, and an explicit
+    since or until day, being the more specific ask, is sent in its place
+    where one is set. The directory and the activity window open a popover —
+    the window with Today, Last 7 days and Last 30 days one click each, and
+    an empty day shown as "Any day" rather than as the date WebKit fills an
+    empty date field with — and Clear filters drops every filter of the bar
+    in one step, leaving the goal and task scope. Each filter is a URL
+    search param under the daemon's own name for it (`?kind=`, `?agent=`,
+    `?status=`, `?seat=`, `?dir=`, `?since=`, `?until=`, `?q=`), so a
+    narrowed screen is what its URL says and opens again with those filters
+    set; a typed one reaches the daemon once the typing has settled rather
+    than on every keystroke, and a day reaches it as the moment that bounds
+    it — the first instant of the day as `since`, its finest last moment as
+    `until` (`23:59:59.999999999Z`), in UTC, so a day holds every session
+    active on it whatever precision the agent reported. `status`, `seat`, `goal` and
     `task` only ever reach `GET /v1/sessions`, being things an outside
     session has none of; a goal or a task is therefore a structural
     impossibility for one, and the outside half of the screen is skipped
@@ -338,6 +347,15 @@ Out: the daemon endpoints themselves (012).
   its agent and its directory instead
   (`ui/src/features/sessions/sessions-page.test.tsx::lists Ariadne sessions and outside sessions together, newest activity first`,
   `::shows an outside row's empty status, goal and task, and names its agent and directory`).
+- The window control opens on the last 7 days asking the daemon for nothing
+  extra, sends a `since` 30 days back when that window is picked, and sends
+  `all=true` for all of it; an outside row shows its model and its tokens
+  once the daemon reports them, and neither, with no zero, until then
+  (`ui/src/features/sessions/sessions-page.test.tsx::opens the window picker on the last 7 days, asking the daemon for nothing extra`,
+  `::asks the daemon with a since bound 30 days back when that window is picked`,
+  `::asks the daemon for every outside conversation when All time is picked`,
+  `::shows an outside row's model and tokens once the daemon reports them`,
+  `::shows neither a model nor a token figure, and no zero, on an outside row without them`).
 - Every filter — kind, agent, status, seat, a day's activity window and a
   search over the titles — reaches the daemon under its own name, on the
   endpoint that takes it, and a day is sent as the moments that bound it, in

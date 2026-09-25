@@ -32,6 +32,7 @@ import {
 } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 
+import { dayBefore } from "./outside-filters"
 import type { OutsideSessionDto } from "./queries"
 import { SessionsPage } from "./sessions-page"
 
@@ -269,6 +270,103 @@ it("sends each filter to the daemon under the name that filter has, on the endpo
     },
     { timeout: 3000 },
   )
+})
+
+it("opens the window picker on the last 7 days, asking the daemon for nothing extra", async () => {
+  renderPage()
+  await waitFor(() => row(TASK.title))
+
+  expect(screen.getByRole("button", { name: "Filter by window" }).textContent).toContain(
+    "Last 7 days",
+  )
+  const query = queriesTo("outside").at(-1)
+  expect(query?.get("since")).toBeNull()
+  expect(query?.get("all")).toBeNull()
+})
+
+it("asks the daemon with a since bound 30 days back when that window is picked", async () => {
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => row(TASK.title))
+
+  await user.click(screen.getByRole("button", { name: "Filter by window" }))
+  await user.click(await screen.findByRole("menuitemradio", { name: "Last 30 days" }))
+
+  await waitFor(() => {
+    const query = queriesTo("outside").at(-1)
+    expect(query?.get("since")).toBe(`${dayBefore(29)}T00:00:00Z`)
+    expect(query?.get("all")).toBeNull()
+  })
+})
+
+it("asks the daemon for every outside conversation when All time is picked", async () => {
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => row(TASK.title))
+
+  await user.click(screen.getByRole("button", { name: "Filter by window" }))
+  await user.click(await screen.findByRole("menuitemradio", { name: "All time" }))
+
+  await waitFor(() => {
+    const query = queriesTo("outside").at(-1)
+    expect(query?.get("all")).toBe("true")
+    expect(query?.get("since")).toBeNull()
+  })
+  expect(screen.getByRole("button", { name: "Filter by window" }).textContent).toContain("All time")
+})
+
+it("resets the window to 7 days when Clear filters is pressed", async () => {
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => row(TASK.title))
+
+  await user.click(screen.getByRole("button", { name: "Filter by window" }))
+  await user.click(await screen.findByRole("menuitemradio", { name: "All time" }))
+  await waitFor(() => expect(queriesTo("outside").at(-1)?.get("all")).toBe("true"))
+
+  await user.click(screen.getByRole("button", { name: "Clear filters" }))
+
+  await waitFor(() => {
+    const query = queriesTo("outside").at(-1)
+    expect(query?.get("since")).toBeNull()
+    expect(query?.get("all")).toBeNull()
+  })
+  expect(screen.getByRole("button", { name: "Filter by window" }).textContent).toContain(
+    "Last 7 days",
+  )
+})
+
+it("shows an outside row's model and tokens once the daemon reports them", async () => {
+  const REPORTED = anOutsideSession({
+    agent_id: "claude-agent-acp",
+    internal_session_id: "acp-session-reported",
+    first_prompt: "Investigate the cache miss.",
+    model: "claude-agent-acp:claude-sonnet-5",
+    effort: "high",
+    usage: { input_tokens: 1200, cached_input_tokens: 900, output_tokens: 340 },
+  })
+  stubDaemon({ outside: [REPORTED] })
+  renderPage()
+
+  const found = await waitFor(() => row(REPORTED.first_prompt))
+  expect(found.textContent).toContain("claude-agent-acp:claude-sonnet-5 @ high")
+  expect(found.textContent).toContain("1.2k")
+  expect(found.textContent).toContain("340")
+})
+
+it("shows neither a model nor a token figure, and no zero, on an outside row without them", async () => {
+  renderPage()
+
+  const found = await waitFor(() => row(OUTSIDE.first_prompt))
+  // No model reported yet: the Agent column falls back to naming the agent,
+  // the way it always did.
+  expect(found.textContent).toContain(OUTSIDE.agent_id)
+  // No usage reported yet: the Tokens cell reads as the dash every other
+  // empty fact in the app does, not as a zero.
+  const cells = within(found).getAllByRole("cell")
+  const tokensCell = cells[4]
+  if (!tokensCell) throw new Error("no tokens cell")
+  expect(tokensCell.textContent).toBe("—")
 })
 
 it("sends a day's activity window as the moments that bound it, in UTC", async () => {

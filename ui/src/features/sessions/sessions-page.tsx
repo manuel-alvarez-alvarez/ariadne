@@ -58,7 +58,14 @@ import { parseModelRef, pinLabel } from "@/features/models/model-ref"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { cn, describeError, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom, sessionTerminalFrom } from "@/routes/paths"
-import { ActivityFilter, AgentFilter, DirectoryFilter, FilterMenu, TypedFilter } from "./filter-bar"
+import {
+  ActivityFilter,
+  AgentFilter,
+  DirectoryFilter,
+  FilterMenu,
+  TypedFilter,
+  WindowFilter,
+} from "./filter-bar"
 import {
   ALL,
   ATTENTION,
@@ -75,7 +82,13 @@ import {
   TASK_PARAM,
 } from "./filters"
 import { NewSessionDialog } from "./new-session-dialog"
-import { KIND_LABELS, OUTSIDE_FILTER_PARAMS, useOutsideSessionFilters } from "./outside-filters"
+import {
+  DEFAULT_WINDOW,
+  KIND_LABELS,
+  OUTSIDE_FILTER_PARAMS,
+  useOutsideSessionFilters,
+  WINDOW_PARAM,
+} from "./outside-filters"
 import {
   byId,
   type OutsideSessionDto,
@@ -213,8 +226,14 @@ export function SessionsPage() {
   const total = ariadneRows.length + (outsideEligible ? outsideTotal : 0)
 
   const filtered =
-    status !== null || seat !== null || OUTSIDE_FILTER_PARAMS.some((param) => browse.values[param])
-  const clearFilters = () => clearSessionFilters(OUTSIDE_FILTER_PARAMS)
+    status !== null ||
+    seat !== null ||
+    browse.window !== DEFAULT_WINDOW ||
+    OUTSIDE_FILTER_PARAMS.some((param) => browse.values[param])
+  // One search-param update, window included, rather than one call per hook:
+  // two separate `setSearch` calls in the same handler would each start from
+  // the same pre-click params, so the second would undo the first's clears.
+  const clearFilters = () => clearSessionFilters([...OUTSIDE_FILTER_PARAMS, WINDOW_PARAM])
 
   const [starting, setStarting] = useState(false)
   const [resumingKey, setResumingKey] = useState<string | null>(null)
@@ -353,6 +372,7 @@ export function SessionsPage() {
             options={ROLES.map((known) => ({ value: known, label: SEAT_LABELS[known] }))}
             allLabel="All roles"
           />
+          <WindowFilter value={browse.window} onSelect={browse.filterWindow} />
           <DirectoryFilter value={browse.values.dir} onSettle={browse.filterBy} />
           <ActivityFilter
             since={browse.values.since}
@@ -509,10 +529,11 @@ function SessionRow({
       <TableCell className="max-w-40 truncate text-xs text-muted-foreground">
         {row.kind === "ariadne"
           ? pinLabel(row.session.model, row.session.effort)
-          : row.session.agent_id}
+          : (row.session.model && pinLabel(row.session.model, row.session.effort)) ||
+            row.session.agent_id}
       </TableCell>
       <TableCell className="text-right text-xs text-muted-foreground">
-        {row.kind === "ariadne" ? <TokenFigure usage={row.session.usage} /> : <Dash />}
+        {row.session.usage ? <TokenFigure usage={row.session.usage} /> : <Dash />}
       </TableCell>
       <TableCell className="text-right tabular-nums text-muted-foreground">
         <When at={movedAt(row)} format="age" label="last activity" />

@@ -29,7 +29,7 @@ import { acpAgentsQueryOptions } from "@/features/agents/queries"
 import { cn } from "@/lib/format"
 
 import { ALL } from "./filters"
-import type { OutsideFilterParam } from "./outside-filters"
+import { dayBefore, type OutsideFilterParam, type Window } from "./outside-filters"
 
 /**
  * How long a typed filter waits for the next keystroke before the daemon is
@@ -160,6 +160,46 @@ export function AgentFilter({
   )
 }
 
+/** The window's three choices, in the order the trigger offers them. */
+const WINDOW_OPTIONS: { value: Window; label: string }[] = [
+  { value: "7", label: "Last 7 days" },
+  { value: "30", label: "Last 30 days" },
+  { value: "all", label: "All time" },
+]
+
+/**
+ * How far back the table looks: the last 7 days (the daemon's own default),
+ * the last 30, or all of it. Unlike the other triggers of the bar this one is
+ * never unset — the table always has a window, 7 days being the one it opens
+ * on — so it draws solid rather than dashed, and offers no "all ___" choice
+ * of its own beside the three.
+ */
+export function WindowFilter({
+  value,
+  onSelect,
+}: {
+  value: Window
+  onSelect: (value: string) => void
+}) {
+  const label = WINDOW_OPTIONS.find((option) => option.value === value)?.label ?? null
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<FilterTrigger what="Window" valueLabel={label} aria-label="Filter by window" />}
+      />
+      <DropdownMenuContent align="start" className="w-44">
+        <DropdownMenuRadioGroup value={value} onValueChange={onSelect}>
+          {WINDOW_OPTIONS.map((option) => (
+            <DropdownMenuRadioItem key={option.value} value={option.value}>
+              {option.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 /**
  * Where a session ran: the directory it is in, or one above it. Typed, so
  * it opens as a field in a popover rather than as a menu of choices, and the
@@ -201,14 +241,6 @@ export function DirectoryFilter({
       </PopoverContent>
     </Popover>
   )
-}
-
-/** A day as the date field carries it: `YYYY-MM-DD`, `days` before today. */
-function dayBefore(days: number): string {
-  const day = new Date()
-  day.setDate(day.getDate() - days)
-  const pad = (value: number) => String(value).padStart(2, "0")
-  return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`
 }
 
 /** The windows most looked for, one click each: `since` so many days back. */

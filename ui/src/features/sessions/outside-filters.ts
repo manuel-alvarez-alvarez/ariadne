@@ -18,6 +18,14 @@
  * as the instants that bound it — `since` as its first, `until` as its last, in
  * UTC — and a day in both fields is the whole of that day. A value that already
  * names a time is sent as it stands.
+ *
+ * `?window=` is separate from the five: it is not a daemon parameter of its
+ * own but how far back the table looks by default — the last 7 days (the
+ * daemon's own default, so unset asks for nothing extra), the last 30, or
+ * all of it — and it only fills `since` or `all` where the since/until
+ * fields above are themselves unset, an explicit day always being the more
+ * specific ask. It is not remembered between visits: the table opens on 7
+ * days every time.
  */
 
 import { useSearchParams } from "react-router-dom"
@@ -41,21 +49,40 @@ export const OUTSIDE_FILTER_PARAMS = ["kind", "agent", "dir", "since", "until", 
 /** The params this half of the bar reads, and the only ones `filterBy` writes. */
 export type OutsideFilterParam = (typeof OUTSIDE_FILTER_PARAMS)[number]
 
+/** The param the window picker travels in, apart from the filters above. */
+export const WINDOW_PARAM = "window"
+
+/** How far back the table looks by default: 7 days, 30, or all of it. */
+export type Window = "7" | "30" | "all"
+
+const WINDOWS: Window[] = ["7", "30", "all"]
+
+/** What the window picker opens on: the daemon's own default window. */
+export const DEFAULT_WINDOW: Window = "7"
+
 interface OutsideFiltersState {
   /** What each field shows: the param exactly as the URL carries it. */
   values: Record<OutsideFilterParam, string>
   /** Which kind the table is narrowed to, or `null` for both. */
   kind: SessionKind | null
+  /** How far back the table looks, {@link DEFAULT_WINDOW} where unset. */
+  window: Window
   /** What the daemon's outside-sessions endpoint is asked for. */
   filters: OutsideSessionListFilters
   /** Apply one selection. "All" and an empty field drop the param. */
   filterBy: (param: OutsideFilterParam, value: string) => void
   /** Apply several at once, the way {@link filterBy} applies one. */
   filterByMany: (values: Partial<Record<OutsideFilterParam, string>>) => void
+  /** Pick the window: {@link DEFAULT_WINDOW} drops the param. */
+  filterWindow: (window: string) => void
 }
 
 function parseKindFilter(value: string): SessionKind | null {
   return KINDS.find((known) => known === value) ?? null
+}
+
+function parseWindow(value: string | null): Window {
+  return WINDOWS.find((known) => known === value) ?? DEFAULT_WINDOW
 }
 
 export function useOutsideSessionFilters(): OutsideFiltersState {
@@ -64,13 +91,17 @@ export function useOutsideSessionFilters(): OutsideFiltersState {
   const values = Object.fromEntries(
     OUTSIDE_FILTER_PARAMS.map((param) => [param, search.get(param)?.trim() ?? ""]),
   ) as Record<OutsideFilterParam, string>
+  const window = parseWindow(search.get(WINDOW_PARAM))
 
+  const since = dayBound(values.since, "first")
+  const until = dayBound(values.until, "last")
   const filters: OutsideSessionListFilters = {
     agent: values.agent || undefined,
     dir: values.dir || undefined,
-    since: dayBound(values.since, "first") || undefined,
-    until: dayBound(values.until, "last") || undefined,
+    since: since || (window === "30" ? dayBound(dayBefore(29), "first") : undefined) || undefined,
+    until: until || undefined,
     q: values.q || undefined,
+    all: !since && !until && window === "all" ? true : undefined,
   }
 
   function filterByMany(changes: Partial<Record<OutsideFilterParam, string>>) {
@@ -88,7 +119,30 @@ export function useOutsideSessionFilters(): OutsideFiltersState {
     filterByMany({ [param]: value })
   }
 
-  return { values, kind: parseKindFilter(values.kind), filters, filterBy, filterByMany }
+  function filterWindow(value: string) {
+    const next = new URLSearchParams(search)
+    if (value === DEFAULT_WINDOW) next.delete(WINDOW_PARAM)
+    else next.set(WINDOW_PARAM, value)
+    setSearch(next, { replace: true })
+  }
+
+  return {
+    values,
+    kind: parseKindFilter(values.kind),
+    window,
+    filters,
+    filterBy,
+    filterByMany,
+    filterWindow,
+  }
+}
+
+/** A day as the date field carries it: `YYYY-MM-DD`, `days` before today. */
+export function dayBefore(days: number): string {
+  const day = new Date()
+  day.setDate(day.getDate() - days)
+  const pad = (value: number) => String(value).padStart(2, "0")
+  return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`
 }
 
 /**
