@@ -9,6 +9,8 @@ tests:
   - crates/ariadne-daemon/tests/it/session_list.rs
   - crates/ariadne-daemon/tests/it/session_start.rs
   - crates/ariadne-daemon/tests/it/stored_conversations.rs
+  - crates/ariadne-daemon/tests/it/stored_conversations_opencode.rs
+  - crates/ariadne-daemon/src/stored_conversations.rs
   - crates/ariadne-store/tests/store.rs
 ---
 
@@ -127,8 +129,9 @@ The ACP runtime belongs to 021.
     conversation it opened.
 17. A stored conversation has a second source: the files the agent keeps
     itself. One reader answers for one agent id, registered in
-    `crates/ariadne-daemon/src/stored_conversations.rs`, and `claude-acp` has
-    the only one today: `$CLAUDE_CONFIG_DIR`, else `~/.claude`, then
+    `crates/ariadne-daemon/src/stored_conversations.rs`; `claude-acp`,
+    `codex-acp` and `opencode-acp` have the only three today. Claude Code's
+    reader: `$CLAUDE_CONFIG_DIR`, else `~/.claude`, then
     `projects/<slug>/<session id>.jsonl`, whose stem is the
     `internal_session_id`. A listing reads the transcript from its start until
     it holds the working directory, a turn and a title, and to the end of the
@@ -156,6 +159,21 @@ The ACP runtime belongs to 021.
     stands where it did. The two reads stand for one moment: a file a page finds
     grown is read again for the listing as well, so the next listing shows what
     it holds now.
+21. OpenCode's reader goes to its own database instead of its files:
+    `$XDG_DATA_HOME/opencode`, else `~/.local/share/opencode`, then
+    `opencode.db`, one SQLite file OpenCode itself may hold open. It is opened
+    read-only on every call — never written to, locked for a write or
+    migrated — and a missing database, or one this build cannot open,
+    contributes no sessions rather than failing the listing. A listing is
+    every root session (`parent_id is null`) that has a row in `message`; a
+    session with a `parent_id` is a subagent of its parent and not a
+    conversation of its own, and one with no message is a conversation nobody
+    had. A row's directory, title and last activity are its `directory`,
+    `title` and `time_updated` columns; its model is its `model` column's
+    JSON, spelled `<providerID>/<id>` as every other OpenCode model is, or
+    `id` alone with no provider; its `usage` is its `tokens_input` and
+    `tokens_output` columns. Nothing here is cached: every call reads the
+    database fresh.
 
 ## Acceptance criteria
 
@@ -246,6 +264,25 @@ The ACP runtime belongs to 021.
   (`stored_conversations.rs::a_page_of_fifty_reads_the_transcripts_of_its_own_rows_only`),
   and a second listing reads no unchanged transcript again
   (`::a_second_listing_reads_no_unchanged_transcript_again`).
+- An OpenCode root session with a message that `session/list` does not answer
+  with is listed under its own directory and title, and carries its model
+  spelled `<providerID>/<id>` and its input and output tokens
+  (`stored_conversations_opencode.rs::a_session_the_agent_does_not_list_is_listed_with_its_model_and_tokens`),
+  or the id alone with no provider
+  (`::a_model_with_no_provider_goes_by_its_id_alone`).
+- A child session is not listed
+  (`stored_conversations_opencode.rs::a_child_session_is_not_listed`), and
+  neither is a root session with no message
+  (`::a_session_with_no_message_is_not_listed`).
+- A row the agent listed stays listed whatever `opencode.db` says of it,
+  including a row absent from it entirely
+  (`stored_conversations_opencode.rs::a_row_the_agent_lists_stays_listed_whatever_the_disk_says`).
+- A missing `opencode.db` leaves the listing working and is never created by
+  the reader
+  (`stored_conversations_opencode.rs::a_missing_database_leaves_the_listing_working`).
+- OpenCode's reader opens the database read-only: its connection refuses a
+  write
+  (`crates/ariadne-daemon/src/stored_conversations.rs::tests::the_connection_refuses_a_write`).
 - The query parameters and the page DTO are in the OpenAPI document, and the
   outside listing is gone from it
   (`session_list.rs::the_query_and_the_page_are_in_the_openapi_document`).

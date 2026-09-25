@@ -10,8 +10,16 @@
 //! conversation that agent stored, and the model, effort, and tokens of one
 //! of them by its internal session id. [`DiskConversations::new`] is where a
 //! reader is registered, under the registry agent id it answers for;
-//! `claude-acp` and `codex-acp` have one each. A reader answers for its own
-//! agent and for no other.
+//! `claude-acp`, `codex-acp` and `opencode-acp` have the only three today. A
+//! reader answers for its own agent and for no other.
+//!
+//! OpenCode's `session/list` answers with the newest 100 root sessions of the
+//! directory it runs in and no further page, so a conversation outside that
+//! window is invisible to it. On 2026-09-25 its database held 243 root
+//! sessions, 101 of them with messages, and not one of the 101 was in the
+//! answer. [`OpencodeConversations`] reads that database directly instead,
+//! opened read-only on every call: it never writes, locks or migrates a file
+//! OpenCode itself may have open.
 //!
 //! A reader caches both reads by the file's path, size and modification time:
 //! from its start as far as a listing needs, and from its figures source for
@@ -30,6 +38,8 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::{Sqlite, query_as};
 
 use ariadne_api::sessions::{OutsideSessionDto, SessionEntryDto, SessionKind};
 use ariadne_core::TokenUsage;
@@ -45,6 +55,9 @@ const CODEX_AGENT_ID: &str = "codex-acp";
 
 /// The most bytes a page reads from the end of one Codex rollout.
 const CODEX_FIGURES_TAIL_BYTES: u64 = 64 * 1024;
+
+/// The registry agent OpenCode's database belongs to.
+const OPENCODE_AGENT_ID: &str = "opencode-acp";
 
 /// What one stored conversation ran on and what it spent.
 ///
@@ -88,6 +101,7 @@ impl DiskConversations {
     pub(crate) fn new(homes: &TranscriptHomes) -> Self {
         let claude = ClaudeConversations::new(homes.claude.clone());
         let codex = CodexConversations::new(homes.codex.clone());
+        let opencode = OpencodeConversations::new(homes.opencode.join("opencode.db"));
         Self {
             readers: [
                 (
@@ -97,6 +111,10 @@ impl DiskConversations {
                 (
                     CODEX_AGENT_ID.to_string(),
                     Box::new(codex) as Box<dyn StoredConversations>,
+                ),
+                (
+                    OPENCODE_AGENT_ID.to_string(),
+                    Box::new(opencode) as Box<dyn StoredConversations>,
                 ),
             ]
             .into_iter()
@@ -675,6 +693,142 @@ fn lines(text: &str) -> impl Iterator<Item = Value> {
         .filter_map(|line| serde_json::from_str(line).ok())
 }
 
+/// OpenCode's own database, one SQLite file at `<home>/opencode.db`: the
+/// `session` table carries one row per conversation, keyed by `id`, with
+/// `parent_id` set for a subagent's session and null for a conversation of
+/// its own; `message` carries the turns, keyed by `session_id`.
+///
+/// Nothing here is cached: every call opens the file fresh and read-only, so
+/// a listing never answers older than OpenCode's own database and never
+/// holds a connection open against a file OpenCode itself may be writing.
+struct OpencodeConversations {
+    /// `<home>/opencode.db`.
+    db: PathBuf,
+}
+
+impl OpencodeConversations {
+    fn new(db: PathBuf) -> Self {
+        Self { db }
+    }
+}
+
+/// A root session with a message, as a listing shows it.
+#[derive(sqlx::FromRow)]
+struct SessionRow {
+    id: String,
+    directory: Option<String>,
+    title: Option<String>,
+    time_updated: Option<i64>,
+}
+
+/// What one session ran on and what it spent, off the `session` row alone.
+#[derive(sqlx::FromRow)]
+struct FiguresRow {
+    model: Option<String>,
+    tokens_input: Option<i64>,
+    tokens_output: Option<i64>,
+}
+
+impl StoredConversations for OpencodeConversations {
+    fn conversations(&self) -> Vec<OutsideSessionDto> {
+        tokio::runtime::Handle::current().block_on(async {
+            let Some(pool) = opencode_connect(&self.db).await else {
+                return Vec::new();
+            };
+            let rows: Vec<SessionRow> = query_as(
+                "SELECT id, directory, title, time_updated FROM session \
+                 WHERE parent_id IS NULL \
+                   AND EXISTS (SELECT 1 FROM message WHERE message.session_id = session.id)",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+            rows.into_iter()
+                .map(|row| OutsideSessionDto {
+                    agent_id: String::new(),
+                    internal_session_id: row.id,
+                    working_directory: row.directory.unwrap_or_default(),
+                    last_activity_at: row.time_updated.map(opencode_moment).unwrap_or_default(),
+                    first_prompt: row.title.unwrap_or_default(),
+                })
+                .collect()
+        })
+    }
+
+    fn figures(&self, internal_session_id: &str) -> Option<Figures> {
+        tokio::runtime::Handle::current().block_on(async {
+            let pool = opencode_connect(&self.db).await?;
+            let found: Option<FiguresRow> =
+                query_as("SELECT model, tokens_input, tokens_output FROM session WHERE id = ?")
+                    .bind(internal_session_id)
+                    .fetch_optional(&pool)
+                    .await
+                    .ok()?;
+            let row = found?;
+            Some(Figures {
+                model: row.model.as_deref().and_then(opencode_model),
+                effort: None,
+                usage: Some(TokenUsage {
+                    input_tokens: u64::try_from(row.tokens_input.unwrap_or_default())
+                        .unwrap_or_default(),
+                    cached_input_tokens: 0,
+                    output_tokens: u64::try_from(row.tokens_output.unwrap_or_default())
+                        .unwrap_or_default(),
+                }),
+            })
+        })
+    }
+}
+
+/// A read-only pool of one connection to `db`, or `None` where it is missing
+/// or this build cannot open it: OpenCode may hold it open at the same
+/// moment, so a listing never writes to it, never waits on its lock and
+/// never runs a migration over it — a session this daemon cannot read is a
+/// session it lists none of, rather than one it fails the whole page for.
+async fn opencode_connect(db: &Path) -> Option<sqlx::Pool<Sqlite>> {
+    if !db.is_file() {
+        return None;
+    }
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(db)
+                .create_if_missing(false)
+                .read_only(true),
+        )
+        .await
+        .inspect_err(|error| {
+            tracing::warn!(
+                error = %error,
+                db = %db.display(),
+                "opening the opencode database failed",
+            );
+        })
+        .ok()
+}
+
+/// The model of one OpenCode session, off the `model` column's JSON:
+/// `{"id": "...", "providerID": "..."}`. Spelled `<providerID>/<id>` — the
+/// same way every other OpenCode model is — or `id` alone where the column
+/// carries no provider.
+fn opencode_model(json: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(json).ok()?;
+    let id = value.get("id").and_then(Value::as_str)?;
+    match value.get("providerID").and_then(Value::as_str) {
+        Some(provider) if !provider.is_empty() => Some(format!("{provider}/{id}")),
+        _ => Some(id.to_string()),
+    }
+}
+
+/// `time_updated`, epoch milliseconds, as the RFC 3339 every other row's
+/// `last_activity_at` is written in.
+fn opencode_moment(millis: i64) -> String {
+    DateTime::<Utc>::from_timestamp_millis(millis)
+        .map(|at| at.to_rfc3339_opts(SecondsFormat::Millis, true))
+        .unwrap_or_default()
+}
+
 fn moment(at: SystemTime) -> String {
     DateTime::<Utc>::from(at).to_rfc3339_opts(SecondsFormat::Millis, true)
 }
@@ -683,7 +837,7 @@ fn moment(at: SystemTime) -> String {
 mod tests {
     use std::io::Write;
 
-    use super::{CODEX_FIGURES_TAIL_BYTES, codex_tail, read_codex_figures};
+    use super::{CODEX_FIGURES_TAIL_BYTES, codex_tail, opencode_connect, read_codex_figures};
 
     use serde_json::json;
 
@@ -727,6 +881,43 @@ mod tests {
         assert_eq!(
             figures.usage.expect("the final token count").input_tokens,
             900
+        );
+    }
+
+    /// [`opencode_connect`] opens `SQLITE_OPEN_READONLY`: a write over the
+    /// connection it hands back is refused, on an ordinary writable database,
+    /// with nothing about the file or its directory stopping a write of its
+    /// own. A test that instead took away the file's or the directory's write
+    /// permission would prove nothing — SQLite itself falls back to a
+    /// read-only open when a read-write one is denied, so a connection asked
+    /// for read-write and a connection asked for read-only behave alike
+    /// there, and the flag between them goes untested.
+    #[tokio::test]
+    async fn the_connection_refuses_a_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("opencode.db");
+        let setup = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(&db)
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE session (id TEXT)")
+            .execute(&setup)
+            .await
+            .unwrap();
+        setup.close().await;
+
+        let reader = opencode_connect(&db).await.expect("opens the database");
+        let wrote = sqlx::query("INSERT INTO session (id) VALUES ('x')")
+            .execute(&reader)
+            .await;
+
+        assert!(
+            wrote.is_err(),
+            "a connection opened read-only must refuse a write"
         );
     }
 }

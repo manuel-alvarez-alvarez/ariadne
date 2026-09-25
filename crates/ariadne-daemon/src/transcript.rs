@@ -30,6 +30,9 @@ pub struct TranscriptHomes {
     pub codex: PathBuf,
     /// Claude Code's home: `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
     pub claude: PathBuf,
+    /// OpenCode's data directory, which holds `opencode.db`:
+    /// `$XDG_DATA_HOME/opencode`, else `~/.local/share/opencode`.
+    pub opencode: PathBuf,
 }
 
 impl TranscriptHomes {
@@ -46,6 +49,7 @@ impl TranscriptHomes {
         Self {
             codex: dir("CODEX_HOME", ".codex"),
             claude: dir("CLAUDE_CONFIG_DIR", ".claude"),
+            opencode: dir("XDG_DATA_HOME", ".local/share").join("opencode"),
         }
     }
 }
@@ -365,6 +369,7 @@ mod tests {
         TranscriptHomes {
             codex: dir.join("codex"),
             claude: dir.join("claude"),
+            opencode: dir.join("opencode"),
         }
     }
 

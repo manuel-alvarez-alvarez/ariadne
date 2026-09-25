@@ -332,6 +332,7 @@ fn transcript_homes(dir: &Path) -> TranscriptHomes {
     TranscriptHomes {
         codex: dir.join("codex"),
         claude: dir.join("claude"),
+        opencode: dir.join("opencode"),
     }
 }
 
