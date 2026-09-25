@@ -1408,7 +1408,10 @@ async fn run_protocol(
     .await
     .ok()
     .map(|transcript| Arc::new(Mutex::new(transcript)));
-    let options = if loose {
+    // A loaded conversation runs on whatever model it ran on, and the row
+    // records that one. Every new conversation — a loose one started from
+    // scratch included — is put on the model it was pinned to.
+    let options = if loose && resumed {
         let model = find_config_option(&setup.config_options, &["model"], &["model"])
             .and_then(current_value)
             .unwrap_or(&config.model);

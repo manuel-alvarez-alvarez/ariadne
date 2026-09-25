@@ -507,7 +507,16 @@ export interface paths {
          */
         get: operations["sessions_list"];
         put?: never;
-        post?: never;
+        /**
+         * Start a loose session: a new conversation with an agent, in a directory,
+         *     with no goal, task or seat behind it.
+         * @description The model is checked as a goal's pin is — a registry agent and a model of
+         *     it, not one the user turned off — and the effort against that model. The
+         *     directory must be an absolute path to one that exists. The session comes
+         *     back live, waiting for the first prompt typed into its console, which
+         *     becomes its title.
+         */
+        post: operations["sessions_create_session"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1593,6 +1602,22 @@ export interface components {
          * @enum {string}
          */
         ModelRank: "frontier" | "balanced" | "fast" | "local";
+        /**
+         * @description Start a loose session: a new conversation with an agent, in a directory,
+         *     with no goal, task or seat behind it.
+         */
+        NewSessionRequest: {
+            /** @description The effort to run that model at; omitted = the agent's own. */
+            effort?: string | null;
+            /**
+             * @description The model to run, `<agent>:<model>`: a registry agent (`GET
+             *     /v1/acp-agents`) and a model of it (`GET /v1/models`).
+             * @example claude-acp:sonnet
+             */
+            model: string;
+            /** @description The absolute path of an existing directory the agent works in. */
+            working_directory: string;
+        };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
             exists: boolean;
@@ -3067,6 +3092,47 @@ export interface operations {
                 };
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_create_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewSessionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

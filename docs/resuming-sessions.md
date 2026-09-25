@@ -78,7 +78,7 @@ changes.
 
 Once resumed, the session is no longer an outside one. List it again and it
 shows under its own row, not as an outside session a second time; `attach
-<id>` still reaches it, now as the session id rather than the internal id.
+<id>` still reaches it, now as the session id rather than the internal id. It keeps the first prompt it was listed with as its title.
 
 ## When it refuses
 

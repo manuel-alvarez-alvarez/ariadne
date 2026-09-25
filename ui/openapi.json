@@ -1351,6 +1351,45 @@
             "description": ""
           }
         }
+      },
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Start a loose session: a new conversation with an agent, in a directory,\nwith no goal, task or seat behind it.",
+        "description": "The model is checked as a goal's pin is — a registry agent and a model of\nit, not one the user turned off — and the effort against that model. The\ndirectory must be an absolute path to one that exists. The session comes\nback live, waiting for the first prompt typed into its console, which\nbecomes its title.",
+        "operationId": "create_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
       }
     },
     "/v1/sessions/{id}": {
@@ -3672,6 +3711,33 @@
           "fast",
           "local"
         ]
+      },
+      "NewSessionRequest": {
+        "type": "object",
+        "description": "Start a loose session: a new conversation with an agent, in a directory,\nwith no goal, task or seat behind it.",
+        "required": [
+          "model",
+          "working_directory"
+        ],
+        "properties": {
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The effort to run that model at; omitted = the agent's own."
+          },
+          "model": {
+            "type": "string",
+            "description": "The model to run, `<agent>:<model>`: a registry agent (`GET\n/v1/acp-agents`) and a model of it (`GET /v1/models`).",
+            "example": "claude-acp:sonnet"
+          },
+          "working_directory": {
+            "type": "string",
+            "description": "The absolute path of an existing directory the agent works in."
+          }
+        },
+        "additionalProperties": false
       },
       "PathStateDto": {
         "type": "object",

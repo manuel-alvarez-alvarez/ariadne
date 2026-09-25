@@ -4,7 +4,8 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::sessions::{
-    ConsoleInputRequest, SessionDto, SessionEntryDto, SessionKind, SessionPageDto, SessionPageQuery,
+    ConsoleInputRequest, NewSessionRequest, SessionDto, SessionEntryDto, SessionKind,
+    SessionPageDto, SessionPageQuery,
 };
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_client::{Client, SseEvent};
@@ -14,7 +15,7 @@ use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use super::attention::reason_label;
 use super::follow;
 use super::resolve::{self, Kind};
-use super::{Subject, confirm, one_of, query_path};
+use super::{Subject, confirm, one_of, parse_effort, parse_model, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, note, ok_id_line, print,
@@ -129,6 +130,30 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         watch: bool,
     },
+    /// Start a loose session: a new conversation with an agent, in a
+    /// directory, with no goal or task behind it
+    ///
+    /// The session waits for its first prompt, which becomes its title:
+    /// type it in `ariadne attach <id>`, or send it with `ariadne session
+    /// send`.
+    New {
+        /// What the session runs on: AGENT:MODEL — the id of an agent of the
+        /// ACP registry and, after the colon, one model of it
+        /// (codex-acp:gpt-5.3-codex)
+        #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: String,
+        /// The reasoning effort that model is run at: one of the efforts
+        /// `ariadne models ls` lists for it. Default: whatever the agent runs
+        /// it at
+        #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
+        effort: Option<String>,
+        /// The directory the agent works in. Default: the current one
+        #[arg(long, value_name = "PATH", value_hint = clap::ValueHint::DirPath)]
+        dir: Option<std::path::PathBuf>,
+        /// Open the session's console once it has started
+        #[arg(long)]
+        attach: bool,
+    },
     /// Show a session
     Inspect {
         /// Session id
@@ -225,6 +250,45 @@ pub(crate) async fn run(client: &Client, cmd: SessionCommand, format: Format) ->
                 format,
             )
             .await?
+        }
+        SessionCommand::New {
+            model,
+            effort,
+            dir,
+            attach,
+        } => {
+            let dir = match dir {
+                Some(dir) => dir,
+                None => std::env::current_dir()?,
+            };
+            // The daemon takes an absolute path, and a relative one means
+            // this shell's directory, not the daemon's.
+            let dir = std::path::absolute(&dir)?;
+            let s: SessionDto = client
+                .post_json(
+                    "/v1/sessions",
+                    &NewSessionRequest {
+                        model,
+                        effort,
+                        working_directory: dir.display().to_string(),
+                    },
+                )
+                .await?;
+            if attach {
+                return super::attach::attach(client, &s.id, None).await;
+            }
+            print(format, &s, || {
+                println!(
+                    "{}",
+                    status_line(
+                        view().color,
+                        view().quiet,
+                        "session",
+                        &s.id,
+                        s.status.as_str(),
+                    )
+                )
+            })?;
         }
         SessionCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
@@ -855,6 +919,72 @@ mod tests {
             [
                 "agent=codex-acp&all=true&limit=2&refresh=true",
                 "agent=codex-acp&all=true&limit=2&cursor=after-two"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn new_starts_a_session_in_the_directory_as_an_absolute_path() {
+        use axum::Router;
+        use axum::extract::State;
+        use axum::routing::post;
+
+        type Bodies = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
+        async fn create(
+            State(bodies): State<Bodies>,
+            axum::Json(body): axum::Json<serde_json::Value>,
+        ) -> axum::Json<SessionDto> {
+            bodies.lock().unwrap().push(body);
+            axum::Json(SessionDto {
+                goal_id: None,
+                seat: None,
+                task_agent_id: None,
+                ..session("01NEW", "goal", None)
+            })
+        }
+
+        let bodies = Bodies::default();
+        let app = Router::new()
+            .route("/v1/sessions", post(create))
+            .with_state(bodies.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+
+        for (dir, effort) in [
+            (Some("relative/dir".into()), Some("high".to_string())),
+            (None, None),
+        ] {
+            run(
+                &client,
+                SessionCommand::New {
+                    model: "codex-acp:gpt-5".into(),
+                    effort,
+                    dir,
+                    attach: false,
+                },
+                Format::Json,
+            )
+            .await
+            .unwrap();
+        }
+        server.abort();
+
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            *bodies.lock().unwrap(),
+            [
+                serde_json::json!({
+                    "model": "codex-acp:gpt-5",
+                    "effort": "high",
+                    "working_directory": cwd.join("relative/dir").display().to_string(),
+                }),
+                serde_json::json!({
+                    "model": "codex-acp:gpt-5",
+                    "effort": null,
+                    "working_directory": cwd.display().to_string(),
+                }),
             ]
         );
     }

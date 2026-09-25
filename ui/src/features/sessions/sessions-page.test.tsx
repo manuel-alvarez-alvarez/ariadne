@@ -14,7 +14,7 @@
  * an Ariadne row opens straight away.
  */
 
-import { cleanup, screen, waitFor } from "@testing-library/react"
+import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
@@ -23,6 +23,7 @@ import { shortId } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
 import {
   aGoal,
+  aModel,
   anOutsideSession,
   anOutsideSessionPage,
   aSession,
@@ -142,6 +143,16 @@ function stubDaemon({
     if (url.pathname === "/v1/sessions" && request.method === "GET" && kind === "outside") {
       return Promise.resolve(
         jsonResponse(outsidePage ? outsidePage(url.searchParams) : anOutsidePage(outside)),
+      )
+    }
+    if (url.pathname === "/v1/sessions" && request.method === "POST") {
+      return Promise.resolve(jsonResponse(resumed))
+    }
+    if (url.pathname === "/v1/models") {
+      return Promise.resolve(
+        jsonResponse([
+          aModel({ id: "claude-agent-acp:claude-sonnet-5", agent_id: "claude-agent-acp" }),
+        ]),
       )
     }
     if (url.pathname === "/v1/outside-sessions/resume" && request.method === "POST") {
@@ -345,6 +356,24 @@ it("resumes an outside row once, then opens the console of the session it answer
     internal_session_id: OUTSIDE.internal_session_id,
   })
   await waitFor(() => expect(seen.url).toBe(`/sessions?session=${RESUMED.id}`))
+})
+
+it("starts a new session from the header and opens its console", async () => {
+  const user = userEvent.setup()
+  const seen = renderPage()
+
+  await user.click(screen.getByRole("button", { name: "New session" }))
+  await user.click(await screen.findByRole("button", { name: "Runs on" }))
+  const models = await screen.findByRole("listbox", { name: "Models" })
+  await user.click(within(models).getByText("claude-agent-acp:claude-sonnet-5"))
+  await user.keyboard("{Escape}")
+  const dialog = screen.getByRole("dialog", { name: "New session" })
+  await user.type(within(dialog).getByLabelText("Working directory"), "/Users/me/dev/ariadne")
+  await user.click(screen.getByRole("button", { name: "Start session" }))
+
+  await waitFor(() =>
+    expect(seen.url).toBe(`/sessions?session=${RESUMED.id}&tab=terminal&focus=terminal`),
+  )
 })
 
 it("narrows to one goal from a scope chip, skipping the outside half, and clears it", async () => {

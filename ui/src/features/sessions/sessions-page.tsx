@@ -32,7 +32,7 @@
  */
 
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
-import { ChevronDownIcon, RefreshCwIcon, XIcon } from "lucide-react"
+import { ChevronDownIcon, PlusIcon, RefreshCwIcon, XIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
@@ -59,7 +59,7 @@ import { goalsQueryOptions } from "@/features/goals/queries"
 import { parseModelRef, pinLabel } from "@/features/models/model-ref"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { describeError, SEAT_LABELS, shortId } from "@/lib/format"
-import { paths, sessionPanelFrom } from "@/routes/paths"
+import { paths, sessionPanelFrom, sessionTerminalFrom } from "@/routes/paths"
 
 import {
   ALL,
@@ -76,6 +76,7 @@ import {
   statusLabel,
   TASK_PARAM,
 } from "./filters"
+import { NewSessionDialog } from "./new-session-dialog"
 import { KIND_LABELS, type OutsideFilterParam, useOutsideSessionFilters } from "./outside-filters"
 import {
   byId,
@@ -213,6 +214,7 @@ export function SessionsPage() {
   const outsideTotal = outsidePages?.at(-1)?.total ?? outsideRows.length
   const total = ariadneRows.length + (outsideEligible ? outsideTotal : 0)
 
+  const [starting, setStarting] = useState(false)
   const [resumingKey, setResumingKey] = useState<string | null>(null)
   const resume = useResumeOutsideSession()
 
@@ -344,7 +346,20 @@ export function SessionsPage() {
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
+            <Button onClick={() => setStarting(true)}>
+              <PlusIcon />
+              New session
+            </Button>
           </>
+        }
+      />
+
+      <NewSessionDialog
+        open={starting}
+        onOpenChange={setStarting}
+        onStarted={(session) =>
+          // Straight into its console: it is waiting for the first prompt.
+          void navigate(sessionTerminalFrom(paths.sessions(), search, session.id))
         }
       />
 

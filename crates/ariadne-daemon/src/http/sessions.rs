@@ -4,7 +4,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::sessions::{
-    ResumeOutsideSessionRequest, SessionDto, SessionPageDto, SessionPageQuery,
+    NewSessionRequest, ResumeOutsideSessionRequest, SessionDto, SessionPageDto, SessionPageQuery,
 };
 use ariadne_core::models::agent_of;
 use ariadne_store::SessionFilter;
@@ -14,6 +14,49 @@ use super::caller::call_ctx;
 use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
 use crate::acp_sessions::{Filter, QueryError};
+
+/// Start a loose session: a new conversation with an agent, in a directory,
+/// with no goal, task or seat behind it.
+///
+/// The model is checked as a goal's pin is — a registry agent and a model of
+/// it, not one the user turned off — and the effort against that model. The
+/// directory must be an absolute path to one that exists. The session comes
+/// back live, waiting for the first prompt typed into its console, which
+/// becomes its title.
+#[utoipa::path(post, path = "/v1/sessions", tag = "sessions",
+    operation_id = "create_session",
+    request_body = NewSessionRequest,
+    responses((status = 200, body = SessionDto), (status = 400), (status = 403), (status = 409)))]
+pub(super) async fn create(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<NewSessionRequest>,
+) -> ApiResult<Json<SessionDto>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    if ctx.session.is_some() {
+        return Err(ApiError::forbidden("only the user may start a session"));
+    }
+    let pin = super::pins::chosen(
+        &state.store,
+        &state.agent_registry,
+        Some(&req.model),
+        req.effort.as_deref(),
+    )
+    .await?;
+    let cwd = std::path::PathBuf::from(&req.working_directory);
+    if !cwd.is_absolute() || !cwd.is_dir() {
+        return Err(ApiError::bad_request(format!(
+            "the working directory must be the absolute path of a directory that exists: {}",
+            req.working_directory
+        )));
+    }
+    let session = state
+        .launcher
+        .start_loose(pin, cwd)
+        .await
+        .map_err(|error| ApiError::conflict(format!("{error:#}")))?;
+    Ok(Json(session_dto_of(&state.store, session).await?))
+}
 
 /// Resume an outside conversation without creating a goal or task.
 #[utoipa::path(post, path = "/v1/outside-sessions/resume", tag = "sessions",

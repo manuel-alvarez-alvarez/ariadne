@@ -57,6 +57,21 @@ fetches every page into one instead. Without `--since` or `--until`, the
 table holds only the last 7 days of activity. See [Resuming a
 session](resuming-sessions.md) for finding and continuing one of these.
 
+## Start a new session
+
+`ariadne session new` starts a conversation with an agent in a directory,
+with no goal or task behind it — the same as **New session** on the desktop
+app's Sessions screen.
+
+```sh
+ariadne session new --model codex-acp:gpt-5.3-codex --attach
+ariadne session new --model claude-acp:sonnet --effort high --dir ~/projects/api
+```
+
+`--dir` defaults to the current directory. The session waits for its first
+prompt, which becomes its title: type it in `ariadne attach <id>` (or pass
+`--attach`), or send it with `ariadne session send <id> "…"`.
+
 ## Connect to a session
 
 `ariadne attach` is an interactive console, not a shell inside the agent. It

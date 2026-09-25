@@ -28,6 +28,7 @@ import {
   api,
   type CacheSnapshot,
   cacheRow,
+  type NewSessionRequest,
   optimisticStatus,
   qk,
   type ResumeOutsideSessionRequest,
@@ -218,6 +219,19 @@ export function outsideSessionsQueryOptions(
       ).then((page) => ({ ...page, sessions: page.sessions.map(outsideSession) })),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.next_cursor ?? null,
+  })
+}
+
+/**
+ * Start a loose session: a new conversation with an agent, in a directory,
+ * without a goal, task or seat. It comes back live, waiting for its first
+ * prompt.
+ */
+export function useStartSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: NewSessionRequest) => unwrap(api().POST("/v1/sessions", { body })),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
   })
 }
 

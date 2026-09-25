@@ -507,6 +507,7 @@ const QUIET_OUTPUT: &[&str] = &[
     "repo update",
     "session kill",
     "session ls",
+    "session new",
     "session resume",
     "session send",
     "skill create",

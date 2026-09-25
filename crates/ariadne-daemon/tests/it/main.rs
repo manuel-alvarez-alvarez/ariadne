@@ -36,6 +36,7 @@ mod resume;
 mod scheduler_attention;
 mod scheduler_dependencies;
 mod session_list;
+mod session_start;
 mod skill_documents;
 mod task_branches;
 mod task_failure;

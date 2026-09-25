@@ -62,6 +62,22 @@ pub struct OutsideSessionDto {
     pub first_prompt: String,
 }
 
+/// Start a loose session: a new conversation with an agent, in a directory,
+/// with no goal, task or seat behind it.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewSessionRequest {
+    /// The model to run, `<agent>:<model>`: a registry agent (`GET
+    /// /v1/acp-agents`) and a model of it (`GET /v1/models`).
+    #[schema(example = "claude-acp:sonnet")]
+    pub model: String,
+    /// The effort to run that model at; omitted = the agent's own.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// The absolute path of an existing directory the agent works in.
+    pub working_directory: String,
+}
+
 /// Resume a stored conversation without a goal, task or seat.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

@@ -1,24 +1,26 @@
 ---
 id: outside-session-resume
 status: current
-updated: 2026-09-24
+updated: 2026-09-25
 areas: [api, daemon, store]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/acp_session_resume.rs
   - crates/ariadne-daemon/tests/it/session_list.rs
+  - crates/ariadne-daemon/tests/it/session_start.rs
   - crates/ariadne-store/tests/store.rs
 ---
 
 # Outside session resume
 
-An outside conversation resumes as a loose session.
-A loose session has no goal, task, staffed agent or seat.
+An outside conversation resumes as a loose session, and a new conversation
+starts as one. A loose session has no goal, task, staffed agent or seat.
 
 ## Scope
 
 In: discovering stored ACP conversations, listing them beside Ariadne's own
-sessions, and resuming one in its recorded working directory.
+sessions, resuming one in its recorded working directory, and starting a new
+one in any directory.
 
 Out: CLI commands, desktop screens, and task staffing.
 Session controls and revival belong to 008.
@@ -110,6 +112,15 @@ The ACP runtime belongs to 021.
     a loose session without one takes the first input typed into its
     console. Once set, it never changes. A task's or a goal's session has
     none, and goes by its work's title.
+16. `POST /v1/sessions` takes `{model, effort?, working_directory}` and
+    starts a loose session: a new conversation, through `session/new`, in
+    that directory, with no goal, task, seat or worktree. The model and
+    effort are checked as a goal's pin is, and the agent is put on them. The
+    directory must be an absolute path to a directory that exists, or the
+    call is refused with 400. Only the user can call it; an agent session
+    receives 403. The session comes back live with no title, and the first
+    prompt typed into it becomes one (item 15). Revived later, it loads the
+    conversation it opened.
 
 ## Acceptance criteria
 
@@ -196,6 +207,16 @@ The ACP runtime belongs to 021.
 - An untitled loose session takes the first prompt typed into it as its
   title, and the next prompt does not rename it
   (`acp_session_resume.rs::the_first_prompt_typed_into_an_untitled_loose_session_titles_it`).
+- A new session opens a conversation in its directory on the chosen model
+  and effort, with no goal, task or worktree, and its first prompt titles it
+  (`session_start.rs::a_new_session_opens_a_conversation_in_its_directory`);
+  revived, it loads that conversation rather than opening another
+  (`::a_new_session_resumes_the_conversation_it_opened`); a relative or
+  missing directory and a model of no registry agent are refused
+  (`::a_new_session_needs_an_existing_absolute_directory_and_a_registry_model`);
+  an agent caller receives 403
+  (`::an_agent_session_cannot_start_a_session`); and the endpoint is in the
+  OpenAPI document (`::the_start_endpoint_is_in_the_openapi_document`).
 - OpenAPI contains resume and omits adoption
   (`acp_session_resume.rs::the_resume_endpoint_replaces_adoption_in_openapi`).
 

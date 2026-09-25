@@ -603,7 +603,7 @@ impl Launcher {
             .launch_loose(
                 &session,
                 PathBuf::from(&outside.working_directory),
-                &outside.internal_session_id,
+                Some(&outside.internal_session_id),
                 "",
             )
             .await;
@@ -615,11 +615,42 @@ impl Launcher {
         result
     }
 
+    /// Start a loose session: a new conversation with the agent the pin
+    /// names, in `cwd`, with no goal, task or seat. The agent answers
+    /// `session/new`, and waits for the first prompt typed into its console.
+    pub(crate) async fn start_loose(
+        &self,
+        pin: ariadne_store::AgentPin,
+        cwd: PathBuf,
+    ) -> Result<AgentSession> {
+        let session = self
+            .store
+            .create_session(NewSession {
+                goal_id: None,
+                task_id: None,
+                seat: None,
+                task_agent_id: None,
+                model: pin.model,
+                effort: pin.effort,
+                worktree_path: Some(cwd.display().to_string()),
+            })
+            .await?;
+        let result = self.launch_loose(&session, cwd, None, "").await;
+        if result.is_err() {
+            self.store
+                .set_session_status(&session.id, SessionStatus::Failed)
+                .await?;
+        }
+        result
+    }
+
+    /// Launch a loose session's agent: loading the conversation `internal`
+    /// names, or opening a new one where there is none.
     async fn launch_loose(
         &self,
         session: &AgentSession,
         cwd: PathBuf,
-        internal: &str,
+        internal: Option<&str>,
         instruction: &str,
     ) -> Result<AgentSession> {
         let launch_id = ariadne_core::id::new_id();
@@ -630,7 +661,7 @@ impl Launcher {
                 ("ARIADNE_LAUNCH_ID".into(), launch_id.clone()),
             ],
             cwd,
-            internal_session_id: Some(internal.to_string()),
+            internal_session_id: internal.map(str::to_string),
             config: ariadne_core::acp::LaunchConfig {
                 version: ariadne_core::acp::VERSION,
                 system_prompt: String::new(),
@@ -641,8 +672,8 @@ impl Launcher {
                     .context("session has no agent pin")?
                     .1
                     .to_string(),
-                effort: None,
-                resume_session_id: Some(internal.to_string()),
+                effort: session.effort.clone(),
+                resume_session_id: internal.map(str::to_string),
                 mcp_servers: Vec::new(),
             },
         };
@@ -1078,7 +1109,7 @@ impl Launcher {
         }
         let session = self.store.restart_session(&previous.id, None).await?;
         if session.seat.is_none() {
-            self.launch_loose(&session, cwd, internal, instruction.unwrap_or(""))
+            self.launch_loose(&session, cwd, Some(internal), instruction.unwrap_or(""))
                 .await
         } else {
             self.launch_resumed(&session, cwd, internal, instruction.unwrap_or(""))

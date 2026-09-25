@@ -171,6 +171,11 @@ same binary also serves (013).
 30. `session inspect` shows a reported context window as `<used> / <size>`
     with the compact token spelling. It shows no context line when the agent
     has not reported one, and it never shows a cost.
+31. `session new --model AGENT:MODEL [--effort E] [--dir PATH] [--attach]`
+    starts a loose session (020): a new conversation with no goal or task,
+    in `--dir` or the current directory, sent to the daemon as an absolute
+    path. It prints the session's status line, or with `--attach` opens its
+    console at once. The first prompt typed into it is its title.
 
 ## Acceptance criteria
 
@@ -327,7 +332,10 @@ same binary also serves (013).
   (`commands/console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
   `::a_permission_question_renders_and_delivers_the_selected_answer`);
   `session send` takes an id and the text
-  (`cli/tests.rs::session_send_takes_an_id_and_the_text_to_send`); and
+  (`cli/tests.rs::session_send_takes_an_id_and_the_text_to_send`);
+  `session new` starts a loose session on a model, in the current directory
+  or the one `--dir` names, sent as an absolute path
+  (`commands/session.rs::new_starts_a_session_in_the_directory_as_an_absolute_path`); and
   `session logs` reads the snapshot and follows the console stream
   (`commands/console.rs::a_transcript_log_uses_its_snapshot_for_table_and_json_output`,
   `::a_followed_log_uses_the_console_event_stream`).

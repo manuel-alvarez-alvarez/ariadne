@@ -117,6 +117,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("session kill", true),
     ("session logs", true),
     ("session ls", true),
+    ("session new", true),
     ("session resume", true),
     ("session send", true),
     ("skill create", true),
