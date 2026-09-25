@@ -90,6 +90,8 @@ The ACP runtime belongs to 021.
 9. Resume finds the conversation in the daemon snapshot.
    A miss takes one fresh snapshot and refuses that call with 404.
 10. The agent starts through `session/load` in its recorded working directory.
+    A directory that no longer exists refuses the resume with 409 and says
+    so, before any row is made: the conversation stays outside.
     Resume creates no goal, task, worktree or branch.
     The row stores that directory in `worktree_path`.
     It stores the agent's internal session id.
@@ -184,6 +186,9 @@ The ACP runtime belongs to 021.
   (`store.rs::a_loose_session_round_trips_without_a_goal_task_or_seat`).
 - Resume loads the recorded directory and internal id, records the loaded model, and creates no scheduled work or worktree
   (`acp_session_resume.rs::an_outside_session_loads_in_its_directory_without_scheduled_work`).
+- A conversation whose directory is gone is refused with that reason, makes
+  no row, and stays in the listing as outside
+  (`acp_session_resume.rs::an_outside_session_whose_directory_is_gone_is_refused_without_a_row`).
 - Concurrent resumes return one row and start one process
   (`acp_session_resume.rs::concurrent_resumes_return_one_row_and_start_one_process`).
 - A load without a model option records the agent's default model

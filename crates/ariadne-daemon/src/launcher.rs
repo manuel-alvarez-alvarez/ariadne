@@ -574,6 +574,16 @@ impl Launcher {
         &self,
         outside: &ariadne_api::sessions::OutsideSessionDto,
     ) -> Result<AgentSession> {
+        // Checked before a row is made: an agent cannot start in a directory
+        // that is gone, and a failed row would hold the conversation from
+        // then on, in the listing's outside half's place.
+        let cwd = PathBuf::from(&outside.working_directory);
+        if !cwd.is_dir() {
+            anyhow::bail!(
+                "the directory this conversation ran in is gone: {}",
+                cwd.display()
+            );
+        }
         let model = self
             .registry
             .default_model(&outside.agent_id)
@@ -600,12 +610,7 @@ impl Launcher {
                 .await?;
         }
         let result = self
-            .launch_loose(
-                &session,
-                PathBuf::from(&outside.working_directory),
-                Some(&outside.internal_session_id),
-                "",
-            )
+            .launch_loose(&session, cwd, Some(&outside.internal_session_id), "")
             .await;
         if result.is_err() {
             self.store

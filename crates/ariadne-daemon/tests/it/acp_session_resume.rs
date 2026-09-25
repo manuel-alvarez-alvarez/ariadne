@@ -134,6 +134,47 @@ fn resume_request() -> serde_json::Value {
     json!({"agent_id": "test-agent", "internal_session_id": "outside-1"})
 }
 
+/// A conversation whose directory is gone cannot start there: the resume is
+/// refused with that reason, before any row is made, so the conversation
+/// stays outside rather than turning into a failed session.
+#[tokio::test]
+async fn an_outside_session_whose_directory_is_gone_is_refused_without_a_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let gone = dir.path().join("removed-worktree");
+    let setup = outside_script_at(gone.to_str().unwrap(), "continue");
+    let stub = stub_acp_agent(dir.path(), setup);
+    let h = harness_with_agent("test-agent", &stub.bin).await;
+
+    let refusal: ErrorBody = h
+        .json(
+            post_json("/v1/outside-sessions/resume", resume_request()),
+            axum::http::StatusCode::CONFLICT,
+        )
+        .await;
+
+    assert_eq!(
+        refusal.error.message,
+        format!(
+            "the directory this conversation ran in is gone: {}",
+            gone.display()
+        )
+    );
+    assert!(
+        h.store
+            .list_sessions(SessionFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let page: SessionPageDto = h.get("/v1/sessions?all=true").await;
+    let row = page
+        .sessions
+        .iter()
+        .find(|session| session.internal_session_id.as_deref() == Some("outside-1"))
+        .unwrap_or_else(|| panic!("outside-1 not in {:#?}", page.sessions));
+    assert_eq!(row.kind, SessionKind::Outside);
+}
+
 #[tokio::test]
 async fn an_outside_session_loads_in_its_directory_without_scheduled_work() {
     let dir = tempfile::tempdir().unwrap();
