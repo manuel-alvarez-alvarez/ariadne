@@ -83,17 +83,28 @@ Out: the daemon endpoints themselves (012).
 17. The agent activity feed shows each event's one-line summary from the
     daemon; its raw payload stays available under the row.
 18. The sessions screen lists both kinds of session in one table, newest
-    activity first: the title, the status, the goal, the task, the agent, the
-    age and the tokens. The daemon answers the two kinds over two endpoints —
+    activity first: the title, the status, the work — in one column, the
+    seat a session holds as a badge, the goal it is under and the task under
+    that, each of which narrows the table to its sessions when picked — the
+    agent, the age and the tokens. The daemon answers the two kinds over two endpoints —
     `GET /v1/sessions` whole, for every session Ariadne started, `GET
     /v1/outside-sessions` a page at a time, for every conversation an ACP
     agent stored on its own — and the screen merges them client-side into the
-    one table. An outside row leaves its status, goal and task empty, and
-    names its registry agent and its working directory instead, under its
-    title. A filter bar above the table narrows the listing by kind, agent —
-    the registry of `GET /v1/acp-agents` — status, seat, a since day, an
-    until day, and a search over the titles; `?goal=` and `?task=` narrow it
-    further, as a chip above the table. Each filter is a URL search param
+    one table. Every row shows its working directory under its title — a
+    task's worktree, a loose session's directory, an outside conversation's.
+    An outside row leaves its status, goal and task empty, and names its
+    registry agent instead. A filter bar above the table narrows the
+    listing by kind, agent — the registry of `GET /v1/acp-agents` — status,
+    seat, directory, a since day, an until day, and a search over the
+    titles; `?goal=` and `?task=` narrow it further, as a chip above the
+    table. The search leads the bar, with the count and Refresh at the other
+    end of its row; under it each filter is one compact trigger naming what
+    it filters and, once set, what it is set to, drawn dashed while unset.
+    The directory and the activity window open a popover — the window with
+    Today, Last 7 days and Last 30 days one click each, and an empty day
+    shown as "Any day" rather than as the date WebKit fills an empty date
+    field with — and Clear filters drops every filter of the bar in one
+    step, leaving the goal and task scope. Each filter is a URL search param
     under the daemon's own name for it (`?kind=`, `?agent=`, `?status=`,
     `?seat=`, `?dir=`, `?since=`, `?until=`, `?q=`), so a narrowed screen is
     what its URL says and opens again with those filters set; a typed one
@@ -126,6 +137,10 @@ Out: the daemon endpoints themselves (012).
     hands back — which is what turns a stored conversation into one Ariadne
     can show a console for. That session is loose: no goal, task or seat of
     its own, same as any other session the screen has none of a fact for.
+    From then on it holds the conversation, so its outside row leaves every
+    cached page at once and the outside half is fetched again; a
+    `session_created` event does the same, for a resume made from the CLI or
+    another window.
 19. On a task staffed with several authors (004) the task panel shows every
     one of them — its skills, its model, its own branch, and its status in the
     pick: the votes it has so far, or "Picked" once it is the one that won —
@@ -329,6 +344,16 @@ Out: the daemon endpoints themselves (012).
   UTC
   (`ui/src/features/sessions/sessions-page.test.tsx::sends each filter to the daemon under the name that filter has, on the endpoint that takes it`,
   `::sends a day's activity window as the moments that bound it, in UTC`).
+- A preset activity window is sent as the day it starts on and named on its
+  trigger; Clear filters drops every filter of the bar at once, the search
+  field and the remembered status included, and keeps the scope
+  (`ui/src/features/sessions/sessions-page.test.tsx::sends a preset activity window as the day it starts on, and names it on the trigger`,
+  `::clears every filter of the bar at once, the search field included, and keeps the scope`).
+- A preset activity window is sent as the day it starts on and named on its
+  trigger; Clear filters drops every filter of the bar at once, the search
+  field and the remembered status included, and keeps the scope
+  (`ui/src/features/sessions/sessions-page.test.tsx::sends a preset activity window as the day it starts on, and names it on the trigger`,
+  `::clears every filter of the bar at once, the search field included, and keeps the scope`).
 - The outside half pages through `next_cursor`, keeping the Ariadne rows
   already shown, and counts both halves together out of the total; Refresh
   asks every outside agent again
@@ -339,6 +364,16 @@ Out: the daemon endpoints themselves (012).
   of the session the daemon answers
   (`ui/src/features/sessions/sessions-page.test.tsx::opens an Ariadne row's own panel directly, asking the resume endpoint for nothing`,
   `::resumes an outside row once, then opens the console of the session it answers`).
+- Every row shows where its agent runs under its title, and a resumed outside
+  conversation is listed once, as the session that holds it, with its
+  directory; a created session refetches the outside half, an updated one
+  does not
+  (`ui/src/features/sessions/sessions-page.test.tsx::shows where a task's agent runs under its title, as it does for every row`,
+  `::shows the seat, the goal and the task of an Ariadne row together, in one Work column`,
+  `::narrows the table to a goal picked in the Work column, opening no panel`,
+  `::shows a resumed outside row once, as the session that holds it, with its directory`,
+  `ui/src/events/dispatch.test.ts::refetches the outside lists when a session is created, since it may hold one of their rows`,
+  `::leaves the outside lists alone when a session only moves on`).
 - A goal chip narrows the screen and the daemon's own list alike, skips the
   outside half, clears from the chip, and the status and seat filters are
   what the screen is opened with next

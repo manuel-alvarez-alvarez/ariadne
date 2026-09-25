@@ -6,7 +6,7 @@
  *
  * What is worth pinning: the two kinds read down one list, newest activity
  * first; an outside row's empty status, goal and task, and its agent and
- * directory shown instead; every filter reaching the daemon under its own
+ * directory shown as every row's is; every filter reaching the daemon under its own
  * name, on the endpoint that takes it; paging through `next_cursor` with the
  * total kept in view, the Ariadne half never asked to page since it never
  * arrives in pages; and picking a row — which resumes an outside session
@@ -19,7 +19,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
 import type { components, GoalDto, SessionDto, TaskDto } from "@/api"
-import { shortId } from "@/lib/format"
+import { SEAT_LABELS, shortId } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
 import {
   aGoal,
@@ -45,6 +45,7 @@ const ENGINEER: SessionDto = aSession({
   id: "01JSESS0000000000000000ENG",
   goal_id: GOAL.id,
   task_id: TASK.id,
+  worktree_path: "/Users/me/.ariadne/worktrees/goal/task-eng",
   last_activity_at: "2026-01-03T00:00:00Z",
 })
 
@@ -251,7 +252,10 @@ it("sends each filter to the daemon under the name that filter has, on the endpo
   await user.click(await screen.findByRole("menuitemradio", { name: OUTSIDE.agent_id }))
   await user.click(screen.getByRole("button", { name: "Filter by status" }))
   await user.click(await screen.findByRole("menuitemradio", { name: "Failed" }))
-  await user.type(screen.getByLabelText("Working directory"), "/Users/me/dev")
+  await user.click(screen.getByRole("button", { name: "Filter by directory" }))
+  await user.type(await screen.findByLabelText("Working directory"), "/Users/me/dev")
+  // Straight on to the search, closing the popover mid-settle: what was
+  // typed in it is sent all the same.
   await user.type(screen.getByLabelText("Search titles"), "flaky")
 
   await waitFor(
@@ -272,7 +276,10 @@ it("sends a day's activity window as the moments that bound it, in UTC", async (
   renderPage()
   await waitFor(() => row(TASK.title))
 
-  fireEvent.change(screen.getByLabelText("Active since"), { target: { value: "2026-01-01" } })
+  await userEvent.setup().click(screen.getByRole("button", { name: "Filter by activity" }))
+  fireEvent.change(await screen.findByLabelText("Active since"), {
+    target: { value: "2026-01-01" },
+  })
   fireEvent.change(screen.getByLabelText("Active until"), { target: { value: "2026-01-03" } })
 
   await waitFor(() => {
@@ -280,6 +287,38 @@ it("sends a day's activity window as the moments that bound it, in UTC", async (
     expect(query?.get("since")).toBe("2026-01-01T00:00:00Z")
     expect(query?.get("until")).toBe("2026-01-03T23:59:59.999999999Z")
   })
+})
+
+it("sends a preset activity window as the day it starts on, and names it on the trigger", async () => {
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => row(TASK.title))
+
+  await user.click(screen.getByRole("button", { name: "Filter by activity" }))
+  await user.click(await screen.findByRole("button", { name: "Last 7 days" }))
+
+  await waitFor(() => {
+    const query = queriesTo("outside").at(-1)
+    expect(query?.get("since")).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00Z$/)
+    expect(query?.get("until")).toBeNull()
+  })
+  expect(screen.getByRole("button", { name: "Filter by activity" }).textContent).toContain(
+    "Last 7 days",
+  )
+})
+
+it("clears every filter of the bar at once, the search field included, and keeps the scope", async () => {
+  stubDaemon({ sessions: [ENGINEER] })
+  const user = userEvent.setup()
+  const seen = renderPage(`/sessions?goal=${GOAL.id}&status=failed&agent=codex-acp&q=flaky`)
+  expect(await screen.findByDisplayValue("flaky")).toBeTruthy()
+
+  await user.click(screen.getByRole("button", { name: "Clear filters" }))
+
+  await waitFor(() => expect(seen.url).toBe(`/sessions?goal=${GOAL.id}`))
+  expect((screen.getByLabelText("Search titles") as HTMLInputElement).value).toBe("")
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull()
+  expect(useSettingsStore.getState().sessionStatusFilter).toBe("")
 })
 
 it("pages the outside half through next_cursor, keeping the Ariadne rows, and counts the total", async () => {
@@ -299,13 +338,13 @@ it("pages the outside half through next_cursor, keeping the Ariadne rows, and co
   await waitFor(() => row(TASK.title))
   // Two Ariadne rows plus the one outside page loaded so far, out of the
   // two Ariadne rows plus the outside total.
-  expect(await screen.findByText("3 of 4")).toBeTruthy()
+  expect(await screen.findByText("3 of 4 sessions")).toBeTruthy()
 
   await user.click(screen.getByRole("button", { name: "Load more" }))
 
   expect(await screen.findByText(LATER.first_prompt)).toBeTruthy()
   expect(screen.getByText(OUTSIDE.first_prompt)).toBeTruthy()
-  expect(await screen.findByText("4 of 4")).toBeTruthy()
+  expect(await screen.findByText("4 of 4 sessions")).toBeTruthy()
   expect(queriesTo("outside").at(-1)?.get("cursor")).toBe("cursor-1")
 })
 
@@ -356,6 +395,64 @@ it("resumes an outside row once, then opens the console of the session it answer
     internal_session_id: OUTSIDE.internal_session_id,
   })
   await waitFor(() => expect(seen.url).toBe(`/sessions?session=${RESUMED.id}`))
+})
+
+it("shows the seat, the goal and the task of an Ariadne row together, in one Work column", async () => {
+  renderPage()
+  await waitFor(() => row(TASK.title))
+
+  const cells = within(row(TASK.title))
+  expect(cells.getByText(SEAT_LABELS[ENGINEER.seat ?? "author"])).toBeTruthy()
+  expect(
+    cells.getByRole("button", { name: `Show the sessions of the goal ${GOAL.title}` }),
+  ).toBeTruthy()
+  expect(
+    cells.getByRole("button", { name: `Show the sessions of the task ${TASK.title}` }),
+  ).toBeTruthy()
+  const headers = screen.getAllByRole("columnheader").map((header) => header.textContent)
+  expect(headers).toContain("Work")
+  expect(headers).not.toContain("Goal")
+  expect(headers).not.toContain("Task")
+})
+
+it("narrows the table to a goal picked in the Work column, opening no panel", async () => {
+  stubDaemon({ sessions: [ENGINEER] })
+  const user = userEvent.setup()
+  const seen = renderPage()
+  await waitFor(() => row(TASK.title))
+
+  await user.click(
+    within(row(TASK.title)).getByRole("button", {
+      name: `Show the sessions of the goal ${GOAL.title}`,
+    }),
+  )
+
+  await waitFor(() => expect(seen.url).toBe(`/sessions?goal=${GOAL.id}`))
+})
+
+it("shows where a task's agent runs under its title, as it does for every row", async () => {
+  renderPage()
+
+  await waitFor(() => row(TASK.title))
+  expect(within(row(TASK.title)).getByText(ENGINEER.worktree_path ?? "")).toBeTruthy()
+})
+
+it("shows a resumed outside row once, as the session that holds it, with its directory", async () => {
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => row(OUTSIDE.first_prompt))
+  // From the resume on, the daemon lists the conversation as the session
+  // that holds it, titled by its first prompt, and no longer as outside.
+  stubDaemon({
+    sessions: [ENGINEER, PLANNER, { ...RESUMED, title: OUTSIDE.first_prompt }],
+    outside: [],
+  })
+
+  await user.click(row(OUTSIDE.first_prompt))
+
+  await waitFor(() => expect(within(row(OUTSIDE.first_prompt)).getByText("Running")).toBeTruthy())
+  expect(screen.getAllByTitle(OUTSIDE.first_prompt)).toHaveLength(1)
+  expect(within(row(OUTSIDE.first_prompt)).getByText(OUTSIDE.working_directory)).toBeTruthy()
 })
 
 it("starts a new session from the header and opens its console", async () => {

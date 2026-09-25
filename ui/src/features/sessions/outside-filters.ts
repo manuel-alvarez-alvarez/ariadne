@@ -36,7 +36,7 @@ export const KIND_LABELS: Record<SessionKind, string> = {
 }
 
 /** The params the filters travel in, in the order the bar shows them. */
-const OUTSIDE_FILTER_PARAMS = ["kind", "agent", "dir", "since", "until", "q"] as const
+export const OUTSIDE_FILTER_PARAMS = ["kind", "agent", "dir", "since", "until", "q"] as const
 
 /** The params this half of the bar reads, and the only ones `filterBy` writes. */
 export type OutsideFilterParam = (typeof OUTSIDE_FILTER_PARAMS)[number]
@@ -50,6 +50,8 @@ interface OutsideFiltersState {
   filters: OutsideSessionListFilters
   /** Apply one selection. "All" and an empty field drop the param. */
   filterBy: (param: OutsideFilterParam, value: string) => void
+  /** Apply several at once, the way {@link filterBy} applies one. */
+  filterByMany: (values: Partial<Record<OutsideFilterParam, string>>) => void
 }
 
 function parseKindFilter(value: string): SessionKind | null {
@@ -71,16 +73,22 @@ export function useOutsideSessionFilters(): OutsideFiltersState {
     q: values.q || undefined,
   }
 
-  function filterBy(param: OutsideFilterParam, value: string) {
+  function filterByMany(changes: Partial<Record<OutsideFilterParam, string>>) {
     const next = new URLSearchParams(search)
-    if (value === "" || value === ALL) next.delete(param)
-    else next.set(param, value)
+    for (const [param, value] of Object.entries(changes)) {
+      if (value === undefined || value === "" || value === ALL) next.delete(param)
+      else next.set(param, value)
+    }
     // A filter is not a place: Back leaves the screen rather than walking back
     // through every narrowing, as the status and seat filters do.
     setSearch(next, { replace: true })
   }
 
-  return { values, kind: parseKindFilter(values.kind), filters, filterBy }
+  function filterBy(param: OutsideFilterParam, value: string) {
+    filterByMany({ [param]: value })
+  }
+
+  return { values, kind: parseKindFilter(values.kind), filters, filterBy, filterByMany }
 }
 
 /**

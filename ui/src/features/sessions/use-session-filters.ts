@@ -51,6 +51,12 @@ interface SessionFiltersState {
   task: string | null
   /** Apply a selection: to the URL, and to what the next visit will restore. */
   filterBy: (param: FilterParam, value: string) => void
+  /**
+   * Drop the status and the seat, and the other params named with them, in
+   * one step — one navigation, so no one of them is put back by the next.
+   * The goal and the task stay: they are a scope, cleared from their chips.
+   */
+  clearFilters: (also: readonly string[]) => void
 }
 
 export function useSessionFilters(): SessionFiltersState {
@@ -119,5 +125,13 @@ export function useSessionFilters(): SessionFiltersState {
     setSearch(next, { replace: true })
   }
 
-  return { status, seat, goal, task, filterBy }
+  function clearFilters(also: readonly string[]) {
+    const next = new URLSearchParams(search)
+    for (const param of [STATUS_PARAM, ROLE_PARAM, ...also]) next.delete(param)
+    rememberStatus("")
+    rememberRole("")
+    setSearch(next, { replace: true })
+  }
+
+  return { status, seat, goal, task, filterBy, clearFilters }
 }

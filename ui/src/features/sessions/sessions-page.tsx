@@ -32,8 +32,16 @@
  */
 
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
-import { ChevronDownIcon, PlusIcon, RefreshCwIcon, XIcon } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import {
+  ListChecksIcon,
+  type LucideIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  TargetIcon,
+  XIcon,
+} from "lucide-react"
+import { useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
@@ -43,24 +51,14 @@ import { PageHeader } from "@/components/page-header"
 import { TokenFigure } from "@/components/token-figure"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
-import { acpAgentsQueryOptions } from "@/features/agents/queries"
 import { goalsQueryOptions } from "@/features/goals/queries"
 import { parseModelRef, pinLabel } from "@/features/models/model-ref"
 import { taskListQueryOptions } from "@/features/tasks/queries"
-import { describeError, SEAT_LABELS, shortId } from "@/lib/format"
+import { cn, describeError, SEAT_LABELS, shortId } from "@/lib/format"
 import { paths, sessionPanelFrom, sessionTerminalFrom } from "@/routes/paths"
-
+import { ActivityFilter, AgentFilter, DirectoryFilter, FilterMenu, TypedFilter } from "./filter-bar"
 import {
   ALL,
   ATTENTION,
@@ -77,7 +75,7 @@ import {
   TASK_PARAM,
 } from "./filters"
 import { NewSessionDialog } from "./new-session-dialog"
-import { KIND_LABELS, type OutsideFilterParam, useOutsideSessionFilters } from "./outside-filters"
+import { KIND_LABELS, OUTSIDE_FILTER_PARAMS, useOutsideSessionFilters } from "./outside-filters"
 import {
   byId,
   type OutsideSessionDto,
@@ -144,17 +142,17 @@ function matchesBrowse(
   return true
 }
 
-/**
- * How long a typed filter waits for the next keystroke before the daemon is
- * asked. Both text fields wait: a path is typed as slowly as a search, and
- * neither is worth a request per character.
- */
-const TYPING_SETTLES_MS = 250
-
 export function SessionsPage() {
   const [search] = useSearchParams()
   const navigate = useNavigate()
-  const { status, seat, goal, task, filterBy } = useSessionFilters()
+  const {
+    status,
+    seat,
+    goal,
+    task,
+    filterBy,
+    clearFilters: clearSessionFilters,
+  } = useSessionFilters()
   const browse = useOutsideSessionFilters()
 
   const ariadneFilters: SessionListFilters = {
@@ -214,6 +212,10 @@ export function SessionsPage() {
   const outsideTotal = outsidePages?.at(-1)?.total ?? outsideRows.length
   const total = ariadneRows.length + (outsideEligible ? outsideTotal : 0)
 
+  const filtered =
+    status !== null || seat !== null || OUTSIDE_FILTER_PARAMS.some((param) => browse.values[param])
+  const clearFilters = () => clearSessionFilters(OUTSIDE_FILTER_PARAMS)
+
   const [starting, setStarting] = useState(false)
   const [resumingKey, setResumingKey] = useState<string | null>(null)
   const resume = useResumeOutsideSession()
@@ -251,106 +253,10 @@ export function SessionsPage() {
         title="Sessions"
         description="Every agent Ariadne has run, and every conversation an ACP agent stored on its own. Pick one to watch its console."
         actions={
-          <>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    aria-label="Filter by kind"
-                    className="w-32 justify-between font-normal"
-                  />
-                }
-              >
-                {browse.kind ? KIND_LABELS[browse.kind] : "All kinds"}
-                <ChevronDownIcon className="text-muted-foreground" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-32">
-                <DropdownMenuRadioGroup
-                  value={browse.values.kind || ALL}
-                  onValueChange={(value) => browse.filterBy("kind", value)}
-                >
-                  <DropdownMenuRadioItem value={ALL}>All kinds</DropdownMenuRadioItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuRadioItem value="ariadne">
-                    {KIND_LABELS.ariadne}
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="outside">
-                    {KIND_LABELS.outside}
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <AgentFilter
-              value={browse.values.agent}
-              onSelect={(agent) => browse.filterBy("agent", agent)}
-            />
-
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    aria-label="Filter by status"
-                    className="w-40 justify-between font-normal"
-                  />
-                }
-              >
-                {statusLabel(status)}
-                <ChevronDownIcon className="text-muted-foreground" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuRadioGroup
-                  value={status ?? ALL}
-                  onValueChange={(value) => filterBy(STATUS_PARAM, value)}
-                >
-                  <DropdownMenuRadioItem value={ALL}>All statuses</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value={LIVE}>Live</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value={ATTENTION}>Needs attention</DropdownMenuRadioItem>
-                  <DropdownMenuSeparator />
-                  {STATUSES.map((known) => (
-                    <DropdownMenuRadioItem key={known} value={known}>
-                      {SESSION_STATUS_META[known].label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    aria-label="Filter by seat"
-                    className="w-36 justify-between font-normal"
-                  />
-                }
-              >
-                {roleLabel(seat)}
-                <ChevronDownIcon className="text-muted-foreground" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-36">
-                <DropdownMenuRadioGroup
-                  value={seat ?? ALL}
-                  onValueChange={(value) => filterBy(ROLE_PARAM, value)}
-                >
-                  <DropdownMenuRadioItem value={ALL}>All roles</DropdownMenuRadioItem>
-                  <DropdownMenuSeparator />
-                  {ROLES.map((known) => (
-                    <DropdownMenuRadioItem key={known} value={known}>
-                      {SEAT_LABELS[known]}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button onClick={() => setStarting(true)}>
-              <PlusIcon />
-              New session
-            </Button>
-          </>
+          <Button onClick={() => setStarting(true)}>
+            <PlusIcon />
+            New session
+          </Button>
         }
       />
 
@@ -363,61 +269,107 @@ export function SessionsPage() {
         }
       />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <TypedFilter
-          label="Working directory"
-          placeholder="/Users/me/dev"
-          value={browse.values.dir}
-          onSettle={browse.filterBy}
-          param="dir"
-          className="w-56 font-mono text-xs"
-        />
-        <Input
-          type="date"
-          aria-label="Active since"
-          className="w-40"
-          value={browse.values.since}
-          onChange={(event) => browse.filterBy("since", event.target.value)}
-        />
-        <Input
-          type="date"
-          aria-label="Active until"
-          className="w-40"
-          value={browse.values.until}
-          onChange={(event) => browse.filterBy("until", event.target.value)}
-        />
-        <TypedFilter
-          label="Search titles"
-          placeholder="Search titles"
-          value={browse.values.q}
-          onSettle={browse.filterBy}
-          param="q"
-          className="w-64"
-        />
-        <Button
-          variant="outline"
-          disabled={!outsideFetchEnabled}
-          // Busy while the first page is in flight, its own refetch included:
-          // a refetch asked for over a request that is already running is the
-          // running one, which carries no `refresh`, and the flag this button
-          // set would then be spent on whatever asked next. A page loading
-          // underneath is Load more's spinner rather than this one's.
-          pending={outsideSessions.isFetching && !outsideSessions.isFetchingNextPage}
-          onClick={() => {
-            refreshWanted.current = true
-            void outsideSessions.refetch()
-          }}
-        >
-          <RefreshCwIcon />
-          Refresh
-        </Button>
+      {/* The search first, since finding one conversation by what it was
+          about is what the bar is used for most, with the count and Refresh
+          at the other end of its row. Under it, one compact trigger per
+          filter, each naming what it filters and what it is set to. The two
+          free-form ones — the directory and the activity window — open a
+          popover rather than sitting in the bar as bare fields: an empty date
+          field in WebKit shows today's date, which read as a filter that was
+          set. */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-md min-w-48 flex-1">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <TypedFilter
+              label="Search titles"
+              placeholder="Search titles"
+              value={browse.values.q}
+              onSettle={browse.filterBy}
+              param="q"
+              className="pl-8"
+            />
+          </div>
+
+          <div className="ml-auto flex items-center gap-3">
+            {outsideEligible ? (
+              <p className="text-sm text-muted-foreground tabular-nums">{`${rows.length} of ${total} sessions`}</p>
+            ) : null}
+            <Button
+              variant="outline"
+              disabled={!outsideFetchEnabled}
+              // Busy while the first page is in flight, its own refetch included:
+              // a refetch asked for over a request that is already running is the
+              // running one, which carries no `refresh`, and the flag this button
+              // set would then be spent on whatever asked next. A page loading
+              // underneath is Load more's spinner rather than this one's.
+              pending={outsideSessions.isFetching && !outsideSessions.isFetchingNextPage}
+              onClick={() => {
+                refreshWanted.current = true
+                void outsideSessions.refetch()
+              }}
+            >
+              <RefreshCwIcon />
+              Refresh
+            </Button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterMenu
+            what="Kind"
+            value={browse.values.kind || ALL}
+            valueLabel={browse.kind ? KIND_LABELS[browse.kind] : null}
+            onSelect={(value) => browse.filterBy("kind", value)}
+            options={[
+              { value: "ariadne", label: KIND_LABELS.ariadne },
+              { value: "outside", label: KIND_LABELS.outside },
+            ]}
+            allLabel="All kinds"
+          />
+          <AgentFilter
+            value={browse.values.agent}
+            onSelect={(agent) => browse.filterBy("agent", agent)}
+          />
+          <FilterMenu
+            what="Status"
+            value={status ?? ALL}
+            valueLabel={status ? statusLabel(status) : null}
+            onSelect={(value) => filterBy(STATUS_PARAM, value)}
+            lead={[
+              { value: LIVE, label: "Live" },
+              { value: ATTENTION, label: "Needs attention" },
+            ]}
+            options={STATUSES.map((known) => ({
+              value: known,
+              label: SESSION_STATUS_META[known].label,
+            }))}
+            allLabel="All statuses"
+          />
+          <FilterMenu
+            what="Role"
+            value={seat ?? ALL}
+            valueLabel={seat ? roleLabel(seat) : null}
+            onSelect={(value) => filterBy(ROLE_PARAM, value)}
+            options={ROLES.map((known) => ({ value: known, label: SEAT_LABELS[known] }))}
+            allLabel="All roles"
+          />
+          <DirectoryFilter value={browse.values.dir} onSettle={browse.filterBy} />
+          <ActivityFilter
+            since={browse.values.since}
+            until={browse.values.until}
+            onChange={browse.filterByMany}
+          />
+
+          {filtered ? (
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              <XIcon />
+              Clear filters
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <ScopeChips goal={goal} task={task} onClear={filterBy} />
-
-      {outsideEligible ? (
-        <p className="text-sm text-muted-foreground">{`${rows.length} of ${total}`}</p>
-      ) : null}
 
       <DataTable
         query={{
@@ -434,8 +386,7 @@ export function SessionsPage() {
         columns={[
           { header: "Title", className: "min-w-56" },
           { header: "Status" },
-          { header: "Goal", className: "min-w-32" },
-          { header: "Task", className: "min-w-32" },
+          { header: "Work", className: "min-w-48" },
           { header: "Agent" },
           { header: "Tokens", className: "text-right" },
           { header: "Last activity", className: "text-right" },
@@ -465,6 +416,7 @@ export function SessionsPage() {
             }
             resuming={resumingKey === rowKey(row)}
             onSelect={() => handleSelect(row)}
+            onScope={filterBy}
           />
         )}
       />
@@ -489,6 +441,7 @@ function SessionRow({
   taskTitle,
   resuming,
   onSelect,
+  onScope,
 }: {
   row: Row
   title: string
@@ -496,7 +449,11 @@ function SessionRow({
   taskTitle: string | undefined
   resuming: boolean
   onSelect: () => void
+  /** Narrow the table to a goal or a task picked in the row. */
+  onScope: (param: FilterParam, id: string) => void
 }) {
+  const directory =
+    row.kind === "outside" ? row.session.working_directory : row.session.worktree_path
   return (
     <TableRow
       className="cursor-pointer"
@@ -510,16 +467,16 @@ function SessionRow({
         <span className="block truncate" title={title}>
           {title}
         </span>
-        {/* An outside row has no goal or task to place it — the working
-            directory is what says where it ran instead, so it rides under
-            the title rather than taking a column of its own the other kind
-            never fills. */}
-        {row.kind === "outside" ? (
+        {/* Where the agent ran, for every kind of row alike: a goal's or a
+            task's worktree, a loose session's directory, an outside
+            conversation's. It rides under the title rather than taking a
+            column of its own. */}
+        {directory ? (
           <span
             className="block truncate font-mono text-xs text-muted-foreground"
-            title={row.session.working_directory}
+            title={directory}
           >
-            {row.session.working_directory}
+            {directory}
           </span>
         ) : null}
       </TableCell>
@@ -537,16 +494,14 @@ function SessionRow({
           </div>
         )}
       </TableCell>
-      <TableCell className="max-w-36 truncate text-xs text-muted-foreground">
-        {row.kind === "ariadne" && row.session.goal_id ? (
-          (goalTitle ?? shortId(row.session.goal_id))
-        ) : (
-          <Dash />
-        )}
-      </TableCell>
-      <TableCell className="max-w-36 truncate text-xs text-muted-foreground">
-        {row.kind === "ariadne" && row.session.task_id ? (
-          (taskTitle ?? shortId(row.session.task_id))
+      <TableCell className="max-w-64">
+        {row.kind === "ariadne" ? (
+          <WorkCell
+            session={row.session}
+            goalTitle={goalTitle}
+            taskTitle={taskTitle}
+            onScope={onScope}
+          />
         ) : (
           <Dash />
         )}
@@ -566,89 +521,89 @@ function SessionRow({
   )
 }
 
-function Dash() {
-  return <span>—</span>
-}
-
 /**
- * Which registry agent to show sessions of, out of the ACP registry
- * (`GET /v1/acp-agents`). An agent id is the whole of the choice: it is what
- * tells one ACP agent from another everywhere else on this screen.
+ * What an Ariadne session works on, in one cell: the seat it holds, the goal
+ * it is under, and the task under that. The seat is a badge of one width, so
+ * the goals and tasks of every row line up beside it. Picking the goal or the
+ * task narrows the table to its sessions, the way the chips above it do. A
+ * loose session holds no seat and has neither.
  */
-function AgentFilter({ value, onSelect }: { value: string; onSelect: (value: string) => void }) {
-  const agents = useQuery(acpAgentsQueryOptions())
-
+function WorkCell({
+  session,
+  goalTitle,
+  taskTitle,
+  onScope,
+}: {
+  session: SessionDto
+  goalTitle: string | undefined
+  taskTitle: string | undefined
+  onScope: (param: FilterParam, id: string) => void
+}) {
+  const { goal_id: goalId, task_id: taskId, seat } = session
+  if (!goalId && !taskId && !seat) return <Dash />
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="outline"
-            aria-label="Filter by agent"
-            className="w-48 justify-between font-normal"
+    <div className="flex min-w-0 items-start gap-2 text-xs">
+      {seat ? (
+        <Badge variant="outline" className="w-22 shrink-0 font-normal text-muted-foreground">
+          {SEAT_LABELS[seat]}
+        </Badge>
+      ) : null}
+      <div className="flex min-w-0 flex-col gap-0.5 pt-px">
+        {goalId ? (
+          <WorkLink
+            icon={TargetIcon}
+            name={goalTitle ?? shortId(goalId)}
+            what="goal"
+            onClick={() => onScope(GOAL_PARAM, goalId)}
           />
-        }
-      >
-        {value || "All agents"}
-        <ChevronDownIcon className="text-muted-foreground" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-48">
-        <DropdownMenuRadioGroup value={value || ALL} onValueChange={onSelect}>
-          <DropdownMenuRadioItem value={ALL}>All agents</DropdownMenuRadioItem>
-          <DropdownMenuSeparator />
-          {(agents.data ?? []).map((agent) => (
-            <DropdownMenuRadioItem key={agent.id} value={agent.id}>
-              {agent.id}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        ) : null}
+        {taskId ? (
+          <WorkLink
+            icon={ListChecksIcon}
+            name={taskTitle ?? shortId(taskId)}
+            what="task"
+            onClick={() => onScope(TASK_PARAM, taskId)}
+            className="text-muted-foreground"
+          />
+        ) : null}
+      </div>
+    </div>
   )
 }
 
-/**
- * A filter that is typed: the field shows every keystroke, and the daemon is
- * asked once the typing has settled (see {@link TYPING_SETTLES_MS}).
- */
-function TypedFilter({
-  label,
-  placeholder,
-  value,
-  param,
-  onSettle,
+/** A goal or a task in the Work cell: its icon and name, narrowing to it. */
+function WorkLink({
+  icon: Icon,
+  name,
+  what,
+  onClick,
   className,
 }: {
-  label: string
-  placeholder: string
-  /** What the URL carries, which is what the field opens on. */
-  value: string
-  param: OutsideFilterParam
-  onSettle: (param: OutsideFilterParam, value: string) => void
+  icon: LucideIcon
+  name: string
+  what: "goal" | "task"
+  onClick: () => void
   className?: string
 }) {
-  const [text, setText] = useState(value)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const settle = useRef(onSettle)
-  settle.current = onSettle
-
-  useEffect(() => () => clearTimeout(timer.current ?? undefined), [])
-
   return (
-    <Input
-      value={text}
-      aria-label={label}
-      placeholder={placeholder}
-      autoComplete="off"
-      className={className}
-      onChange={(event) => {
-        const next = event.target.value
-        setText(next)
-        clearTimeout(timer.current ?? undefined)
-        timer.current = setTimeout(() => settle.current(param, next), TYPING_SETTLES_MS)
-      }}
-    />
+    <button
+      type="button"
+      title={`${what === "goal" ? "Goal" : "Task"}: ${name}`}
+      aria-label={`Show the sessions of the ${what} ${name}`}
+      onClick={onClick}
+      className={cn(
+        "flex min-w-0 items-center gap-1 rounded-sm text-left underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring",
+        className,
+      )}
+    >
+      <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 truncate">{name}</span>
+    </button>
   )
+}
+
+function Dash() {
+  return <span>—</span>
 }
 
 /**
