@@ -24,17 +24,24 @@ use common::{Harness, harness};
 
 /// The agent whose transcripts the disk reader answers for.
 const CLAUDE: &str = "claude-acp";
+/// The agent whose rollouts the disk reader answers for.
+const CODEX: &str = "codex-acp";
 
 /// A harness whose one registry agent is `stub`, under the id the disk reader
 /// is registered by.
 async fn harness_with(stub: &StubAcpAgent) -> Harness {
+    harness_with_agent(stub, CLAUDE).await
+}
+
+/// A harness whose one registry agent is under the disk reader's agent id.
+async fn harness_with_agent(stub: &StubAcpAgent, agent: &str) -> Harness {
     let h = harness()
-        .home(home_with_agents(&[(CLAUDE, &stub.bin)]))
+        .home(home_with_agents(&[(agent, &stub.bin)]))
         .discover_agents()
         .await;
     // The disk half is read for the agents discovery accepted, so a probe
     // that timed out under load is probed again first.
-    discovery_accepted(&h, stub, CLAUDE).await;
+    discovery_accepted(&h, stub, agent).await;
     h
 }
 
@@ -102,6 +109,102 @@ fn transcript(h: &Harness, cwd: &str, id: &str, lines: &[String], at: DateTime<U
 
 fn body(lines: &[String]) -> String {
     lines.iter().map(|line| format!("{line}\n")).collect()
+}
+
+/// A Codex rollout under its dated session directory, last written at `at`.
+fn rollout(h: &Harness, filename: &str, lines: &[String], at: DateTime<Utc>) -> PathBuf {
+    let path = h
+        .transcript_homes()
+        .codex
+        .join("sessions/2026/09/25")
+        .join(format!("rollout-2026-09-25T10-00-00-{filename}.jsonl"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, body(lines)).unwrap();
+    written_at(&path, at);
+    path
+}
+
+fn session_meta(id: &str, cwd: &str, source: &str) -> String {
+    json!({"type": "session_meta", "payload": {
+        "session_id": id, "cwd": cwd, "source": source,
+    }})
+    .to_string()
+}
+
+fn turn_context(model: &str, effort: &str) -> String {
+    json!({"type": "turn_context", "payload": {"model": model, "effort": effort}}).to_string()
+}
+
+fn token_count(input: u64, cached: u64, output: u64) -> String {
+    json!({"type": "event_msg", "payload": {"type": "token_count", "info": {
+        "total_token_usage": {"input_tokens": input, "cached_input_tokens": cached,
+        "output_tokens": output},
+    }}})
+    .to_string()
+}
+
+/// A Codex rollout that its ACP index omits is listed from disk with the
+/// last turn's model, effort, and running tokens. Subagents and rollouts that
+/// never reached a turn stay out.
+#[tokio::test]
+async fn a_codex_rollout_the_agent_does_not_list_is_listed_with_its_figures() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = stub_listing(dir.path(), json!([]));
+    let h = harness_with_agent(&stub, CODEX).await;
+    let now = Utc::now();
+    rollout(
+        &h,
+        "unlisted",
+        &[
+            session_meta("unlisted", "/work/unlisted", "cli"),
+            turn_context("gpt-5-codex", "medium"),
+            token_count(100, 80, 20),
+            turn_context("gpt-5.2-codex", "high"),
+            token_count(900, 700, 200),
+        ],
+        now - TimeDelta::hours(1),
+    );
+    rollout(
+        &h,
+        "subagent",
+        &[
+            session_meta("subagent", "/work/subagent", "subagent"),
+            turn_context("gpt-5.2-codex", "high"),
+        ],
+        now - TimeDelta::hours(2),
+    );
+    rollout(
+        &h,
+        "no-turn",
+        &[session_meta("no-turn", "/work/no-turn", "cli")],
+        now - TimeDelta::hours(3),
+    );
+
+    let page = listing(&h, "").await;
+
+    assert_eq!(ids(&page), ["unlisted"]);
+    let found = row(&page, "unlisted");
+    assert_eq!(found.agent_id, CODEX);
+    assert_eq!(found.internal_session_id.as_deref(), Some("unlisted"));
+    assert_eq!(found.working_directory.as_deref(), Some("/work/unlisted"));
+    assert_eq!(
+        found.last_activity_at.as_deref(),
+        Some(hours_before(now, 1).as_str())
+    );
+    assert_eq!(found.model.as_deref(), Some("codex-acp:gpt-5.2-codex"));
+    assert_eq!(found.effort.as_deref(), Some("high"));
+    assert_eq!(found.usage.expect("the rollout's tokens").input_tokens, 900);
+    assert_eq!(
+        found
+            .usage
+            .expect("the rollout's tokens")
+            .cached_input_tokens,
+        700
+    );
+    assert_eq!(
+        found.usage.expect("the rollout's tokens").output_tokens,
+        200
+    );
 }
 
 /// Write more lines at the end of a transcript, as a conversation that goes on

@@ -216,6 +216,12 @@ The ACP runtime belongs to 021.
   own directory and title, and carries the model and the tokens of that
   transcript, one model request counted once
   (`stored_conversations.rs::a_transcript_the_agent_does_not_list_is_listed_with_its_model_and_tokens`).
+- A Codex rollout `session/list` does not answer with is listed under its
+  recorded directory and activity, and carries the last turn's model, effort,
+  and running token total; subagent and no-turn rollouts are not listed
+  (`stored_conversations.rs::a_codex_rollout_the_agent_does_not_list_is_listed_with_its_figures`).
+- The figures of a large Codex rollout read its bounded tail, not its whole
+  file (`stored_conversations.rs::tests::a_large_rollouts_figures_read_only_its_tail`).
 - A conversation both sources hold is one row, under the title the agent
   listed, with the figures of the file behind it
   (`stored_conversations.rs::a_conversation_both_sources_hold_is_one_row_under_the_agents_title`).
