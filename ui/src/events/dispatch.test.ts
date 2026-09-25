@@ -34,7 +34,7 @@ import {
   type RepositoryDto,
   type TaskDto,
 } from "@/api"
-import { aGoal, aRepository, aTask } from "@/test/fixtures"
+import { aGoal, aRepository, aSession, aTask } from "@/test/fixtures"
 import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
 const REPOSITORY: RepositoryDto = aRepository({
@@ -236,6 +236,28 @@ describe("invalidateEverything", () => {
     invalidateEverything(queryClient)
 
     expect(stale(queryClient, qk.goals.list())).toBe(true)
+  })
+})
+
+describe("session events", () => {
+  it("refetches the outside lists when a session is created, since it may hold one of their rows", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const outside = qk.outsideSessions.list({})
+    queryClient.setQueryData(outside, { pages: [], pageParams: [] })
+
+    dispatch(queryClient, { event: "session_created", data: aSession() })
+
+    expect(stale(queryClient, outside)).toBe(true)
+  })
+
+  it("leaves the outside lists alone when a session only moves on", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const outside = qk.outsideSessions.list({})
+    queryClient.setQueryData(outside, { pages: [], pageParams: [] })
+
+    dispatch(queryClient, { event: "session_updated", data: aSession() })
+
+    expect(stale(queryClient, outside)).toBe(false)
   })
 })
 

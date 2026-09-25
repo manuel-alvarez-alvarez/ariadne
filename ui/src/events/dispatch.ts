@@ -79,6 +79,10 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
     case "session_created": {
       queryClient.setQueryData(qk.sessions.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+      // A new session can be an outside conversation resumed, from the CLI or
+      // another window: the outside rows are cut without the ones a session
+      // holds, so theirs are asked for again.
+      void queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() })
       break
     }
     case "session_updated": {

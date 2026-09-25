@@ -18,6 +18,7 @@
  */
 
 import {
+  type InfiniteData,
   infiniteQueryOptions,
   queryOptions,
   useMutation,
@@ -157,6 +158,14 @@ export interface OutsideSessionDto {
   first_prompt: string
 }
 
+/** One page of the outside listing, its rows read as {@link OutsideSessionDto}. */
+interface OutsideSessionPage {
+  sessions: OutsideSessionDto[]
+  next_cursor?: string | null
+  total: number
+  snapshot_at: string
+}
+
 function outsideSession(entry: SessionEntryDto): OutsideSessionDto {
   return {
     agent_id: entry.agent_id,
@@ -216,7 +225,9 @@ export function outsideSessionsQueryOptions(
             },
           },
         }),
-      ).then((page) => ({ ...page, sessions: page.sessions.map(outsideSession) })),
+      ).then(
+        (page): OutsideSessionPage => ({ ...page, sessions: page.sessions.map(outsideSession) }),
+      ),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.next_cursor ?? null,
   })
@@ -235,13 +246,38 @@ export function useStartSession() {
   })
 }
 
-/** Resume an outside conversation as a live session, without a goal, task or seat. */
+/**
+ * Resume an outside conversation as a live session, without a goal, task or seat.
+ *
+ * The session that answers holds the conversation from then on, so its
+ * outside row goes from every cached page at once — the table would show the
+ * one conversation twice until the outside lists came back — and those lists
+ * are refetched too, since the daemon now leaves it out of their totals.
+ */
 export function useResumeOutsideSession() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: ResumeOutsideSessionRequest) =>
       unwrap(api().POST("/v1/outside-sessions/resume", { body })),
-    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
+    onSuccess: (session, { agent_id, internal_session_id }) => {
+      cacheRow(queryClient, qk.sessions, session)
+      queryClient.setQueriesData<InfiniteData<OutsideSessionPage>>(
+        { queryKey: qk.outsideSessions.lists() },
+        (data) =>
+          data && {
+            ...data,
+            pages: data.pages.map((page) => ({
+              ...page,
+              sessions: page.sessions.filter(
+                (outside) =>
+                  outside.agent_id !== agent_id ||
+                  outside.internal_session_id !== internal_session_id,
+              ),
+            })),
+          },
+      )
+      void queryClient.invalidateQueries({ queryKey: qk.outsideSessions.lists() })
+    },
   })
 }
 

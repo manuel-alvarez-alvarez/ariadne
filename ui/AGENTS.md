@@ -134,7 +134,8 @@ the query cache and it stays live.
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists`, and `tasks.transitions` when the event carries a transition |
 | `message_sent` | invalidate `tasks.messages` for the task it is about; a message about the goal itself belongs to no task's channel |
-| `session_created`, `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` |
+| `session_created` | patch `sessions.detail`, invalidate `sessions.lists` and `outsideSessions.lists` — a resume adopts an outside row |
+| `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |
 | `skill_created`, `skill_updated` | patch `skills.detail`, invalidate `skills.lists` |
 | `skill_deleted` | remove `skills.detail`, invalidate `skills.lists` |
