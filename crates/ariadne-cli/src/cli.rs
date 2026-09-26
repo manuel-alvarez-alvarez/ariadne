@@ -10,6 +10,7 @@ use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
 use crate::commands::models::ModelsCommand;
+use crate::commands::permissions::PermissionsCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
 use crate::commands::skill::SkillCommand;
@@ -68,6 +69,17 @@ Examples:
   ariadne repo add ~/projects/ui --branch next
   ariadne repo ls
   ariadne repo update <repo-id> --branch main
+";
+
+const PERMISSIONS_EXAMPLES: &str = "\
+Examples:
+  ariadne permissions enable --wait         # turn Laya on and wait for the install
+  ariadne permissions show                  # settings, install state, python
+  ariadne permissions set --checkpoints all
+  ariadne permissions set --threshold 0.6
+  ariadne permissions set --schedule 03:30  # or: --no-schedule
+  ariadne permissions refresh
+  ariadne permissions disable
 ";
 
 const GOAL_EXAMPLES: &str = "\
@@ -323,6 +335,18 @@ pub(crate) enum Command {
     Repo {
         #[command(subcommand)]
         command: RepoCommand,
+    },
+    /// Manage Laya, the model behind the `ai` permission mode (022)
+    ///
+    /// Laya answers an ACP agent's permission requests on its own, for every
+    /// repository set to `ai`. It is a Python package Ariadne installs for
+    /// you, so `permissions enable` starts a background install rather than
+    /// answering at once — `permissions show` says where it has got to, and
+    /// `ariadne doctor` reports the Python interpreter it needs.
+    #[command(after_help = PERMISSIONS_EXAMPLES)]
+    Permissions {
+        #[command(subcommand)]
+        command: PermissionsCommand,
     },
     /// Manage goals
     ///

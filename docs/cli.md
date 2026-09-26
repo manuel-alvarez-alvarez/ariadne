@@ -357,6 +357,29 @@ ariadne repo update <repo-id> --permission-mode ask
 See [Permission modes](permissions.md) and [Resuming a session](resuming-sessions.md)
 for the related session workflows.
 
+## Permissions and Laya
+
+`ariadne permissions` manages Laya, the model behind the `ai` permission
+mode: see [Permission modes](permissions.md#laya) for what it installs and
+what each setting does.
+
+```sh
+ariadne permissions show                    # settings, install state, python
+ariadne permissions enable --wait            # turn it on and wait for the install
+ariadne permissions set --checkpoints all    # english (843 MB) or all (2.4 GB)
+ariadne permissions set --threshold 0.6      # how sure Laya has to be, 0 to 1
+ariadne permissions set --schedule 03:30     # daily reinstall, or --no-schedule
+ariadne permissions refresh --wait           # install again, on the settings as they stand
+ariadne permissions disable                  # keeps the files
+```
+
+`enable` and `refresh` answer at once with `installing`; `--wait` blocks
+until the install leaves that state and exits 1 with the reason on a
+`failed` one. A repository refused `ai` before Laya is on, and a `laya_disabled`
+error anywhere, name the fix: `run ariadne permissions enable`. `ariadne
+doctor` reports the Python interpreter Laya needs and where its install
+stands, next to the rest of the daemon's environment.
+
 ## Output and troubleshooting
 
 Listings print tables by default. Add `--format json` for JSON, `-q` for ids

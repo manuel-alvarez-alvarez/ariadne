@@ -7,9 +7,15 @@
 
 use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus};
 use ariadne_api::doctor::DaemonReportDto;
+use ariadne_api::permissions::{LayaState, LayaStatusDto, PythonDto};
 
 use super::Check;
 use super::checks::{THERE, forge_check, required_tool};
+
+/// What to do about a Python the daemon cannot install Laya into, whether it
+/// is too old or was not found at all — the one hint both `python_check` and
+/// `ClientError::hint`'s `python_unavailable` case give, in the same words.
+const PYTHON_HINT: &str = "install Python 3.10 or newer, or set python_bin in config.toml";
 
 /// The daemon's cached discovery result for each ACP registry entry — and,
 /// where none of them is ready, the failure that says no session can be
@@ -86,7 +92,14 @@ fn acp_capabilities(agent: &AcpAgentDto) -> String {
 }
 
 /// The daemon's own environment, or the absence of one.
-pub(super) fn daemon_environment(daemon: Option<&DaemonReportDto>) -> Vec<Check> {
+///
+/// `laya` is `None` on the same daemon-unreachable path as `daemon`, so its
+/// check is added only where there is one to add — the fallback the caller
+/// takes for `daemon` covers it either way.
+pub(super) fn daemon_environment(
+    daemon: Option<&DaemonReportDto>,
+    laya: Option<&LayaStatusDto>,
+) -> Vec<Check> {
     let Some(daemon) = daemon else {
         return vec![
             Check::fail(
@@ -137,7 +150,50 @@ pub(super) fn daemon_environment(daemon: Option<&DaemonReportDto>) -> Vec<Check>
              its mode, and whether the filesystem is read-only",
         ),
     });
+    checks.push(python_check(&daemon.python));
+    if let Some(laya) = laya {
+        checks.push(laya_check(laya));
+    }
     checks
+}
+
+/// The Python interpreter Laya's install runs on (022): reported apart from
+/// [`required_tool`]'s pass/fail, because the question is not whether it is
+/// there but whether it is new enough — and it never fails the report, since
+/// Laya is optional.
+fn python_check(python: &PythonDto) -> Check {
+    match (python.ok, &python.path, &python.version) {
+        (true, _, Some(version)) => Check::ok("python", format!("Python {version}")),
+        (false, Some(path), Some(version)) => Check::warn(
+            "python",
+            format!("python {version} found, Laya needs 3.10 or newer"),
+        )
+        .hint(format!("{path} is too old — {PYTHON_HINT}")),
+        _ => Check::warn("python", "not found").hint(PYTHON_HINT),
+    }
+}
+
+/// Where the Laya install stands — never a failure, since `ai` is one
+/// permission mode among four and nothing else depends on it.
+fn laya_check(status: &LayaStatusDto) -> Check {
+    match status.state {
+        LayaState::Disabled => Check::ok("laya", "disabled"),
+        LayaState::Installing => Check::ok("laya", "installing"),
+        LayaState::Ready => Check::ok(
+            "laya",
+            format!(
+                "ready {}",
+                status.installed_release.as_deref().unwrap_or("-")
+            ),
+        ),
+        LayaState::Failed => Check::warn(
+            "laya",
+            format!(
+                "failed: {}",
+                status.last_error.as_deref().unwrap_or("unknown reason")
+            ),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -253,7 +309,8 @@ mod tests {
             db: there("/home/me/.ariadne/ariadne.db"),
             worktree_root: there("/home/me/.ariadne/worktrees"),
         };
-        let checks = daemon_environment(Some(&daemon));
+        let laya = laya_status(LayaState::Ready);
+        let checks = daemon_environment(Some(&daemon), Some(&laya));
         // Without git the daemon spawns nothing at all: that is a failure. A
         // forge CLI is never one, however it is missing.
         assert_eq!(by_name(&checks, "git").status, Status::Fail);
@@ -262,10 +319,96 @@ mod tests {
         let glab = by_name(&checks, "glab");
         assert_eq!(glab.status, Status::Warn);
         assert!(glab.detail.contains("not found on the daemon's PATH"));
+        assert_eq!(by_name(&checks, "python").status, Status::Ok);
+        assert_eq!(by_name(&checks, "laya").status, Status::Ok);
 
-        let checks = daemon_environment(None);
+        let checks = daemon_environment(None, None);
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].status, Status::Fail);
         assert!(checks[0].hint.is_some());
+    }
+
+    fn laya_status(state: LayaState) -> LayaStatusDto {
+        LayaStatusDto {
+            enabled: true,
+            checkpoints: ariadne_api::permissions::LayaCheckpoints::English,
+            threshold: 0.8,
+            schedule: None,
+            python: PythonDto {
+                path: Some("/usr/bin/python3".into()),
+                version: Some("3.12.1".into()),
+                ok: true,
+            },
+            state,
+            installed_release: Some("v0.1.4".into()),
+            latest_release: Some("v0.1.4".into()),
+            weights_present: true,
+            endpoint: None,
+            last_refresh_at: None,
+            last_error: None,
+        }
+    }
+
+    /// Never fails: a Python the daemon cannot install Laya into is a thing
+    /// to look at, not a broken install, since `ai` is one permission mode
+    /// among four.
+    #[test]
+    fn python_never_fails_and_names_what_it_found() {
+        let ready = PythonDto {
+            path: Some("/usr/bin/python3".into()),
+            version: Some("3.12.1".into()),
+            ok: true,
+        };
+        let check = python_check(&ready);
+        assert_eq!(check.status, Status::Ok);
+        assert!(check.detail.contains("3.12.1"), "{}", check.detail);
+
+        let too_old = PythonDto {
+            path: Some("/usr/bin/python3".into()),
+            version: Some("3.9.2".into()),
+            ok: false,
+        };
+        let check = python_check(&too_old);
+        assert_eq!(check.status, Status::Warn);
+        assert!(check.detail.contains("3.9.2"), "{}", check.detail);
+        assert!(check.detail.contains("3.10 or newer"), "{}", check.detail);
+
+        let missing = PythonDto {
+            path: None,
+            version: None,
+            ok: false,
+        };
+        let check = python_check(&missing);
+        assert_eq!(check.status, Status::Warn);
+        assert_eq!(check.detail, "not found");
+        assert!(check.hint.as_deref().unwrap().contains("Python 3.10"));
+    }
+
+    /// The four states Laya's install reports, none of them a failure.
+    #[test]
+    fn laya_reports_its_four_states_and_never_fails() {
+        assert_eq!(
+            laya_check(&laya_status(LayaState::Disabled)).detail,
+            "disabled"
+        );
+        assert_eq!(
+            laya_check(&laya_status(LayaState::Installing)).detail,
+            "installing"
+        );
+        let ready = laya_check(&laya_status(LayaState::Ready));
+        assert_eq!(ready.status, Status::Ok);
+        assert!(ready.detail.contains("v0.1.4"), "{}", ready.detail);
+
+        let failed = LayaStatusDto {
+            last_error: Some("pip install failed".into()),
+            ..laya_status(LayaState::Failed)
+        };
+        let check = laya_check(&failed);
+        assert_eq!(check.status, Status::Warn);
+        assert!(
+            check.detail.contains("pip install failed"),
+            "{}",
+            check.detail
+        );
     }
 }

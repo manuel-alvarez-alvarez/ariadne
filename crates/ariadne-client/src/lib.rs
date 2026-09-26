@@ -22,6 +22,7 @@ use ariadne_api::agents::{AcpAgentDto, AgentConfigDto, UpdateAgentConfigRequest}
 use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::models::{ModelDto, SetModelRankRequest};
+use ariadne_api::permissions::{LayaStatusDto, UpdateLayaRequest};
 use ariadne_api::skills::SkillDto;
 use ariadne_api::{HealthResponse, VersionResponse};
 
@@ -116,6 +117,16 @@ impl ClientError {
                  ariadne daemon start only starts a local one, on a socket"
             )),
             Self::Unreachable { .. } => Some("is it running? try: ariadne daemon start".into()),
+            // Laya (022): the daemon's message already says what is wrong,
+            // and this is the one thing to do about it — on `permissions
+            // enable|refresh|set` and on `repo add|update --permission-mode
+            // ai` alike, since both refuse the same way.
+            Self::Api { code, .. } if code == "laya_disabled" => {
+                Some("run ariadne permissions enable".into())
+            }
+            Self::Api { code, .. } if code == "python_unavailable" => {
+                Some("install Python 3.10 or newer, or set python_bin in config.toml".into())
+            }
             _ => None,
         }
     }
@@ -286,6 +297,27 @@ impl Client {
     pub async fn reset_skill(&self, skill: &str) -> Result<SkillDto, ClientError> {
         self.post_empty(&format!("/v1/skills/{skill}/document/reset"))
             .await
+    }
+
+    /// The Laya settings, the interpreter probed afresh, and where the
+    /// install has got to (022).
+    pub async fn laya_status(&self) -> Result<LayaStatusDto, ClientError> {
+        self.get_json("/v1/permissions/laya").await
+    }
+
+    /// Change the Laya settings. Only the fields `req` names are sent — an
+    /// absent field leaves the daemon's own value alone, which is the whole
+    /// point of a partial update: `UpdateLayaRequest`'s own `Serialize`
+    /// writes every field, `schedule` excepted, so it is built by hand here
+    /// rather than serialized whole.
+    pub async fn update_laya(&self, req: &UpdateLayaRequest) -> Result<LayaStatusDto, ClientError> {
+        self.put_json("/v1/permissions/laya", &laya_update_body(req))
+            .await
+    }
+
+    /// Run the Laya install again, on the settings as they stand.
+    pub async fn refresh_laya(&self) -> Result<LayaStatusDto, ClientError> {
+        self.post_empty("/v1/permissions/laya/refresh").await
     }
 
     /// Set or clear a catalog entry's user rank. `None` clears it.
@@ -563,6 +595,27 @@ impl SseStream {
     }
 }
 
+/// [`Client::update_laya`]'s body: only the fields `req` names, so an absent
+/// one reaches the daemon absent rather than as an explicit `null` — which
+/// `UpdateLayaRequest`'s own `Serialize` cannot do for `enabled`,
+/// `checkpoints` and `threshold`, only for `schedule`.
+fn laya_update_body(req: &UpdateLayaRequest) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    if let Some(enabled) = req.enabled {
+        body.insert("enabled".into(), enabled.into());
+    }
+    if let Some(checkpoints) = req.checkpoints {
+        body.insert("checkpoints".into(), checkpoints.as_str().into());
+    }
+    if let Some(threshold) = req.threshold {
+        body.insert("threshold".into(), threshold.into());
+    }
+    if let Some(schedule) = &req.schedule {
+        body.insert("schedule".into(), schedule.clone().into());
+    }
+    serde_json::Value::Object(body)
+}
+
 /// The same request either transport sends, at the uri that transport spells.
 fn request(
     builder: http::request::Builder,
@@ -719,6 +772,70 @@ mod tests {
         assert_eq!(err.human(), "task not found: badid123");
         assert!(err.hint().is_none());
         assert_eq!(err.code(), "not_found");
+    }
+
+    /// The two Laya refusals (022) each carry the one command that answers
+    /// them, on `permissions enable|refresh|set` and on `repo
+    /// add|update --permission-mode ai` alike, since both send the same code.
+    #[test]
+    fn a_laya_refusal_carries_the_command_that_answers_it() {
+        let disabled = ClientError::Api {
+            status: StatusCode::CONFLICT,
+            code: "laya_disabled".into(),
+            message: "the `ai` permission mode needs Laya".into(),
+        };
+        assert_eq!(
+            disabled.hint().as_deref(),
+            Some("run ariadne permissions enable")
+        );
+
+        let unavailable = ClientError::Api {
+            status: StatusCode::CONFLICT,
+            code: "python_unavailable".into(),
+            message: "Laya needs Python 3.10 or newer".into(),
+        };
+        assert_eq!(
+            unavailable.hint().as_deref(),
+            Some("install Python 3.10 or newer, or set python_bin in config.toml")
+        );
+    }
+
+    /// Only the fields a caller actually set reach the wire: `enabled` alone
+    /// stays `{"enabled": true}`, never `{"enabled": true, "checkpoints":
+    /// null, "threshold": null}` — which is what `UpdateLayaRequest`'s own
+    /// `Serialize` would have written, `enabled` and `checkpoints` and
+    /// `threshold` having no `skip_serializing_if` of their own. `schedule`
+    /// is the one field where an explicit `null` is a value in its own right.
+    #[test]
+    fn a_laya_update_sends_only_the_fields_that_were_set() {
+        use ariadne_api::permissions::LayaCheckpoints;
+
+        assert_eq!(
+            laya_update_body(&UpdateLayaRequest {
+                enabled: Some(true),
+                ..Default::default()
+            }),
+            serde_json::json!({"enabled": true})
+        );
+        assert_eq!(
+            laya_update_body(&UpdateLayaRequest {
+                threshold: Some(0.6),
+                ..Default::default()
+            }),
+            serde_json::json!({"threshold": 0.6})
+        );
+        assert_eq!(
+            laya_update_body(&UpdateLayaRequest {
+                checkpoints: Some(LayaCheckpoints::All),
+                schedule: Some(None),
+                ..Default::default()
+            }),
+            serde_json::json!({"checkpoints": "all", "schedule": null})
+        );
+        assert_eq!(
+            laya_update_body(&UpdateLayaRequest::default()),
+            serde_json::json!({})
+        );
     }
 
     /// A body with nothing in it still has to say something.

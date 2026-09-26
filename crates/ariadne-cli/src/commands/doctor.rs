@@ -206,12 +206,16 @@ async fn examine(client: &Client) -> Report {
     let health = client.health().await;
     let reachable = health.is_ok();
     // Everything here only exists for a daemon that answered at all.
-    let (version, daemon) = match reachable {
+    let (version, daemon, laya) = match reachable {
         true => {
-            let (version, daemon) = tokio::join!(client.version(), client.daemon_report());
-            (version.ok().map(|v| v.version), daemon.ok())
+            let (version, daemon, laya) = tokio::join!(
+                client.version(),
+                client.daemon_report(),
+                client.laya_status(),
+            );
+            (version.ok().map(|v| v.version), daemon.ok(), laya.ok())
         }
-        false => (None, None),
+        false => (None, None, None),
     };
 
     Report::new(
@@ -233,7 +237,7 @@ async fn examine(client: &Client) -> Report {
             ),
             Section::new(
                 "daemon environment",
-                agents::daemon_environment(daemon.as_ref()),
+                agents::daemon_environment(daemon.as_ref(), laya.as_ref()),
             ),
         ],
     )

@@ -117,7 +117,7 @@ Two more settings:
 ```sh
 ariadne permissions set --threshold 0.6      # how sure Laya has to be, 0 to 1
 ariadne permissions set --schedule 03:30     # install again daily, local time
-ariadne permissions set --schedule none      # and stop doing that
+ariadne permissions set --no-schedule        # and stop doing that
 ```
 
 The threshold is how sure Laya has to be before its answer is taken; it
@@ -141,3 +141,18 @@ while Laya is off is refused:
 the `ai` permission mode needs Laya; turn it on with
 `ariadne permissions enable` first
 ```
+
+`enable` and `refresh` answer at once, with the install running in the
+background; add `--wait` to block until it leaves `installing` instead of
+polling `permissions show` by hand:
+
+```sh
+ariadne permissions enable --wait
+ariadne permissions refresh --wait
+```
+
+`--wait` exits 1 and prints `last_error` if the install settles on `failed`.
+`ariadne doctor` reports the same two things `permissions show` does — the
+Python interpreter found and where the install stands — next to the rest of
+the daemon's environment; neither ever fails the report, since `ai` is one
+permission mode among four.

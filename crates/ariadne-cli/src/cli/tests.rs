@@ -8,6 +8,7 @@ use clap::FromArgMatches;
 use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
+use crate::commands::permissions::PermissionsCommand;
 use crate::commands::skill::SkillCommand;
 use crate::output::ColorChoice;
 
@@ -21,7 +22,14 @@ fn the_command_tree_is_well_formed() {
 /// The command groups: every one of them is a screen someone lands on from
 /// `ariadne --help`, so every one of them has to read the same way.
 const GROUPS: &[&str] = &[
-    "agent", "daemon", "goal", "repo", "session", "skill", "task",
+    "agent",
+    "daemon",
+    "goal",
+    "permissions",
+    "repo",
+    "session",
+    "skill",
+    "task",
 ];
 
 /// The root and every group say what they are for, list the two global flags
@@ -108,6 +116,11 @@ const LEAVES: &[(&str, bool)] = &[
     ("models ls", true),
     ("models rank", true),
     ("models show", true),
+    ("permissions disable", true),
+    ("permissions enable", true),
+    ("permissions refresh", true),
+    ("permissions set", true),
+    ("permissions show", true),
     ("repo add", true),
     ("repo inspect", true),
     ("repo ls", true),
@@ -1389,6 +1402,133 @@ fn models_rank_refuses_an_unknown_word_and_naming_neither_rank_nor_clear() {
         panic!("names neither a rank nor --clear");
     };
     assert!(err.to_string().contains("required"), "{err}");
+}
+
+/// Every `permissions` verb parses, `set` included with each flag it takes.
+#[test]
+fn every_permissions_verb_parses() {
+    let Command::Permissions {
+        command: PermissionsCommand::Show,
+    } = parse(&["ariadne", "permissions", "show"]).command
+    else {
+        panic!("permissions show");
+    };
+
+    let Command::Permissions {
+        command: PermissionsCommand::Enable { wait },
+    } = parse(&["ariadne", "permissions", "enable", "--wait"]).command
+    else {
+        panic!("permissions enable");
+    };
+    assert!(wait);
+
+    let Command::Permissions {
+        command: PermissionsCommand::Disable,
+    } = parse(&["ariadne", "permissions", "disable"]).command
+    else {
+        panic!("permissions disable");
+    };
+
+    let Command::Permissions {
+        command: PermissionsCommand::Refresh { wait },
+    } = parse(&["ariadne", "permissions", "refresh"]).command
+    else {
+        panic!("permissions refresh");
+    };
+    assert!(!wait);
+
+    let Command::Permissions {
+        command:
+            PermissionsCommand::Set {
+                checkpoints,
+                threshold,
+                schedule,
+                no_schedule,
+            },
+    } = parse(&[
+        "ariadne",
+        "permissions",
+        "set",
+        "--checkpoints",
+        "all",
+        "--threshold",
+        "0.6",
+        "--schedule",
+        "03:30",
+    ])
+    .command
+    else {
+        panic!("permissions set");
+    };
+    assert!(matches!(
+        checkpoints,
+        Some(crate::commands::permissions::Checkpoints::All)
+    ));
+    assert_eq!(threshold, Some(0.6));
+    assert_eq!(schedule.as_deref(), Some("03:30"));
+    assert!(!no_schedule);
+
+    let Command::Permissions {
+        command: PermissionsCommand::Set { no_schedule, .. },
+    } = parse(&["ariadne", "permissions", "set", "--no-schedule"]).command
+    else {
+        panic!("permissions set --no-schedule");
+    };
+    assert!(no_schedule);
+}
+
+/// `set` with nothing to change is refused: there is nothing to send.
+#[test]
+fn permissions_set_with_no_flag_is_a_usage_error() {
+    assert!(try_parse(&["ariadne", "permissions", "set"]).is_err());
+}
+
+/// `--schedule` and `--no-schedule` say opposite things about the same
+/// setting, so both together is refused rather than one silently winning.
+#[test]
+fn permissions_set_schedule_and_no_schedule_are_a_usage_error() {
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "permissions",
+            "set",
+            "--schedule",
+            "03:30",
+            "--no-schedule",
+        ])
+        .is_err()
+    );
+}
+
+/// A threshold outside 0 to 1 and a schedule that is not `HH:MM` are refused
+/// before anything is sent, in the same words the daemon would refuse them
+/// in — a round trip is not needed to know 0 to 1 from a typo.
+#[test]
+fn permissions_set_refuses_a_bad_threshold_or_schedule_locally() {
+    let Err(err) = try_parse(&["ariadne", "permissions", "set", "--threshold", "1.5"]) else {
+        panic!("1.5 is out of range");
+    };
+    assert!(err.to_string().contains("between 0 and 1"), "{err}");
+
+    let Err(err) = try_parse(&["ariadne", "permissions", "set", "--schedule", "25:00"]) else {
+        panic!("25:00 is not a clock time");
+    };
+    assert!(err.to_string().contains("HH:MM"), "{err}");
+}
+
+/// `ai` is a real value of the same enum `learn` and `ask` are, so it parses
+/// on `repo add` the way they always have.
+#[test]
+fn repo_add_permission_mode_ai_parses() {
+    let Command::Repo {
+        command: RepoCommand::Add {
+            permission_mode, ..
+        },
+    } = parse(&["ariadne", "repo", "add", "/r", "--permission-mode", "ai"]).command
+    else {
+        panic!("repo add");
+    };
+    assert_eq!(permission_mode, Some(PermissionMode::Ai));
 }
 
 fn parse(argv: &[&str]) -> Cli {

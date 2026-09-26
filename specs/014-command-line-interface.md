@@ -1,13 +1,15 @@
 ---
 id: command-line-interface
 status: current
-updated: 2026-09-24
+updated: 2026-09-26
 areas: [cli]
 commits: [3dcba5f1, e94647fd, 3cd70453, 9f7fa36b, 1a862dfe, 87fa62cf, 03f9c8b7, 29e6d84e, 1b09ac10, 7fe184e9]
 tests:
   - crates/ariadne-cli/src/cli/tests.rs
   - crates/ariadne-cli/src/output.rs
   - crates/ariadne-cli/src/commands/models.rs
+  - crates/ariadne-cli/src/commands/permissions.rs
+  - crates/ariadne-client/src/lib.rs
   - crates/ariadne-cli/src/commands/session.rs
   - crates/ariadne-cli/src/commands/task.rs
   - crates/ariadne-cli/src/error.rs
@@ -43,8 +45,8 @@ same binary also serves (013).
 
 1. Every user-facing action exists both here and in the desktop app.
 2. The tree is one verb per action, grouped by entity — `daemon`, `agent`,
-   `models`, `skill`, `repo`, `goal`, `task`, `session`, `events`,
-   `attention`, `attach`, `doctor`, `completions`,
+   `models`, `skill`, `repo`, `permissions`, `goal`, `task`, `session`,
+   `events`, `attention`, `attach`, `doctor`, `completions`,
    plus the one hidden command the agents use (`mcp serve`). Nothing in the tree launches
    an agent or reports on one's behalf: the daemon's ACP runtime does both
    (021).
@@ -176,6 +178,29 @@ same binary also serves (013).
     in `--dir` or the current directory, sent to the daemon as an absolute
     path. It prints the session's status line, or with `--attach` opens its
     console at once. The first prompt typed into it is its title.
+32. `ariadne permissions` manages Laya, the model behind the `ai` permission
+    mode (022). `show` is a key-value block of the whole status, `--format
+    json` the DTO unchanged. `enable` and `disable` turn it on and off,
+    `refresh` reinstalls it, and each of the two that starts an install takes
+    `--wait`: it blocks until `state` leaves `installing` by following
+    `laya_updated` on `/v1/events/stream`, and exits 1 with `last_error` where
+    it settles on `failed`. `set` changes `--checkpoints`, `--threshold` and
+    `--schedule` (or `--no-schedule`, which turns the daily refresh off);
+    at least one of the four is required, `--schedule` and `--no-schedule`
+    refuse each other, and only the flags actually given reach the daemon —
+    an absent one is left out of the request rather than sent as `null`. A
+    bad `--threshold` or `--schedule` is refused locally, in the same words
+    the daemon would use, before anything is sent. A `laya_disabled` refusal
+    — here and on `repo add|update --permission-mode ai` alike — carries the
+    hint `run ariadne permissions enable`; a `python_unavailable` one carries
+    `install Python 3.10 or newer, or set python_bin in config.toml`.
+33. `ariadne doctor` reports the Python interpreter Laya's install would run
+    on, next to the daemon's own environment (rule 19), and where the install
+    itself stands. Neither ever fails the report, since `ai` is one
+    permission mode among four: `python` is `ok` with the version found, or a
+    warning naming the version that is too old or that none was found;
+    `laya` is `ok` for `disabled`, `installing` and `ready <release>`, and a
+    warning for `failed: <last_error>`.
 
 ## Acceptance criteria
 
@@ -192,11 +217,12 @@ same binary also serves (013).
   `::the_listing_flags_are_advertised_exactly_where_they_are_honored`), and
   parse on either side (`::the_display_flags_parse_on_either_side_of_the_subcommand`).
 - A status is spelled in kebab or snake, and so is every other enum a flag
-  takes — `repo add --permission-mode` among them, while `task create` takes
-  no permission mode; several statuses ride on one flag, and a non-status
-  lists the real ones
+  takes — `repo add --permission-mode` among them, `ai` included, while
+  `task create` takes no permission mode; several statuses ride on one flag,
+  and a non-status lists the real ones
   (`::a_status_is_spelled_in_kebab_or_in_snake`, `::several_statuses_ride_on_one_flag`,
-  `::a_status_that_is_no_spelling_of_one_lists_the_real_ones`).
+  `::a_status_that_is_no_spelling_of_one_lists_the_real_ones`,
+  `::repo_add_permission_mode_ai_parses`).
 - A model and an effort can be chosen for every agent on the line
   (`cli/tests.rs::a_model_can_be_chosen_for_every_agent_on_the_line`,
   `::an_effort_can_be_chosen_beside_every_model`).
@@ -265,6 +291,34 @@ same binary also serves (013).
   (`commands/doctor/agents.rs::acp_probe_results_show_rejections_and_gaps`),
   and fails only where no agent is ready
   (`::no_ready_agent_fails_the_report_and_one_is_enough`).
+- `doctor` reports the Python interpreter Laya needs without ever failing on
+  it, and reports the four states of the Laya install
+  (`commands/doctor/agents.rs::python_never_fails_and_names_what_it_found`,
+  `::laya_reports_its_four_states_and_never_fails`).
+- Every `permissions` verb parses, `set` with no flag and `--schedule` with
+  `--no-schedule` are usage errors, and a bad threshold or schedule is
+  refused locally in the daemon's own words
+  (`cli/tests.rs::every_permissions_verb_parses`,
+  `::permissions_set_with_no_flag_is_a_usage_error`,
+  `::permissions_set_schedule_and_no_schedule_are_a_usage_error`,
+  `::permissions_set_refuses_a_bad_threshold_or_schedule_locally`).
+- `show` renders every field of the status; `enable` sends only `{"enabled":
+  true}`, `set --no-schedule` only a `null` schedule, and `set --threshold`
+  only the threshold — never the other fields as an explicit `null`
+  (`commands/permissions.rs::show_renders_every_field`,
+  `::enable_sends_enabled_true_and_nothing_else`,
+  `::set_no_schedule_sends_a_null_schedule`,
+  `::set_threshold_sends_only_threshold`).
+- `enable --wait` and `refresh --wait` block on the event stream until the
+  install leaves `installing`, and a failed install exits with its
+  `last_error`
+  (`commands/permissions.rs::enable_wait_returns_once_the_stream_answers_ready`,
+  `::enable_wait_fails_with_the_last_error_on_a_failed_install`).
+- A `laya_disabled` refusal keeps the daemon's message and adds the command
+  that answers it, on `permissions` and on `repo add|update
+  --permission-mode ai` alike
+  (`commands/permissions.rs::refresh_keeps_the_daemons_message_and_adds_the_hint_on_laya_disabled`,
+  `ariadne-client/src/lib.rs::a_laya_refusal_carries_the_command_that_answers_it`).
 - A git below the floor is a warning that names what it cannot do, and a
   version line is read down to its major and minor
   (`checks.rs::a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits`,
@@ -350,4 +404,4 @@ same binary also serves (013).
 
 `crates/ariadne-cli/src/cli.rs`, `crates/ariadne-cli/src/commands/`,
 `crates/ariadne-cli/src/error.rs`, `crates/ariadne-cli/src/complete.rs`,
-`crates/ariadne-cli/src/output/`.
+`crates/ariadne-cli/src/output/`, `crates/ariadne-client/src/lib.rs`.
