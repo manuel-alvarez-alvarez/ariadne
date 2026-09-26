@@ -73,11 +73,13 @@ pub(super) fn block(
             tool,
             options,
             answer,
+            ai_note,
             ..
         } => permission(
             question,
             tool,
             options,
+            ai_note.as_deref(),
             answer.as_deref(),
             picked,
             width,

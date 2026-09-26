@@ -93,6 +93,27 @@ never uses a learned approval. The console shows the usual permission picker;
 the recorded `permission_request` event includes `guardrail` with the rule
 name. Requests without a match have no `guardrail` field.
 
+When a request comes to you, the console says why under the call, while it
+asks — for example `AI said escalate (0.41, threshold 0.70)` or
+`guardrail credential-paths`. `ariadne session logs` prints the same line
+under the question. Afterwards, `ariadne events --kind permission.replied`
+and the desktop app's activity tab say who answered and why the model did
+not:
+
+```text
+allowed by AI (0.83, threshold 0.70)
+allow-once in the console — AI said escalate (0.41, threshold 0.70)
+allow-once in the console — AI said allow (0.62, threshold 0.80)
+allow-once in the console — guardrail credential-paths
+allow-once in the console — AI unavailable
+```
+
+`AI said allow` below the threshold means the model leaned towards allowing
+but was not sure enough; lowering the threshold lets such requests through.
+`AI unavailable`, `failed`, `timed out` and `malformed` mean the model gave
+no answer at all. The daemon log has one `AI permission decision` line per
+request with the same fields.
+
 Turn it on, look at it, and install it again:
 
 ```sh

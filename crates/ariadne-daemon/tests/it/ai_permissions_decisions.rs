@@ -243,6 +243,39 @@ async fn reply(h: &Harness, session_id: &str) -> Value {
         .expect("the permission reply was stored")
 }
 
+/// Answer the waiting question in the console, and the reply it was stored as.
+async fn answered(h: &Harness, session_id: &str, text: &str) -> Value {
+    assert_eq!(
+        h.send(answer(session_id, text)).await.0,
+        StatusCode::NO_CONTENT
+    );
+    eventually(TIMEOUT, "the console reply to be stored", || async {
+        h.store
+            .list_events(EventFilter {
+                session_id: Some(session_id.to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.kind == "permission.replied")
+    })
+    .await;
+    reply(h, session_id).await
+}
+
+/// The model's side of a reply: its label, its allow score to four places,
+/// the threshold, the guardrail and why it gave no answer.
+fn model_part(reply: &Value) -> Value {
+    json!({
+        "label": reply["label"],
+        "confidence": reply["confidence"].as_f64().map(|c| (c * 1e4).round() / 1e4),
+        "threshold": reply["threshold"],
+        "guardrail": reply["guardrail"],
+        "ai_error": reply["ai_error"],
+    })
+}
+
 async fn permission_request(h: &Harness, session_id: &str) -> Value {
     h.store
         .list_events(EventFilter {
@@ -285,7 +318,8 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
     assert_eq!(
         reply(&h, &session.id).await,
         json!({"session_id": "stub-session", "option_id": "yes", "decided_by": "ai",
-               "label": "allow", "confidence": 0.95})
+               "label": "allow", "confidence": 0.95, "threshold": 0.7,
+               "guardrail": null, "ai_error": null})
     );
     let requests = server.requests.lock().unwrap();
     let state = requests[0]["state"].as_str().unwrap();
@@ -407,7 +441,14 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
         h.session_status(&asked).await == SessionStatus::Idle
     })
     .await;
-    assert_eq!(reply(&h, &asked.id).await["decided_by"], "console");
+    let asked_reply = reply(&h, &asked.id).await;
+    assert_eq!(asked_reply["decided_by"], "console");
+    assert_eq!(
+        model_part(&asked_reply),
+        json!({"label": "allow", "confidence": 0.6, "threshold": 0.7,
+               "guardrail": null, "ai_error": null}),
+        "the reply keeps the score that fell short"
+    );
 
     let again = h
         .task_on(
@@ -461,8 +502,9 @@ async fn a_guardrail_asks_the_console_without_calling_the_model_and_names_the_ru
         "credential-paths"
     );
     assert_eq!(
-        h.send(answer(&session.id, "no")).await.0,
-        StatusCode::NO_CONTENT
+        model_part(&answered(&h, &session.id, "no").await),
+        json!({"label": null, "confidence": null, "threshold": null,
+               "guardrail": "credential-paths", "ai_error": null})
     );
 }
 
@@ -490,12 +532,33 @@ async fn a_learned_approval_does_not_answer_a_guardrail_request() {
 async fn an_answer_that_needs_review_waits_for_the_console() {
     let server = ModelServer::answer(0.99).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, Timeouts::default()).await;
+    let _guard =
+        tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
     assert_eq!(
-        h.send(answer(&session.id, "no")).await.0,
-        StatusCode::NO_CONTENT
+        model_part(&permission_request(&h, &session.id).await),
+        json!({"label": "escalate", "confidence": 0.01, "threshold": 0.7,
+               "guardrail": null, "ai_error": null}),
+        "the question carries the model's answer while it waits"
+    );
+    let reply = answered(&h, &session.id, "no").await;
+    assert_eq!(reply["decided_by"], "console");
+    assert_eq!(
+        model_part(&reply),
+        json!({"label": "escalate", "confidence": 0.01, "threshold": 0.7,
+               "guardrail": null, "ai_error": null})
+    );
+    let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
+    assert!(
+        snapshot.lines.iter().any(|line| line.level == "INFO"
+            && line.message.contains("AI permission decision")
+            && line
+                .message
+                .contains("tool=Bash decided_by=console label=escalate")
+            && line.message.contains("threshold=0.7")),
+        "{snapshot:?}"
     );
 }
 
@@ -511,8 +574,9 @@ async fn an_allow_without_an_allowing_option_waits_for_the_console() {
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
     assert_eq!(
-        h.send(answer(&session.id, "no")).await.0,
-        StatusCode::NO_CONTENT
+        model_part(&answered(&h, &session.id, "no").await),
+        json!({"label": "allow", "confidence": 0.99, "threshold": 0.7,
+               "guardrail": null, "ai_error": null})
     );
 }
 
@@ -534,8 +598,9 @@ async fn a_malformed_answer_warns_and_waits_for_the_console() {
         "{snapshot:?}"
     );
     assert_eq!(
-        h.send(answer(&session.id, "no")).await.0,
-        StatusCode::NO_CONTENT
+        model_part(&answered(&h, &session.id, "no").await),
+        json!({"label": null, "confidence": null, "threshold": null,
+               "guardrail": null, "ai_error": "malformed"})
     );
 }
 
@@ -556,8 +621,13 @@ async fn a_stopped_model_warns_and_waits_for_the_console() {
         "{snapshot:?}"
     );
     assert_eq!(
-        h.send(answer(&session.id, "no")).await.0,
-        StatusCode::NO_CONTENT
+        permission_request(&h, &session.id).await["ai_error"],
+        "failed"
+    );
+    assert_eq!(
+        model_part(&answered(&h, &session.id, "no").await),
+        json!({"label": null, "confidence": null, "threshold": null,
+               "guardrail": null, "ai_error": "failed"})
     );
 }
 
@@ -573,8 +643,9 @@ async fn a_model_timeout_waits_for_the_console() {
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
     assert_eq!(
-        h.send(answer(&session.id, "no")).await.0,
-        StatusCode::NO_CONTENT
+        model_part(&answered(&h, &session.id, "no").await),
+        json!({"label": null, "confidence": null, "threshold": null,
+               "guardrail": null, "ai_error": "timed out"})
     );
 }
 
@@ -593,7 +664,8 @@ async fn a_disabled_model_waits_for_the_console() {
     wait_for_question(&h, &session).await;
     assert!(server.requests.lock().unwrap().is_empty());
     assert_eq!(
-        h.send(answer(&session.id, "no")).await.0,
-        StatusCode::NO_CONTENT
+        model_part(&answered(&h, &session.id, "no").await),
+        json!({"label": null, "confidence": null, "threshold": null,
+               "guardrail": null, "ai_error": "unavailable"})
     );
 }

@@ -1334,12 +1334,16 @@ impl RuntimeIncoming {
                         tracing::warn!(
                             "AI permission model is unavailable for a permission decision"
                         );
-                        None
+                        Some(Decision::Unanswered {
+                            reason: "unavailable",
+                        })
                     }
                 },
                 None => {
                     tracing::warn!("AI permission model is unavailable for a permission decision");
-                    None
+                    Some(Decision::Unanswered {
+                        reason: "unavailable",
+                    })
                 }
             }
         } else {
@@ -1362,30 +1366,54 @@ impl RuntimeIncoming {
         let waiting = guardrail.is_some()
             || matches!(self.permission_mode, PermissionMode::Ask)
             || (remembers && !learned && !ai_permissions_allow);
+        // What the model made of the request, whoever answers it: the
+        // question shows it while it waits, and the reply keeps it, so a
+        // reader asking why the console was asked finds the score it fell
+        // short with.
+        let (label, confidence, threshold, ai_error) = match &ai_permissions_decision {
+            Some(Decision::Allow {
+                confidence,
+                threshold,
+            }) => (Some("allow"), Some(*confidence), Some(*threshold), None),
+            Some(Decision::NotConfident {
+                label,
+                confidence,
+                threshold,
+            }) => (Some(*label), Some(*confidence), Some(*threshold), None),
+            Some(Decision::Unanswered { reason }) => (None, None, None, Some(*reason)),
+            None => (None, None, None, None),
+        };
+        for (key, value) in [
+            ("label", json!(label)),
+            ("confidence", json!(confidence)),
+            ("threshold", json!(threshold)),
+            ("ai_error", json!(ai_error)),
+        ] {
+            if !value.is_null() {
+                payload[key] = value;
+            }
+        }
         let receiver = waiting.then(|| self.begin_permission());
         self.end_text().await;
         self.sink.emit("permission_request", payload).await;
-        let (selected, decided_by, label, confidence) = match receiver {
-            Some(receiver) => (
-                self.wait_for_permission(params, receiver).await?,
-                "console",
-                None,
-                None,
-            ),
-            None if ai_permissions_allow => {
-                let Some(Decision::Allow { confidence }) = ai_permissions_decision else {
-                    unreachable!("ai_permissions_allow requires an allowing decision of the model")
-                };
-                (
-                    approved_option(params),
-                    "ai",
-                    Some("allow"),
-                    Some(confidence),
-                )
-            }
-            None if learned => (approved_option(params), "learned", None, None),
-            None => (approved_option(params), "auto", None, None),
+        let (selected, decided_by) = match receiver {
+            Some(receiver) => (self.wait_for_permission(params, receiver).await?, "console"),
+            None if ai_permissions_allow => (approved_option(params), "ai"),
+            None if learned => (approved_option(params), "learned"),
+            None => (approved_option(params), "auto"),
         };
+        if self.permission_mode == PermissionMode::Ai {
+            tracing::info!(
+                tool = %signature.tool_name,
+                decided_by,
+                label,
+                confidence,
+                threshold,
+                guardrail,
+                ai_error,
+                "AI permission decision"
+            );
+        }
         if remembers
             && decided_by == "console"
             && !self.repository_id.is_empty()
@@ -1409,7 +1437,8 @@ impl RuntimeIncoming {
             .emit(
                 "permission.replied",
                 json!({"session_id": session_id, "option_id": selected,
-                       "decided_by": decided_by, "label": label, "confidence": confidence}),
+                       "decided_by": decided_by, "label": label, "confidence": confidence,
+                       "threshold": threshold, "guardrail": guardrail, "ai_error": ai_error}),
             )
             .await;
         Ok(json!({"outcome": outcome}))

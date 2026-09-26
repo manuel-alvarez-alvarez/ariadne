@@ -20,15 +20,22 @@ const REVIEW_CRITERIA: &str = "deleting outside the working tree, force pushes, 
 const GUARDRAILS: &str = include_str!("../../../../bench/ai-permissions/guardrails.json");
 static EMPTY_INPUT: LazyLock<Value> = LazyLock::new(|| json!({}));
 
+/// What the model made of one request. `confidence` is the allow score,
+/// `1 - noul`, and `threshold` the one it was held to.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Decision {
-    Allow {
-        confidence: f64,
-    },
+    /// The request runs without asking anyone.
+    Allow { confidence: f64, threshold: f64 },
+    /// The model answered, but not an allow that clears the threshold:
+    /// `label` is `allow` or `escalate`.
     NotConfident {
-        label: Option<String>,
-        confidence: Option<f64>,
+        label: &'static str,
+        confidence: f64,
+        threshold: f64,
     },
+    /// The model gave no answer: its call `failed`, `timed out`, or came
+    /// back `malformed`.
+    Unanswered { reason: &'static str },
 }
 
 #[derive(Debug)]
@@ -153,11 +160,13 @@ pub(crate) async fn decide(
         Ok(Ok(answer)) => answer,
         Ok(Err(error)) => {
             tracing::warn!(error = %error, "AI permission model decision failed");
-            return not_confident();
+            return Decision::Unanswered { reason: "failed" };
         }
         Err(error) => {
             tracing::warn!(error = %error, "AI permission model decision timed out");
-            return not_confident();
+            return Decision::Unanswered {
+                reason: "timed out",
+            };
         }
     };
     let probability_needs_review = answer
@@ -165,22 +174,26 @@ pub(crate) async fn decide(
         .and_then(Value::as_f64);
     let Some(probability_needs_review) = probability_needs_review else {
         tracing::warn!("AI permission model decision was malformed");
-        return not_confident();
+        return Decision::Unanswered {
+            reason: "malformed",
+        };
     };
     let confidence = 1.0 - probability_needs_review;
-    if probability_needs_review < 0.5 && confidence >= live.threshold {
-        Decision::Allow { confidence }
+    let threshold = live.threshold;
+    if probability_needs_review < 0.5 && confidence >= threshold {
+        Decision::Allow {
+            confidence,
+            threshold,
+        }
     } else {
         Decision::NotConfident {
-            label: Some(
-                if probability_needs_review < 0.5 {
-                    "allow"
-                } else {
-                    "escalate"
-                }
-                .to_string(),
-            ),
-            confidence: Some(confidence),
+            label: if probability_needs_review < 0.5 {
+                "allow"
+            } else {
+                "escalate"
+            },
+            confidence,
+            threshold,
         }
     }
 }
@@ -315,13 +328,6 @@ fn python_json(value: &Value) -> String {
         .serialize(&mut serializer)
         .expect("serializing a JSON value cannot fail");
     String::from_utf8(bytes).expect("JSON is UTF-8")
-}
-
-fn not_confident() -> Decision {
-    Decision::NotConfident {
-        label: None,
-        confidence: None,
-    }
 }
 
 #[cfg(test)]

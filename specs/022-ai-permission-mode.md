@@ -211,9 +211,24 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 30. An allow of the model is never learned. Only an allowing console answer
     writes the learned table.
 31. `permission.replied` carries `decided_by`: `ai`, `learned`, `console`,
-    or `auto`. A reply of the model also carries its `label` and
-    `confidence`; these are null for every other decider. The console renders
-    it as `allowed by AI (0.94)`.
+    or `auto`, and always the keys `label`, `confidence`, `threshold`,
+    `guardrail` and `ai_error`. Whenever the model answered, whoever decided,
+    `label` is `allow` or `escalate`, `confidence` its allow score, and
+    `threshold` the one that score was held to. `guardrail` names the rule
+    that asked the console. `ai_error` is `unavailable`, `failed`,
+    `timed out` or `malformed` where the model was asked and gave no answer.
+    Each is null otherwise, and all five are null outside `ai`. The
+    `permission_request` carries the same fields, those that are not null,
+    since the model has answered before the console is asked. In `ai`, each
+    reply also logs one `AI permission decision` line at INFO with the tool,
+    `decided_by` and those fields. While a question waits, the console
+    shows under its call why the model left it to a person —
+    `AI said escalate (0.41, threshold 0.70)`,
+    `guardrail credential-paths`, `AI timed out`
+    (`ariadne_api::permissions::ai_permission_note`) — and
+    `ariadne session logs` prints it under the question. The answered line
+    is the option chosen, or `allowed by AI (0.94)` for a reply of the
+    model. The reply's event summary (012, rule 13) names the reason too.
 
 ## Guardrails
 
@@ -340,6 +355,23 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   and its confidence, raises no attention, and sends the benchmarked state and
   `noul` question with `model = "typed-decisions"` to the model
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
+- Every reply keeps the model's side: the label, score and threshold that
+  fell short, the guardrail that asked, or why the model gave no answer
+  (`ai_permissions_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`,
+  `::an_answer_that_needs_review_waits_for_the_console`,
+  `::a_guardrail_asks_the_console_without_calling_the_model_and_names_the_rule`,
+  `::a_malformed_answer_warns_and_waits_for_the_console`,
+  `::a_stopped_model_warns_and_waits_for_the_console`,
+  `::a_model_timeout_waits_for_the_console`,
+  `::a_disabled_model_waits_for_the_console`), and each reply is logged
+  (`::an_answer_that_needs_review_waits_for_the_console`).
+- The request carries the model's answer while the question waits
+  (`ai_permissions_decisions.rs::an_answer_that_needs_review_waits_for_the_console`,
+  `::a_stopped_model_warns_and_waits_for_the_console`), and the console and
+  `session logs` show it with the question, not with the answer
+  (`tui/picker.rs::tests::a_waiting_question_says_why_the_model_left_it_and_its_answer_does_not`,
+  `transcript.rs::tests::a_question_says_why_the_ai_permission_model_left_it_to_the_console`,
+  `ariadne_api::permissions::tests::a_reply_names_why_the_model_did_not_decide_it`).
 - A `noul` answer is gated on the probability of its false, allowing side
   (`ai_permissions_decisions.rs::a_noul_answer_is_gated_on_its_allow_probability`).
 - An uncertain allow asks the console, remembers its approval, and still asks

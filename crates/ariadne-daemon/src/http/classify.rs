@@ -120,6 +120,9 @@ const TOOL_INPUT_FIELDS: [&str; 7] = [
 /// `cwd` is read only to relativize a path already read off one of those — it
 /// is never a summary of its own, and it never appears in one.
 pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
+    if kind == "permission.replied" {
+        return finish(&permission_reply_summary(payload));
+    }
     let text = tool_call_summary(payload)
         .or_else(|| {
             (kind == "post_tool_use")
@@ -128,6 +131,30 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
         })
         .or_else(|| agent_text(kind, payload));
     finish(&text.unwrap_or_else(|| "…".to_string()))
+}
+
+/// An answered permission request: the option chosen and who chose it, and,
+/// where the AI permission model had a part, why it did not decide —
+/// `allow-once in the console — AI said escalate (0.41, threshold 0.70)`,
+/// `allowed by AI (0.83, threshold 0.70)`.
+fn permission_reply_summary(payload: &serde_json::Value) -> String {
+    let number = |key: &str| payload.get(key).and_then(serde_json::Value::as_f64);
+    let decided_by = non_empty_str(payload.get("decided_by"));
+    if decided_by == Some("ai")
+        && let (Some(confidence), Some(threshold)) = (number("confidence"), number("threshold"))
+    {
+        return format!("allowed by AI ({confidence:.2}, threshold {threshold:.2})");
+    }
+    let option = non_empty_str(payload.get("option_id")).unwrap_or("cancelled");
+    let answer = match decided_by {
+        Some("console") => format!("{option} in the console"),
+        Some(decider) => format!("{option}, {decider}"),
+        None => option.to_string(),
+    };
+    match ariadne_api::permissions::ai_permission_note(payload) {
+        Some(note) => format!("{answer} — {note}"),
+        None => answer,
+    }
 }
 
 /// A payload's field, where it holds a non-empty string.
@@ -475,6 +502,57 @@ mod tests {
 
     /// A payload nothing above can read — here, one carrying only its `cwd` —
     /// summarizes to `…`, visibly, rather than to nothing.
+    #[test]
+    fn an_answered_permission_says_who_answered_and_why_the_model_did_not() {
+        let reply = |fields: serde_json::Value| {
+            let mut payload = json!({"session_id": "stub-session", "option_id": "allow-once",
+                                     "decided_by": "console", "label": null, "confidence": null,
+                                     "threshold": null, "guardrail": null, "ai_error": null});
+            payload
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            summarize("permission.replied", &payload)
+        };
+        assert_eq!(
+            reply(
+                json!({"decided_by": "ai", "label": "allow", "confidence": 0.8312,
+                         "threshold": 0.7})
+            ),
+            "allowed by AI (0.83, threshold 0.70)"
+        );
+        assert_eq!(
+            reply(json!({"label": "escalate", "confidence": 0.41, "threshold": 0.7})),
+            "allow-once in the console — AI said escalate (0.41, threshold 0.70)"
+        );
+        assert_eq!(
+            reply(json!({"label": "allow", "confidence": 0.62, "threshold": 0.8})),
+            "allow-once in the console — AI said allow (0.62, threshold 0.80)"
+        );
+        assert_eq!(
+            reply(json!({"guardrail": "credential-paths"})),
+            "allow-once in the console — guardrail credential-paths"
+        );
+        assert_eq!(
+            reply(json!({"ai_error": "unavailable"})),
+            "allow-once in the console — AI unavailable"
+        );
+        assert_eq!(
+            reply(json!({"decided_by": "learned"})),
+            "allow-once, learned"
+        );
+        assert_eq!(reply(json!({"decided_by": "auto"})), "allow-once, auto");
+        assert_eq!(
+            reply(json!({"option_id": null})),
+            "cancelled in the console"
+        );
+        assert_eq!(
+            summarize("permission.replied", &json!({"option_id": "yes"})),
+            "yes",
+            "a reply recorded before deciders were named still reads"
+        );
+    }
+
     #[test]
     fn a_payload_with_nothing_readable_but_its_cwd_summarizes_to_an_ellipsis() {
         let payload = json!({"session_id": "stub-session", "cwd": "/tmp/wt"});

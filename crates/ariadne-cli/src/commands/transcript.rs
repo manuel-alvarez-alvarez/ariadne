@@ -85,8 +85,16 @@ pub(crate) mod render {
                 question,
                 options,
                 answer,
+                ai_note,
                 ..
-            } => permission_block(meta, question, options, answer.as_deref(), color),
+            } => permission_block(
+                meta,
+                question,
+                options,
+                ai_note.as_deref(),
+                answer.as_deref(),
+                color,
+            ),
             TranscriptItem::SystemNote { meta, text } => {
                 text_block(meta, "SYSTEM", DIM, text, DIM, width, color)
             }
@@ -233,6 +241,7 @@ pub(crate) mod render {
         meta: &ItemMeta,
         question: &str,
         options: &[PermissionOption],
+        ai_note: Option<&str>,
         answer: Option<&str>,
         color: bool,
     ) -> String {
@@ -241,6 +250,9 @@ pub(crate) mod render {
             header(meta, "PERMISSION", PERMISSION, color),
             question
         );
+        if let Some(note) = ai_note {
+            out.push_str(&format!("  {note}\n"));
+        }
         for (index, option) in options.iter().enumerate() {
             out.push_str(&format!("  {}. {}\n", index + 1, option.name));
         }
@@ -487,6 +499,7 @@ pub(crate) mod render {
                 meta,
                 question,
                 options,
+                ai_note,
                 ..
             } = TranscriptItem::from(event)
             else {
@@ -498,6 +511,9 @@ pub(crate) mod render {
                 header(&meta, "PERMISSION", PERMISSION, self.color),
                 question
             ));
+            if let Some(note) = ai_note {
+                out.push_str(&format!("  {note}\n"));
+            }
             for (index, option) in options.iter().enumerate() {
                 out.push_str(&format!("  {}. {}\n", index + 1, option.name));
             }
@@ -608,6 +624,36 @@ mod tests {
         assert!(output.contains("all tests passed"), "{output}");
         assert!(output.contains("answer: Allow"), "{output}");
         assert!(!output.contains('…'), "nothing is truncated: {output}");
+    }
+
+    #[test]
+    fn a_question_says_why_the_ai_permission_model_left_it_to_the_console() {
+        let events = [
+            event(
+                "ask",
+                "permission_request",
+                json!({
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "cat ~/.aws/credentials"},
+                    "options": [{"optionId": "yes", "name": "Allow"}],
+                    "guardrail": "credential-paths"
+                }),
+            ),
+            event("answer", "permission.replied", json!({"option_id": "yes"})),
+        ];
+
+        let output = render::transcript(&fold(&events), Some(80), false);
+
+        let question = output
+            .lines()
+            .position(|line| line.contains("PERMISSION"))
+            .expect("the question is printed");
+        assert_eq!(
+            output.lines().nth(question + 1),
+            Some("  guardrail credential-paths"),
+            "{output}"
+        );
+        assert!(output.contains("answer: Allow\n"), "{output}");
     }
 
     #[test]

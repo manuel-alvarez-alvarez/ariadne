@@ -127,6 +127,11 @@ and the ACP runtime that reports the agent events (021).
     (021), the message or thought a turn produced, whole or as one chunk on
     the console stream, a `session.error`'s message — those are shown
     verbatim.
+    A `permission.replied` reads as who answered and, where the AI
+    permission model had a part, why it did not decide (022, rule 31):
+    `allowed by AI (0.83, threshold 0.70)`,
+    `allow-once in the console — AI said escalate (0.41, threshold 0.70)`,
+    `allow-once, learned`.
     A path under the payload's `cwd` is printed relative to it, and the cwd
     itself is never printed. The summary is
     flattened to one line and cut at 200 characters with a trailing `…`,
@@ -297,7 +302,9 @@ and the ACP runtime that reports the agent events (021).
   `::the_agents_own_words_are_shown_where_the_payload_carries_them`,
   `::a_payload_with_nothing_readable_but_its_cwd_summarizes_to_an_ellipsis`,
   `::a_path_under_the_cwd_prints_relative_and_the_cwd_never_appears`,
-  `::a_long_summary_is_cut_at_200_characters`), and it reaches both
+  `::a_long_summary_is_cut_at_200_characters`), an answered permission says
+  who answered and why the model did not
+  (`::an_answered_permission_says_who_answered_and_why_the_model_did_not`), and it reaches both
   `GET /v1/events` and the SSE stream
   (`events.rs::an_events_summary_reaches_the_snapshot_and_the_stream_alike`).
 - A domain stream frame for an agent event carries no payload

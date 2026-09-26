@@ -25,6 +25,7 @@ pub(super) fn picker(
         tool,
         options,
         answer,
+        ai_note,
         ..
     } = item
     else {
@@ -38,6 +39,7 @@ pub(super) fn picker(
             question,
             tool,
             options,
+            ai_note.as_deref(),
             answer.as_deref(),
             Some(picked),
             width,
@@ -60,11 +62,15 @@ pub(super) fn picker(
 /// the answer once it is given. The call it asks about is drawn under the
 /// question — its head, and the command or the diff where it carries one,
 /// folded past `fold` lines — so what is being allowed can be read before
-/// it is. Once answered it is the question, the head and the option chosen.
+/// it is. Under the head, while it waits, is why the AI permission model
+/// left it to a person, where it had a part. Once answered it is the
+/// question, the head and the option chosen.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn permission(
     question: &str,
     tool: &Tool,
     options: &[PermissionOption],
+    ai_note: Option<&str>,
     answer: Option<&str>,
     picked: Option<usize>,
     width: usize,
@@ -78,6 +84,13 @@ pub(super) fn permission(
         return lines;
     }
     let (mut lines, below) = frame(question, tool, options, picked, width);
+    if let Some(note) = ai_note {
+        lines.extend(
+            fit(note, width)
+                .into_iter()
+                .map(|row| Line::from(Span::styled(row, DIM))),
+        );
+    }
     lines.extend(body(tool, width, fold));
     lines.extend(below);
     lines
@@ -523,6 +536,47 @@ mod tests {
         let shown = screen(&terminal);
 
         assert!(shown.contains("↳ allowed by AI (0.95)"), "{shown}");
+    }
+
+    #[test]
+    fn a_waiting_question_says_why_the_model_left_it_and_its_answer_does_not() {
+        let mut console = Console::new(header());
+        let mut asked = asked_with(
+            "Allow this edit?",
+            &["Always Allow", "Reject"],
+            json!({"toolCallId": "edit", "kind": "edit",
+                   "rawInput": {"file_path": "src/main.rs"}}),
+        );
+        asked.payload["label"] = json!("escalate");
+        asked.payload["confidence"] = json!(0.41);
+        asked.payload["threshold"] = json!(0.7);
+        console.apply(&asked);
+
+        let waiting = pane(&console, 60, 12);
+        let question = row_of(&waiting, "Allow this edit?").expect("the question is drawn");
+        assert_eq!(
+            row_of(&waiting, "AI said escalate (0.41, threshold 0.70)"),
+            Some(question + 2),
+            "the model's reason is under the head, before the options: {waiting}"
+        );
+
+        let mut terminal = terminal();
+        console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({"option_id": "option-0", "decided_by": "console",
+                   "label": "escalate", "confidence": 0.41, "threshold": 0.7,
+                   "guardrail": null, "ai_error": null}),
+        ));
+        console.apply(&event("agent_message", "done", json!({"text": "done"})));
+        console.commit(&mut terminal).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(shown.contains("↳ Always Allow"), "{shown}");
+        assert!(
+            !shown.contains("AI said"),
+            "the answer does not repeat it: {shown}"
+        );
     }
 
     #[test]

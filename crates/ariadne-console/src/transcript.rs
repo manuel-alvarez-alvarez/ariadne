@@ -270,6 +270,9 @@ pub enum TranscriptItem {
         tool: Tool,
         options: Vec<PermissionOption>,
         answer: Option<String>,
+        /// Why the AI permission model left the question to a person, where
+        /// it had a part: `AI said escalate (0.41, threshold 0.70)`.
+        ai_note: Option<String>,
     },
     SystemNote {
         meta: ItemMeta,
@@ -355,6 +358,7 @@ impl From<&AgentEventDto> for TranscriptItem {
                     tool,
                     options: permission_options(&event.payload),
                     answer: None,
+                    ai_note: ariadne_api::permissions::ai_permission_note(&event.payload),
                 }
             }
             "session.error" => Self::Error {
