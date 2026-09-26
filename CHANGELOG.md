@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.10.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.9.0...v0.10.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **daemon:** Remove AI permission fields checkpoints, question, allow_criteria, review_criteria, prompts, and default_prompts, and flags --checkpoints, --question, --allow, --review, and --default-prompts.
+* **cli:** group AI permission commands
+* **ui:** rename the Permissions screen from Laya to the AI permission model
+* **daemon:** the /v1/permissions/laya routes, the laya_updated event, the laya_* error codes and the laya_release_url config key are gone. The squashed schema renames laya_settings, so an existing database needs a migration.
+* **daemon:** `task create --permission-mode`, the `permission_mode` field of task creation (HTTP and the orchestrator's create_task tool) and the `permission_mode` key of config.toml are removed; a config.toml that still sets it stops the daemon. The database schema changes, so an existing ariadne.db must be migrated.
+* **daemon:** `agent_sessions` gains a `title` column in the squashed schema, so a database written by an earlier build does not open as it is.
+* **daemon:** page sessions and outside conversations together
+
+### Features
+
+* **cli:** add the permissions group for Laya ([cc45011](https://github.com/manuel-alvarez-alvarez/ariadne/commit/cc450111548ad69e3369b1229ddfc752c0c4b743))
+* **cli:** colour fenced code by its language in the console ([26c74f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/26c74f7fe45b20d74a77bf5d8f676e45a58645d1))
+* **cli:** group AI permission commands ([3e47146](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3e47146e1abfffd213ebf7955f566e588c171f62))
+* **cli:** list all sessions together ([741e04e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/741e04e23e3344d105b595de5e434eeadd3c5451))
+* **cli:** mark the words a diff changed, and brighten a tool's output ([0e2bce2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0e2bce23683e73df6a870879823b3df6ffb0874d))
+* **cli:** pin the console input box to the bottom of the terminal ([c0d5f6e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c0d5f6ece59f911efb172ea0d035a0ebe78de707))
+* **cli:** show session models and outside usage ([35a3b1f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/35a3b1f95333afc02ede35ebc08b16bb50834023))
+* **console:** unfold the pane's output with Ctrl-O ([368401f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/368401fd5568a2a1d69c3261f4384bb353b90519))
+* **daemon:** add a Kev backend to the AI permission benchmark harness ([c4d0755](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c4d0755dc1eccfc9c323b39b9901daa7c5a9b86d))
+* **daemon:** add Laya permission settings and install ([9ff4ba8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9ff4ba8e1f772a9618c0f62cc545afc9b233d634))
+* **daemon:** add the AI permission benchmark harness and its baseline ([3ff094b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3ff094bd24006c8137c5008fd932fadb649970e3))
+* **daemon:** build the AI permission prompts and checkpoint in ([6b841e2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6b841e22eb3d63c1e1dff82c567a49a44a75c346))
+* **daemon:** decide AI permissions with the benchmarked configuration and guardrails ([571e786](https://github.com/manuel-alvarez-alvarez/ariadne/commit/571e7869d301cc6058819f2f23902a7543aa9563))
+* **daemon:** install the pinned AI permission model ([c656dde](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c656dde3594981ee803ab50491f0d89f9567fd18))
+* **daemon:** let Laya decide permission requests in ai mode ([b933650](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b9336506468e4fc2f88b078544c2fee2d0e60571))
+* **daemon:** list the conversations on disk with their model and tokens ([7ef3d01](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7ef3d01d35e2fb288e97ed0c4026bb2410a25318))
+* **daemon:** move AI permission files into the daemon, add a decide example ([d77a175](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d77a175c4d35ebb52fd1d736d71a1686683742e0))
+* **daemon:** page sessions and outside conversations together ([457bedf](https://github.com/manuel-alvarez-alvarez/ariadne/commit/457bedf950f39023fd4c9668de1f885ee03435fa))
+* **daemon:** pick Kev-4B over Laya on the AI permission benchmark ([fe05f74](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fe05f744dece3de6b31b5c262ca96c0546edef4c))
+* **daemon:** read OpenCode's own database for its stored sessions ([c2b2316](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c2b2316a45da9b40b79dc298f1927a91a544fc5a))
+* **daemon:** read stored Codex rollouts ([a19afd6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a19afd6c0244b817f67458d41a17e2c48ab94ba8))
+* **daemon:** rename Laya to the AI permission model and add prompt settings ([87f1839](https://github.com/manuel-alvarez-alvarez/ariadne/commit/87f18395239ab27b34c2e8941179a6cfb6e763e6))
+* **daemon:** resume outside conversations as loose sessions ([7f235a4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7f235a408a36de2fe4b462e15a901794c8f4fec2))
+* **daemon:** run the Laya server and refresh it daily ([a923ae9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a923ae9edc2f9adb967bb47d1e51da1af8d2040f))
+* **daemon:** select the AI permission configuration by benchmark ([3b17a77](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3b17a7724105c3125c50da9fa601e60e46af0814))
+* **daemon:** serve and decide AI permissions with Kev ([61944d5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/61944d5a248cc3d4734bdd9254bffbf406d94246))
+* **daemon:** set the permission mode per repository ([36a39d1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/36a39d1221ada318c846e6e9ff1684ad104ee69f))
+* **daemon:** show why the AI permission model did not decide each request ([4563f54](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4563f5437950a992c8f8c41d29b5d186eeef68e7))
+* **daemon:** title loose sessions by their first prompt ([4da841a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4da841a97ab2fe591971690ef72db88d8bb055d2))
+* start a new session from the sessions screen or the CLI ([c525ecd](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c525ecd8f7e8dedb9930f42af57ef8624c9df653))
+* **ui:** add a window picker and show an outside row's model and tokens ([3cbfe67](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3cbfe679f75d43f89d387f7276ff7bd2fad48f73))
+* **ui:** add the Permissions screen for Laya ([d18e0eb](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d18e0eba802e78625a4be380ba08cb1e53a69833))
+* **ui:** drop the checkpoints and prompt controls from the Permissions screen ([05ff729](https://github.com/manuel-alvarez-alvarez/ariadne/commit/05ff7294220f69de2cdfd4d0877464220e1313ef))
+* **ui:** merge the sessions and outside-sessions screens ([bf7bb70](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bf7bb70919c49cb43d7a6d485ea12d70624aee2b))
+* **ui:** put an agent's skills and its model on two lines ([e52b93a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e52b93aab21e517711748c13ef6f677d4bd6160d))
+* **ui:** rename the Permissions screen from Laya to the AI permission model ([bbaf1e8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bbaf1e8209dff4179a8f33a0c78c19793cc2e2a4))
+* **ui:** rework the sessions filter bar and show each session's work in one column ([0daf524](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0daf524b23e4aed466047fa4726caf0d43856fd5))
+* **ui:** show a model pin without cutting it off ([27f3b8f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/27f3b8f42ceee507fddb8a88d7b67039911d9a09))
+
+
+### Bug Fixes
+
+* **cli:** fill the screen above the input box with the transcript ([8bd71f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8bd71f706a5bba4b41d86a59e453d8218d6567ec))
+* **daemon:** say why a conversation whose directory is gone cannot resume ([ab4658b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ab4658b089c237c122c4d7e7ad20edf2f580a826))
+* **daemon:** start the Laya server and read its decisions as laya-serve answers them ([56d6c28](https://github.com/manuel-alvarez-alvarez/ariadne/commit/56d6c2830b28d6076b53397700ea06adae57581e))
+* **daemon:** stop the Laya server with the daemon and wait for it to finish loading ([c207b24](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c207b24a8cadddbbd20b81cfb37e937b02ebfaa3))
+* **ui:** keep the model readable in a session row ([e216bd7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e216bd7894014146cf5d548d61d419b61fa9f2db))
+* **ui:** list a resumed outside session once ([9b58e92](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9b58e92845aa1645e5d0499d548d7cc1c44a1b90))
+* **ui:** open a resumed session's console again on its own ([a6eb224](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a6eb2241161e765ce101495487bf2af0e6323a93))
+* **ui:** read the paged sessions list ([585d3ef](https://github.com/manuel-alvarez-alvarez/ariadne/commit/585d3ef34d16ecefc57ae3961a5a35816154bf0e))
+* **ui:** show the model rank choices in full ([45f0c2c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/45f0c2c1ada9265989ce19d396f6ae2d7ed1f660))
+
+
+### Performance Improvements
+
+* **daemon:** ask no agent for a sessions page with no outside rows ([297d768](https://github.com/manuel-alvarez-alvarez/ariadne/commit/297d76887b4bf758a796bfd4bf178158a8887595))
+
 ## [0.9.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.8.0...v0.9.0) (2026-09-24)
 
 
