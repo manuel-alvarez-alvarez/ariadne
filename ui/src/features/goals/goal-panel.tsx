@@ -35,7 +35,7 @@ import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
-import { pinLabel } from "@/features/models/model-ref"
+import { ModelPin } from "@/features/models/model-pin"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { taskListQueryOptions } from "@/features/tasks"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
@@ -298,9 +298,11 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
       <Fact label="Orchestrator">
         {/* The goal's pin: what its orchestrator runs on, frozen when the goal
             was created. */}
-        <span className="text-xs">
-          {goal.orchestrated ? pinLabel(goal.model, goal.effort) : "No orchestrator"}
-        </span>
+        {goal.orchestrated ? (
+          <ModelPin model={goal.model} effort={goal.effort} mode="wrap" className="text-xs" />
+        ) : (
+          <span className="text-xs">No orchestrator</span>
+        )}
       </Fact>
       <Fact label="Created">
         <When at={goal.created_at} label="created" />

@@ -337,6 +337,11 @@ Out: the daemon endpoints themselves (012).
   `::refuses a leading colon, which names no agent`,
   `::refuses a trailing colon, which names no model`,
   `::splits at the first colon`).
+- A model pin wraps whole in a panel fact, and a one-line table pin cuts its
+  middle without cutting its effort; focus opens its whole value
+  (`ui/src/features/models/model-pin.test.tsx::wraps every character of a pin without a tooltip`,
+  `::keeps an effort visible beside a middle-cut model and opens the whole pin on focus`,
+  `::leaves out an empty effort and its at sign`).
 - A listed model offers its own efforts, and an unlisted one takes free text
   (`ui/src/features/models/pin-picker.test.tsx::offers the efforts of the pinned model, the agent's own first, and stores the pick`,
   `::takes free text for a model of a known agent the catalog does not list`,

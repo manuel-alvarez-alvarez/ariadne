@@ -137,12 +137,14 @@ it("keeps the sessions tab to the sessions, with no breakdown above them", async
 it("shows what the orchestrator runs on: the goal's pin, and that it is a pin", () => {
   mount(aGoal({ model: "codex-acp:gpt-5.3-codex" }))
 
-  const orchestrator = detail("Orchestrator").textContent ?? ""
-  expect(orchestrator).toContain("codex-acp:gpt-5.3-codex")
+  const orchestrator = detail("Orchestrator")
+  const text = orchestrator.textContent ?? ""
+  expect(text).toContain("codex-acp:gpt-5.3-codex")
+  expect(orchestrator.querySelector(".break-all")).not.toBeNull()
   // One word for "this is not what the profile says", where "(overrides)" left
   // the reader to work out which of the two won.
   // Nothing behind the pin to disagree with it any more.
-  expect(orchestrator).not.toContain("grok-4")
+  expect(text).not.toContain("grok-4")
 })
 
 it("shows the effort that model is run at, beside it", () => {

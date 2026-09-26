@@ -212,7 +212,7 @@ function Value({
  * on screen. The tail may still be cut when even *it* does not fit, which is
  * the point at which nothing would have.
  */
-function MiddleTruncated({ value, title }: { value: string; title: string }) {
+export function MiddleTruncated({ value, title }: { value: string; title: string }) {
   const { head, tail } = middleTruncate(value)
   return (
     <span className="flex min-w-0 overflow-hidden font-mono" title={title}>
