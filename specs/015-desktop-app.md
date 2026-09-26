@@ -199,9 +199,11 @@ Out: the daemon endpoints themselves (012).
     opens it. A tab value that is not one of the two opens the console.
     Leaving the console's tab closes its socket, and coming back opens a
     new one.
-25. A session's Agent fact and the sessions list show the pin the session
-    was launched on, whole (`<agent>:<model>`), with the effort after an `@`
-    where one is pinned.
+25. The sessions list shows the pin the session was launched on
+    (`<agent>:<model>`): the row cuts the model id in the middle when needed,
+    keeps the effort after an `@` readable, and its hint holds the whole pin
+    (`ui/src/features/sessions/sessions-list.test.tsx::keeps the effort beside
+    a middle-cut model and gives the row a whole-pin hint`).
 26. A row of the attention strip for an agent blocked on a permission or an
     input prompt opens that session's console with `?focus=`, so the terminal
     takes the keyboard on arrival.
@@ -342,6 +344,9 @@ Out: the daemon endpoints themselves (012).
   (`ui/src/features/models/model-pin.test.tsx::wraps every character of a pin without a tooltip`,
   `::keeps an effort visible beside a middle-cut model and opens the whole pin on focus`,
   `::leaves out an empty effort and its at sign`).
+- The sessions list uses the one-line pin and keeps its effort beside the
+  middle-cut model
+  (`ui/src/features/sessions/sessions-list.test.tsx::keeps the effort beside a middle-cut model and gives the row a whole-pin hint`).
 - A listed model offers its own efforts, and an unlisted one takes free text
   (`ui/src/features/models/pin-picker.test.tsx::offers the efforts of the pinned model, the agent's own first, and stores the pick`,
   `::takes free text for a model of a known agent the catalog does not list`,

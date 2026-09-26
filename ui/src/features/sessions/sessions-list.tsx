@@ -37,7 +37,7 @@ import { TokenHalves } from "@/components/token-figure"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { When, WhenDetail } from "@/components/when"
-import { pinLabel } from "@/features/models/model-ref"
+import { ModelPin } from "@/features/models/model-pin"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { cn, shortId } from "@/lib/format"
 
@@ -185,7 +185,7 @@ function SessionRow({
           pinned. The seat is already on the row, so it is not repeated here.
           It is the session's own snapshot: what it was launched on. */}
       <TableCell className="max-w-36 text-xs text-muted-foreground lg:max-w-56">
-        <span className="block truncate">{pinLabel(session.model, session.effort)}</span>
+        <ModelPin model={session.model} effort={session.effort} mode="row" />
       </TableCell>
       {/* The reason rides in the status cell rather than taking a fifth
           column: it is empty for almost every row, and where it is not it is
