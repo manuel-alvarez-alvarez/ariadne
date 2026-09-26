@@ -26,6 +26,12 @@ it("mounts the repositories screen at #/repositories", async () => {
   expect(await screen.findByRole("heading", { name: "Repositories", level: 1 })).toBeDefined()
 })
 
+it("mounts the permissions screen at #/permissions", async () => {
+  await open("/permissions")
+
+  expect(await screen.findByRole("heading", { name: "Permissions", level: 1 })).toBeDefined()
+})
+
 it("leads nowhere from a screen the app no longer has", async () => {
   await open("/graphs")
 

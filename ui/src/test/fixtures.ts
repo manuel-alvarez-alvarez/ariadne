@@ -18,6 +18,7 @@ import type {
   components,
   EffortDto,
   GoalDto,
+  LayaStatusDto,
   ModelDto,
   RepositoryDto,
   SessionDto,
@@ -267,6 +268,25 @@ export function aModel(overrides: Partial<ModelDto> = {}): ModelDto {
     efforts: [],
     enabled: true,
     rank: null,
+    ...overrides,
+  }
+}
+
+/** The Laya settings row `GET /v1/permissions/laya` answers with, off by default. */
+export function aLayaStatus(overrides: Partial<LayaStatusDto> = {}): LayaStatusDto {
+  return {
+    enabled: false,
+    checkpoints: "english",
+    threshold: 0.8,
+    schedule: null,
+    python: { path: "/usr/bin/python3", version: "3.12.1", ok: true },
+    state: "disabled",
+    installed_release: null,
+    latest_release: null,
+    weights_present: false,
+    endpoint: null,
+    last_refresh_at: null,
+    last_error: null,
     ...overrides,
   }
 }

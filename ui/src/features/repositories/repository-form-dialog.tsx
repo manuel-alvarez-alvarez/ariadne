@@ -47,7 +47,7 @@ const formSchema = z.object({
     .refine((value) => value.startsWith("/"), { message: "The path must be absolute." }),
   base_branch: z.string().trim(),
   description: z.string(),
-  permission_mode: z.enum(["auto", "ask", "learn"]),
+  permission_mode: z.enum(["auto", "ask", "learn", "ai"]),
 })
 
 type RepositoryFormValues = z.infer<typeof formSchema>
@@ -136,13 +136,20 @@ export function RepositoryFormDialog({
    * The daemon's refusal, on the field it is about.
    *
    * A 400 is one of three things — the path is not absolute, it is not a git
-   * work tree, or the branch is unknown — and the message picks the field. A
-   * 409 is about the pair, and goes above the buttons.
+   * work tree, or the branch is unknown — and the message picks the field.
+   * `laya_disabled` is about the mode just picked, so it lands there too,
+   * pointing at the screen that turns Laya on rather than repeating the
+   * daemon's own CLI-flavoured words. A 409 about the pair goes above the
+   * buttons instead — no field of this form is what it is about.
    */
   function showFailure(error: unknown): void {
     if (ApiError.is(error) && error.status === 400) {
       const message = describeError(error)
       setError(/branch/i.test(error.message) ? "base_branch" : "path", { message })
+      return
+    }
+    if (ApiError.is(error) && error.code === "laya_disabled") {
+      setError("permission_mode", { message: "Enable Laya on the Permissions screen first" })
       return
     }
     setError("root", { message: describeError(error) })
@@ -222,7 +229,7 @@ export function RepositoryFormDialog({
             </FieldDescription>
           </Field>
 
-          <Field>
+          <Field data-invalid={formState.errors.permission_mode ? true : undefined}>
             <FieldLabel htmlFor="repository-permission-mode">Permission requests</FieldLabel>
             <Controller
               control={control}
@@ -239,6 +246,7 @@ export function RepositoryFormDialog({
                     id="repository-permission-mode"
                     aria-label="Permission requests"
                     className="w-full"
+                    aria-invalid={formState.errors.permission_mode ? true : undefined}
                     onBlur={field.onBlur}
                   >
                     <SelectValue />
@@ -258,9 +266,13 @@ export function RepositoryFormDialog({
                 </Select>
               )}
             />
-            <FieldDescription>
-              How every agent working in this checkout has its tool permission requests answered.
-            </FieldDescription>
+            {formState.errors.permission_mode ? (
+              <FieldError errors={[formState.errors.permission_mode]} />
+            ) : (
+              <FieldDescription>
+                How every agent working in this checkout has its tool permission requests answered.
+              </FieldDescription>
+            )}
           </Field>
         </FormDialogBody>
       </FormDialogContent>

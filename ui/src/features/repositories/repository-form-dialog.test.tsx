@@ -117,6 +117,44 @@ describe("registering a repository", () => {
     expect(lastWrite()?.body?.permission_mode).toBe("learn")
   })
 
+  it("offers AI among the permission modes, and sends it as ai", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
+    await user.click(screen.getByRole("combobox", { name: "Permission requests" }))
+    await user.click(await screen.findByRole("option", { name: /^AI/ }))
+    await user.click(screen.getByRole("button", { name: "Register repository" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.permission_mode).toBe("ai")
+  })
+
+  it("puts a laya_disabled refusal on the permission mode field, pointing at the Permissions screen", async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    stubDaemon({
+      status: 409,
+      code: "laya_disabled",
+      message:
+        "the `ai` permission mode needs Laya; turn it on with `ariadne permissions enable` first",
+    })
+    renderDialog(null, onOpenChange)
+
+    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
+    await user.click(screen.getByRole("combobox", { name: "Permission requests" }))
+    await user.click(await screen.findByRole("option", { name: /^AI/ }))
+    await user.click(screen.getByRole("button", { name: "Register repository" }))
+
+    // On the field, not the daemon's own CLI-flavoured words, and the dialog
+    // is left open to fix it.
+    const message = await screen.findByText("Enable Laya on the Permissions screen first")
+    expect(message.closest("[data-slot=field]")?.textContent).toContain("Permission requests")
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
   it("refuses a relative path itself, without asking the daemon", async () => {
     const user = userEvent.setup()
     renderDialog(null)

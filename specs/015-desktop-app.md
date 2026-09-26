@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-24
+updated: 2026-09-26
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, ced9f4f8, c11241f3]
 tests:
@@ -37,7 +37,8 @@ Out: the daemon endpoints themselves (012).
    outside conversation an ACP agent stored on its own, merged into one
    listing, each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
-   be staffed on, and a daemon-logs drawer.
+   be staffed on, Permissions — the Laya settings behind the `ai` permission
+   mode (022) — and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -239,8 +240,23 @@ Out: the daemon endpoints themselves (012).
     row from the daemon's answer through the same `models` query key a switch
     write uses, and a refusal is toasted rather than swallowed, springing the
     picker back to what the daemon still says.
-
-## Acceptance criteria
+32. The Permissions screen holds one card, over the one settings row
+    `GET /v1/permissions/laya` answers with (022): a switch for `enabled`,
+    disabled with the Python version found (or that none was) where the daemon
+    has none new enough to install into; a select of the two checkpoint
+    choices; a number field for the threshold, 0 to 1; a time field for the
+    daily refresh, whose native clear is what turns it off, sending `schedule:
+    null`; a Refresh button, disabled while Laya is off or already installing;
+    and a fact list of the state, the installed and latest release, whether
+    the weights are present, the endpoint, the last refresh's age, and the
+    last error in the error style. Every control sends its own change the
+    moment it is made — there is no Save button — and a refusal is toasted
+    with the daemon's own message, the same as the agents screen's flag editor
+    and rank picker. The `laya_updated` event (012, 022) patches the same
+    query key any of those writes does, since the row has no list beside it.
+    The repository dialog's `PERMISSION_MODES` gains `ai`, and a `laya_disabled`
+    refusal on it lands on the permission-mode field, naming the Permissions
+    screen rather than the daemon's own CLI-flavoured words.
 
 - 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
@@ -474,6 +490,46 @@ Out: the daemon endpoints themselves (012).
   model, its own branch and its own pick status each on its own line, and a
   clear gap between one author's block and the next
   (`ui/src/features/tasks/task-panel.test.tsx::shows every author's own branch, marking only the one the reviewers picked`).
+- The Permissions screen's card shows every fact of the settings row, and the
+  error style holds the last one once there is one
+  (`ui/src/features/permissions/permissions-page.test.tsx::shows every fact
+  the daemon answered with`,
+  `::shows the last error in the error style, once there is one`).
+- The switch sends `enabled` alone, and is disabled with the Python version
+  found or that none was, where the daemon has none new enough
+  (`ui/src/features/permissions/permissions-page.test.tsx::the enabled
+  switch > sends enabled: true the moment it is turned on`,
+  `::the enabled switch > is disabled with the version found, where Python is
+  too old`,
+  `::the enabled switch > is disabled and says not found, where no
+  interpreter was found at all`).
+- The checkpoints select, the threshold field and the daily refresh field each
+  send only the field that changed, and the refresh field's native clear is
+  what turns the schedule off
+  (`ui/src/features/permissions/permissions-page.test.tsx::sends the
+  checkpoints picked, and nothing else`,
+  `::sends the threshold typed, once the field is left`,
+  `::the daily refresh > sends the time picked`,
+  `::the daily refresh > sends null once it is cleared back to off`).
+- Refresh posts once, and is disabled while Laya is off or already installing
+  (`ui/src/features/permissions/permissions-page.test.tsx::Refresh > posts to
+  the refresh endpoint`,
+  `::Refresh > is disabled while Laya is off`,
+  `::Refresh > is disabled while an install is already running`).
+- A refusal of any of the above is toasted with the daemon's own message
+  (`ui/src/features/permissions/permissions-page.test.tsx::toasts the
+  daemon's own message on a refusal`).
+- `laya_updated` replaces the cached settings row whole, so a card that read
+  `installing` reads `ready`
+  (`ui/src/events/dispatch.test.ts::laya events > replaces the cached status
+  whole, so a card that read installing reads ready`).
+- The repository dialog offers `AI` among the permission modes and sends it
+  as `ai`, and a `laya_disabled` refusal lands on that field naming the
+  Permissions screen
+  (`ui/src/features/repositories/repository-form-dialog.test.tsx::offers AI
+  among the permission modes, and sends it as ai`,
+  `::puts a laya_disabled refusal on the permission mode field, pointing at
+  the Permissions screen`).
 
 ## Sources
 

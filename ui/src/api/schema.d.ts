@@ -457,6 +457,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/permissions/laya": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Laya settings, the interpreter probed afresh, and where the install
+         *     has got to.
+         */
+        get: operations["permissions_get"];
+        /**
+         * Change the Laya settings. An absent field stays as it was.
+         * @description Turning Laya on is refused while the daemon has no Python 3.10 or newer to
+         *     install into: the download is minutes and gigabytes, and it would fail at
+         *     the end of them. Turning it off keeps every file on disk, so turning it
+         *     back on costs nothing but the release check.
+         */
+        put: operations["permissions_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/permissions/laya/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run the install again: the release check, the wheel and the checkpoints
+         *     the settings name now.
+         */
+        post: operations["permissions_refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repositories": {
         parameters: {
             query?: never;
@@ -1277,6 +1324,12 @@ export interface components {
             home: string;
             /** @description The daemon's `PATH`, the one every agent and git lookup uses. */
             path?: string | null;
+            /**
+             * @description The Python interpreter Laya's install runs on (022). It is reported
+             *     apart from `tools` because it answers a question of its own: not
+             *     whether it is there, but whether it is new enough.
+             */
+            python: components["schemas"]["PythonDto"];
             socket_path: string;
             /**
              * @description The other binaries the daemon runs: git, without which no worktree can
@@ -1374,6 +1427,11 @@ export interface components {
             data: components["schemas"]["DeletedDto"];
             /** @enum {string} */
             event: "repository_deleted";
+        } | {
+            /** @description The Laya settings or the state of its install moved (022). */
+            data: components["schemas"]["LayaStatusDto"];
+            /** @enum {string} */
+            event: "laya_updated";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -1498,6 +1556,54 @@ export interface components {
          * @enum {string}
          */
         Landing: "merge" | "pull_request" | "none";
+        /**
+         * @description Which checkpoints the install downloads.
+         *
+         *     English alone is 843 MB; all three — English, multilingual and
+         *     typed-decisions — are 2.4 GB together.
+         * @enum {string}
+         */
+        LayaCheckpoints: "english" | "all";
+        /**
+         * @description Where the install has got to.
+         * @enum {string}
+         */
+        LayaState: "disabled" | "installing" | "ready" | "failed";
+        /** @description The Laya settings and the state of the install behind them. */
+        LayaStatusDto: {
+            checkpoints: components["schemas"]["LayaCheckpoints"];
+            /** @description Whether Laya answers permission requests at all. */
+            enabled: boolean;
+            /** @description Where the Laya server answers, once one is running (022, Server). */
+            endpoint?: string | null;
+            /**
+             * @description The release tag of the package on disk.
+             * @example v0.1.4
+             */
+            installed_release?: string | null;
+            /** @description Why the last install failed. */
+            last_error?: string | null;
+            /** @description When the last install ended well, RFC 3339 in UTC. */
+            last_refresh_at?: string | null;
+            /** @description The release tag the last download reported. */
+            latest_release?: string | null;
+            python: components["schemas"]["PythonDto"];
+            /**
+             * @description When the daily refresh runs, `HH:MM` in 24-hour local time. `null`
+             *     turns the refresh off.
+             * @example 03:30
+             */
+            schedule?: string | null;
+            state: components["schemas"]["LayaState"];
+            /**
+             * Format: double
+             * @description How sure Laya has to be before its answer is taken, 0 to 1.
+             * @example 0.8
+             */
+            threshold: number;
+            /** @description Whether the checkpoints of the last good install are on disk. */
+            weights_present: boolean;
+        };
         /** @description One captured daemon log line. */
         LogLineDto: {
             /**
@@ -1635,7 +1741,7 @@ export interface components {
          * @description How the ACP runtime answers a tool permission request.
          * @enum {string}
          */
-        PermissionMode: "auto" | "ask" | "learn";
+        PermissionMode: "auto" | "ask" | "learn" | "ai";
         /**
          * @description One reviewer picking the winning author of a task staffed with several:
          *     the author whose branch lands.
@@ -1643,6 +1749,21 @@ export interface components {
         PickWinnerRequest: {
             /** @description Id of the author picked, one of the task's authors. */
             author_agent_id: string;
+        };
+        /** @description The Python interpreter the daemon found, as it answered `--version`. */
+        PythonDto: {
+            /** @description Whether it is Python 3.10 or newer, which Laya needs. */
+            ok: boolean;
+            /**
+             * @description Absolute path, when one was found.
+             * @example /usr/bin/python3
+             */
+            path?: string | null;
+            /**
+             * @description The version it printed, without the `Python ` in front of it.
+             * @example 3.12.1
+             */
+            version?: string | null;
         };
         /**
          * @description The author reporting the pull or merge request it opened for a task, so
@@ -2091,6 +2212,23 @@ export interface components {
         /** @description Body of `PUT /v1/agents/{id}`: the whole new flag list, empty included. */
         UpdateAgentConfigRequest: {
             extra_flags: string[];
+        };
+        /** @description Partial update of the Laya settings; an absent field stays unchanged. */
+        UpdateLayaRequest: {
+            checkpoints?: null | components["schemas"]["LayaCheckpoints"];
+            /** @description Turning it on starts an install; turning it off keeps the files. */
+            enabled?: boolean | null;
+            /**
+             * @description `HH:MM` in 24-hour local time. Absent keeps the schedule; `null`
+             *     turns it off.
+             * @example 03:30
+             */
+            schedule?: string | null;
+            /**
+             * Format: double
+             * @description 0 to 1. Anything else is refused.
+             */
+            threshold?: number | null;
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateRepositoryRequest: {
@@ -2881,6 +3019,88 @@ export interface operations {
             };
         };
     };
+    permissions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LayaStatusDto"];
+                };
+            };
+        };
+    };
+    permissions_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLayaRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LayaStatusDto"];
+                };
+            };
+            /** @description no Python 3.10 or newer to install into */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description a threshold outside 0..=1, or a schedule that is not HH:MM */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    permissions_refresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LayaStatusDto"];
+                };
+            };
+            /** @description Laya is off, or an install is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     repositories_list: {
         parameters: {
             query?: never;
@@ -2928,7 +3148,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description this path and base branch are already registered */
+            /** @description this path and base branch are already registered, or `ai` was asked for while Laya is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3002,7 +3222,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description this path and base branch are already registered */
+            /** @description this path and base branch are already registered, or `ai` was asked for while Laya is off */
             409: {
                 headers: {
                     [name: string]: unknown;

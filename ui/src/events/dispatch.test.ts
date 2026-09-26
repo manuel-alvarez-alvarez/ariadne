@@ -34,7 +34,7 @@ import {
   type RepositoryDto,
   type TaskDto,
 } from "@/api"
-import { aGoal, aRepository, aSession, aTask } from "@/test/fixtures"
+import { aGoal, aLayaStatus, aRepository, aSession, aTask } from "@/test/fixtures"
 import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
 const REPOSITORY: RepositoryDto = aRepository({
@@ -258,6 +258,22 @@ describe("session events", () => {
     dispatch(queryClient, { event: "session_updated", data: aSession() })
 
     expect(stale(queryClient, outside)).toBe(false)
+  })
+})
+
+describe("laya events", () => {
+  it("replaces the cached status whole, so a card that read installing reads ready", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(qk.permissions.laya(), aLayaStatus({ state: "installing" }))
+
+    dispatch(queryClient, {
+      event: "laya_updated",
+      data: aLayaStatus({ state: "ready", installed_release: "v0.1.4" }),
+    })
+
+    expect(queryClient.getQueryData(qk.permissions.laya())).toEqual(
+      aLayaStatus({ state: "ready", installed_release: "v0.1.4" }),
+    )
   })
 })
 

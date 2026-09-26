@@ -135,4 +135,11 @@ export const qk = {
     lists: () => ["agent-events", "list"] as const,
     list: (filters?: AgentEventFilters) => ["agent-events", "list", filters ?? {}] as const,
   },
+  /**
+   * The Laya settings behind the `ai` permission mode
+   * (`GET /v1/permissions/laya`). One row, so a detail key and no list.
+   */
+  permissions: {
+    laya: () => ["permissions", "detail", "laya"] as const,
+  },
 } as const
