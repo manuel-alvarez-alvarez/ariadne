@@ -142,15 +142,34 @@ pub(super) fn pane() -> Terminal<Anchored<TestBackend>> {
     open(|| TestBackend::new(72, 40)).unwrap()
 }
 
-/// What [`screen`] reads, of the terminal [`pane`] makes.
+/// Everything the terminal [`pane`] makes has shown: its scrollback, where
+/// the finished blocks are, and then its screen, which the pane holds
+/// whole. The blank rows the bottom-aligned pane leaves between them are
+/// left out, so a test reads the transcript as one block of text.
 pub(super) fn shown(terminal: &Terminal<Anchored<TestBackend>>) -> String {
-    rows(terminal.backend().under().buffer())
+    let backend = terminal.backend().under();
+    let mut text = String::new();
+    if backend.scrollback().area.height > 0 {
+        text.push_str(&rows(backend.scrollback()));
+        text.push('\n');
+    }
+    text.push_str(&filled(backend.buffer()));
+    text
 }
 
 /// Everything the terminal shows: the scrollback above the viewport and
 /// the viewport itself, as one block of text.
 pub(super) fn screen(terminal: &Terminal<TestBackend>) -> String {
     rows(terminal.backend().buffer())
+}
+
+/// The rows of `buffer` from its first row that holds something: the run of
+/// blank rows a bottom-aligned pane leaves over the block it is writing is
+/// not part of what the transcript says.
+pub(super) fn filled(buffer: &Buffer) -> String {
+    let shown = rows(buffer);
+    let kept: Vec<&str> = shown.lines().skip_while(|row| row.is_empty()).collect();
+    kept.join("\n").trim_end().to_string()
 }
 
 /// The cell after a wide character is the blank the buffer leaves under

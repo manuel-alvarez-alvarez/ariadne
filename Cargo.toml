@@ -74,7 +74,10 @@ clap_complete = { version = "4", features = ["unstable-dynamic"] }
 # input area, crossterm owns the raw mode and the key events under it.
 # `event-stream` is what lets the keys be awaited beside the daemon's stream
 # instead of polled.
-ratatui = "0.30"
+# `scrolling-regions` is what puts a finished block into the scrollback
+# without painting the pane again: the pane is the whole terminal, so ratatui
+# borrows its top row and scrolls that row away rather than clear and redraw.
+ratatui = { version = "0.30", features = ["scrolling-regions"] }
 crossterm = { version = "0.29", features = ["event-stream"] }
 # Markdown for the console: a parser, not a renderer. pulldown-cmark carries
 # no terminal types of its own, so the console styles every event in the one

@@ -91,6 +91,19 @@ impl Pair {
             .map(|row| row.trim_end().to_string())
             .collect();
         assert_eq!(emulated, expected, "the emulator shows the pane");
+        let size = self.test.size().unwrap();
+        assert_eq!(pane, Rect::from(size), "the pane is the whole screen");
+        let status = usize::from(size.height - self.on_test.pinned_rows(self.width));
+        let last = expected.len() - 1;
+        assert!(
+            expected[status].starts_with(" author · ")
+                && expected[status + 1].starts_with('─')
+                && expected[last - 1].starts_with('─')
+                && expected[last].starts_with(' ')
+                && !expected[last].trim().is_empty(),
+            "the status row, the box between its rules and the footer are the last rows: \
+             {expected:#?}"
+        );
         let cursor = self
             .test
             .backend_mut()

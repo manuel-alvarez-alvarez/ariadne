@@ -336,7 +336,9 @@ mod tests {
         let mut terminal =
             Terminal::new(TestBackend::new(width, live + console.pinned_rows(width))).unwrap();
         terminal.draw(|frame| console.render(frame)).unwrap();
-        screen(&terminal)
+        // The live area is bottom-aligned, so the question starts under the
+        // rows it leaves blank.
+        filled(terminal.backend().buffer())
     }
 
     fn asked_with(question: &str, options: &[&str], input: serde_json::Value) -> AgentEventDto {

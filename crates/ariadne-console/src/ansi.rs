@@ -16,6 +16,7 @@
 //! [`Terminal::insert_before`]: ratatui::Terminal::insert_before
 
 use std::io::{self, Write};
+use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
 use ratatui::backend::{Backend, ClearType, WindowSize};
@@ -71,6 +72,23 @@ impl<W: Write> AnsiBackend<W> {
         write!(self.out, "\x1b[{};{}H", at.y + 1, at.x + 1)?;
         self.cursor = at;
         Ok(())
+    }
+
+    /// Scroll the rows of `region` by `lines` inside a `DECSTBM` region, with
+    /// `SU` or `SD` as `direction` says, and reset the region after. Both
+    /// `DECSTBM`s put the cursor on the screen's first cell.
+    fn scroll_region(&mut self, region: Range<u16>, lines: u16, direction: char) -> io::Result<()> {
+        if lines == 0 || region.is_empty() {
+            return Ok(());
+        }
+        write!(
+            self.out,
+            "\x1b[{};{}r\x1b[{lines}{direction}\x1b[r",
+            region.start + 1,
+            region.end
+        )?;
+        self.cursor = Position::ORIGIN;
+        self.out.flush()
     }
 }
 
@@ -170,6 +188,24 @@ impl<W: Write> Backend for AnsiBackend<W> {
             ClearType::CurrentLine => b"\x1b[2K",
             ClearType::UntilNewLine => b"\x1b[K",
         })
+    }
+
+    /// Scroll the rows of `region` up by `lines`, as crossterm's backend does
+    /// for the CLI: `DECSTBM` sets the region, `SU` scrolls it, and the
+    /// region is reset to the whole screen after. The rows that leave a
+    /// region that starts on the top row go into the scrollback. A region of
+    /// one row is not one a terminal takes, and the pane's own backend,
+    /// `Anchored`, never asks for one.
+    fn scroll_region_up(&mut self, region: Range<u16>, lines: u16) -> io::Result<()> {
+        self.scroll_region(region, lines, 'S')
+    }
+
+    /// Scroll the rows of `region` down by `lines`, with `SD` where `SU`
+    /// scrolls up. Nothing reaches the scrollback: the rows that leave the
+    /// bottom of the region are gone, and the rows freed at its top are
+    /// blank.
+    fn scroll_region_down(&mut self, region: Range<u16>, lines: u16) -> io::Result<()> {
+        self.scroll_region(region, lines, 'T')
     }
 
     fn size(&self) -> io::Result<Size> {
@@ -297,6 +333,8 @@ mod tests {
     use ratatui::widgets::{Block, Paragraph, Widget};
     use ratatui::{Terminal, TerminalOptions, Viewport};
 
+    use crate::tui::Anchored;
+
     use super::*;
 
     /// The bytes the backend wrote, readable while the terminal still owns
@@ -341,9 +379,11 @@ mod tests {
         }
     }
 
-    fn inline(window: &Window, tap: &Tap) -> Terminal<AnsiBackend<Tap>> {
+    /// An inline viewport of 3 rows on the backend, under the pane's own
+    /// backend as every host has it ([`crate::tui::open`]).
+    fn inline(window: &Window, tap: &Tap) -> Terminal<Anchored<AnsiBackend<Tap>>> {
         Terminal::with_options(
-            AnsiBackend::new(tap.clone(), window.clone()),
+            Anchored::over(AnsiBackend::new(tap.clone(), window.clone())),
             TerminalOptions {
                 viewport: Viewport::Inline(3),
             },
@@ -539,6 +579,78 @@ mod tests {
             ["first", "second", "third", "status"],
             "the two rows that ran off the top are in the scrollback"
         );
+    }
+
+    /// The rows `A` to `D` on a terminal of 4 rows, drawn on the backend and
+    /// on ratatui's test backend, which is what says how a scrolling region
+    /// scrolls: one call made on each, then what a terminal that read the
+    /// bytes shows, what the test backend holds, what the terminal's
+    /// scrollback holds and the bytes the call wrote.
+    fn scrolled(region: Range<u16>, up: bool) -> (Vec<String>, Vec<String>, Vec<String>, String) {
+        let window = Window::new(8, 4);
+        let tap = Tap::default();
+        let mut ansi = AnsiBackend::new(tap.clone(), window.clone());
+        let mut test = TestBackend::new(8, 4);
+        let cells: Vec<Cell> = ["A", "B", "C", "D"]
+            .iter()
+            .map(|symbol| {
+                let mut cell = Cell::default();
+                cell.set_symbol(symbol);
+                cell
+            })
+            .collect();
+        let rows = || (0u16..).zip(&cells).map(|(y, cell)| (0, y, cell));
+        ansi.draw(rows()).unwrap();
+        test.draw(rows()).unwrap();
+        let before = tap.0.lock().unwrap().len();
+
+        if up {
+            ansi.scroll_region_up(region.clone(), 1).unwrap();
+            test.scroll_region_up(region, 1).unwrap();
+        } else {
+            ansi.scroll_region_down(region.clone(), 1).unwrap();
+            test.scroll_region_down(region, 1).unwrap();
+        }
+
+        let mut parser = vt100::Parser::new(4, 8, 10);
+        parser.process(&tap.0.lock().unwrap());
+        let screen: Vec<String> = parser
+            .screen()
+            .rows(0, 8)
+            .map(|row| row.trim_end().to_string())
+            .collect();
+        parser.screen_mut().set_scrollback(10);
+        let back = parser.screen().scrollback();
+        let scrollback: Vec<String> = parser
+            .screen()
+            .rows(0, 8)
+            .take(back)
+            .map(|row| row.trim_end().to_string())
+            .collect();
+        let expected: Vec<String> = (0..4)
+            .map(|y| test.buffer()[(0, y)].symbol().trim().to_string())
+            .collect();
+        let bytes = String::from_utf8_lossy(&tap.0.lock().unwrap()[before..]).to_string();
+        (screen, expected, scrollback, bytes)
+    }
+
+    #[test]
+    fn a_region_of_several_rows_scrolls_up_inside_a_decstbm_region() {
+        let (screen, expected, _, bytes) = scrolled(0..3, true);
+
+        assert_eq!(screen, ["B", "C", "", "D"], "{bytes:?}");
+        assert_eq!(screen, expected, "as the test backend has it");
+        assert_eq!(bytes, "\x1b[1;3r\x1b[1S\x1b[r");
+    }
+
+    #[test]
+    fn a_region_scrolls_down_inside_a_decstbm_region() {
+        let (screen, expected, scrollback, bytes) = scrolled(1..4, false);
+
+        assert_eq!(screen, ["A", "", "B", "C"], "{bytes:?}");
+        assert_eq!(screen, expected, "as the test backend has it");
+        assert!(scrollback.is_empty(), "nothing reaches the scrollback");
+        assert_eq!(bytes, "\x1b[2;4r\x1b[1T\x1b[r");
     }
 
     /// Told a new size, the terminal redraws its viewport at that size.

@@ -1111,7 +1111,7 @@ mod tests {
         let rows: Vec<&str> = shown
             .lines()
             .skip_while(|row| !row.starts_with("✗ "))
-            .take_while(|row| !row.is_empty())
+            .take_while(|row| row.starts_with("✗ ") || row.starts_with("  "))
             .collect();
         assert!(rows.len() > 1, "{shown}");
         assert!(rows.iter().all(|row| row.width() <= 80), "{shown}");

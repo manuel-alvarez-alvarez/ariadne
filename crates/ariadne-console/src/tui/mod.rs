@@ -3,8 +3,9 @@
 //!
 //! The shape is the one a person expects of a chat with an agent, and the one
 //! the Codex CLI has: the transcript scrolls in the terminal's own buffer, and
-//! a viewport pinned under it, as tall as what it holds, has the blocks still
-//! being written, a status line and the box being typed into. Finished blocks
+//! a viewport as tall as the terminal has the blocks still being written over
+//! its last rows: a status line and the box being typed into, which are the
+//! bottom rows of the screen whatever the transcript holds. Finished blocks
 //! leave the viewport with
 //! [`Terminal::insert_before`], so what the agent said is still in the
 //! scrollback after the console is closed — which is why the viewport is
@@ -185,8 +186,8 @@ pub struct Console {
     /// The last totals each launch of the session reported, by the launch
     /// they were read under: what the footer sums.
     launches: BTreeMap<String, TokenUsageDto>,
-    /// A resize wipes the terminal and draws the whole transcript again at
-    /// the new size ([`Console::redraws_whole_on_resize`]).
+    /// A resize wipes the terminal, its scrollback too, and draws the whole
+    /// transcript again at the new size ([`Console::redraws_whole_on_resize`]).
     whole_on_resize: bool,
     /// Whether a fold in the pane draws every line instead: a tool's output,
     /// a diff, a thought and a daemon prompt. Folded at each attach, and
@@ -221,15 +222,15 @@ impl Console {
     /// Draw the whole transcript again, from a cleared terminal, once a
     /// resize settles.
     ///
-    /// A terminal emulator re-wraps its rows when it is made narrower and
-    /// trims the rows under the cursor when it is made shorter — xterm.js
-    /// does both — so the pane's rows are no longer where the console drew
-    /// them, and fitting the pane in place leaves a copy of its status row
-    /// behind, or takes a row of the transcript with it. Where the terminal
-    /// holds this console and nothing else, as the desktop app's does, the
-    /// transcript is drawn again instead. The CLI's terminal holds the
-    /// user's shell above the console, which a clear would take, and fits
-    /// the pane in place.
+    /// Every resize erases the pane's rows and draws the pane again, since
+    /// the pane owns the screen. The scrollback is the terminal's, and a
+    /// terminal emulator re-wraps it when it is made narrower — xterm.js
+    /// does — so its blocks are no longer as the console drew them. Where
+    /// the terminal holds this console and nothing else, as the desktop
+    /// app's does, the scrollback is cleared too and every block is drawn
+    /// into it again, at the new width. The CLI's terminal holds the user's
+    /// shell above the console, which a clear would take, and draws the
+    /// pane again alone.
     pub fn redraws_whole_on_resize(mut self) -> Self {
         self.whole_on_resize = true;
         self
@@ -647,8 +648,8 @@ impl Console {
     /// How many leading items are finished with and may leave the viewport.
     ///
     /// While a turn runs the last item is never one of them — it is what is
-    /// still being written. Between turns it is one too, so the idle pane is
-    /// its pinned rows alone — unless it is a run of chunks no whole has
+    /// still being written. Between turns it is one too, so the idle pane has
+    /// nothing over its pinned rows — unless it is a run of chunks no whole has
     /// closed, which the next chunk would write into. Neither is an
     /// unanswered question, which is the picker, nor a
     /// prompt still waiting to be confirmed, nor a tool call that has not
@@ -695,19 +696,20 @@ impl Console {
         self.emit(terminal, end)
     }
 
-    /// One turn of the screen: the pane made as tall as what it will hold,
-    /// every finished block moved above it, and the pane drawn.
+    /// One turn of the screen: the pane made as tall as the terminal, every
+    /// finished block moved above it, and the pane drawn.
     ///
-    /// The height comes first, and is the one the pane has once the finished
-    /// blocks have left it: a pane made shorter leaves blank the rows those
-    /// blocks were written on, and they are inserted onto them, so nothing
-    /// scrolls and no blank row is left between the scrollback and the pane.
+    /// The height comes first, and is the terminal's own: the pane holds
+    /// every row of the screen, so the fit has nothing to do but at the open
+    /// and on a resize. A finished block then leaves the pane through a
+    /// scrolling region — ratatui borrows the pane's top row for it — and no
+    /// draw repaints more than the cells that changed.
     pub fn show<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
         if terminal.backend().lost() {
             return Ok(());
         }
         let end = self.settled();
-        viewport::fit(terminal, self.rows(end, terminal.size()?))?;
+        viewport::fit(terminal, self.rows(terminal.size()?))?;
         self.emit(terminal, end)?;
         terminal.draw(|frame| self.render(frame))?;
         Ok(())
@@ -715,8 +717,9 @@ impl Console {
 
     /// The way out: everything left goes to the scrollback, and the viewport
     /// is wiped so the shell comes back to a clean line. The pane is made as
-    /// short as it gets first, so what is left lands where it was written and
-    /// the shell comes back right under it.
+    /// short as its pinned rows first, on the top row of the screen, so what
+    /// is left is inserted over the rows it was drawn on and the shell comes
+    /// back right under it.
     ///
     /// A terminal whose backend a failed fit lost has nothing to write to:
     /// the error that ended the loop is the one to report, and this is `Ok`.
@@ -725,7 +728,8 @@ impl Console {
             return Ok(());
         }
         let end = self.items.len();
-        viewport::fit(terminal, self.rows(end, terminal.size()?))?;
+        let width = terminal.size()?.width;
+        viewport::fit(terminal, self.pinned_rows(width))?;
         self.emit(terminal, end)?;
         // ratatui's clear puts the cursor back where the box had it, inside
         // the wiped rows: the shell comes back at their top instead.
@@ -1166,10 +1170,9 @@ mod tests {
         console.show(&mut terminal).unwrap();
 
         let shown = shown(&terminal);
-        assert_eq!(
-            terminal.get_frame().area().height,
-            console.pinned_rows(72),
-            "the pane is its pinned rows alone: {shown}"
+        assert!(
+            console.live_lines(console.committed, 72, 40).is_empty(),
+            "no block is left in the pane: {shown}"
         );
         assert!(
             shown.contains("● answered\n\n author"),
@@ -1193,9 +1196,8 @@ mod tests {
             shown.starts_with("▌❯ hello\n\n✗ 409 Conflict"),
             "the prompt and why it was refused are in the scrollback: {shown}"
         );
-        assert_eq!(
-            terminal.get_frame().area().height,
-            console.pinned_rows(72),
+        assert!(
+            console.live_lines(console.committed, 72, 40).is_empty(),
             "{shown}"
         );
     }

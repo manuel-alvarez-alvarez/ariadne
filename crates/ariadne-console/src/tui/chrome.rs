@@ -121,9 +121,7 @@ impl Console {
     /// `from` on — the ones not yet in the scrollback — and the picker of a
     /// question waiting for its answer, folded to `height` rows. One blank
     /// line separates two blocks, as in the scrollback. The head of a long
-    /// block is in it too: the area draws the tail. The pane is as tall as
-    /// these lines (008), so what is drawn and what is counted are the one
-    /// list.
+    /// block is in it too: the area draws the tail, on its last rows (008).
     pub fn live_lines(&self, from: usize, width: u16, height: u16) -> Vec<Line<'static>> {
         let width = usize::from(width);
         let height = usize::from(height);
@@ -157,13 +155,27 @@ impl Console {
     }
 
     /// The blocks not yet in the scrollback, and the picker of a question
-    /// waiting for its answer.
+    /// waiting for its answer, on the rows right above the status row.
+    ///
+    /// The area is every row over the pinned ones, and what is drawn is its
+    /// last rows: the live area is bottom-aligned, so the block being
+    /// written ends where the status row begins and the rows over it stay
+    /// blank (008).
     fn draw_live(&self, frame: &mut Draw, area: Rect) {
         let lines = self.live_lines(self.committed, area.width, area.height);
         // The tail is what is happening now; the head of a long block has
         // scrolled past, exactly as it would have in the scrollback.
         let skip = lines.len().saturating_sub(usize::from(area.height));
-        frame.render_widget(Paragraph::new(Text::from(lines[skip..].to_vec())), area);
+        let lines = lines[skip..].to_vec();
+        let height = u16::try_from(lines.len())
+            .unwrap_or(u16::MAX)
+            .min(area.height);
+        let tail = Rect {
+            y: area.bottom() - height,
+            height,
+            ..area
+        };
+        frame.render_widget(Paragraph::new(Text::from(lines)), tail);
     }
 
     fn draw_status(&self, frame: &mut Draw, area: Rect) {
@@ -670,16 +682,18 @@ mod tests {
         terminal.draw(|frame| console.render(frame)).unwrap();
         let live = screen(&terminal);
         console.commit(&mut terminal).unwrap();
-        terminal.draw(|frame| console.render(frame)).unwrap();
-        let committed = screen(&terminal);
-
-        assert!(live.contains("● first\n\n● second"), "{live}");
-        assert!(committed.contains("● first\n\n● second"), "{committed}");
         assert_eq!(
             console.live_lines(console.committed, 72, 30).len(),
             1,
             "only the open block is live"
         );
+        console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
+        console.commit(&mut terminal).unwrap();
+        terminal.draw(|frame| console.render(frame)).unwrap();
+        let committed = screen(&terminal);
+
+        assert!(live.contains("● first\n\n● second"), "{live}");
+        assert!(committed.contains("● first\n\n● second"), "{committed}");
     }
 
     #[test]

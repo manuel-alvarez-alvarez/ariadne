@@ -96,13 +96,15 @@ breaks the tie on the rare internal id two agents both hold; otherwise the id
 alone is enough. [Resuming a session](resuming-sessions.md) says what a
 resumed or revived session can and cannot do.
 
-In a terminal the console is an inline pane. The transcript scrolls in
-the terminal's own buffer, so it is still there in your scrollback after you
-leave. Three things stay pinned under it: a status row, the input box, and a
-footer. The pane is as tall as what it holds: between turns it sits right
-under the transcript, and it grows with the block the agent is writing — up to
-the whole terminal, where it shows the block's last lines — and shrinks back
-once the block has moved into the scrollback.
+In a terminal the console is an inline pane as tall as the terminal. Its last
+rows are pinned: a status row, the input box, and a footer. So the input box
+is always on the bottom rows of the screen, however long or short the
+transcript is. The block the agent is writing sits right above the status
+row, and when the block is taller than the screen you see its last lines.
+The rows above it are blank. A finished block moves into the terminal's own
+scrollback, so scroll up to read the conversation so far. When you leave,
+the pane is erased and your shell prompt comes back right under the last
+block, so the transcript stays in your scrollback.
 
 ```
  author · claude:opus · running   ⠹ thinking 12s
@@ -142,21 +144,19 @@ Neither row is ever cut off. In a narrow terminal each row leaves out whole
 items, the least important first: the status row drops the model, then the
 seat, the clock, and what the turn is doing, and keeps the session's status to
 the last; the footer drops its later key hints, then the tokens, and keeps the
-first hint to the last. Resizing the terminal redraws the pane at the new
-size, and a shorter terminal still shows the whole of it. A narrower terminal
-gets the pane on its top row, and what was on the screen above the pane moves
-into the scrollback.
+first hint to the last. Resizing the terminal erases the pane and draws it
+again at the new size, with the input box on the new bottom rows.
 
-A resize has two limits, because the terminal moves its rows before the
-console hears of the resize, and the console does not ask the terminal where
-they went:
+A resize has two limits in the scrollback, because the terminal moves its
+rows before the console hears of the resize, and the console does not ask the
+terminal where they went:
 
 - In tmux, a taller window pulls rows of the history down onto the screen.
-  The pane is drawn again where it was, over some of those rows, so they are
-  gone from the scrollback. Attach again to see the whole transcript.
+  The pane erases them when it is drawn again, so they are gone from the
+  scrollback. Attach again to see the whole transcript.
 - On a narrower window, the terminal rewraps the pane before it is drawn
-  again. Rows of the old pane that the rewrap moved above it can stay in the
-  scrollback.
+  again. Rows of the old pane that the rewrap pushed up, most often blank
+  ones, can stay in the scrollback.
 
 The input box has a dim rule above and below it, without side borders. Its
 prompt is `❯ `, and continued rows align under the text:
@@ -179,13 +179,15 @@ On a narrow terminal it uses the same lines without a box; long titles are
 shortened to fit.
 
 The pane opens where the cursor is, which the console asks the terminal for
-once. A terminal that does not answer — a pseudo-terminal with nothing behind
-it, as `script` gives a process with no terminal of its own — keeps the
-console waiting a few seconds, and then the same pane opens from the bottom
-row of the screen. Nothing else changes: the transcript still scrolls into
-your scrollback, and the console never switches to the alternate screen. The
-terminal is not asked again after that, however many blocks scroll past and
-however often the pane grows or shrinks.
+once, and then takes the whole screen: what was on the screen above it,
+your shell included, moves into the scrollback. A terminal that does not
+answer — a pseudo-terminal with nothing behind it, as `script` gives a
+process with no terminal of its own — keeps the console waiting a few
+seconds, and then the same pane opens from the bottom row of the screen.
+Nothing else changes: the transcript still scrolls into your scrollback, and
+the console never switches to the alternate screen. The terminal is not
+asked again after that, however many blocks scroll past and however often
+the terminal is resized.
 
 The agent's text streams in as it is written and renders as markdown:
 headings, bold, code spans, fenced code under its language, lists and task

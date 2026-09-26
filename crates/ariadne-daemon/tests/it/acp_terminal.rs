@@ -194,8 +194,26 @@ impl Client {
         self.key(TerminalKey::Enter).await;
     }
 
+    /// Everything the emulator has shown: its scrollback, where the pane
+    /// puts each finished block, then its screen, which the pane holds whole.
     fn screen(&self) -> String {
-        self.parser.screen().contents()
+        let mut screen = self.parser.screen().clone();
+        let (height, width) = screen.size();
+        screen.set_scrollback(usize::MAX);
+        // A page of the scrollback at a time: scrolled back by `back` rows,
+        // the screen's first row is the scrollback's row `back` from its end.
+        let mut back = screen.scrollback();
+        let mut shown: Vec<String> = Vec::new();
+        while back > 0 {
+            screen.set_scrollback(back);
+            let page = back.min(usize::from(height));
+            shown.extend(screen.rows(0, width).take(page));
+            back -= page;
+        }
+        screen.set_scrollback(0);
+        shown.extend(screen.rows(0, width));
+        let shown: Vec<&str> = shown.iter().map(|row| row.trim_end()).collect();
+        shown.join("\n")
     }
 
     /// Read frames into the emulator until the screen satisfies `done`, or
