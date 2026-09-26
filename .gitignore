@@ -4,3 +4,5 @@
 .idea/
 *.iml
 node_modules/
+__pycache__/
+bench/ai-permissions/results/*/scores_real.csv
