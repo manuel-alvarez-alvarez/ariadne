@@ -18,7 +18,7 @@ mod server;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use ariadne_api::permissions::{LayaCheckpoints, LayaState, LayaStatusDto};
 use ariadne_store::Store;
@@ -57,6 +57,9 @@ pub struct Laya {
     configured_endpoint: Option<String>,
     /// Where the server the daemon started answers, once one has.
     endpoint: Arc<RwLock<Option<String>>>,
+    /// Whether a server has been launched and is still loading its weights:
+    /// neither healthy nor given up on yet.
+    starting: Arc<watch::Sender<bool>>,
     /// Whether an install is running now. Claimed with a compare-and-swap, so
     /// exactly one install runs at a time however many callers ask at once.
     installing: Arc<AtomicBool>,
@@ -79,6 +82,7 @@ impl Laya {
             serve_command: cfg.laya_serve_command.clone(),
             configured_endpoint: cfg.laya_endpoint.clone(),
             endpoint: Arc::default(),
+            starting: Arc::new(watch::Sender::new(false)),
             installing: Arc::default(),
             timeouts,
             server_tx,
@@ -151,6 +155,12 @@ impl Laya {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = endpoint;
     }
 
+    /// Say that a server is loading its weights, or that it is done: healthy,
+    /// or given up on.
+    pub(crate) fn set_starting(&self, starting: bool) {
+        self.starting.send_replace(starting);
+    }
+
     pub(crate) fn notify_server(&self) {
         let _ = self.server_tx.send(server::Command::Reconcile);
     }
@@ -182,6 +192,22 @@ impl Laya {
             endpoint,
             threshold: row.threshold,
         })
+    }
+
+    /// [`Laya::live`], after waiting out a server that is still loading its
+    /// weights, so a request made just after the daemon starts is still
+    /// Laya's to decide. A Laya with no server starting answers at once.
+    pub async fn live_once_started(&self) -> Option<LayaLive> {
+        let mut starting = self.starting.subscribe();
+        loop {
+            let was_starting = *starting.borrow_and_update();
+            if let Some(live) = self.live().await {
+                return Some(live);
+            }
+            if !was_starting || starting.changed().await.is_err() {
+                return None;
+            }
+        }
     }
 
     /// Publish the status as it now stands, whatever moved it.

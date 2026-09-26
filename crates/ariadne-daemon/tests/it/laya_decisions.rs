@@ -16,7 +16,8 @@ use ariadne_store::{AgentPin, EventFilter};
 
 use crate::common::acp::{registry_home, script, stub_acp_agent};
 use crate::common::{
-    Cast, Harness, RUNS_OUT, TIMEOUT, eventually, harness, post_json, put_json, shared_script,
+    Cast, Harness, HarnessBuilder, RUNS_OUT, TIMEOUT, eventually, harness, post_json, put_json,
+    shared_script,
 };
 
 #[derive(Clone)]
@@ -165,11 +166,30 @@ async fn laya_harness_with(
     timeouts: Timeouts,
     scripted: Value,
 ) -> (Harness, Cast, tempfile::TempDir) {
+    let endpoint = server.endpoint.clone();
+    laya_harness_on(
+        |builder| builder.laya_endpoint(endpoint),
+        server,
+        threshold,
+        timeouts,
+        scripted,
+    )
+    .await
+}
+
+/// A harness whose Laya is reached however `laya` says: a pinned endpoint, or
+/// a server the daemon starts.
+async fn laya_harness_on(
+    laya: impl FnOnce(HarnessBuilder) -> HarnessBuilder,
+    server: &LayaServer,
+    threshold: f64,
+    timeouts: Timeouts,
+    scripted: Value,
+) -> (Harness, Cast, tempfile::TempDir) {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = harness()
+    let h = laya(harness())
         .home(registry_home(&stub))
-        .laya_endpoint(server.endpoint.clone())
         .laya_release_url(format!("{}/release.json", server.endpoint))
         .laya_installer(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()])
         .python_bin(python())
@@ -274,6 +294,71 @@ async fn a_confident_allow_runs_at_once_and_reports_laya() {
         requests[0]["questions"]["decision"]["criteria"]["review"],
         "deleting outside the working tree, force pushes, package installs, network writes, credentials or secrets, changes to system configuration, anything unclear"
     );
+}
+
+/// A `laya-serve` that records its pid, loads for as long as its second
+/// argument says, and then allows every request with the calibrated
+/// confidence 0.95.
+const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
+import http.server, json, os, sys, time
+with open(sys.argv[1], 'w') as f:
+    f.write(str(os.getpid()) + '\n')
+time.sleep(float(sys.argv[2]))
+ANSWER = json.dumps({"answers": {"decision": {"type": "choice", "choice": "allow",
+    "probabilities": {"allow": 0.95, "review": 0.05}, "confidence": 0.05,
+    "answer_confidence": 0.95}}, "usage": {}, "routing": {}}).encode()
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200 if self.path == '/health' else 404)
+        self.end_headers()
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length', 0)))
+        self.send_response(200)
+        self.send_header('content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(ANSWER)
+    def log_message(self, *args): pass
+http.server.HTTPServer((os.environ['LAYA_HOST'], int(os.environ['LAYA_PORT'])), Handler).serve_forever()
+"#;
+
+#[tokio::test]
+async fn a_request_made_while_the_server_loads_waits_for_it() {
+    let release = LayaServer::hanging().await;
+    let record = tempfile::NamedTempFile::new().unwrap();
+    let command = vec![
+        shared_script(SLOW_SERVER).display().to_string(),
+        record.path().display().to_string(),
+        "3".to_string(),
+    ];
+    let (h, cast, _agent_dir) = laya_harness_on(
+        |builder| builder.laya_serve_command(command),
+        &release,
+        0.8,
+        Timeouts::default(),
+        permission_script(),
+    )
+    .await;
+    eventually(TIMEOUT, "the server to start loading", || async {
+        std::fs::read_to_string(record.path()).is_ok_and(|pid| pid.ends_with('\n'))
+    })
+    .await;
+    assert_eq!(
+        h.state.laya.live().await,
+        None,
+        "the server is still loading"
+    );
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the Laya-approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    assert_eq!(h.attention(&session).await, None);
+    let reply = reply(&h, &session.id).await;
+    assert_eq!(reply["decided_by"], "laya");
+    assert_eq!(reply["confidence"], 0.95);
+    h.state.laya.shutdown().await;
 }
 
 #[tokio::test]

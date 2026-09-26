@@ -139,7 +139,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 17. While Laya is enabled and its install is ready, the daemon runs
    `<home>/laya/venv/bin/laya-serve` as its child, in a process group of its
    own. It binds an available loopback port, preloads the selected checkpoints
-   from `<home>/laya/hf`, and never listens beyond the local machine.
+   from `<home>/laya/hf`, and never listens beyond the local machine. The
+   server runs under a `/bin/sh` guard whose stdin is a pipe only the daemon
+   writes to. When that pipe closes, however the daemon ended (`kill -9`
+   included), the guard kills the whole process group, so no server outlives
+   its daemon. When the server exits on its own, the guard exits with its
+   status.
 18. The daemon waits up to `Timeouts::laya_serve_start` for `GET /health`
    to answer with a success. It then publishes the loopback endpoint in
    `laya_updated`. On disable, refresh, shutdown, or an unsuccessful health
@@ -157,8 +162,11 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Decisions
 
-1. In `ai`, Laya decides before a learned approval is read. The daemon posts
-   to `{endpoint}/v1/systemone` and waits at most
+1. In `ai`, Laya decides before a learned approval is read. A request made
+   while a launched server is still loading its weights waits until that
+   server is healthy or given up on (at most `Timeouts::laya_serve_start`),
+   so the requests of a freshly started daemon are still Laya's. The daemon
+   then posts to `{endpoint}/v1/systemone` and waits at most
    `Timeouts::laya_decision`, five seconds by default.
 2. The state carries the tool call's title as `tool`, its `kind`, its
    `rawInput` as compact JSON cut to 2,000 characters, the repository path,
@@ -248,6 +256,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   shutdown (`laya_server.rs::a_ready_enabled_laya_starts_after_a_daemon_restart`).
   A server that misses its health deadline has no endpoint
   (`laya_server.rs::a_server_that_never_answers_health_is_not_live`).
+- The guard kills the server once the daemon's end of its pipe closes, and
+  exits with the server's status when the server exits on its own
+  (`laya/server.rs::tests::the_server_dies_when_the_daemon_end_of_its_pipe_closes`,
+  `::the_guard_exits_with_the_server_status`).
 - A due schedule refreshes once per local date, catches up after startup, and
   does nothing while disabled (`laya_server.rs::the_schedule_refreshes_once_per_local_day`).
 - The three paths, the five schemas, the nullable schedule, the doctor's
@@ -276,6 +288,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`laya_decisions.rs::a_review_answer_waits_for_the_console`).
 - A confident allow without an allowing option asks the console
   (`laya_decisions.rs::an_allow_without_an_allowing_option_waits_for_the_console`).
+- A request made while the server loads waits for it, and Laya decides it
+  (`laya_decisions.rs::a_request_made_while_the_server_loads_waits_for_it`).
 - A stopped or timed-out Laya warns and asks the console
   (`laya_decisions.rs::a_stopped_laya_warns_and_waits_for_the_console`,
   `::a_laya_timeout_waits_for_the_console`).

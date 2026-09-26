@@ -1305,7 +1305,7 @@ impl RuntimeIncoming {
         );
         let laya_decision = if self.permission_mode == PermissionMode::Ai {
             match self.sink.runtime.inner.laya.as_ref() {
-                Some(laya) => match laya.live().await {
+                Some(laya) => match laya.live_once_started().await {
                     Some(live) => Some(
                         decide(
                             &live,
