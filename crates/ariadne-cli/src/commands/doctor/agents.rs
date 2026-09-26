@@ -13,9 +13,9 @@ use super::Check;
 use super::checks::{THERE, forge_check, required_tool};
 
 /// What to do about a Python the daemon cannot install the model into, whether it
-/// is too old or was not found at all — the one hint both `python_check` and
+/// is unsupported or was not found at all — the one hint both `python_check` and
 /// `ClientError::hint`'s `python_unavailable` case give, in the same words.
-const PYTHON_HINT: &str = "install Python 3.10 or newer, or set python_bin in config.toml";
+const PYTHON_HINT: &str = "install Python 3.12 or 3.13, or set python_bin in config.toml";
 
 /// The daemon's cached discovery result for each ACP registry entry — and,
 /// where none of them is ready, the failure that says no session can be
@@ -166,9 +166,9 @@ fn python_check(python: &PythonDto) -> Check {
         (true, _, Some(version)) => Check::ok("python", format!("Python {version}")),
         (false, Some(path), Some(version)) => Check::warn(
             "python",
-            format!("python {version} found, the AI permission model needs 3.10 or newer"),
+            format!("python {version} found, the AI permission model needs 3.12 or 3.13"),
         )
-        .hint(format!("{path} is too old — {PYTHON_HINT}")),
+        .hint(format!("{path} is unsupported — {PYTHON_HINT}")),
         _ => Check::warn("python", "not found").hint(PYTHON_HINT),
     }
 }
@@ -370,7 +370,18 @@ mod tests {
         let check = python_check(&too_old);
         assert_eq!(check.status, Status::Warn);
         assert!(check.detail.contains("3.9.2"), "{}", check.detail);
-        assert!(check.detail.contains("3.10 or newer"), "{}", check.detail);
+        assert!(check.detail.contains("3.12 or 3.13"), "{}", check.detail);
+        assert!(check.hint.as_deref().unwrap().contains("unsupported"));
+
+        let too_new = PythonDto {
+            path: Some("/usr/bin/python3".into()),
+            version: Some("3.14.0".into()),
+            ok: false,
+        };
+        let check = python_check(&too_new);
+        assert_eq!(check.status, Status::Warn);
+        assert!(check.detail.contains("3.14.0"), "{}", check.detail);
+        assert!(check.hint.as_deref().unwrap().contains("unsupported"));
 
         let missing = PythonDto {
             path: None,
@@ -380,7 +391,13 @@ mod tests {
         let check = python_check(&missing);
         assert_eq!(check.status, Status::Warn);
         assert_eq!(check.detail, "not found");
-        assert!(check.hint.as_deref().unwrap().contains("Python 3.10"));
+        assert!(
+            check
+                .hint
+                .as_deref()
+                .unwrap()
+                .contains("Python 3.12 or 3.13")
+        );
     }
 
     /// The four states the model's install reports, none of them a failure.

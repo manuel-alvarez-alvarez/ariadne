@@ -193,7 +193,7 @@ same binary also serves (013).
     refused locally, in the same words the daemon would use, before anything
     is sent. An `ai_disabled` refusal — here and on `repo add|update
     --permission-mode ai` alike — carries the hint `run ariadne permissions ai
-    enable`; a `python_unavailable` one carries `install Python 3.10 or newer,
+    enable`; a `python_unavailable` one carries `install Python 3.12 or 3.13,
     or set python_bin in config.toml`.
 33. `ariadne doctor` reports the Python interpreter the AI permission model's install would run
     on, next to the daemon's own environment (rule 19), and where the install

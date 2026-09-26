@@ -1,6 +1,6 @@
 //! Which Python the model install would run on, and whether it is new enough.
 //!
-//! The model needs Python 3.10 or newer, and installs PyTorch into a virtual
+//! The model needs Python 3.12 or 3.13, and installs PyTorch into a virtual
 //! environment of that interpreter. The question is asked before anything is
 //! downloaded, because a 3.9 finds out two gigabytes too late.
 
@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use ariadne_api::permissions::PythonDto;
 use ariadne_core::probe;
 
-/// The oldest Python the model runs on.
-const OLDEST: (u32, u32) = (3, 10);
+/// The Python versions the model runs on.
+const SUPPORTED: [(u32, u32); 2] = [(3, 12), (3, 13)];
 
 /// The interpreter the daemon would install into, as it answers `--version`.
 ///
@@ -28,7 +28,9 @@ pub(crate) async fn probe_python(configured: Option<&str>, path: Option<&OsStr>)
             probe::is_executable(&candidate).then_some(candidate)
         }
         Some(bin) => path.and_then(|path| probe::which(path, bin)),
-        None => path.and_then(|path| probe::which(path, "python3")),
+        None => ["python3.13", "python3.12", "python3"]
+            .into_iter()
+            .find_map(|name| path.and_then(|path| probe::which(path, name))),
     };
     let Some(binary) = found else {
         return PythonDto {
@@ -42,7 +44,7 @@ pub(crate) async fn probe_python(configured: Option<&str>, path: Option<&OsStr>)
         .map(|line| version_of(&line));
     PythonDto {
         path: Some(binary.display().to_string()),
-        ok: version.as_deref().is_some_and(new_enough),
+        ok: version.as_deref().is_some_and(supported),
         version,
     }
 }
@@ -57,13 +59,13 @@ fn version_of(line: &str) -> String {
         .to_string()
 }
 
-/// Whether a version is 3.10 or newer. Anything that does not read as two
+/// Whether a version is Python 3.12 or 3.13. Anything that does not read as two
 /// numbers is not: an interpreter that will not say what it is, is not one to
 /// install two gigabytes into.
-fn new_enough(version: &str) -> bool {
+pub(crate) fn supported(version: &str) -> bool {
     let mut parts = version.split('.').map(str::parse::<u32>);
     match (parts.next(), parts.next()) {
-        (Some(Ok(major)), Some(Ok(minor))) => (major, minor) >= OLDEST,
+        (Some(Ok(major)), Some(Ok(minor))) => SUPPORTED.contains(&(major, minor)),
         _ => false,
     }
 }
@@ -73,23 +75,23 @@ mod tests {
     use super::*;
 
     /// What an interpreter prints is read as a version, whichever of the two
-    /// shapes it uses, and the cut is at 3.10 exactly.
+    /// shapes it uses, and the supported versions are 3.12 and 3.13.
     #[test]
-    fn the_version_is_read_from_the_line_and_cut_at_three_ten() {
+    fn the_version_is_read_from_the_line_and_checked_against_kevs_versions() {
         assert_eq!(version_of("Python 3.12.1"), "3.12.1");
         assert_eq!(version_of("3.9.18"), "3.9.18");
         assert_eq!(version_of("Python 3.10.0rc1"), "3.10.0rc1");
         // Nothing that reads as a version: the line itself is the answer.
         assert_eq!(version_of("not a python at all"), "not a python at all");
 
-        assert!(new_enough("3.10.0"));
-        assert!(new_enough("3.12.1"));
-        assert!(new_enough("4.0.0"));
-        assert!(!new_enough("3.9.18"));
-        assert!(!new_enough("2.7.18"));
+        assert!(supported("3.12.0"));
+        assert!(supported("3.13.1"));
+        assert!(!supported("3.14.0"));
+        assert!(!supported("3.11.18"));
+        assert!(!supported("4.0.0"));
         // A version with no minor, and a line that is no version.
-        assert!(!new_enough("3"));
-        assert!(!new_enough("not a python at all"));
+        assert!(!supported("3"));
+        assert!(!supported("not a python at all"));
     }
 
     /// A `python_bin` naming nothing that can be run leaves the report empty

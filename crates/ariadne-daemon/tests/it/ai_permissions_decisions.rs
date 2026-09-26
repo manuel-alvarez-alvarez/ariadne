@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Request, StatusCode};
-use axum::routing::{get, post as route_post};
+use axum::routing::post as route_post;
 use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt;
 
@@ -61,7 +61,6 @@ impl ModelServer {
             requests: requests.clone(),
         };
         let app = axum::Router::new()
-            .route("/release.json", get(release))
             .route("/v1/systemone", route_post(decision))
             .with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -92,13 +91,6 @@ fn response(decision: Value) -> Value {
         "usage": {"input_tokens": 139, "output_tokens": 0},
         "latency_ms": 200.0
     })
-}
-
-async fn release() -> axum::Json<Value> {
-    axum::Json(json!({
-        "tag_name": "v0.1.0",
-        "assets": [{"browser_download_url": "https://example.test/model.whl"}]
-    }))
 }
 
 async fn decision(
@@ -174,7 +166,7 @@ async fn ai_permissions_harness_with(
 /// a server the daemon starts.
 async fn ai_permissions_harness_on(
     ai_permissions: impl FnOnce(HarnessBuilder) -> HarnessBuilder,
-    server: &ModelServer,
+    _server: &ModelServer,
     threshold: f64,
     timeouts: Timeouts,
     scripted: Value,
@@ -183,7 +175,6 @@ async fn ai_permissions_harness_on(
     let stub = stub_acp_agent(agent_dir.path(), scripted);
     let h = ai_permissions(harness())
         .home(registry_home(&stub))
-        .ai_permissions_release_url(format!("{}/release.json", server.endpoint))
         .ai_permissions_installer(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()])
         .python_bin(python())
         .timeouts(timeouts)

@@ -89,8 +89,8 @@ it("renders the switch, the threshold, the schedule, Refresh and the facts, and 
 it("shows every fact the daemon answered with", async () => {
   current = anAiPermissionsStatus({
     state: "ready",
-    installed_release: "v0.1.4",
-    latest_release: "v0.1.5",
+    installed_release: "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+    latest_release: "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
     weights_present: true,
     endpoint: "http://127.0.0.1:8901",
     last_refresh_at: "2026-01-01T00:00:00Z",
@@ -99,8 +99,9 @@ it("shows every fact the daemon answered with", async () => {
   renderScreen(<PermissionsPage />)
 
   expect(await screen.findByText("Ready")).toBeDefined()
-  expect(screen.getByText("v0.1.4")).toBeDefined()
-  expect(screen.getByText("v0.1.5")).toBeDefined()
+  expect(
+    screen.getAllByText("kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101"),
+  ).toHaveLength(2)
   expect(screen.getByText("Yes")).toBeDefined()
   expect(screen.getByText("http://127.0.0.1:8901")).toBeDefined()
 })
@@ -108,11 +109,11 @@ it("shows every fact the daemon answered with", async () => {
 it("shows the last error in the error style, once there is one", async () => {
   current = anAiPermissionsStatus({
     state: "failed",
-    last_error: "the release document named no wheel",
+    last_error: "the package could not be installed",
   })
   renderScreen(<PermissionsPage />)
 
-  const message = await screen.findByText("the release document named no wheel")
+  const message = await screen.findByText("the package could not be installed")
   expect(message.className).toContain("text-destructive")
 })
 
@@ -134,7 +135,7 @@ describe("the enabled switch", () => {
 
     const switchEl = await screen.findByRole("switch", { name: "Enable the AI permission model" })
     expect(switchEl.getAttribute("data-disabled")).not.toBeNull()
-    expect(await screen.findByText(/The model needs Python 3.10 or newer/)).toBeDefined()
+    expect(await screen.findByText(/The model needs Python 3.12 or 3.13/)).toBeDefined()
     expect(screen.getByText(/found 3.9.1/)).toBeDefined()
   })
 

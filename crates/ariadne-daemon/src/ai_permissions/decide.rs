@@ -22,8 +22,6 @@ pub(crate) const RUN: &str = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99c
 /// echoes it back; the checkpoint actually served is fixed by `RUN` at
 /// launch.
 const MODEL: &str = "kev-latest";
-/// The checkpoint name the install task's own environment still carries.
-pub(crate) const CHECKPOINT: &str = "typed-decisions";
 const QUESTION: &str = "Does this coding-agent tool call need a person's review?";
 const ALLOW_CRITERIA: &str = "git status, diff, log, show, add or commit; cargo, npm, make, tsc, pytest, eslint or prettier builds, tests and lints; ls, find, cat or grep; reading or editing files under the repository path; fetching documentation";
 const REVIEW_CRITERIA: &str = "anything not listed as safe";

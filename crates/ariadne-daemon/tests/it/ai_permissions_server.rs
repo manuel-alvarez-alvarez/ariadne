@@ -38,16 +38,6 @@ fn installer() -> Vec<String> {
     vec!["/usr/bin/true".into()]
 }
 
-async fn release() -> (String, tokio::task::JoinHandle<()>) {
-    let app = axum::Router::new().route("/release", axum::routing::get(|| async { axum::Json(json!({"tag_name":"v1", "assets":[{"browser_download_url":"https://example.test/model.whl"}]})) }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/release", listener.local_addr().unwrap());
-    (
-        url,
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }),
-    )
-}
-
 async fn ready(h: &Harness) -> AiPermissionsStatusDto {
     eventually(TIMEOUT, "the model to be ready", || async {
         h.get::<AiPermissionsStatusDto>("/v1/permissions/ai")
@@ -65,12 +55,10 @@ fn enable() -> axum::http::Request<Body> {
 
 #[tokio::test]
 async fn a_ready_model_starts_the_server_with_its_built_in_weights() {
-    let (url, task) = release().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let server = shared_script(SERVER);
     let h = harness()
         .python_bin(python())
-        .ai_permissions_release_url(url)
         .ai_permissions_installer(installer())
         .ai_permissions_serve_command(vec![
             server.display().to_string(),
@@ -106,15 +94,12 @@ async fn a_ready_model_starts_the_server_with_its_built_in_weights() {
     })
     .await;
     h.state.ai_permissions.shutdown().await;
-    task.abort();
 }
 
 #[tokio::test]
 async fn the_schedule_refreshes_once_per_local_day() {
-    let (url, task) = release().await;
     let h = harness()
         .python_bin(python())
-        .ai_permissions_release_url(url)
         .ai_permissions_installer(installer())
         .timeouts(Timeouts {
             ai_permissions_schedule_poll: std::time::Duration::from_millis(50),
@@ -154,17 +139,14 @@ async fn the_schedule_refreshes_once_per_local_day() {
         marker
     );
     h.state.ai_permissions.shutdown().await;
-    task.abort();
 }
 
 #[tokio::test]
 async fn a_refresh_and_an_unexpected_exit_restart_the_server() {
-    let (url, task) = release().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let server = shared_script(SERVER);
     let h = harness()
         .python_bin(python())
-        .ai_permissions_release_url(url)
         .ai_permissions_installer(installer())
         .ai_permissions_serve_command(vec![
             server.display().to_string(),
@@ -214,15 +196,12 @@ async fn a_refresh_and_an_unexpected_exit_restart_the_server() {
     })
     .await;
     h.state.ai_permissions.shutdown().await;
-    task.abort();
 }
 
 #[tokio::test]
 async fn a_server_that_never_answers_health_is_not_live() {
-    let (url, task) = release().await;
     let h = harness()
         .python_bin(python())
-        .ai_permissions_release_url(url)
         .ai_permissions_installer(installer())
         .ai_permissions_serve_command(vec!["/bin/sleep".into(), "10".into()])
         .timeouts(Timeouts {
@@ -237,17 +216,14 @@ async fn a_server_that_never_answers_health_is_not_live() {
     let status: AiPermissionsStatusDto = h.get("/v1/permissions/ai").await;
     assert_eq!(status.endpoint, None);
     h.state.ai_permissions.shutdown().await;
-    task.abort();
 }
 
 #[tokio::test]
 async fn a_ready_enabled_model_starts_after_a_daemon_restart() {
-    let (url, task) = release().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let server = shared_script(SERVER);
     let first = harness()
         .python_bin(python())
-        .ai_permissions_release_url(url)
         .ai_permissions_installer(installer())
         .ai_permissions_serve_command(vec![
             server.display().to_string(),
@@ -277,5 +253,4 @@ async fn a_ready_enabled_model_starts_after_a_daemon_restart() {
     .await;
     assert_eq!(second.status().await.state, AiPermissionsState::Ready);
     second.shutdown().await;
-    task.abort();
 }

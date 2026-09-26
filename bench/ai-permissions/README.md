@@ -16,15 +16,22 @@ backend's venv interpreter.
 
 ### Laya
 
-The model is a separate install from this repository, at `~/.ariadne/ai-permissions/venv`
-(Python 3.14, the `laya` package). Its checkpoints (`english`, `multilingual`,
-`typed-decisions`) live under `~/.ariadne/ai-permissions/hf`, the Hugging Face cache. Run the
+The harness keeps Laya separate from the daemon at `~/.ariadne/ai-permissions/laya-venv`
+(Python 3.10 or newer). Install the latest Laya release wheel with:
+
+```sh
+python3 -m venv ~/.ariadne/ai-permissions/laya-venv
+~/.ariadne/ai-permissions/laya-venv/bin/pip install "laya[serve] @ <wheel url of the latest NandhaKishorM/laya release>"
+```
+
+Its checkpoints (`english`, `multilingual`, `typed-decisions`) live under
+`~/.ariadne/ai-permissions/hf`, the Hugging Face cache. Run the
 harness with that venv's interpreter, and point `HF_HOME` at that cache so it finds the
 checkpoints already downloaded there instead of trying to fetch them again:
 
 ```sh
 export HF_HOME=~/.ariadne/ai-permissions/hf
-~/.ariadne/ai-permissions/venv/bin/python3 bench/ai-permissions/harness.py <command> ...
+~/.ariadne/ai-permissions/laya-venv/bin/python3 bench/ai-permissions/harness.py <command> ...
 ```
 
 The harness needs nothing beyond what that venv already has (torch, transformers, numpy, and
@@ -34,7 +41,7 @@ so it never binds a port the production daemon might already be using.
 ### Kev
 
 [Kev](https://github.com/jaredpalmer/kev) is not on PyPI (the PyPI package named `kev` is
-unrelated) and needs Python 3.12 or 3.13, where Laya's venv is 3.14, so it gets its own venv at
+unrelated) and needs Python 3.12 or 3.13, so it gets its own venv at
 `~/.ariadne/ai-permissions/kev-venv`, built against a pinned commit:
 
 ```sh

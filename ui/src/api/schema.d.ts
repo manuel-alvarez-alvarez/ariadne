@@ -471,10 +471,10 @@ export interface paths {
         get: operations["permissions_get"];
         /**
          * Change the AI permission settings. An absent field stays as it was.
-         * @description Turning the model on is refused while the daemon has no Python 3.10 or newer to
+         * @description Turning the model on is refused while the daemon has no Python 3.12 or 3.13 to
          *     install into: the download is minutes and gigabytes, and it would fail at
          *     the end of them. Turning it off keeps every file on disk, so turning it
-         *     back on costs nothing but the release check.
+         *     back on repairs its pinned package and weights.
          */
         put: operations["permissions_update"];
         post?: never;
@@ -493,10 +493,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Run the install again: the release check, the wheel and the checkpoints
-         *     the settings name now.
-         */
+        /** Run the install again: the pinned package, adapter and base. */
         post: operations["permissions_refresh"];
         delete?: never;
         options?: never;
@@ -1205,15 +1202,15 @@ export interface components {
             /** @description Where the model server answers, once one is running (022, Server). */
             endpoint?: string | null;
             /**
-             * @description The release tag of the package on disk.
-             * @example v0.1.4
+             * @description The pinned model package and run on disk.
+             * @example kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101
              */
             installed_release?: string | null;
             /** @description Why the last install failed. */
             last_error?: string | null;
             /** @description When the last install ended well, RFC 3339 in UTC. */
             last_refresh_at?: string | null;
-            /** @description The release tag the last download reported. */
+            /** @description The pinned model package and run the last install used. */
             latest_release?: string | null;
             python: components["schemas"]["PythonDto"];
             /**
@@ -1743,7 +1740,7 @@ export interface components {
         };
         /** @description The Python interpreter the daemon found, as it answered `--version`. */
         PythonDto: {
-            /** @description Whether it is Python 3.10 or newer, which the model needs. */
+            /** @description Whether it is Python 3.12 or 3.13, which the model needs. */
             ok: boolean;
             /**
              * @description Absolute path, when one was found.
@@ -3049,7 +3046,7 @@ export interface operations {
                     "application/json": components["schemas"]["AiPermissionsStatusDto"];
                 };
             };
-            /** @description no Python 3.10 or newer to install into */
+            /** @description no Python 3.12 or 3.13 to install into */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -125,7 +125,7 @@ impl ClientError {
                 Some("run ariadne permissions ai enable".into())
             }
             Self::Api { code, .. } if code == "python_unavailable" => {
-                Some("install Python 3.10 or newer, or set python_bin in config.toml".into())
+                Some("install Python 3.12 or 3.13, or set python_bin in config.toml".into())
             }
             _ => None,
         }
@@ -792,11 +792,11 @@ mod tests {
         let unavailable = ClientError::Api {
             status: StatusCode::CONFLICT,
             code: "python_unavailable".into(),
-            message: "the AI permission model needs Python 3.10 or newer".into(),
+            message: "the AI permission model needs Python 3.12 or 3.13".into(),
         };
         assert_eq!(
             unavailable.hint().as_deref(),
-            Some("install Python 3.10 or newer, or set python_bin in config.toml")
+            Some("install Python 3.12 or 3.13, or set python_bin in config.toml")
         );
     }
 

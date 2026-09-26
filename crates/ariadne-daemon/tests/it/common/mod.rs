@@ -116,7 +116,6 @@ pub(crate) struct HarnessBuilder {
     ai_permissions_serve_command: Option<Vec<String>>,
     ai_permissions_endpoint: Option<String>,
     python_bin: Option<String>,
-    ai_permissions_release_url: Option<String>,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -151,7 +150,6 @@ pub(crate) fn harness() -> HarnessBuilder {
         ai_permissions_serve_command: None,
         ai_permissions_endpoint: None,
         python_bin: None,
-        ai_permissions_release_url: None,
     }
 }
 
@@ -253,12 +251,6 @@ impl HarnessBuilder {
         self
     }
 
-    /// Read the AI permission model release document from `url`, rather than from GitHub.
-    pub(crate) fn ai_permissions_release_url(mut self, url: impl Into<String>) -> Self {
-        self.ai_permissions_release_url = Some(url.into());
-        self
-    }
-
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -295,9 +287,6 @@ impl HarnessBuilder {
         config.ai_permissions_endpoint = self.ai_permissions_endpoint;
         if let Some(python_bin) = self.python_bin {
             config.python_bin = Some(python_bin);
-        }
-        if let Some(url) = self.ai_permissions_release_url {
-            config.ai_permissions_release_url = url;
         }
         let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
             &config.acp_agents,

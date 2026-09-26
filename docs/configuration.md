@@ -22,8 +22,8 @@ acp_registry_url = "https://cdn.agentclientprotocol.com/registry/v1/latest/regis
                                    # download the index only on an explicit refresh
 python_bin = "/opt/python3.12/bin/python3"
                                    # the Python that the AI permission model
-                                   # installs into; it has to be 3.10 or newer
-                                   # (default: python3 on the daemon's PATH).
+                                   # installs into; it has to be Python 3.12 or 3.13
+                                   # (default: python3.13, python3.12, then python3 on PATH).
                                    # See Permission modes.
 
 [[acp_agents]]                     # an agent of your own, or one the registry
@@ -55,15 +55,14 @@ Startup downloads nothing. It uses the kept index only when its fetch time
 is after the snapshot date at midnight UTC. Otherwise, it uses the shipped
 snapshot. Changing the URL does not discard the last good copy.
 
-`python_bin` and `ai_permissions_release_url` belong to the AI permission
-model, the model the `ai` permission mode answers with. `python_bin` is the
-interpreter the model's virtual environment is built from — set it where the
-`python3` on the daemon's own `PATH` is older than 3.10, or where you want the
-model on a different one. Nothing is installed into that interpreter: the
+`python_bin` belongs to the AI permission model, the model the `ai` permission
+mode answers with. It is the interpreter the model's virtual environment is
+built from — set it where the
+first supported Python on the daemon's own `PATH` is not 3.12 or 3.13, or where
+you want the model on a different interpreter. Nothing is installed into that interpreter: the
 package and PyTorch go into `~/.ariadne/ai-permissions/venv`.
-`ai_permissions_release_url` is the release document the install reads its
-tag and its wheel from; the download has a 30-second timeout. Neither key
-turns the model on — [Permission modes](permissions.md) does that.
+The daemon installs fixed model pins. `python_bin` does not turn the model on —
+[Permission modes](permissions.md) does that.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

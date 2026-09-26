@@ -31,29 +31,21 @@ pub struct Config {
     pub acp_agents: Vec<AcpAgentConfig>,
     /// ACP registry index URL, fetched only on an explicit refresh.
     pub acp_registry_url: String,
-    /// The Python interpreter the model's install runs on (022). `None` looks
-    /// `python3` up on the daemon's PATH.
+    /// The Python interpreter the model's install runs on (022). `None` finds
+    /// Python 3.13, Python 3.12, then `python3` on the daemon's PATH.
     pub python_bin: Option<String>,
-    /// Where the AI permission model release document is read from.
-    pub ai_permissions_release_url: String,
     /// A command that stands in for the whole model install — the venv, pip
     /// and the weights — so the suite proves the install's states without
     /// downloading two gigabytes. Set by the test harness alone: it is not a
     /// key of `config.toml`.
     pub ai_permissions_installer: Option<Vec<String>>,
-    /// A command that stands in for `laya-serve` in the suite. Like the
+    /// A command that stands in for the model server in the suite. Like the
     /// installer seam, it is not a `config.toml` key.
     pub ai_permissions_serve_command: Option<Vec<String>>,
     /// Where the model server answers, in place of one the daemon started.
     /// Set by the test harness alone, for the same reason.
     pub ai_permissions_endpoint: Option<String>,
 }
-
-/// Where the AI permission model release document is read from unless the config says
-/// otherwise: the latest release of the package's own repository, whose
-/// assets carry the wheel an install takes.
-const AI_PERMISSIONS_RELEASE_URL: &str =
-    "https://api.github.com/repos/NandhaKishorM/laya/releases/latest";
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
 fn default_cli_bin() -> String {
@@ -102,9 +94,6 @@ impl Config {
                 "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json".into()
             }),
             python_bin: file.python_bin,
-            ai_permissions_release_url: file
-                .ai_permissions_release_url
-                .unwrap_or_else(|| AI_PERMISSIONS_RELEASE_URL.into()),
             ai_permissions_installer: None,
             ai_permissions_serve_command: None,
             ai_permissions_endpoint: None,
@@ -166,29 +155,18 @@ mod tests {
             "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
         );
         assert_eq!(config.python_bin, None);
-        assert_eq!(
-            config.ai_permissions_release_url,
-            AI_PERMISSIONS_RELEASE_URL
-        );
     }
 
-    /// The two AI permission model keys a user may set are read; the two test seams beside
+    /// The AI permission model Python key is read; the test seams beside
     /// them are not keys at all, and a file naming one is refused like any
     /// other unknown key.
     #[test]
     fn the_ai_permissions_keys_a_user_may_set_are_read_and_the_test_seams_are_not() {
-        let dir = home_with(
-            "python_bin = \"/opt/python3.12/bin/python3\"\n\
-             ai_permissions_release_url = \"http://127.0.0.1/release.json\"\n",
-        );
+        let dir = home_with("python_bin = \"/opt/python3.12/bin/python3\"\n");
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
         assert_eq!(
             config.python_bin.as_deref(),
             Some("/opt/python3.12/bin/python3")
-        );
-        assert_eq!(
-            config.ai_permissions_release_url,
-            "http://127.0.0.1/release.json"
         );
         assert_eq!(config.ai_permissions_installer, None);
         assert_eq!(config.ai_permissions_endpoint, None);
@@ -196,6 +174,7 @@ mod tests {
         for seam in [
             "ai_permissions_installer = [\"/bin/true\"]\n",
             "ai_permissions_endpoint = \"http://x\"\n",
+            "ai_permissions_release_url = \"http://x\"\n",
         ] {
             let dir = home_with(seam);
             assert!(

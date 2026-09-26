@@ -32,7 +32,7 @@ import { useRefreshAiPermissions, useUpdateAiPermissions } from "./queries"
 /** What the Python check found, in the one line that says why the switch is off. */
 function pythonReason(python: PythonDto): string {
   const found = python.version ? `found ${python.version}` : "not found"
-  return `The model needs Python 3.10 or newer; ${found}.`
+  return `The model needs Python 3.12 or 3.13; ${found}.`
 }
 
 const STATE_LABELS: Record<AiPermissionsStatusDto["state"], string> = {

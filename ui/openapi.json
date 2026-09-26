@@ -990,7 +990,7 @@
           "permissions"
         ],
         "summary": "Change the AI permission settings. An absent field stays as it was.",
-        "description": "Turning the model on is refused while the daemon has no Python 3.10 or newer to\ninstall into: the download is minutes and gigabytes, and it would fail at\nthe end of them. Turning it off keeps every file on disk, so turning it\nback on costs nothing but the release check.",
+        "description": "Turning the model on is refused while the daemon has no Python 3.12 or 3.13 to\ninstall into: the download is minutes and gigabytes, and it would fail at\nthe end of them. Turning it off keeps every file on disk, so turning it\nback on repairs its pinned package and weights.",
         "operationId": "update",
         "requestBody": {
           "content": {
@@ -1014,7 +1014,7 @@
             }
           },
           "409": {
-            "description": "no Python 3.10 or newer to install into"
+            "description": "no Python 3.12 or 3.13 to install into"
           },
           "422": {
             "description": "a threshold outside 0..=1 or a schedule that is not HH:MM"
@@ -1027,7 +1027,7 @@
         "tags": [
           "permissions"
         ],
-        "summary": "Run the install again: the release check, the wheel and the checkpoints\nthe settings name now.",
+        "summary": "Run the install again: the pinned package, adapter and base.",
         "operationId": "refresh",
         "responses": {
           "202": {
@@ -2881,8 +2881,8 @@
               "string",
               "null"
             ],
-            "description": "The release tag of the package on disk.",
-            "example": "v0.1.4"
+            "description": "The pinned model package and run on disk.",
+            "example": "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101"
           },
           "last_error": {
             "type": [
@@ -2903,7 +2903,7 @@
               "string",
               "null"
             ],
-            "description": "The release tag the last download reported."
+            "description": "The pinned model package and run the last install used."
           },
           "python": {
             "$ref": "#/components/schemas/PythonDto"
@@ -3986,7 +3986,7 @@
         "properties": {
           "ok": {
             "type": "boolean",
-            "description": "Whether it is Python 3.10 or newer, which the model needs."
+            "description": "Whether it is Python 3.12 or 3.13, which the model needs."
           },
           "path": {
             "type": [

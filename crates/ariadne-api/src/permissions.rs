@@ -45,7 +45,7 @@ pub struct PythonDto {
     /// The version it printed, without the `Python ` in front of it.
     #[schema(example = "3.12.1")]
     pub version: Option<String>,
-    /// Whether it is Python 3.10 or newer, which the model needs.
+    /// Whether it is Python 3.12 or 3.13, which the model needs.
     pub ok: bool,
 }
 
@@ -63,10 +63,10 @@ pub struct AiPermissionsStatusDto {
     pub schedule: Option<String>,
     pub python: PythonDto,
     pub state: AiPermissionsState,
-    /// The release tag of the package on disk.
-    #[schema(example = "v0.1.4")]
+    /// The pinned model package and run on disk.
+    #[schema(example = "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101")]
     pub installed_release: Option<String>,
-    /// The release tag the last download reported.
+    /// The pinned model package and run the last install used.
     pub latest_release: Option<String>,
     /// Whether the checkpoints of the last good install are on disk.
     pub weights_present: bool,

@@ -45,12 +45,8 @@ unknown key stops the daemon rather than being ignored):
   prevent_sleep            hold off system sleep while a session is live (default: true)
   acp_registry_url         index URL fetched on refresh (default:
                            https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json)
-  python_bin               the Python 3.10-or-newer the AI permission model
-                           installs into (default: python3 on this daemon's PATH)
-  ai_permissions_release_url
-                           where the model's release document is read from
-                           (default:
-                           https://api.github.com/repos/NandhaKishorM/laya/releases/latest)
+  python_bin               the Python 3.12 or 3.13 the AI permission model
+                           installs into (default: python3.13, python3.12, then python3 on this daemon's PATH)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
 
   ariadned --check-config reads that file and exits.\

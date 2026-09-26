@@ -1,9 +1,8 @@
 //! Integration tests for the AI permission settings, the Python check and the install
 //! behind `/v1/permissions/ai` (022).
 //!
-//! Nothing here downloads anything. The release document is served by the
-//! test, the whole install is one shell script the daemon runs in place of
-//! the venv, the wheel and the checkpoints, and the interpreter is a script
+//! Nothing here downloads anything. The whole install is one shell script the
+//! daemon runs in place of the venv, package and weights, and the interpreter is a script
 //! that prints a version. What is proved is the daemon's own rules: what it
 //! refuses, what it starts, what it writes down and what it says on the
 //! stream.
@@ -29,9 +28,9 @@ use common::{
     put_json, shared_script,
 };
 
-/// The release the served document names, and the wheel on it.
-const TAG: &str = "v0.1.4";
-const WHEEL: &str = "model-0.1.4-py3-none-any.whl";
+const PIN: &str = "kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
+const RUN: &str = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
+const KEV_COMMIT: &str = "f1535963cea021439370c23127bc970b6788e730";
 
 // -- the stubs ---------------------------------------------------------------
 
@@ -53,13 +52,13 @@ fn python_printing(version: &str) -> String {
 fn installer(record: &std::path::Path, hold: &str, status: &str) -> Vec<String> {
     let script = shared_script(
         "#!/bin/sh\n\
-         printf '%s\\n%s\\n%s\\n%s\\n' \
-           \"$LAYA_HOME\" \"$LAYA_CHECKPOINTS\" \"$LAYA_WHEEL_URL\" \"$LAYA_RELEASE\" > \"$1\"\n\
+         printf '%s\\n%s\\n%s\\n' \
+           \"$AI_PERMISSIONS_HOME\" \"$AI_PERMISSIONS_RUN\" \"$AI_PERMISSIONS_KEV_COMMIT\" > \"$1\"\n\
          if [ -n \"$2\" ]; then\n\
            while [ ! -f \"$2\" ]; do sleep 0.05; done\n\
          fi\n\
          if [ \"$3\" != \"0\" ]; then\n\
-           echo 'the wheel could not be installed' >&2\n\
+           echo 'the package could not be installed' >&2\n\
          fi\n\
          exit \"$3\"\n",
     );
@@ -71,8 +70,7 @@ fn installer(record: &std::path::Path, hold: &str, status: &str) -> Vec<String> 
     ]
 }
 
-/// What the installer recorded: `LAYA_HOME`, `LAYA_CHECKPOINTS`,
-/// `LAYA_WHEEL_URL` and `LAYA_RELEASE`, in that order.
+/// What the installer recorded: its home, run and Kev commit, in that order.
 fn recorded(record: &std::path::Path) -> Vec<String> {
     std::fs::read_to_string(record)
         .unwrap_or_default()
@@ -81,50 +79,11 @@ fn recorded(record: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-/// A release document served over loopback, with the tarball ahead of the
-/// wheel so the pick is a pick and not the first asset.
-struct ReleaseServer {
-    url: String,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl ReleaseServer {
-    async fn start() -> Self {
-        let document = json!({
-            "tag_name": TAG,
-            "assets": [
-                {"browser_download_url": "https://example.test/model-0.1.4.tar.gz"},
-                {"browser_download_url": format!("https://example.test/{WHEEL}")},
-            ],
-        });
-        let app = axum::Router::new().route(
-            "/release.json",
-            axum::routing::get(move || {
-                let document = document.clone();
-                async move { axum::Json(document) }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/release.json", listener.local_addr().unwrap());
-        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        Self { url, task }
-    }
-}
-
-impl Drop for ReleaseServer {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
 // -- the harness -------------------------------------------------------------
 
-/// A daemon whose Python is new enough and whose release document is the
-/// served one. The install itself is the caller's to configure.
-fn with_ai_permissions(python: &str, release: &ReleaseServer) -> HarnessBuilder {
-    harness()
-        .python_bin(python_printing(python))
-        .ai_permissions_release_url(release.url.clone())
+/// A daemon whose Python is new enough. The install itself is the caller's to configure.
+fn with_ai_permissions(python: &str) -> HarnessBuilder {
+    harness().python_bin(python_printing(python))
 }
 
 async fn status(h: &Harness) -> AiPermissionsStatusDto {
@@ -151,9 +110,8 @@ async fn settles_on(h: &Harness, state: AiPermissionsState) -> AiPermissionsStat
 /// carries, and no daily refresh.
 #[tokio::test]
 async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
-    let release = ReleaseServer::start().await;
-    let python = python_printing("3.12.1");
-    let h = with_ai_permissions("3.12.1", &release).await;
+    let python = python_printing("3.13.1");
+    let h = with_ai_permissions("3.13.1").await;
 
     let status = status(&h).await;
     assert!(!status.enabled);
@@ -168,19 +126,18 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
     assert_eq!(status.last_error, None);
 
     assert_eq!(status.python.path.as_deref(), Some(python.as_str()));
-    assert_eq!(status.python.version.as_deref(), Some("3.12.1"));
+    assert_eq!(status.python.version.as_deref(), Some("3.13.1"));
     assert!(status.python.ok);
 }
 
 /// The model installs PyTorch into a virtual environment of the daemon's Python,
-/// and needs 3.10 for it. Turning it on against an older one is refused
+/// and needs Python 3.12 or 3.13. Turning it on against Python 3.14 is refused
 /// before anything is downloaded — and the refusal leaves the settings
 /// exactly as they were, so nothing has to be undone.
 #[tokio::test]
 async fn turning_the_model_on_without_a_new_enough_python_is_refused_and_changes_nothing() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.9.18", &release)
+    let h = with_ai_permissions("3.14.0")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
 
@@ -188,7 +145,11 @@ async fn turning_the_model_on_without_a_new_enough_python_is_refused_and_changes
         .json(update(json!({"enabled": true})), StatusCode::CONFLICT)
         .await;
     assert_eq!(refused.error.code, "python_unavailable");
-    assert!(refused.error.message.contains("3.9.18"), "{refused:?}");
+    assert!(refused.error.message.contains("3.14.0"), "{refused:?}");
+    assert!(
+        refused.error.message.contains("3.12 or 3.13"),
+        "{refused:?}"
+    );
 
     let after = status(&h).await;
     assert!(!after.enabled, "the refusal wrote nothing");
@@ -202,14 +163,12 @@ async fn turning_the_model_on_without_a_new_enough_python_is_refused_and_changes
 
 /// Turning the model on answers at once with `installing` — the install takes
 /// minutes and gigabytes — and says on the stream when it is ready. What the
-/// installer saw is the checkpoints the settings name and the wheel of the
-/// release document, and what is written down afterwards is the tag it
-/// installed.
+/// installer saw is the model home, run and package commit, and the status
+/// records the pin it installed.
 #[tokio::test]
 async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
     let mut events = h.bus.subscribe();
@@ -232,8 +191,8 @@ async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
     assert!(installing.enabled);
 
     let ready = settles_on(&h, AiPermissionsState::Ready).await;
-    assert_eq!(ready.installed_release.as_deref(), Some(TAG));
-    assert_eq!(ready.latest_release.as_deref(), Some(TAG));
+    assert_eq!(ready.installed_release.as_deref(), Some(PIN));
+    assert_eq!(ready.latest_release.as_deref(), Some(PIN));
     assert!(ready.weights_present);
     assert!(ready.last_refresh_at.is_some());
     assert_eq!(ready.last_error, None);
@@ -247,9 +206,8 @@ async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
                 .join("ai-permissions")
                 .display()
                 .to_string(),
-            "typed-decisions".to_string(),
-            format!("https://example.test/{WHEEL}"),
-            TAG.to_string(),
+            RUN.to_string(),
+            KEV_COMMIT.to_string(),
         ]
     );
 
@@ -266,9 +224,8 @@ async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
 /// The earlier install, where there is one, is left on disk.
 #[tokio::test]
 async fn an_install_that_fails_keeps_the_model_on_and_says_why() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "7"))
         .await;
 
@@ -282,7 +239,7 @@ async fn an_install_that_fails_keeps_the_model_on_and_says_why() {
     );
     assert_eq!(
         failed.last_error.as_deref(),
-        Some("the wheel could not be installed"),
+        Some("the package could not be installed"),
         "the installer's own stderr is what the user is left to act on"
     );
     assert!(!failed.weights_present);
@@ -294,9 +251,8 @@ async fn an_install_that_fails_keeps_the_model_on_and_says_why() {
 /// install that ran for minutes must not be forgotten by a restart.
 #[tokio::test]
 async fn the_settings_are_validated_and_survive_a_daemon_restart() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
 
@@ -359,11 +315,10 @@ async fn the_old_route_answers_404() {
 /// install is running, because one runs at a time.
 #[tokio::test]
 async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_install() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let hold = tempfile::tempdir().unwrap();
     let hold = hold.path().join("let-go");
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
 
@@ -396,7 +351,7 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
     settles_on(&h, AiPermissionsState::Ready).await;
     assert_eq!(
         recorded(record.path()).get(1).map(String::as_str),
-        Some("typed-decisions")
+        Some(RUN)
     );
 }
 
@@ -404,9 +359,8 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
 /// and nothing else, and the weights that took an hour stay where they are.
 #[tokio::test]
 async fn turning_the_model_off_keeps_the_files_it_installed() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
 
@@ -420,7 +374,7 @@ async fn turning_the_model_off_keeps_the_files_it_installed() {
         .await;
     assert!(!off.enabled);
     assert_eq!(off.state, AiPermissionsState::Disabled);
-    assert_eq!(off.installed_release.as_deref(), Some(TAG));
+    assert_eq!(off.installed_release.as_deref(), Some(PIN));
     assert!(off.weights_present, "the files are still on disk");
 }
 
@@ -429,11 +383,10 @@ async fn turning_the_model_off_keeps_the_files_it_installed() {
 /// down, and the state stays `disabled`.
 #[tokio::test]
 async fn turning_the_model_off_during_an_install_keeps_it_off_when_the_install_ends() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let hold = tempfile::tempdir().unwrap();
     let hold = hold.path().join("let-go");
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
     let mut events = h.bus.subscribe();
@@ -463,7 +416,7 @@ async fn turning_the_model_off_during_an_install_keeps_it_off_when_the_install_e
         AiPermissionsState::Disabled,
         "the install did not turn it on"
     );
-    assert_eq!(ended.installed_release.as_deref(), Some(TAG));
+    assert_eq!(ended.installed_release.as_deref(), Some(PIN));
     assert!(ended.weights_present, "what it put on disk is written down");
     assert_eq!(status(&h).await.state, AiPermissionsState::Disabled);
 }
@@ -473,11 +426,10 @@ async fn turning_the_model_off_during_an_install_keeps_it_off_when_the_install_e
 /// what the model is on.
 #[tokio::test]
 async fn turning_the_model_back_on_during_its_install_reports_that_install() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let hold = tempfile::tempdir().unwrap();
     let hold = hold.path().join("let-go");
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
 
@@ -495,7 +447,7 @@ async fn turning_the_model_back_on_during_its_install_reports_that_install() {
 
     std::fs::write(&hold, "go").unwrap();
     let ready = settles_on(&h, AiPermissionsState::Ready).await;
-    assert_eq!(ready.installed_release.as_deref(), Some(TAG));
+    assert_eq!(ready.installed_release.as_deref(), Some(PIN));
 }
 
 /// The race of turning the model on while its install runs, taken in its bad
@@ -508,11 +460,10 @@ async fn turning_the_model_back_on_during_its_install_reports_that_install() {
 /// is the same on every run.
 #[tokio::test]
 async fn a_turn_off_that_lands_before_the_rejoin_keeps_the_model_off() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let hold = tempfile::tempdir().unwrap();
     let hold = hold.path().join("let-go");
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
     let mut events = h.bus.subscribe();
@@ -570,7 +521,6 @@ fn local(time: &str) -> chrono::DateTime<chrono::Local> {
 /// what time it is, so nothing here waits on a clock.
 #[tokio::test]
 async fn the_daily_refresh_runs_the_install_once_at_its_minute() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     // The installer waits while this file is missing: it is there, so the
     // first install ends at once, and the refresh removes it to hold its own
@@ -578,7 +528,7 @@ async fn the_daily_refresh_runs_the_install_once_at_its_minute() {
     let hold = tempfile::tempdir().unwrap();
     let hold = hold.path().join("hold");
     std::fs::write(&hold, "").unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), &hold.display().to_string(), "0"))
         .await;
     let ai_permissions = &h.state.ai_permissions;
@@ -610,8 +560,8 @@ async fn the_daily_refresh_runs_the_install_once_at_its_minute() {
     settles_on(&h, AiPermissionsState::Ready).await;
     assert_eq!(
         recorded(record.path()).get(1).map(String::as_str),
-        Some("typed-decisions"),
-        "the refresh installs the built-in checkpoint"
+        Some(RUN),
+        "the refresh installs the built-in run"
     );
 
     std::fs::write(record.path(), "").unwrap();
@@ -635,9 +585,8 @@ async fn the_daily_refresh_runs_the_install_once_at_its_minute() {
 /// hour into an agent's work, and allowed once the model is on.
 #[tokio::test]
 async fn a_repository_takes_the_ai_mode_only_once_the_model_is_on() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
     let repo = h.git_repo("repo");
@@ -702,11 +651,10 @@ async fn a_repository_takes_the_ai_mode_only_once_the_model_is_on() {
 /// server reports, and nothing is live while the AI permission model is off.
 #[tokio::test]
 async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
-    let release = ReleaseServer::start().await;
     let record = tempfile::NamedTempFile::new().unwrap();
 
     // With nothing configured, the endpoint is whatever the server reported.
-    let h = with_ai_permissions("3.12.1", &release)
+    let h = with_ai_permissions("3.13.1")
         .ai_permissions_installer(installer(record.path(), "", "0"))
         .await;
     assert_eq!(h.state.ai_permissions.endpoint(), None);
@@ -747,7 +695,7 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
     assert_eq!(h.state.ai_permissions.live().await, None);
 
     // A configured endpoint is the answer whatever a server says.
-    let pinned = with_ai_permissions("3.12.1", &release)
+    let pinned = with_ai_permissions("3.13.1")
         .ai_permissions_endpoint("http://127.0.0.1:9999")
         .await;
     assert_eq!(
@@ -803,13 +751,12 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
 /// python3 is there but whether it is new enough.
 #[tokio::test]
 async fn the_doctor_reports_the_interpreter_the_model_needs() {
-    let release = ReleaseServer::start().await;
-    let python = python_printing("3.9.18");
-    let h = with_ai_permissions("3.9.18", &release).await;
+    let python = python_printing("3.14.0");
+    let h = with_ai_permissions("3.14.0").await;
 
     let report: ariadne_api::doctor::DaemonReportDto = h.get("/v1/doctor").await;
     assert_eq!(report.python.path.as_deref(), Some(python.as_str()));
-    assert_eq!(report.python.version.as_deref(), Some("3.9.18"));
+    assert_eq!(report.python.version.as_deref(), Some("3.14.0"));
     assert!(
         !report.python.ok,
         "3.9 is not one the AI permission model installs into"

@@ -48,10 +48,8 @@ pub struct AiPermissions {
     /// `<home>/ai-permissions`: the virtual environment, and the Hugging Face cache
     /// under it. A disabled model keeps everything here.
     home: PathBuf,
-    /// The `python_bin` config key, or `None` for `python3` on PATH.
+    /// The `python_bin` config key, or `None` for supported Python on PATH.
     python_bin: Option<String>,
-    /// Where the release document is read from (`ai_permissions_release_url`).
-    release_url: String,
     /// The command that stands in for the whole install, in the suite.
     installer: Option<Vec<String>>,
     /// The command that stands in for `kev.serve` in integration tests.
@@ -83,7 +81,6 @@ impl AiPermissions {
             events,
             home: cfg.root.join("ai-permissions"),
             python_bin: cfg.python_bin.clone(),
-            release_url: cfg.ai_permissions_release_url.clone(),
             installer: cfg.ai_permissions_installer.clone(),
             serve_command: cfg.ai_permissions_serve_command.clone(),
             configured_endpoint: cfg.ai_permissions_endpoint.clone(),

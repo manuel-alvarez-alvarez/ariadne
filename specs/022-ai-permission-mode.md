@@ -26,11 +26,11 @@ The fourth permission mode. In `ai`, a local model answers the ACP permission
 requests of every session in the repository, instead of a person answering
 them or a rule approving them.
 
-That model is the AI permission model, a Python package. Ariadne installs it:
-a wheel of the package's own GitHub release, into a virtual environment under
-the Ariadne home, and the checkpoints it decides with from Hugging Face. The
-install takes minutes and gigabytes, so it is a background task, and
-everything a client reads of it is one settings row.
+That model is the AI permission model. The daemon installs its pinned package
+from Git into a virtual environment under the Ariadne home. It downloads the
+pinned Hub adapter and base model from Hugging Face. The install takes minutes
+and gigabytes, so it is a background task, and everything a client reads of it
+is one settings row.
 
 ## Scope
 
@@ -50,35 +50,35 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
    (`ai_permission_settings`), one install, one server. A repository chooses
    `ai`; this says whether there is a model to answer with.
 3. The settings are `enabled`, `threshold`, and `schedule`. The
-   `typed-decisions` checkpoint and the decision prompts are built in.
+   Kev run and the decision prompts are built in.
    `threshold` is how sure
    the model has to be before its answer is taken, 0 to 1. `schedule` is
    `HH:MM` in 24-hour local time, or nothing.
 4. The state of the install is `disabled`, `installing`, `ready` or `failed`,
-   and beside it are the release on disk, the release the last download named,
+   and beside it are the pin on disk, the pin the last install used,
    whether the checkpoints are there, when the last install ended well, and
    why the last one failed. All of it is in the store, so it outlives the
    install and the daemon that ran it.
 5. The Python check finds the interpreter the install would run: the
    `python_bin` config key where one is set — a path taken as it stands, a
-   bare name looked up on the daemon's `PATH` — else `python3` on that same
-   `PATH`. It is asked `--version`, and `ok` is true for 3.10 or newer.
+   bare name looked up on the daemon's `PATH` — else it tries `python3.13`,
+   then `python3.12`, then `python3` on that same `PATH`. It is asked
+   `--version`, and `ok` is true only for 3.12 or 3.13.
    Anything that cannot be found, will not answer, or answers with no version
    is `ok: false`.
 6. Turning the model on with `ok: false` is refused with 409
    `python_unavailable`, and writes nothing: the install puts PyTorch into a
-   virtual environment of that interpreter, and 3.9 would fail at the end of
+   virtual environment of that interpreter, and an unsupported version would fail at the end of
    gigabytes rather than the start.
-7. An install runs as one background task, and one at a time. It reads the
-   release document at the `ai_permissions_release_url` config key — by
-   default the latest release of the package's repository — under
-   `Timeouts::ai_permissions_release_download`, 30 s, and takes its
-   `tag_name` and the one `.whl` asset on it. It creates
-   `<home>/ai-permissions/venv` with `python -m venv` where there is none,
-   installs the package's `serve` extra from that wheel into it with pip, and
-   downloads the `typed-decisions` checkpoint with the package's own router
+7. An install runs as one background task, and one at a time. It creates
+   `<home>/ai-permissions/venv` with a supported Python interpreter. It rebuilds
+   a venv made by another interpreter, while retaining `<home>/ai-permissions/hf`.
+   It installs `kev[serve]` from git at commit `f1535963cea021439370c23127bc970b6788e730`,
+   downloads adapter `jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`,
+   and downloads base `Qwen/Qwen3.5-4B-Base@1001bb4d826a52d1f399e183466143f4da7b741b`
    under `HF_HOME=<home>/ai-permissions/hf`.
-8. An install that ends well writes `installed_release`, `latest_release`,
+8. An install that ends well writes `installed_release`, `latest_release` as
+   `kev@f1535963 jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`,
    `weights_present`, `state = ready` and `last_refresh_at`, and clears
    `last_error`. One that fails at any step writes `state = failed` and
    `last_error`, and leaves the install before it on disk: the files of a
@@ -97,7 +97,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     and writes nothing. Turning the model
     on starts an install and answers at once with `state = installing`.
     Turning it off writes `state = disabled` and keeps every file, so turning
-    it back on costs the release check alone.
+    it back on repairs the pinned package and weights.
     Turning it off while an install runs does not stop that install. The
     install's end still writes its release, its weights and its error, but
     never its state: every state an install writes lands only on a row that is
@@ -110,7 +110,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 12. `POST /v1/permissions/ai/refresh` runs the install again on the settings
     as they stand, and answers 202 with `state = installing`. It is refused
     with 409 `ai_disabled` while the model is off, and 409 `ai_busy` while an
-    install is running.
+    install is running. A manual or scheduled refresh reinstalls the same pins to repair
+    the installation; it never upgrades them.
     The daily refresh is the same install, run by the daemon itself. It reads
     the local clock every `Timeouts::ai_permissions_schedule_poll`, 30 s, and
     starts an install once each local date when the `schedule` minute has
@@ -126,12 +127,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     interpreter is reported apart from the tools (012, rule 19) because the
     question it answers is not whether it is there but whether it is new
     enough.
-15. `python_bin` and `ai_permissions_release_url` are keys of
-    `<home>/config.toml`, listed by `ariadned --help` and read by
-    `--check-config`. The test seams `ai_permissions_installer` — a command
-    the daemon runs in place of the venv, the wheel and the checkpoints, with
-    the package's home, checkpoints, wheel URL and release in its
-    environment, its exit status deciding the install and its stderr becoming
+15. `python_bin` is a key of
+   `<home>/config.toml`, listed by `ariadned --help` and read by
+    `--check-config`. The test seam `ai_permissions_installer` — a command
+    the daemon runs in place of the venv, package and weights, with the
+    model home, run and Kev commit in its
+   environment, its exit status deciding the install and its stderr becoming
     `last_error` — `ai_permissions_serve_command` and
     `ai_permissions_endpoint` are settings of the daemon alone. None is a key
     of the user's config, and a file naming one is refused like any other
@@ -180,7 +181,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 22. The status and update request do not carry the checkpoint or prompt texts.
 23. The server passes `--run`, `decide::RUN`'s value, to `kev.serve`; the
     installer downloads what that run needs onto disk before the model is
-    ready.
+    ready. The installer receives `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN`,
+    and `AI_PERMISSIONS_KEV_COMMIT`.
 24. The default threshold is 0.56, `winner.json`'s. Existing settings rows
     keep their stored threshold.
 
@@ -278,21 +280,19 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - A fresh daemon is off, at threshold 0.56, with no schedule, and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
-- A version is read out of what an interpreter prints, and the cut is at 3.10
-  (`ai_permissions/python.rs::tests::the_version_is_read_from_the_line_and_cut_at_three_ten`);
+- A version is read out of what an interpreter prints, and only 3.12 and 3.13 pass
+  (`ai_permissions/python.rs::tests::the_version_is_read_from_the_line_and_checked_against_kevs_versions`);
   an interpreter that is not there is reported as missing
   (`::an_interpreter_that_is_not_there_is_reported_as_missing`).
-- Turning the model on against Python 3.9 is refused with
+- Turning the model on against Python 3.14 is refused with
   `python_unavailable` and changes nothing
   (`ai_permissions.rs::turning_the_model_on_without_a_new_enough_python_is_refused_and_changes_nothing`).
-- Turning it on against 3.12 answers `installing`, says so on the stream, and
-  settles on `ready` with the release tag, the weights and the refresh time;
-  the installer saw `<home>/ai-permissions`, `typed-decisions` and the wheel of the
-  release document
-  (`ai_permissions.rs::turning_the_model_on_starts_the_install_and_reports_it_ready`).
-- The release document gives the tag and the wheel, and one carrying neither
-  is refused where it is read
-  (`ai_permissions/install.rs::tests::the_release_document_gives_the_tag_and_the_wheel`).
+- Turning it on against 3.13 answers `installing`, says so on the stream, and
+  settles on `ready` with the pin, the weights and the refresh time;
+  the installer saw `<home>/ai-permissions`, the Kev run and the Kev commit
+ (`ai_permissions.rs::turning_the_model_on_starts_the_install_and_reports_it_ready`).
+- A venv with Python 3.13 is kept, and a venv with Python 3.14 is rebuilt
+  (`ai_permissions/install.rs::tests::a_venv_with_a_supported_interpreter_is_kept`).
 - An install that fails leaves the model on and carries the installer's own
   words
   (`ai_permissions.rs::an_install_that_fails_keeps_the_model_on_and_says_why`).
@@ -303,7 +303,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   and a schedule is two digits, a colon and two digits
   (`http/permissions.rs::tests::a_schedule_is_two_digits_a_colon_and_two_digits`).
 - Refresh is refused with `ai_disabled` while off and `ai_busy` while
-  installing, and runs the installer again on the `typed-decisions` checkpoint
+  installing, and runs the installer again on the fixed Kev pins
   (`ai_permissions.rs::refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_install`).
 - Turning the model off keeps the release and the weights
   (`ai_permissions.rs::turning_the_model_off_keeps_the_files_it_installed`).
@@ -352,7 +352,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - The settings are one row taking partial writes and
   they survive a store reopen
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
-- `python_bin` and `ai_permissions_release_url` are read from `config.toml`,
+- `python_bin` is read from `config.toml`, and `ai_permissions_release_url` is refused,
   and the test seams are not keys of it
   (`config.rs::tests::the_ai_permissions_keys_a_user_may_set_are_read_and_the_test_seams_are_not`).
 - Every benchmark case builds the same model, questions, state, and guardrail

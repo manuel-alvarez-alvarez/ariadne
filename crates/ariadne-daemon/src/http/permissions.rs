@@ -24,15 +24,15 @@ pub(super) async fn get(State(state): State<AppState>) -> ApiResult<Json<AiPermi
 
 /// Change the AI permission settings. An absent field stays as it was.
 ///
-/// Turning the model on is refused while the daemon has no Python 3.10 or newer to
+/// Turning the model on is refused while the daemon has no Python 3.12 or 3.13 to
 /// install into: the download is minutes and gigabytes, and it would fail at
 /// the end of them. Turning it off keeps every file on disk, so turning it
-/// back on costs nothing but the release check.
+/// back on repairs its pinned package and weights.
 #[utoipa::path(put, path = "/v1/permissions/ai", tag = "permissions",
     request_body = UpdateAiPermissionsRequest,
     responses(
         (status = 200, body = AiPermissionsStatusDto),
-        (status = 409, description = "no Python 3.10 or newer to install into"),
+        (status = 409, description = "no Python 3.12 or 3.13 to install into"),
         (status = 422, description = "a threshold outside 0..=1 or a schedule that is not HH:MM")
     ))]
 pub(super) async fn update(
@@ -87,8 +87,7 @@ pub(super) async fn update(
     }
 }
 
-/// Run the install again: the release check, the wheel and the checkpoints
-/// the settings name now.
+/// Run the install again: the pinned package, adapter and base.
 #[utoipa::path(post, path = "/v1/permissions/ai/refresh", tag = "permissions",
     responses(
         (status = 202, body = AiPermissionsStatusDto),
@@ -142,14 +141,12 @@ fn invalid(message: String) -> ApiError {
 fn python_unavailable(status: &AiPermissionsStatusDto) -> String {
     match (&status.python.path, &status.python.version) {
         (Some(path), Some(version)) => format!(
-            "the AI permission model needs Python 3.10 or newer; {path} is {version}. \
+            "the AI permission model needs Python 3.12 or 3.13; {path} is {version}. \
              Set `python_bin` in config.toml to a newer one"
         ),
-        _ => {
-            "the AI permission model needs Python 3.10 or newer, and this daemon found no python3 \
+        _ => "the AI permission model needs Python 3.12 or 3.13, and this daemon found no Python \
               on its PATH. Set `python_bin` in config.toml"
-                .to_string()
-        }
+            .to_string(),
     }
 }
 

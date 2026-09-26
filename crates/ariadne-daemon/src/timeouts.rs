@@ -26,11 +26,6 @@ pub struct Timeouts {
     pub session_load: Duration,
     /// How long a registry download may take, including its response body.
     pub registry_download: Duration,
-    /// How long the AI permission model release document may take to download, including its
-    /// response body (022). The install that follows it is unbounded — it
-    /// fetches a wheel, PyTorch and gigabytes of weights — so this covers the
-    /// one call the daemon makes itself.
-    pub ai_permissions_release_download: Duration,
     /// How long the model's HTTP server may take to load its weights and answer.
     pub ai_permissions_serve_start: Duration,
     /// How long the server supervisor waits before its first restart.
@@ -80,7 +75,6 @@ impl Default for Timeouts {
             probe: Duration::from_secs(5),
             session_load: Duration::from_secs(60),
             registry_download: Duration::from_secs(30),
-            ai_permissions_release_download: Duration::from_secs(30),
             ai_permissions_serve_start: Duration::from_secs(120),
             ai_permissions_serve_restart: Duration::from_secs(1),
             ai_permissions_schedule_poll: Duration::from_secs(30),

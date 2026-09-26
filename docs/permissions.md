@@ -130,11 +130,12 @@ In the desktop app, the same settings are on the **Permissions** screen.
 Enabling installs three things, under `~/.ariadne/ai-permissions`:
 
 - a Python virtual environment, in `~/.ariadne/ai-permissions/venv`;
-- the package and its dependencies;
-- the checkpoints the model decides with, in `~/.ariadne/ai-permissions/hf`.
+- the pinned model package and its dependencies;
+- the 152 MB adapter and 8.7 GB base model, in `~/.ariadne/ai-permissions/hf`.
 
-It needs **Python 3.10 or newer**. Ariadne uses `python3` from the daemon's
-own `PATH`, or whatever `python_bin` in `~/.ariadne/config.toml` names — see
+It needs **Python 3.12 or 3.13**. Ariadne tries `python3.13`, then `python3.12`,
+then `python3` from the daemon's own `PATH`, or whatever `python_bin` in
+`~/.ariadne/config.toml` names — see
 [Configuration](configuration.md). Nothing is installed into that
 interpreter itself: everything goes into the virtual environment. Enabling
 the model against an older Python is refused before anything is downloaded, and
@@ -157,8 +158,8 @@ The threshold is how sure the model has to be before its answer is taken; it
 defaults to `0.56`, and anything outside 0 to 1 is refused. Set another value
 with `ariadne permissions ai set --threshold <value>`. Existing installations
 keep their stored threshold. The schedule is
-`HH:MM` in 24-hour local time, and the daily refresh downloads the latest
-release and the checkpoints again. It runs once per local date: if the daemon
+`HH:MM` in 24-hour local time, and the daily refresh reinstalls the same pinned
+package, adapter and base to repair them. It runs once per local date: if the daemon
 was down at the scheduled time, it catches up on its next start that day. A
 refresh already in progress is not queued. The model starts without one, and then
 nothing is downloaded until you ask for it.
@@ -188,7 +189,7 @@ Once the install is ready, the daemon runs the model's local server on a loopbac
 port and keeps its selected weights in memory for permission decisions. It
 stops that child when you disable the model or the daemon exits, and starts it
 again after a refresh. Turning the model off keeps every file. Turning it back on
-is the release check and nothing more, so it is quick.
+reinstalls the same pins and repairs the model.
 
 Set the AI permission model up before you point a repository at it. A repository set to `ai`
 while the model is off is refused:
@@ -215,7 +216,7 @@ permission mode among four.
 
 In the desktop app, the **Permissions** screen holds the same settings, in one
 card: a switch for `enabled` — disabled, with the Python version it found (or
-that it found none), while there is no Python 3.10 or newer to install into —
+that it found none), while there is no Python 3.12 or 3.13 to install into —
 a number field for the threshold, and a time field for the daily refresh
 whose clear button is what turns it off. A Refresh button reruns the install,
 disabled while the model is off or already installing. Below them, a fact
