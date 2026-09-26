@@ -1,7 +1,7 @@
 /**
- * The Laya settings, the Python check, and where the install has got to — one
- * card, because there is one row behind it (`GET /v1/permissions/laya`) and
- * nothing here is a list.
+ * The AI permission model's settings, the Python check, and where the install
+ * has got to — one card, because there is one row behind it
+ * (`GET /v1/permissions/ai`) and nothing here is a list.
  *
  * Every control sends its own change the moment it is made: there is no Save
  * button, and the row the daemon answers with is what the facts below are
@@ -13,12 +13,18 @@
  * input's native clear is what asks for it, so clearing it and picking a time
  * are the same gesture in both directions, and there is nothing to build for
  * it beyond reading an empty value as `null`.
+ *
+ * The three prompt texts save the same way, one field at a time, on blur
+ * rather than on every keystroke — like the threshold. Restore defaults sends
+ * all three as `null` in one write, which the daemon reads as "use the
+ * built-in text"; the button is disabled once the effective texts already
+ * match the built-in ones, so there is nothing left to restore.
  */
 
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import type { LayaStatusDto, PythonDto, UpdateLayaRequest } from "@/api"
+import type { AiPermissionsStatusDto, PythonDto, UpdateAiPermissionsRequest } from "@/api"
 import { Fact, FactList } from "@/components/fact-list"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
@@ -31,10 +37,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import { When } from "@/components/when"
 import { describeError } from "@/lib/format"
 
-import { useRefreshLaya, useUpdateLaya } from "./queries"
+import { useRefreshAiPermissions, useUpdateAiPermissions } from "./queries"
 
 const CHECKPOINT_ITEMS = [
   { value: "english", label: "English only (843 MB)" },
@@ -44,29 +51,49 @@ const CHECKPOINT_ITEMS = [
 /** What the Python check found, in the one line that says why the switch is off. */
 function pythonReason(python: PythonDto): string {
   const found = python.version ? `found ${python.version}` : "not found"
-  return `Laya needs Python 3.10 or newer; ${found}.`
+  return `The model needs Python 3.10 or newer; ${found}.`
 }
 
-const STATE_LABELS: Record<LayaStatusDto["state"], string> = {
+const STATE_LABELS: Record<AiPermissionsStatusDto["state"], string> = {
   disabled: "Disabled",
   installing: "Installing",
   ready: "Ready",
   failed: "Failed",
 }
 
-export function LayaCard({ status }: { status: LayaStatusDto }) {
-  const update = useUpdateLaya()
-  const refresh = useRefreshLaya()
+const PROMPT_FIELDS = [
+  { key: "question", id: "ai-prompt-question", label: "Question" },
+  { key: "allow_criteria", id: "ai-prompt-allow", label: "Allow when" },
+  { key: "review_criteria", id: "ai-prompt-review", label: "Ask a person when" },
+] as const
 
-  // A typed buffer for the two free-form fields, so a keystroke is not fought
-  // by the row the last one answered with — reset only when the daemon's own
+function samePrompts(
+  a: AiPermissionsStatusDto["prompts"],
+  b: AiPermissionsStatusDto["default_prompts"],
+): boolean {
+  return (
+    a.question === b.question &&
+    a.allow_criteria === b.allow_criteria &&
+    a.review_criteria === b.review_criteria
+  )
+}
+
+export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
+  const update = useUpdateAiPermissions()
+  const refresh = useRefreshAiPermissions()
+
+  // A typed buffer for the free-form fields, so a keystroke is not fought by
+  // the row the last one answered with — reset only when the daemon's own
   // value actually moves (a write's own answer, another window, the stream).
   const [thresholdText, setThresholdText] = useState(String(status.threshold))
   useEffect(() => setThresholdText(String(status.threshold)), [status.threshold])
   const [schedule, setSchedule] = useState(status.schedule ?? "")
   useEffect(() => setSchedule(status.schedule ?? ""), [status.schedule])
 
-  function send(body: UpdateLayaRequest, failureTitle: string) {
+  const [prompts, setPrompts] = useState(status.prompts)
+  useEffect(() => setPrompts(status.prompts), [status.prompts])
+
+  function send(body: UpdateAiPermissionsRequest, failureTitle: string) {
     update.mutate(body, {
       onError: (error) => toast.error(failureTitle, { description: describeError(error) }),
     })
@@ -75,22 +102,22 @@ export function LayaCard({ status }: { status: LayaStatusDto }) {
   return (
     <div className="flex flex-col gap-4 rounded-xl border bg-card p-4">
       <div>
-        <h2 className="font-heading text-base font-semibold">Laya</h2>
+        <h2 className="font-heading text-base font-semibold">AI</h2>
         <p className="text-sm text-muted-foreground">
           A model that runs on this machine and answers the `ai` permission mode's requests.
         </p>
       </div>
 
       <Field orientation="horizontal">
-        <FieldLabel htmlFor="laya-enabled">Enable Laya</FieldLabel>
+        <FieldLabel htmlFor="ai-enabled">Enable the AI permission model</FieldLabel>
         <Switch
-          id="laya-enabled"
+          id="ai-enabled"
           checked={status.enabled}
           disabled={!status.python.ok || update.isPending}
           onCheckedChange={(checked) =>
             send(
               { enabled: checked },
-              checked ? "Could not turn Laya on" : "Could not turn Laya off",
+              checked ? "Could not turn the model on" : "Could not turn the model off",
             )
           }
         />
@@ -100,18 +127,18 @@ export function LayaCard({ status }: { status: LayaStatusDto }) {
       ) : null}
 
       <Field>
-        <FieldLabel htmlFor="laya-checkpoints">Checkpoints</FieldLabel>
+        <FieldLabel htmlFor="ai-checkpoints">Checkpoints</FieldLabel>
         <Select
           value={status.checkpoints}
           onValueChange={(value) =>
             send(
-              { checkpoints: value as LayaStatusDto["checkpoints"] },
+              { checkpoints: value as AiPermissionsStatusDto["checkpoints"] },
               "Could not change the checkpoints",
             )
           }
           items={CHECKPOINT_ITEMS}
         >
-          <SelectTrigger id="laya-checkpoints" aria-label="Checkpoints" className="w-full">
+          <SelectTrigger id="ai-checkpoints" aria-label="Checkpoints" className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false}>
@@ -125,9 +152,9 @@ export function LayaCard({ status }: { status: LayaStatusDto }) {
       </Field>
 
       <Field>
-        <FieldLabel htmlFor="laya-threshold">Threshold</FieldLabel>
+        <FieldLabel htmlFor="ai-threshold">Threshold</FieldLabel>
         <Input
-          id="laya-threshold"
+          id="ai-threshold"
           type="number"
           min={0}
           max={1}
@@ -141,14 +168,14 @@ export function LayaCard({ status }: { status: LayaStatusDto }) {
           }}
         />
         <FieldDescription>
-          How sure Laya has to be before its answer is taken, 0 to 1.
+          How sure the model has to be before its answer is taken, 0 to 1.
         </FieldDescription>
       </Field>
 
       <Field>
-        <FieldLabel htmlFor="laya-schedule">Daily refresh</FieldLabel>
+        <FieldLabel htmlFor="ai-schedule">Daily refresh</FieldLabel>
         <Input
-          id="laya-schedule"
+          id="ai-schedule"
           type="time"
           value={schedule}
           aria-label="Daily refresh"
@@ -163,6 +190,43 @@ export function LayaCard({ status }: { status: LayaStatusDto }) {
         </FieldDescription>
       </Field>
 
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Prompts</h3>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={samePrompts(status.prompts, status.default_prompts) || update.isPending}
+            onClick={() =>
+              send(
+                { question: null, allow_criteria: null, review_criteria: null },
+                "Could not restore the default prompts",
+              )
+            }
+          >
+            Restore defaults
+          </Button>
+        </div>
+        {PROMPT_FIELDS.map((field) => (
+          <Field key={field.key}>
+            <FieldLabel htmlFor={field.id}>{field.label}</FieldLabel>
+            <Textarea
+              id={field.id}
+              value={prompts[field.key]}
+              onChange={(event) =>
+                setPrompts((current) => ({ ...current, [field.key]: event.target.value }))
+              }
+              onBlur={(event) =>
+                send(
+                  { [field.key]: event.target.value },
+                  `Could not change the "${field.label}" prompt`,
+                )
+              }
+            />
+          </Field>
+        ))}
+      </div>
+
       <div>
         <Button
           variant="outline"
@@ -173,7 +237,7 @@ export function LayaCard({ status }: { status: LayaStatusDto }) {
           onClick={() =>
             refresh.mutate(undefined, {
               onError: (error) =>
-                toast.error("Could not refresh Laya", { description: describeError(error) }),
+                toast.error("Could not refresh the model", { description: describeError(error) }),
             })
           }
         >

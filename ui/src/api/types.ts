@@ -66,9 +66,9 @@ export type AgentEventDto = Schemas["AgentEventDto"]
 export type ResyncDto = Schemas["ResyncDto"]
 export type HeartbeatDto = Schemas["HeartbeatDto"]
 
-export type LayaStatusDto = Schemas["LayaStatusDto"]
+export type AiPermissionsStatusDto = Schemas["AiPermissionsStatusDto"]
 export type PythonDto = Schemas["PythonDto"]
-export type UpdateLayaRequest = Schemas["UpdateLayaRequest"]
+export type UpdateAiPermissionsRequest = Schemas["UpdateAiPermissionsRequest"]
 
 /**
  * Every domain event carried by `GET /v1/events/stream`, as a tagged union.

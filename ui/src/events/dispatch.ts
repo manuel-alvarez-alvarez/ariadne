@@ -13,8 +13,8 @@
  * Screens therefore need no event handling of their own: read with the keys in
  * `src/api/query-keys.ts` and the cache stays live.
  *
- * `laya_updated` is the one event with no list beside its detail: there is one
- * settings row, so the whole cache it moves is `setQueryData`.
+ * `ai_permissions_updated` is the one event with no list beside its detail:
+ * there is one settings row, so the whole cache it moves is `setQueryData`.
  *
  * Anything that arrives while the stream is down is lost — the daemon has no
  * replay. `invalidateEverything` is the recovery path and runs on every
@@ -132,9 +132,9 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
       break
     }
-    case "laya_updated": {
+    case "ai_permissions_updated": {
       // One row, no list: the whole cache the Permissions screen reads.
-      queryClient.setQueryData(qk.permissions.laya(), event.data)
+      queryClient.setQueryData(qk.permissions.ai(), event.data)
       break
     }
     default: {

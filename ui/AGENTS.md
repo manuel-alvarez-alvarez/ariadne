@@ -49,8 +49,8 @@ src/
     skills/        skills screen: the catalog, and the document each one is
     repositories/  the registered checkouts goals are created against
     agents/        agents screen: the flags each registry agent is launched with
-    permissions/   the Permissions screen: the Laya settings behind the `ai`
-                   permission mode
+    permissions/   the Permissions screen: the AI permission model's settings
+                   behind the `ai` permission mode
     system/        the daemon-logs drawer and the log stream behind it
   test/            setup, render harness, DTO fixtures and the browser stand-ins
                    the suite shares
@@ -98,11 +98,11 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["repositories", "list", filters]   ["repositories", "detail", id]
 ["agents",       "list", {}]        ["models",   "list", {}]
 ["agent-events", "list", filters]
-["permissions",  "detail", "laya"]
+["permissions",  "detail", "ai"]
 ```
 
-`permissions.laya()` is the one key with no list beside it: there is one Laya
-settings row, `GET /v1/permissions/laya`, not a collection.
+`permissions.ai()` is the one key with no list beside it: there is one AI
+permission model settings row, `GET /v1/permissions/ai`, not a collection.
 
 The outside-sessions list is the one key with no detail beside it, and the one
 list the daemon pages: its cursor stays out of the key, because the pages of
@@ -148,7 +148,7 @@ the query cache and it stays live.
 | `repository_created` | patch `repositories.detail`, invalidate `repositories.lists` |
 | `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
 | `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
-| `laya_updated` | patch `permissions.laya()` whole — the one settings row, no list beside it |
+| `ai_permissions_updated` | patch `permissions.ai()` whole — the one settings row, no list beside it |
 
 The daemon has **no replay**: anything that happened while the stream was down
 is simply gone. So both a reconnect and the daemon's `resync` control event

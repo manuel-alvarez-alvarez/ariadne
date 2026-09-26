@@ -137,8 +137,8 @@ export function RepositoryFormDialog({
    *
    * A 400 is one of three things — the path is not absolute, it is not a git
    * work tree, or the branch is unknown — and the message picks the field.
-   * `laya_disabled` is about the mode just picked, so it lands there too,
-   * pointing at the screen that turns Laya on rather than repeating the
+   * `ai_disabled` is about the mode just picked, so it lands there too,
+   * pointing at the screen that turns the model on rather than repeating the
    * daemon's own CLI-flavoured words. A 409 about the pair goes above the
    * buttons instead — no field of this form is what it is about.
    */
@@ -148,8 +148,10 @@ export function RepositoryFormDialog({
       setError(/branch/i.test(error.message) ? "base_branch" : "path", { message })
       return
     }
-    if (ApiError.is(error) && error.code === "laya_disabled") {
-      setError("permission_mode", { message: "Enable Laya on the Permissions screen first" })
+    if (ApiError.is(error) && error.code === "ai_disabled") {
+      setError("permission_mode", {
+        message: "Enable the AI permission model on the Permissions screen first",
+      })
       return
     }
     setError("root", { message: describeError(error) })

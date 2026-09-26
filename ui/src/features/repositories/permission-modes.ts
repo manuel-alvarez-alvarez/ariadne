@@ -16,7 +16,7 @@ export const PERMISSION_MODES: { value: PermissionMode; label: string; meaning: 
   {
     value: "ai",
     label: "AI",
-    meaning: "let Laya allow safe requests, and ask once for the rest",
+    meaning: "let the AI permission model allow safe requests, and ask once for the rest",
   },
 ]
 

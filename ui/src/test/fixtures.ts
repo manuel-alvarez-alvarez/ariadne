@@ -15,10 +15,10 @@
 import type {
   AgentConfigDto,
   AgentEventDto,
+  AiPermissionsStatusDto,
   components,
   EffortDto,
   GoalDto,
-  LayaStatusDto,
   ModelDto,
   RepositoryDto,
   SessionDto,
@@ -272,8 +272,16 @@ export function aModel(overrides: Partial<ModelDto> = {}): ModelDto {
   }
 }
 
-/** The Laya settings row `GET /v1/permissions/laya` answers with, off by default. */
-export function aLayaStatus(overrides: Partial<LayaStatusDto> = {}): LayaStatusDto {
+const DEFAULT_AI_PERMISSIONS_PROMPTS = {
+  question: "Should this request be allowed?",
+  allow_criteria: "Safe, reversible requests.",
+  review_criteria: "Anything destructive or irreversible.",
+}
+
+/** The AI permission settings row `GET /v1/permissions/ai` answers with, off by default. */
+export function anAiPermissionsStatus(
+  overrides: Partial<AiPermissionsStatusDto> = {},
+): AiPermissionsStatusDto {
   return {
     enabled: false,
     checkpoints: "english",
@@ -287,6 +295,8 @@ export function aLayaStatus(overrides: Partial<LayaStatusDto> = {}): LayaStatusD
     endpoint: null,
     last_refresh_at: null,
     last_error: null,
+    prompts: { ...DEFAULT_AI_PERMISSIONS_PROMPTS },
+    default_prompts: { ...DEFAULT_AI_PERMISSIONS_PROMPTS },
     ...overrides,
   }
 }

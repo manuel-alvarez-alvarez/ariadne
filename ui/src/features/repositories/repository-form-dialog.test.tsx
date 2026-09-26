@@ -132,14 +132,13 @@ describe("registering a repository", () => {
     expect(lastWrite()?.body?.permission_mode).toBe("ai")
   })
 
-  it("puts a laya_disabled refusal on the permission mode field, pointing at the Permissions screen", async () => {
+  it("puts an ai_disabled refusal on the permission mode field, pointing at the Permissions screen", async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     stubDaemon({
       status: 409,
-      code: "laya_disabled",
-      message:
-        "the `ai` permission mode needs Laya; turn it on with `ariadne permissions enable` first",
+      code: "ai_disabled",
+      message: "the `ai` permission mode needs the AI permission model turned on first",
     })
     renderDialog(null, onOpenChange)
 
@@ -150,7 +149,9 @@ describe("registering a repository", () => {
 
     // On the field, not the daemon's own CLI-flavoured words, and the dialog
     // is left open to fix it.
-    const message = await screen.findByText("Enable Laya on the Permissions screen first")
+    const message = await screen.findByText(
+      "Enable the AI permission model on the Permissions screen first",
+    )
     expect(message.closest("[data-slot=field]")?.textContent).toContain("Permission requests")
     expect(onOpenChange).not.toHaveBeenCalled()
   })

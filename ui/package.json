@@ -13,6 +13,7 @@
     "typecheck": "tsc -b",
     "lint": "biome check .",
     "check:unused": "node scripts/check-unused.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run check:unused",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "gen:api": "node scripts/gen-api.mjs",

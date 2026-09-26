@@ -37,8 +37,8 @@ Out: the daemon endpoints themselves (012).
    outside conversation an ACP agent stored on its own, merged into one
    listing, each shown in its console — skills, repositories, the agents of
    the daemon's ACP registry with their launch flags and the models each may
-   be staffed on, Permissions — the Laya settings behind the `ai` permission
-   mode (022) — and a daemon-logs drawer.
+   be staffed on, Permissions — the AI permission model's settings behind the
+   `ai` permission mode (022) — and a daemon-logs drawer.
 4. Types are generated from the daemon's OpenAPI document, so a DTO change
    that is not reflected here fails the typecheck rather than the app.
 5. One SSE connection serves the whole app, with a dispatcher and reconnect
@@ -240,23 +240,44 @@ Out: the daemon endpoints themselves (012).
     row from the daemon's answer through the same `models` query key a switch
     write uses, and a refusal is toasted rather than swallowed, springing the
     picker back to what the daemon still says.
-32. The Permissions screen holds one card, over the one settings row
-    `GET /v1/permissions/laya` answers with (022): a switch for `enabled`,
-    disabled with the Python version found (or that none was) where the daemon
-    has none new enough to install into; a select of the two checkpoint
-    choices; a number field for the threshold, 0 to 1; a time field for the
-    daily refresh, whose native clear is what turns it off, sending `schedule:
-    null`; a Refresh button, disabled while Laya is off or already installing;
-    and a fact list of the state, the installed and latest release, whether
-    the weights are present, the endpoint, the last refresh's age, and the
-    last error in the error style. Every control sends its own change the
-    moment it is made — there is no Save button — and a refusal is toasted
-    with the daemon's own message, the same as the agents screen's flag editor
-    and rank picker. The `laya_updated` event (012, 022) patches the same
-    query key any of those writes does, since the row has no list beside it.
-    The repository dialog's `PERMISSION_MODES` gains `ai`, and a `laya_disabled`
-    refusal on it lands on the permission-mode field, naming the Permissions
-    screen rather than the daemon's own CLI-flavoured words.
+32. The Permissions screen holds one card, "AI", over the one settings row
+    `GET /v1/permissions/ai` answers with (022): a switch for `enabled`,
+    labelled "Enable the AI permission model", disabled with the Python
+    version found (or that none was) where the daemon has none new enough to
+    install into; a select of the two checkpoint choices; a number field for
+    the threshold, 0 to 1; a time field for the daily refresh, whose native
+    clear is what turns it off, sending `schedule: null`; a Refresh button,
+    disabled while the model is off or already installing; and a fact list of
+    the state, the installed and latest release, whether the weights are
+    present, the endpoint, the last refresh's age, and the last error in the
+    error style. Every control sends its own change the moment it is made —
+    there is no Save button — and a refusal is toasted with the daemon's own
+    message, the same as the agents screen's flag editor and rank picker. The
+    `ai_permissions_updated` event (012, 022) patches the same query key any
+    of those writes does, since the row has no list beside it
+    (`ui/src/events/dispatch.test.ts::replaces the cached status whole, so a
+    card that read installing reads ready`). The repository dialog's
+    `PERMISSION_MODES` gains `ai`, and an `ai_disabled` refusal on it lands on
+    the permission-mode field, naming the Permissions screen rather than the
+    daemon's own CLI-flavoured words
+    (`ui/src/features/repositories/repository-form-dialog.test.tsx::puts an
+    ai_disabled refusal on the permission mode field, pointing at the
+    Permissions screen`).
+33. Below the daily refresh field, a "Prompts" section holds three text areas
+    over `prompts.question`, `prompts.allow_criteria` and
+    `prompts.review_criteria` — "Question", "Allow when" and "Ask a person
+    when" — each saving its own field on blur, like the threshold
+    (`ui/src/features/permissions/permissions-page.test.tsx::Prompts sends
+    exactly the question, once the field is left`, `::sends exactly the
+    allow-when text, once the field is left`, `::sends exactly the
+    ask-a-person-when text, once the field is left`). A "Restore defaults"
+    button sends all three fields as `null`, which the daemon reads as
+    "use the built-in text", and is disabled while `prompts` equals
+    `default_prompts`
+    (`ui/src/features/permissions/permissions-page.test.tsx::Prompts sends the
+    three prompts as null, on Restore defaults`, `::is disabled while the
+    prompts already match the built-in ones`, `::is enabled once a prompt no
+    longer matches the built-in one`).
 
 - 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
@@ -511,24 +532,25 @@ Out: the daemon endpoints themselves (012).
   `::sends the threshold typed, once the field is left`,
   `::the daily refresh > sends the time picked`,
   `::the daily refresh > sends null once it is cleared back to off`).
-- Refresh posts once, and is disabled while Laya is off or already installing
+- Refresh posts once, and is disabled while the model is off or already
+  installing
   (`ui/src/features/permissions/permissions-page.test.tsx::Refresh > posts to
   the refresh endpoint`,
-  `::Refresh > is disabled while Laya is off`,
+  `::Refresh > is disabled while the model is off`,
   `::Refresh > is disabled while an install is already running`).
 - A refusal of any of the above is toasted with the daemon's own message
   (`ui/src/features/permissions/permissions-page.test.tsx::toasts the
   daemon's own message on a refusal`).
-- `laya_updated` replaces the cached settings row whole, so a card that read
-  `installing` reads `ready`
-  (`ui/src/events/dispatch.test.ts::laya events > replaces the cached status
-  whole, so a card that read installing reads ready`).
+- `ai_permissions_updated` replaces the cached settings row whole, so a card
+  that read `installing` reads `ready`
+  (`ui/src/events/dispatch.test.ts::ai permissions events > replaces the
+  cached status whole, so a card that read installing reads ready`).
 - The repository dialog offers `AI` among the permission modes and sends it
-  as `ai`, and a `laya_disabled` refusal lands on that field naming the
+  as `ai`, and an `ai_disabled` refusal lands on that field naming the
   Permissions screen
   (`ui/src/features/repositories/repository-form-dialog.test.tsx::offers AI
   among the permission modes, and sends it as ai`,
-  `::puts a laya_disabled refusal on the permission mode field, pointing at
+  `::puts an ai_disabled refusal on the permission mode field, pointing at
   the Permissions screen`).
 
 ## Sources

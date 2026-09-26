@@ -457,7 +457,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/permissions/laya": {
+    "/v1/permissions/ai": {
         parameters: {
             query?: never;
             header?: never;
@@ -465,13 +465,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The Laya settings, the interpreter probed afresh, and where the install
+         * The AI permission settings, the interpreter probed afresh, and where the install
          *     has got to.
          */
         get: operations["permissions_get"];
         /**
-         * Change the Laya settings. An absent field stays as it was.
-         * @description Turning Laya on is refused while the daemon has no Python 3.10 or newer to
+         * Change the AI permission settings. An absent field stays as it was.
+         * @description Turning the model on is refused while the daemon has no Python 3.10 or newer to
          *     install into: the download is minutes and gigabytes, and it would fail at
          *     the end of them. Turning it off keeps every file on disk, so turning it
          *     back on costs nothing but the release check.
@@ -484,7 +484,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/permissions/laya/refresh": {
+    "/v1/permissions/ai/refresh": {
         parameters: {
             query?: never;
             header?: never;
@@ -1194,6 +1194,70 @@ export interface components {
             usage: components["schemas"]["TokenUsageDto"];
         };
         /**
+         * @description Which checkpoints the install downloads.
+         *
+         *     English alone is 843 MB; all three — English, multilingual and
+         *     typed-decisions — are 2.4 GB together.
+         * @enum {string}
+         */
+        AiPermissionsCheckpoints: "english" | "all";
+        /**
+         * @description The prompt texts of the one choice question each decision asks the model.
+         *     The answer names, `allow` and `review`, are fixed.
+         */
+        AiPermissionsPrompts: {
+            /** @description What the `allow` answer covers. */
+            allow_criteria: string;
+            /** @description The question the model answers. */
+            question: string;
+            /** @description What the `review` answer covers. */
+            review_criteria: string;
+        };
+        /**
+         * @description Where the install has got to.
+         * @enum {string}
+         */
+        AiPermissionsState: "disabled" | "installing" | "ready" | "failed";
+        /** @description The AI permission settings and the state of the install behind them. */
+        AiPermissionsStatusDto: {
+            checkpoints: components["schemas"]["AiPermissionsCheckpoints"];
+            /** @description The built-in prompt texts, which a `null` prompt restores. */
+            default_prompts: components["schemas"]["AiPermissionsPrompts"];
+            /** @description Whether the model answers permission requests at all. */
+            enabled: boolean;
+            /** @description Where the model server answers, once one is running (022, Server). */
+            endpoint?: string | null;
+            /**
+             * @description The release tag of the package on disk.
+             * @example v0.1.4
+             */
+            installed_release?: string | null;
+            /** @description Why the last install failed. */
+            last_error?: string | null;
+            /** @description When the last install ended well, RFC 3339 in UTC. */
+            last_refresh_at?: string | null;
+            /** @description The release tag the last download reported. */
+            latest_release?: string | null;
+            /** @description The prompt texts each decision sends the model now. */
+            prompts: components["schemas"]["AiPermissionsPrompts"];
+            python: components["schemas"]["PythonDto"];
+            /**
+             * @description When the daily refresh runs, `HH:MM` in 24-hour local time. `null`
+             *     turns the refresh off.
+             * @example 03:30
+             */
+            schedule?: string | null;
+            state: components["schemas"]["AiPermissionsState"];
+            /**
+             * Format: double
+             * @description How sure the model has to be before its answer is taken, 0 to 1.
+             * @example 0.8
+             */
+            threshold: number;
+            /** @description Whether the checkpoints of the last good install are on disk. */
+            weights_present: boolean;
+        };
+        /**
          * @description Why a live agent session needs the user's attention.
          *
          *     Orthogonal to [`SessionStatus`]: a session waiting on a permission prompt
@@ -1325,7 +1389,7 @@ export interface components {
             /** @description The daemon's `PATH`, the one every agent and git lookup uses. */
             path?: string | null;
             /**
-             * @description The Python interpreter Laya's install runs on (022). It is reported
+             * @description The Python interpreter the model's install runs on (022). It is reported
              *     apart from `tools` because it answers a question of its own: not
              *     whether it is there, but whether it is new enough.
              */
@@ -1428,10 +1492,10 @@ export interface components {
             /** @enum {string} */
             event: "repository_deleted";
         } | {
-            /** @description The Laya settings or the state of its install moved (022). */
-            data: components["schemas"]["LayaStatusDto"];
+            /** @description The AI permission settings or the state of its install moved (022). */
+            data: components["schemas"]["AiPermissionsStatusDto"];
             /** @enum {string} */
-            event: "laya_updated";
+            event: "ai_permissions_updated";
         };
         /**
          * @description One reasoning effort an entry can be run at: the name it is passed by, and
@@ -1556,54 +1620,6 @@ export interface components {
          * @enum {string}
          */
         Landing: "merge" | "pull_request" | "none";
-        /**
-         * @description Which checkpoints the install downloads.
-         *
-         *     English alone is 843 MB; all three — English, multilingual and
-         *     typed-decisions — are 2.4 GB together.
-         * @enum {string}
-         */
-        LayaCheckpoints: "english" | "all";
-        /**
-         * @description Where the install has got to.
-         * @enum {string}
-         */
-        LayaState: "disabled" | "installing" | "ready" | "failed";
-        /** @description The Laya settings and the state of the install behind them. */
-        LayaStatusDto: {
-            checkpoints: components["schemas"]["LayaCheckpoints"];
-            /** @description Whether Laya answers permission requests at all. */
-            enabled: boolean;
-            /** @description Where the Laya server answers, once one is running (022, Server). */
-            endpoint?: string | null;
-            /**
-             * @description The release tag of the package on disk.
-             * @example v0.1.4
-             */
-            installed_release?: string | null;
-            /** @description Why the last install failed. */
-            last_error?: string | null;
-            /** @description When the last install ended well, RFC 3339 in UTC. */
-            last_refresh_at?: string | null;
-            /** @description The release tag the last download reported. */
-            latest_release?: string | null;
-            python: components["schemas"]["PythonDto"];
-            /**
-             * @description When the daily refresh runs, `HH:MM` in 24-hour local time. `null`
-             *     turns the refresh off.
-             * @example 03:30
-             */
-            schedule?: string | null;
-            state: components["schemas"]["LayaState"];
-            /**
-             * Format: double
-             * @description How sure Laya has to be before its answer is taken, 0 to 1.
-             * @example 0.8
-             */
-            threshold: number;
-            /** @description Whether the checkpoints of the last good install are on disk. */
-            weights_present: boolean;
-        };
         /** @description One captured daemon log line. */
         LogLineDto: {
             /**
@@ -1752,7 +1768,7 @@ export interface components {
         };
         /** @description The Python interpreter the daemon found, as it answered `--version`. */
         PythonDto: {
-            /** @description Whether it is Python 3.10 or newer, which Laya needs. */
+            /** @description Whether it is Python 3.10 or newer, which the model needs. */
             ok: boolean;
             /**
              * @description Absolute path, when one was found.
@@ -2213,11 +2229,26 @@ export interface components {
         UpdateAgentConfigRequest: {
             extra_flags: string[];
         };
-        /** @description Partial update of the Laya settings; an absent field stays unchanged. */
-        UpdateLayaRequest: {
-            checkpoints?: null | components["schemas"]["LayaCheckpoints"];
+        /** @description Partial update of the AI permission settings; an absent field stays unchanged. */
+        UpdateAiPermissionsRequest: {
+            /**
+             * @description What the `allow` answer covers, kept, restored and limited as
+             *     `question` is.
+             */
+            allow_criteria?: string | null;
+            checkpoints?: null | components["schemas"]["AiPermissionsCheckpoints"];
             /** @description Turning it on starts an install; turning it off keeps the files. */
             enabled?: boolean | null;
+            /**
+             * @description The question the model answers. Absent keeps it; `null` or a blank
+             *     text restores the built-in one. At most 4000 characters.
+             */
+            question?: string | null;
+            /**
+             * @description What the `review` answer covers, kept, restored and limited as
+             *     `question` is.
+             */
+            review_criteria?: string | null;
             /**
              * @description `HH:MM` in 24-hour local time. Absent keeps the schedule; `null`
              *     turns it off.
@@ -3033,7 +3064,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LayaStatusDto"];
+                    "application/json": components["schemas"]["AiPermissionsStatusDto"];
                 };
             };
         };
@@ -3047,7 +3078,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateLayaRequest"];
+                "application/json": components["schemas"]["UpdateAiPermissionsRequest"];
             };
         };
         responses: {
@@ -3056,7 +3087,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LayaStatusDto"];
+                    "application/json": components["schemas"]["AiPermissionsStatusDto"];
                 };
             };
             /** @description no Python 3.10 or newer to install into */
@@ -3066,7 +3097,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description a threshold outside 0..=1, or a schedule that is not HH:MM */
+            /** @description a threshold outside 0..=1, a schedule that is not HH:MM, or a prompt over 4000 characters */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3089,10 +3120,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LayaStatusDto"];
+                    "application/json": components["schemas"]["AiPermissionsStatusDto"];
                 };
             };
-            /** @description Laya is off, or an install is already running */
+            /** @description the AI permission model is off, or an install is already running */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3148,7 +3179,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description this path and base branch are already registered, or `ai` was asked for while Laya is off */
+            /** @description this path and base branch are already registered, or `ai` was asked for while the AI permission model is off */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3222,7 +3253,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description this path and base branch are already registered, or `ai` was asked for while Laya is off */
+            /** @description this path and base branch are already registered, or `ai` was asked for while the AI permission model is off */
             409: {
                 headers: {
                     [name: string]: unknown;

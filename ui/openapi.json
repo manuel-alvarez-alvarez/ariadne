@@ -965,12 +965,12 @@
         }
       }
     },
-    "/v1/permissions/laya": {
+    "/v1/permissions/ai": {
       "get": {
         "tags": [
           "permissions"
         ],
-        "summary": "The Laya settings, the interpreter probed afresh, and where the install\nhas got to.",
+        "summary": "The AI permission settings, the interpreter probed afresh, and where the install\nhas got to.",
         "operationId": "get",
         "responses": {
           "200": {
@@ -978,7 +978,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LayaStatusDto"
+                  "$ref": "#/components/schemas/AiPermissionsStatusDto"
                 }
               }
             }
@@ -989,14 +989,14 @@
         "tags": [
           "permissions"
         ],
-        "summary": "Change the Laya settings. An absent field stays as it was.",
-        "description": "Turning Laya on is refused while the daemon has no Python 3.10 or newer to\ninstall into: the download is minutes and gigabytes, and it would fail at\nthe end of them. Turning it off keeps every file on disk, so turning it\nback on costs nothing but the release check.",
+        "summary": "Change the AI permission settings. An absent field stays as it was.",
+        "description": "Turning the model on is refused while the daemon has no Python 3.10 or newer to\ninstall into: the download is minutes and gigabytes, and it would fail at\nthe end of them. Turning it off keeps every file on disk, so turning it\nback on costs nothing but the release check.",
         "operationId": "update",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateLayaRequest"
+                "$ref": "#/components/schemas/UpdateAiPermissionsRequest"
               }
             }
           },
@@ -1008,7 +1008,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LayaStatusDto"
+                  "$ref": "#/components/schemas/AiPermissionsStatusDto"
                 }
               }
             }
@@ -1017,12 +1017,12 @@
             "description": "no Python 3.10 or newer to install into"
           },
           "422": {
-            "description": "a threshold outside 0..=1, or a schedule that is not HH:MM"
+            "description": "a threshold outside 0..=1, a schedule that is not HH:MM, or a prompt over 4000 characters"
           }
         }
       }
     },
-    "/v1/permissions/laya/refresh": {
+    "/v1/permissions/ai/refresh": {
       "post": {
         "tags": [
           "permissions"
@@ -1035,13 +1035,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LayaStatusDto"
+                  "$ref": "#/components/schemas/AiPermissionsStatusDto"
                 }
               }
             }
           },
           "409": {
-            "description": "Laya is off, or an install is already running"
+            "description": "the AI permission model is off, or an install is already running"
           }
         }
       }
@@ -1100,7 +1100,7 @@
             "description": "not an absolute path, not a git work tree, or an unknown branch"
           },
           "409": {
-            "description": "this path and base branch are already registered, or `ai` was asked for while Laya is off"
+            "description": "this path and base branch are already registered, or `ai` was asked for while the AI permission model is off"
           }
         }
       }
@@ -1184,7 +1184,7 @@
             "description": ""
           },
           "409": {
-            "description": "this path and base branch are already registered, or `ai` was asked for while Laya is off"
+            "description": "this path and base branch are already registered, or `ai` was asked for while the AI permission model is off"
           }
         }
       },
@@ -2844,6 +2844,138 @@
           }
         }
       },
+      "AiPermissionsCheckpoints": {
+        "type": "string",
+        "description": "Which checkpoints the install downloads.\n\nEnglish alone is 843 MB; all three — English, multilingual and\ntyped-decisions — are 2.4 GB together.",
+        "enum": [
+          "english",
+          "all"
+        ]
+      },
+      "AiPermissionsPrompts": {
+        "type": "object",
+        "description": "The prompt texts of the one choice question each decision asks the model.\nThe answer names, `allow` and `review`, are fixed.",
+        "required": [
+          "question",
+          "allow_criteria",
+          "review_criteria"
+        ],
+        "properties": {
+          "allow_criteria": {
+            "type": "string",
+            "description": "What the `allow` answer covers."
+          },
+          "question": {
+            "type": "string",
+            "description": "The question the model answers."
+          },
+          "review_criteria": {
+            "type": "string",
+            "description": "What the `review` answer covers."
+          }
+        }
+      },
+      "AiPermissionsState": {
+        "type": "string",
+        "description": "Where the install has got to.",
+        "enum": [
+          "disabled",
+          "installing",
+          "ready",
+          "failed"
+        ]
+      },
+      "AiPermissionsStatusDto": {
+        "type": "object",
+        "description": "The AI permission settings and the state of the install behind them.",
+        "required": [
+          "enabled",
+          "checkpoints",
+          "threshold",
+          "python",
+          "state",
+          "weights_present",
+          "prompts",
+          "default_prompts"
+        ],
+        "properties": {
+          "checkpoints": {
+            "$ref": "#/components/schemas/AiPermissionsCheckpoints"
+          },
+          "default_prompts": {
+            "$ref": "#/components/schemas/AiPermissionsPrompts",
+            "description": "The built-in prompt texts, which a `null` prompt restores."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the model answers permission requests at all."
+          },
+          "endpoint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the model server answers, once one is running (022, Server)."
+          },
+          "installed_release": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release tag of the package on disk.",
+            "example": "v0.1.4"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last install failed."
+          },
+          "last_refresh_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the last install ended well, RFC 3339 in UTC."
+          },
+          "latest_release": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release tag the last download reported."
+          },
+          "prompts": {
+            "$ref": "#/components/schemas/AiPermissionsPrompts",
+            "description": "The prompt texts each decision sends the model now."
+          },
+          "python": {
+            "$ref": "#/components/schemas/PythonDto"
+          },
+          "schedule": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the daily refresh runs, `HH:MM` in 24-hour local time. `null`\nturns the refresh off.",
+            "example": "03:30"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AiPermissionsState"
+          },
+          "threshold": {
+            "type": "number",
+            "format": "double",
+            "description": "How sure the model has to be before its answer is taken, 0 to 1.",
+            "example": 0.8
+          },
+          "weights_present": {
+            "type": "boolean",
+            "description": "Whether the checkpoints of the last good install are on disk."
+          }
+        }
+      },
       "AttentionReason": {
         "type": "string",
         "description": "Why a live agent session needs the user's attention.\n\nOrthogonal to [`SessionStatus`]: a session waiting on a permission prompt\nis still `running` as far as its lifecycle goes, it just cannot make\nprogress until someone looks at it.",
@@ -3087,7 +3219,7 @@
           },
           "python": {
             "$ref": "#/components/schemas/PythonDto",
-            "description": "The Python interpreter Laya's install runs on (022). It is reported\napart from `tools` because it answers a question of its own: not\nwhether it is there, but whether it is new enough."
+            "description": "The Python interpreter the model's install runs on (022). It is reported\napart from `tools` because it answers a question of its own: not\nwhether it is there, but whether it is new enough."
           },
           "socket_path": {
             "type": "string"
@@ -3426,20 +3558,20 @@
           },
           {
             "type": "object",
-            "description": "The Laya settings or the state of its install moved (022).",
+            "description": "The AI permission settings or the state of its install moved (022).",
             "required": [
               "data",
               "event"
             ],
             "properties": {
               "data": {
-                "$ref": "#/components/schemas/LayaStatusDto",
-                "description": "The Laya settings or the state of its install moved (022)."
+                "$ref": "#/components/schemas/AiPermissionsStatusDto",
+                "description": "The AI permission settings or the state of its install moved (022)."
               },
               "event": {
                 "type": "string",
                 "enum": [
-                  "laya_updated"
+                  "ai_permissions_updated"
                 ]
               }
             }
@@ -3633,105 +3765,6 @@
           "pull_request",
           "none"
         ]
-      },
-      "LayaCheckpoints": {
-        "type": "string",
-        "description": "Which checkpoints the install downloads.\n\nEnglish alone is 843 MB; all three — English, multilingual and\ntyped-decisions — are 2.4 GB together.",
-        "enum": [
-          "english",
-          "all"
-        ]
-      },
-      "LayaState": {
-        "type": "string",
-        "description": "Where the install has got to.",
-        "enum": [
-          "disabled",
-          "installing",
-          "ready",
-          "failed"
-        ]
-      },
-      "LayaStatusDto": {
-        "type": "object",
-        "description": "The Laya settings and the state of the install behind them.",
-        "required": [
-          "enabled",
-          "checkpoints",
-          "threshold",
-          "python",
-          "state",
-          "weights_present"
-        ],
-        "properties": {
-          "checkpoints": {
-            "$ref": "#/components/schemas/LayaCheckpoints"
-          },
-          "enabled": {
-            "type": "boolean",
-            "description": "Whether Laya answers permission requests at all."
-          },
-          "endpoint": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Where the Laya server answers, once one is running (022, Server)."
-          },
-          "installed_release": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The release tag of the package on disk.",
-            "example": "v0.1.4"
-          },
-          "last_error": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Why the last install failed."
-          },
-          "last_refresh_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "When the last install ended well, RFC 3339 in UTC."
-          },
-          "latest_release": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The release tag the last download reported."
-          },
-          "python": {
-            "$ref": "#/components/schemas/PythonDto"
-          },
-          "schedule": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "When the daily refresh runs, `HH:MM` in 24-hour local time. `null`\nturns the refresh off.",
-            "example": "03:30"
-          },
-          "state": {
-            "$ref": "#/components/schemas/LayaState"
-          },
-          "threshold": {
-            "type": "number",
-            "format": "double",
-            "description": "How sure Laya has to be before its answer is taken, 0 to 1.",
-            "example": 0.8
-          },
-          "weights_present": {
-            "type": "boolean",
-            "description": "Whether the checkpoints of the last good install are on disk."
-          }
-        }
       },
       "LogLineDto": {
         "type": "object",
@@ -3998,7 +4031,7 @@
         "properties": {
           "ok": {
             "type": "boolean",
-            "description": "Whether it is Python 3.10 or newer, which Laya needs."
+            "description": "Whether it is Python 3.10 or newer, which the model needs."
           },
           "path": {
             "type": [
@@ -4973,17 +5006,24 @@
         },
         "additionalProperties": false
       },
-      "UpdateLayaRequest": {
+      "UpdateAiPermissionsRequest": {
         "type": "object",
-        "description": "Partial update of the Laya settings; an absent field stays unchanged.",
+        "description": "Partial update of the AI permission settings; an absent field stays unchanged.",
         "properties": {
+          "allow_criteria": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the `allow` answer covers, kept, restored and limited as\n`question` is."
+          },
           "checkpoints": {
             "oneOf": [
               {
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/LayaCheckpoints"
+                "$ref": "#/components/schemas/AiPermissionsCheckpoints"
               }
             ]
           },
@@ -4993,6 +5033,20 @@
               "null"
             ],
             "description": "Turning it on starts an install; turning it off keeps the files."
+          },
+          "question": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The question the model answers. Absent keeps it; `null` or a blank\ntext restores the built-in one. At most 4000 characters."
+          },
+          "review_criteria": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the `review` answer covers, kept, restored and limited as\n`question` is."
           },
           "schedule": {
             "type": [
@@ -5182,7 +5236,7 @@
     },
     {
       "name": "permissions",
-      "description": "Laya, the local model the `ai` permission mode answers with"
+      "description": "The AI permission model: the local model the `ai` permission mode answers with"
     },
     {
       "name": "goals",

@@ -34,7 +34,7 @@ import {
   type RepositoryDto,
   type TaskDto,
 } from "@/api"
-import { aGoal, aLayaStatus, aRepository, aSession, aTask } from "@/test/fixtures"
+import { aGoal, anAiPermissionsStatus, aRepository, aSession, aTask } from "@/test/fixtures"
 import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
 const REPOSITORY: RepositoryDto = aRepository({
@@ -261,18 +261,18 @@ describe("session events", () => {
   })
 })
 
-describe("laya events", () => {
+describe("ai permissions events", () => {
   it("replaces the cached status whole, so a card that read installing reads ready", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    queryClient.setQueryData(qk.permissions.laya(), aLayaStatus({ state: "installing" }))
+    queryClient.setQueryData(qk.permissions.ai(), anAiPermissionsStatus({ state: "installing" }))
 
     dispatch(queryClient, {
-      event: "laya_updated",
-      data: aLayaStatus({ state: "ready", installed_release: "v0.1.4" }),
+      event: "ai_permissions_updated",
+      data: anAiPermissionsStatus({ state: "ready", installed_release: "v0.1.4" }),
     })
 
-    expect(queryClient.getQueryData(qk.permissions.laya())).toEqual(
-      aLayaStatus({ state: "ready", installed_release: "v0.1.4" }),
+    expect(queryClient.getQueryData(qk.permissions.ai())).toEqual(
+      anAiPermissionsStatus({ state: "ready", installed_release: "v0.1.4" }),
     )
   })
 })
