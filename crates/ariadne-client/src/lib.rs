@@ -601,27 +601,17 @@ impl SseStream {
 /// [`Client::update_ai_permissions`]'s body: only the fields `req` names, so an absent
 /// one reaches the daemon absent rather than as an explicit `null` — which
 /// `UpdateAiPermissionsRequest`'s own `Serialize` cannot do for `enabled`,
-/// `checkpoints` and `threshold`, only for `schedule` and the prompts.
+/// `threshold`, only for `schedule`.
 fn ai_permissions_update_body(req: &UpdateAiPermissionsRequest) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     if let Some(enabled) = req.enabled {
         body.insert("enabled".into(), enabled.into());
     }
-    if let Some(checkpoints) = req.checkpoints {
-        body.insert("checkpoints".into(), checkpoints.as_str().into());
-    }
     if let Some(threshold) = req.threshold {
         body.insert("threshold".into(), threshold.into());
     }
-    for (field, value) in [
-        ("schedule", &req.schedule),
-        ("question", &req.question),
-        ("allow_criteria", &req.allow_criteria),
-        ("review_criteria", &req.review_criteria),
-    ] {
-        if let Some(value) = value {
-            body.insert(field.into(), value.clone().into());
-        }
+    if let Some(schedule) = &req.schedule {
+        body.insert("schedule".into(), schedule.clone().into());
     }
     serde_json::Value::Object(body)
 }
@@ -811,16 +801,9 @@ mod tests {
     }
 
     /// Only the fields a caller actually set reach the wire: `enabled` alone
-    /// stays `{"enabled": true}`, never `{"enabled": true, "checkpoints":
-    /// null, "threshold": null}` — which is what `UpdateAiPermissionsRequest`'s own
-    /// `Serialize` would have written, `enabled` and `checkpoints` and
-    /// `threshold` having no `skip_serializing_if` of their own. `schedule`
-    /// and the prompts are the fields where an explicit `null` is a value in
-    /// its own right.
+    /// stays `{"enabled": true}`, never `{"enabled": true, "threshold": null}`.
     #[test]
     fn an_ai_permissions_update_sends_only_the_fields_that_were_set() {
-        use ariadne_api::permissions::AiPermissionsCheckpoints;
-
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {
                 enabled: Some(true),
@@ -837,24 +820,10 @@ mod tests {
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {
-                checkpoints: Some(AiPermissionsCheckpoints::All),
                 schedule: Some(None),
                 ..Default::default()
             }),
-            serde_json::json!({"checkpoints": "all", "schedule": null})
-        );
-        assert_eq!(
-            ai_permissions_update_body(&UpdateAiPermissionsRequest {
-                question: Some(Some("Is it safe?".into())),
-                allow_criteria: Some(None),
-                review_criteria: Some(Some("anything else".into())),
-                ..Default::default()
-            }),
-            serde_json::json!({
-                "question": "Is it safe?",
-                "allow_criteria": null,
-                "review_criteria": "anything else",
-            })
+            serde_json::json!({"schedule": null})
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest::default()),

@@ -491,10 +491,7 @@ mod tests {
     use super::*;
 
     use ariadne_api::goals::GoalDto;
-    use ariadne_api::permissions::{
-        AiPermissionsCheckpoints, AiPermissionsPrompts, AiPermissionsState, AiPermissionsStatusDto,
-        PythonDto,
-    };
+    use ariadne_api::permissions::{AiPermissionsState, AiPermissionsStatusDto, PythonDto};
     use ariadne_api::tasks::TaskTransitionDto;
     use ariadne_core::{AttentionReason, SessionStatus, TaskStatus};
 
@@ -544,7 +541,6 @@ mod tests {
     fn ai_permissions() -> AiPermissionsStatusDto {
         AiPermissionsStatusDto {
             enabled: true,
-            checkpoints: AiPermissionsCheckpoints::English,
             threshold: 0.8,
             schedule: None,
             python: PythonDto {
@@ -559,16 +555,6 @@ mod tests {
             endpoint: None,
             last_refresh_at: None,
             last_error: None,
-            prompts: AiPermissionsPrompts {
-                question: "q".into(),
-                allow_criteria: "a".into(),
-                review_criteria: "r".into(),
-            },
-            default_prompts: AiPermissionsPrompts {
-                question: "q".into(),
-                allow_criteria: "a".into(),
-                review_criteria: "r".into(),
-            },
         }
     }
 

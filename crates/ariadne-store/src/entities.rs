@@ -184,14 +184,10 @@ pub struct AcpRegistryIndex {
 
 /// The one AI permission settings row, and the state of the install behind it (022).
 ///
-/// The spellings of `checkpoints` and `state` are the wire's own
-/// (`ariadne_api::permissions`); the store keeps the text and the CHECK
-/// constraints hold it to the sets.
+/// The spelling of `state` is the wire's own (`ariadne_api::permissions`).
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct AiPermissionSettings {
     pub enabled: bool,
-    /// `english` or `all`.
-    pub checkpoints: String,
     /// How sure the model has to be before its answer is taken, 0 to 1.
     pub threshold: f64,
     /// `HH:MM` in 24-hour local time, or `None` for no daily refresh.
@@ -205,12 +201,6 @@ pub struct AiPermissionSettings {
     pub weights_present: bool,
     pub last_refresh_at: Option<String>,
     pub last_error: Option<String>,
-    /// The question each decision asks the model, or `None` for the built-in text.
-    pub question: Option<String>,
-    /// What the `allow` answer covers, or `None` for the built-in text.
-    pub allow_criteria: Option<String>,
-    /// What the `review` answer covers, or `None` for the built-in text.
-    pub review_criteria: Option<String>,
     pub updated_at: String,
 }
 

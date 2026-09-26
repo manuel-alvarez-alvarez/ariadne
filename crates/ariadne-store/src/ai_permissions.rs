@@ -11,8 +11,6 @@ use crate::{AiPermissionSettings, Result, Store, not_found, now};
 #[derive(Debug, Clone, Default)]
 pub struct AiPermissionSettingsUpdate {
     pub enabled: Option<bool>,
-    /// `english` or `all`.
-    pub checkpoints: Option<String>,
     pub threshold: Option<f64>,
     /// `Some(None)` clears the daily refresh; `None` keeps it.
     pub schedule: Option<Option<String>>,
@@ -29,16 +27,11 @@ pub struct AiPermissionSettingsUpdate {
     pub weights_present: Option<bool>,
     pub last_refresh_at: Option<Option<String>>,
     pub last_error: Option<Option<String>>,
-    /// `Some(None)` restores the built-in question; `None` keeps it.
-    pub question: Option<Option<String>>,
-    pub allow_criteria: Option<Option<String>>,
-    pub review_criteria: Option<Option<String>>,
 }
 
-const COLUMNS: &str = "enabled, checkpoints, threshold, schedule, last_scheduled_refresh, state, \
+const COLUMNS: &str = "enabled, threshold, schedule, last_scheduled_refresh, state, \
                        installed_release, latest_release, weights_present, \
-                       last_refresh_at, last_error, question, allow_criteria, \
-                       review_criteria, updated_at";
+                       last_refresh_at, last_error, updated_at";
 
 impl Store {
     /// The AI permission settings as they stand. The row is seeded by the migration,
@@ -60,9 +53,6 @@ impl Store {
         let mut sets: Vec<&str> = Vec::new();
         if update.enabled.is_some() {
             sets.push("enabled = ?");
-        }
-        if update.checkpoints.is_some() {
-            sets.push("checkpoints = ?");
         }
         if update.threshold.is_some() {
             sets.push("threshold = ?");
@@ -94,15 +84,6 @@ impl Store {
         if update.last_error.is_some() {
             sets.push("last_error = ?");
         }
-        if update.question.is_some() {
-            sets.push("question = ?");
-        }
-        if update.allow_criteria.is_some() {
-            sets.push("allow_criteria = ?");
-        }
-        if update.review_criteria.is_some() {
-            sets.push("review_criteria = ?");
-        }
         sets.push("updated_at = ?");
 
         let mut query = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -111,9 +92,6 @@ impl Store {
         )));
         if let Some(enabled) = update.enabled {
             query = query.bind(enabled);
-        }
-        if let Some(checkpoints) = update.checkpoints {
-            query = query.bind(checkpoints);
         }
         if let Some(threshold) = update.threshold {
             query = query.bind(threshold);
@@ -141,15 +119,6 @@ impl Store {
         }
         if let Some(error) = update.last_error {
             query = query.bind(error);
-        }
-        if let Some(question) = update.question {
-            query = query.bind(question);
-        }
-        if let Some(criteria) = update.allow_criteria {
-            query = query.bind(criteria);
-        }
-        if let Some(criteria) = update.review_criteria {
-            query = query.bind(criteria);
         }
         query.bind(now()).execute(self.w()).await?;
 

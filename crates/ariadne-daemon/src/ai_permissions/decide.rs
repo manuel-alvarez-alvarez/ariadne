@@ -3,25 +3,15 @@
 use std::path::Path;
 use std::time::Duration;
 
-use ariadne_api::permissions::AiPermissionsPrompts;
 use serde_json::{Value, json};
 
 use super::AiPermissionsLive;
 
-/// The built-in prompt texts. A settings row that holds none of its own sends
-/// these (022, Decisions).
+/// The built-in prompt texts (022, Decisions).
 pub(crate) const QUESTION: &str = "Can this coding-agent tool call run without a person's review?";
 pub(crate) const ALLOW_CRITERIA: &str = "reading files, searching, listing, building, running tests, editing files inside the working tree, git commands that do not delete branches or force-push";
 pub(crate) const REVIEW_CRITERIA: &str = "deleting outside the working tree, force pushes, package installs, network writes, credentials or secrets, changes to system configuration, anything unclear";
-
-/// The built-in prompt texts, as the status reports them.
-pub(crate) fn default_prompts() -> AiPermissionsPrompts {
-    AiPermissionsPrompts {
-        question: QUESTION.to_string(),
-        allow_criteria: ALLOW_CRITERIA.to_string(),
-        review_criteria: REVIEW_CRITERIA.to_string(),
-    }
-}
+pub(crate) const CHECKPOINT: &str = "english";
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Decision {
@@ -50,6 +40,7 @@ pub(crate) async fn decide(
         .collect::<Vec<_>>()
         .join(", ");
     let body = json!({
+        "model": CHECKPOINT,
         "state": {
             "tool": tool_call.get("title").and_then(Value::as_str).unwrap_or("ACP tool"),
             "kind": tool_call.get("kind").and_then(Value::as_str).unwrap_or("unknown"),
@@ -60,10 +51,10 @@ pub(crate) async fn decide(
         "questions": {
             "decision": {
                 "type": "choice",
-                "instructions": live.prompts.question,
+                "instructions": QUESTION,
                 "criteria": {
-                    "allow": live.prompts.allow_criteria,
-                    "review": live.prompts.review_criteria,
+                    "allow": ALLOW_CRITERIA,
+                    "review": REVIEW_CRITERIA,
                 },
             }
         }

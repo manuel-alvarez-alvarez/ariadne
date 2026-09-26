@@ -389,13 +389,10 @@ mode: see [Permission modes](permissions.md#the-ai-permission-model) for what it
 what each setting does.
 
 ```sh
-ariadne permissions ai show                    # settings, install state, python, and prompts
+ariadne permissions ai show                    # settings, install state, and python
 ariadne permissions ai enable --wait            # turn it on and wait for the install
-ariadne permissions ai set --checkpoints all    # english (843 MB) or all (2.4 GB)
 ariadne permissions ai set --threshold 0.6      # how sure the model has to be, 0 to 1
 ariadne permissions ai set --schedule 03:30     # daily reinstall, or --no-schedule
-ariadne permissions ai set --question "Is this safe?"
-ariadne permissions ai set --default-prompts    # restore all three built-in prompts
 ariadne permissions ai refresh --wait           # install again, on the settings as they stand
 ariadne permissions ai disable                  # keeps the files
 ```

@@ -109,17 +109,6 @@ enable` answers at once, and `ariadne permissions ai show` says where it has got
 to: `installing`, `ready`, or `failed` with the reason. An install that fails
 leaves the one before it on disk, so a working model stays working.
 
-Choose which checkpoints to download:
-
-```sh
-ariadne permissions ai set --checkpoints english   # 843 MB; the default
-ariadne permissions ai set --checkpoints all       # 2.4 GB, and every language
-```
-
-`english` is the English checkpoint alone. `all` adds the multilingual and
-typed-decisions checkpoints. Changing the choice takes effect on the next
-install, so follow it with `ariadne permissions ai refresh`.
-
 Two more settings:
 
 ```sh
@@ -136,24 +125,8 @@ was down at the scheduled time, it catches up on its next start that day. A
 refresh already in progress is not queued. The model starts without one, and then
 nothing is downloaded until you ask for it.
 
-## Prompts
-
-Each decision uses a question, allow criteria, and review criteria. `show`
-prints all three and marks each as `default` or `custom`. Change any text with
-the matching `set` flag:
-
-```sh
-ariadne permissions ai set --question "Should this tool call run?"
-ariadne permissions ai set --allow "The request only reads repository files."
-ariadne permissions ai set --review "The request changes files or reaches a network service."
-```
-
-The three flags can be combined with each other and with the other `set`
-settings. Restore all built-in texts together with:
-
-```sh
-ariadne permissions ai set --default-prompts
-```
+The AI permission model uses built-in prompts and the English checkpoint. The
+configuration is measured by `bench/ai-permissions/`.
 
 Once the install is ready, the daemon runs the model's local server on a loopback
 port and keeps its selected weights in memory for permission decisions. It

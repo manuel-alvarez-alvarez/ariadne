@@ -15,9 +15,7 @@ use axum::http::StatusCode;
 use serde_json::json;
 
 use ariadne_api::error::ErrorBody;
-use ariadne_api::permissions::{
-    AiPermissionsCheckpoints, AiPermissionsState, AiPermissionsStatusDto,
-};
+use ariadne_api::permissions::{AiPermissionsState, AiPermissionsStatusDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::PermissionMode;
@@ -159,7 +157,6 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
 
     let status = status(&h).await;
     assert!(!status.enabled);
-    assert_eq!(status.checkpoints, AiPermissionsCheckpoints::English);
     assert_eq!(status.threshold, 0.8);
     assert_eq!(status.schedule, None);
     assert_eq!(status.state, AiPermissionsState::Disabled);
@@ -188,17 +185,13 @@ async fn turning_the_model_on_without_a_new_enough_python_is_refused_and_changes
         .await;
 
     let refused: ErrorBody = h
-        .json(
-            update(json!({"enabled": true, "checkpoints": "all"})),
-            StatusCode::CONFLICT,
-        )
+        .json(update(json!({"enabled": true})), StatusCode::CONFLICT)
         .await;
     assert_eq!(refused.error.code, "python_unavailable");
     assert!(refused.error.message.contains("3.9.18"), "{refused:?}");
 
     let after = status(&h).await;
     assert!(!after.enabled, "the refusal wrote nothing");
-    assert_eq!(after.checkpoints, AiPermissionsCheckpoints::English);
     assert_eq!(after.state, AiPermissionsState::Disabled);
     assert!(!after.python.ok);
     assert!(
@@ -309,11 +302,10 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
 
     let chosen: AiPermissionsStatusDto = h
         .json(
-            update(json!({"checkpoints": "all", "threshold": 0.6, "schedule": "03:30"})),
+            update(json!({"threshold": 0.6, "schedule": "03:30"})),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(chosen.checkpoints, AiPermissionsCheckpoints::All);
     assert_eq!(chosen.threshold, 0.6);
     assert_eq!(chosen.schedule.as_deref(), Some("03:30"));
 
@@ -336,7 +328,6 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
         Timeouts::default(),
     );
     let kept = ai_permissions.status().await;
-    assert_eq!(kept.checkpoints, AiPermissionsCheckpoints::All);
     assert_eq!(kept.threshold, 0.6);
     assert_eq!(kept.schedule.as_deref(), Some("03:30"));
 
@@ -349,133 +340,6 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
         .json(update(json!({"schedule": null})), StatusCode::OK)
         .await;
     assert_eq!(off.schedule, None);
-}
-
-/// A prompt set on the settings is what the status reports, and a `null`
-/// restores the built-in text: the status then shows `prompts` equal to
-/// `default_prompts`, and the row holds no text of its own.
-#[tokio::test]
-async fn a_null_prompt_restores_the_built_in_text() {
-    let release = ReleaseServer::start().await;
-    let h = with_ai_permissions("3.12.1", &release).await;
-    let defaults = status(&h).await.default_prompts;
-    assert_eq!(
-        status(&h).await.prompts,
-        defaults,
-        "a fresh daemon sends the built-in texts"
-    );
-
-    let set: AiPermissionsStatusDto = h
-        .json(
-            update(json!({
-                "question": "Is this safe?",
-                "allow_criteria": "reading",
-                "review_criteria": "writing",
-            })),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(set.prompts.question, "Is this safe?");
-    assert_eq!(set.prompts.allow_criteria, "reading");
-    assert_eq!(set.prompts.review_criteria, "writing");
-    assert_eq!(
-        set.default_prompts, defaults,
-        "the built-in texts do not move"
-    );
-
-    let restored: AiPermissionsStatusDto = h
-        .json(
-            update(json!({"question": null, "allow_criteria": null, "review_criteria": null})),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(restored.prompts, restored.default_prompts);
-    let row = h.store.ai_permission_settings().await.unwrap();
-    assert_eq!(
-        (row.question, row.allow_criteria, row.review_criteria),
-        (None, None, None)
-    );
-}
-
-/// A blank prompt is no prompt: it stores NULL, so the model is never sent an
-/// empty question. An absent prompt keeps what was there.
-#[tokio::test]
-async fn a_blank_prompt_stores_null() {
-    let release = ReleaseServer::start().await;
-    let h = with_ai_permissions("3.12.1", &release).await;
-    let _: AiPermissionsStatusDto = h
-        .json(
-            update(json!({"question": "Is this safe?", "review_criteria": "writing"})),
-            StatusCode::OK,
-        )
-        .await;
-
-    let blank: AiPermissionsStatusDto = h
-        .json(update(json!({"question": "  \n "})), StatusCode::OK)
-        .await;
-    assert_eq!(blank.prompts.question, blank.default_prompts.question);
-    assert_eq!(
-        blank.prompts.review_criteria, "writing",
-        "an absent prompt is kept"
-    );
-    let row = h.store.ai_permission_settings().await.unwrap();
-    assert_eq!(row.question, None);
-    assert_eq!(row.review_criteria.as_deref(), Some("writing"));
-}
-
-/// A prompt over 4000 characters is refused with 422 `invalid_request`, and
-/// the refusal writes nothing, not even the fields beside it.
-#[tokio::test]
-async fn a_prompt_over_4000_characters_is_refused() {
-    let release = ReleaseServer::start().await;
-    let h = with_ai_permissions("3.12.1", &release).await;
-
-    let longest = "é".repeat(4000);
-    let kept: AiPermissionsStatusDto = h
-        .json(update(json!({"allow_criteria": longest})), StatusCode::OK)
-        .await;
-    assert_eq!(
-        kept.prompts.allow_criteria, longest,
-        "4000 characters is the limit, not bytes"
-    );
-
-    for field in ["question", "allow_criteria", "review_criteria"] {
-        let refused: ErrorBody = h
-            .json(
-                update(json!({field: "x".repeat(4001), "threshold": 0.5})),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            )
-            .await;
-        assert_eq!(refused.error.code, "invalid_request", "{field}");
-    }
-    let unchanged = status(&h).await;
-    assert_eq!(unchanged.threshold, 0.8, "a refusal wrote nothing");
-    assert_eq!(
-        unchanged.prompts.question,
-        unchanged.default_prompts.question
-    );
-    assert_eq!(unchanged.prompts.allow_criteria, longest);
-}
-
-/// A client that shows the prompts learns of a change from the stream, as it
-/// does of every other change to the settings.
-#[tokio::test]
-async fn a_prompt_change_publishes_ai_permissions_updated() {
-    let release = ReleaseServer::start().await;
-    let h = with_ai_permissions("3.12.1", &release).await;
-    let mut events = h.bus.subscribe();
-
-    let _: AiPermissionsStatusDto = h
-        .json(
-            update(json!({"review_criteria": "writing"})),
-            StatusCode::OK,
-        )
-        .await;
-    next_event(
-        &mut events,
-        |e| matches!(&e.event, DomainEvent::AiPermissionsUpdated(s) if s.prompts.review_criteria == "writing"),
-    )
-    .await;
 }
 
 /// The old name of the settings is gone from the wire: nothing answers at the
@@ -510,10 +374,7 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
     // The installer holds until the file appears, so the daemon is busy for
     // as long as the test needs it to be, and not a moment by the clock.
     let _: AiPermissionsStatusDto = h
-        .json(
-            update(json!({"enabled": true, "checkpoints": "all"})),
-            StatusCode::OK,
-        )
+        .json(update(json!({"enabled": true})), StatusCode::OK)
         .await;
     let busy: ErrorBody = h
         .json(post("/v1/permissions/ai/refresh"), StatusCode::CONFLICT)
@@ -524,8 +385,7 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
     settles_on(&h, AiPermissionsState::Ready).await;
     std::fs::remove_file(&hold).unwrap();
 
-    // A refresh of a ready model runs the installer again, on the checkpoints
-    // the settings name now.
+    // A refresh of a ready model runs the installer again on the built-in checkpoint.
     std::fs::write(record.path(), "").unwrap();
     let again: AiPermissionsStatusDto = h
         .json(post("/v1/permissions/ai/refresh"), StatusCode::ACCEPTED)
@@ -535,7 +395,7 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
     settles_on(&h, AiPermissionsState::Ready).await;
     assert_eq!(
         recorded(record.path()).get(1).map(String::as_str),
-        Some("all")
+        Some("english")
     );
 }
 
@@ -733,10 +593,7 @@ async fn the_daily_refresh_runs_the_install_once_at_its_minute() {
     );
 
     let _: AiPermissionsStatusDto = h
-        .json(
-            update(json!({"schedule": "03:30", "checkpoints": "all"})),
-            StatusCode::OK,
-        )
+        .json(update(json!({"schedule": "03:30"})), StatusCode::OK)
         .await;
     std::fs::write(record.path(), "").unwrap();
     assert!(!ai_permissions.run_schedule(local("03:29:00"), before).await);
@@ -752,8 +609,8 @@ async fn the_daily_refresh_runs_the_install_once_at_its_minute() {
     settles_on(&h, AiPermissionsState::Ready).await;
     assert_eq!(
         recorded(record.path()).get(1).map(String::as_str),
-        Some("all"),
-        "the refresh installs what the settings name now"
+        Some("english"),
+        "the refresh installs the built-in checkpoint"
     );
 
     std::fs::write(record.path(), "").unwrap();
@@ -921,9 +778,7 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
     for name in [
         "AiPermissionsStatusDto",
         "UpdateAiPermissionsRequest",
-        "AiPermissionsCheckpoints",
         "AiPermissionsState",
-        "AiPermissionsPrompts",
         "PythonDto",
     ] {
         assert!(schemas[name].is_object(), "{name} is not in the document");
@@ -934,13 +789,6 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
         schedule.to_string().contains("null"),
         "the schedule is not nullable: {schedule}"
     );
-    for prompt in ["question", "allow_criteria", "review_criteria"] {
-        let field = &schemas["UpdateAiPermissionsRequest"]["properties"][prompt];
-        assert!(
-            field.to_string().contains("null"),
-            "{prompt} is not nullable: {field}"
-        );
-    }
 
     // The doctor's report carries the interpreter the AI permission model installs into.
     assert!(schemas["DaemonReportDto"]["properties"]["python"].is_object());

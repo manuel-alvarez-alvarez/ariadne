@@ -331,7 +331,6 @@ mod tests {
     fn ai_permissions_status(state: AiPermissionsState) -> AiPermissionsStatusDto {
         AiPermissionsStatusDto {
             enabled: true,
-            checkpoints: ariadne_api::permissions::AiPermissionsCheckpoints::English,
             threshold: 0.8,
             schedule: None,
             python: PythonDto {
@@ -346,16 +345,6 @@ mod tests {
             endpoint: None,
             last_refresh_at: None,
             last_error: None,
-            prompts: ariadne_api::permissions::AiPermissionsPrompts {
-                question: "q".into(),
-                allow_criteria: "a".into(),
-                review_criteria: "r".into(),
-            },
-            default_prompts: ariadne_api::permissions::AiPermissionsPrompts {
-                question: "q".into(),
-                allow_criteria: "a".into(),
-                review_criteria: "r".into(),
-            },
         }
     }
 

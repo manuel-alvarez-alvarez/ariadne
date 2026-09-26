@@ -20,10 +20,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use tokio::sync::{mpsc, watch};
 
-use ariadne_api::permissions::{
-    AiPermissionsCheckpoints, AiPermissionsPrompts, AiPermissionsState, AiPermissionsStatusDto,
-};
-use ariadne_store::{AiPermissionSettings, Store};
+use ariadne_api::permissions::{AiPermissionsState, AiPermissionsStatusDto};
+use ariadne_store::Store;
 
 use crate::bus::EventBus;
 use crate::config::Config;
@@ -37,8 +35,6 @@ pub struct AiPermissionsLive {
     pub endpoint: String,
     /// How sure the model has to be before its answer is taken, 0 to 1.
     pub threshold: f64,
-    /// The prompt texts the decision sends, as the settings stand now.
-    pub prompts: AiPermissionsPrompts,
 }
 
 /// The daemon's model: its settings, its install, and where its server is.
@@ -107,7 +103,6 @@ impl AiPermissions {
                 tracing::warn!(error = %error, "reading the AI permission settings failed");
                 return AiPermissionsStatusDto {
                     enabled: false,
-                    checkpoints: AiPermissionsCheckpoints::English,
                     threshold: DEFAULT_THRESHOLD,
                     schedule: None,
                     python,
@@ -118,15 +113,11 @@ impl AiPermissions {
                     endpoint: self.endpoint(),
                     last_refresh_at: None,
                     last_error: Some(error.to_string()),
-                    prompts: decide::default_prompts(),
-                    default_prompts: decide::default_prompts(),
                 };
             }
         };
-        let prompts = prompts_of(&row);
         AiPermissionsStatusDto {
             enabled: row.enabled,
-            checkpoints: checkpoints_of(&row.checkpoints),
             threshold: row.threshold,
             schedule: row.schedule,
             python,
@@ -137,8 +128,6 @@ impl AiPermissions {
             endpoint: self.endpoint(),
             last_refresh_at: row.last_refresh_at,
             last_error: row.last_error,
-            prompts,
-            default_prompts: decide::default_prompts(),
         }
     }
 
@@ -193,10 +182,9 @@ impl AiPermissions {
     pub async fn live(&self) -> Option<AiPermissionsLive> {
         let endpoint = self.endpoint()?;
         let row = self.store.ai_permission_settings().await.ok()?;
-        row.enabled.then(|| AiPermissionsLive {
+        row.enabled.then_some(AiPermissionsLive {
             endpoint,
             threshold: row.threshold,
-            prompts: prompts_of(&row),
         })
     }
 
@@ -227,27 +215,6 @@ impl AiPermissions {
 /// The threshold a daemon that cannot read its settings reports: the same one
 /// the schema defaults to, so a failure does not invent a number.
 const DEFAULT_THRESHOLD: f64 = 0.8;
-
-/// The prompt texts a row holds, with the built-in text where it holds none.
-fn prompts_of(row: &AiPermissionSettings) -> AiPermissionsPrompts {
-    let text = |stored: &Option<String>, default: &str| {
-        stored.clone().unwrap_or_else(|| default.to_string())
-    };
-    AiPermissionsPrompts {
-        question: text(&row.question, decide::QUESTION),
-        allow_criteria: text(&row.allow_criteria, decide::ALLOW_CRITERIA),
-        review_criteria: text(&row.review_criteria, decide::REVIEW_CRITERIA),
-    }
-}
-
-/// The checkpoints a stored spelling names. A row written by a future build
-/// that spells it some other way reads as the smaller download.
-fn checkpoints_of(stored: &str) -> AiPermissionsCheckpoints {
-    match stored {
-        "all" => AiPermissionsCheckpoints::All,
-        _ => AiPermissionsCheckpoints::English,
-    }
-}
 
 /// The state a stored spelling names. One nothing here knows reads as
 /// `failed`: a state that cannot be read is not one to answer requests on.

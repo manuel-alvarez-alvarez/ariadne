@@ -2,8 +2,8 @@
 //! and the weights.
 //!
 //! One install runs at a time, as a background tokio task, because it takes
-//! minutes and downloads gigabytes — PyTorch, and 843 MB of English weights
-//! or 2.4 GB of all three checkpoints. Nothing waits on it: the write that
+//! minutes and downloads gigabytes — PyTorch and 843 MB of English weights.
+//! Nothing waits on it: the write that
 //! started it answers `installing`, and every state it reaches afterwards is
 //! published as `ai_permissions_updated`.
 //!
@@ -17,11 +17,11 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use ariadne_api::permissions::{AiPermissionsCheckpoints, AiPermissionsStatusDto};
+use ariadne_api::permissions::AiPermissionsStatusDto;
 use ariadne_store::AiPermissionSettingsUpdate;
 use tokio::process::Command;
 
-use super::{AiPermissions, checkpoints_of};
+use super::{AiPermissions, decide};
 
 /// What the release document names: the tag the install records, and the
 /// wheel it takes.
@@ -31,10 +31,9 @@ struct Release {
     wheel_url: String,
 }
 
-/// The checkpoints each choice downloads, as
+/// The checkpoint the installer downloads, as
 /// `from laya import Router; Router().preload([…])` names them.
-const ENGLISH: [&str; 1] = ["english"];
-const ALL: [&str; 3] = ["english", "multilingual", "typed-decisions"];
+const CHECKPOINTS: [&str; 1] = [decide::CHECKPOINT];
 
 impl AiPermissions {
     /// Start an install in the background, and answer the status it leaves
@@ -110,18 +109,12 @@ async fn run(ai_permissions: &AiPermissions) -> Result<Release> {
         ai_permissions.timeouts.ai_permissions_release_download,
     )
     .await?;
-    let row = ai_permissions
-        .store
-        .ai_permission_settings()
-        .await
-        .context("reading the AI permission settings")?;
-    let checkpoints = checkpoints_of(&row.checkpoints);
     match &ai_permissions.installer {
-        Some(command) => stub(ai_permissions, command, &release, checkpoints).await?,
+        Some(command) => stub(ai_permissions, command, &release).await?,
         None => {
             let venv = venv(ai_permissions).await?;
             wheel(&venv, &release).await?;
-            weights(ai_permissions, &venv, checkpoints).await?;
+            weights(ai_permissions, &venv).await?;
         }
     }
     Ok(release)
@@ -204,19 +197,14 @@ async fn release(url: &str, timeout: Duration) -> Result<Release> {
 /// The command that stands in for the venv, the wheel and the weights, in the
 /// suite. Its exit status decides the install, and its stderr says why one
 /// that failed did.
-async fn stub(
-    ai_permissions: &AiPermissions,
-    command: &[String],
-    release: &Release,
-    checkpoints: AiPermissionsCheckpoints,
-) -> Result<()> {
+async fn stub(ai_permissions: &AiPermissions, command: &[String], release: &Release) -> Result<()> {
     let (program, args) = command.split_first().ok_or_else(|| {
         anyhow!("the configured AI permission model installer is an empty command")
     })?;
     let output = Command::new(program)
         .args(args)
         .env("LAYA_HOME", &ai_permissions.home)
-        .env("LAYA_CHECKPOINTS", checkpoints.as_str())
+        .env("LAYA_CHECKPOINTS", decide::CHECKPOINT)
         .env("LAYA_WHEEL_URL", &release.wheel_url)
         .env("LAYA_RELEASE", &release.tag)
         .stdin(Stdio::null())
@@ -289,16 +277,8 @@ async fn wheel(venv: &Path, release: &Release) -> Result<()> {
 
 /// The checkpoints, downloaded by the model's own router into a Hugging Face cache
 /// under the model home, so nothing lands in the user's.
-async fn weights(
-    ai_permissions: &AiPermissions,
-    venv: &Path,
-    checkpoints: AiPermissionsCheckpoints,
-) -> Result<()> {
-    let names: &[&str] = match checkpoints {
-        AiPermissionsCheckpoints::English => &ENGLISH,
-        AiPermissionsCheckpoints::All => &ALL,
-    };
-    let quoted = names
+async fn weights(ai_permissions: &AiPermissions, venv: &Path) -> Result<()> {
+    let quoted = CHECKPOINTS
         .iter()
         .map(|name| format!("\"{name}\""))
         .collect::<Vec<_>>()

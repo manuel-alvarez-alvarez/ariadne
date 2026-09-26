@@ -282,6 +282,7 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
         session.worktree_path.as_deref().unwrap()
     );
     assert_eq!(requests[0]["state"]["options"], "Reject, Allow");
+    assert_eq!(requests[0]["model"], "english");
     assert_eq!(
         requests[0]["questions"]["decision"]["instructions"],
         "Can this coding-agent tool call run without a person's review?"
@@ -293,72 +294,6 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
     assert_eq!(
         requests[0]["questions"]["decision"]["criteria"]["review"],
         "deleting outside the working tree, force pushes, package installs, network writes, credentials or secrets, changes to system configuration, anything unclear"
-    );
-}
-
-/// The question a `PUT` sets is the `instructions` the daemon sends the model
-/// on the next decision: the decision reads the settings each time, not once.
-#[tokio::test]
-async fn a_changed_question_reaches_the_model_on_the_next_decision() {
-    let server = ModelServer::answer("allow", 0.95).await;
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
-    let _: Value = h
-        .json(
-            put_json(
-                "/v1/permissions/ai",
-                json!({"question": "May this run unattended?"}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
-        h.session_status(&session).await == SessionStatus::Idle
-    })
-    .await;
-
-    let requests = server.requests.lock().unwrap();
-    let decision = &requests[0]["questions"]["decision"];
-    assert_eq!(decision["instructions"], "May this run unattended?");
-    assert_eq!(
-        decision["criteria"]["allow"],
-        "reading files, searching, listing, building, running tests, editing files inside the working tree, git commands that do not delete branches or force-push",
-        "an unset criterion is still the built-in one"
-    );
-}
-
-/// The criteria a `PUT` sets are the `criteria` of the choice, under the
-/// fixed answer names `allow` and `review`.
-#[tokio::test]
-async fn changed_criteria_reach_the_model_under_the_fixed_answer_names() {
-    let server = ModelServer::answer("allow", 0.95).await;
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
-    let _: Value = h
-        .json(
-            put_json(
-                "/v1/permissions/ai",
-                json!({"allow_criteria": "tests and builds", "review_criteria": "everything else"}),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
-        h.session_status(&session).await == SessionStatus::Idle
-    })
-    .await;
-
-    let requests = server.requests.lock().unwrap();
-    let decision = &requests[0]["questions"]["decision"];
-    assert_eq!(
-        decision["criteria"],
-        json!({"allow": "tests and builds", "review": "everything else"})
-    );
-    assert_eq!(
-        decision["instructions"], "Can this coding-agent tool call run without a person's review?",
-        "an unset question is still the built-in one"
     );
 }
 

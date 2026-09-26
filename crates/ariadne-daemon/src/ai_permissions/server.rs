@@ -8,6 +8,7 @@ use tokio::process::{Child, Command as ProcessCommand};
 use tokio::sync::{mpsc, oneshot};
 
 use super::AiPermissions;
+use super::decide;
 
 /// The shell `laya-serve` runs under. It holds the read end of a pipe whose
 /// write end only the daemon has. The kernel closes that end however the
@@ -94,7 +95,7 @@ async fn run(ai_permissions: AiPermissions, mut rx: mpsc::UnboundedReceiver<Comm
         }
         ai_permissions.set_starting(true);
         serving = settings.last_refresh_at.clone();
-        match launch(&ai_permissions, &settings.checkpoints).await {
+        match launch(&ai_permissions).await {
             Ok((running, endpoint)) => {
                 child = Some(running);
                 if health(
@@ -129,10 +130,7 @@ async fn run(ai_permissions: AiPermissions, mut rx: mpsc::UnboundedReceiver<Comm
     }
 }
 
-async fn launch(
-    ai_permissions: &AiPermissions,
-    checkpoints: &str,
-) -> anyhow::Result<(Child, String)> {
+async fn launch(ai_permissions: &AiPermissions) -> anyhow::Result<(Child, String)> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     drop(listener);
@@ -140,16 +138,12 @@ async fn launch(
     let (program, args) = command.split_first().ok_or_else(|| {
         anyhow::anyhow!("the configured AI permission model server is an empty command")
     })?;
-    let models = match checkpoints {
-        "all" => "english,multilingual,typed-decisions",
-        _ => "english",
-    };
     let mut child = guarded(program, args);
     child
         .env("LAYA_HOST", "127.0.0.1")
         .env("LAYA_PORT", port.to_string())
         .env("LAYA_PRELOAD", "1")
-        .env("LAYA_MODELS", models)
+        .env("LAYA_MODELS", decide::CHECKPOINT)
         .env("HF_HOME", ai_permissions.home.join("hf"));
     Ok((child.spawn()?, format!("http://127.0.0.1:{port}")))
 }

@@ -33,8 +33,7 @@ pub(super) async fn get(State(state): State<AppState>) -> ApiResult<Json<AiPermi
     responses(
         (status = 200, body = AiPermissionsStatusDto),
         (status = 409, description = "no Python 3.10 or newer to install into"),
-        (status = 422, description = "a threshold outside 0..=1, a schedule that is not HH:MM, \
-                                      or a prompt over 4000 characters")
+        (status = 422, description = "a threshold outside 0..=1 or a schedule that is not HH:MM")
     ))]
 pub(super) async fn update(
     State(state): State<AppState>,
@@ -55,21 +54,6 @@ pub(super) async fn update(
         )));
     }
 
-    for (field, prompt) in [
-        ("question", &req.question),
-        ("allow_criteria", &req.allow_criteria),
-        ("review_criteria", &req.review_criteria),
-    ] {
-        if let Some(Some(text)) = prompt
-            && text.chars().count() > MAX_PROMPT
-        {
-            return Err(invalid(format!(
-                "{field} must be at most {MAX_PROMPT} characters, not {}",
-                text.chars().count()
-            )));
-        }
-    }
-
     let before = state.ai_permissions.status().await;
     let turning_on = req.enabled == Some(true) && !before.enabled;
     if turning_on && !before.python.ok {
@@ -82,12 +66,8 @@ pub(super) async fn update(
 
     let update = AiPermissionSettingsUpdate {
         enabled: req.enabled,
-        checkpoints: req.checkpoints.map(|c| c.as_str().to_string()),
         threshold: req.threshold,
         schedule: req.schedule,
-        question: req.question.map(stored_prompt),
-        allow_criteria: req.allow_criteria.map(stored_prompt),
-        review_criteria: req.review_criteria.map(stored_prompt),
         // Turning the model off leaves the files where they are and says so;
         // turning it on is the install's own state to write.
         state: (req.enabled == Some(false) && before.enabled).then(|| "disabled".to_string()),
@@ -150,15 +130,6 @@ pub(super) async fn ai_needs_the_model(state: &AppState) -> Result<(), ApiError>
         "the `ai` permission mode needs the AI permission model; turn it on with \
          `ariadne permissions enable` first",
     ))
-}
-
-/// The longest prompt text a write takes, in characters.
-const MAX_PROMPT: usize = 4000;
-
-/// What a prompt field stores: `null` and a blank text both restore the
-/// built-in text, so neither sends the model an empty question.
-fn stored_prompt(prompt: Option<String>) -> Option<String> {
-    prompt.filter(|text| !text.trim().is_empty())
 }
 
 /// A refusal of what the body says, as against what the daemon is in: the

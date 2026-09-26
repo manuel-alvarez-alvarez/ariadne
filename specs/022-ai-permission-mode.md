@@ -49,13 +49,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 2. The model is the daemon's, not a repository's: one settings row
    (`ai_permission_settings`), one install, one server. A repository chooses
    `ai`; this says whether there is a model to answer with.
-3. The settings are `enabled`, `checkpoints`, `threshold`, `schedule` and the
-   three prompts of rule 21. A fresh daemon is off, on the English
-   checkpoint, at a threshold of 0.8, with no daily refresh and the built-in
-   prompts. `checkpoints` is `english` — 843 MB — or `all`, which adds the
-   `multilingual` and `typed-decisions` subfolders and makes 2.4 GB.
-   `threshold` is how sure the model has to be before its answer is taken, 0
-   to 1. `schedule` is `HH:MM` in 24-hour local time, or nothing.
+3. The settings are `enabled`, `threshold`, and `schedule`. The English
+   checkpoint and the decision prompts are built in. `threshold` is how sure
+   the model has to be before its answer is taken, 0 to 1. `schedule` is
+   `HH:MM` in 24-hour local time, or nothing.
 4. The state of the install is `disabled`, `installing`, `ready` or `failed`,
    and beside it are the release on disk, the release the last download named,
    whether the checkpoints are there, when the last install ended well, and
@@ -78,7 +75,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
    `tag_name` and the one `.whl` asset on it. It creates
    `<home>/ai-permissions/venv` with `python -m venv` where there is none,
    installs the package's `serve` extra from that wheel into it with pip, and
-   downloads the checkpoints the settings name with the package's own router
+   downloads the English checkpoint with the package's own router
    under `HF_HOME=<home>/ai-permissions/hf`.
 8. An install that ends well writes `installed_release`, `latest_release`,
    `weights_present`, `state = ready` and `last_refresh_at`, and clears
@@ -89,14 +86,14 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
    `ai_permissions_updated`, carrying the whole `AiPermissionsStatusDto` (012,
    rule 25). Nothing waits on an install: the write that starts one answers
    `installing`, and the event says how it ended.
-10. `GET /v1/permissions/ai` answers the settings, the effective prompts, the
-    built-in prompts, the state and the interpreter probed afresh, as an
+10. `GET /v1/permissions/ai` answers the settings, the state and the
+    interpreter probed afresh, as an
     `AiPermissionsStatusDto`.
 11. `PUT /v1/permissions/ai` takes an `UpdateAiPermissionsRequest`; an absent
     field stays as it is. A `schedule` of `null` turns the daily refresh off,
-    and an absent one keeps it. A `threshold` outside 0..=1, a `schedule`
-    that is not `HH:MM`, and a prompt over 4000 characters are refused with
-    422 and the code `invalid_request`, and write nothing. Turning the model
+    and an absent one keeps it. A `threshold` outside 0..=1 or a `schedule`
+    that is not `HH:MM` is refused with 422 and the code `invalid_request`,
+    and writes nothing. Turning the model
     on starts an install and answers at once with `state = installing`.
     Turning it off writes `state = disabled` and keeps every file, so turning
     it back on costs the release check alone.
@@ -151,7 +148,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 18. While the model is enabled and its install is ready, the daemon runs the
     package's server executable from `<home>/ai-permissions/venv/bin` as its
     child, in a process group of its own. It binds an available loopback
-    port, preloads the selected checkpoints from `<home>/ai-permissions/hf`,
+    port, preloads the English checkpoint from `<home>/ai-permissions/hf`,
     and never listens beyond the local machine. The server runs under a
     `/bin/sh` guard whose stdin is a pipe only the daemon writes to. When
     that pipe closes, however the daemon ended (`kill -9` included), the
@@ -168,12 +165,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     capped backoff that starts at `Timeouts::ai_permissions_serve_restart`,
     1, 2, 4 … 60 seconds. A disabled model is not restarted.
 
-## Prompts
+## Decision configuration
 
 21. Each decision asks the model one choice question. Its three texts are
-    settings: `question`, `allow_criteria` and `review_criteria`. Each is a
-    nullable column of `ai_permission_settings`, and NULL means the built-in
-    text:
+    constants in `decide.rs`:
     - `question`: “Can this coding-agent tool call run without a person's
       review?”
     - `allow_criteria`: “reading files, searching, listing, building, running
@@ -182,16 +177,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     - `review_criteria`: “deleting outside the working tree, force pushes,
       package installs, network writes, credentials or secrets, changes to
       system configuration, anything unclear”
-22. The status carries `prompts`, the texts the next decision sends, and
-    `default_prompts`, the built-in texts, each as `{ question,
-    allow_criteria, review_criteria }`.
-23. `UpdateAiPermissionsRequest` takes `question`, `allow_criteria` and
-    `review_criteria`, each optional and nullable. An absent one keeps the
-    stored text. A `null` or a blank string stores NULL, so the built-in text
-    is used again and the model is never sent an empty question. A text over
-    4000 characters is refused (rule 11). A `PUT` that changes a prompt
-    publishes `ai_permissions_updated` like every other write.
-24. The answer names, `allow` and `review`, are fixed: only the texts change.
+22. The status and update request do not carry the checkpoint or prompt texts.
+23. The installer receives `LAYA_CHECKPOINTS=english`, and the server receives
+    `LAYA_MODELS=english`.
+24. The answer names, `allow` and `review`, are fixed.
 
 ## Decisions
 
@@ -205,10 +194,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 26. The state carries the tool call's title as `tool`, its `kind`, its
     `rawInput` as compact JSON cut to 2,000 characters, the repository path,
     and the option names joined by `, `.
-27. The one choice question is named `decision`. The daemon reads the
-    effective prompts from the settings on every decision: `instructions` is
-    the question, `criteria.allow` the allow text and `criteria.review` the
-    review text.
+27. The one choice question is named `decision`. The request carries
+    `model = english`, the built-in question as `instructions`, and the two
+    built-in criteria.
 28. The answer is read from `answers.decision`: its `choice` is the label, and
     its confidence is the calibrated `answer_confidence`, or, when that is
     absent, the chosen label's entry in `probabilities`. The model's
@@ -251,14 +239,14 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - An install that fails leaves the model on and carries the installer's own
   words
   (`ai_permissions.rs::an_install_that_fails_keeps_the_model_on_and_says_why`).
-- `checkpoints`, `threshold` and `schedule` are kept and read back by the
+- `threshold` and `schedule` are kept and read back by the
   next daemon; 1.5 and `25:00` are refused with 422; `null` turns the
   schedule off and an absent one keeps it
   (`ai_permissions.rs::the_settings_are_validated_and_survive_a_daemon_restart`),
   and a schedule is two digits, a colon and two digits
   (`http/permissions.rs::tests::a_schedule_is_two_digits_a_colon_and_two_digits`).
 - Refresh is refused with `ai_disabled` while off and `ai_busy` while
-  installing, and runs the installer again on the checkpoints set now
+  installing, and runs the installer again on the English checkpoint
   (`ai_permissions.rs::refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_install`).
 - Turning the model off keeps the release and the weights
   (`ai_permissions.rs::turning_the_model_off_keeps_the_files_it_installed`).
@@ -285,9 +273,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - The configured endpoint wins over the one a server reports, and nothing is
   live while the model is off
   (`ai_permissions.rs::the_endpoint_is_the_configured_one_and_live_needs_the_model_on`).
-- A ready enabled model starts its local server with its selected
-  checkpoints and reports the endpoint
-  (`ai_permissions_server.rs::a_ready_model_starts_the_server_with_its_selected_weights`),
+- A ready enabled model starts its local server with its built-in English
+  checkpoint and reports the endpoint
+  (`ai_permissions_server.rs::a_ready_model_starts_the_server_with_its_built_in_weights`),
   restarts it after a refresh and an unexpected exit
   (`::a_refresh_and_an_unexpected_exit_restart_the_server`), starts it again
   after a daemon restart and leaves no child after shutdown
@@ -298,39 +286,21 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   exits with the server's status when the server exits on its own
   (`ai_permissions/server.rs::tests::the_server_dies_when_the_daemon_end_of_its_pipe_closes`,
   `::the_guard_exits_with_the_server_status`).
-- The three paths, the schemas, the nullable schedule and prompts, the
+- The three paths, the schemas, the nullable schedule, the
   doctor's `python` and the event kind are in the OpenAPI document
   (`ai_permissions.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`),
   and the doctor reports the interpreter apart from the tools
   (`::the_doctor_reports_the_interpreter_the_model_needs`).
 - The old route answers 404 (`ai_permissions.rs::the_old_route_answers_404`).
-- The settings are one row taking partial writes, the prompts among them, and
+- The settings are one row taking partial writes and
   they survive a store reopen
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
 - `python_bin` and `ai_permissions_release_url` are read from `config.toml`,
   and the test seams are not keys of it
   (`config.rs::tests::the_ai_permissions_keys_a_user_may_set_are_read_and_the_test_seams_are_not`).
-- A `null` prompt restores the built-in text, and the status then shows
-  `prompts` equal to `default_prompts`
-  (`ai_permissions.rs::a_null_prompt_restores_the_built_in_text`).
-- A blank prompt stores NULL, and an absent one keeps its text
-  (`ai_permissions.rs::a_blank_prompt_stores_null`).
-- A prompt over 4000 characters is refused with 422 `invalid_request` and
-  writes nothing; 4000 characters are taken
-  (`ai_permissions.rs::a_prompt_over_4000_characters_is_refused`).
-- A prompt change publishes `ai_permissions_updated`
-  (`ai_permissions.rs::a_prompt_change_publishes_ai_permissions_updated`).
-- The client sends a prompt as a text or as an explicit `null`, and leaves an
-  unset one out
-  (`ariadne-client/src/lib.rs::tests::an_ai_permissions_update_sends_only_the_fields_that_were_set`).
-- A question set with `PUT` is the `instructions` of the next decision
-  (`ai_permissions_decisions.rs::a_changed_question_reaches_the_model_on_the_next_decision`),
-  and the criteria set with `PUT` are its `criteria` under `allow` and
-  `review`
-  (`::changed_criteria_reach_the_model_under_the_fixed_answer_names`).
 - A confident allow selects the allowing option, records `decided_by: "ai"`
   and its confidence, raises no attention, and sends the request state and
-  the built-in prompts to the model
+  built-in prompts with `model = "english"` to the model
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
 - The confidence gated is the calibrated `answer_confidence`, not the entropy
   `confidence`, and an answer without it is gated on the chosen label's

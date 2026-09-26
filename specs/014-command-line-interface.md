@@ -181,18 +181,15 @@ same binary also serves (013).
 32. `ariadne permissions ai` manages the AI permission model behind the `ai`
     permission mode (022); `ariadne permissions` prints the group help and
     accepts no flat command. `show` is a key-value block of the whole status,
-    `--format json` the DTO unchanged, and prints each prompt as `default` or
-    `custom`. `enable` and `disable` turn it on and off, `refresh` reinstalls
+    and `--format json` prints the DTO unchanged. `enable` and `disable` turn
+    it on and off, `refresh` reinstalls
     it, and each of the two that starts an install takes `--wait`: it blocks
     until `state` leaves `installing` by following `ai_permissions_updated` on
     `/v1/events/stream`, and exits 1 with `last_error` where it settles on
-    `failed`. `set` changes `--checkpoints`, `--threshold`, `--schedule` (or
-    `--no-schedule`, which turns the daily refresh off), and the `--question`,
-    `--allow`, and `--review` prompt texts. `--default-prompts` restores all
-    three prompts and refuses every prompt-text flag. At least one setting is
-    required, `--schedule` and `--no-schedule` refuse each other, and only the
-    flags actually given reach the daemon — an absent one is left out of the
-    request rather than sent as `null`. A bad `--threshold` or `--schedule` is
+    `failed`. `set` changes `--threshold` or `--schedule`; `--no-schedule`
+    turns the daily refresh off. At least one setting is required, `--schedule`
+    and `--no-schedule` refuse each other, and only the flags actually given
+    reach the daemon. A bad `--threshold` or `--schedule` is
     refused locally, in the same words the daemon would use, before anything
     is sent. An `ai_disabled` refusal — here and on `repo add|update
     --permission-mode ai` alike — carries the hint `run ariadne permissions ai
@@ -310,20 +307,14 @@ same binary also serves (013).
   `::permissions_set_with_no_flag_is_a_usage_error`,
   `::permissions_set_schedule_and_no_schedule_are_a_usage_error`,
   `::permissions_set_refuses_a_bad_threshold_or_schedule_locally`).
-- `show` renders every field of the status and snapshots default and custom
-  prompts; `enable` sends only `{"enabled":
-  true}`, `set --no-schedule` only a `null` schedule, and `set --threshold`
-  only the threshold — never the other fields as an explicit `null`. `set
-  --question` sends that field alone, and `--default-prompts` sends every
-  prompt as `null` and refuses a prompt-text flag.
+- `show` renders every status field except built-in configuration; `enable`
+  sends only `{"enabled": true}`, `set --no-schedule` only a `null` schedule,
+  and `set --threshold` only the threshold.
   (`commands/permissions.rs::show_renders_every_field`,
-  `::show_snapshots_custom_prompts`, `::show_snapshots_default_prompts`,
+  `::show_omits_the_built_in_configuration`,
   `::enable_sends_enabled_true_and_nothing_else`,
   `::set_no_schedule_sends_a_null_schedule`,
-  `::set_threshold_sends_only_threshold`,
-  `::set_question_sends_only_the_question`,
-  `::set_default_prompts_sends_null_for_every_prompt`,
-  `cli/tests.rs::permissions_set_default_prompts_conflicts_with_a_prompt_text`).
+  `::set_threshold_sends_only_threshold`).
 - `enable --wait` and `refresh --wait` block on the event stream until the
   install leaves `installing`, and a failed install exits with its
   `last_error`

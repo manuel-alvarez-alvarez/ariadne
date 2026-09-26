@@ -52,15 +52,12 @@ async fn ready(h: &Harness) -> AiPermissionsStatusDto {
     h.get("/v1/permissions/ai").await
 }
 
-fn enable(checkpoints: &str) -> axum::http::Request<Body> {
-    put_json(
-        "/v1/permissions/ai",
-        json!({"enabled":true,"checkpoints":checkpoints}),
-    )
+fn enable() -> axum::http::Request<Body> {
+    put_json("/v1/permissions/ai", json!({"enabled":true}))
 }
 
 #[tokio::test]
-async fn a_ready_model_starts_the_server_with_its_selected_weights() {
+async fn a_ready_model_starts_the_server_with_its_built_in_weights() {
     let (url, task) = release().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let server = shared_script(SERVER);
@@ -73,7 +70,7 @@ async fn a_ready_model_starts_the_server_with_its_selected_weights() {
             record.path().display().to_string(),
         ])
         .await;
-    let _: AiPermissionsStatusDto = h.json(enable("all"), StatusCode::OK).await;
+    let _: AiPermissionsStatusDto = h.json(enable(), StatusCode::OK).await;
     ready(&h).await;
     eventually(TIMEOUT, "the model endpoint", || async {
         h.get::<AiPermissionsStatusDto>("/v1/permissions/ai")
@@ -85,7 +82,7 @@ async fn a_ready_model_starts_the_server_with_its_selected_weights() {
     let status: AiPermissionsStatusDto = h.get("/v1/permissions/ai").await;
     assert!(status.endpoint.is_some());
     let saw = std::fs::read_to_string(record.path()).unwrap();
-    assert!(saw.contains("english,multilingual,typed-decisions"));
+    assert!(saw.contains("english"));
     assert!(saw.contains("/ai-permissions/hf"));
     let _: AiPermissionsStatusDto = h
         .json(
@@ -166,7 +163,7 @@ async fn a_refresh_and_an_unexpected_exit_restart_the_server() {
             record.path().display().to_string(),
         ])
         .await;
-    let _: AiPermissionsStatusDto = h.json(enable("english"), StatusCode::OK).await;
+    let _: AiPermissionsStatusDto = h.json(enable(), StatusCode::OK).await;
     ready(&h).await;
     eventually(TIMEOUT, "the first server", || async {
         std::fs::read_to_string(record.path())
@@ -226,7 +223,7 @@ async fn a_server_that_never_answers_health_is_not_live() {
             ..Timeouts::default()
         })
         .await;
-    let _: AiPermissionsStatusDto = h.json(enable("english"), StatusCode::OK).await;
+    let _: AiPermissionsStatusDto = h.json(enable(), StatusCode::OK).await;
     ready(&h).await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let status: AiPermissionsStatusDto = h.get("/v1/permissions/ai").await;
@@ -249,7 +246,7 @@ async fn a_ready_enabled_model_starts_after_a_daemon_restart() {
             record.path().display().to_string(),
         ])
         .await;
-    let _: AiPermissionsStatusDto = first.json(enable("english"), StatusCode::OK).await;
+    let _: AiPermissionsStatusDto = first.json(enable(), StatusCode::OK).await;
     ready(&first).await;
     eventually(TIMEOUT, "the first server", || async {
         std::fs::read_to_string(record.path()).is_ok()

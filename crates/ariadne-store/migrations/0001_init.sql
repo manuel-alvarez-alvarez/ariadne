@@ -181,8 +181,6 @@ CREATE INDEX idx_tasks_status ON tasks (status);
 CREATE TABLE ai_permission_settings (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     enabled           INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
-    checkpoints       TEXT NOT NULL DEFAULT 'english'
-                      CHECK (checkpoints IN ('english', 'all')),
     -- How sure the model has to be before its answer is taken, 0 to 1.
     threshold         REAL NOT NULL DEFAULT 0.8,
     -- When the daily refresh runs, `HH:MM` in 24-hour local time.
@@ -197,10 +195,6 @@ CREATE TABLE ai_permission_settings (
     weights_present   INTEGER NOT NULL DEFAULT 0 CHECK (weights_present IN (0, 1)),
     last_refresh_at   TEXT,                     -- when an install last ended well
     last_error        TEXT,                     -- why the last install failed
-    -- The prompt texts each decision sends the model. NULL = the built-in text.
-    question          TEXT,
-    allow_criteria    TEXT,
-    review_criteria   TEXT,
     updated_at        TEXT NOT NULL
 );
 INSERT INTO ai_permission_settings (id, updated_at)

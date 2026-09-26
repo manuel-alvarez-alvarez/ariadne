@@ -3,35 +3,12 @@
 //!
 //! One settings row behind `/v1/permissions/ai`, the Python interpreter the
 //! daemon found, and where the install has got to. The install is a Python
-//! package and two gigabytes of weights, so it runs in the background: a
+//! package and its weights, so it runs in the background: a
 //! write answers with `installing` and the `ai_permissions_updated` event
 //! says how it ended.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-
-/// Which checkpoints the install downloads.
-///
-/// English alone is 843 MB; all three — English, multilingual and
-/// typed-decisions — are 2.4 GB together.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AiPermissionsCheckpoints {
-    /// The English checkpoint alone.
-    English,
-    /// English, multilingual and typed-decisions.
-    All,
-}
-
-impl AiPermissionsCheckpoints {
-    /// The spelling the settings row and the installer's environment carry.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AiPermissionsCheckpoints::English => "english",
-            AiPermissionsCheckpoints::All => "all",
-        }
-    }
-}
 
 /// Where the install has got to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -77,7 +54,6 @@ pub struct PythonDto {
 pub struct AiPermissionsStatusDto {
     /// Whether the model answers permission requests at all.
     pub enabled: bool,
-    pub checkpoints: AiPermissionsCheckpoints,
     /// How sure the model has to be before its answer is taken, 0 to 1.
     #[schema(example = 0.8)]
     pub threshold: f64,
@@ -100,22 +76,6 @@ pub struct AiPermissionsStatusDto {
     pub last_refresh_at: Option<String>,
     /// Why the last install failed.
     pub last_error: Option<String>,
-    /// The prompt texts each decision sends the model now.
-    pub prompts: AiPermissionsPrompts,
-    /// The built-in prompt texts, which a `null` prompt restores.
-    pub default_prompts: AiPermissionsPrompts,
-}
-
-/// The prompt texts of the one choice question each decision asks the model.
-/// The answer names, `allow` and `review`, are fixed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct AiPermissionsPrompts {
-    /// The question the model answers.
-    pub question: String,
-    /// What the `allow` answer covers.
-    pub allow_criteria: String,
-    /// What the `review` answer covers.
-    pub review_criteria: String,
 }
 
 /// Partial update of the AI permission settings; an absent field stays unchanged.
@@ -124,7 +84,6 @@ pub struct AiPermissionsPrompts {
 pub struct UpdateAiPermissionsRequest {
     /// Turning it on starts an install; turning it off keeps the files.
     pub enabled: Option<bool>,
-    pub checkpoints: Option<AiPermissionsCheckpoints>,
     /// 0 to 1. Anything else is refused.
     pub threshold: Option<f64>,
     /// `HH:MM` in 24-hour local time. Absent keeps the schedule; `null`
@@ -136,33 +95,6 @@ pub struct UpdateAiPermissionsRequest {
     )]
     #[schema(value_type = Option<String>, nullable = true, example = "03:30")]
     pub schedule: Option<Option<String>>,
-    /// The question the model answers. Absent keeps it; `null` or a blank
-    /// text restores the built-in one. At most 4000 characters.
-    #[serde(
-        default,
-        deserialize_with = "nullable",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schema(value_type = Option<String>, nullable = true)]
-    pub question: Option<Option<String>>,
-    /// What the `allow` answer covers, kept, restored and limited as
-    /// `question` is.
-    #[serde(
-        default,
-        deserialize_with = "nullable",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schema(value_type = Option<String>, nullable = true)]
-    pub allow_criteria: Option<Option<String>>,
-    /// What the `review` answer covers, kept, restored and limited as
-    /// `question` is.
-    #[serde(
-        default,
-        deserialize_with = "nullable",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schema(value_type = Option<String>, nullable = true)]
-    pub review_criteria: Option<Option<String>>,
 }
 
 /// Tell "the field is absent" from "the field is `null`", which plain

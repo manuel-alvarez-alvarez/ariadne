@@ -1440,22 +1440,15 @@ fn every_permissions_verb_parses() {
     let Command::Permissions {
         command:
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
-                checkpoints,
                 threshold,
                 schedule,
                 no_schedule,
-                question,
-                allow,
-                review,
-                default_prompts,
             }),
     } = parse(&[
         "ariadne",
         "permissions",
         "ai",
         "set",
-        "--checkpoints",
-        "all",
         "--threshold",
         "0.6",
         "--schedule",
@@ -1465,17 +1458,9 @@ fn every_permissions_verb_parses() {
     else {
         panic!("permissions set");
     };
-    assert!(matches!(
-        checkpoints,
-        Some(crate::commands::permissions::Checkpoints::All)
-    ));
     assert_eq!(threshold, Some(0.6));
     assert_eq!(schedule.as_deref(), Some("03:30"));
     assert!(!no_schedule);
-    assert_eq!(question, None);
-    assert_eq!(allow, None);
-    assert_eq!(review, None);
-    assert!(!default_prompts);
 
     let Command::Permissions {
         command: PermissionsCommand::Ai(AiPermissionsCommand::Set { no_schedule, .. }),
@@ -1502,22 +1487,6 @@ fn permissions_group_prints_help_and_refuses_the_old_flat_commands() {
         "{err}"
     );
     assert!(try_parse(&["ariadne", "permissions", "show"]).is_err());
-}
-
-#[test]
-fn permissions_set_default_prompts_conflicts_with_a_prompt_text() {
-    assert!(
-        try_parse(&[
-            "ariadne",
-            "permissions",
-            "ai",
-            "set",
-            "--default-prompts",
-            "--question",
-            "x",
-        ])
-        .is_err()
-    );
 }
 
 /// `--schedule` and `--no-schedule` say opposite things about the same
