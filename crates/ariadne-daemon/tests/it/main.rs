@@ -25,6 +25,7 @@ mod goal_delete;
 mod goal_repositories;
 mod landing_lifecycle;
 mod laya;
+mod laya_decisions;
 mod logs;
 mod managers;
 mod models;

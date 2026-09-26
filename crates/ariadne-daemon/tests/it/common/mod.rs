@@ -316,7 +316,8 @@ impl HarnessBuilder {
                 store.clone(),
                 self.timeouts,
                 transcript_homes(dir.path()),
-            ),
+            )
+            .with_laya(laya.clone()),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
         });

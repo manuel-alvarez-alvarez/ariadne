@@ -121,11 +121,17 @@ async fn main() -> Result<()> {
 
     let config = std::sync::Arc::new(config);
     agent_registry.discover().await;
+    let laya = ariadne_daemon::laya::Laya::new(
+        store.clone(),
+        events.clone(),
+        &config,
+        ariadne_daemon::timeouts::Timeouts::default(),
+    );
     let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
         cfg: config.clone(),
         store: store.clone(),
         git: ariadne_daemon::gitwt::GitManager,
-        acp: ariadne_daemon::acp::AcpRuntime::new(store.clone()),
+        acp: ariadne_daemon::acp::AcpRuntime::new(store.clone()).with_laya(laya.clone()),
         registry: agent_registry.clone(),
         branches: ariadne_daemon::branch::BranchWatchers::new(events.clone()),
     });
@@ -143,12 +149,6 @@ async fn main() -> Result<()> {
         store.clone(),
         launcher.clone(),
         config.prevent_sleep,
-        ariadne_daemon::timeouts::Timeouts::default(),
-    );
-    let laya = ariadne_daemon::laya::Laya::new(
-        store.clone(),
-        events.clone(),
-        &config,
         ariadne_daemon::timeouts::Timeouts::default(),
     );
     ariadne_daemon::laya::schedule::start(

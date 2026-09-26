@@ -43,6 +43,8 @@ use crate::acp_calls::PromptTurn;
 use crate::acp_transport::pipes;
 use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
+use crate::laya::Laya;
+use crate::laya::decide::{Decision, decide};
 use crate::scheduler::SchedEvent;
 use crate::timeouts::Timeouts;
 use crate::transcript::{LaunchTranscript, TranscriptHomes};
@@ -149,6 +151,7 @@ struct Inner {
     /// session, so a chatty session never lags another session's console,
     /// kept for as long as an agent runs for it or somebody listens.
     consoles: Mutex<HashMap<String, broadcast::Sender<AgentEventDto>>>,
+    laya: Option<Laya>,
 }
 
 /// Resolves once a driver has killed and reaped its child. Shared, so that
@@ -358,8 +361,17 @@ impl AcpRuntime {
                 ending: Mutex::new(HashMap::new()),
                 scheduler: OnceLock::new(),
                 consoles: Mutex::new(HashMap::new()),
+                laya: None,
             }),
         }
+    }
+
+    /// Give this runtime the daemon's Laya service before it is shared.
+    pub fn with_laya(mut self, laya: Laya) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("a new ACP runtime has one owner")
+            .laya = Some(laya);
+        self
     }
 
     pub(crate) fn preserve_user_resume(&self, session_id: &str) {
@@ -797,6 +809,7 @@ impl AcpRuntime {
             sink: sink.clone(),
             turn: turn.clone(),
             repository_id: launch.repository_id.clone(),
+            repository: launch.cwd.clone(),
             permission_mode: launch.permission_mode,
             pending_permission: permission.clone(),
             reports: io.reports.clone(),
@@ -1146,6 +1159,7 @@ struct RuntimeIncoming {
     sink: EventSink,
     turn: Arc<tokio::sync::Mutex<Turn>>,
     repository_id: String,
+    repository: PathBuf,
     permission_mode: PermissionMode,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     reports: Followers,
@@ -1285,13 +1299,36 @@ impl RuntimeIncoming {
         let mut payload = tool_payload(session_id.clone(), &params["toolCall"]);
         payload["options"] = params.get("options").cloned().unwrap_or_default();
         let signature = permission_signature(&params["toolCall"]);
-        // `ai` asks Laya, and until it does (022, Decisions) it is `learn`:
-        // the one mode that neither approves on its own nor asks twice for
-        // the same tool.
         let remembers = matches!(
             self.permission_mode,
             PermissionMode::Learn | PermissionMode::Ai
         );
+        let laya_decision = if self.permission_mode == PermissionMode::Ai {
+            match self.sink.runtime.inner.laya.as_ref() {
+                Some(laya) => match laya.live().await {
+                    Some(live) => Some(
+                        decide(
+                            &live,
+                            &params["toolCall"],
+                            &params["options"],
+                            &self.repository,
+                            self.sink.runtime.inner.timeouts.laya_decision,
+                        )
+                        .await,
+                    ),
+                    None => {
+                        tracing::warn!("Laya is unavailable for a permission decision");
+                        None
+                    }
+                },
+                None => {
+                    tracing::warn!("Laya is unavailable for a permission decision");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let learned = remembers
             && self
                 .sink
@@ -1301,19 +1338,38 @@ impl RuntimeIncoming {
                 .has_learned_permission(&self.repository_id, &signature.tool_name, &signature.kind)
                 .await
                 .unwrap_or(false);
-        // The input path must see a waiting receiver as soon as the request
-        // reaches the console stream. Register it before emitting the event,
-        // rather than leaving a gap where input would become a new prompt.
-        let waiting =
-            matches!(self.permission_mode, PermissionMode::Ask) || (remembers && !learned);
+        let laya_allow = matches!(laya_decision, Some(Decision::Allow { .. }))
+            && approved_option(params)
+                .as_deref()
+                .is_some_and(|option| allowing_option(params, option));
+        let waiting = matches!(self.permission_mode, PermissionMode::Ask)
+            || (remembers && !learned && !laya_allow);
         let receiver = waiting.then(|| self.begin_permission());
         self.end_text().await;
         self.sink.emit("permission_request", payload).await;
-        let selected = match receiver {
-            Some(receiver) => self.wait_for_permission(params, receiver).await?,
-            None => approved_option(params),
+        let (selected, decided_by, label, confidence) = match receiver {
+            Some(receiver) => (
+                self.wait_for_permission(params, receiver).await?,
+                "console",
+                None,
+                None,
+            ),
+            None if laya_allow => {
+                let Some(Decision::Allow { confidence }) = laya_decision else {
+                    unreachable!("laya_allow requires an allowing Laya decision")
+                };
+                (
+                    approved_option(params),
+                    "laya",
+                    Some("allow"),
+                    Some(confidence),
+                )
+            }
+            None if learned => (approved_option(params), "learned", None, None),
+            None => (approved_option(params), "auto", None, None),
         };
         if remembers
+            && decided_by == "console"
             && !self.repository_id.is_empty()
             && selected
                 .as_deref()
@@ -1334,7 +1390,8 @@ impl RuntimeIncoming {
         self.sink
             .emit(
                 "permission.replied",
-                json!({"session_id": session_id, "option_id": selected}),
+                json!({"session_id": session_id, "option_id": selected,
+                       "decided_by": decided_by, "label": label, "confidence": confidence}),
             )
             .await;
         Ok(json!({"outcome": outcome}))

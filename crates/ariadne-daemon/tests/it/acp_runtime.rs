@@ -317,6 +317,19 @@ async fn auto_approves_a_permission_request_with_the_allowing_option() {
     for kind in ["permission_request", "permission.replied"] {
         assert!(kinds.iter().any(|k| k == kind), "{kind} missing: {kinds:?}");
     }
+    let replied = h
+        .store
+        .list_events(EventFilter {
+            session_id: Some(session.id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|event| event.kind == "permission.replied")
+        .unwrap();
+    let payload: Value = serde_json::from_str(&replied.payload).unwrap();
+    assert_eq!(payload["decided_by"], "auto");
 }
 
 /// An agent that dies mid-turn is reaped — its pid is gone, where an unreaped

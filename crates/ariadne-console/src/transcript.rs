@@ -586,6 +586,11 @@ pub fn permission_answer(payload: &Value, options: &[PermissionOption]) -> Strin
     let Some(id) = string_at(payload, "/option_id") else {
         return "cancelled".into();
     };
+    if payload.get("decided_by").and_then(Value::as_str) == Some("laya")
+        && let Some(confidence) = payload.get("confidence").and_then(Value::as_f64)
+    {
+        return format!("allowed by Laya ({confidence:.2})");
+    }
     options
         .iter()
         .find(|option| option.id == id)

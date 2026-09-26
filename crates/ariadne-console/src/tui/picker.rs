@@ -502,6 +502,30 @@ mod tests {
     }
 
     #[test]
+    fn a_laya_answer_names_laya_and_its_confidence() {
+        let mut console = Console::new(header());
+        let mut terminal = terminal();
+        console.apply(&asked_with(
+            "Allow this edit?",
+            &["Always Allow", "Reject"],
+            json!({"toolCallId": "edit", "kind": "edit",
+                   "rawInput": {"file_path": "src/main.rs"}}),
+        ));
+        console.apply(&event(
+            "permission.replied",
+            "answered",
+            json!({"option_id": "option-0", "decided_by": "laya",
+                   "label": "allow", "confidence": 0.95}),
+        ));
+        console.apply(&event("agent_message", "done", json!({"text": "done"})));
+
+        console.commit(&mut terminal).unwrap();
+        let shown = screen(&terminal);
+
+        assert!(shown.contains("↳ allowed by Laya (0.95)"), "{shown}");
+    }
+
+    #[test]
     fn a_question_of_200_columns_and_a_long_option_name_wrap_in_80_without_losing_a_character() {
         let mut console = Console::new(header());
         let question: String = (1..=20).map(|n| format!("question{n:02} ")).collect();

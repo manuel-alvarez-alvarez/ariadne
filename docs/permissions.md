@@ -44,7 +44,7 @@ remove it.
 | `auto` | Ariadne selects an allowing option automatically. | You accept the agent's requested tool access by default. |
 | `ask` | Ariadne shows every permission request in the console and waits for your answer. | You want to approve or deny each request yourself. |
 | `learn` | Ariadne asks the first time, then remembers an allowing answer for a matching request. | You want review at first use without repeating the same approval. |
-| `ai` | Laya, a model on your own machine, answers each request. | You want each request judged, without answering it yourself. |
+| `ai` | Laya decides first; an uncertain answer falls back to `learn`. | You want local model review with remembered console approvals as a fallback. |
 
 For `ask` and a new `learn` request, `ariadne attention` marks the session as
 waiting. Open it with `ariadne attach <session-id>`. The console shows the
@@ -70,6 +70,15 @@ the repository to `ask` when you want to review a matching request again.
 Laya is the model behind the `ai` mode. It runs on your own machine: nothing
 about a permission request leaves it. It is a Python package, and Ariadne
 installs it for you.
+
+For each request, Laya sees the tool title and kind, up to 2,000 characters
+of its JSON input, the repository path, and the available option names. An
+`allow` is confident when its confidence meets the configured threshold. Any
+other answer, an unavailable Laya, or a failed request falls back to `learn`:
+an existing approval is used, or the console asks you. Laya's own allows are
+never remembered; only allowing console answers are. The answered console
+line names Laya and its confidence when Laya decided, for example `allowed by
+Laya (0.94)`.
 
 Turn it on, look at it, and install it again:
 

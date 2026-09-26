@@ -6,7 +6,10 @@ areas: [core, api, store, daemon]
 commits: []
 tests:
   - crates/ariadne-daemon/tests/it/laya.rs
+  - crates/ariadne-daemon/tests/it/laya_decisions.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
+  - crates/ariadne-daemon/tests/it/acp_runtime.rs
+  - crates/ariadne-console/src/tui/picker.rs
   - crates/ariadne-daemon/src/laya/python.rs
   - crates/ariadne-daemon/src/laya/install.rs
   - crates/ariadne-daemon/src/laya/schedule.rs
@@ -142,11 +145,32 @@ and fills this section.
 
 ## Decisions
 
-**Known gap.** `ai` does not ask Laya yet: it behaves exactly as `learn` —
-it asks the first time for one repository, tool name and tool kind, and
-remembers an allowing answer (021, rule 9). Task 3 of this goal sends the
-request to `live()`'s endpoint, takes an answer at or above the threshold,
-and fills this section.
+1. In `ai`, Laya decides before a learned approval is read. The daemon posts
+   to `{endpoint}/v1/systemone` and waits at most
+   `Timeouts::laya_decision`, five seconds by default.
+2. The state carries the tool call's title as `tool`, its `kind`, its
+   `rawInput` as compact JSON cut to 2,000 characters, the repository path,
+   and the option names joined by `, `.
+3. The one choice question is named `decision`. Its instructions are “Can
+   this coding-agent tool call run without a person's review?”. Its `allow`
+   criterion is “reading files, searching, listing, building, running tests,
+   editing files inside the working tree, git commands that do not delete
+   branches or force-push”. Its `review` criterion is “deleting outside the
+   working tree, force pushes, package installs, network writes, credentials
+   or secrets, changes to system configuration, anything unclear”.
+4. An `allow` whose confidence is at least the configured threshold selects
+   the allowing option. A request without an allowing option is not a
+   confident allow.
+5. Every other answer follows `learn` (021, rule 9): a matching learned
+   approval is selected, otherwise the console is asked, and its allowing
+   answer is remembered. Laya is unavailable, and a warning is logged, when
+   `live()` is absent, its call fails or times out, or its answer is malformed.
+6. A Laya allow is never learned. Only an allowing console answer writes the
+   learned table.
+7. `permission.replied` carries `decided_by`: `laya`, `learned`, `console`,
+   or `auto`. A Laya reply also carries its `label` and `confidence`; these
+   are null for every other decider. The console renders a Laya allow as
+   `allowed by Laya (0.94)`.
 
 ## Acceptance criteria
 
@@ -221,8 +245,29 @@ and fills this section.
 - `python_bin` and `laya_release_url` are read from `config.toml`, and the
   two test seams are not keys of it
   (`config.rs::tests::the_laya_keys_a_user_may_set_are_read_and_the_test_seams_are_not`).
-- `ai` asks once and remembers the approval, as `learn` does
-  (`acp_console.rs::ai_asks_once_and_remembers_the_approval_as_learn_does`).
+- A confident allow selects the allowing option, records Laya and its
+  confidence, raises no attention, and sends the request state to Laya
+  (`laya_decisions.rs::a_confident_allow_runs_at_once_and_reports_laya`).
+- An uncertain allow asks the console, remembers its approval, and still asks
+  Laya before selecting that learned approval next time
+  (`laya_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`).
+- A confident review asks the console
+  (`laya_decisions.rs::a_review_answer_waits_for_the_console`).
+- A confident allow without an allowing option asks the console
+  (`laya_decisions.rs::an_allow_without_an_allowing_option_waits_for_the_console`).
+- A stopped or timed-out Laya warns and asks the console
+  (`laya_decisions.rs::a_stopped_laya_warns_and_waits_for_the_console`,
+  `::a_laya_timeout_waits_for_the_console`).
+- A malformed answer warns and asks the console
+  (`laya_decisions.rs::a_malformed_answer_warns_and_waits_for_the_console`).
+- A Laya disabled after the repository chose `ai` asks the console
+  (`laya_decisions.rs::a_disabled_laya_waits_for_the_console`).
+- The unchanged `auto`, `ask`, and `learn` paths name their decider
+  (`acp_runtime.rs::auto_approves_a_permission_request_with_the_allowing_option`,
+  `acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`,
+  `::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
+- A Laya reply renders its decider and confidence
+  (`ariadne-console::tui::picker::tests::a_laya_answer_names_laya_and_its_confidence`).
 
 ## Sources
 
@@ -234,6 +279,7 @@ and fills this section.
 `crates/ariadne-store/src/laya.rs`,
 `crates/ariadne-daemon/src/laya/`,
 `crates/ariadne-daemon/src/main.rs`,
+`crates/ariadne-daemon/tests/it/laya_decisions.rs`,
 `crates/ariadne-daemon/src/http/permissions.rs`,
 `crates/ariadne-daemon/src/http/repositories.rs`,
 `crates/ariadne-daemon/src/http/doctor.rs`,

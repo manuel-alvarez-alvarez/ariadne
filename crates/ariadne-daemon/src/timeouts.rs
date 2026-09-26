@@ -35,6 +35,8 @@ pub struct Timeouts {
     /// (`crate::laya::schedule`). Nothing waits on it: it is the period of a
     /// clock, and it bounds how late after its minute a refresh starts.
     pub laya_schedule_poll: Duration,
+    /// How long one permission decision may take at Laya's local HTTP seam.
+    pub laya_decision: Duration,
     /// How often a running turn's transcript is read again for what the
     /// launch has spent, so a long turn's figure moves before it ends.
     pub transcript_poll: Duration,
@@ -78,6 +80,7 @@ impl Default for Timeouts {
             registry_download: Duration::from_secs(30),
             laya_release_download: Duration::from_secs(30),
             laya_schedule_poll: Duration::from_secs(30),
+            laya_decision: Duration::from_secs(5),
             transcript_poll: Duration::from_secs(15),
             session_wake: Duration::from_millis(250),
             full_reconcile: Duration::from_secs(5),

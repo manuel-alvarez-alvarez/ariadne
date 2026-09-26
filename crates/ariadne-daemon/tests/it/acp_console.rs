@@ -22,7 +22,7 @@ use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{
     Actor, AttentionReason, MessageKind, PermissionMode, Seat, SessionStatus, TaskStatus,
 };
-use ariadne_store::{AgentPin, NewTask, NewTaskAgent, Store};
+use ariadne_store::{AgentPin, EventFilter, NewTask, NewTaskAgent, Store};
 
 use ariadne_api::stream::{DeletedDto, DomainEvent};
 use ariadne_daemon::acp::TurnReport;
@@ -69,6 +69,21 @@ fn post_console_input(session_id: &str, text: &str) -> Request<Body> {
         &format!("/v1/sessions/{session_id}/console/input"),
         json!({ "text": text }),
     )
+}
+
+async fn permission_decider(h: &Harness, session_id: &str) -> String {
+    h.store
+        .list_events(EventFilter {
+            session_id: Some(session_id.to_string()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|event| event.kind == "permission.replied")
+        .and_then(|event| serde_json::from_str::<serde_json::Value>(&event.payload).ok())
+        .and_then(|payload| payload["decided_by"].as_str().map(str::to_string))
+        .expect("the permission reply names its decider")
 }
 
 /// A request whose allowing and denying answers are distinct, so a test can
@@ -979,6 +994,7 @@ async fn ask_raises_attention_and_a_console_answer_unblocks_the_turn() {
         })
         .expect("the console answer reached the agent");
     assert_eq!(reply["result"]["outcome"]["optionId"], "yes");
+    assert_eq!(permission_decider(&h, &session.id).await, "console");
 }
 
 /// Learn mode asks again after a denial, records an approval under the
@@ -1065,6 +1081,7 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
         .collect();
     assert_eq!(replies.len(), 3, "each stub process got one reply");
     assert_eq!(replies[2]["result"]["outcome"]["optionId"], "yes");
+    assert_eq!(permission_decider(&h, &session.id).await, "learned");
 }
 
 /// `ai` answers each request through Laya (022). Until it does, it is

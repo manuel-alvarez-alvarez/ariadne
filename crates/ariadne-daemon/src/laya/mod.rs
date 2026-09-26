@@ -9,6 +9,7 @@
 //! task at a time. Everything a client reads comes back as one
 //! [`LayaStatusDto`], and every change to it is published as `laya_updated`.
 
+pub(crate) mod decide;
 pub mod install;
 pub mod python;
 pub mod schedule;
