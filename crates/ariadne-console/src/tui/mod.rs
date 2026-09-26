@@ -1,14 +1,14 @@
 //! The inline pane: a scrolling transcript with a status line and an input
 //! box pinned under it.
 //!
-//! The shape is the one a person expects of a chat with an agent, and the one
-//! the Codex CLI has: the transcript scrolls in the terminal's own buffer, and
-//! a viewport as tall as the terminal has the blocks still being written over
-//! its last rows: a status line and the box being typed into, which are the
-//! bottom rows of the screen whatever the transcript holds. Finished blocks
-//! leave the viewport with
-//! [`Terminal::insert_before`], so what the agent said is still in the
-//! scrollback after the console is closed — which is why the viewport is
+//! The shape is the one a person expects of a chat with an agent: a viewport
+//! as tall as the terminal, its last rows a status line and the box being
+//! typed into, which are the bottom rows of the screen whatever the
+//! transcript holds, and the transcript filling every row above them, its
+//! last line right over the status line. A line of a finished block leaves
+//! the viewport as it scrolls off the top, with [`Terminal::insert_before`],
+//! so what the agent said is in the terminal's own scrollback, and is still
+//! there after the console is closed — which is why the viewport is
 //! [`ratatui::Viewport::Inline`] and never the alternate screen.
 //!
 //! Nothing here knows where the events come from or where the input goes.
@@ -32,9 +32,11 @@ use anyhow::Result;
 use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures_util::{Stream, StreamExt};
 use ratatui::Terminal;
-use ratatui::text::{Line, Text};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Widget};
 use tokio::time::{Instant, interval};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::SessionDto;
@@ -163,8 +165,18 @@ pub struct Console {
     /// included — a reconnect brings the whole snapshot back, and the count
     /// below is how it is not printed twice.
     items: Vec<TranscriptItem>,
-    /// How many leading items have gone into the terminal's own buffer.
+    /// How many leading items have gone into the terminal's own buffer
+    /// whole.
     committed: usize,
+    /// Where the attach banner is: it leads the transcript, and goes into
+    /// the scrollback as it scrolls off the top, like any other line.
+    banner: Banner,
+    /// The last lines of the piece — the banner where it is still
+    /// [`Banner::Live`], the item at `committed` otherwise — whose first
+    /// lines are in the scrollback already: as they were drawn when the
+    /// first of them went, so the piece keeps the width and the fold that
+    /// its lines in the scrollback have. Empty where no piece is part-way.
+    head: Vec<Line<'static>>,
     /// Where each prompt typed but not yet confirmed sits, oldest first, so
     /// the `user_prompt_submit` that comes back replaces the one it belongs
     /// to rather than doubling it. Several can be waiting at once: input
@@ -193,8 +205,21 @@ pub struct Console {
     /// a diff, a thought and a daemon prompt. Folded at each attach, and
     /// toggled by Ctrl-O for as long as the attach lasts. A block moved to
     /// the scrollback while this is set carries every line of it, since a
-    /// block already there cannot be drawn again.
+    /// block already there cannot be drawn again; a block part-way there
+    /// keeps the fold its first lines had.
     whole: bool,
+}
+
+/// Where the attach banner is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Banner {
+    /// Not drawn: [`Console::banner`] was not called.
+    Unshown,
+    /// Drawn over the first block, on the screen, its first lines in the
+    /// scrollback where `head` holds its last ones.
+    Live,
+    /// In the scrollback, whole.
+    Committed,
 }
 
 impl Console {
@@ -204,6 +229,8 @@ impl Console {
             header,
             items: Vec::new(),
             committed: 0,
+            banner: Banner::Unshown,
+            head: Vec::new(),
             pending: VecDeque::new(),
             picked: 0,
             turn: Turn::Idle,
@@ -223,14 +250,15 @@ impl Console {
     /// resize settles.
     ///
     /// Every resize erases the pane's rows and draws the pane again, since
-    /// the pane owns the screen. The scrollback is the terminal's, and a
-    /// terminal emulator re-wraps it when it is made narrower — xterm.js
-    /// does — so its blocks are no longer as the console drew them. Where
-    /// the terminal holds this console and nothing else, as the desktop
-    /// app's does, the scrollback is cleared too and every block is drawn
-    /// into it again, at the new width. The CLI's terminal holds the user's
-    /// shell above the console, which a clear would take, and draws the
-    /// pane again alone.
+    /// the pane owns the screen: the tail of the transcript at the new
+    /// width. The scrollback is the terminal's, and a terminal emulator
+    /// re-wraps it when it is made narrower — xterm.js does — so its blocks
+    /// are no longer as the console drew them. Where the terminal holds this
+    /// console and nothing else, as the desktop app's does, the scrollback
+    /// is cleared too and the whole transcript is drawn again, at the new
+    /// width, the lines that do not fit on the screen into the scrollback.
+    /// The CLI's terminal holds the user's shell above the console, which a
+    /// clear would take, and draws the pane again alone.
     pub fn redraws_whole_on_resize(mut self) -> Self {
         self.whole_on_resize = true;
         self
@@ -241,35 +269,37 @@ impl Console {
     fn redraw<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
         viewport::restart(terminal)?;
         self.committed = 0;
-        self.banner(terminal)?;
+        self.head.clear();
+        if self.banner != Banner::Unshown {
+            self.banner = Banner::Live;
+        }
         self.show(terminal)
     }
 
-    /// Put the attach identity into the terminal's scrollback before its first block.
-    pub fn banner<B: Screen>(&self, terminal: &mut Terminal<B>) -> Result<()> {
-        let width = usize::from(terminal.size()?.width);
-        // One blank line after it, as after every block.
-        let mut lines = banner::draw(&self.header, width);
-        lines.push(Line::default());
-        let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-        terminal.insert_before(height, |buffer| {
-            Paragraph::new(Text::from(lines)).render(buffer.area, buffer);
-        })?;
-        Ok(())
+    /// Put the attach identity at the head of the transcript, over its
+    /// first block, with one blank line under it as under every block. It
+    /// goes into the scrollback as it scrolls off the top of the screen.
+    pub fn banner(&mut self) {
+        if self.banner == Banner::Unshown {
+            self.banner = Banner::Live;
+        }
     }
 
-    /// Rebuild from a fresh snapshot, keeping what is already in the
-    /// scrollback out of it.
+    /// Rebuild from a fresh snapshot, keeping the finished blocks out of it.
     ///
     /// This is what a reconnect lands on. The daemon's stream has no replay,
-    /// so the whole transcript arrives again; the items before `committed`
-    /// were printed by the connection that dropped and are not printed twice.
+    /// so the whole transcript arrives again. The finished items the
+    /// connection that dropped drew stay as they were drawn: the ones in the
+    /// scrollback are not printed twice, and the ones on the screen, which
+    /// go into the scrollback as they scroll off, keep their place — a
+    /// refused prompt and why it was refused among them, which no event
+    /// holds. The snapshot gives the items after them.
     ///
     /// The count is all there is to go on, and the two folds do not always
     /// agree on it: a turn that streamed around a tool call is two blocks
     /// live and one block stored. A block can therefore be lost from the
-    /// viewport across a reconnect. It is in the scrollback, where it was
-    /// printed, and the next block redraws the viewport.
+    /// viewport across a reconnect. It is where it was drawn, and the next
+    /// block redraws the viewport.
     pub fn snapshot(&mut self, events: &[AgentEventDto]) {
         self.snapshot_at(events, chrono::Utc::now());
     }
@@ -308,14 +338,15 @@ impl Console {
         // the clock follows: a turn that was running before the stream
         // dropped counts from its own prompt again, and a turn that began
         // while the stream was down counts from its prompt, not the old one.
+        let finished = self.settled();
         let mut items = Vec::new();
         for event in events {
             absorb(&mut items, event);
             self.follow_turn(event, now);
             self.follow_usage(event);
         }
-        self.committed = self.committed.min(items.len());
-        self.items = items;
+        self.items.truncate(finished);
+        self.items.extend(items.into_iter().skip(finished));
         self.pending.clear();
     }
 
@@ -645,13 +676,14 @@ impl Console {
         self.input.paste(text);
     }
 
-    /// How many leading items are finished with and may leave the viewport.
+    /// How many leading items are finished with: their lines are stable,
+    /// and go into the scrollback as they scroll off the top of the screen.
     ///
     /// While a turn runs the last item is never one of them — it is what is
-    /// still being written. Between turns it is one too, so the idle pane has
-    /// nothing over its pinned rows — unless it is a run of chunks no whole has
-    /// closed, which the next chunk would write into. Neither is an
-    /// unanswered question, which is the picker, nor a
+    /// still being written. Between turns it is one too, so the last block
+    /// ends on its blank line like every finished one — unless it is a run of
+    /// chunks no whole has closed, which the next chunk would write into.
+    /// Neither is an unanswered question, which is the picker, nor a
     /// prompt still waiting to be confirmed, nor a tool call that has not
     /// ended: the question about a call comes after the call, and the event
     /// that ends the call comes after the answer, so a call committed while
@@ -689,28 +721,78 @@ impl Console {
         end.max(self.committed)
     }
 
-    /// Move every finished block into the terminal's own buffer, above the
-    /// viewport, where the scrollback keeps it.
-    pub fn commit<B: Screen>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
-        let end = self.settled();
-        self.emit(terminal, end)
+    /// The pieces of the transcript not yet wholly in the scrollback that
+    /// may go into it, in order, `width` columns wide: the last lines of
+    /// the piece part-way there, the banner, and the finished blocks, each
+    /// with the blank line under it. A block that draws nothing is a piece
+    /// of no lines, not even the blank one. With them, the first item that
+    /// is not one of them.
+    fn finished(&self, width: u16) -> (Vec<Vec<Line<'static>>>, usize) {
+        let mut pieces = Vec::new();
+        let mut next = self.committed;
+        if !self.head.is_empty() {
+            pieces.push(rewrap(&self.head, width));
+            if self.banner != Banner::Live {
+                next += 1;
+            }
+        } else if self.banner == Banner::Live {
+            let mut lines = banner::draw(&self.header, usize::from(width));
+            lines.push(Line::default());
+            pieces.push(lines);
+        }
+        let end = self.settled().max(next);
+        for item in self.items.iter().take(end).skip(next) {
+            pieces.push(self.piece(item, width));
+        }
+        (pieces, end)
     }
 
-    /// One turn of the screen: the pane made as tall as the terminal, every
-    /// finished block moved above it, and the pane drawn.
+    /// The lines one item takes in the scrollback: its block, and the blank
+    /// line under it where the block draws anything.
+    fn piece(&self, item: &TranscriptItem, width: u16) -> Vec<Line<'static>> {
+        let mut lines = block(item, usize::from(width), None, self.whole);
+        if !lines.is_empty() {
+            lines.push(Line::default());
+        }
+        lines
+    }
+
+    /// Move every finished line into the terminal's own buffer, whether it
+    /// fits the screen or not: what a test reads as what the scrollback
+    /// gets.
+    #[cfg(test)]
+    pub(super) fn commit<B: Screen>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        let (pieces, _) = self.finished(terminal.size()?.width);
+        let count = pieces.iter().map(Vec::len).sum();
+        self.emit(terminal, pieces, count)
+    }
+
+    /// One turn of the screen: the pane made as tall as the terminal, the
+    /// finished lines that do not fit over its pinned rows moved above it,
+    /// and the pane drawn.
     ///
     /// The height comes first, and is the terminal's own: the pane holds
     /// every row of the screen, so the fit has nothing to do but at the open
-    /// and on a resize. A finished block then leaves the pane through a
-    /// scrolling region — ratatui borrows the pane's top row for it — and no
-    /// draw repaints more than the cells that changed.
+    /// and on a resize. The transcript then fills the rows over the pinned
+    /// ones, its last line on the row over the status row: the lines that
+    /// do not fit leave through the top, into the scrollback, from the
+    /// first, and only where they are finished — the block being written
+    /// keeps its head, which the pane does not show, until it is finished.
+    /// A line leaves through a scrolling region — ratatui borrows the
+    /// pane's top row for it — and no draw repaints more than the cells that
+    /// changed.
     pub fn show<B: Screen>(&mut self, terminal: &mut Terminal<Anchored<B>>) -> Result<()> {
         if terminal.backend().lost() {
             return Ok(());
         }
-        let end = self.settled();
         viewport::fit(terminal, self.rows(terminal.size()?))?;
-        self.emit(terminal, end)?;
+        let size = terminal.size()?;
+        let room = size.height.saturating_sub(self.pinned_rows(size.width));
+        let (pieces, from) = self.finished(size.width);
+        let finished: usize = pieces.iter().map(Vec::len).sum();
+        let written = self.unfinished(from, size.width, room).len();
+        let over = (finished + written).saturating_sub(usize::from(room));
+        self.emit(terminal, pieces, over.min(finished))?;
         terminal.draw(|frame| self.render(frame))?;
         Ok(())
     }
@@ -727,10 +809,16 @@ impl Console {
         if terminal.backend().lost() {
             return Ok(());
         }
-        let end = self.items.len();
         let width = terminal.size()?.width;
         viewport::fit(terminal, self.pinned_rows(width))?;
-        self.emit(terminal, end)?;
+        // Every item is done with now, the one being written and an
+        // unanswered question too: each goes as the block it is.
+        let (mut pieces, from) = self.finished(width);
+        for item in self.items.iter().skip(from) {
+            pieces.push(self.piece(item, width));
+        }
+        let count = pieces.iter().map(Vec::len).sum();
+        self.emit(terminal, pieces, count)?;
         // ratatui's clear puts the cursor back where the box had it, inside
         // the wiped rows: the shell comes back at their top instead.
         terminal.clear()?;
@@ -739,19 +827,78 @@ impl Console {
         Ok(())
     }
 
-    fn emit<B: Screen>(&mut self, terminal: &mut Terminal<B>, end: usize) -> Result<()> {
-        let width = usize::from(terminal.size()?.width);
-        for at in self.committed..end {
-            let mut lines = block(&self.items[at], width, None, self.whole);
-            lines.push(Line::default());
-            let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-            terminal.insert_before(height, |buffer| {
-                Paragraph::new(Text::from(lines)).render(buffer.area, buffer);
-            })?;
+    /// Move the first `count` lines of `pieces` — what [`Console::finished`]
+    /// gives, in its order — into the terminal's own buffer, above the
+    /// viewport, where the scrollback keeps them. A piece that goes whole is
+    /// done with; the last lines of one that goes in part are kept as they
+    /// are, to go later.
+    fn emit<B: Screen>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        pieces: Vec<Vec<Line<'static>>>,
+        count: usize,
+    ) -> Result<()> {
+        let mut left = count;
+        for mut lines in pieces {
+            let taken = lines.len().min(left);
+            let rest = lines.split_off(taken);
+            if !lines.is_empty() {
+                let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+                terminal.insert_before(height, |buffer| {
+                    Paragraph::new(Text::from(lines)).render(buffer.area, buffer);
+                })?;
+            }
+            if !rest.is_empty() {
+                if taken > 0 {
+                    self.head = rest;
+                }
+                break;
+            }
+            left -= taken;
+            self.head.clear();
+            match self.banner {
+                Banner::Live => self.banner = Banner::Committed,
+                _ => self.committed += 1,
+            }
         }
-        self.committed = end;
         Ok(())
     }
+}
+
+/// `lines` cut into rows of `width` columns at most, between grapheme
+/// clusters: the last lines of a piece drawn at a width the terminal has
+/// since been made narrower than, as a terminal re-wraps its scrollback.
+fn rewrap(lines: &[Line<'static>], width: u16) -> Vec<Line<'static>> {
+    let width = usize::from(width.max(1));
+    let mut rows = Vec::with_capacity(lines.len());
+    for line in lines {
+        if line.width() <= width {
+            rows.push(line.clone());
+            continue;
+        }
+        let mut row: Vec<Span<'static>> = Vec::new();
+        let mut used = 0;
+        for span in &line.spans {
+            let mut text = String::new();
+            for grapheme in span.content.graphemes(true) {
+                let columns = grapheme.width();
+                if used > 0 && used + columns > width {
+                    if !text.is_empty() {
+                        row.push(Span::styled(std::mem::take(&mut text), span.style));
+                    }
+                    rows.push(Line::from(std::mem::take(&mut row)).style(line.style));
+                    used = 0;
+                }
+                used += columns;
+                text.push_str(grapheme);
+            }
+            if !text.is_empty() {
+                row.push(Span::styled(text, span.style));
+            }
+        }
+        rows.push(Line::from(row).style(line.style));
+    }
+    rows
 }
 
 /// Whether a session's events so far end with the session's end: a
@@ -980,8 +1127,7 @@ where
         Some(frame) => console.frame(frame?),
         None => false,
     };
-    terminal.autoresize()?;
-    console.banner(terminal)?;
+    console.banner();
     if ended {
         return Ok(());
     }
@@ -1168,14 +1314,15 @@ mod tests {
         ]);
 
         console.show(&mut terminal).unwrap();
+        console.commit(&mut terminal).unwrap();
 
         let shown = shown(&terminal);
         assert!(
-            console.live_lines(console.committed, 72, 40).is_empty(),
-            "no block is left in the pane: {shown}"
+            console.live_lines(72, 35).is_empty(),
+            "every block is finished, and none is left out of the scrollback: {shown}"
         );
         assert!(
-            shown.contains("● answered\n\n author"),
+            rows(terminal.backend().under().scrollback()).ends_with("● answered\n"),
             "the last block is in the scrollback: {shown}"
         );
     }
@@ -1194,12 +1341,10 @@ mod tests {
         assert!(!shown.contains("queued"), "{shown}");
         assert!(
             shown.starts_with("▌❯ hello\n\n✗ 409 Conflict"),
-            "the prompt and why it was refused are in the scrollback: {shown}"
+            "the prompt and why it was refused are on the screen: {shown}"
         );
-        assert!(
-            console.live_lines(console.committed, 72, 40).is_empty(),
-            "{shown}"
-        );
+        console.commit(&mut terminal).unwrap();
+        assert!(console.live_lines(72, 35).is_empty(), "{shown}");
     }
 
     #[test]
@@ -1945,6 +2090,96 @@ mod tests {
         assert!(
             shown.contains("line 1") && shown.contains("line 30"),
             "{shown}"
+        );
+    }
+
+    /// A block part-way into the scrollback keeps the fold its lines there
+    /// were drawn with, since they cannot be drawn again, and Ctrl-O changes
+    /// the blocks after it (rule 27).
+    #[test]
+    fn a_block_part_way_into_the_scrollback_keeps_its_fold_and_ctrl_o_changes_the_ones_after() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        let ran = |id: &str| {
+            let output: String = (1..=30).map(|n| format!("{id}-{n:02}\n")).collect();
+            event(
+                "post_tool_use",
+                id,
+                json!({"acp": {"toolCallId": id, "kind": "execute", "status": "completed",
+                               "rawInput": {"command": format!("cat {id}")},
+                               "rawOutput": output}}),
+            )
+        };
+        let stop = || event("stop", "stop", json!({"stop_reason": "end_turn"}));
+        let said: String = (1..=20).map(|n| format!("- said-{n:02}\n")).collect();
+        console.key(ctrl('o'));
+        console.apply(&ran("alpha"));
+        console.apply(&event("agent_message", "said", json!({"text": said})));
+        console.apply(&stop());
+        console.show(&mut terminal).unwrap();
+        let scrollback = rows(terminal.backend().under().scrollback());
+        assert!(
+            scrollback.contains("alpha-01") && !scrollback.contains("alpha-30"),
+            "the first block is part-way into the scrollback: {scrollback}"
+        );
+
+        console.key(ctrl('o'));
+        console.apply(&ran("beta"));
+        console.apply(&stop());
+        console.show(&mut terminal).unwrap();
+
+        let shown = shown(&terminal);
+        for n in 1..=30 {
+            assert_eq!(
+                shown.matches(&format!("alpha-{n:02}")).count(),
+                1,
+                "the part-way block stays whole, each line once: {shown}"
+            );
+        }
+        assert!(
+            shown.contains("beta-30") && !shown.contains("beta-01"),
+            "the block after it is folded: {shown}"
+        );
+        assert_eq!(shown.matches("more lines").count(), 1, "{shown}");
+    }
+
+    /// A refused prompt and why it was refused are the console's own, and
+    /// no event holds them: a reconnect's snapshot keeps them where they
+    /// were drawn.
+    #[test]
+    fn a_reconnect_keeps_a_refused_prompt_on_the_screen() {
+        let mut terminal = pane();
+        let mut console = Console::new(header());
+        let events = [
+            event(
+                "user_prompt_submit",
+                "go",
+                json!({"text": "go", "source": "console"}),
+            ),
+            event("agent_message", "done", json!({"text": "done"})),
+            event("stop", "stop", json!({"stop_reason": "end_turn"})),
+        ];
+        console.snapshot(&events);
+        type_into(&mut console, "more");
+        enter(&mut console);
+        console.failed("409 Conflict: the session takes no more input");
+        console.show(&mut terminal).unwrap();
+
+        console.dropped();
+        console.snapshot(&events);
+        console.live();
+        console.apply(&event("agent_message", "later", json!({"text": "later"})));
+        console.show(&mut terminal).unwrap();
+
+        let shown = shown(&terminal);
+        assert!(
+            shown.contains("▌❯ go\n\n● done\n\n▌❯ more\n\n✗ 409 Conflict"),
+            "the refused prompt is where it was drawn: {shown}"
+        );
+        assert_eq!(shown.matches("● done").count(), 1, "{shown}");
+        assert!(
+            shown.find("✗ 409 Conflict") < shown.find("● later"),
+            "and what comes after the reconnect is under it: {shown}"
         );
     }
 

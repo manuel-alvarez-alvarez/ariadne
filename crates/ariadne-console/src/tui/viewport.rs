@@ -99,7 +99,7 @@ impl Console {
 /// and the blocks the pane was opened under are not erased, and neither is
 /// the shell above them. The next draw paints the new pane whole. That
 /// happens here alone — at the open, on a resize and at the close — and no
-/// other draw repaints more than the cells that changed: a finished block
+/// other draw repaints more than the cells that changed: a finished line
 /// leaves the pane through a scrolling region instead.
 ///
 /// A terminal resized is the same case. The pane owns the screen, so a
@@ -351,10 +351,10 @@ impl<B: Backend> Backend for Anchored<B> {
         inner.clear_region(clear_type)
     }
 
-    /// The scrolling region that takes a finished block into the scrollback
-    /// ([`Console::commit`]): ratatui borrows the pane's top row, draws the
-    /// block's line over it and scrolls that row away, rather than paint the
-    /// pane again.
+    /// The scrolling region that takes a finished line into the scrollback
+    /// as it scrolls off the top ([`Console::show`]): ratatui borrows the
+    /// pane's top row, draws the line over it and scrolls that row away,
+    /// rather than paint the pane again.
     ///
     /// That row is a region of one row, and no terminal takes one: `DECSTBM`
     /// wants its top row above its bottom one, and tmux, xterm and xterm.js
@@ -429,7 +429,7 @@ mod tests {
 
     use futures_util::stream;
     use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
-    use ratatui::buffer::Cell;
+    use ratatui::buffer::{Buffer, Cell};
     use ratatui::layout::{Position, Rect, Size};
     use serde_json::json;
 
@@ -642,17 +642,17 @@ mod tests {
         );
     }
 
-    /// Between turns every block is in the scrollback, the agent's last and
-    /// the stop under it too: the pane is the whole terminal all the same,
-    /// its rows over the pinned ones blank.
+    /// Between turns the transcript fills the screen from the bottom: the
+    /// banner, the prompt and the answer, in order, the blank line under the
+    /// answer on the row over the status row, and blank rows above the
+    /// banner. No line has scrolled off the top, so the scrollback is empty.
     #[test]
-    fn an_idle_pane_takes_the_whole_terminal_with_its_pinned_rows_last() {
+    fn between_turns_the_transcript_ends_on_the_row_over_the_status_row() {
         let mut terminal = pane();
         let mut console = Console::new(header());
+        console.banner();
         console.show(&mut terminal).unwrap();
         assert_eq!(pane_of(&mut terminal), Rect::new(0, 0, 72, 40), "at first");
-        let screen = rows(terminal.backend().under().buffer());
-        assert_pinned(&lines(&screen), " enter send", "with no block yet");
 
         console.apply(&prompt("go"));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
@@ -661,23 +661,35 @@ mod tests {
 
         assert_eq!(pane_of(&mut terminal), Rect::new(0, 0, 72, 40), "after it");
         let scrollback = rows(terminal.backend().under().scrollback());
-        assert_eq!(
-            scrollback, "▌❯ go\n\n● done\n",
-            "each block of the turn is in the scrollback, a separator under each"
-        );
+        assert_eq!(scrollback, "", "no line has scrolled off the top");
         let screen = rows(terminal.backend().under().buffer());
         let screen = lines(&screen);
+        assert_eq!(
+            screen[31..35],
+            ["▌❯ go", "", "● done", ""],
+            "the prompt and the answer end on the row over the status row: {screen:#?}"
+        );
+        let top = screen.iter().position(|row| row.starts_with('╭'));
+        let bottom = screen.iter().position(|row| row.starts_with('╰'));
+        let (Some(top), Some(bottom)) = (top, bottom) else {
+            panic!("the banner is on the screen: {screen:#?}");
+        };
+        assert_eq!(
+            bottom + 2,
+            31,
+            "one blank line under the banner, then the prompt: {screen:#?}"
+        );
         assert!(
-            screen[..35].iter().all(|row| row.is_empty()),
-            "the rows over the pinned ones are blank: {screen:#?}"
+            screen[..top].iter().all(|row| row.is_empty()),
+            "the rows above the banner are blank: {screen:#?}"
         );
         assert_pinned(&screen, " enter send", "after a turn of two lines");
     }
 
-    /// The live area is bottom-aligned: the block in work ends on the row
-    /// over the status row, and the rows over it are blank.
+    /// While a block is written it ends right over the status row, and the
+    /// prompt before it stays on the screen above it.
     #[test]
-    fn the_block_in_work_is_drawn_right_over_the_status_row() {
+    fn while_a_block_is_written_the_prompt_before_it_stays_above_it() {
         let mut terminal = pane();
         let mut console = Console::new(header());
         console.snapshot(&[
@@ -688,15 +700,18 @@ mod tests {
         console.show(&mut terminal).unwrap();
 
         let scrollback = rows(terminal.backend().under().scrollback());
-        assert_eq!(scrollback, "▌❯ first\n", "the finished prompt");
+        assert_eq!(scrollback, "", "the prompt is not in the scrollback");
         let screen = rows(terminal.backend().under().buffer());
         let screen = lines(&screen);
         assert_eq!(
-            screen[..35].iter().filter(|row| !row.is_empty()).count(),
-            1,
-            "one row of the live area is drawn: {screen:#?}"
+            screen[32..35],
+            ["▌❯ first", "", "● second"],
+            "the prompt is above the block in work: {screen:#?}"
         );
-        assert_eq!(screen[34], "● second", "and it is the last: {screen:#?}");
+        assert!(
+            screen[..32].iter().all(|row| row.is_empty()),
+            "and the rows over them are blank: {screen:#?}"
+        );
         assert_pinned(&screen, " enter send", "under the block in work");
     }
 
@@ -740,15 +755,23 @@ mod tests {
         console
     }
 
+    /// A block in work taller than the screen shows its last lines, and no
+    /// line of it goes into the scrollback while it is written: its head is
+    /// committed once it is finished, each line once, in order.
     #[test]
-    fn a_block_longer_than_the_terminal_takes_every_row_and_reaches_the_scrollback_once() {
+    fn a_block_in_work_taller_than_the_screen_shows_its_tail_and_keeps_its_head_until_it_ends() {
         let mut terminal = pane();
         let mut console = a_long_block(&mut terminal);
 
         let tail = rows(terminal.backend().under().buffer());
         assert!(
-            tail.contains("row-100") && !tail.contains("row-065"),
+            tail.contains("row-100") && tail.contains("row-066") && !tail.contains("row-065"),
             "the pane shows the last lines of the block: {tail}"
+        );
+        let scrollback = rows(terminal.backend().under().scrollback());
+        assert!(
+            !scrollback.contains("row-"),
+            "no line of the block in work is in the scrollback: {scrollback}"
         );
 
         turn_ends(&mut console, 100);
@@ -761,29 +784,50 @@ mod tests {
             .collect();
         let expected: Vec<String> = (1..=100).map(|n| format!("row-{n:03}")).collect();
         assert_eq!(found, expected, "each line once, in order: {history}");
-        assert_eq!(
-            history.matches("filler-").count(),
-            60,
-            "and the lines committed before it are neither lost nor said again: {history}"
+        let scrollback = rows(terminal.backend().under().scrollback());
+        assert!(
+            scrollback.contains("row-001"),
+            "the head is committed once the block ends: {scrollback}"
         );
     }
 
-    /// A screen full of transcript and a transcript of two lines leave the
-    /// box on the same rows: the pane never shrinks to its content.
+    /// With the screen full, a finished block of 100 lines arrives whole:
+    /// the lines that do not fit leave through the top, and the screen ends
+    /// with the last line of the transcript right over the status row.
     #[test]
-    fn the_box_stays_on_the_bottom_rows_once_a_long_block_is_committed() {
+    fn a_finished_block_of_100_lines_leaves_through_the_top_each_line_once() {
         let mut terminal = pane();
-        let mut console = a_long_block(&mut terminal);
+        let mut console = under_way(&mut terminal);
 
         turn_ends(&mut console, 100);
         console.show(&mut terminal).unwrap();
 
+        let history = history(&terminal);
+        let found: Vec<&str> = history
+            .lines()
+            .filter_map(|line| line.find("row-").map(|at| &line[at..]))
+            .collect();
+        let expected: Vec<String> = (1..=100).map(|n| format!("row-{n:03}")).collect();
+        assert_eq!(found, expected, "each line once, in order: {history}");
+        let filler: Vec<&str> = history
+            .lines()
+            .filter_map(|line| line.find("filler-").map(|at| &line[at..]))
+            .collect();
+        let before: Vec<String> = (1..=60).map(|n| format!("filler-{n:03}")).collect();
+        assert_eq!(
+            filler, before,
+            "and the lines before it are neither lost nor said again: {history}"
+        );
         assert_eq!(pane_of(&mut terminal), Rect::new(0, 0, 72, 40));
         let screen = rows(terminal.backend().under().buffer());
         let screen = lines(&screen);
         assert!(
-            screen[..35].iter().all(|row| row.is_empty()),
-            "the block is in the scrollback, not on the screen: {screen:#?}"
+            screen[33].ends_with("row-100") && screen[34].is_empty(),
+            "the last line and the blank line under it are over the status row: {screen:#?}"
+        );
+        assert!(
+            screen[0].contains("row-"),
+            "the block fills the screen: {screen:#?}"
         );
         assert_pinned(&screen, " enter send", "after a block of 100 lines");
     }
@@ -1044,11 +1088,11 @@ mod tests {
         assert_eq!(tap.screen(), committed, "once the block is committed");
     }
 
-    /// A finished block leaves the pane through the row ratatui borrows at
-    /// its top: the bytes scroll that row into the scrollback and paint no
-    /// row of the pane again, the pinned rows among them.
+    /// A finished line leaves the pane through the row ratatui borrows at
+    /// its top as it scrolls off: the bytes scroll that row into the
+    /// scrollback, erase nothing whole and paint no pinned row again.
     #[tokio::test(start_paused = true)]
-    async fn a_committed_block_is_scrolled_away_and_the_pane_is_not_painted_again() {
+    async fn a_committed_line_is_scrolled_away_with_no_full_clear_and_no_pinned_row_painted() {
         let tap = Tap::default();
         let window = Window::new(72, 40);
         let now = chrono::Utc::now();
@@ -1061,7 +1105,8 @@ mod tests {
         let mut emulator = vt100::Parser::new(40, 72, 200);
         emulator.process(tap.take().as_bytes());
 
-        // The next block of the same turn: the one before it is finished.
+        // The next block of the same turn: the one before it is finished,
+        // and the lines at the top that no longer fit leave.
         console.apply_at(
             &event("agent_message_chunk", "more", json!({"text": "more"})),
             now,
@@ -1091,7 +1136,7 @@ mod tests {
         assert_eq!(
             shown.iter().filter(|row| row.as_str() == "● done").count(),
             1,
-            "the block is in the scrollback once: {shown:#?}"
+            "the block is on the screen once: {shown:#?}"
         );
         assert_eq!(
             shown.iter().filter(|row| row.contains("filler-")).count(),
@@ -1186,6 +1231,17 @@ mod tests {
             shown.contains(&"─".repeat(60)) && !shown.contains(&"─".repeat(61)),
             "drawn at the new width: {shown}"
         );
+        let rows: Vec<&str> = shown.split('\n').collect();
+        assert_eq!(
+            rows.len(),
+            40,
+            "the transcript fits the screen, and none of it is in the scrollback: {shown}"
+        );
+        assert_eq!(
+            rows[33..35],
+            ["● done 1", ""],
+            "and it ends on the row over the status row: {shown}"
+        );
     }
 
     /// The CLI's terminal holds the user's shell above the console: a
@@ -1223,10 +1279,11 @@ mod tests {
         let mut emulator = vt100::Parser::new(40, 72, 200);
         emulator.process(written.as_bytes());
         let shown = everything(&mut emulator);
+        let screen = &shown[shown.len() - 40..];
         assert_eq!(
-            shown[..4],
+            screen[31..35],
             ["▌❯ go", "", "● done", ""],
-            "and the blocks read as they did: {shown:#?}"
+            "and the blocks read as they did: {screen:#?}"
         );
     }
 
@@ -1289,10 +1346,15 @@ mod tests {
                 1,
                 "{what}: one status row: {screen:#?}"
             );
+            let live = usize::from(height - PINNED);
             assert_eq!(
-                screen[usize::from(height - PINNED - 1)],
-                "● writing",
-                "{what}"
+                screen[live - 7..live],
+                ["▌❯ go", "", "● done", "", "▌❯ next", "", "● writing"],
+                "{what}: the tail of the transcript is over the status row: {screen:#?}"
+            );
+            assert!(
+                screen[..live - 7].iter().all(|row| row.is_empty()),
+                "{what}: with blank rows above it: {screen:#?}"
             );
             assert_pinned(&screen, " enter send", what);
             let shown = everything(&mut emulator);
@@ -1342,28 +1404,43 @@ mod tests {
         );
     }
 
-    /// The way out wipes the pane, and the shell comes back on the top row
-    /// of the screen: right under the last block, which is the last row of
-    /// the scrollback, and not on the row the input box had the cursor on.
+    /// The way out puts what is left on the screen into the terminal as it
+    /// was, and wipes the pane: the scrollback and the screen read as the
+    /// transcript, each line once, and the shell comes back on the row under
+    /// the last block, not on the row the input box had the cursor on.
     #[test]
-    fn the_shell_comes_back_right_under_the_last_block_in_the_scrollback() {
+    fn at_the_close_the_transcript_reads_once_and_the_shell_comes_back_under_it() {
         let mut terminal = pane();
-        let mut console = Console::new(header());
-        console.snapshot(&[
-            prompt("go"),
-            event("agent_message", "done", json!({"text": "done"})),
-            event("stop", "stop", json!({"stop_reason": "end_turn"})),
-        ]);
+        let mut console = under_way(&mut terminal);
+        console.apply(&event("agent_message", "done", json!({"text": "done"})));
+        console.apply(&event("stop", "stop", json!({"stop_reason": "end_turn"})));
         console.show(&mut terminal).unwrap();
 
         console.close(&mut terminal).unwrap();
 
-        let scrollback = rows(terminal.backend().under().scrollback());
-        assert_eq!(scrollback, "▌❯ go\n\n● done\n", "the transcript");
+        let history = history(&terminal);
+        let found: Vec<&str> = history
+            .lines()
+            .filter(|line| line.contains("filler-") || line.contains("go") || line.contains("done"))
+            .collect();
+        let mut expected: Vec<String> = (1..=60)
+            .map(|n| format!("filler-{n:03}"))
+            .chain(["▌❯ go".to_string(), "● done".to_string()])
+            .collect();
+        expected[0] = format!("● • {}", expected[0]);
+        for line in expected.iter_mut().skip(1).take(59) {
+            *line = format!("  • {line}");
+        }
+        assert_eq!(found, expected, "the transcript once, in order: {history}");
         let screen = rows(terminal.backend().under().buffer());
+        let screen = lines(&screen);
+        let done = screen
+            .iter()
+            .position(|row| *row == "● done")
+            .expect("the last block is on the screen");
         assert!(
-            screen.lines().all(str::is_empty),
-            "the pane is wiped: {screen}"
+            screen[done + 1..].iter().all(|row| row.is_empty()),
+            "the pane is wiped: {screen:#?}"
         );
         assert_eq!(
             terminal
@@ -1371,8 +1448,11 @@ mod tests {
                 .under_mut()
                 .get_cursor_position()
                 .unwrap(),
-            Position::ORIGIN,
-            "the cursor is on the row after the scrollback's last: {screen}"
+            Position {
+                x: 0,
+                y: u16::try_from(done + 2).unwrap()
+            },
+            "the cursor is under the blank line of the last block: {screen:#?}"
         );
     }
 
@@ -1392,9 +1472,9 @@ mod tests {
 
         let shown = history(&terminal);
         assert_eq!(
-            shown.trim_end(),
+            shown.trim(),
             "▌❯ go\n\n● half",
-            "the block is under the scrollback, and the pane is wiped: {shown}"
+            "the blocks are on the top rows, and the pane is wiped: {shown}"
         );
         assert_eq!(
             terminal
@@ -1402,7 +1482,7 @@ mod tests {
                 .under_mut()
                 .get_cursor_position()
                 .unwrap(),
-            Position { x: 0, y: 2 },
+            Position { x: 0, y: 4 },
             "the cursor is under the separator of the last block: {shown}"
         );
     }
@@ -1444,6 +1524,62 @@ mod tests {
         );
     }
 
+    /// A pending question and every option are on the screen together,
+    /// the blocks before it right above it as far as they fit, and the lines
+    /// that do not fit gone through the top into the scrollback.
+    #[test]
+    fn a_pending_question_keeps_the_blocks_before_it_above_it_as_far_as_they_fit() {
+        let mut terminal = super::open(|| TestBackend::new(72, 24)).unwrap();
+        let mut console = Console::new(header());
+        let said: String = (1..=30).map(|n| format!("- said-{n:03}\n")).collect();
+        console.snapshot(&[
+            prompt("go"),
+            event("agent_message", "said", json!({"text": said})),
+            event(
+                "permission_request",
+                "Permission requested for Edit",
+                json!({"tool_name": "Edit",
+                       "acp": {"toolCallId": "edit", "kind": "edit",
+                               "rawInput": {"file_path": "src/lib.rs"},
+                               "content": [{"type": "diff", "path": "src/lib.rs",
+                                            "oldText": "fn a() {}\n", "newText": "fn b() {}\n"}]},
+                       "options": [{"optionId": "once", "name": "Allow once"},
+                                   {"optionId": "always", "name": "Allow always"},
+                                   {"optionId": "no", "name": "Reject"}]}),
+            ),
+        ]);
+
+        console.show(&mut terminal).unwrap();
+
+        let screen = rows(terminal.backend().under().buffer());
+        let screen = lines(&screen);
+        let rule = screen
+            .iter()
+            .position(|row| row.starts_with("─ permission ─"))
+            .expect("the question is on the screen");
+        for option in ["❯ 1. Allow once", "2. Allow always", "3. Reject"] {
+            assert!(
+                screen.iter().any(|row| row.contains(option)),
+                "{option} is on the screen: {screen:#?}"
+            );
+        }
+        assert!(
+            screen[rule - 1].is_empty() && screen[rule - 2].ends_with("said-030"),
+            "the block before it ends right above it: {screen:#?}"
+        );
+        assert!(
+            screen[0].contains("said-"),
+            "and fills the rows above it: {screen:#?}"
+        );
+        let history = history(&terminal);
+        let said: Vec<&str> = history
+            .lines()
+            .filter_map(|line| line.find("said-").map(|at| &line[at..]))
+            .collect();
+        let expected: Vec<String> = (1..=30).map(|n| format!("said-{n:03}")).collect();
+        assert_eq!(said, expected, "each line of it once, in order: {history}");
+    }
+
     #[test]
     fn the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read() {
         let mut terminal = super::open(Mute::new).unwrap();
@@ -1463,48 +1599,56 @@ mod tests {
         );
     }
 
+    /// Every row of `screen` under the scrollback of `scrollback`, and how
+    /// many times a line of the filler is in them.
+    fn fillers(scrollback: &Buffer, screen: &Buffer) -> usize {
+        format!("{}\n{}", rows(scrollback), rows(screen))
+            .matches("filler-")
+            .count()
+    }
+
     #[test]
-    fn a_finished_block_reaches_the_scrollback_when_the_cursor_position_cannot_be_read() {
+    fn a_line_reaches_the_scrollback_when_the_cursor_position_cannot_be_read() {
         let mut terminal = super::open(Mute::new).unwrap();
-        let mut console = Console::new(header());
-        console.snapshot(&[
-            prompt("first"),
-            event("agent_message_chunk", "second", json!({"text": "second"})),
-        ]);
 
-        console.show(&mut terminal).unwrap();
+        under_way(&mut terminal);
 
-        let scrollback = rows(terminal.backend().under().0.scrollback());
+        let backend = &terminal.backend().under().0;
+        let scrollback = rows(backend.scrollback());
         assert!(
-            scrollback.ends_with("▌❯ first\n"),
-            "the finished prompt is in the scrollback: {scrollback}"
+            scrollback.contains("filler-001"),
+            "the first line of the filler scrolled off the top: {scrollback}"
         );
-        let screen = rows(terminal.backend().under().0.buffer());
+        assert_eq!(fillers(backend.scrollback(), backend.buffer()), 60);
+        let screen = rows(backend.buffer());
         assert_eq!(
-            row_of(&screen, "● second"),
+            row_of(&screen, "▌❯ go"),
             Some(40 - usize::from(PINNED) - 1),
-            "and the block in work is over the pinned rows: {screen}"
+            "and the prompt is over the pinned rows: {screen}"
         );
     }
 
     /// The terminal answered where its cursor was at the open, and answers
     /// nothing after: the console answers every later query itself rather
-    /// than end on its first finished block.
+    /// than end on the first line that scrolls off the top.
     #[test]
-    fn a_finished_block_reaches_the_scrollback_when_only_the_first_cursor_query_is_answered() {
+    fn a_line_reaches_the_scrollback_when_only_the_first_cursor_query_is_answered() {
         let mut terminal = super::open(Mute::answering_once).unwrap();
         let mut console = Console::new(header());
+        let filler: String = (1..=60).map(|n| format!("- filler-{n:03}\n")).collect();
         console.snapshot(&[
-            prompt("first"),
-            event("agent_message_chunk", "second", json!({"text": "second"})),
+            event("agent_message", "filler", json!({"text": filler})),
+            prompt("go"),
         ]);
 
         console
             .show(&mut terminal)
-            .expect("the block is inserted without asking the terminal again");
+            .expect("the line is inserted without asking the terminal again");
 
-        let scrollback = rows(terminal.backend().under().0.scrollback());
-        assert_eq!(scrollback, "▌❯ first\n", "the finished prompt");
+        let backend = &terminal.backend().under().0;
+        let scrollback = rows(backend.scrollback());
+        assert!(scrollback.contains("filler-001"), "{scrollback}");
+        assert_eq!(fillers(backend.scrollback(), backend.buffer()), 60);
         assert!(
             console.close(&mut terminal).is_ok(),
             "and closing, which asks where the cursor is again, still works"

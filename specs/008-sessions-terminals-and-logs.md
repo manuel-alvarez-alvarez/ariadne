@@ -211,26 +211,39 @@ goal id to a seat (014).
     `--kind` also filters later events. JSON output keeps each event object
     unchanged.
 23. `ariadne attach` on a terminal is an inline pane, never the alternate
-    screen. A finished block goes into the terminal's own buffer above the
-    pane, so it stays in the scrollback; the pane holds the block still being
-    written, a status row, the input box and a footer. While a turn runs the last
-    block is the one being written; between turns none is, and the last one
-    is committed too — but a run of chunks no stored whole has closed, which
-    the next chunk would continue. The pane is as tall as the terminal,
-    always, and starts on its top row. Its last rows are the pinned ones, in
-    this order: the status row, the input box between its two rules, and
-    the footer. So the input box is on the bottom rows of the screen whatever
-    the transcript holds: a transcript of two lines and a screen full of it
-    alike, between turns and during one. Every row over the pinned ones is
-    the live area, and it is bottom-aligned: the last lines of the blocks
-    not yet in the scrollback end on the row over the status row, and the
-    rows over them are blank. The transcript before them is in the
-    terminal's scrollback, not on the screen. The pane is opened on the
-    top row at the open: its rows are erased and the rows above it —
-    the banner, and the shell over it — are scrolled into the scrollback,
-    never erased. A finished block leaves the pane through ratatui's
-    scrolling regions: ratatui borrows the pane's top row, draws each line
-    of the block over it and scrolls that row into the scrollback, then
+    screen. The pane is as tall as the terminal, always, and starts on its
+    top row. Its last rows are the pinned ones, in this order: the status
+    row, the input box between its two rules, and the footer. So the input
+    box is on the bottom rows of the screen whatever the transcript holds: a
+    transcript of two lines and a screen full of it alike, between turns and
+    during one. Every row over the pinned ones is the live area, and the
+    transcript fills it from the bottom: the attach banner, the finished
+    blocks, the block being written and the picker of a pending question, in
+    that order, one blank line between two blocks, the last line on the row
+    over the status row. Blank rows are on the screen only while the
+    transcript is shorter than the live area, and they are above it. A line
+    goes into the terminal's own buffer above the pane — the scrollback —
+    only when it scrolls off the top of the live area, so the scrollback and
+    the screen read as the transcript, each line once, and what is in the
+    scrollback never comes back. Only a finished line goes. While a turn
+    runs the last block is the one being written; between turns none is —
+    but a run of chunks no stored whole has closed, which the next chunk
+    would continue. A finished block ends on its blank line, so between turns
+    the screen shows the tail of the transcript with the last block's blank
+    line on the row over the status row; during a turn the block being
+    written ends on that row itself, and the blocks before it are above it as
+    far as they fit. A block being written that is taller than the live area
+    shows its tail, and its head goes into the scrollback only once the
+    block is finished. The lines of a finished block are stable, so they go
+    one by one, and a block can be part-way into the scrollback: its last
+    lines stay as they were drawn when its first line went, with the fold
+    they had (rule 27), and a terminal made narrower since cuts them into
+    rows of its width, as it re-wraps its scrollback. The banner goes the
+    same way as any other line. The pane is opened on the top row at the
+    open: its rows are erased and the rows above it — the shell — are
+    scrolled into the scrollback, never erased. A line leaves the pane
+    through ratatui's scrolling regions: ratatui borrows the pane's top row,
+    draws the line over it and scrolls that row into the scrollback, then
     draws the top row again. That row is a region of one row, which no
     terminal takes as a region — `DECSTBM` wants its top row above its
     bottom one, and tmux, xterm and xterm.js drop a request for one row and
@@ -239,9 +252,9 @@ goal id to a seat (014).
     the scrollback, and then scrolls the whole screen down one row with
     `DECSTBM` and `SD`, which puts every other row back and leaves the top
     row blank; a region of one row further down is erased, and a region of
-    two rows or more goes to the backend as it is. So a committed block
-    writes no full clear and paints no row of the pane but the top one, and
-    no committed line is deleted or said again. The pane is opened again
+    two rows or more goes to the backend as it is. So a committed line
+    writes no full clear and paints no pinned row again, and no committed
+    line is deleted or said again. The pane is opened again
     only at the open, on a resize and at the close, and is wiped and drawn
     whole only then — every other draw writes the cells that changed.
     ratatui drops the backend where opening the pane again fails, and the
@@ -294,7 +307,13 @@ goal id to a seat (014).
     owns the screen, so a resize of the terminal — shorter, taller, narrower
     or wider — erases every row of the pane and draws it again at the new
     size, by the same height rule: whatever the terminal did with the old
-    rows, no stale row is left and the status row is drawn once. An erase
+    rows, no stale row is left and the status row is drawn once. The pane
+    draws the tail of the transcript at the new width: on a shorter terminal
+    the lines that no longer fit go into the scrollback, and a taller one
+    has blank rows above the transcript, since what is in the scrollback
+    does not come back. A terminal that moves the top rows of its screen
+    into its scrollback as it is made shorter keeps them there, and the pane
+    draws them again. An erase
     from the top-left corner to the end of the screen is made one row at a
     time, since tmux keeps a copy of what that erase removes in its
     scrollback. The blank end of each row is
@@ -302,28 +321,31 @@ goal id to a seat (014).
     blank cells into rows of their own. The console the daemon hosts for
     the desktop app does more on a resize: its emulator holds the console
     and nothing else, so once the size has held for 250 ms it also clears
-    the emulator's scrollback and draws the banner and every block into it
-    again, at the new width, with the pane under them — the scrollback the
-    emulator re-wrapped is replaced whole. The CLI's terminal holds the
-    user's shell above the console, and draws the pane again alone: its
-    scrollback stays as the terminal re-wrapped it. At the close the pane is
-    made as short as its pinned rows, on the top row of the screen, so the
-    blocks still in it are inserted on the top rows; the pane is wiped, and
-    the shell comes back on the row under the last block — the top row of
-    the screen, right under the scrollback, where every block was already
-    in it. The pane
+    the emulator, its scrollback too, and draws the whole transcript again,
+    at the new width and in the same shape: each block once, the lines that
+    do not fit the live area in the scrollback and the tail on the screen
+    over the pinned rows — the scrollback the emulator re-wrapped is
+    replaced whole. The CLI's terminal holds the user's shell above the
+    console, and draws the pane again alone: its scrollback stays as the
+    terminal re-wrapped it. At the close the pane is made as short as its
+    pinned rows, on the top row of the screen, and everything not yet in the
+    scrollback — the block being written and a pending question too, as the
+    blocks they are — is inserted over the rows from the top one down; the
+    pane is wiped, and the shell comes back on the row under the last
+    block's blank line. The scrollback and the screen then read as the
+    transcript, each line once. The pane
     opens from the
     cursor, which the terminal is asked for once, at the open; a terminal that
     does not answer within crossterm's timeout gets the same pane opened from
     the bottom row instead. On both paths every later cursor query — the one
-    ratatui makes after each block it inserts above the pane, on a resize,
+    ratatui makes after each line it inserts above the pane, on a resize,
     and each time the pane is opened again — is answered
     by the backend itself, from where it last put the cursor,
     and never sent to the terminal: once the key stream reads the terminal, a
     query's answer would come through the reader the stream holds, and time
     out. There is no alternate-screen fallback.
-    Each attach puts one welcome banner into scrollback before its first
-    transcript block, with one blank line under it: seat, task title (or
+    Each attach puts one welcome banner at the head of the transcript, over
+    its first block, with one blank line under it: seat, task title (or
     `orchestrator` with the goal title),
     model and effort, repository name, and the session id cut to 12 columns.
     The frame fits its contents but no more than the pane; a long title cuts
@@ -492,7 +514,9 @@ goal id to a seat (014).
     whichever the attach had. Whole draws every fold of the pane in full: a
     tool's output, a diff, a thought and a daemon prompt (rules 24, 25); a
     block moved to the scrollback while the state is whole carries every
-    line of it, since a block already there cannot be drawn again. The
+    line of it, since a block already there cannot be drawn again, and a
+    block part-way into the scrollback keeps the fold its first lines had:
+    Ctrl-O changes the blocks after it. The
     footer names the state as its last hint, after every other, in its drop
     order (rule 23). On a permission question the arrows and the number keys
     move the pick and Enter posts the option's id; Ctrl-O still toggles the
@@ -500,7 +524,8 @@ goal id to a seat (014).
     of the pane, above the box, whatever came after it — a snapshot taken
     mid-turn ends on the text so far (rule 13), which comes after the
     question in it — and it ends on the row over the status row, as the live
-    area is bottom-aligned (rule 23). Its command or diff is folded to the
+    area is bottom-aligned (rule 23), the blocks before it above it as far
+    as they fit. Its command or diff is folded to the
     room its question, options and two rules leave in the live area, which
     is the terminal's height less the pinned rows, whatever the fold state
     says, so the question and every option are on the screen together. A
@@ -515,8 +540,10 @@ goal id to a seat (014).
     runs and how to attach again, or, where the session has ended, how to
     revive it.
 29. A dropped stream says "reconnecting" and is dialled again on the backoff
-    every other follow uses. The fresh snapshot redraws what was open and does
-    not repeat what is already in the scrollback.
+    every other follow uses. The finished blocks stay as they were drawn, on
+    the screen and in the scrollback — a refused prompt and why it was
+    refused among them, which no event holds — and the fresh snapshot redraws
+    what was open under them, and repeats none of them.
 30. With stdin or stdout redirected there is no pane. `ariadne attach` is then
     the plain line protocol: one `kind · summary` per event, numbered options
     for a permission question, and one prompt per line read (014).
@@ -859,35 +886,37 @@ goal id to a seat (014).
 - Where the cursor position cannot be read, the pane opens from the bottom
   row
   (`ariadne-console/tui/viewport.rs::the_console_opens_at_the_bottom_when_the_cursor_position_cannot_be_read`)
-  and a finished block still reaches the scrollback
-  (`::a_finished_block_reaches_the_scrollback_when_the_cursor_position_cannot_be_read`).
+  and a line that scrolls off the top still reaches the scrollback
+  (`::a_line_reaches_the_scrollback_when_the_cursor_position_cannot_be_read`).
   A terminal that answered at the open and answers nothing after — the
   terminal once the key stream reads it — is never asked again, and a
-  finished block still reaches the scrollback
-  (`::a_finished_block_reaches_the_scrollback_when_only_the_first_cursor_query_is_answered`).
-- The pane is as tall as the terminal, with its pinned rows last and blank
-  rows over them, before the first block and after a turn of two lines
-  whose every block is in the scrollback
-  (`ariadne-console/tui/viewport.rs::an_idle_pane_takes_the_whole_terminal_with_its_pinned_rows_last`),
-  and the block in work is drawn right over the status row
-  (`::the_block_in_work_is_drawn_right_over_the_status_row`). The status
+  line still reaches the scrollback
+  (`::a_line_reaches_the_scrollback_when_only_the_first_cursor_query_is_answered`).
+- The pane is as tall as the terminal, with its pinned rows last. On a
+  terminal of 72 by 40, between turns, the banner, a prompt and an answer
+  are on the screen in order, the answer's blank line on the row over the
+  status row, blank rows above the banner and the scrollback empty
+  (`ariadne-console/tui/viewport.rs::between_turns_the_transcript_ends_on_the_row_over_the_status_row`).
+  While a block is written, the prompt before it stays above it
+  (`::while_a_block_is_written_the_prompt_before_it_stays_above_it`), and
+  each of the 30 lines of a block in work shows while it is written
+  (`::each_line_of_a_block_in_work_shows_while_it_is_written`). The status
   row, the box and the footer are the last rows of the screen at 60 by 20,
   80 by 24 and 120 by 40, on the test backend and on the ANSI backend read
   back by a terminal emulator, through every step of the whole scenario
   (`ariadne-console/tui/scenario.rs::the_whole_pane_draws_at_60_by_20`,
   `::the_whole_pane_draws_at_80_by_24`, `::the_whole_pane_draws_at_120_by_40`).
-  Each of the 30 lines of a block in work shows while it is written on a
-  terminal of 40 rows
-  (`::each_line_of_a_block_in_work_shows_while_it_is_written`). A block of
-  100 lines takes the 40 rows and shows its tail, and once committed is in
-  the scrollback once, in order, with every line committed before it
-  (`::a_block_longer_than_the_terminal_takes_every_row_and_reaches_the_scrollback_once`),
-  and the box stays on the bottom rows once it is committed, the screen
-  over them blank
-  (`::the_box_stays_on_the_bottom_rows_once_a_long_block_is_committed`). A
-  committed block is scrolled into the scrollback through the pane's top
+  With the screen full, a finished block of 100 lines leaves through the
+  top: the scrollback and the screen hold every line once, in order, the
+  lines before it too, and the screen ends with the last line over the
+  status row
+  (`ariadne-console/tui/viewport.rs::a_finished_block_of_100_lines_leaves_through_the_top_each_line_once`).
+  A block in work taller than the screen shows its tail, and its head goes
+  into the scrollback only once it is finished
+  (`::a_block_in_work_taller_than_the_screen_shows_its_tail_and_keeps_its_head_until_it_ends`).
+  A committed line is scrolled into the scrollback through the pane's top
   row, with no full clear and no pinned row painted again
-  (`::a_committed_block_is_scrolled_away_and_the_pane_is_not_painted_again`):
+  (`::a_committed_line_is_scrolled_away_with_no_full_clear_and_no_pinned_row_painted`):
   a region of one row on the top row puts that row alone in the
   scrollback, on the ANSI backend read back by an emulator as on the test
   backend
@@ -900,8 +929,8 @@ goal id to a seat (014).
   and the loop returns that error to its host
   (`::the_loop_returns_the_error_of_a_pane_that_cannot_be_opened_again`).
   A backend
-  that answers one cursor query is asked no other through a turn and a
-  resize
+  that answers one cursor query is asked no other through a turn, a
+  resize and the close
   (`::no_cursor_query_follows_the_open_through_a_turn_and_a_resize`),
   a resize to a shorter terminal keeps the whole pane on the screen
   (`::a_resize_to_a_shorter_terminal_keeps_the_whole_pane_on_the_screen`),
@@ -909,8 +938,13 @@ goal id to a seat (014).
   test backend shows while a block is written and once it is committed
   (`::the_ansi_backend_shows_the_rows_the_test_backend_shows_through_a_turn`).
   A pending permission question on a terminal of 24 rows shows its question
-  and every option
-  (`::a_pending_question_on_a_terminal_of_24_rows_shows_its_question_and_every_option`).
+  and every option, its diff folded to the room left
+  (`::a_pending_question_on_a_terminal_of_24_rows_shows_its_question_and_every_option`),
+  and the blocks before it above it as far as they fit
+  (`::a_pending_question_keeps_the_blocks_before_it_above_it_as_far_as_they_fit`).
+- A block part-way into the scrollback keeps the fold its first lines had,
+  and Ctrl-O changes the blocks after it
+  (`ariadne-console/tui/mod.rs::a_block_part_way_into_the_scrollback_keeps_its_fold_and_ctrl_o_changes_the_ones_after`).
 - Streamed chunks append to the block already open
   (`ariadne-console/tui/mod.rs::streamed_chunks_append_to_the_agent_block_that_is_already_open`),
   a chunk that arrives after the whole of its turn is not drawn again
@@ -1004,7 +1038,9 @@ goal id to a seat (014).
   until the next snapshot says it is back
   (`::a_dropped_frame_says_reconnecting_until_the_next_snapshot`), and its
   fresh snapshot is not printed twice
-  (`::a_reconnect_redraws_the_fresh_snapshot_without_repeating_the_scrollback`).
+  (`::a_reconnect_redraws_the_fresh_snapshot_without_repeating_the_scrollback`)
+  and keeps a refused prompt on the screen
+  (`::a_reconnect_keeps_a_refused_prompt_on_the_screen`).
   The loop reads any source and writes any sink: every pane test above
   drives it from an in-memory one, with no server. The CLI's source reads
   the daemon's stream as frames and dials it again when it drops
@@ -1052,19 +1088,21 @@ goal id to a seat (014).
 - The blank end of a row is erased, not written as spaces
   (`ariadne-console/tui/viewport.rs::the_blank_end_of_a_row_is_erased_and_not_written_as_spaces`).
 - A resize to a shorter, a taller, a narrower and a wider terminal leaves
-  no stale row and one status row on the screen, and each block once in the
-  scrollback
+  no stale row, one status row and the tail of the transcript over the
+  pinned rows on the screen, and each block once in the scrollback and the
+  screen
   (`ariadne-console/tui/viewport.rs::a_resize_either_way_leaves_no_stale_row_and_one_status_row`),
   and a pane on the top row is erased row by row
   (`::a_pane_on_the_top_row_is_erased_row_by_row_and_never_from_the_corner`).
 - The daemon's console clears the scrollback and draws the whole
-  transcript again once a resize settles, each block once
+  transcript again once a resize settles, each block once, ending on the
+  row over the status row
   (`ariadne-console/tui/viewport.rs::a_console_that_redraws_whole_draws_the_transcript_again_once_a_resize_settles`),
   and the CLI's never clears the scrollback
   (`::a_console_that_fits_in_place_never_clears_the_scrollback`).
-- The shell comes back on the row under the last block: the top row of the
-  screen, right under the scrollback, where every block is in it
-  (`ariadne-console/tui/viewport.rs::the_shell_comes_back_right_under_the_last_block_in_the_scrollback`),
+- At the close the scrollback and the screen read as the transcript, each
+  line once, and the shell comes back on the row under the last block
+  (`ariadne-console/tui/viewport.rs::at_the_close_the_transcript_reads_once_and_the_shell_comes_back_under_it`),
   and under a block the close leaves on the screen
   (`::the_shell_comes_back_under_a_block_the_close_leaves_on_the_screen`),
   and the CLI says the session has ended where it has

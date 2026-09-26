@@ -1572,10 +1572,11 @@ mod tests {
         let said = event("agent_message", "done", json!({"text": "done"}));
         let stop = |reason: &str| event("stop", reason, json!({"stop_reason": reason}));
 
-        // The transcript: what is above the status line.
+        // The transcript: what is above the status line. The blank line
+        // under the block, which a finished block ends on, is not the stop's.
         let transcript = |events: &[AgentEventDto]| {
             let (shown, _) = drawn(events);
-            shown[..shown.find("author").unwrap()].to_string()
+            shown[..shown.find("author").unwrap()].trim().to_string()
         };
         let before = transcript(std::slice::from_ref(&said));
         let after = transcript(&[said.clone(), stop("end_turn")]);

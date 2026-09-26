@@ -61,8 +61,8 @@ impl Pair {
             events: Vec::new(),
             width,
         };
-        pair.on_test.banner(&mut pair.test).unwrap();
-        pair.on_ansi.banner(&mut pair.ansi).unwrap();
+        pair.on_test.banner();
+        pair.on_ansi.banner();
         pair.show();
         pair
     }

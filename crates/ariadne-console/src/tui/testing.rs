@@ -143,8 +143,8 @@ pub(super) fn pane() -> Terminal<Anchored<TestBackend>> {
 }
 
 /// Everything the terminal [`pane`] makes has shown: its scrollback, where
-/// the finished blocks are, and then its screen, which the pane holds
-/// whole. The blank rows the bottom-aligned pane leaves between them are
+/// the lines that scrolled off the top are, and then its screen, which the
+/// pane holds whole. The blank rows the bottom-aligned pane leaves between them are
 /// left out, so a test reads the transcript as one block of text.
 pub(super) fn shown(terminal: &Terminal<Anchored<TestBackend>>) -> String {
     let backend = terminal.backend().under();
@@ -164,8 +164,8 @@ pub(super) fn screen(terminal: &Terminal<TestBackend>) -> String {
 }
 
 /// The rows of `buffer` from its first row that holds something: the run of
-/// blank rows a bottom-aligned pane leaves over the block it is writing is
-/// not part of what the transcript says.
+/// blank rows a bottom-aligned pane leaves over a short transcript is not
+/// part of what the transcript says.
 pub(super) fn filled(buffer: &Buffer) -> String {
     let shown = rows(buffer);
     let kept: Vec<&str> = shown.lines().skip_while(|row| row.is_empty()).collect();

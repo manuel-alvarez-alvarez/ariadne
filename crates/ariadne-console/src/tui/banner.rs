@@ -182,7 +182,7 @@ mod tests {
     fn the_banner_precedes_the_first_block_and_a_snapshot_does_not_repeat_it() {
         let mut console = crate::tui::Console::new(header());
         let mut terminal = crate::tui::testing::terminal();
-        console.banner(&mut terminal).unwrap();
+        console.banner();
         console.apply(&crate::tui::testing::event(
             "user_prompt_submit",
             "first",

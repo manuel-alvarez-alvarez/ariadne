@@ -117,12 +117,25 @@ impl Console {
         self.draw_footer(frame, footer);
     }
 
-    /// Every line of the live area, `width` columns wide: the blocks from
-    /// `from` on — the ones not yet in the scrollback — and the picker of a
+    /// Every line of the transcript not yet in the scrollback, `width`
+    /// columns wide: the banner and the finished blocks, each with the blank
+    /// line under it, then the rest of the blocks and the picker of a
     /// question waiting for its answer, folded to `height` rows. One blank
     /// line separates two blocks, as in the scrollback. The head of a long
     /// block is in it too: the area draws the tail, on its last rows (008).
-    pub fn live_lines(&self, from: usize, width: u16, height: u16) -> Vec<Line<'static>> {
+    pub fn live_lines(&self, width: u16, height: u16) -> Vec<Line<'static>> {
+        let (pieces, from) = self.finished(width);
+        let mut lines = pieces.concat();
+        lines.extend(self.unfinished(from, width, height));
+        lines
+    }
+
+    /// The lines of the blocks from `from` on — the ones still being
+    /// written, or held back by one that is — and the picker of a question
+    /// waiting for its answer, folded to `height` rows, one blank line
+    /// between two of them. They are under the finished ones, which end on
+    /// their blank line, and go into the scrollback once they are finished.
+    pub(super) fn unfinished(&self, from: usize, width: u16, height: u16) -> Vec<Line<'static>> {
         let width = usize::from(width);
         let height = usize::from(height);
         let asking = self.question();
@@ -154,17 +167,17 @@ impl Console {
         lines
     }
 
-    /// The blocks not yet in the scrollback, and the picker of a question
-    /// waiting for its answer, on the rows right above the status row.
+    /// The transcript not yet in the scrollback on the rows right above the
+    /// status row.
     ///
     /// The area is every row over the pinned ones, and what is drawn is its
-    /// last rows: the live area is bottom-aligned, so the block being
-    /// written ends where the status row begins and the rows over it stay
-    /// blank (008).
+    /// last rows: the live area is bottom-aligned, so the transcript ends
+    /// where the status row begins, and the rows over it are blank only
+    /// while it is shorter than the area (008).
     fn draw_live(&self, frame: &mut Draw, area: Rect) {
-        let lines = self.live_lines(self.committed, area.width, area.height);
-        // The tail is what is happening now; the head of a long block has
-        // scrolled past, exactly as it would have in the scrollback.
+        let lines = self.live_lines(area.width, area.height);
+        // The tail is what is happening now; the head of a long block in
+        // work is held back from the scrollback until the block is finished.
         let skip = lines.len().saturating_sub(usize::from(area.height));
         let lines = lines[skip..].to_vec();
         let height = u16::try_from(lines.len())
@@ -683,7 +696,7 @@ mod tests {
         let live = screen(&terminal);
         console.commit(&mut terminal).unwrap();
         assert_eq!(
-            console.live_lines(console.committed, 72, 30).len(),
+            console.live_lines(72, 30).len(),
             1,
             "only the open block is live"
         );

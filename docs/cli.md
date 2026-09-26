@@ -99,12 +99,20 @@ resumed or revived session can and cannot do.
 In a terminal the console is an inline pane as tall as the terminal. Its last
 rows are pinned: a status row, the input box, and a footer. So the input box
 is always on the bottom rows of the screen, however long or short the
-transcript is. The block the agent is writing sits right above the status
-row, and when the block is taller than the screen you see its last lines.
-The rows above it are blank. A finished block moves into the terminal's own
-scrollback, so scroll up to read the conversation so far. When you leave,
-the pane is erased and your shell prompt comes back right under the last
-block, so the transcript stays in your scrollback.
+transcript is. The transcript fills the screen above the status row, as in a
+chat app: its last line is right over the status row, and the lines before
+it go up the screen. Between turns you see the end of the conversation, the
+last answer over the status row. During a turn you see the block the agent
+is writing over the status row, with your prompt and the blocks before it
+above it; when that block is taller than the screen you see its last lines.
+Blank rows are on the screen only while the transcript is shorter than the
+screen, and they are at the top. A line moves into the terminal's own
+scrollback only when it scrolls off the top of the screen, so scroll up to
+read the conversation so far. A line of the block the agent is still writing
+waits until the block is finished. When you leave, the rest of the
+transcript is put on the top rows of the screen, the pane is erased, and
+your shell prompt comes back right under the last block, so the transcript
+stays in your scrollback, each line once.
 
 ```
  author · claude:opus · running   ⠹ thinking 12s
@@ -134,7 +142,9 @@ folded, which is where each attach starts, and whole, which draws every line
 of a tool's output, a diff, a thought and a daemon prompt; press it again to
 fold them back. A reconnect keeps whichever the attach had. A block that
 leaves for the scrollback while the pane is whole keeps every line there too,
-since a block already in the scrollback cannot be drawn again. The footer's
+since a block already in the scrollback cannot be drawn again. A block that
+is part-way into the scrollback keeps the fold its first lines had, and
+Ctrl-O changes the blocks after it. The footer's
 last hint says which way the pane is set, `ctrl-o unfold` or `ctrl-o fold`,
 and is the first hint dropped on a narrow terminal. A pending permission
 question keeps its own fold, sized to the room its options leave, whichever
@@ -145,18 +155,25 @@ items, the least important first: the status row drops the model, then the
 seat, the clock, and what the turn is doing, and keeps the session's status to
 the last; the footer drops its later key hints, then the tokens, and keeps the
 first hint to the last. Resizing the terminal erases the pane and draws it
-again at the new size, with the input box on the new bottom rows.
+again at the new size, with the input box on the new bottom rows and the end
+of the transcript over it at the new width. On a shorter terminal the lines
+that no longer fit move into the scrollback. A taller terminal has blank rows
+at the top, since a line in the scrollback does not come back onto the
+screen.
 
-A resize has two limits in the scrollback, because the terminal moves its
-rows before the console hears of the resize, and the console does not ask the
+A resize has limits in the scrollback, because the terminal moves its rows
+before the console hears of the resize, and the console does not ask the
 terminal where they went:
 
 - In tmux, a taller window pulls rows of the history down onto the screen.
   The pane erases them when it is drawn again, so they are gone from the
   scrollback. Attach again to see the whole transcript.
+- A terminal that moves the top rows of its screen into the scrollback when
+  it is made shorter keeps them there, and the pane draws them again, so
+  those lines are in the scrollback twice.
 - On a narrower window, the terminal rewraps the pane before it is drawn
-  again. Rows of the old pane that the rewrap pushed up, most often blank
-  ones, can stay in the scrollback.
+  again. Rows of the old pane that the rewrap pushed up can stay in the
+  scrollback.
 
 The input box has a dim rule above and below it, without side borders. Its
 prompt is `❯ `, and continued rows align under the text:
@@ -172,9 +189,9 @@ An empty box says `Tell the agent what to do` in dim text. The hint is not
 part of the prompt. The box grows to four text rows, then scrolls with the
 cursor.
 
-Before the transcript, the scrollback gets a short welcome banner naming the
-seat, task (or orchestrator goal), model and effort, repository, and session,
-and one blank line under it.
+The transcript starts with a short welcome banner naming the seat, task (or
+orchestrator goal), model and effort, repository, and session, and one blank
+line under it. It scrolls into the scrollback like any other line.
 On a narrow terminal it uses the same lines without a box; long titles are
 shortened to fit.
 
