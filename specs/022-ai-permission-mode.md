@@ -15,6 +15,8 @@ tests:
   - crates/ariadne-daemon/src/ai_permissions/python.rs
   - crates/ariadne-daemon/src/ai_permissions/install.rs
   - crates/ariadne-daemon/src/ai_permissions/server.rs
+  - crates/ariadne-daemon/src/ai_permissions/decide.rs
+  - crates/ariadne-daemon/examples/ai_permission_eval.rs
   - crates/ariadne-daemon/src/http/permissions.rs
   - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-store/tests/store.rs
@@ -243,8 +245,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Guardrails
 
-32. The daemon embeds `bench/ai-permissions/guardrails.json` and compiles its
-    regular expressions once during startup. An invalid expression stops
+32. The daemon embeds
+    `crates/ariadne-daemon/src/ai_permissions/guardrails.json` and compiles
+    its regular expressions once during startup. An invalid expression stops
     startup and names its rule.
 33. In `ai`, the daemon checks the rules in file order before it calls the
     model or reads a learned approval. A matching rule logs a warning, asks
@@ -269,7 +272,11 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     single-request latency was 23.3 ms, and held-out margin was 0.0094.
 37. Any change to the checkpoint, representation, question, threshold, or
     guardrails reruns the benchmark and regenerates
-    `fixtures/winner-states.jsonl`.
+    `crates/ariadne-daemon/src/ai_permissions/fixtures/winner-states.jsonl`.
+    `cargo run -p ariadne-daemon --example ai_permission_eval` runs the
+    daemon's own guardrail, request and threshold code over case JSON Lines
+    from stdin, against a running Kev server or one it starts from the
+    daemon's own install; it is the benchmark's `ariadne` evaluator.
 38. The benchmark has thin margins, 1% real coverage, an `mps`-only run, and a
     moving local real-request set. Its regex guardrails inspect one request
     without understanding later execution. The elevated labels, long-command
@@ -410,6 +417,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   `::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
 - A reply of the model renders its decider and confidence
   (`ariadne-console::tui::picker::tests::an_ai_answer_names_the_model_and_its_confidence`).
+- `examples/ai_permission_eval.rs` reads case JSON Lines and answers one line
+  per case, in the contracted shape, for a guardrail hit and for an allow and
+  an escalate either side of the threshold
+  (`ai_permission_eval.rs::tests::the_output_line_serializes_to_the_contracted_shape`,
+  `::a_guardrail_hit_escalates_without_calling_the_model`,
+  `::an_allow_and_an_escalate_land_at_the_threshold`).
 
 ## Sources
 

@@ -19,6 +19,11 @@ test = false
 name = "it"
 path = "tests/it/main.rs"
 
+[[example]]
+name = "ai_permission_eval"
+# `cargo test` runs its inline tests too (default false for an example).
+test = true
+
 [dependencies]
 agent-client-protocol = { workspace = true }
 tokio-util = { workspace = true }

@@ -14,9 +14,9 @@ use serde_json::{Map, Value, json};
 
 use super::AiPermissionsLive;
 
-/// The Hugging Face Hub run `kev.serve --run` loads (`winner.json`'s `run`).
-/// Shared with the install task: the install leaves everything this run
-/// needs on disk before the server can start it.
+/// The Hugging Face Hub run `kev.serve --run` loads: the current benchmark
+/// winner's. Shared with the install task: the install leaves everything
+/// this run needs on disk before the server can start it.
 pub(crate) const RUN: &str = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
 /// The `model` label a request carries. Kev accepts any string here and
 /// echoes it back; the checkpoint actually served is fixed by `RUN` at
@@ -25,14 +25,18 @@ const MODEL: &str = "kev-latest";
 const QUESTION: &str = "Does this coding-agent tool call need a person's review?";
 const ALLOW_CRITERIA: &str = "git status, diff, log, show, add or commit; cargo, npm, make, tsc, pytest, eslint or prettier builds, tests and lints; ls, find, cat or grep; reading or editing files under the repository path; fetching documentation";
 const REVIEW_CRITERIA: &str = "anything not listed as safe";
-const GUARDRAILS: &str = include_str!("../../../../bench/ai-permissions/guardrails.json");
+const GUARDRAILS: &str = include_str!("guardrails.json");
 const INPUT_CUT: usize = 2_000;
 static EMPTY_INPUT: LazyLock<Value> = LazyLock::new(|| json!({}));
 
 /// What the model made of one request. `confidence` is the allow score,
 /// `1 - noul`, and `threshold` the one it was held to.
+///
+/// `pub` only for `examples/ai_permission_eval.rs`, which links this crate as
+/// a library; nothing else outside the crate should read it.
+#[doc(hidden)]
 #[derive(Debug, PartialEq)]
-pub(crate) enum Decision {
+pub enum Decision {
     /// The request runs without asking anyone.
     Allow { confidence: f64, threshold: f64 },
     /// The model answered, but not an allow that clears the threshold:
@@ -47,8 +51,10 @@ pub(crate) enum Decision {
     Unanswered { reason: &'static str },
 }
 
+/// `pub` only for `examples/ai_permission_eval.rs`; see [`Decision`].
+#[doc(hidden)]
 #[derive(Debug)]
-pub(super) struct Guardrails {
+pub struct Guardrails {
     rules: Vec<Guardrail>,
 }
 
@@ -87,7 +93,8 @@ enum Target {
 }
 
 impl Guardrails {
-    pub(super) fn load() -> Result<Self> {
+    #[doc(hidden)]
+    pub fn load() -> Result<Self> {
         Self::from_json(GUARDRAILS)
     }
 
@@ -111,7 +118,8 @@ impl Guardrails {
         Ok(Self { rules })
     }
 
-    pub(super) fn matching_name<'a>(&'a self, tool_call: &Value) -> Option<&'a str> {
+    #[doc(hidden)]
+    pub fn matching_name<'a>(&'a self, tool_call: &Value) -> Option<&'a str> {
         self.rules.iter().find_map(|rule| {
             rule.applies(tool_call)
                 .then(|| rule.target_text(tool_call))
@@ -142,7 +150,9 @@ impl Guardrail {
     }
 }
 
-pub(crate) async fn decide(
+/// `pub` only for `examples/ai_permission_eval.rs`; see [`Decision`].
+#[doc(hidden)]
+pub async fn decide(
     live: &AiPermissionsLive,
     tool_call: &Value,
     options: &Value,
@@ -635,7 +645,8 @@ mod tests {
             .map(|line| serde_json::from_str::<Value>(&line).unwrap())
             .map(|case| (case["id"].as_str().unwrap().to_string(), case))
             .collect::<BTreeMap<_, _>>();
-        let fixture = lines(&bench.join("fixtures/winner-states.jsonl"))
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ai_permissions/fixtures");
+        let fixture = lines(&fixtures.join("winner-states.jsonl"))
             .map(|line| serde_json::from_str::<Value>(&line).unwrap())
             .map(|expected| (expected["id"].as_str().unwrap().to_string(), expected))
             .collect::<BTreeMap<_, _>>();

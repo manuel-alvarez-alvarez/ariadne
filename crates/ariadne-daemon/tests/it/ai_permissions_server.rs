@@ -25,7 +25,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 http.server.HTTPServer((host, port), Handler).serve_forever()
 "#;
 
-/// `bench/ai-permissions/winner.json`'s `run`, `decide::RUN`'s value.
+/// `decide::RUN`'s value, the current benchmark winner's run.
 const RUN: &str = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
 
 fn python() -> String {
