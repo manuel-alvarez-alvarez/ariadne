@@ -177,13 +177,12 @@ to the console when they exceed the model's useful input window, and score
 changes from another device or numeric precision can matter near the
 threshold.
 
-A follow-up comparison, recorded in
-[`REPORT-laya-vs-kev.md`](../bench/ai-permissions/REPORT-laya-vs-kev.md), re-scored the same
-extended sets against two sizes of a second model, Kev, and picked Kev-4B: it
-covers more safe cases (136 of 301) and more real requests (54 of 301) with a
-higher AUROC (0.9845), at ten times the single-request latency (about 230 ms
-against 30 ms) and roughly four times the resident memory (8 to 16 GB against
-2.7 GB) while the server is enabled. That trade is what ships.
+A follow-up comparison re-scored the same extended sets against two sizes of a
+second model, Kev, and picked Kev-4B: it covers more safe cases (136 of 301)
+and more real requests (54 of 301) with a higher AUROC (0.9845), at ten times
+the single-request latency (about 230 ms against 30 ms) and roughly four times
+the resident memory (8 to 16 GB against 2.7 GB) while the server is enabled.
+That trade is what ships.
 
 Once the install is ready, the daemon runs the model's local server on a loopback
 port and keeps its selected weights in memory for permission decisions. It

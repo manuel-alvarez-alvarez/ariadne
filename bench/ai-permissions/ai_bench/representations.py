@@ -2,7 +2,7 @@
 
 A representation is a pure function of the case's request and repository. `json` with
 `fields = title, kind, input, repository, options` reproduces the production state built by
-`crates/ariadne-daemon/src/ai_permissions/decide.rs` exactly -- see `states` in `harness.py`.
+`crates/ariadne-daemon/src/ai_permissions/decide.rs` exactly.
 """
 from __future__ import annotations
 

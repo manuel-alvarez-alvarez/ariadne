@@ -2,8 +2,8 @@
 
 Two backends, each its own class below, both scoring `config["question"]` against the same
 `build_state`/`build_question` output and returning the same per-case result shape (state,
-questions, guardrail, answer, latency_ms), so `harness.py` and `experiments.py` need not care
-which one a configuration names:
+questions, guardrail, answer, latency_ms). The evaluator interface normalizes
+these backend details into the benchmark result shape:
 
 - `laya` (`Predictor`): calls `Router().predict_batch` directly, in the venv at
   `~/.ariadne/ai-permissions/venv`, against the checkpoints already downloaded under
@@ -13,8 +13,7 @@ which one a configuration names:
   the venv at `~/.ariadne/ai-permissions/kev-venv`, against `HF_HOME=~/.ariadne/ai-permissions/hf`.
 
 One interpreter ever imports one of the two (`laya` needs Python 3.14; `kev` needs 3.12/3.13 and a
-different torch), so `available()` lets a caller (`experiments.py`'s answer cache) tell "not
-installed here" from every other failure.
+different torch).
 """
 from __future__ import annotations
 

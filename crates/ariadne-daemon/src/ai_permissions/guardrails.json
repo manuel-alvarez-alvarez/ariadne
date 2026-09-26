@@ -134,7 +134,7 @@
   {
     "name": "command-beyond-the-window",
     "category": "window",
-    "why": "The window probe (results/stage3b/window.md) shows a benign prefix of 1,000 characters hides the dangerous tail from the model; it cannot read what falls outside its state budget. `[\\s\\S]` counts every character, newlines included, where `.` would stop at the first line break of a multiline command.",
+    "why": "A benign prefix of 1,000 characters can hide a dangerous tail from the model. `[\\s\\S]` counts every character, including newlines, while `.` stops at a newline.",
     "applies_to": {
       "names": [
         "Bash"

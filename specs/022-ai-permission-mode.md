@@ -152,7 +152,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 18. While the model is enabled and its install is ready, the daemon runs
     `<home>/ai-permissions/venv/bin/python -m kev.serve` as its child, in a
     process group of its own, with `--run` the pinned Hugging Face Hub run
-    `decide::RUN` names (`bench/ai-permissions/winner.json`'s `run`), `--host`
+    `decide::RUN` names, `--host`
     and `--port` an available loopback port. `HF_HOME` is
     `<home>/ai-permissions/hf` and `HF_HUB_OFFLINE=1`, so nothing downloads at
     startup: the install leaves everything the run needs on disk first. The
@@ -185,7 +185,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     installer downloads what that run needs onto disk before the model is
     ready. The installer receives `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN`,
     and `AI_PERMISSIONS_KEV_COMMIT`.
-24. The default threshold is 0.56, `winner.json`'s. Existing settings rows
+24. The default threshold is 0.56. Existing settings rows
     keep their stored threshold.
 
 ## Decisions
@@ -261,15 +261,19 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Benchmark
 
-35. `bench/ai-permissions/` holds the harness, cases, configurations, results,
-    report, winner, guardrails, and parity fixture. The commands to reproduce
-    the run are in `bench/ai-permissions/README.md` and `REPORT.md`.
-36. The 2026-09-26 run at git sha
-    `3ff094bd24006c8137c5008fd932fadb649970e3` tested 75 configurations. The
-    winner covered 30 of 127 safe cases (23.62%) and 3 of 301 real requests
-    (1.00%). It allowed none of 89 adversarial development cases, 168 held-out
-    cases, or 44 elevated cases. Its AUROC was 0.9808, ECE was 0.4484, median
-    single-request latency was 23.3 ms, and held-out margin was 0.0094.
+35. `bench/ai-permissions/` holds case JSON Lines, evaluator code, `run.py`,
+    the `laya` and `kev` configurations, its README, and tests. Evaluators take
+    an optional configuration and ordered cases, then return ordered results
+    with an id, optional allow score, `allow` or `escalate` label, optional
+    guardrail, and latency. The `laya`, `kev`, and daemon-backed `ariadne`
+    evaluators use that interface.
+36. `run.py validate` keeps the case validation contract. `run.py run` accepts
+    one or more `--evaluator name[=config]` values, uses a bundled config when
+    one exists, defaults to development cases without held-out cases, and can
+    add read-only real cases, threshold sweeps, and per-case CSV output. Its
+    table reports safe coverage, elevated and adversarial approvals, AUROC,
+    positive-class precision, recall, F1, accuracy, median latency, and real
+    coverage when requested. It writes no result Markdown.
 37. Any change to the checkpoint, representation, question, threshold, or
     guardrails reruns the benchmark and regenerates
     `crates/ariadne-daemon/src/ai_permissions/fixtures/winner-states.jsonl`.
@@ -277,10 +281,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     daemon's own guardrail, request and threshold code over case JSON Lines
     from stdin, against a running Kev server or one it starts from the
     daemon's own install; it is the benchmark's `ariadne` evaluator.
-38. The benchmark has thin margins, 1% real coverage, an `mps`-only run, and a
-    moving local real-request set. Its regex guardrails inspect one request
-    without understanding later execution. The elevated labels, long-command
-    window, and device precision remain known limits.
+38. Benchmark scores remain measurements from a local model, device, and
+    changing read-only real-request sample. Regex guardrails inspect one request
+    without understanding later execution, and elevated labels, long commands,
+    and device precision remain limits.
 
 ## Acceptance criteria
 
@@ -423,6 +427,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`ai_permission_eval.rs::tests::the_output_line_serializes_to_the_contracted_shape`,
   `::a_guardrail_hit_escalates_without_calling_the_model`,
   `::an_allow_and_an_escalate_land_at_the_threshold`).
+- The benchmark validates every committed case file and uses development files
+  by default (`bench/ai-permissions/run.py validate bench/ai-permissions/cases/`).
+- The benchmark metrics calculate allow-positive precision, recall, F1,
+  accuracy, AUROC, and coverage (`bench/ai-permissions/tests/test_metrics.py`).
+- The daemon-backed evaluator parses one ordered result per input case from its
+  command (`bench/ai-permissions/tests/test_ariadne_evaluator.py`).
 
 ## Sources
 
@@ -432,8 +442,8 @@ from its `serve` extra (not the unrelated PyPI package of the same name). The
 daemon keeps to its interface: `<venv>/bin/python -m kev.serve --run <run>
 --host <host> --port <port>`, `HF_HOME` and `HF_HUB_OFFLINE=1` so nothing
 downloads once the model is serving, and `GET /v1/models` for health. `<run>`
-is `decide::RUN`, the Hugging Face Hub id `bench/ai-permissions/winner.json`
-pins (`jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`), which
+is `decide::RUN`, the Hugging Face Hub id
+`jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`, which
 the installer downloads onto disk before the server is ready.
 
 `crates/ariadne-core/src/lib.rs`,
