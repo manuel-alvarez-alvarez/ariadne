@@ -213,9 +213,17 @@ Once the call has ended, the head says how long it took. A call that a
 cancelled turn left running keeps its `◐`, and goes to the scrollback with
 the rest of the turn.
 Its output is folded to its last lines under the head, with a count of the
-lines left out, and hangs from the head by `⎿`, until Ctrl-O unfolds it. A
-file change is a diff: the file's name, then the hunks with added and removed
-lines in colour, folded past a page with a count, until Ctrl-O unfolds it.
+lines left out, and hangs from the head by `⎿`, until Ctrl-O unfolds it. The
+output itself draws in the terminal's own foreground, not dimmed, so the
+text you most want to read — a file, a compiler error, a failing test — is
+never the hardest to see; the `⎿` gutter, the count of hidden lines, and a
+thought stay dim. A file change is a diff: the file's name, then the hunks
+with added and removed lines in colour, folded past a page with a count,
+until Ctrl-O unfolds it. Where a hunk replaces as many lines as it removes,
+the words that changed between a removed line and the one that replaces it
+draw bold, so the one word that moved stands out without reading the two
+side by side, word by word; a rewritten line that shares few words with its
+replacement draws plain instead.
 
 ```
 ✓ $ cargo nextest run  8.2s

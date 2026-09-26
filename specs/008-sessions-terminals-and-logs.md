@@ -406,16 +406,26 @@ goal id to a seat (014).
     text of its `content` entries otherwise, and the structure as JSON only
     where there is neither. It is folded to its last lines with a count of
     the hidden ones, trailing blank lines trimmed, under the console's fold
-    state (rule 27); the fold is the thought's. Its first row starts with
-    `⎿ ` two columns under the head's mark, which
-    ties it to the call, and its next rows and the diff's rows start at the
-    column of its text.
+    state (rule 27); the fold is the thought's. It draws in the terminal's
+    own foreground, not dimmed, since a file's contents, a compiler error and
+    a failing test all land there and are the text a reader most wants to
+    read. Its first row starts with `⎿ ` two columns under the head's mark,
+    which ties it to the call, and its next rows and the diff's rows start at
+    the column of its text; the gutter mark, the hidden-line count and a
+    thought stay dim.
     A tab in the output takes the columns to the next stop of eight, since a
     cell drawn with a tab draws nothing. A `diff` content entry draws as a
     unified diff under a file header — the path, or the old name to the new
     where they differ — with added, removed, hunk and context lines each in
     their own colour, folded past a line limit with a count, under the same
-    fold state. Where the agent
+    fold state. Where a hunk
+    replaces as many lines as it removes, the i-th removed line pairs with
+    the i-th added line and the words that differ between the two draw bold,
+    the rest of each line plain in its own colour — except where the pair
+    shares less than half its words, when both draw plain with no bold at
+    all, a rewritten line never becoming a sea of bold. A hunk whose removed
+    and added runs differ in length draws every line plain, as a diff of only
+    removed or only added lines always has. Where the agent
     sent `oldText` and `newText` rather than a patch, the diff is the hunks
     between them with three lines of context, never every old line and then
     every new one. A patch that starts at its first hunk takes its file
@@ -779,6 +789,16 @@ goal id to a seat (014).
   (`ariadne-console/transcript.rs::an_old_and_a_new_text_fold_to_hunks_with_context`). A
   patch without file headers takes them from the entry's `path`
   (`ariadne-console/transcript.rs::a_patch_without_file_headers_takes_them_from_the_entry_path`).
+- A removed line and the added line that replaces it draw the one word that
+  differs bold on both, the rest of each line plain
+  (`ariadne-console/tui/blocks.rs::a_pair_that_differs_in_one_word_draws_that_word_bold_on_both_lines`);
+  a pair that shares less than half its words draws plain with no bold at all
+  (`::a_pair_that_shares_less_than_half_its_words_draws_plain_with_no_bold_at_all`);
+  a hunk whose removed and added runs differ in length draws every line plain
+  (`::a_hunk_whose_removed_and_added_runs_differ_in_length_draws_plain`); and a
+  diff of only added lines, or only removed lines, draws as it always has
+  (`::a_diff_of_added_lines_alone_draws_as_before`,
+  `::a_diff_of_removed_lines_alone_draws_as_before`).
 - A permission question draws the call's head and its command or its diff
   above the options
   (`ariadne-console/tui/picker.rs::a_permission_question_draws_the_call_above_its_options`),
@@ -796,6 +816,11 @@ goal id to a seat (014).
 - A call's first output row starts with `⎿ `, and its next rows and its diff
   rows start at the same column
   (`ariadne-console/tui/blocks.rs::the_output_and_the_diff_of_a_call_hang_from_its_head_at_one_column`).
+- A call's output draws in the terminal's own foreground, and the `⎿ ` gutter
+  and the hidden-line count stay dim
+  (`ariadne-console/tui/blocks.rs::a_calls_output_draws_in_the_terminal_foreground_and_the_gutter_and_count_stay_dim`);
+  a thought still draws dim
+  (`::a_thought_still_draws_dim`).
 - An error of 300 columns wraps in a pane of 80 with no character lost, as
   one long word
   (`ariadne-console/tui/blocks.rs::an_error_wider_than_the_pane_wraps_with_no_character_lost`)

@@ -25,6 +25,11 @@ pub const PICKED: Style = Style::new().fg(Color::Magenta).add_modifier(Modifier:
 pub const FRAME: Style = Style::new().add_modifier(Modifier::DIM);
 pub const FAIL: Style = Style::new().fg(Color::Red).add_modifier(Modifier::BOLD);
 pub const DIM: Style = Style::new().add_modifier(Modifier::DIM);
+/// A tool's output body: the terminal's own foreground, not dimmed. A file's
+/// contents, a compiler error and a failing test all land here, and it is
+/// the text a reader most wants — dimming it would make it the hardest to
+/// read.
+pub const OUTPUT: Style = Style::new();
 /// Markdown headings separate the parts of an agent answer.
 pub const HEADING: Style = Style::new()
     .fg(Color::Cyan)
