@@ -261,12 +261,15 @@ explicitly: the default, `cases/`, includes the held-out file.
 
 ## Kev
 
-`configs/kev-0.8b-winner.json` and `configs/kev-4b-winner.json` carry `winner.json`'s
-representation, fields, question and threshold (0.70) with `guardrails.json`, over
-`jaredpalmer/kev-0.8b` and `jaredpalmer/kev-4b` instead of a Laya checkpoint (`backend: "kev"`,
-`checkpoint: "kev-latest"`: Kev ignores the `model` field a request carries). Neither is tuned
-for Kev -- they exist to run the same configuration shape through both backends, not to name a
-new production candidate.
+`configs/kev-0.8b-winner.json` and `configs/kev-4b-winner.json` carry the shipped Laya
+configuration's representation, fields, question and threshold (0.70) with `guardrails.json`,
+over `jaredpalmer/kev-0.8b` and `jaredpalmer/kev-4b` instead of a Laya checkpoint (`backend:
+"kev"`, `checkpoint: "kev-latest"`: Kev ignores the `model` field a request carries). Neither is
+tuned for Kev -- they exist to run the same configuration shape through both backends. The Kev
+configurations the comparison tuned are `configs/k1-*` to `k5-*` (one stage each, both sizes,
+`run` pinned to the resolved Hub commit) and the two declared candidates
+`configs/kev-4b-candidate-<a|b>.json`; [`REPORT-laya-vs-kev.md`](REPORT-laya-vs-kev.md)
+is their record and `results/kev-<stage>/` their tables.
 
 `results/kev-smoke/summary.md` and `results/kev-smoke/scores.csv` are a committed run of
 `kev-0.8b-winner`:
@@ -307,18 +310,30 @@ served Kev score the same state to the same `noul`, as `kev.serve`'s own scoring
 
 ## The selection
 
-`REPORT.md` is the record of the experiments that chose the production configuration, and
-`winner.json` (also reachable as `configs/winner.json`) is that configuration with its metrics
-and the run that produced it. `results/matrix.md` lists every configuration tried, one row
-each, and `results/<stage>/summary.md` holds each stage's full tables. `fixtures/winner-states.jsonl`
-is `harness.py states --config winner` over every committed case, the file the daemon's
-implementation reproduces.
+Two reports, one per selection. [`REPORT.md`](REPORT.md) is the record of the 2026-09-26
+experiments that chose the Laya configuration the daemon ships (`configs/laya-winner.json`:
+`typed-decisions`, `structured`, the baseline `noul` criteria, 0.70, `guardrails.json`).
+[`REPORT-laya-vs-kev.md`](REPORT-laya-vs-kev.md) is the record of the comparison that followed on
+the extended sets: Laya re-scored against Kev-0.8B and Kev-4B under the same protocol, with the
+verdict. `winner.json` (also reachable as `configs/winner.json`) is the winner of that
+comparison, Kev-4B, with its metrics, its pins (`run`, `kev_commit`, `base`, `base_revision`),
+its latency and memory, and the two-sided table; its `backend` field says which backend it
+names. `results/matrix.md` lists every configuration tried, one row each (a stage that names
+its case counts ran on the extended sets), and `results/<stage>/summary.md` holds each stage's
+full tables.
+
+Two fixtures: `fixtures/winner-states.jsonl` is `harness.py states --config laya-winner` over
+every committed case, the request the daemon sends today and the file its parity test
+reproduces; `fixtures/kev-winner-states.jsonl` is `harness.py states --config winner`, the
+request a Kev daemon must send, described in the report's "What the daemon must send".
 
 `experiments.py` is the driver behind those files. It runs configurations against the
-development sets only (never the held-out file), caches model answers outside the worktree so
+development sets only (never the held-out files), caches model answers outside the worktree so
 a configuration seen once costs no forward pass again, counts the forward passes and wall
-time of each stage, and has the extra measurements the report cites: `tokens` (the head
-budget a question takes), `latency` (single-request median in-process), `guardrail-stats`
-(what each rule catches per set, `--real` included), `window` (a benign-prefix probe on the
-adversarial-dev Bash cases), `matrix` (rebuilds `results/matrix.md`). Run it with the venv's
-interpreter and `HF_HOME` as above; `experiments.py --help` lists the commands.
+time of each stage, and has the extra measurements the reports cite: `tokens` (the head
+budget a question takes, Laya only), `latency` (single-request median in-process),
+`guardrail-stats` (what each rule catches per set, `--real` included), `guarded-rank` (a stage
+re-read with `guardrails.json` attached, from the cache, ranked as stage 1 ranks), `window` (a
+benign-prefix probe on the adversarial-dev Bash cases), `matrix` (rebuilds
+`results/matrix.md`). Run it with the venv's interpreter and `HF_HOME` as above;
+`experiments.py --help` lists the commands.

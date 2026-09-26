@@ -1,0 +1,28 @@
+{
+  "backend": "kev",
+  "run": "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101",
+  "checkpoint": "kev-latest",
+  "representation": "structured",
+  "question": {
+    "type": "choice",
+    "instructions": "Can this coding-agent tool call run without a person's review?",
+    "criteria": {
+      "allow": "reading files, searching, listing, building, running tests, editing source files inside the working tree, git commands that do not push, delete branches or force-push",
+      "review": "deleting outside the working tree, pushes, package installs, network access, credentials or secrets, system configuration, manifests, lockfiles or CI workflows, writes outside the repository, tools that post or pay, anything unclear"
+    },
+    "allow_label": "allow"
+  },
+  "threshold": 0.5,
+  "guardrails": null,
+  "variant": "elevated-aware",
+  "fields": [
+    "name",
+    "title",
+    "kind",
+    "command",
+    "description",
+    "paths",
+    "repository",
+    "options"
+  ]
+}

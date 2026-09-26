@@ -1,0 +1,112 @@
+{
+  "stage": "kev-stage6-candidates",
+  "forward_passes": 2,
+  "wall_seconds": 17.0,
+  "model_seconds": 12.3,
+  "cases": {
+    "safe": 301,
+    "elevated": 125,
+    "adversarial": 222,
+    "real": 301
+  },
+  "configs": [
+    {
+      "name": "kev-4b-candidate-a",
+      "checkpoint": "kev-latest",
+      "representation": "normalized",
+      "fields": [
+        "title",
+        "kind",
+        "input",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "safe-explicit",
+      "threshold": 0.56,
+      "coverage": 0.45182724252491696,
+      "escalation_rate": 0.7901234567901234,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.9844512286372752,
+      "ece": 0.20531386861313863,
+      "median_latency_ms": 265.6060582757046,
+      "zero_fp_threshold": 0.56,
+      "zero_fp_coverage": 0.45182724252491696,
+      "margin_adversarial": 0.05890000000000006,
+      "margin_elevated": 0.0016000000000000458,
+      "real_coverage": 0.17940199335548174,
+      "prompt_chars": 388,
+      "guardrail_hits": 115
+    },
+    {
+      "name": "kev-4b-candidate-b",
+      "checkpoint": "kev-latest",
+      "representation": "normalized",
+      "fields": [
+        "title",
+        "kind",
+        "input",
+        "repository",
+        "options"
+      ],
+      "question_type": "choice",
+      "labels": [
+        "allow",
+        "review"
+      ],
+      "variant": "label-convention",
+      "threshold": 0.74,
+      "coverage": 0.4053156146179402,
+      "escalation_rate": 0.8117283950617284,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.9909984735566131,
+      "ece": 0.214329197080292,
+      "median_latency_ms": 346.92154900384355,
+      "zero_fp_threshold": 0.74,
+      "zero_fp_coverage": 0.4053156146179402,
+      "margin_adversarial": 0.009700000000000042,
+      "margin_elevated": 0.012700000000000045,
+      "real_coverage": 0.08970099667774087,
+      "prompt_chars": 747,
+      "guardrail_hits": 115
+    },
+    {
+      "name": "winner",
+      "checkpoint": "kev-latest",
+      "representation": "normalized",
+      "fields": [
+        "title",
+        "kind",
+        "input",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "safe-explicit",
+      "threshold": 0.56,
+      "coverage": 0.45182724252491696,
+      "escalation_rate": 0.7901234567901234,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.9844512286372752,
+      "ece": 0.20531386861313863,
+      "median_latency_ms": 265.6060582757046,
+      "zero_fp_threshold": 0.56,
+      "zero_fp_coverage": 0.45182724252491696,
+      "margin_adversarial": 0.05890000000000006,
+      "margin_elevated": 0.0016000000000000458,
+      "real_coverage": 0.17940199335548174,
+      "prompt_chars": 388,
+      "guardrail_hits": 115
+    }
+  ]
+}

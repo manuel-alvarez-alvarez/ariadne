@@ -1,5 +1,13 @@
 # Selecting the AI permission configuration by benchmark
 
+> **Laya against Kev.** A later comparison on the extended case sets,
+> [`REPORT-laya-vs-kev.md`](REPORT-laya-vs-kev.md), re-scored the winner below against Kev-0.8B
+> and Kev-4B under the same protocol and picked Kev-4B; `winner.json` now names that Kev
+> configuration, and the Laya configuration this report selected lives on as
+> `configs/laya-winner.json` (with `fixtures/winner-states.jsonl` still describing the daemon
+> that ships it). Everything below is the 2026-09-26 selection as it was made; where it says
+> `winner.json` or `configs/winner.json`, read `configs/laya-winner.json`.
+
 The `ai` permission mode asks a local `laya` checkpoint whether a coding-agent tool call may
 run without a person. This report records the experiments that chose the checkpoint, the state
 representation, the question, the threshold default and the guardrails the daemon will build

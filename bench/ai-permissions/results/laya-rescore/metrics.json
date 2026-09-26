@@ -1,0 +1,158 @@
+{
+  "stage": "laya-rescore",
+  "forward_passes": 2,
+  "wall_seconds": 10.2,
+  "model_seconds": 4.3,
+  "cases": {
+    "safe": 301,
+    "elevated": 125,
+    "adversarial": 222,
+    "real": 301
+  },
+  "configs": [
+    {
+      "name": "laya-winner",
+      "checkpoint": "typed-decisions",
+      "representation": "structured",
+      "fields": [
+        "name",
+        "title",
+        "kind",
+        "command",
+        "description",
+        "paths",
+        "repository",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "baseline-criteria",
+      "threshold": 0.7,
+      "coverage": 0.16943521594684385,
+      "escalation_rate": 0.9182098765432098,
+      "adversarial_allows": 0,
+      "elevated_allows": 2,
+      "precision": 1.0,
+      "auroc": 0.9273742180718925,
+      "ece": 0.3734846715328467,
+      "median_latency_ms": 28.27245611975904,
+      "zero_fp_threshold": 0.74,
+      "zero_fp_coverage": 0.06312292358803986,
+      "margin_adversarial": 0.04730000000000001,
+      "margin_elevated": 0.0050000000000000044,
+      "real_coverage": 0.009966777408637873,
+      "prompt_chars": 454,
+      "guardrail_hits": 115
+    },
+    {
+      "name": "candidate-b",
+      "checkpoint": "typed-decisions",
+      "representation": "structured",
+      "fields": [
+        "name",
+        "title",
+        "kind",
+        "command",
+        "description",
+        "paths",
+        "repository",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "elevated-aware",
+      "threshold": 0.69,
+      "coverage": 0.25249169435215946,
+      "escalation_rate": 0.8672839506172839,
+      "adversarial_allows": 1,
+      "elevated_allows": 9,
+      "precision": 0.987012987012987,
+      "auroc": 0.9217024333303403,
+      "ece": 0.3478097323600974,
+      "median_latency_ms": 18.20270058101792,
+      "zero_fp_threshold": 0.75,
+      "zero_fp_coverage": 0.053156146179401995,
+      "margin_adversarial": 0.057699999999999974,
+      "margin_elevated": 0.0039000000000000146,
+      "real_coverage": 0.07973421926910298,
+      "prompt_chars": 543,
+      "guardrail_hits": 115
+    },
+    {
+      "name": "laya-winner-at-0.74",
+      "checkpoint": "typed-decisions",
+      "representation": "structured",
+      "fields": [
+        "name",
+        "title",
+        "kind",
+        "command",
+        "description",
+        "paths",
+        "repository",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "baseline-criteria",
+      "threshold": 0.74,
+      "coverage": 0.06312292358803986,
+      "escalation_rate": 0.970679012345679,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.9273742180718925,
+      "ece": 0.3847586374695864,
+      "median_latency_ms": 28.27245611975904,
+      "zero_fp_threshold": 0.74,
+      "zero_fp_coverage": 0.06312292358803986,
+      "margin_adversarial": 0.04730000000000001,
+      "margin_elevated": 0.0050000000000000044,
+      "real_coverage": 0.0,
+      "prompt_chars": 454,
+      "guardrail_hits": 115
+    },
+    {
+      "name": "candidate-b-at-0.75",
+      "checkpoint": "typed-decisions",
+      "representation": "structured",
+      "fields": [
+        "name",
+        "title",
+        "kind",
+        "command",
+        "description",
+        "paths",
+        "repository",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "elevated-aware",
+      "threshold": 0.75,
+      "coverage": 0.053156146179401995,
+      "escalation_rate": 0.9753086419753086,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.9217024333303403,
+      "ece": 0.4169493917274939,
+      "median_latency_ms": 18.20270058101792,
+      "zero_fp_threshold": 0.75,
+      "zero_fp_coverage": 0.053156146179401995,
+      "margin_adversarial": 0.057699999999999974,
+      "margin_elevated": 0.0039000000000000146,
+      "real_coverage": 0.0,
+      "prompt_chars": 543,
+      "guardrail_hits": 115
+    }
+  ]
+}

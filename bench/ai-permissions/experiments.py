@@ -378,7 +378,10 @@ def cmd_run(args) -> int:
         w.writerows(score_rows)
     with open(out_dir / "metrics.json", "w", encoding="utf-8") as fh:
         json.dump({"stage": args.stage, "forward_passes": passes, "wall_seconds": round(wall, 1),
-                   "model_seconds": round(predictor.model_seconds, 1), "configs": metrics_rows}, fh, indent=2)
+                   "model_seconds": round(predictor.model_seconds, 1),
+                   "cases": {"safe": len(safe_c), "elevated": len(elevated_c), "adversarial": len(adversarial_c),
+                             "real": len(real_c)},
+                   "configs": metrics_rows}, fh, indent=2)
     with open(out_dir / "summary.md", "w", encoding="utf-8") as fh:
         fh.write("# %s\n\n" % args.stage)
         if args.title:
@@ -410,8 +413,13 @@ def cmd_matrix(args) -> int:
             m["stage"] = data["stage"]
             rows.append(m)
     rows.sort(key=lambda m: (m["stage"], m["name"]))
-    ledger = [(json.load(open(p, encoding="utf-8"))["stage"], json.load(open(p, encoding="utf-8"))["forward_passes"],
-               json.load(open(p, encoding="utf-8"))["wall_seconds"]) for p in sorted(RESULTS.glob("*/metrics.json"))]
+    ledger = []
+    for p in sorted(RESULTS.glob("*/metrics.json")):
+        with open(p, encoding="utf-8") as fh:
+            data = json.load(fh)
+        counts = data.get("cases")
+        sets = "" if counts is None else " on %d/%d/%d dev cases" % (counts["safe"], counts["elevated"], counts["adversarial"])
+        ledger.append("%s %d passes, %.0f s%s" % (data["stage"], data["forward_passes"], data["wall_seconds"], sets))
     with open(RESULTS / "matrix.md", "w", encoding="utf-8") as fh:
         fh.write("# Every tested configuration\n\n")
         fh.write("One row per configuration, from `results/<stage>/metrics.json`; a configuration that ran in "
@@ -426,8 +434,9 @@ def cmd_matrix(args) -> int:
                  "elevated allow score (a guardrail hit scores 0). Real coverage is only present for the "
                  "configurations run with `--real`.\n\n")
         fh.write("Forward passes and wall time of each stage's last run (a rerun after the cache holds its answers "
-                 "costs none; the full ledger is in `REPORT.md`): %s.\n\n" % "; ".join(
-                     "%s %d passes, %.0f s" % row for row in ledger))
+                 "costs none; the full ledger is in `REPORT.md`). A stage that names its development case counts "
+                 "(safe/elevated/adversarial-dev) ran on the extended sets; the others ran on the first sets of "
+                 "127/44/89: %s.\n\n" % "; ".join(ledger))
         fh.write("| stage | " + render_matrix_rows(rows).split("\n")[0][2:] + "\n")
         fh.write("| --- | " + render_matrix_rows(rows).split("\n")[1][2:] + "\n")
         body = render_matrix_rows(rows).split("\n")[2:]
@@ -557,6 +566,56 @@ def cmd_window(args) -> int:
     return 0
 
 
+def cmd_guarded_rank(args) -> int:
+    """Every named configuration re-scored with `guardrails.json` in front of it, ranked as stage 1 ranks.
+
+    A guardrail hit skips the model and every other answer is already in the cache, so this costs
+    no forward pass: it is how a stage run without guardrails is read with them, before the
+    guarded twins of the shortlist are written as configurations of their own. The rank is the
+    sum of two ranks, AUROC (safe against adversarial-dev) and safe coverage at the lowest
+    threshold with zero adversarial-dev and zero elevated allows, lowest sum first.
+    """
+    predictor = CachedPredictor(Path(args.cache))
+    safe_c, elevated_c, adversarial_c = load_dev()
+    rows = []
+    for name in args.configs:
+        config = harness.load_config(name)
+        config["guardrails"] = str(HERE / "guardrails.json")
+        config["name"] = name + "+g"
+        buckets = []
+        for cases in (safe_c, elevated_c, adversarial_c):
+            raw = predictor.evaluate(config, cases)
+            buckets.append([metrics_mod.CaseResult(c, r["state"], r["questions"], r["guardrail"], r["answer"], r["latency_ms"])
+                            for c, r in zip(cases, raw)])
+        m = config_metrics(config, buckets[0], buckets[1], buckets[2], [])
+        m["guardrail_hits"] = sum(1 for b in buckets for r in b if r.guardrail is not None)
+        rows.append(m)
+    by_auroc = sorted(rows, key=lambda m: -(m["auroc"] or 0.0))
+    by_cov = sorted(rows, key=lambda m: -(m["zero_fp_coverage"] or 0.0))
+    for m in rows:
+        m["rank_auroc"] = by_auroc.index(m) + 1
+        m["rank_coverage"] = by_cov.index(m) + 1
+        m["rank_sum"] = m["rank_auroc"] + m["rank_coverage"]
+    rows.sort(key=lambda m: (m["rank_sum"], -(m["auroc"] or 0.0)))
+    out = ["# %s\n" % args.title if args.title else "# Guarded ranking\n",
+           "Each configuration below is the named one with `guardrails.json` attached (`+g`), scored from the "
+           "answer cache (%d forward passes). Columns as in `results/matrix.md`; the three rank columns are the "
+           "AUROC rank, the zero-FP coverage rank and their sum, lowest first.\n" % predictor.forward_passes,
+           "| rank sum | rank AUROC | rank zero-FP coverage | guardrail hits | " + render_matrix_rows([]).split("\n")[0][2:],
+           "| --- | --- | --- | --- | " + render_matrix_rows([]).split("\n")[1][2:]]
+    for m in rows:
+        line = render_matrix_rows([m]).split("\n")[2]
+        out.append("| %d | %d | %d | %d | %s" % (m["rank_sum"], m["rank_auroc"], m["rank_coverage"], m["guardrail_hits"], line[2:]))
+    text = "\n".join(out) + "\n"
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(text, encoding="utf-8")
+        print("wrote %s (%d configurations, %d forward passes)" % (args.out, len(rows), predictor.forward_passes))
+    else:
+        print(text)
+    return 0
+
+
 def cmd_confidently_wrong(args) -> int:
     """Every configuration's cases on the wrong side of the argmax at answer_confidence >= CONFIDENT.
 
@@ -648,6 +707,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--configs", nargs="+", required=True)
     p.add_argument("--n", type=int, default=60)
     p.set_defaults(func=cmd_latency)
+
+    p = sub.add_parser("guarded-rank", help="rank configurations with guardrails.json attached, from the cache")
+    p.add_argument("--configs", nargs="+", required=True)
+    p.add_argument("--title", default=None)
+    p.add_argument("--out", default=None, help="write the table here instead of printing it")
+    p.set_defaults(func=cmd_guarded_rank)
 
     p = sub.add_parser("guardrail-stats", help="cases each guardrail catches per set")
     p.add_argument("--guardrails", default=str(HERE / "guardrails.json"))
