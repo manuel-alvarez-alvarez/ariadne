@@ -189,9 +189,13 @@ however often the pane grows or shrinks.
 
 The agent's text streams in as it is written and renders as markdown:
 headings, bold, code spans, fenced code under its language, lists and task
-lists, quotes, tables, and links with their URL in plain text. A thought is
-dimmed and folded to a few lines, until Ctrl-O unfolds it. A plan is a
-checklist that counts what is done (`plan 2/5`): `☐` pending, `◐` in
+lists, quotes, tables, and links with their URL in plain text. Fenced code
+in a language the console knows, such as `rust`, `json` or `sh`, is coloured
+in your terminal's own palette: comments dim, strings green, keywords
+magenta, numbers cyan and types yellow. Other fenced code is drawn in one
+colour, and so is a language the console does not bundle, such as TOML. A
+thought is dimmed and folded to a few lines, until Ctrl-O unfolds it. A plan
+is a checklist that counts what is done (`plan 2/5`): `☐` pending, `◐` in
 progress, `☑` done and dimmed. A briefing or a nudge from the daemon shows
 under `» daemon`, folded to its first six lines, until Ctrl-O unfolds it. An
 error shows whole after `✗`. A note says what happened in words,

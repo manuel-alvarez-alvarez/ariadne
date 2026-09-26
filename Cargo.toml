@@ -84,6 +84,17 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # and the new text of a file, and the console shows the hunks between them,
 # with context, rather than every old line and then every new one.
 similar = "2"
+# The grammars that colour a fenced code block by its language, and nothing
+# else: `parsing` gives the parser that turns a line into scopes,
+# `default-syntaxes` the Sublime Text grammars built into the binary, and
+# `regex-fancy` a pure-Rust regex engine for them, where `regex-onig` would
+# need a C build. No theme is loaded: the console maps a scope onto its own
+# eight ANSI colours, so the user's terminal theme still decides each hue.
+syntect = { version = "5.3", default-features = false, features = [
+  "parsing",
+  "default-syntaxes",
+  "regex-fancy",
+] }
 # How many columns a string takes on the screen: a CJK character and most
 # emoji take two, so the console wraps and cuts by this rather than by the
 # character count. The version ratatui already pulls in.

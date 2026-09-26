@@ -22,6 +22,9 @@ serde_json = { workspace = true }
 # The hunks of a tool call's file change, where the agent sent the old and the
 # new text of the file rather than a patch.
 similar = { workspace = true }
+# The scopes of a fenced code block's lines, from the grammar of its language,
+# which the console colours in its own palette.
+syntect = { workspace = true }
 tokio = { workspace = true }
 # The display width the console wraps and cuts text by, so a wide character
 # or an emoji takes the two columns it draws on, and the grapheme clusters

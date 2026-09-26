@@ -2,16 +2,23 @@
 //!
 //! This renderer is a pure function of text and width. It measures terminal
 //! columns rather than bytes and cuts only between grapheme clusters.
+//!
+//! A fenced block in a language that syntect has a grammar for is coloured by
+//! the scopes of that grammar, mapped onto the pane's ANSI palette. No theme
+//! is loaded, so the terminal's own theme decides every hue.
+
+use std::sync::OnceLock;
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxSet};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{
-    CODE, CODE_CONTINUATION, HEADING, LIST_BULLETS, MARK, QUOTE_BAR, RULE, TABLE_HEADER, TASK_DONE,
-    TASK_TODO,
+    CODE, CODE_COMMENT, CODE_CONTINUATION, CODE_KEYWORD, CODE_NUMBER, CODE_PLAIN, CODE_STRING,
+    CODE_TYPE, HEADING, LIST_BULLETS, MARK, QUOTE_BAR, RULE, TABLE_HEADER, TASK_DONE, TASK_TODO,
 };
 
 /// Render `text` as markdown, wrapped to `width` columns.
@@ -29,6 +36,7 @@ struct Writer {
     lists: Vec<Option<u64>>,
     items: Vec<Item>,
     code: bool,
+    highlight: Option<Highlight>,
     table: Option<Table>,
     links: Vec<Link>,
 }
@@ -161,6 +169,7 @@ impl Writer {
                     && !language.is_empty()
                 {
                     self.draw_wrapped(&language, MARK);
+                    self.highlight = Highlight::new(&language);
                 }
                 self.code = true;
             }
@@ -232,7 +241,10 @@ impl Writer {
                 self.flush();
                 self.remove_quote();
             }
-            TagEnd::CodeBlock => self.code = false,
+            TagEnd::CodeBlock => {
+                self.code = false;
+                self.highlight = None;
+            }
             TagEnd::List(_) => {
                 self.flush();
                 self.lists.pop();
@@ -282,12 +294,29 @@ impl Writer {
         let base = self.block_prefix();
         let first = format!("{base}  ");
         let continued = format!("{base}{CODE_CONTINUATION}");
+        let runs = match self
+            .highlight
+            .as_mut()
+            .map(|highlight| highlight.line(text))
+        {
+            Some(Some(runs)) => runs,
+            Some(None) => {
+                // A grammar that fails on a line leaves the rest of the
+                // block plain, rather than coloured from a broken state.
+                self.highlight = None;
+                vec![(0, CODE)]
+            }
+            None => vec![(0, CODE)],
+        };
         let mut rest = text;
         let mut first_line = true;
         loop {
             let prefix = if first_line { &first } else { &continued };
+            let start = text.len() - rest.len();
             let (part, next) = cut(rest, self.width.saturating_sub(prefix.width()).max(1));
-            self.line(prefix, &part, CODE);
+            let mut spans = vec![Span::styled(prefix.clone(), MARK)];
+            spans.extend(styled(text, start..start + part.len(), &runs));
+            self.lines.push(Line::from(spans));
             let Some(next) = next else {
                 break;
             };
@@ -506,6 +535,127 @@ impl Writer {
     }
 }
 
+/// The grammars fenced code is coloured by, and the style of each scope.
+struct Grammars {
+    syntaxes: SyntaxSet,
+    styles: Vec<(Scope, Style)>,
+}
+
+#[cfg(test)]
+pub(crate) static GRAMMARS_BUILT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Built once for the process: the daemon hosts many consoles, and building
+/// the set for each would cost every one of them the same work.
+fn grammars() -> &'static Grammars {
+    static GRAMMARS: OnceLock<Grammars> = OnceLock::new();
+    GRAMMARS.get_or_init(|| {
+        #[cfg(test)]
+        GRAMMARS_BUILT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let styles = [
+            ("comment", CODE_COMMENT),
+            ("string", CODE_STRING),
+            ("constant.numeric", CODE_NUMBER),
+            ("keyword", CODE_KEYWORD),
+            ("storage", CODE_KEYWORD),
+            ("entity", CODE_TYPE),
+            ("support.type", CODE_TYPE),
+            ("support.class", CODE_TYPE),
+        ];
+        Grammars {
+            syntaxes: SyntaxSet::load_defaults_nonewlines(),
+            styles: styles
+                .into_iter()
+                .map(|(name, style)| (Scope::new(name).expect("a scope name parses"), style))
+                .collect(),
+        }
+    })
+}
+
+/// The parse of one fenced block, carried from line to line: a string or a
+/// comment that spans lines keeps its colour on the next.
+struct Highlight {
+    state: ParseState,
+    stack: ScopeStack,
+}
+
+impl Highlight {
+    /// None where the label names no grammar, so the block draws as before.
+    fn new(language: &str) -> Option<Self> {
+        let syntax = grammars().syntaxes.find_syntax_by_token(language)?;
+        Some(Self {
+            state: ParseState::new(syntax),
+            stack: ScopeStack::new(),
+        })
+    }
+
+    /// Where each style of `line` starts, by byte, or None where the grammar
+    /// fails on it.
+    fn line(&mut self, line: &str) -> Option<Vec<(usize, Style)>> {
+        let ops = self.state.parse_line(line, &grammars().syntaxes).ok()?;
+        let mut runs = Vec::new();
+        mark(&mut runs, 0, self.style());
+        for (at, op) in ops {
+            self.stack.apply(&op).ok()?;
+            mark(&mut runs, at, self.style());
+        }
+        Some(runs)
+    }
+
+    /// The style of the innermost scope the palette has a colour for.
+    fn style(&self) -> Style {
+        let styles = &grammars().styles;
+        self.stack
+            .as_slice()
+            .iter()
+            .rev()
+            .find_map(|scope| {
+                styles
+                    .iter()
+                    .find(|(prefix, _)| prefix.is_prefix_of(*scope))
+                    .map(|(_, style)| *style)
+            })
+            .unwrap_or(CODE_PLAIN)
+    }
+}
+
+/// Start a run of `style` at `at`, over one that started there too, and
+/// merged into the run before where it has the same style.
+fn mark(runs: &mut Vec<(usize, Style)>, at: usize, style: Style) {
+    if runs.last().is_some_and(|&(last, _)| last == at) {
+        runs.pop();
+    }
+    if runs.last().is_none_or(|&(_, last)| last != style) {
+        runs.push((at, style));
+    }
+}
+
+/// The spans of `text` within `range`, each in the style of its run. An empty
+/// range is one empty span in the style it falls in.
+fn styled(
+    text: &str,
+    range: std::ops::Range<usize>,
+    runs: &[(usize, Style)],
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (i, &(at, style)) in runs.iter().enumerate() {
+        let end = runs.get(i + 1).map_or(text.len(), |&(next, _)| next);
+        let (from, to) = (at.max(range.start), end.min(range.end));
+        if from < to {
+            spans.push(Span::styled(text[from..to].to_string(), style));
+        }
+    }
+    if spans.is_empty() {
+        let style = runs
+            .iter()
+            .rev()
+            .find(|&&(at, _)| at <= range.start)
+            .map_or(CODE, |&(_, style)| style);
+        spans.push(Span::styled(String::new(), style));
+    }
+    spans
+}
+
 fn cut(text: &str, width: usize) -> (String, Option<&str>) {
     let mut used = 0;
     let mut end = 0;
@@ -665,6 +815,8 @@ impl Blank for Line<'_> {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::style::Color;
+
     use super::*;
 
     fn text(lines: &[Line<'static>]) -> Vec<String> {
@@ -898,6 +1050,148 @@ mod tests {
             ["1. first", "   item here", "2. second"]
         );
     }
+    fn code_styles(lines: &[Line<'static>]) -> Vec<Style> {
+        lines
+            .iter()
+            .flat_map(|line| line.spans.iter().skip(1))
+            .filter(|span| !span.content.trim().is_empty())
+            .map(|span| span.style)
+            .collect()
+    }
+
+    #[test]
+    fn a_rust_fence_colours_a_comment_a_string_a_keyword_and_a_number_apart() {
+        let lines = render(
+            "```rust\n// the answer\nlet name = \"forty\";\nlet n = 42;\n```",
+            80,
+        );
+
+        assert_eq!(styles(&lines, "the answer"), Some(CODE_COMMENT));
+        assert_eq!(styles(&lines, "forty"), Some(CODE_STRING));
+        assert_eq!(styles(&lines, "let"), Some(CODE_KEYWORD));
+        assert_eq!(styles(&lines, "42"), Some(CODE_NUMBER));
+        assert_eq!(
+            text(&lines),
+            [
+                "rust",
+                "  // the answer",
+                "  let name = \"forty\";",
+                "  let n = 42;"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_json_a_yaml_and_a_sh_fence_are_coloured() {
+        let json = render("```json\n{\"count\": 3}\n```", 80);
+        assert_eq!(styles(&json, "3"), Some(CODE_NUMBER), "{json:?}");
+        assert!(code_styles(&json).contains(&CODE_STRING), "{json:?}");
+
+        let yaml = render("```yaml\nname: \"console\" # the crate\n```", 80);
+        assert_eq!(styles(&yaml, "the crate"), Some(CODE_COMMENT), "{yaml:?}");
+        assert!(code_styles(&yaml).contains(&CODE_STRING), "{yaml:?}");
+
+        let sh = render("```sh\necho \"hi\" # greet\n```", 80);
+        assert_eq!(styles(&sh, "greet"), Some(CODE_COMMENT), "{sh:?}");
+        assert!(code_styles(&sh).contains(&CODE_STRING), "{sh:?}");
+    }
+
+    #[test]
+    fn a_fence_with_no_label_or_an_unknown_one_draws_in_the_one_code_colour() {
+        for (source, label) in [
+            ("```\nlet n = 42; // x\n\nn\n```", None),
+            (
+                "```nosuchlanguage\nlet n = 42; // x\n\nn\n```",
+                Some("nosuchlanguage"),
+            ),
+            // syntect bundles no TOML grammar.
+            ("```toml\nlet n = 42; // x\n\nn\n```", Some("toml")),
+        ] {
+            let lines = render(source, 80);
+            let mut wanted = Vec::new();
+            if let Some(label) = label {
+                wanted.push(Line::from(Span::styled(label.to_string(), MARK)));
+            }
+            for code in ["let n = 42; // x", "", "n"] {
+                wanted.push(Line::from(vec![
+                    Span::styled("  ", MARK),
+                    Span::styled(code, CODE),
+                ]));
+            }
+            assert_eq!(lines, wanted, "{source}");
+        }
+    }
+
+    #[test]
+    fn the_same_fence_drawn_twice_has_the_same_styles() {
+        let source = "```rust\n/* a\n   b */ fn main() { let s = \"x\"; }\n```";
+        assert_eq!(render(source, 20), render(source, 20));
+    }
+
+    #[test]
+    fn fenced_code_uses_the_ansi_palette_alone() {
+        let source = [
+            "```rust\n#[derive(Debug)]\npub struct A<T: Copy>(u8, &'static str);\nfn f() -> i32 { 0x1f }\n```",
+            "```json\n{\"a\": [1, true, null]}\n```",
+            "```sh\nfor f in *.rs; do echo \"$f\"; done\n```",
+            "```python\n@dataclass\nclass A:\n    x: int = 1  # one\n```",
+        ]
+        .join("\n\n");
+        for span in render(&source, 80).iter().flat_map(|line| &line.spans) {
+            for colour in [span.style.fg, span.style.bg].into_iter().flatten() {
+                assert!(
+                    !matches!(colour, Color::Rgb(..) | Color::Indexed(_)),
+                    "{span:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn coloured_code_wraps_by_display_width_with_its_indent_and_continuation() {
+        let source = format!("let s = \"{}日本\"; // done", "x".repeat(20));
+        let lines = render(&format!("```rust\n{source}\n```"), 16);
+        let rendered = text(&lines);
+
+        assert!(widest(&lines) <= 16, "{rendered:?}");
+        assert!(rendered[1].starts_with("  let"), "{rendered:?}");
+        assert!(
+            rendered[2..]
+                .iter()
+                .all(|line| line.starts_with(CODE_CONTINUATION)),
+            "{rendered:?}"
+        );
+        let body: String = rendered[1..]
+            .iter()
+            .map(|line| {
+                line.trim_start_matches("  ")
+                    .trim_start_matches(CODE_CONTINUATION)
+            })
+            .collect();
+        assert_eq!(body, source);
+        // A string cut across two rows keeps its colour on both.
+        assert!(
+            lines[1..3]
+                .iter()
+                .all(|line| line.spans.iter().any(|span| span.style == CODE_STRING)),
+            "{lines:?}"
+        );
+        assert_eq!(styles(&lines, "done"), Some(CODE_COMMENT));
+    }
+
+    #[test]
+    fn every_prefix_of_a_coloured_fence_renders_without_a_panic() {
+        let source =
+            "```rust\n/* open\nfn main() { let s = \"日本\u{1f469}\u{200d}\u{1f52c}\"; }\n```";
+        for width in [1, 4, 80] {
+            for end in 0..=source.len() {
+                if source.is_char_boundary(end) {
+                    let _ = render(&source[..end], width);
+                }
+            }
+        }
+    }
+
     #[test]
     fn plain_text_with_no_markdown_in_it_survives_unchanged() {
         assert_eq!(text(&render("just a sentence.", 40)), ["just a sentence."]);

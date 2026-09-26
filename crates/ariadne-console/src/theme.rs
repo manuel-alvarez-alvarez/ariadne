@@ -34,6 +34,15 @@ pub const HEADING: Style = Style::new()
 pub const TABLE_HEADER: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 /// Markdown code spans and blocks use one quiet, distinct colour.
 pub const CODE: Style = Style::new().fg(Color::Yellow);
+/// A fenced block in a language its grammar knows, coloured by what each
+/// part of a line is. The eight ANSI colours alone, so the terminal's own
+/// theme decides each hue; what is none of these is plain.
+pub const CODE_COMMENT: Style = Style::new().add_modifier(Modifier::DIM);
+pub const CODE_STRING: Style = Style::new().fg(Color::Green);
+pub const CODE_KEYWORD: Style = Style::new().fg(Color::Magenta);
+pub const CODE_NUMBER: Style = Style::new().fg(Color::Cyan);
+pub const CODE_TYPE: Style = Style::new().fg(Color::Yellow);
+pub const CODE_PLAIN: Style = Style::new();
 /// Markdown structure is context, not the answer itself.
 pub const MARK: Style = Style::new().add_modifier(Modifier::DIM);
 /// The lines of a diff: added, removed, the hunk header, and the file header.

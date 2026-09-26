@@ -1122,6 +1122,25 @@ mod tests {
         );
     }
 
+    /// The daemon hosts many consoles in one process, and they share one
+    /// set of grammars for fenced code.
+    #[tokio::test]
+    async fn two_consoles_that_draw_fenced_code_build_the_grammars_once() {
+        use std::sync::atomic::Ordering;
+
+        for text in ["```rust\nlet n = 1;\n```", "```json\n{\"n\": 1}\n```"] {
+            let (shown, _, _) = console(
+                Stub::new(vec![event("agent_message", text, json!({"text": text}))])
+                    .deltas(vec![ended()]),
+                Vec::new(),
+            )
+            .await;
+            assert!(shown.contains("n"), "{shown}");
+        }
+
+        assert_eq!(crate::markdown::GRAMMARS_BUILT.load(Ordering::SeqCst), 1);
+    }
+
     /// A cancelled turn leaves its call as it was, and nothing will end it:
     /// the blocks after it still go to the scrollback.
     #[test]

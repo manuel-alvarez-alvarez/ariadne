@@ -1,7 +1,7 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-24
+updated: 2026-09-26
 areas: [daemon, store, cli]
 commits: [e4816cf6, 39937143, a69b953f]
 tests:
@@ -333,10 +333,18 @@ goal id to a seat (014).
     keeping its backticks there as in text, or become
     `header: value` lines where the pane is too narrow. Fenced code has a dim
     language label, a two-column code indent and a dim `↪` on continued lines,
-    never a fence. Links retain their plain URL, lists use `•`, `◦` and `▪` by
-    depth with task markers, and every wrapped quote line keeps its `│ ` bar.
+    never a fence. A fence whose label names a grammar bundled with syntect is
+    coloured by the scopes of that grammar in the eight ANSI colours alone:
+    a comment dim, a string green, a keyword magenta, a number cyan, a type
+    or entity yellow, the rest plain. No theme is loaded and no 24-bit colour
+    is drawn, so the terminal's theme decides each hue. The grammars are built
+    once for the process, however many consoles it hosts. A fence with no
+    label, or a label no grammar knows, draws in the one code colour; syntect
+    bundles no TOML grammar, so a `toml` fence draws uncoloured. Links
+    retain their plain URL, lists use `•`, `◦` and `▪` by depth with task
+    markers, and every wrapped quote line keeps its `│ ` bar.
     Each mark of the transcript has one meaning over the whole pane. The
-    renderer is pure, uses no syntax colour or OSC 8 link, and accepts
+    renderer is pure, uses no OSC 8 link, and accepts
     each incomplete markdown prefix without a panic. A plan is a checklist
     under a head that counts the completed entries, `plan 1/3`: `☐` pending,
     `◐` in progress in the plan colour, `☑` completed and dimmed, a long entry
@@ -655,6 +663,20 @@ goal id to a seat (014).
 - Fenced code shows its language without a fence and wraps every character
   (`ariadne-console/markdown.rs::a_heading_a_code_block_and_a_list_each_keep_their_own_style`,
   `::a_long_code_line_wraps_with_continuation_marks_without_loss`).
+- A `rust` fence colours a comment, a string, a keyword and a number apart
+  (`ariadne-console/markdown.rs::a_rust_fence_colours_a_comment_a_string_a_keyword_and_a_number_apart`),
+  a `json`, a `yaml` and a `sh` fence are coloured
+  (`::a_json_a_yaml_and_a_sh_fence_are_coloured`), and a fence with no label,
+  an unknown one or `toml` draws as before
+  (`::a_fence_with_no_label_or_an_unknown_one_draws_in_the_one_code_colour`),
+  the same fence draws the same styles twice
+  (`::the_same_fence_drawn_twice_has_the_same_styles`), no colour outside the
+  ANSI palette is drawn (`::fenced_code_uses_the_ansi_palette_alone`), coloured
+  code wraps with its indent and `↪`
+  (`::coloured_code_wraps_by_display_width_with_its_indent_and_continuation`,
+  `::every_prefix_of_a_coloured_fence_renders_without_a_panic`), and two
+  consoles build the grammars once
+  (`ariadne-console/tui/mod.rs::two_consoles_that_draw_fenced_code_build_the_grammars_once`).
 - Markdown links retain a non-autolink destination once
   (`ariadne-console/markdown.rs::links_keep_their_destination_once`), lists
   show nested glyphs and task markers
