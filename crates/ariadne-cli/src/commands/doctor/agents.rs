@@ -177,17 +177,17 @@ fn python_check(python: &PythonDto) -> Check {
 /// permission mode among four and nothing else depends on it.
 fn ai_permissions_check(status: &AiPermissionsStatusDto) -> Check {
     match status.state {
-        AiPermissionsState::Disabled => Check::ok("ai-permissions", "disabled"),
-        AiPermissionsState::Installing => Check::ok("ai-permissions", "installing"),
+        AiPermissionsState::Disabled => Check::ok("ai permissions", "disabled"),
+        AiPermissionsState::Installing => Check::ok("ai permissions", "installing"),
         AiPermissionsState::Ready => Check::ok(
-            "ai-permissions",
+            "ai permissions",
             format!(
                 "ready {}",
                 status.installed_release.as_deref().unwrap_or("-")
             ),
         ),
         AiPermissionsState::Failed => Check::warn(
-            "ai-permissions",
+            "ai permissions",
             format!(
                 "failed: {}",
                 status.last_error.as_deref().unwrap_or("unknown reason")
@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(glab.status, Status::Warn);
         assert!(glab.detail.contains("not found on the daemon's PATH"));
         assert_eq!(by_name(&checks, "python").status, Status::Ok);
-        assert_eq!(by_name(&checks, "ai-permissions").status, Status::Ok);
+        assert_eq!(by_name(&checks, "ai permissions").status, Status::Ok);
 
         let checks = daemon_environment(None, None);
         assert_eq!(checks.len(), 1);

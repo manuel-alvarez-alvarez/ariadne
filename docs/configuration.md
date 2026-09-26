@@ -25,9 +25,6 @@ python_bin = "/opt/python3.12/bin/python3"
                                    # installs into; it has to be 3.10 or newer
                                    # (default: python3 on the daemon's PATH).
                                    # See Permission modes.
-ai_permissions_release_url = "https://api.github.com/repos/NandhaKishorM/laya/releases/latest"
-                                   # where the model's release is read from: its tag,
-                                   # and the wheel an install takes
 
 [[acp_agents]]                     # an agent of your own, or one the registry
 id = "my-agent"                    # names under another command

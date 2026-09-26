@@ -396,7 +396,7 @@ fn domain_line(event: &DomainEvent) -> Line {
         DomainEvent::AiPermissionsUpdated(l) => Line {
             at: now(),
             kind,
-            subject: "ai-permissions".to_string(),
+            subject: "ai permissions".to_string(),
             detail: l.last_error.clone().unwrap_or_default(),
             session: None,
             status: Some(l.state.as_str().to_string()),
@@ -491,6 +491,10 @@ mod tests {
     use super::*;
 
     use ariadne_api::goals::GoalDto;
+    use ariadne_api::permissions::{
+        AiPermissionsCheckpoints, AiPermissionsPrompts, AiPermissionsState, AiPermissionsStatusDto,
+        PythonDto,
+    };
     use ariadne_api::tasks::TaskTransitionDto;
     use ariadne_core::{AttentionReason, SessionStatus, TaskStatus};
 
@@ -537,6 +541,37 @@ mod tests {
         }
     }
 
+    fn ai_permissions() -> AiPermissionsStatusDto {
+        AiPermissionsStatusDto {
+            enabled: true,
+            checkpoints: AiPermissionsCheckpoints::English,
+            threshold: 0.8,
+            schedule: None,
+            python: PythonDto {
+                path: None,
+                version: None,
+                ok: false,
+            },
+            state: AiPermissionsState::Ready,
+            installed_release: None,
+            latest_release: None,
+            weights_present: true,
+            endpoint: None,
+            last_refresh_at: None,
+            last_error: None,
+            prompts: AiPermissionsPrompts {
+                question: "q".into(),
+                allow_criteria: "a".into(),
+                review_criteria: "r".into(),
+            },
+            default_prompts: AiPermissionsPrompts {
+                question: "q".into(),
+                allow_criteria: "a".into(),
+                review_criteria: "r".into(),
+            },
+        }
+    }
+
     /// The shape of every line: when, what kind, what it happened to, and the
     /// one phrase that says the rest.
     #[test]
@@ -548,6 +583,16 @@ mod tests {
         assert_eq!(
             rendered(&domain_line(&DomainEvent::TaskCreated(task()))),
             "<time> · task_created · 01TASK · Wire the screen [under_review]"
+        );
+    }
+
+    #[test]
+    fn an_ai_permissions_event_names_its_subject() {
+        assert_eq!(
+            rendered(&domain_line(&DomainEvent::AiPermissionsUpdated(
+                ai_permissions()
+            ))),
+            "<time> · ai_permissions_updated · ai permissions"
         );
     }
 

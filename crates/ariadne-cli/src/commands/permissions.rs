@@ -32,6 +32,13 @@ impl Checkpoints {
 
 #[derive(Subcommand)]
 pub(crate) enum PermissionsCommand {
+    /// Manage the AI permission model
+    #[command(subcommand)]
+    Ai(#[command(subcommand)] AiPermissionsCommand),
+}
+
+#[derive(Subcommand)]
+pub(crate) enum AiPermissionsCommand {
     /// Show the AI permission settings and where the install has got to
     Show,
     /// Turn the model on and start the install
@@ -48,9 +55,9 @@ pub(crate) enum PermissionsCommand {
         #[arg(long)]
         wait: bool,
     },
-    /// Change the checkpoints, the threshold or the daily refresh
+    /// Change the checkpoints, threshold, daily refresh, or prompts
     #[command(group = clap::ArgGroup::new("ai-set")
-        .args(["checkpoints", "threshold", "schedule", "no_schedule"])
+        .args(["checkpoints", "threshold", "schedule", "no_schedule", "question", "allow", "review", "default_prompts"])
         .required(true)
         .multiple(true))]
     Set {
@@ -66,13 +73,31 @@ pub(crate) enum PermissionsCommand {
         /// Turn the daily refresh off
         #[arg(long, conflicts_with = "schedule")]
         no_schedule: bool,
+        /// The question the model answers
+        #[arg(long)]
+        question: Option<String>,
+        /// What the allow answer covers
+        #[arg(long)]
+        allow: Option<String>,
+        /// What the review answer covers
+        #[arg(long)]
+        review: Option<String>,
+        /// Restore all prompt texts to their built-in values
+        #[arg(long, conflicts_with_all = ["question", "allow", "review"])]
+        default_prompts: bool,
     },
 }
 
 pub(crate) async fn run(client: &Client, cmd: PermissionsCommand, format: Format) -> Result<()> {
     match cmd {
-        PermissionsCommand::Show => show(client, format).await,
-        PermissionsCommand::Enable { wait } => {
+        PermissionsCommand::Ai(command) => run_ai(client, command, format).await,
+    }
+}
+
+async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> Result<()> {
+    match cmd {
+        AiPermissionsCommand::Show => show(client, format).await,
+        AiPermissionsCommand::Enable { wait } => {
             settle(
                 client,
                 format,
@@ -86,7 +111,7 @@ pub(crate) async fn run(client: &Client, cmd: PermissionsCommand, format: Format
             )
             .await
         }
-        PermissionsCommand::Disable => {
+        AiPermissionsCommand::Disable => {
             let status = client
                 .update_ai_permissions(&UpdateAiPermissionsRequest {
                     enabled: Some(false),
@@ -95,14 +120,18 @@ pub(crate) async fn run(client: &Client, cmd: PermissionsCommand, format: Format
                 .await?;
             print_result(format, &status)
         }
-        PermissionsCommand::Refresh { wait } => {
+        AiPermissionsCommand::Refresh { wait } => {
             settle(client, format, wait, client.refresh_ai_permissions().await?).await
         }
-        PermissionsCommand::Set {
+        AiPermissionsCommand::Set {
             checkpoints,
             threshold,
             schedule,
             no_schedule,
+            question,
+            allow,
+            review,
+            default_prompts,
         } => {
             let status = client
                 .update_ai_permissions(&UpdateAiPermissionsRequest {
@@ -110,11 +139,21 @@ pub(crate) async fn run(client: &Client, cmd: PermissionsCommand, format: Format
                     checkpoints: checkpoints.map(Checkpoints::as_api),
                     threshold,
                     schedule: schedule_field(schedule, no_schedule),
-                    ..Default::default()
+                    question: prompt_field(question, default_prompts),
+                    allow_criteria: prompt_field(allow, default_prompts),
+                    review_criteria: prompt_field(review, default_prompts),
                 })
                 .await?;
             print_result(format, &status)
         }
+    }
+}
+
+fn prompt_field(value: Option<String>, default_prompts: bool) -> Option<Option<String>> {
+    match (value, default_prompts) {
+        (_, true) => Some(None),
+        (Some(value), false) => Some(Some(value)),
+        (None, false) => None,
     }
 }
 
@@ -253,7 +292,38 @@ fn fields(status: &AiPermissionsStatusDto) -> Vec<(&'static str, Kv)> {
             last_refresh(status.last_refresh_at.as_deref()),
         ),
         ("last error", dash(status.last_error.as_deref()).into()),
+        (
+            "question",
+            prompt_text(&status.prompts.question, &status.default_prompts.question).into(),
+        ),
+        (
+            "allow criteria",
+            prompt_text(
+                &status.prompts.allow_criteria,
+                &status.default_prompts.allow_criteria,
+            )
+            .into(),
+        ),
+        (
+            "review criteria",
+            prompt_text(
+                &status.prompts.review_criteria,
+                &status.default_prompts.review_criteria,
+            )
+            .into(),
+        ),
     ]
+}
+
+fn prompt_text(value: &str, default: &str) -> String {
+    format!(
+        "{value} ({})",
+        if value == default {
+            "default"
+        } else {
+            "custom"
+        }
+    )
 }
 
 fn python_field(python: &PythonDto) -> String {
@@ -410,6 +480,35 @@ mod tests {
         assert!(text.contains("never"), "{text}");
     }
 
+    #[test]
+    fn show_snapshots_custom_prompts() {
+        let status = AiPermissionsStatusDto {
+            prompts: AiPermissionsPrompts {
+                question: "Should this run?".into(),
+                allow_criteria: "It only reads files.".into(),
+                review_criteria: "It changes files.".into(),
+            },
+            last_refresh_at: None,
+            ..status(AiPermissionsState::Ready)
+        };
+        assert_eq!(
+            crate::output::kv_block(&fields(&status), &crate::output::View::plain()),
+            "enabled            yes\nstate              ● ready\npython             3.12.1 at /usr/bin/python3\ncheckpoints        english\nthreshold          0.8\nschedule           off\ninstalled release  v0.1.4\nlatest release     v0.1.4\nweights            yes\nendpoint           http://127.0.0.1:8900\nlast refresh       never\nlast error         -\nquestion           Should this run? (custom)\nallow criteria     It only reads files. (custom)\nreview criteria    It changes files. (custom)"
+        );
+    }
+
+    #[test]
+    fn show_snapshots_default_prompts() {
+        let status = AiPermissionsStatusDto {
+            last_refresh_at: None,
+            ..status(AiPermissionsState::Ready)
+        };
+        assert_eq!(
+            crate::output::kv_block(&fields(&status), &crate::output::View::plain()),
+            "enabled            yes\nstate              ● ready\npython             3.12.1 at /usr/bin/python3\ncheckpoints        english\nthreshold          0.8\nschedule           off\ninstalled release  v0.1.4\nlatest release     v0.1.4\nweights            yes\nendpoint           http://127.0.0.1:8900\nlast refresh       never\nlast error         -\nquestion           q (default)\nallow criteria     a (default)\nreview criteria    r (default)"
+        );
+    }
+
     /// One route, capturing every body it is sent — what every body-shape
     /// test below reads back.
     async fn capturing_put() -> (
@@ -450,7 +549,7 @@ mod tests {
 
         run(
             &client,
-            PermissionsCommand::Enable { wait: false },
+            PermissionsCommand::Ai(AiPermissionsCommand::Enable { wait: false }),
             Format::Json,
         )
         .await
@@ -467,12 +566,16 @@ mod tests {
 
         run(
             &client,
-            PermissionsCommand::Set {
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 checkpoints: None,
                 threshold: None,
                 schedule: None,
                 no_schedule: true,
-            },
+                question: None,
+                allow: None,
+                review: None,
+                default_prompts: false,
+            }),
             Format::Json,
         )
         .await
@@ -489,12 +592,16 @@ mod tests {
 
         run(
             &client,
-            PermissionsCommand::Set {
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 checkpoints: None,
                 threshold: Some(0.6),
                 schedule: None,
                 no_schedule: false,
-            },
+                question: None,
+                allow: None,
+                review: None,
+                default_prompts: false,
+            }),
             Format::Json,
         )
         .await
@@ -502,6 +609,62 @@ mod tests {
         server.abort();
 
         assert_eq!(seen.lock().unwrap()[0], json!({"threshold": 0.6}));
+    }
+
+    #[tokio::test]
+    async fn set_question_sends_only_the_question() {
+        let (client, server, seen) = capturing_put().await;
+
+        run(
+            &client,
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                checkpoints: None,
+                threshold: None,
+                schedule: None,
+                no_schedule: false,
+                question: Some("Is this safe?".into()),
+                allow: None,
+                review: None,
+                default_prompts: false,
+            }),
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(
+            seen.lock().unwrap()[0],
+            json!({"question": "Is this safe?"})
+        );
+    }
+
+    #[tokio::test]
+    async fn set_default_prompts_sends_null_for_every_prompt() {
+        let (client, server, seen) = capturing_put().await;
+
+        run(
+            &client,
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                checkpoints: None,
+                threshold: None,
+                schedule: None,
+                no_schedule: false,
+                question: None,
+                allow: None,
+                review: None,
+                default_prompts: true,
+            }),
+            Format::Json,
+        )
+        .await
+        .unwrap();
+        server.abort();
+
+        assert_eq!(
+            seen.lock().unwrap()[0],
+            json!({"question": null, "allow_criteria": null, "review_criteria": null})
+        );
     }
 
     /// The daemon's message survives whole, and `ai_disabled` picks up the
@@ -522,7 +685,7 @@ mod tests {
 
         let err = run(
             &client,
-            PermissionsCommand::Refresh { wait: false },
+            PermissionsCommand::Ai(AiPermissionsCommand::Refresh { wait: false }),
             Format::Table,
         )
         .await
@@ -536,7 +699,7 @@ mod tests {
         );
         assert_eq!(
             crate::error::human_line(&err),
-            "the AI permission model is off; turn it on before refreshing it (run ariadne permissions enable)"
+            "the AI permission model is off; turn it on before refreshing it (run ariadne permissions ai enable)"
         );
     }
 
@@ -566,7 +729,7 @@ mod tests {
 
         run(
             &client,
-            PermissionsCommand::Enable { wait: true },
+            PermissionsCommand::Ai(AiPermissionsCommand::Enable { wait: true }),
             Format::Json,
         )
         .await
@@ -604,7 +767,7 @@ mod tests {
 
         let err = run(
             &client,
-            PermissionsCommand::Enable { wait: true },
+            PermissionsCommand::Ai(AiPermissionsCommand::Enable { wait: true }),
             Format::Json,
         )
         .await
@@ -640,7 +803,7 @@ mod tests {
 
         run(
             &client,
-            PermissionsCommand::Enable { wait: true },
+            PermissionsCommand::Ai(AiPermissionsCommand::Enable { wait: true }),
             Format::Json,
         )
         .await

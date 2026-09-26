@@ -119,10 +119,10 @@ impl ClientError {
             Self::Unreachable { .. } => Some("is it running? try: ariadne daemon start".into()),
             // The model (022): the daemon's message already says what is wrong,
             // and this is the one thing to do about it — on `permissions
-            // enable|refresh|set` and on `repo add|update --permission-mode
+            // ai enable|refresh|set` and on `repo add|update --permission-mode
             // ai` alike, since both refuse the same way.
             Self::Api { code, .. } if code == "ai_disabled" => {
-                Some("run ariadne permissions enable".into())
+                Some("run ariadne permissions ai enable".into())
             }
             Self::Api { code, .. } if code == "python_unavailable" => {
                 Some("install Python 3.10 or newer, or set python_bin in config.toml".into())
@@ -785,7 +785,7 @@ mod tests {
     }
 
     /// The two AI permission model refusals (022) each carry the one command that answers
-    /// them, on `permissions enable|refresh|set` and on `repo
+    /// them, on `permissions ai enable|refresh|set` and on `repo
     /// add|update --permission-mode ai` alike, since both send the same code.
     #[test]
     fn an_ai_refusal_carries_the_command_that_answers_it() {
@@ -796,7 +796,7 @@ mod tests {
         };
         assert_eq!(
             disabled.hint().as_deref(),
-            Some("run ariadne permissions enable")
+            Some("run ariadne permissions ai enable")
         );
 
         let unavailable = ClientError::Api {

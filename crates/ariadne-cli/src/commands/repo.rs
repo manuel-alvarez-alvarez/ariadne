@@ -41,7 +41,7 @@ pub(crate) enum RepoCommand {
         description: Option<String>,
         /// How its agents' ACP permission requests are answered: auto
         /// approves, ask waits for a console answer, learn remembers
-        /// approvals, ai lets the model decide (default: auto)
+        /// approvals, ai lets the AI permission model decide (default: auto)
         #[arg(long, value_parser = Spelling::<PermissionMode>::new())]
         permission_mode: Option<PermissionMode>,
     },

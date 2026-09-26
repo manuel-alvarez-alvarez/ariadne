@@ -8,7 +8,7 @@ use clap::FromArgMatches;
 use ariadne_core::{GoalStatus, Landing, PermissionMode, Seat, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
-use crate::commands::permissions::PermissionsCommand;
+use crate::commands::permissions::{AiPermissionsCommand, PermissionsCommand};
 use crate::commands::skill::SkillCommand;
 use crate::output::ColorChoice;
 
@@ -116,11 +116,11 @@ const LEAVES: &[(&str, bool)] = &[
     ("models ls", true),
     ("models rank", true),
     ("models show", true),
-    ("permissions disable", true),
-    ("permissions enable", true),
-    ("permissions refresh", true),
-    ("permissions set", true),
-    ("permissions show", true),
+    ("permissions ai disable", true),
+    ("permissions ai enable", true),
+    ("permissions ai refresh", true),
+    ("permissions ai set", true),
+    ("permissions ai show", true),
     ("repo add", true),
     ("repo inspect", true),
     ("repo ls", true),
@@ -1404,50 +1404,55 @@ fn models_rank_refuses_an_unknown_word_and_naming_neither_rank_nor_clear() {
     assert!(err.to_string().contains("required"), "{err}");
 }
 
-/// Every `permissions` verb parses, `set` included with each flag it takes.
+/// Every AI permissions verb parses, `set` included with each flag it takes.
 #[test]
 fn every_permissions_verb_parses() {
     let Command::Permissions {
-        command: PermissionsCommand::Show,
-    } = parse(&["ariadne", "permissions", "show"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Show),
+    } = parse(&["ariadne", "permissions", "ai", "show"]).command
     else {
-        panic!("permissions show");
+        panic!("permissions ai show");
     };
 
     let Command::Permissions {
-        command: PermissionsCommand::Enable { wait },
-    } = parse(&["ariadne", "permissions", "enable", "--wait"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Enable { wait }),
+    } = parse(&["ariadne", "permissions", "ai", "enable", "--wait"]).command
     else {
-        panic!("permissions enable");
+        panic!("permissions ai enable");
     };
     assert!(wait);
 
     let Command::Permissions {
-        command: PermissionsCommand::Disable,
-    } = parse(&["ariadne", "permissions", "disable"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Disable),
+    } = parse(&["ariadne", "permissions", "ai", "disable"]).command
     else {
-        panic!("permissions disable");
+        panic!("permissions ai disable");
     };
 
     let Command::Permissions {
-        command: PermissionsCommand::Refresh { wait },
-    } = parse(&["ariadne", "permissions", "refresh"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Refresh { wait }),
+    } = parse(&["ariadne", "permissions", "ai", "refresh"]).command
     else {
-        panic!("permissions refresh");
+        panic!("permissions ai refresh");
     };
     assert!(!wait);
 
     let Command::Permissions {
         command:
-            PermissionsCommand::Set {
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
                 checkpoints,
                 threshold,
                 schedule,
                 no_schedule,
-            },
+                question,
+                allow,
+                review,
+                default_prompts,
+            }),
     } = parse(&[
         "ariadne",
         "permissions",
+        "ai",
         "set",
         "--checkpoints",
         "all",
@@ -1467,12 +1472,16 @@ fn every_permissions_verb_parses() {
     assert_eq!(threshold, Some(0.6));
     assert_eq!(schedule.as_deref(), Some("03:30"));
     assert!(!no_schedule);
+    assert_eq!(question, None);
+    assert_eq!(allow, None);
+    assert_eq!(review, None);
+    assert!(!default_prompts);
 
     let Command::Permissions {
-        command: PermissionsCommand::Set { no_schedule, .. },
-    } = parse(&["ariadne", "permissions", "set", "--no-schedule"]).command
+        command: PermissionsCommand::Ai(AiPermissionsCommand::Set { no_schedule, .. }),
+    } = parse(&["ariadne", "permissions", "ai", "set", "--no-schedule"]).command
     else {
-        panic!("permissions set --no-schedule");
+        panic!("permissions ai set --no-schedule");
     };
     assert!(no_schedule);
 }
@@ -1480,7 +1489,35 @@ fn every_permissions_verb_parses() {
 /// `set` with nothing to change is refused: there is nothing to send.
 #[test]
 fn permissions_set_with_no_flag_is_a_usage_error() {
-    assert!(try_parse(&["ariadne", "permissions", "set"]).is_err());
+    assert!(try_parse(&["ariadne", "permissions", "ai", "set"]).is_err());
+}
+
+#[test]
+fn permissions_group_prints_help_and_refuses_the_old_flat_commands() {
+    let Err(err) = try_parse(&["ariadne", "permissions"]) else {
+        panic!("permissions must print help rather than parse")
+    };
+    assert!(
+        err.to_string().contains("Manage the AI permission model"),
+        "{err}"
+    );
+    assert!(try_parse(&["ariadne", "permissions", "show"]).is_err());
+}
+
+#[test]
+fn permissions_set_default_prompts_conflicts_with_a_prompt_text() {
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "permissions",
+            "ai",
+            "set",
+            "--default-prompts",
+            "--question",
+            "x",
+        ])
+        .is_err()
+    );
 }
 
 /// `--schedule` and `--no-schedule` say opposite things about the same
@@ -1491,6 +1528,7 @@ fn permissions_set_schedule_and_no_schedule_are_a_usage_error() {
         try_parse(&[
             "ariadne",
             "permissions",
+            "ai",
             "set",
             "--schedule",
             "03:30",
@@ -1505,12 +1543,13 @@ fn permissions_set_schedule_and_no_schedule_are_a_usage_error() {
 /// in — a round trip is not needed to know 0 to 1 from a typo.
 #[test]
 fn permissions_set_refuses_a_bad_threshold_or_schedule_locally() {
-    let Err(err) = try_parse(&["ariadne", "permissions", "set", "--threshold", "1.5"]) else {
+    let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", "--threshold", "1.5"]) else {
         panic!("1.5 is out of range");
     };
     assert!(err.to_string().contains("between 0 and 1"), "{err}");
 
-    let Err(err) = try_parse(&["ariadne", "permissions", "set", "--schedule", "25:00"]) else {
+    let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", "--schedule", "25:00"])
+    else {
         panic!("25:00 is not a clock time");
     };
     assert!(err.to_string().contains("HH:MM"), "{err}");

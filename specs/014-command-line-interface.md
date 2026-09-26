@@ -178,28 +178,32 @@ same binary also serves (013).
     in `--dir` or the current directory, sent to the daemon as an absolute
     path. It prints the session's status line, or with `--attach` opens its
     console at once. The first prompt typed into it is its title.
-32. `ariadne permissions` manages Laya, the model behind the `ai` permission
-    mode (022). `show` is a key-value block of the whole status, `--format
-    json` the DTO unchanged. `enable` and `disable` turn it on and off,
-    `refresh` reinstalls it, and each of the two that starts an install takes
-    `--wait`: it blocks until `state` leaves `installing` by following
-    `laya_updated` on `/v1/events/stream`, and exits 1 with `last_error` where
-    it settles on `failed`. `set` changes `--checkpoints`, `--threshold` and
-    `--schedule` (or `--no-schedule`, which turns the daily refresh off);
-    at least one of the four is required, `--schedule` and `--no-schedule`
-    refuse each other, and only the flags actually given reach the daemon —
-    an absent one is left out of the request rather than sent as `null`. A
-    bad `--threshold` or `--schedule` is refused locally, in the same words
-    the daemon would use, before anything is sent. A `laya_disabled` refusal
-    — here and on `repo add|update --permission-mode ai` alike — carries the
-    hint `run ariadne permissions enable`; a `python_unavailable` one carries
-    `install Python 3.10 or newer, or set python_bin in config.toml`.
-33. `ariadne doctor` reports the Python interpreter Laya's install would run
+32. `ariadne permissions ai` manages the AI permission model behind the `ai`
+    permission mode (022); `ariadne permissions` prints the group help and
+    accepts no flat command. `show` is a key-value block of the whole status,
+    `--format json` the DTO unchanged, and prints each prompt as `default` or
+    `custom`. `enable` and `disable` turn it on and off, `refresh` reinstalls
+    it, and each of the two that starts an install takes `--wait`: it blocks
+    until `state` leaves `installing` by following `ai_permissions_updated` on
+    `/v1/events/stream`, and exits 1 with `last_error` where it settles on
+    `failed`. `set` changes `--checkpoints`, `--threshold`, `--schedule` (or
+    `--no-schedule`, which turns the daily refresh off), and the `--question`,
+    `--allow`, and `--review` prompt texts. `--default-prompts` restores all
+    three prompts and refuses every prompt-text flag. At least one setting is
+    required, `--schedule` and `--no-schedule` refuse each other, and only the
+    flags actually given reach the daemon — an absent one is left out of the
+    request rather than sent as `null`. A bad `--threshold` or `--schedule` is
+    refused locally, in the same words the daemon would use, before anything
+    is sent. An `ai_disabled` refusal — here and on `repo add|update
+    --permission-mode ai` alike — carries the hint `run ariadne permissions ai
+    enable`; a `python_unavailable` one carries `install Python 3.10 or newer,
+    or set python_bin in config.toml`.
+33. `ariadne doctor` reports the Python interpreter the AI permission model's install would run
     on, next to the daemon's own environment (rule 19), and where the install
     itself stands. Neither ever fails the report, since `ai` is one
     permission mode among four: `python` is `ok` with the version found, or a
     warning naming the version that is too old or that none was found;
-    `laya` is `ok` for `disabled`, `installing` and `ready <release>`, and a
+    `ai permissions` is `ok` for `disabled`, `installing` and `ready <release>`, and a
     warning for `failed: <last_error>`.
 
 ## Acceptance criteria
@@ -255,9 +259,11 @@ same binary also serves (013).
   and the plain line protocol is unchanged behind it
   (`console.rs::a_console_renders_a_stub_agent_transcript_and_delivers_an_input_line`,
   `::a_permission_question_renders_and_delivers_the_selected_answer`).
-- `ariadne events` prints the daemon's summary in an agent event's detail
+- `ariadne events` prints the daemon's summary in an agent event's detail and
+  spells the AI permission subject `ai permissions`
   (`commands/events.rs::an_event_reads_as_time_kind_subject_and_detail`,
-  `::an_agent_event_reads_the_same_recorded_as_it_does_live`), and its
+  `::an_agent_event_reads_the_same_recorded_as_it_does_live`,
+  `::an_ai_permissions_event_names_its_subject`), and its
   snapshot is the newest page of the listing, printed oldest first
   (`::the_snapshot_asks_for_the_newest_page_and_prints_it_oldest_first`).
 - `task history` paints `from` and `to`, and a row carries a dash for a
@@ -291,34 +297,43 @@ same binary also serves (013).
   (`commands/doctor/agents.rs::acp_probe_results_show_rejections_and_gaps`),
   and fails only where no agent is ready
   (`::no_ready_agent_fails_the_report_and_one_is_enough`).
-- `doctor` reports the Python interpreter Laya needs without ever failing on
-  it, and reports the four states of the Laya install
+- `doctor` reports the Python interpreter the AI permission model needs without ever failing on
+  it, and reports the four states of the model install
   (`commands/doctor/agents.rs::python_never_fails_and_names_what_it_found`,
-  `::laya_reports_its_four_states_and_never_fails`).
-- Every `permissions` verb parses, `set` with no flag and `--schedule` with
+  `::ai_permissions_reports_its_four_states_and_never_fails`).
+- Every `permissions ai` verb parses, the group prints help, the former flat
+  commands are refused, `set` with no flag and `--schedule` with
   `--no-schedule` are usage errors, and a bad threshold or schedule is
   refused locally in the daemon's own words
   (`cli/tests.rs::every_permissions_verb_parses`,
+  `::permissions_group_prints_help_and_refuses_the_old_flat_commands`,
   `::permissions_set_with_no_flag_is_a_usage_error`,
   `::permissions_set_schedule_and_no_schedule_are_a_usage_error`,
   `::permissions_set_refuses_a_bad_threshold_or_schedule_locally`).
-- `show` renders every field of the status; `enable` sends only `{"enabled":
+- `show` renders every field of the status and snapshots default and custom
+  prompts; `enable` sends only `{"enabled":
   true}`, `set --no-schedule` only a `null` schedule, and `set --threshold`
-  only the threshold — never the other fields as an explicit `null`
+  only the threshold — never the other fields as an explicit `null`. `set
+  --question` sends that field alone, and `--default-prompts` sends every
+  prompt as `null` and refuses a prompt-text flag.
   (`commands/permissions.rs::show_renders_every_field`,
+  `::show_snapshots_custom_prompts`, `::show_snapshots_default_prompts`,
   `::enable_sends_enabled_true_and_nothing_else`,
   `::set_no_schedule_sends_a_null_schedule`,
-  `::set_threshold_sends_only_threshold`).
+  `::set_threshold_sends_only_threshold`,
+  `::set_question_sends_only_the_question`,
+  `::set_default_prompts_sends_null_for_every_prompt`,
+  `cli/tests.rs::permissions_set_default_prompts_conflicts_with_a_prompt_text`).
 - `enable --wait` and `refresh --wait` block on the event stream until the
   install leaves `installing`, and a failed install exits with its
   `last_error`
   (`commands/permissions.rs::enable_wait_returns_once_the_stream_answers_ready`,
   `::enable_wait_fails_with_the_last_error_on_a_failed_install`).
-- A `laya_disabled` refusal keeps the daemon's message and adds the command
+- An `ai_disabled` refusal keeps the daemon's message and adds the command
   that answers it, on `permissions` and on `repo add|update
   --permission-mode ai` alike
-  (`commands/permissions.rs::refresh_keeps_the_daemons_message_and_adds_the_hint_on_laya_disabled`,
-  `ariadne-client/src/lib.rs::a_laya_refusal_carries_the_command_that_answers_it`).
+  (`commands/permissions.rs::refresh_keeps_the_daemons_message_and_adds_the_hint_on_ai_disabled`,
+  `ariadne-client/src/lib.rs::an_ai_refusal_carries_the_command_that_answers_it`).
 - A git below the floor is a warning that names what it cannot do, and a
   version line is read down to its major and minor
   (`checks.rs::a_git_below_the_floor_is_a_warning_about_repositories_with_no_commits`,

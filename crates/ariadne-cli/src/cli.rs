@@ -73,13 +73,13 @@ Examples:
 
 const PERMISSIONS_EXAMPLES: &str = "\
 Examples:
-  ariadne permissions enable --wait         # turn the AI permission model on and wait for the install
-  ariadne permissions show                  # settings, install state, python
-  ariadne permissions set --checkpoints all
-  ariadne permissions set --threshold 0.6
-  ariadne permissions set --schedule 03:30  # or: --no-schedule
-  ariadne permissions refresh
-  ariadne permissions disable
+  ariadne permissions ai enable --wait         # turn the AI permission model on and wait for the install
+  ariadne permissions ai show                  # settings, install state, python
+  ariadne permissions ai set --checkpoints all
+  ariadne permissions ai set --threshold 0.6
+  ariadne permissions ai set --schedule 03:30  # or: --no-schedule
+  ariadne permissions ai refresh
+  ariadne permissions ai disable
 ";
 
 const GOAL_EXAMPLES: &str = "\
@@ -340,10 +340,10 @@ pub(crate) enum Command {
     ///
     /// The model answers an ACP agent's permission requests on its own, for every
     /// repository set to `ai`. It is a Python package Ariadne installs for
-    /// you, so `permissions enable` starts a background install rather than
-    /// answering at once — `permissions show` says where it has got to, and
+    /// you, so `permissions ai enable` starts a background install rather than
+    /// answering at once — `permissions ai show` says where it has got to, and
     /// `ariadne doctor` reports the Python interpreter it needs.
-    #[command(after_help = PERMISSIONS_EXAMPLES)]
+    #[command(arg_required_else_help = true, after_help = PERMISSIONS_EXAMPLES)]
     Permissions {
         #[command(subcommand)]
         command: PermissionsCommand,
