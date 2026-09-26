@@ -20,6 +20,8 @@ is a file an agent may never see.
 - [`ui/AGENTS.md`](ui/AGENTS.md) — Ariadne Desktop under `ui/`: its layout, how
   it calls the daemon, query keys, the event stream, routes, keyboard chords,
   the shadcn setup, and the npm commands that check it.
+- [`bench/`](bench/README.md) — reproducible experiments that select production
+  defaults, with each benchmark's harness, cases, results and report.
 - [`.github/RELEASING.md`](.github/RELEASING.md) — the release loop: how
   release-please turns commits into versions, tags and release notes.
 - [`docs/`](docs/README.md) — the user-facing manual: installing, configuring

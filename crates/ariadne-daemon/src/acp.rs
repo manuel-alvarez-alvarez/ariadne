@@ -1303,7 +1303,21 @@ impl RuntimeIncoming {
             self.permission_mode,
             PermissionMode::Learn | PermissionMode::Ai
         );
-        let ai_permissions_decision = if self.permission_mode == PermissionMode::Ai {
+        let guardrail = (self.permission_mode == PermissionMode::Ai)
+            .then(|| self.sink.runtime.inner.ai_permissions.as_ref())
+            .flatten()
+            .and_then(|ai_permissions| ai_permissions.guardrail(&params["toolCall"]))
+            .map(str::to_string);
+        if let Some(guardrail) = &guardrail {
+            tracing::warn!(
+                guardrail,
+                "AI permission guardrail `{guardrail}` requires console review"
+            );
+            payload["guardrail"] = json!(guardrail);
+        }
+        let ai_permissions_decision = if self.permission_mode == PermissionMode::Ai
+            && guardrail.is_none()
+        {
             match self.sink.runtime.inner.ai_permissions.as_ref() {
                 Some(ai_permissions) => match ai_permissions.live_once_started().await {
                     Some(live) => Some(
@@ -1331,7 +1345,8 @@ impl RuntimeIncoming {
         } else {
             None
         };
-        let learned = remembers
+        let learned = guardrail.is_none()
+            && remembers
             && self
                 .sink
                 .runtime
@@ -1344,7 +1359,8 @@ impl RuntimeIncoming {
             && approved_option(params)
                 .as_deref()
                 .is_some_and(|option| allowing_option(params, option));
-        let waiting = matches!(self.permission_mode, PermissionMode::Ask)
+        let waiting = guardrail.is_some()
+            || matches!(self.permission_mode, PermissionMode::Ask)
             || (remembers && !learned && !ai_permissions_allow);
         let receiver = waiting.then(|| self.begin_permission());
         self.end_text().await;

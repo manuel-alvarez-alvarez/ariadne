@@ -72,13 +72,26 @@ The AI permission model is the model behind the `ai` mode. It runs on your own m
 about a permission request leaves it. It is a Python package, and Ariadne
 installs it for you.
 
-For each request, the model sees the tool title and kind, up to 2,000 characters
-of its JSON input, the repository path, and the available option names. An
-`allow` is confident when its confidence meets the configured threshold. Any
-other answer, an unavailable model, or a failed request falls back to `learn`:
-an existing approval is used, or the console asks you. The model's own allows are
-never remembered; only allowing console answers are. The answered console
-line names the model and its confidence when it decided.
+For each request, the model sees a short text record. Its nonempty lines are,
+in order: the tool name, title, kind, command, description, paths, repository
+path, and option names. Paths come from `file_path`, `path`, `url`, and the
+tool call's locations. The model receives the local `typed-decisions`
+checkpoint and one question: “Does this coding-agent tool call need a person's
+review?”
+
+The answer is a probability that review is needed. Ariadne allows the request
+only when “no” is the model's most likely answer and its probability meets the
+configured threshold. Any other answer, an unavailable model, or a failed
+request falls back to `learn`: an existing approval is used, or the console
+asks you. The model's own allows are never remembered; only allowing console
+answers are. The answered console line names the model and its confidence when
+it decided.
+
+Before asking the model, Ariadne checks the request against the regular
+expression guardrails selected by the benchmark. A match always asks you and
+never uses a learned approval. The console shows the usual permission picker;
+the recorded `permission_request` event includes `guardrail` with the rule
+name. Requests without a match have no `guardrail` field.
 
 Turn it on, look at it, and install it again:
 
@@ -118,15 +131,27 @@ ariadne permissions ai set --no-schedule        # and stop doing that
 ```
 
 The threshold is how sure the model has to be before its answer is taken; it
-defaults to `0.8`, and anything outside 0 to 1 is refused. The schedule is
+defaults to `0.7`, and anything outside 0 to 1 is refused. Set another value
+with `ariadne permissions ai set --threshold <value>`. Existing installations
+keep their stored threshold. The schedule is
 `HH:MM` in 24-hour local time, and the daily refresh downloads the latest
 release and the checkpoints again. It runs once per local date: if the daemon
 was down at the scheduled time, it catches up on its next start that day. A
 refresh already in progress is not queued. The model starts without one, and then
 nothing is downloaded until you ask for it.
 
-The AI permission model uses built-in prompts and the English checkpoint. The
-configuration is measured by `bench/ai-permissions/`.
+The [AI permission benchmark](../bench/ai-permissions/README.md) tested 75
+configurations on 2026-09-26; the winner allowed 30 of 127 safe cases, 3 of 301
+real requests, and none of 89 development, 168 held-out, or 44 elevated risky
+cases. It measured AUROC 0.9808 and 23.3 ms median single-request latency, but
+real coverage was 1%, and its held-out margin was only 0.0094.
+
+The benchmark ran on one Apple GPU and used a changing local sample for real
+requests. Guardrails inspect one request with regular expressions, so they
+cannot understand how a written file will run later. Long shell commands go
+to the console when they exceed the model's useful input window, and score
+changes from another device or numeric precision can matter near the
+threshold.
 
 Once the install is ready, the daemon runs the model's local server on a loopback
 port and keeps its selected weights in memory for permission decisions. It

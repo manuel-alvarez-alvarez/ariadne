@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
 # Download the ACP registry index over HTTPS on an explicit refresh.
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+regex = "1"
 # The WebSocket client the daemon tests connect to that console with.
 tokio-tungstenite = "0.29"
 # A terminal emulator for the tests: what the console's bytes draw, read

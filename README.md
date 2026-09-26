@@ -164,6 +164,8 @@ the orchestrator asks to the commit on the base branch.
 <summary><b>The top-level tree</b></summary>
 
 ```
+bench/           reproducible experiments that select production defaults — see
+                 bench/README.md
 crates/          the Rust workspace: ariadned, the ariadne CLI and the libraries
                  they share — crate by crate in crates/AGENTS.md
 docs/            the manual: install, the CLI, events, configuration
@@ -196,7 +198,8 @@ the commit types included — they are written down there and nowhere else — a
 points at the file each area keeps: [`crates/AGENTS.md`](crates/AGENTS.md) for
 the Rust workspace and its cargo commands,
 [`ui/AGENTS.md`](ui/AGENTS.md) for the desktop app. [`specs/`](specs/README.md)
-describes what each subsystem does, as it stands. The release loop is in
+describes what each subsystem does, as it stands. [`bench/`](bench/README.md)
+holds reproducible experiments that select production defaults. The release loop is in
 [`.github/RELEASING.md`](.github/RELEASING.md).
 
 ## License

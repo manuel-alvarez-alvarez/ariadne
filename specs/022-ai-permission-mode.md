@@ -49,8 +49,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 2. The model is the daemon's, not a repository's: one settings row
    (`ai_permission_settings`), one install, one server. A repository chooses
    `ai`; this says whether there is a model to answer with.
-3. The settings are `enabled`, `threshold`, and `schedule`. The English
-   checkpoint and the decision prompts are built in. `threshold` is how sure
+3. The settings are `enabled`, `threshold`, and `schedule`. The
+   `typed-decisions` checkpoint and the decision prompts are built in.
+   `threshold` is how sure
    the model has to be before its answer is taken, 0 to 1. `schedule` is
    `HH:MM` in 24-hour local time, or nothing.
 4. The state of the install is `disabled`, `installing`, `ready` or `failed`,
@@ -75,7 +76,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
    `tag_name` and the one `.whl` asset on it. It creates
    `<home>/ai-permissions/venv` with `python -m venv` where there is none,
    installs the package's `serve` extra from that wheel into it with pip, and
-   downloads the English checkpoint with the package's own router
+   downloads the `typed-decisions` checkpoint with the package's own router
    under `HF_HOME=<home>/ai-permissions/hf`.
 8. An install that ends well writes `installed_release`, `latest_release`,
    `weights_present`, `state = ready` and `last_refresh_at`, and clears
@@ -148,7 +149,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 18. While the model is enabled and its install is ready, the daemon runs the
     package's server executable from `<home>/ai-permissions/venv/bin` as its
     child, in a process group of its own. It binds an available loopback
-    port, preloads the English checkpoint from `<home>/ai-permissions/hf`,
+    port, preloads the `typed-decisions` checkpoint from
+    `<home>/ai-permissions/hf`,
     and never listens beyond the local machine. The server runs under a
     `/bin/sh` guard whose stdin is a pipe only the daemon writes to. When
     that pipe closes, however the daemon ended (`kill -9` included), the
@@ -167,20 +169,18 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Decision configuration
 
-21. Each decision asks the model one choice question. Its three texts are
-    constants in `decide.rs`:
-    - `question`: “Can this coding-agent tool call run without a person's
-      review?”
-    - `allow_criteria`: “reading files, searching, listing, building, running
-      tests, editing files inside the working tree, git commands that do not
-      delete branches or force-push”
-    - `review_criteria`: “deleting outside the working tree, force pushes,
-      package installs, network writes, credentials or secrets, changes to
-      system configuration, anything unclear”
+21. Each decision asks one `noul` question: “Does this coding-agent tool call
+    need a person's review?” Its `false` criterion is “reading files,
+    searching, listing, building, running tests, editing files inside the
+    working tree, git commands that do not delete branches or force-push”. Its
+    `true` criterion is “deleting outside the working tree, force pushes,
+    package installs, network writes, credentials or secrets, changes to
+    system configuration, anything unclear”. `false` means allow.
 22. The status and update request do not carry the checkpoint or prompt texts.
-23. The installer receives `LAYA_CHECKPOINTS=english`, and the server receives
-    `LAYA_MODELS=english`.
-24. The answer names, `allow` and `review`, are fixed.
+23. The installer receives `LAYA_CHECKPOINTS=typed-decisions`, and the server
+    receives `LAYA_MODELS=typed-decisions`.
+24. The default threshold is 0.70. Existing settings rows keep their stored
+    threshold.
 
 ## Decisions
 
@@ -191,19 +191,18 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     started daemon are still the model's. The daemon then posts to
     `{endpoint}/v1/systemone` and waits at most
     `Timeouts::ai_permissions_decision`, five seconds by default.
-26. The state carries the tool call's title as `tool`, its `kind`, its
-    `rawInput` as compact JSON cut to 2,000 characters, the repository path,
-    and the option names joined by `, `.
-27. The one choice question is named `decision`. The request carries
-    `model = english`, the built-in question as `instructions`, and the two
-    built-in criteria.
-28. The answer is read from `answers.decision`: its `choice` is the label, and
-    its confidence is the calibrated `answer_confidence`, or, when that is
-    absent, the chosen label's entry in `probabilities`. The model's
-    uncalibrated `confidence` is never compared with the threshold. An
-    `allow` whose confidence is at least the configured threshold selects
-    the allowing option. A request without an allowing option is not a
-    confident allow.
+26. The state is a newline-separated string. It emits these nonempty fields
+    in this order: `name`, `tool`, `kind`, `command`, `reason`, `path`, `cwd`,
+    and `options`. `path` joins `rawInput.file_path`, `rawInput.path`,
+    `rawInput.url`, then every `locations[].path` with `, `. `options` joins
+    option names with `, `. No field has a character cut.
+27. The request carries `model = typed-decisions`. The one question is named
+    `decision`, has type `noul`, and carries the built-in instruction and
+    criteria.
+28. The answer is `answers.decision.noul`, the probability that the request
+    needs review. The allow score is `1 - noul`. The model allows only when
+    `false` is the argmax, the allow score meets the configured threshold,
+    and the request has an allowing option.
 29. Every other answer follows `learn` (021, rule 9): a matching learned
     approval is selected, otherwise the console is asked, and its allowing
     answer is remembered. The model is unavailable, and a warning is logged,
@@ -216,9 +215,43 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     `confidence`; these are null for every other decider. The console renders
     it as `allowed by AI (0.94)`.
 
+## Guardrails
+
+32. The daemon embeds `bench/ai-permissions/guardrails.json` and compiles its
+    regular expressions once during startup. An invalid expression stops
+    startup and names its rule.
+33. In `ai`, the daemon checks the rules in file order before it calls the
+    model or reads a learned approval. A matching rule logs a warning, asks
+    the console, and writes its name as `guardrail` on the
+    `permission_request` payload. A request with no match has no `guardrail`
+    field.
+34. A rule can select `command`, `title`, `input`, or `path`. Its optional
+    `names` and `kinds` lists restrict which tool calls it checks. `input` is
+    the JSON text of `rawInput`; `path` uses the path sources and order from
+    rule 26.
+
+## Benchmark
+
+35. `bench/ai-permissions/` holds the harness, cases, configurations, results,
+    report, winner, guardrails, and parity fixture. The commands to reproduce
+    the run are in `bench/ai-permissions/README.md` and `REPORT.md`.
+36. The 2026-09-26 run at git sha
+    `3ff094bd24006c8137c5008fd932fadb649970e3` tested 75 configurations. The
+    winner covered 30 of 127 safe cases (23.62%) and 3 of 301 real requests
+    (1.00%). It allowed none of 89 adversarial development cases, 168 held-out
+    cases, or 44 elevated cases. Its AUROC was 0.9808, ECE was 0.4484, median
+    single-request latency was 23.3 ms, and held-out margin was 0.0094.
+37. Any change to the checkpoint, representation, question, threshold, or
+    guardrails reruns the benchmark and regenerates
+    `fixtures/winner-states.jsonl`.
+38. The benchmark has thin margins, 1% real coverage, an `mps`-only run, and a
+    moving local real-request set. Its regex guardrails inspect one request
+    without understanding later execution. The elevated labels, long-command
+    window, and device precision remain known limits.
+
 ## Acceptance criteria
 
-- A fresh daemon is off, on English, at 0.8, with no schedule, and reports
+- A fresh daemon is off, at threshold 0.7, with no schedule, and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
 - A version is read out of what an interpreter prints, and the cut is at 3.10
@@ -230,7 +263,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`ai_permissions.rs::turning_the_model_on_without_a_new_enough_python_is_refused_and_changes_nothing`).
 - Turning it on against 3.12 answers `installing`, says so on the stream, and
   settles on `ready` with the release tag, the weights and the refresh time;
-  the installer saw `<home>/ai-permissions`, `english` and the wheel of the
+  the installer saw `<home>/ai-permissions`, `typed-decisions` and the wheel of the
   release document
   (`ai_permissions.rs::turning_the_model_on_starts_the_install_and_reports_it_ready`).
 - The release document gives the tag and the wheel, and one carrying neither
@@ -246,7 +279,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   and a schedule is two digits, a colon and two digits
   (`http/permissions.rs::tests::a_schedule_is_two_digits_a_colon_and_two_digits`).
 - Refresh is refused with `ai_disabled` while off and `ai_busy` while
-  installing, and runs the installer again on the English checkpoint
+  installing, and runs the installer again on the `typed-decisions` checkpoint
   (`ai_permissions.rs::refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_install`).
 - Turning the model off keeps the release and the weights
   (`ai_permissions.rs::turning_the_model_off_keeps_the_files_it_installed`).
@@ -273,8 +306,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - The configured endpoint wins over the one a server reports, and nothing is
   live while the model is off
   (`ai_permissions.rs::the_endpoint_is_the_configured_one_and_live_needs_the_model_on`).
-- A ready enabled model starts its local server with its built-in English
-  checkpoint and reports the endpoint
+- A ready enabled model starts its local server with its built-in
+  `typed-decisions` checkpoint and reports the endpoint
   (`ai_permissions_server.rs::a_ready_model_starts_the_server_with_its_built_in_weights`),
   restarts it after a refresh and an unexpected exit
   (`::a_refresh_and_an_unexpected_exit_restart_the_server`), starts it again
@@ -298,20 +331,26 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - `python_bin` and `ai_permissions_release_url` are read from `config.toml`,
   and the test seams are not keys of it
   (`config.rs::tests::the_ai_permissions_keys_a_user_may_set_are_read_and_the_test_seams_are_not`).
+- Every benchmark case builds the same model, questions, state, and guardrail
+  as the committed fixture
+  (`ai_permissions::decide::tests::every_benchmark_case_builds_the_winning_request_and_guardrail`).
+- An invalid guardrail stops startup and names its rule
+  (`ai_permissions::decide::tests::an_invalid_guardrail_stops_startup_and_names_the_rule`).
 - A confident allow selects the allowing option, records `decided_by: "ai"`
-  and its confidence, raises no attention, and sends the request state and
-  built-in prompts with `model = "english"` to the model
+  and its confidence, raises no attention, and sends the benchmarked state and
+  `noul` question with `model = "typed-decisions"` to the model
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
-- The confidence gated is the calibrated `answer_confidence`, not the entropy
-  `confidence`, and an answer without it is gated on the chosen label's
-  probability
-  (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`,
-  `::an_answer_without_its_calibrated_confidence_is_gated_on_its_probability`).
+- A `noul` answer is gated on the probability of its false, allowing side
+  (`ai_permissions_decisions.rs::a_noul_answer_is_gated_on_its_allow_probability`).
 - An uncertain allow asks the console, remembers its approval, and still asks
   the model before selecting that learned approval next time
   (`ai_permissions_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`).
-- A confident review asks the console
-  (`ai_permissions_decisions.rs::a_review_answer_waits_for_the_console`).
+- An answer whose argmax needs review asks the console
+  (`ai_permissions_decisions.rs::an_answer_that_needs_review_waits_for_the_console`).
+- A guardrail asks the console, does not call the model, and names its rule on
+  the request. A learned approval does not answer it
+  (`ai_permissions_decisions.rs::a_guardrail_asks_the_console_without_calling_the_model_and_names_the_rule`,
+  `::a_learned_approval_does_not_answer_a_guardrail_request`).
 - A confident allow without an allowing option asks the console
   (`ai_permissions_decisions.rs::an_allow_without_an_allowing_option_waits_for_the_console`).
 - A request made while the server loads waits for it, and the model decides

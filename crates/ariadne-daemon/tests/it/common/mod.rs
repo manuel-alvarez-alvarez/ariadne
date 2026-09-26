@@ -320,7 +320,8 @@ impl HarnessBuilder {
             bus.clone(),
             &config,
             self.timeouts,
-        );
+        )
+        .unwrap();
         ariadne_daemon::ai_permissions::schedule::start(
             ai_permissions.clone(),
             self.timeouts.ai_permissions_schedule_poll,

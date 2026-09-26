@@ -82,7 +82,7 @@ async fn a_ready_model_starts_the_server_with_its_built_in_weights() {
     let status: AiPermissionsStatusDto = h.get("/v1/permissions/ai").await;
     assert!(status.endpoint.is_some());
     let saw = std::fs::read_to_string(record.path()).unwrap();
-    assert!(saw.contains("english"));
+    assert!(saw.contains("typed-decisions"));
     assert!(saw.contains("/ai-permissions/hf"));
     let _: AiPermissionsStatusDto = h
         .json(
@@ -259,7 +259,8 @@ async fn a_ready_enabled_model_starts_after_a_daemon_restart() {
         first.bus.clone(),
         &first.launcher.cfg,
         first.timeouts,
-    );
+    )
+    .unwrap();
     eventually(TIMEOUT, "the restarted daemon server", || async {
         std::fs::read_to_string(record.path())
             .ok()

@@ -18,6 +18,9 @@ mod server;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
+
+use anyhow::Result;
+use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 
 use ariadne_api::permissions::{AiPermissionsState, AiPermissionsStatusDto};
@@ -65,13 +68,16 @@ pub struct AiPermissions {
     installing: Arc<AtomicBool>,
     timeouts: Timeouts,
     server_tx: mpsc::UnboundedSender<server::Command>,
+    /// The benchmark's rules, parsed and compiled once when the daemon starts.
+    guardrails: Arc<decide::Guardrails>,
 }
 
 impl AiPermissions {
     /// The AI permission model of a daemon configured by `cfg`, writing to `store` and
     /// publishing on `events`.
-    pub fn new(store: Store, events: EventBus, cfg: &Config, timeouts: Timeouts) -> Self {
+    pub fn new(store: Store, events: EventBus, cfg: &Config, timeouts: Timeouts) -> Result<Self> {
         let (server_tx, server_rx) = mpsc::unbounded_channel();
+        let guardrails = Arc::new(decide::Guardrails::load()?);
         let ai_permissions = Self {
             store,
             events,
@@ -86,9 +92,10 @@ impl AiPermissions {
             installing: Arc::default(),
             timeouts,
             server_tx,
+            guardrails,
         };
         server::start(ai_permissions.clone(), server_rx);
-        ai_permissions
+        Ok(ai_permissions)
     }
 
     /// The settings and the state of the install behind them, with the
@@ -204,6 +211,11 @@ impl AiPermissions {
         }
     }
 
+    /// The first benchmark guardrail that requires console review.
+    pub(crate) fn guardrail<'a>(&'a self, tool_call: &Value) -> Option<&'a str> {
+        self.guardrails.matching_name(tool_call)
+    }
+
     /// Publish the status as it now stands, whatever moved it.
     pub(crate) async fn announce(&self) -> AiPermissionsStatusDto {
         let status = self.status().await;
@@ -214,7 +226,7 @@ impl AiPermissions {
 
 /// The threshold a daemon that cannot read its settings reports: the same one
 /// the schema defaults to, so a failure does not invent a number.
-const DEFAULT_THRESHOLD: f64 = 0.8;
+const DEFAULT_THRESHOLD: f64 = 0.7;
 
 /// The state a stored spelling names. One nothing here knows reads as
 /// `failed`: a state that cannot be read is not one to answer requests on.

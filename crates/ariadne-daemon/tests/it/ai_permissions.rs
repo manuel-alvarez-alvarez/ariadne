@@ -147,7 +147,7 @@ async fn settles_on(h: &Harness, state: AiPermissionsState) -> AiPermissionsStat
 // -- the tests ---------------------------------------------------------------
 
 /// A daemon nobody has configured answers with the defaults, and with the
-/// interpreter it probed: off, English alone, the threshold the schema
+/// interpreter it probed: off, the threshold the schema
 /// carries, and no daily refresh.
 #[tokio::test]
 async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
@@ -157,7 +157,7 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
 
     let status = status(&h).await;
     assert!(!status.enabled);
-    assert_eq!(status.threshold, 0.8);
+    assert_eq!(status.threshold, 0.7);
     assert_eq!(status.schedule, None);
     assert_eq!(status.state, AiPermissionsState::Disabled);
     assert_eq!(status.installed_release, None);
@@ -247,7 +247,7 @@ async fn turning_the_model_on_starts_the_install_and_reports_it_ready() {
                 .join("ai-permissions")
                 .display()
                 .to_string(),
-            "english".to_string(),
+            "typed-decisions".to_string(),
             format!("https://example.test/{WHEEL}"),
             TAG.to_string(),
         ]
@@ -326,7 +326,8 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
         EventBus::default(),
         &h.launcher.cfg,
         Timeouts::default(),
-    );
+    )
+    .unwrap();
     let kept = ai_permissions.status().await;
     assert_eq!(kept.threshold, 0.6);
     assert_eq!(kept.schedule.as_deref(), Some("03:30"));
@@ -395,7 +396,7 @@ async fn refresh_is_refused_while_the_model_is_off_or_busy_and_reruns_the_instal
     settles_on(&h, AiPermissionsState::Ready).await;
     assert_eq!(
         recorded(record.path()).get(1).map(String::as_str),
-        Some("english")
+        Some("typed-decisions")
     );
 }
 
@@ -609,7 +610,7 @@ async fn the_daily_refresh_runs_the_install_once_at_its_minute() {
     settles_on(&h, AiPermissionsState::Ready).await;
     assert_eq!(
         recorded(record.path()).get(1).map(String::as_str),
-        Some("english"),
+        Some("typed-decisions"),
         "the refresh installs the built-in checkpoint"
     );
 

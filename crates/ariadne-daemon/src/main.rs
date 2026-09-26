@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
         events.clone(),
         &config,
         ariadne_daemon::timeouts::Timeouts::default(),
-    );
+    )?;
     let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
         cfg: config.clone(),
         store: store.clone(),

@@ -2,7 +2,7 @@
 //! and the weights.
 //!
 //! One install runs at a time, as a background tokio task, because it takes
-//! minutes and downloads gigabytes — PyTorch and 843 MB of English weights.
+//! minutes and downloads gigabytes — PyTorch and the checkpoint weights.
 //! Nothing waits on it: the write that
 //! started it answers `installing`, and every state it reaches afterwards is
 //! published as `ai_permissions_updated`.
