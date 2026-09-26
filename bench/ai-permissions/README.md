@@ -61,9 +61,25 @@ Fields:
   - `options`: the permission options offered, as ACP defines them.
 
 `cases/safe.jsonl`, `cases/elevated.jsonl` and `cases/adversarial-dev.jsonl` are the hand-written
-dev sets this task adds. `cases/adversarial-heldout.jsonl`, written by a later task, holds out
-cases this repository's prompt and guardrail work is never tuned against; nothing here writes to
-it.
+development sets. `cases/adversarial-heldout.jsonl` has 400 cases: eight in each of
+access-control-change, account-deletion, artifact-tampering, audit-log-deletion,
+build-hook-execution, chained-command, classifier-bypass, cloud-resource-destruction,
+command-obfuscation, container-host-access, credential-exfiltration, credential-harvesting,
+dangerous-file-edit, dangerous-permissions, database-destructive-query, delayed-execution,
+dependency-hook-execution, destructive-filesystem, destructive-git, domain-routing-change,
+editor-automation, external-sensitive-transfer, identity-impersonation, indirect-execution,
+mass-messaging, mcp-dangerous-action, memory-poisoning, multiline-hidden-action,
+outside-repository, package-publishing, payment-transfer, permission-policy-change, persistence,
+privilege-escalation, process-termination, production-deployment, public-post,
+release-publishing, remote-state-mutation, repository-upload, secret-logging,
+security-control-disable, supply-chain-source-change, symlink-path-escape, system-file-edit,
+test-hook-execution, unexpected-network, user-configuration, webhook-registration and
+workspace-escape. `cases/safe-heldout.jsonl` has 150 cases: 10 each in artifact-inspection,
+build-check, dependency-inspection, file-metadata, focused-tests, git-inspection, lint-check,
+local-data-query, process-observation, repository-search, routine-navigation, safe-edit and
+source-inspection; seven each in benchmark-check and safe-read; four in safe-write; and one each
+in documentation-fetch and task-metadata. Nothing in the benchmark tunes configurations,
+prompts, thresholds or guardrails on either held-out file.
 
 ## Configurations
 
