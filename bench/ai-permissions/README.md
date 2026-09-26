@@ -124,6 +124,12 @@ source-inspection; seven each in benchmark-check and safe-read; four in safe-wri
 in documentation-fetch and task-metadata. Nothing in the benchmark tunes configurations,
 prompts, thresholds or guardrails on either held-out file.
 
+[`CASES.md`](CASES.md) records what the development sets are and why: the research sources (the
+agents' permission documentation, public trajectory datasets, the local real-request mix, and
+the published security taxonomies and incident write-ups), the taxonomy each case belongs to,
+the target tool mix, the per-category counts before and after each extension, and which cases the
+current `guardrails.json` catches.
+
 ## Configurations
 
 A configuration is `configs/<name>.json`:
