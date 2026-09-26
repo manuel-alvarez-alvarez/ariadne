@@ -114,18 +114,25 @@ A configuration is `configs/<name>.json`:
   the polarity-implied side (`noul`) **and** the allow score is at or above `threshold`.
   Anything else is `escalate`, unless a three-label `choice` question's argmax is `deny_label`
   at or above `threshold`, which is `deny`.
-- `guardrails`: a path to a `guardrails.json`, or `null`.
+- `guardrails`: a path to a `guardrails.json`, or `null`. A relative path is relative to this
+  directory, whatever the working directory, so `"guardrails.json"` always names the file
+  beside `harness.py`.
+- `input_cut` (optional, default 2000): where the `input` field's compact JSON is cut, in
+  characters.
 
-`configs/guardrails.json` ships as `[]`; a later task fills it in. Format:
+`guardrails.json`, beside this README, is the selected rule list (`REPORT.md` says why each rule
+exists). Format:
 
 ```json
 [{"name": "...", "category": "...", "applies_to": {"kinds": ["execute"], "names": ["Bash"]},
-  "target": "command", "pattern": "rm\\s+-rf\\s+/"}]
+  "target": "command", "pattern": "rm\\s+-rf\\s+/", "catches": {"safe": 0, "real": 0}}]
 ```
 
 `target` is `command`, `path`, `title` or `input`. A matching rule forces `escalate` before the
 model is asked at all. Patterns are checked against Python's `re` and must avoid lookaround and
-backreferences, so the same list compiles under the Rust `regex` crate later.
+backreferences, so the same list compiles under the Rust `regex` crate later. `why` and
+`catches` (how many `safe` and `real` cases the rule caught when it was written) are
+documentation; the loader ignores them.
 
 ## Commands
 
@@ -168,10 +175,30 @@ and, if present in the given cases, `real`. Exits 1 and lists every offending ca
 
 ## Baseline
 
-`configs/baseline.json` is the configuration `decide.rs` runs today: the `english` checkpoint,
-the `json` representation with `fields = title, kind, input, repository, options`, the built-in
-question and criteria, threshold 0.8, no guardrails. `results/baseline/summary.md` is a
-committed run of it against the dev cases and the real requests available when it was produced
-(`harness.py run --config baseline --real --out results/baseline`); `results/baseline/scores.csv`
-is the dev-case scores behind it. Reproduce it with the command above; `--real` numbers will
-differ machine to machine since they depend on that machine's own request history.
+`configs/baseline.json` is the configuration `decide.rs` ran before the selection: the `english`
+checkpoint, the `json` representation with `fields = title, kind, input, repository, options`,
+the built-in question and criteria, threshold 0.8, no guardrails. `results/baseline/summary.md`
+is a committed run of it against the dev cases and the real requests available when it was
+produced (`harness.py run --config baseline --real --cases cases/safe.jsonl cases/elevated.jsonl
+cases/adversarial-dev.jsonl --out results/baseline`); `results/baseline/scores.csv` is the
+dev-case scores behind it. Reproduce it with the command above; `--real` numbers will differ
+machine to machine since they depend on that machine's own request history. Pass `--cases`
+explicitly: the default, `cases/`, includes the held-out file.
+
+## The selection
+
+`REPORT.md` is the record of the experiments that chose the production configuration, and
+`winner.json` (also reachable as `configs/winner.json`) is that configuration with its metrics
+and the run that produced it. `results/matrix.md` lists every configuration tried, one row
+each, and `results/<stage>/summary.md` holds each stage's full tables. `fixtures/winner-states.jsonl`
+is `harness.py states --config winner` over every committed case, the file the daemon's
+implementation reproduces.
+
+`experiments.py` is the driver behind those files. It runs configurations against the
+development sets only (never the held-out file), caches model answers outside the worktree so
+a configuration seen once costs no forward pass again, counts the forward passes and wall
+time of each stage, and has the extra measurements the report cites: `tokens` (the head
+budget a question takes), `latency` (single-request median in-process), `guardrail-stats`
+(what each rule catches per set, `--real` included), `window` (a benign-prefix probe on the
+adversarial-dev Bash cases), `matrix` (rebuilds `results/matrix.md`). Run it with the venv's
+interpreter and `HF_HOME` as above; `experiments.py --help` lists the commands.

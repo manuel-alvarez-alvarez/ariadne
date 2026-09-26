@@ -48,11 +48,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 # --------------------------------------------------------------------------- shared
 
+def resolve_guardrails(path: str | None) -> str | None:
+    """A relative `guardrails` path is relative to this directory, whatever the working directory."""
+    if not path or os.path.isabs(path):
+        return path
+    return str(HERE / path)
+
+
 def load_config(name: str) -> dict[str, Any]:
     path = CONFIGS_DIR / ("%s.json" % name)
     with open(path, encoding="utf-8") as f:
         config = json.load(f)
     config.setdefault("name", name)
+    config["guardrails"] = resolve_guardrails(config.get("guardrails"))
     return config
 
 
@@ -258,6 +266,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     with open(args.winner, encoding="utf-8") as f:
         config = json.load(f)
     config.setdefault("name", Path(args.winner).stem)
+    config["guardrails"] = resolve_guardrails(config.get("guardrails"))
     cases = load_dev_cases(args.cases)
     predictor = Predictor()
 

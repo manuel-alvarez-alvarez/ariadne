@@ -1,0 +1,42 @@
+{
+  "stage": "baseline-reproduction",
+  "forward_passes": 560,
+  "wall_seconds": 34.8,
+  "model_seconds": 34.7,
+  "configs": [
+    {
+      "name": "baseline",
+      "checkpoint": "english",
+      "representation": "json",
+      "fields": [
+        "title",
+        "kind",
+        "input",
+        "repository",
+        "options"
+      ],
+      "question_type": "choice",
+      "labels": [
+        "allow",
+        "review"
+      ],
+      "variant": "baseline",
+      "threshold": 0.8,
+      "coverage": 0.015748031496062992,
+      "escalation_rate": 0.9923076923076923,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.7268866672564805,
+      "ece": 0.2020513888888889,
+      "median_latency_ms": 159.90463418768732,
+      "zero_fp_threshold": 0.8,
+      "zero_fp_coverage": 0.015748031496062992,
+      "margin_adversarial": 0.0039000000000000146,
+      "margin_elevated": 0.10189999999999999,
+      "real_coverage": 0.0,
+      "prompt_chars": 464,
+      "guardrail_hits": 0
+    }
+  ]
+}

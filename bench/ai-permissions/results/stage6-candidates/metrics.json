@@ -1,0 +1,116 @@
+{
+  "stage": "stage6-candidates",
+  "forward_passes": 0,
+  "wall_seconds": 0.3,
+  "model_seconds": 0.0,
+  "configs": [
+    {
+      "name": "winner",
+      "checkpoint": "typed-decisions",
+      "representation": "structured",
+      "fields": [
+        "name",
+        "title",
+        "kind",
+        "command",
+        "description",
+        "paths",
+        "repository",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "baseline-criteria",
+      "threshold": 0.7,
+      "coverage": 0.23622047244094488,
+      "escalation_rate": 0.8846153846153846,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.9808015571087322,
+      "ece": 0.4483993975903614,
+      "median_latency_ms": 16.342268046724985,
+      "zero_fp_threshold": 0.7,
+      "zero_fp_coverage": 0.23622047244094488,
+      "margin_adversarial": 0.05779999999999996,
+      "margin_elevated": 0.005800000000000027,
+      "real_coverage": 0.009966777408637873,
+      "prompt_chars": 454,
+      "guardrail_hits": 51
+    },
+    {
+      "name": "candidate-b",
+      "checkpoint": "typed-decisions",
+      "representation": "structured",
+      "fields": [
+        "name",
+        "title",
+        "kind",
+        "command",
+        "description",
+        "paths",
+        "repository",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "elevated-aware",
+      "threshold": 0.69,
+      "coverage": 0.29133858267716534,
+      "escalation_rate": 0.8576923076923076,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.973635318057153,
+      "ece": 0.4093493975903615,
+      "median_latency_ms": 179.32719520593838,
+      "zero_fp_threshold": 0.69,
+      "zero_fp_coverage": 0.29133858267716534,
+      "margin_adversarial": 0.024899999999999922,
+      "margin_elevated": 0.00039999999999995595,
+      "real_coverage": 0.07973421926910298,
+      "prompt_chars": 543,
+      "guardrail_hits": 51
+    },
+    {
+      "name": "winner-at-0.71",
+      "checkpoint": "typed-decisions",
+      "representation": "structured",
+      "fields": [
+        "name",
+        "title",
+        "kind",
+        "command",
+        "description",
+        "paths",
+        "repository",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "baseline-criteria",
+      "threshold": 0.71,
+      "coverage": 0.16535433070866143,
+      "escalation_rate": 0.9192307692307692,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.9808015571087322,
+      "ece": 0.4072897590361446,
+      "median_latency_ms": 16.342268046724985,
+      "zero_fp_threshold": 0.7,
+      "zero_fp_coverage": 0.23622047244094488,
+      "margin_adversarial": 0.05779999999999996,
+      "margin_elevated": 0.005800000000000027,
+      "real_coverage": 0.009966777408637873,
+      "prompt_chars": 454,
+      "guardrail_hits": 51
+    }
+  ]
+}

@@ -60,7 +60,7 @@ def _paths(request: dict[str, Any]) -> list[str]:
     return found
 
 
-def _field_value(field: str, request: dict[str, Any], repository: str) -> Any:
+def _field_value(field: str, request: dict[str, Any], repository: str, input_cut: int = INPUT_CUT) -> Any:
     tool_call = request.get("toolCall", {})
     raw_input = tool_call.get("rawInput", {}) or {}
     if field == "name":
@@ -71,7 +71,7 @@ def _field_value(field: str, request: dict[str, Any], repository: str) -> Any:
         return tool_call.get("kind")
     if field == "input":
         compact = jsonlib.dumps(raw_input, ensure_ascii=False, separators=(",", ":"))
-        return compact[:INPUT_CUT]
+        return compact[:input_cut]
     if field == "command":
         return raw_input.get("command")
     if field == "description":
@@ -85,16 +85,16 @@ def _field_value(field: str, request: dict[str, Any], repository: str) -> Any:
     raise ValueError("unknown field %r" % field)
 
 
-def build_raw(request: dict[str, Any], repository: str, fields: list[str]) -> str:
-    """The compact JSON of `rawInput` alone. `fields` and `repository` are ignored."""
+def build_raw(request: dict[str, Any], repository: str, fields: list[str], input_cut: int = INPUT_CUT) -> str:
+    """The compact JSON of `rawInput` alone. `fields`, `repository` and `input_cut` are ignored."""
     raw_input = request.get("toolCall", {}).get("rawInput", {}) or {}
     return jsonlib.dumps(raw_input, ensure_ascii=False, separators=(",", ":"))
 
 
-def build_structured(request: dict[str, Any], repository: str, fields: list[str]) -> str:
+def build_structured(request: dict[str, Any], repository: str, fields: list[str], input_cut: int = INPUT_CUT) -> str:
     lines = []
     for field in fields:
-        value = _field_value(field, request, repository)
+        value = _field_value(field, request, repository, input_cut)
         if value in (None, "", []):
             continue
         key = STRUCTURED_KEYS[field]
@@ -104,24 +104,24 @@ def build_structured(request: dict[str, Any], repository: str, fields: list[str]
     return "\n".join(lines)
 
 
-def build_json(request: dict[str, Any], repository: str, fields: list[str]) -> dict[str, Any]:
+def build_json(request: dict[str, Any], repository: str, fields: list[str], input_cut: int = INPUT_CUT) -> dict[str, Any]:
     obj: dict[str, Any] = {}
     for field in fields:
-        value = _field_value(field, request, repository)
+        value = _field_value(field, request, repository, input_cut)
         if value in (None, "", []):
             continue
         obj[JSON_KEYS[field]] = value
     return obj
 
 
-def build_normalized(base: str, request: dict[str, Any], repository: str, fields: list[str]):
+def build_normalized(base: str, request: dict[str, Any], repository: str, fields: list[str], input_cut: int = INPUT_CUT):
     derived = derive_features(request, repository)
     if base == "json":
-        obj = build_json(request, repository, fields)
+        obj = build_json(request, repository, fields, input_cut)
         obj.update(derived)
         return obj
     if base == "structured":
-        text = build_structured(request, repository, fields)
+        text = build_structured(request, repository, fields, input_cut)
         extra = "\n".join("%s: %s" % (k, v) for k, v in derived.items())
         return text + ("\n" + extra if text else extra)
     raise ValueError("normalized must be based on 'structured' or 'json', got %r" % base)
@@ -138,13 +138,14 @@ def build_state(config: dict[str, Any], request: dict[str, Any], repository: str
     """The `state` value a configuration sends, exactly as it would be sent."""
     representation = config["representation"]
     fields = config.get("fields") or []
+    input_cut = int(config.get("input_cut") or INPUT_CUT)
     if representation == "normalized":
         base = config.get("normalized_base", "json")
-        return build_normalized(base, request, repository, fields)
+        return build_normalized(base, request, repository, fields, input_cut)
     builder = REPRESENTATIONS.get(representation)
     if builder is None:
         raise ValueError("unknown representation %r" % representation)
-    return builder(request, repository, fields)
+    return builder(request, repository, fields, input_cut)
 
 
 def build_question(question_cfg: dict[str, Any]) -> dict[str, Any]:

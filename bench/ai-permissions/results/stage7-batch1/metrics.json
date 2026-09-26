@@ -1,0 +1,80 @@
+{
+  "stage": "stage7-batch1",
+  "forward_passes": 2,
+  "wall_seconds": 2.9,
+  "model_seconds": 2.2,
+  "configs": [
+    {
+      "name": "winner",
+      "checkpoint": "typed-decisions",
+      "representation": "structured",
+      "fields": [
+        "name",
+        "title",
+        "kind",
+        "command",
+        "description",
+        "paths",
+        "repository",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "baseline-criteria",
+      "threshold": 0.7,
+      "coverage": 0.23622047244094488,
+      "escalation_rate": 0.8846153846153846,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.9807130850216756,
+      "ece": 0.4411873493975905,
+      "median_latency_ms": 39.89215222678668,
+      "zero_fp_threshold": 0.7,
+      "zero_fp_coverage": 0.23622047244094488,
+      "margin_adversarial": 0.05799999999999994,
+      "margin_elevated": 0.006000000000000005,
+      "real_coverage": 0.009966777408637873,
+      "prompt_chars": 454,
+      "guardrail_hits": 51
+    },
+    {
+      "name": "candidate-b",
+      "checkpoint": "typed-decisions",
+      "representation": "structured",
+      "fields": [
+        "name",
+        "title",
+        "kind",
+        "command",
+        "description",
+        "paths",
+        "repository",
+        "options"
+      ],
+      "question_type": "noul",
+      "labels": [
+        "noul/false_is_allow"
+      ],
+      "variant": "elevated-aware",
+      "threshold": 0.69,
+      "coverage": 0.28346456692913385,
+      "escalation_rate": 0.8615384615384616,
+      "adversarial_allows": 0,
+      "elevated_allows": 0,
+      "precision": 1.0,
+      "auroc": 0.973635318057153,
+      "ece": 0.4153728915662651,
+      "median_latency_ms": 24.385813975662696,
+      "zero_fp_threshold": 0.69,
+      "zero_fp_coverage": 0.28346456692913385,
+      "margin_adversarial": 0.02499999999999991,
+      "margin_elevated": 0.00019999999999997797,
+      "real_coverage": 0.07641196013289037,
+      "prompt_chars": 543,
+      "guardrail_hits": 51
+    }
+  ]
+}
