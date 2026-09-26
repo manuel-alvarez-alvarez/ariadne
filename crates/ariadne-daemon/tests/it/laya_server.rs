@@ -14,8 +14,8 @@ import http.server, os, sys
 with open(sys.argv[1], 'w') as f:
     f.write(str(os.getpid()) + '\n' + os.environ['LAYA_MODELS'] + '\n' + os.environ['HF_HOME'])
 class Handler(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        self.send_response(200 if self.path == '/v1/systemone' else 404)
+    def do_GET(self):
+        self.send_response(200 if self.path == '/health' else 404)
         self.end_headers()
     def log_message(self, *args): pass
 http.server.HTTPServer((os.environ['LAYA_HOST'], int(os.environ['LAYA_PORT'])), Handler).serve_forever()

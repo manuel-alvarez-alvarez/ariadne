@@ -80,12 +80,19 @@ pub(crate) async fn decide(
             return not_confident();
         }
     };
-    let choice = answer
-        .pointer("/answers/decision/choice/choice")
+    let decision = answer.pointer("/answers/decision");
+    let choice = decision
+        .and_then(|decision| decision.get("choice"))
         .and_then(Value::as_str);
-    let confidence = answer
-        .pointer("/answers/decision/choice/confidence")
-        .and_then(Value::as_f64);
+    // `answer_confidence` is Laya's calibrated confidence; its `confidence` is an
+    // uncalibrated entropy score. The ONNX agent reports only the probabilities, and the
+    // chosen label's probability is the same calibrated number.
+    let confidence = decision.and_then(|decision| {
+        decision
+            .get("answer_confidence")
+            .or_else(|| decision.get("probabilities")?.get(choice?))
+            .and_then(Value::as_f64)
+    });
     let (Some(label), Some(confidence)) = (choice, confidence) else {
         tracing::warn!("Laya permission decision was malformed");
         return not_confident();

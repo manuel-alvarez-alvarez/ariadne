@@ -140,8 +140,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
    `<home>/laya/venv/bin/laya-serve` as its child, in a process group of its
    own. It binds an available loopback port, preloads the selected checkpoints
    from `<home>/laya/hf`, and never listens beyond the local machine.
-18. The daemon waits up to `Timeouts::laya_serve_start` for `POST
-   /v1/systemone` to answer. It then publishes the loopback endpoint in
+18. The daemon waits up to `Timeouts::laya_serve_start` for `GET /health`
+   to answer with a success. It then publishes the loopback endpoint in
    `laya_updated`. On disable, refresh, shutdown, or an unsuccessful health
    wait it clears that endpoint and kills the whole process group.
 19. An unexpectedly exited server clears its endpoint and restarts with a
@@ -170,8 +170,12 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
    branches or force-push”. Its `review` criterion is “deleting outside the
    working tree, force pushes, package installs, network writes, credentials
    or secrets, changes to system configuration, anything unclear”.
-4. An `allow` whose confidence is at least the configured threshold selects
-   the allowing option. A request without an allowing option is not a
+4. The answer is read from `answers.decision`: its `choice` is the label, and
+   its confidence is the calibrated `answer_confidence`, or, when that is
+   absent, the chosen label's entry in `probabilities`. Laya's uncalibrated
+   `confidence` is never compared with the threshold. An `allow` whose
+   confidence is at least the configured threshold selects the allowing
+   option. A request without an allowing option is not a
    confident allow.
 5. Every other answer follows `learn` (021, rule 9): a matching learned
    approval is selected, otherwise the console is asked, and its allowing
@@ -260,6 +264,11 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - A confident allow selects the allowing option, records Laya and its
   confidence, raises no attention, and sends the request state to Laya
   (`laya_decisions.rs::a_confident_allow_runs_at_once_and_reports_laya`).
+- The confidence gated is Laya's calibrated `answer_confidence`, not its
+  entropy `confidence`, and an answer without it is gated on the chosen
+  label's probability
+  (`laya_decisions.rs::a_confident_allow_runs_at_once_and_reports_laya`,
+  `::an_answer_without_its_calibrated_confidence_is_gated_on_its_probability`).
 - An uncertain allow asks the console, remembers its approval, and still asks
   Laya before selecting that learned approval next time
   (`laya_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`).

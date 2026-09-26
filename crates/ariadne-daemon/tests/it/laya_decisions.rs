@@ -38,17 +38,18 @@ struct LayaServer {
 }
 
 impl LayaServer {
+    /// An answer shaped as `laya-serve` returns it. Its `confidence` is the
+    /// uncalibrated entropy score, set far from the calibrated one so a
+    /// decision gated on the wrong field fails.
     async fn answer(label: &str, confidence: f64) -> Self {
-        Self::start(Answer::Value(json!({
-            "answers": {"decision": {"choice": {
-                "choice": label,
-                "confidence": confidence,
-                "distribution": {"allow": confidence, "review": 1.0 - confidence}
-            }}},
-            "usage": {},
-            "routing": {}
-        })))
-        .await
+        let mut decision = choice(label, confidence);
+        decision["answer_confidence"] = json!(confidence);
+        Self::start(Answer::Value(response(decision))).await
+    }
+
+    /// An answer shaped as the ONNX agent returns it: no `answer_confidence`.
+    async fn onnx_answer(label: &str, confidence: f64) -> Self {
+        Self::start(Answer::Value(response(choice(label, confidence)))).await
     }
 
     async fn hanging() -> Self {
@@ -84,6 +85,26 @@ impl Drop for LayaServer {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+fn choice(label: &str, confidence: f64) -> Value {
+    let other = if label == "allow" { "review" } else { "allow" };
+    json!({
+        "type": "choice",
+        "choice": label,
+        "probabilities": {label: confidence, other: 1.0 - confidence},
+        "confidence": 0.05,
+        "action": {"act_probability": 1.0}
+    })
+}
+
+fn response(decision: Value) -> Value {
+    json!({
+        "model": "laya-rl-agent",
+        "answers": {"decision": decision},
+        "usage": {"input_tokens": 139, "output_tokens": 0},
+        "routing": {"model": "english"}
+    })
 }
 
 async fn release() -> axum::Json<Value> {
@@ -253,6 +274,23 @@ async fn a_confident_allow_runs_at_once_and_reports_laya() {
         requests[0]["questions"]["decision"]["criteria"]["review"],
         "deleting outside the working tree, force pushes, package installs, network writes, credentials or secrets, changes to system configuration, anything unclear"
     );
+}
+
+#[tokio::test]
+async fn an_answer_without_its_calibrated_confidence_is_gated_on_its_probability() {
+    let server = LayaServer::onnx_answer("allow", 0.95).await;
+    let (h, cast, _agent_dir) = laya_harness(&server, 0.8, Timeouts::default()).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the Laya-approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    assert_eq!(h.attention(&session).await, None);
+    let reply = reply(&h, &session.id).await;
+    assert_eq!(reply["decided_by"], "laya");
+    assert_eq!(reply["confidence"], 0.95);
 }
 
 #[tokio::test]

@@ -141,7 +141,7 @@ async fn health(child: &mut Child, endpoint: &str, timeout: Duration) -> bool {
             return false;
         }
         if client
-            .post(format!("{endpoint}/v1/systemone"))
+            .get(format!("{endpoint}/health"))
             .send()
             .await
             .is_ok_and(|r| r.status().is_success())
