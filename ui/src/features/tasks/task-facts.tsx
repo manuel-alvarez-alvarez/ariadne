@@ -61,11 +61,12 @@ export function TaskFacts({ task }: { task: TaskDto }) {
             className="text-xs"
           />
         ) : (
-          // Several authors write the task side by side, each on its own
-          // branch: one line apiece, with the branch it owns and its own pick
-          // status — the same facts, and the same order, as `ariadne task
-          // inspect`'s `author` line.
-          <span className="flex flex-col gap-1 text-xs">
+          // Several authors write the task side by side, each its own block:
+          // its skills, its model, the branch it owns and its own pick status
+          // — the same facts, and the same order, as `ariadne task inspect`'s
+          // `author` line. A clear gap between blocks is what lets a reader
+          // see three candidates as three, not one run-on list.
+          <span className="flex flex-col gap-3 text-xs">
             {authors.map((author) => (
               <AuthorRow key={author.id} task={task} author={author} />
             ))}
@@ -74,11 +75,11 @@ export function TaskFacts({ task }: { task: TaskDto }) {
       </Fact>
       <Fact label="Reviewers">
         {reviewers.length > 0 ? (
-          // One line each: a reviewer is its skills and what it runs on, which
-          // side by side would be a run-on the eye cannot split. Each agent
-          // carries its own pin, so two reviewers on the same skills can still
-          // read differently.
-          <span className="flex flex-col gap-0.5 text-xs">
+          // Two lines each — the skills, then the model below them — with a
+          // gap between reviewers clear enough that a reviewer's own model
+          // does not read as the next reviewer's. Each agent carries its own
+          // pin, so two reviewers on the same skills can still read differently.
+          <span className="flex flex-col gap-2 text-xs">
             {reviewers.map((reviewer) => (
               <AgentSummary
                 key={reviewer.id}
@@ -170,16 +171,18 @@ function Muted({ children }: { children: ReactNode }) {
 }
 
 /**
- * One author of a several-author task: what it knows, what it runs on, its
- * own branch, and its status in the pick — the votes it has, or the "Picked"
- * mark once it is the one that won. Every author gets one of the two: the
- * task's own status (in the header above) says where the task as a whole
- * stands, not which of several candidates is ahead.
+ * One author of a several-author task, as its own block: what it knows, what
+ * it runs on, its own branch, and its status in the pick — the votes it has,
+ * or the "Picked" mark once it is the one that won. Each fact of a block sits
+ * on its own line, since a several-author task is exactly where a branch or a
+ * pick status sitting beside the wrong model would mislead. Every author gets
+ * one of the two pick facts: the task's own status (in the header above) says
+ * where the task as a whole stands, not which of several candidates is ahead.
  */
 function AuthorRow({ task, author }: { task: TaskDto; author: TaskAgentDto }) {
   const votes = task.picks.filter((pick) => pick.author_agent_id === author.id).length
   return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+    <span className="flex min-w-0 flex-col gap-1">
       <AgentSummary skills={author.skills} model={author.model} effort={author.effort} />
       <span className="flex min-w-0 items-center gap-1 text-muted-foreground">
         <GitBranchIcon className="size-3 shrink-0" />

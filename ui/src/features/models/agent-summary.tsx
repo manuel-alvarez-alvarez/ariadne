@@ -1,11 +1,12 @@
 /**
- * One staffed agent in a line: `skills · model`, and after an `@` the effort
- * that model is run at where one is pinned.
+ * One staffed agent in two lines: its skills, wrapped over as many lines as
+ * they need, and below them the model it runs on, in muted text.
  *
  * An agent has no name and no page: it is what it knows and what it runs on.
  * So the skills are the identity — each one linking to itself — and the model
- * after them is quiet secondary text. Since a model names the agent that runs
- * it (`claude-agent-acp:claude-opus-5`), that is one fact and not two.
+ * beneath them is quiet secondary text, drawn by {@link ModelPin} in its
+ * wrapping mode so a long id breaks rather than clips in a fact cell half a
+ * panel wide.
  *
  * There is nothing behind the pin to disagree with it. What the orchestrator
  * sized this agent at, or what the user chose instead, is simply what it runs
@@ -17,7 +18,7 @@ import type { Seat } from "@/api"
 import { SkillName } from "@/features/skills/skill-name"
 import { cn, SEAT_LABELS } from "@/lib/format"
 
-import { pinLabel } from "./model-ref"
+import { ModelPin } from "./model-pin"
 
 export function AgentSummary({
   skills,
@@ -40,32 +41,35 @@ export function AgentSummary({
   className?: string
 }) {
   return (
-    <span className={cn("flex min-w-0 items-baseline gap-1", className)}>
-      <span className="flex min-w-0 shrink items-baseline gap-1">
+    <span className={cn("flex min-w-0 flex-col gap-0.5", className)}>
+      <span className="flex flex-wrap items-baseline gap-x-1">
         {skills.length === 0 ? (
           // Legal, and rarely what anybody wanted: an agent with nothing but
           // its task. Said plainly rather than left as a gap.
-          <span className="truncate text-muted-foreground italic">no skills</span>
+          <span className="text-muted-foreground italic">no skills</span>
         ) : (
           skills.map((skill, at) => (
-            // The box that clips a name too long for the line: the name
-            // itself is inline, so it keeps the baseline the model beside it
-            // is aligned to.
-            <span key={skill} className="min-w-0 truncate">
+            // No box to clip the name: the line wraps whole skills onto as
+            // many lines as it needs, rather than cutting one short. A flex
+            // item's default min-width is its content's, which would push a
+            // long unbroken name past the cell instead of wrapping it — so
+            // this one is let shrink (`min-w-0`) and break inside itself
+            // (`break-words`) where a name has nowhere else to fold.
+            <span key={skill} className="min-w-0 break-words">
               {at > 0 ? <span className="text-muted-foreground">, </span> : null}
               <SkillName name={skill} />
             </span>
           ))
         )}
       </span>
-      <span className="min-w-0 truncate text-muted-foreground">· {pinLabel(model, effort)}</span>
+      <ModelPin model={model} effort={effort} mode="wrap" className="text-muted-foreground" />
     </span>
   )
 }
 
 /**
- * A session's agent in one line: the seat it sits in, and what it was launched
- * on.
+ * A session's agent in two lines: the seat it sits in, and below it what it
+ * was launched on.
  *
  * A session carries the seat and the pin but not the skills — those belong to
  * the staffed agent, which a session only points at — so this says what it
@@ -83,9 +87,9 @@ export function SeatSummary({
   className?: string
 }) {
   return (
-    <span className={cn("flex min-w-0 items-baseline gap-1", className)}>
-      <span className="shrink-0">{SEAT_LABELS[seat]}</span>
-      <span className="min-w-0 truncate text-muted-foreground">· {pinLabel(model, effort)}</span>
+    <span className={cn("flex min-w-0 flex-col gap-0.5", className)}>
+      <span>{SEAT_LABELS[seat]}</span>
+      <ModelPin model={model} effort={effort} mode="wrap" className="text-muted-foreground" />
     </span>
   )
 }

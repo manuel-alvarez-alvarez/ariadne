@@ -163,15 +163,16 @@ function stubTabLists(sessions: SessionDto[] = [SESSION], messages: MessageDto[]
 }
 
 /**
- * The value of a fact, by the label above it. The gap between a profile's name
- * and the two facts after it is a CSS one, so the text comes out run together;
- * one space is put back so the assertions read as the line does.
+ * The value of a fact, by the label above it. An agent's skills and its model
+ * sit on two lines now rather than joined by a middot, so what comes out is
+ * the two run together with nothing between them — assertions below check
+ * each half rather than expecting a separator that no longer exists.
  */
 function fact(label: string): string {
   const term = screen.getByText(label)
   const value = term.nextElementSibling
   if (!value) throw new Error(`no value under "${label}"`)
-  return (value.textContent ?? "").replaceAll("·", " ·").replaceAll("  ·", " ·")
+  return value.textContent ?? ""
 }
 
 /** The hint behind a fact's figure, opened the way a keyboard opens it. */
@@ -191,8 +192,42 @@ it("shows the author's pin as it was staffed", () => {
   mount()
 
   expect(fact("Author")).toContain("coding")
-  // The model and, after an `@`, the effort it is run at: one pin, one line.
+  // The model and, after an `@`, the effort it is run at: one pin, on its own
+  // line below the skills.
   expect(fact("Author")).toContain("codex-acp:gpt-5 @ xhigh")
+})
+
+it("wraps three skills, clipping none, even one with no hyphen to break on", () => {
+  const unbroken = "documentationthatrunsonwithnohyphenatallforittobreakon"
+  mount({
+    ...TASK,
+    agents: [
+      {
+        id: "01AGENTAUTHOR",
+        seat: "author",
+        skills: ["coding", "migration", unbroken],
+        model: "codex-acp:gpt-5",
+      },
+    ],
+  })
+
+  for (const skill of ["coding", "migration", unbroken]) {
+    const name = screen.getByRole("link", { name: skill })
+    expect(name.textContent).toBe(skill)
+    // Clipping is a CSS class on an ancestor, not a shorter string: the name
+    // wraps rather than truncates, so no box on the way up to the fact may
+    // carry that class.
+    for (let node: HTMLElement | null = name; node; node = node.parentElement) {
+      expect(node.className).not.toContain("truncate")
+    }
+  }
+
+  // The unbroken skill has no hyphen to fold on: its own box has to shrink
+  // below its content's width and break inside the word itself, or a narrow
+  // cell would push it past the edge instead of wrapping it.
+  const box = screen.getByRole("link", { name: unbroken }).parentElement
+  expect(box?.className).toContain("min-w-0")
+  expect(box?.className).toContain("break-words")
 })
 
 it("leaves the effort off a pin that names none, which is the CLI's own", () => {
@@ -209,8 +244,10 @@ it("shows each reviewer slot's own pin, in review order", () => {
   mount()
 
   const reviewers = fact("Reviewers")
-  expect(reviewers).toContain("code-review · claude-agent-acp:claude-sonnet-5 @ high")
-  expect(reviewers).toContain("security-review · codex-acp:gpt-5.6-luna")
+  // No separator between a skill and its model now that the model reads on
+  // its own line below it, rather than joined to it by a middot.
+  expect(reviewers).toContain("code-reviewclaude-agent-acp:claude-sonnet-5 @ high")
+  expect(reviewers).toContain("security-reviewcodex-acp:gpt-5.6-luna")
 })
 
 it("says a task has no reviewers rather than showing an empty list", () => {
@@ -277,16 +314,18 @@ it("shows every author's own branch, marking only the one the reviewers picked",
   mount(TWO_AUTHOR_TASK)
 
   const authors = fact("Authors")
-  expect(authors).toContain("coding · codex-acp:gpt-5 @ xhigh")
-  expect(authors).toContain("testing · claude-agent-acp:claude-sonnet-5")
+  // No separator between a skill and its model now that the model reads on
+  // its own line below it, rather than joined to it by a middot.
+  expect(authors).toContain("codingcodex-acp:gpt-5 @ xhigh")
+  expect(authors).toContain("testingclaude-agent-acp:claude-sonnet-5")
   expect(authors).toContain("surface-the-pins-000001")
   expect(authors).toContain("surface-the-pins-000001-b")
 
-  // Exactly one "Picked" mark, on the winner's own line.
+  // Exactly one "Picked" mark, on the winner's own block.
   const picked = screen.getByText("Picked")
-  const row = picked.closest(".flex-wrap")?.textContent ?? ""
-  expect(row).toContain("surface-the-pins-000001-b")
-  expect(row).not.toContain("codex-acp:gpt-5")
+  const block = picked.closest(".flex-col")?.textContent ?? ""
+  expect(block).toContain("surface-the-pins-000001-b")
+  expect(block).not.toContain("codex-acp:gpt-5")
 
   // The author nobody picked says so, rather than showing nothing at all —
   // every author gets its own status, not just the one that won. It reads

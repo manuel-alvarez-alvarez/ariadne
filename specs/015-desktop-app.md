@@ -462,6 +462,18 @@ Out: the daemon endpoints themselves (012).
   a textarea
   (`ui/src/lib/shortcuts.test.ts::is true for form fields, the console's textarea included`,
   `ui/src/components/keyboard-shortcuts-dialog.test.tsx::says what the two vocabularies are, since neither is guessable`).
+- An agent's skills wrap onto as many lines as they need, clipping none of
+  them, with the model it runs on below them in muted text and no middot
+  before it; each skill still links to its skill and still shows its summary
+  on hover
+  (`ui/src/features/tasks/task-panel.test.tsx::shows the author's pin as it was staffed`,
+  `::shows each reviewer slot's own pin, in review order`,
+  `::wraps three skills, clipping none, even one with no hyphen to break on`,
+  `ui/src/features/sessions/session-detail-view.test.tsx::shows the model the session was launched with, once`).
+- A several-author task draws one block per author, with its skills, its
+  model, its own branch and its own pick status each on its own line, and a
+  clear gap between one author's block and the next
+  (`ui/src/features/tasks/task-panel.test.tsx::shows every author's own branch, marking only the one the reviewers picked`).
 
 ## Sources
 

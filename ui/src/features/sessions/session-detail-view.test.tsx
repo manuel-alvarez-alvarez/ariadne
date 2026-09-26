@@ -155,7 +155,17 @@ it("shows the model the session was launched with, once", async () => {
   // agent runs is the snapshot taken when it started, not the profile as
   // edited since.
   await waitFor(() => expect(detail("Agent")).toContain("Author"))
-  expect(detail("Agent")).toContain("claude-agent-acp:claude-opus-5 @ xhigh")
+
+  // The seat and the model are two lines, not one joined by a middot: the
+  // seat sits in its own element, and the model sits in the next one, under
+  // it.
+  const agent = screen.getByText("Agent").nextElementSibling
+  const seatSummary = agent?.firstElementChild
+  const [seatLine, modelLine] = seatSummary?.children ?? []
+  expect(seatLine?.textContent).toBe("Author")
+  expect(modelLine?.textContent).toBe("claude-agent-acp:claude-opus-5 @ xhigh")
+  expect(agent?.textContent).not.toContain("·")
+
   // And it says it once: a Model row under this one carried the same tail with
   // the agent taken off it.
   expect(screen.queryByText("Model")).toBeNull()
