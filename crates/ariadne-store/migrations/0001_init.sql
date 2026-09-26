@@ -187,6 +187,8 @@ CREATE TABLE laya_settings (
     -- When the daily refresh runs, `HH:MM` in 24-hour local time.
     -- NULL = no refresh.
     schedule          TEXT,
+    -- Local date (`YYYY-MM-DD`) of the last scheduled refresh.
+    last_scheduled_refresh TEXT,
     state             TEXT NOT NULL DEFAULT 'disabled'
                       CHECK (state IN ('disabled', 'installing', 'ready', 'failed')),
     installed_release TEXT,                     -- the release tag on disk

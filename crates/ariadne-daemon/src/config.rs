@@ -41,6 +41,9 @@ pub struct Config {
     /// downloading two gigabytes. Set by the test harness alone: it is not a
     /// key of `config.toml`.
     pub laya_installer: Option<Vec<String>>,
+    /// A command that stands in for `laya-serve` in the suite. Like the
+    /// installer seam, it is not a `config.toml` key.
+    pub laya_serve_command: Option<Vec<String>>,
     /// Where the Laya server answers, in place of one the daemon started.
     /// Set by the test harness alone, for the same reason.
     pub laya_endpoint: Option<String>,
@@ -102,6 +105,7 @@ impl Config {
                 .laya_release_url
                 .unwrap_or_else(|| LAYA_RELEASE_URL.into()),
             laya_installer: None,
+            laya_serve_command: None,
             laya_endpoint: None,
             root,
         };

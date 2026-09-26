@@ -109,11 +109,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     while an install is running.
     The daily refresh is the same install, run by the daemon itself. It reads
     the local clock every `Timeouts::laya_schedule_poll`, 30 s, and starts an
-    install on the one read that passes the `schedule` minute — after the read
-    before it, at or before this one — so each day's refresh runs once. It
+    install once each local date when the `schedule` minute has passed. It
     runs nothing while Laya is off, without a schedule, or while an install
-    runs. A daemon that is not running at the minute does not catch up when it
-    starts: the next day's minute is the next refresh. A minute a
+    runs. A daemon that starts after the minute catches up once that day. A minute a
     daylight-saving change skips is no time on that day.
 13. `POST /v1/repositories` and `PUT /v1/repositories/{id}` refuse
     `permission_mode = ai` while Laya is off, with 409 `laya_disabled`. The
@@ -138,10 +136,24 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Server
 
-**Known gap.** Nothing starts `laya-serve`, so `endpoint` is only ever what a
-caller sets by hand and `live` is only ever `None` on a daemon nobody has
-configured. Task 2 of this goal starts the server, sets the endpoint from it,
-and fills this section.
+17. While Laya is enabled and its install is ready, the daemon runs
+   `<home>/laya/venv/bin/laya-serve` as its child, in a process group of its
+   own. It binds an available loopback port, preloads the selected checkpoints
+   from `<home>/laya/hf`, and never listens beyond the local machine.
+18. The daemon waits up to `Timeouts::laya_serve_start` for `POST
+   /v1/systemone` to answer. It then publishes the loopback endpoint in
+   `laya_updated`. On disable, refresh, shutdown, or an unsuccessful health
+   wait it clears that endpoint and kills the whole process group.
+19. An unexpectedly exited server clears its endpoint and restarts with a
+   capped 1, 2, 4 … 60 second backoff. A disabled Laya is not restarted.
+
+## Schedule
+
+20. A schedule is checked every `Timeouts::laya_schedule_poll`. Once each
+   local date, when enabled Laya reaches its configured `HH:MM`, it starts a
+   refresh unless one is already installing. The completed date is stored, so
+   a daemon started after that time catches up once that day, but subsequent
+   ticks do not repeat it. A changed schedule applies at the next tick.
 
 ## Decisions
 
@@ -215,17 +227,9 @@ and fills this section.
   (`::a_turn_off_that_lands_before_the_rejoin_keeps_laya_off`); and a
   state written only while enabled leaves a row turned off at `disabled`
   (`store.rs::the_laya_settings_are_one_row_that_takes_partial_writes`).
-- The daily refresh runs the install once on the read that passes its
-  minute, on the checkpoints set now, and nothing on the next read, while
-  Laya is off, or without a schedule
-  (`laya.rs::the_daily_refresh_runs_the_install_once_at_its_minute`). The
-  minute is due on the read that passes it and no other, over midnight too,
-  a minute before the first read is not caught up, and a schedule that is no
-  time is never due
-  (`laya/schedule.rs::tests::the_minute_is_due_on_the_tick_that_passes_it_and_no_other`,
-  `::a_tick_over_midnight_passes_the_minute_of_the_new_day`,
-  `::a_minute_before_the_first_tick_is_not_caught_up`,
-  `::a_schedule_that_is_not_a_time_is_never_due`).
+- The daily refresh starts once per local date, catches up after daemon
+  startup, and skips a disabled or busy Laya
+  (`laya_server.rs::the_schedule_refreshes_once_per_local_day`).
 - A repository is refused `ai` while Laya is off, on registration and on an
   edit, and takes it once Laya is on
   (`laya.rs::a_repository_takes_the_ai_mode_only_once_laya_is_on`), and the
@@ -234,6 +238,14 @@ and fills this section.
 - The configured endpoint wins over the one a server reports, and nothing is
   live while Laya is off
   (`laya.rs::the_endpoint_is_the_configured_one_and_live_needs_laya_on`).
+- A ready enabled Laya starts its local server with its selected checkpoints,
+  reports the endpoint, stops it on disable and shutdown, restarts it after a
+  refresh, a daemon restart and an unexpected exit, and leaves no child after
+  shutdown (`laya_server.rs::a_ready_enabled_laya_starts_after_a_daemon_restart`).
+  A server that misses its health deadline has no endpoint
+  (`laya_server.rs::a_server_that_never_answers_health_is_not_live`).
+- A due schedule refreshes once per local date, catches up after startup, and
+  does nothing while disabled (`laya_server.rs::the_schedule_refreshes_once_per_local_day`).
 - The three paths, the five schemas, the nullable schedule, the doctor's
   `python` and the event kind are in the OpenAPI document
   (`laya.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`),

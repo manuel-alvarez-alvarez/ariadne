@@ -64,6 +64,9 @@ impl Laya {
                 ..Default::default()
             })
             .await;
+        // A refresh must replace an already-serving release even when the
+        // stub installer completes before the supervisor's next poll.
+        self.restart_server();
         let laya = self.clone();
         tokio::spawn(async move {
             let outcome = run(&laya).await;
@@ -96,7 +99,9 @@ impl Laya {
         if let Err(error) = self.store.update_laya_settings(update).await {
             tracing::warn!(error = %error, "writing the Laya settings failed");
         }
-        self.announce().await
+        let status = self.announce().await;
+        self.notify_server();
+        status
     }
 }
 

@@ -167,6 +167,7 @@ async fn main() -> Result<()> {
         outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::from_env(),
         laya,
     };
+    let laya_shutdown = state.laya.clone();
     let app = http::router(state);
 
     let shutdown = shutdown_signal();
@@ -189,6 +190,7 @@ async fn main() -> Result<()> {
     };
 
     // Best-effort cleanup of runtime files.
+    laya_shutdown.shutdown().await;
     let _ = std::fs::remove_file(&config.socket_path);
     let _ = std::fs::remove_file(&config.pid_file);
     info!("ariadned stopped");

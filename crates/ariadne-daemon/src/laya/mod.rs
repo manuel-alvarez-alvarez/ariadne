@@ -13,10 +13,12 @@ pub(crate) mod decide;
 pub mod install;
 pub mod python;
 pub mod schedule;
+mod server;
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
+use tokio::sync::mpsc;
 
 use ariadne_api::permissions::{LayaCheckpoints, LayaState, LayaStatusDto};
 use ariadne_store::Store;
@@ -49,6 +51,8 @@ pub struct Laya {
     release_url: String,
     /// The command that stands in for the whole install, in the suite.
     installer: Option<Vec<String>>,
+    /// The command that stands in for `laya-serve` in integration tests.
+    serve_command: Option<Vec<String>>,
     /// The `laya_endpoint` config key, which wins over [`Laya::set_endpoint`].
     configured_endpoint: Option<String>,
     /// Where the server the daemon started answers, once one has.
@@ -57,24 +61,30 @@ pub struct Laya {
     /// exactly one install runs at a time however many callers ask at once.
     installing: Arc<AtomicBool>,
     timeouts: Timeouts,
+    server_tx: mpsc::UnboundedSender<server::Command>,
 }
 
 impl Laya {
     /// The Laya of a daemon configured by `cfg`, writing to `store` and
     /// publishing on `events`.
     pub fn new(store: Store, events: EventBus, cfg: &Config, timeouts: Timeouts) -> Self {
-        Self {
+        let (server_tx, server_rx) = mpsc::unbounded_channel();
+        let laya = Self {
             store,
             events,
             home: cfg.root.join("laya"),
             python_bin: cfg.python_bin.clone(),
             release_url: cfg.laya_release_url.clone(),
             installer: cfg.laya_installer.clone(),
+            serve_command: cfg.laya_serve_command.clone(),
             configured_endpoint: cfg.laya_endpoint.clone(),
             endpoint: Arc::default(),
             installing: Arc::default(),
             timeouts,
-        }
+            server_tx,
+        };
+        server::start(laya.clone(), server_rx);
+        laya
     }
 
     /// The settings and the state of the install behind them, with the
@@ -139,6 +149,28 @@ impl Laya {
             .endpoint
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = endpoint;
+    }
+
+    pub(crate) fn notify_server(&self) {
+        let _ = self.server_tx.send(server::Command::Reconcile);
+    }
+
+    pub(crate) fn restart_server(&self) {
+        let _ = self.server_tx.send(server::Command::Restart);
+    }
+
+    pub(crate) fn serve_command(&self) -> Vec<String> {
+        self.serve_command
+            .clone()
+            .unwrap_or_else(|| vec![self.home.join("venv/bin/laya-serve").display().to_string()])
+    }
+
+    /// Reap the server and its process group before daemon shutdown finishes.
+    pub async fn shutdown(&self) {
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        if self.server_tx.send(server::Command::Stop(done_tx)).is_ok() {
+            let _ = done_rx.await;
+        }
     }
 
     /// What the `ai` permission mode needs, or `None` where Laya cannot

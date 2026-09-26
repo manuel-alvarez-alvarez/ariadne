@@ -31,9 +31,11 @@ pub struct Timeouts {
     /// fetches a wheel, PyTorch and gigabytes of weights — so this covers the
     /// one call the daemon makes itself.
     pub laya_release_download: Duration,
-    /// How often the clock is read for Laya's daily refresh
-    /// (`crate::laya::schedule`). Nothing waits on it: it is the period of a
-    /// clock, and it bounds how late after its minute a refresh starts.
+    /// How long Laya's HTTP server may take to load its weights and answer.
+    pub laya_serve_start: Duration,
+    /// How long the server supervisor waits before its first restart.
+    pub laya_serve_restart: Duration,
+    /// How often the daily Laya refresh clock checks local time.
     pub laya_schedule_poll: Duration,
     /// How long one permission decision may take at Laya's local HTTP seam.
     pub laya_decision: Duration,
@@ -79,6 +81,8 @@ impl Default for Timeouts {
             session_load: Duration::from_secs(60),
             registry_download: Duration::from_secs(30),
             laya_release_download: Duration::from_secs(30),
+            laya_serve_start: Duration::from_secs(120),
+            laya_serve_restart: Duration::from_secs(1),
             laya_schedule_poll: Duration::from_secs(30),
             laya_decision: Duration::from_secs(5),
             transcript_poll: Duration::from_secs(15),

@@ -16,6 +16,7 @@ pub struct LayaUpdate {
     pub threshold: Option<f64>,
     /// `Some(None)` clears the daily refresh; `None` keeps it.
     pub schedule: Option<Option<String>>,
+    pub last_scheduled_refresh: Option<Option<String>>,
     /// `disabled`, `installing`, `ready` or `failed`.
     pub state: Option<String>,
     /// Move `state` only where the row is still enabled; a row turned off
@@ -30,7 +31,7 @@ pub struct LayaUpdate {
     pub last_error: Option<Option<String>>,
 }
 
-const COLUMNS: &str = "enabled, checkpoints, threshold, schedule, state, \
+const COLUMNS: &str = "enabled, checkpoints, threshold, schedule, last_scheduled_refresh, state, \
                        installed_release, latest_release, weights_present, \
                        last_refresh_at, last_error, updated_at";
 
@@ -60,6 +61,9 @@ impl Store {
         }
         if update.schedule.is_some() {
             sets.push("schedule = ?");
+        }
+        if update.last_scheduled_refresh.is_some() {
+            sets.push("last_scheduled_refresh = ?");
         }
         if update.state.is_some() {
             sets.push(match update.state_while_enabled {
@@ -99,6 +103,9 @@ impl Store {
         }
         if let Some(schedule) = update.schedule {
             query = query.bind(schedule);
+        }
+        if let Some(date) = update.last_scheduled_refresh {
+            query = query.bind(date);
         }
         if let Some(state) = update.state {
             query = query.bind(state);

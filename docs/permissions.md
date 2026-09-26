@@ -132,16 +132,16 @@ ariadne permissions set --no-schedule        # and stop doing that
 The threshold is how sure Laya has to be before its answer is taken; it
 defaults to `0.8`, and anything outside 0 to 1 is refused. The schedule is
 `HH:MM` in 24-hour local time, and the daily refresh downloads the latest
-release and the checkpoints again, as `ariadne permissions refresh` does. It
-runs within half a minute of that time, while the daemon is running. A daemon
-that is stopped at that time does not make up for it when it starts: the next
-day's refresh is the next one. The refresh is skipped while Laya is off or an
-install is already running. Laya starts without a schedule, and then nothing
-is downloaded until you ask for it.
+release and the checkpoints again. It runs once per local date: if the daemon
+was down at the scheduled time, it catches up on its next start that day. A
+refresh already in progress is not queued. Laya starts without one, and then
+nothing is downloaded until you ask for it.
 
-Turning Laya off keeps every file. Turning it back on is the release check and
-nothing more, so it is quick. An install that is running when you turn Laya
-off runs to its end, and Laya stays off.
+Once the install is ready, the daemon runs Laya's local server on a loopback
+port and keeps its selected weights in memory for permission decisions. It
+stops that child when you disable Laya or the daemon exits, and starts it
+again after a refresh. Turning Laya off keeps every file. Turning it back on
+is the release check and nothing more, so it is quick.
 
 Set Laya up before you point a repository at it. A repository set to `ai`
 while Laya is off is refused:

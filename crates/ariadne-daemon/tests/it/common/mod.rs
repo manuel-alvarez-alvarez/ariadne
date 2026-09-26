@@ -113,6 +113,7 @@ pub(crate) struct HarnessBuilder {
     path: std::ffi::OsString,
     index: String,
     laya_installer: Option<Vec<String>>,
+    laya_serve_command: Option<Vec<String>>,
     laya_endpoint: Option<String>,
     python_bin: Option<String>,
     laya_release_url: Option<String>,
@@ -147,6 +148,7 @@ pub(crate) fn harness() -> HarnessBuilder {
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
         laya_installer: None,
+        laya_serve_command: None,
         laya_endpoint: None,
         python_bin: None,
         laya_release_url: None,
@@ -230,6 +232,12 @@ impl HarnessBuilder {
         self
     }
 
+    /// Run `cmd` as the Laya server instead of the installed `laya-serve`.
+    pub(crate) fn laya_serve_command(mut self, cmd: Vec<String>) -> Self {
+        self.laya_serve_command = Some(cmd);
+        self
+    }
+
     /// Answer `Laya::endpoint` with `url`, in place of a server the daemon
     /// started.
     pub(crate) fn laya_endpoint(mut self, url: impl Into<String>) -> Self {
@@ -283,6 +291,7 @@ impl HarnessBuilder {
         // `config.toml`, so the harness writes them onto the config the way
         // the daemon would have read them.
         config.laya_installer = self.laya_installer;
+        config.laya_serve_command = self.laya_serve_command;
         config.laya_endpoint = self.laya_endpoint;
         if let Some(python_bin) = self.python_bin {
             config.python_bin = Some(python_bin);
@@ -308,6 +317,7 @@ impl HarnessBuilder {
         }
         let laya =
             ariadne_daemon::laya::Laya::new(store.clone(), bus.clone(), &config, self.timeouts);
+        ariadne_daemon::laya::schedule::start(laya.clone(), self.timeouts.laya_schedule_poll);
         let launcher = Arc::new(Launcher {
             cfg: Arc::new(config),
             store: store.clone(),

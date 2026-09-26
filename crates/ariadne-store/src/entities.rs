@@ -196,6 +196,8 @@ pub struct LayaSettings {
     pub threshold: f64,
     /// `HH:MM` in 24-hour local time, or `None` for no daily refresh.
     pub schedule: Option<String>,
+    /// Local date of the last refresh the daily schedule started.
+    pub last_scheduled_refresh: Option<String>,
     /// `disabled`, `installing`, `ready` or `failed`.
     pub state: String,
     pub installed_release: Option<String>,
