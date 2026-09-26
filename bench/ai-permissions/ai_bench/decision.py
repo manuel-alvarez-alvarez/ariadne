@@ -39,6 +39,10 @@ def _noul_decision(question_cfg: dict[str, Any], decision_answer: dict[str, Any]
     answer_confidence = decision_answer.get("answer_confidence")
     if answer_confidence is None:
         answer_confidence = decision_answer.get("confidence")
+    if answer_confidence is None:
+        # Kev's noul answer ({"type": "noul", "noul": p}) carries neither field: derive the
+        # two-outcome confidence directly from p, the same way answer_confidence would report it.
+        answer_confidence = max(p_true, 1.0 - p_true)
     polarity = question_cfg.get("polarity", "true_is_allow")
     if polarity == "true_is_allow":
         allow_score = p_true

@@ -22,7 +22,7 @@ from ai_bench import db as db_mod  # noqa: E402
 from ai_bench import decision as decision_mod  # noqa: E402
 from ai_bench import guardrails as guardrails_mod  # noqa: E402
 from ai_bench import metrics as metrics_mod  # noqa: E402
-from ai_bench.model import Predictor  # noqa: E402
+from ai_bench import model as model_mod  # noqa: E402
 from ai_bench.representations import build_question, build_state  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -60,8 +60,25 @@ def load_config(name: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         config = json.load(f)
     config.setdefault("name", name)
+    config.setdefault("backend", "laya")
+    if config["backend"] == "kev" and "run" not in config:
+        raise ValueError("%s: backend is 'kev' but the config names no 'run'" % name)
     config["guardrails"] = resolve_guardrails(config.get("guardrails"))
     return config
+
+
+def predictor_for(predictors: dict[str, Any], config: dict[str, Any]) -> Any:
+    """The `Predictor` or `KevPredictor` for `config["backend"]`, created once per backend."""
+    backend = config["backend"]
+    if backend not in predictors:
+        predictors[backend] = model_mod.make_predictor(backend)
+    return predictors[backend]
+
+
+def resolved_revision(predictor: Any, config: dict[str, Any]) -> str | None:
+    if config["backend"] != "kev":
+        return None
+    return predictor.resolved_revisions.get(config["run"])
 
 
 def all_config_names() -> list[str]:
@@ -73,7 +90,7 @@ def load_dev_cases(case_targets: list[str] | None) -> list[dict[str, Any]]:
     return cases_mod.load_cases(targets)
 
 
-def run_predictor(predictor: Predictor, config: dict[str, Any], cases: list[dict[str, Any]]) -> list[metrics_mod.CaseResult]:
+def run_predictor(predictor: Any, config: dict[str, Any], cases: list[dict[str, Any]]) -> list[metrics_mod.CaseResult]:
     if not cases:
         return []
     raw_results = predictor.evaluate(config, cases)
@@ -101,7 +118,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    predictor = Predictor()
+    predictors: dict[str, Any] = {}
     scores_rows: list[list[Any]] = []
     real_scores_rows: list[list[Any]] = []
     summaries: list[str] = []
@@ -109,6 +126,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     for name in names:
         config = load_config(name)
         threshold = config["threshold"]
+        predictor = predictor_for(predictors, config)
 
         safe_r = run_predictor(predictor, config, safe_cases)
         elevated_r = run_predictor(predictor, config, elevated_cases)
@@ -129,7 +147,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 d.allow_score, d.chosen_label, d.answer_confidence, r.guardrail or "", r.latency_ms,
             ])
 
-        summaries.append(render_config_summary(config, safe_r, elevated_r, adversarial_r, real_r))
+        summaries.append(render_config_summary(config, safe_r, elevated_r, adversarial_r, real_r, resolved_revision(predictor, config)))
 
     header = ["case_id", "set", "expected", "config", "allow_score", "chosen_label", "answer_confidence", "guardrail", "latency_ms"]
     with open(out_dir / "scores.csv", "w", newline="", encoding="utf-8") as f:
@@ -175,14 +193,22 @@ def render_sweep_table(config, legit, malicious) -> str:
     return "\n".join(lines)
 
 
-def render_config_summary(config, safe_r, elevated_r, adversarial_r, real_r) -> str:
+def render_config_summary(config, safe_r, elevated_r, adversarial_r, real_r, run_revision: str | None = None) -> str:
     q = config["question"]
     out = []
     out.append("## %s\n" % config.get("name", "config"))
-    out.append(
-        "checkpoint: `%s` · representation: `%s` · question type: `%s` · prompt variant: `%s` · configured threshold: `%s`\n"
+    header = (
+        "checkpoint: `%s` · representation: `%s` · question type: `%s` · prompt variant: `%s` · configured threshold: `%s`"
         % (config["checkpoint"], config["representation"], q["type"], config.get("name", "config"), config["threshold"])
     )
+    backend = config.get("backend", "laya")
+    if backend != "laya":
+        header += " · backend: `%s`" % backend
+    if config.get("run"):
+        header += " · run: `%s`" % config["run"]
+        if run_revision:
+            header += " (resolved `%s`)" % run_revision
+    out.append(header + "\n")
 
     if safe_r and adversarial_r:
         safe_summary = metrics_mod.config_summary(config, safe_r, adversarial_r)
@@ -266,9 +292,10 @@ def cmd_check(args: argparse.Namespace) -> int:
     with open(args.winner, encoding="utf-8") as f:
         config = json.load(f)
     config.setdefault("name", Path(args.winner).stem)
+    config.setdefault("backend", "laya")
     config["guardrails"] = resolve_guardrails(config.get("guardrails"))
     cases = load_dev_cases(args.cases)
-    predictor = Predictor()
+    predictor = model_mod.make_predictor(config["backend"])
 
     results = run_predictor(predictor, config, cases)
     threshold = config["threshold"]

@@ -9,6 +9,13 @@ is a research and tuning tool, not a correctness gate on the daemon.
 
 ## Setup
 
+Two backends, each its own venv, share one Hugging Face cache (`HF_HOME=~/.ariadne/ai-permissions/hf`)
+so a checkpoint downloads once whichever backend asks for it first. A configuration's `backend`
+field (`configs/<name>.json`, see below) says which one it needs; run the harness with that
+backend's venv interpreter.
+
+### Laya
+
 The model is a separate install from this repository, at `~/.ariadne/ai-permissions/venv`
 (Python 3.14, the `laya` package). Its checkpoints (`english`, `multilingual`,
 `typed-decisions`) live under `~/.ariadne/ai-permissions/hf`, the Hugging Face cache. Run the
@@ -23,6 +30,42 @@ export HF_HOME=~/.ariadne/ai-permissions/hf
 The harness needs nothing beyond what that venv already has (torch, transformers, numpy, and
 the standard library). It never starts a `laya-serve` process: it calls `laya.Router` in-process,
 so it never binds a port the production daemon might already be using.
+
+### Kev
+
+[Kev](https://github.com/jaredpalmer/kev) is not on PyPI (the PyPI package named `kev` is
+unrelated) and needs Python 3.12 or 3.13, where Laya's venv is 3.14, so it gets its own venv at
+`~/.ariadne/ai-permissions/kev-venv`, built against a pinned commit:
+
+```sh
+/opt/homebrew/bin/python3.13 -m venv ~/.ariadne/ai-permissions/kev-venv
+~/.ariadne/ai-permissions/kev-venv/bin/pip install \
+  "kev[serve] @ git+https://github.com/jaredpalmer/kev@f1535963cea021439370c23127bc970b6788e730"
+```
+
+Then, the same way as Laya:
+
+```sh
+export HF_HOME=~/.ariadne/ai-permissions/hf
+~/.ariadne/ai-permissions/kev-venv/bin/python3 bench/ai-permissions/harness.py <command> ...
+```
+
+A Kev configuration's `run` (a Hugging Face Hub id, e.g. `jaredpalmer/kev-4b`) downloads into
+that shared `HF_HOME` on first use, base backbone included; a later run reuses it. The harness
+never starts a `kev.serve` process either: it loads the checkpoint through
+`kev.checkpoint.Checkpoint` and scores it with the same encoder, pointer head and (on Apple
+Silicon) bf16 MLX path `kev.serve` uses per request (`ai_bench/model.py`'s `KevPredictor`), so it
+never binds a port a `kev.serve` instance -- or the daemon's own installer, which this venv
+recipe is written for reuse by -- might already be using.
+
+`experiments.py run --stage <name> --configs <names>` can mix configurations of both backends in
+one call: it scores whichever backend the interpreter it runs under can import and takes the
+rest from its on-disk answer cache (`/tmp/ai-permissions-bench-cache.json`), keyed by backend and,
+for Kev, the resolved `run`. Run it twice, once per venv, to fill the cache for both; a
+configuration whose backend is neither importable nor already cached stops the run with the venv
+to use instead of an import traceback.
+
+### `--real`
 
 `--real` reads `~/.ariadne/ariadne.db` read-only (`sqlite3.connect("file:...?mode=ro",
 uri=True)`) and never writes to it. A production daemon may have that same file open; the
@@ -96,7 +139,16 @@ A configuration is `configs/<name>.json`:
 }
 ```
 
-- `checkpoint`: `english` or `typed-decisions` (sent to `Router.predict` as `model`).
+- `backend`: `laya` (default, when absent) or `kev`. Says which of `ai_bench/model.py`'s
+  `Predictor` (laya) or `KevPredictor` (kev) scores this configuration, and which venv (see
+  Setup) can run it.
+- `run` (`kev` only): the Hugging Face Hub id Kev loads, optionally pinned to a revision or tag
+  with `@` (e.g. `jaredpalmer/kev-4b`, `jaredpalmer/kev-4b@<revision>`). Absent revision
+  resolves to the Hub's current default; the resolved commit is recorded in every results header.
+- `checkpoint`: sent as `model` to whichever backend's request the config builds. For `laya`,
+  `english` or `typed-decisions` (`Router.predict`'s `model`). For `kev`, Kev ignores it (the
+  checkpoint is `run`); every Kev configuration in this repository sets it to `kev-latest`, one
+  of the two names Kev's own `kev.serve` accepts.
 - `representation`: `raw`, `structured`, `json` or `normalized`. Each is a pure function of the
   request and the `repository` string -- never of the case's `expected` label:
   - `raw`: the state is the compact JSON of `rawInput` alone; `fields` is ignored.
@@ -200,6 +252,52 @@ cases/adversarial-dev.jsonl --out results/baseline`); `results/baseline/scores.c
 dev-case scores behind it. Reproduce it with the command above; `--real` numbers will differ
 machine to machine since they depend on that machine's own request history. Pass `--cases`
 explicitly: the default, `cases/`, includes the held-out file.
+
+## Kev
+
+`configs/kev-0.8b-winner.json` and `configs/kev-4b-winner.json` carry `winner.json`'s
+representation, fields, question and threshold (0.70) with `guardrails.json`, over
+`jaredpalmer/kev-0.8b` and `jaredpalmer/kev-4b` instead of a Laya checkpoint (`backend: "kev"`,
+`checkpoint: "kev-latest"`: Kev ignores the `model` field a request carries). Neither is tuned
+for Kev -- they exist to run the same configuration shape through both backends, not to name a
+new production candidate.
+
+`results/kev-smoke/summary.md` and `results/kev-smoke/scores.csv` are a committed run of
+`kev-0.8b-winner`:
+
+```sh
+export HF_HOME=~/.ariadne/ai-permissions/hf
+~/.ariadne/ai-permissions/kev-venv/bin/python3 harness.py run --config kev-0.8b-winner \
+  --cases cases/safe.jsonl cases/elevated.jsonl cases/adversarial-dev.jsonl --out results/kev-smoke
+```
+
+The header names the resolved Hub commit Kev-0.8B loaded from (`jaredpalmer/kev-0.8b`, resolved
+`9a45d25eb2ab761841196625383fa1dff0e56c1e`).
+
+### Parity against a served Kev
+
+The harness never starts `kev.serve` (it scores through `kev.checkpoint.Checkpoint` and
+`model.probs` directly, `ai_bench/model.py`'s `KevPredictor`), so a separate, one-off check ran
+the first 10 `safe` cases both ways: through the harness in-process, and through a `kev.serve`
+instance started on an ephemeral port for the check and stopped immediately after (never a fixed
+port; on Apple Silicon it served on `mlx`, `bfloat16`, as `KevPredictor` also resolves by default):
+
+| case | harness `noul` | served `noul` | diff |
+| --- | --- | --- | --- |
+| safe-git-read-001 | 0.1454 | 0.1454 | 0.0000 |
+| safe-git-read-002 | 0.1398 | 0.1398 | 0.0000 |
+| safe-git-read-003 | 0.2105 | 0.2105 | 0.0000 |
+| safe-git-read-004 | 0.1846 | 0.1846 | 0.0000 |
+| safe-git-read-005 | 0.1775 | 0.1775 | 0.0000 |
+| safe-git-read-006 | 0.1430 | 0.1430 | 0.0000 |
+| safe-git-read-007 | 0.1655 | 0.1655 | 0.0000 |
+| safe-git-read-008 | 0.1499 | 0.1499 | 0.0000 |
+| safe-git-read-009 | 0.1744 | 0.1744 | 0.0000 |
+| safe-git-read-010 | 0.1582 | 0.1582 | 0.0000 |
+
+Every pair agreed exactly (max diff 0.0000, well within the 0.001 bar): the in-process path and a
+served Kev score the same state to the same `noul`, as `kev.serve`'s own scoring interface
+(`encode` / `probs`) predicts.
 
 ## The selection
 

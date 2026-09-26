@@ -35,7 +35,7 @@ from ai_bench import db as db_mod  # noqa: E402
 from ai_bench import decision as decision_mod  # noqa: E402
 from ai_bench import guardrails as guardrails_mod  # noqa: E402
 from ai_bench import metrics as metrics_mod  # noqa: E402
-from ai_bench.model import Predictor  # noqa: E402
+from ai_bench import model as model_mod  # noqa: E402
 from ai_bench.representations import build_question, build_state  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -48,11 +48,18 @@ CONFIDENT = 0.70  # a wrong answer at or above this answer_confidence is "confid
 
 # --------------------------------------------------------------------------- cached predictor
 
-class CachedPredictor(Predictor):
-    """`Predictor` with an on-disk answer cache and a forward-pass counter."""
+class CachedPredictor:
+    """An on-disk answer cache and forward-pass counter over both backends.
+
+    One interpreter ever imports one backend (`laya` and `kev` pin incompatible Python and torch
+    versions), so a configuration whose backend cannot be imported here is scored from the cache
+    alone; a cache miss for it stops the run with the venv to use instead of a traceback out of an
+    absent import. Cache keys include the backend and, for `kev`, the resolved `run` (never the
+    raw, possibly unpinned, config value), so the two backends' answers, two Kev checkpoints, or
+    two commits of one moved (unpinned) Kev `run`, never collide.
+    """
 
     def __init__(self, cache_path: Path):
-        super().__init__()
         self.cache_path = cache_path
         self.cache: dict[str, dict[str, Any]] = {}
         if cache_path.exists():
@@ -60,10 +67,17 @@ class CachedPredictor(Predictor):
                 self.cache = json.load(f)
         self.forward_passes = 0
         self.model_seconds = 0.0
+        self._predictors: dict[str, Any] = {}
+        self.resolved_runs: dict[str, str] = {}  # config["run"] -> the Hub commit it resolves to now
+
+    def predictor_for(self, backend: str) -> Any:
+        if backend not in self._predictors:
+            self._predictors[backend] = model_mod.make_predictor(backend)
+        return self._predictors[backend]
 
     @staticmethod
-    def key(request: dict[str, Any]) -> str:
-        blob = json.dumps(request, sort_keys=True, ensure_ascii=False)
+    def key(backend: str, request: dict[str, Any]) -> str:
+        blob = json.dumps({"backend": backend, **request}, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     def save(self) -> None:
@@ -73,8 +87,18 @@ class CachedPredictor(Predictor):
         os.replace(tmp, self.cache_path)
 
     def evaluate(self, config, cases, batch_size: int = 16):
+        backend = config.get("backend", "laya")
         rules = guardrails_mod.load_guardrails(config.get("guardrails"))
         question = build_question(config["question"])
+        resolved_run = None
+        if backend == "kev":
+            # Resolved before the cache is read (never from the cache itself): an unpinned `run`
+            # is a moving target, and only a fresh resolution catches it having moved since the
+            # answer now in the cache was scored, instead of matching that older commit's key.
+            resolved_run = self.resolved_runs.get(config["run"])
+            if resolved_run is None:
+                resolved_run = model_mod.resolve_revision(config["run"])
+                self.resolved_runs[config["run"]] = resolved_run
         results: list[dict[str, Any] | None] = [None] * len(cases)
         to_predict: list[int] = []
         requests: list[dict[str, Any]] = []
@@ -88,7 +112,9 @@ class CachedPredictor(Predictor):
                 results[i] = {**base, "answer": None, "latency_ms": 0.0}
                 continue
             model_request = {"state": state, "questions": question, "model": config["checkpoint"]}
-            k = self.key(model_request if batch_size == 16 else {**model_request, "batch_size": batch_size})
+            if backend == "kev":
+                model_request["run"] = resolved_run
+            k = self.key(backend, model_request if batch_size == 16 else {**model_request, "batch_size": batch_size})
             hit = self.cache.get(k)
             if hit is not None:
                 results[i] = {**base, "answer": hit["answer"], "latency_ms": hit["latency_ms"]}
@@ -98,9 +124,22 @@ class CachedPredictor(Predictor):
                 keys.append(k)
                 results[i] = base
         if to_predict:
-            router = self._load_router()
+            predictor = self.predictor_for(backend)
+            if not predictor.available():
+                raise model_mod.BackendUnavailable(
+                    "%s needs the %s backend to score %d case(s) not already in the cache; "
+                    "run it from %s first" % (config["name"], backend, len(to_predict), model_mod.VENV_HINT[backend])
+                )
             started = time.perf_counter()
-            answers = router.predict_batch(requests, batch_size=batch_size)
+            if backend == "kev":
+                # Pinned to resolved_run, the exact commit that keyed the cache above: an
+                # unpinned config["run"] resolves again, independently, inside Checkpoint.load,
+                # and a Hub move between the two resolutions would score a newer commit than the
+                # one the cache entry (and the results header) says it did.
+                pinned_run = "%s@%s" % (config["run"].partition("@")[0], resolved_run)
+                answers = [predictor.predict_one(pinned_run, r["state"], r["questions"], r["model"]) for r in requests]
+            else:
+                answers = predictor.predict(requests, batch_size)
             elapsed = time.perf_counter() - started
             self.forward_passes += len(to_predict)
             self.model_seconds += elapsed
@@ -113,7 +152,7 @@ class CachedPredictor(Predictor):
         return results
 
     def device(self) -> str:
-        router = self._load_router()
+        router = self.predictor_for("laya")._load_router()
         return str(router.load("english").device)
 
 
@@ -319,7 +358,8 @@ def cmd_run(args) -> int:
                                    d.chosen_label, d.answer_confidence, r.guardrail or "", r.latency_ms])
         m = config_metrics(config, safe_r, elevated_r, adversarial_r, real_r)
         metrics_rows.append(m)
-        text = harness.render_config_summary(config, safe_r, elevated_r, adversarial_r, real_r)
+        revision = predictor.resolved_runs.get(config["run"]) if config.get("backend") == "kev" else None
+        text = harness.render_config_summary(config, safe_r, elevated_r, adversarial_r, real_r, revision)
         if args.sweep:
             text += "\n\n### threshold sweep against adversarial-dev and elevated together\n\n"
             text += render_sweep(config, safe_r, elevated_r, adversarial_r)
@@ -398,13 +438,20 @@ def cmd_matrix(args) -> int:
 
 
 def cmd_tokens(args) -> int:
-    """How many head tokens (question + options) each configuration's question takes per checkpoint."""
+    """How many head tokens (question + options) each configuration's question takes per checkpoint.
+
+    Laya-only: Kev has no fixed head token budget (its options are branch tokens read by the
+    pointer head, not generated), so there is nothing analogous to report for a `kev` config.
+    """
     from laya.common import build_sequence, render_options
 
     predictor = CachedPredictor(Path(args.cache))
-    router = predictor._load_router()
+    router = predictor.predictor_for("laya")._load_router()
     for name in args.configs:
         config = harness.load_config(name)
+        if config.get("backend") == "kev":
+            print("%s: skipped, tokens is laya-only" % name)
+            continue
         agent = router.load(config["checkpoint"])
         q = agent._to_internal(build_question(config["question"])["decision"])
         ins = "%s question: %s" % (q["t"], q["ins"])
@@ -421,23 +468,38 @@ def cmd_tokens(args) -> int:
 
 
 def cmd_latency(args) -> int:
-    """Median single-request latency in-process, one `router.predict` per case, on the safe set."""
+    """Median single-request latency in-process, one request per case, on the safe set.
+
+    Laya: one `router.predict` per case. Kev: one `KevPredictor.predict_one` per case (its own
+    scoring path, one state at a time). Both skip the first few calls as warm-up.
+    """
     predictor = CachedPredictor(Path(args.cache))
-    router = predictor._load_router()
     safe_c, _, _ = load_dev()
     for name in args.configs:
         config = harness.load_config(name)
         question = build_question(config["question"])
-        agent = router.load(config["checkpoint"])
+        backend = config.get("backend", "laya")
+        kp = predictor.predictor_for(backend)
+        if not kp.available():
+            raise model_mod.BackendUnavailable("%s: run this from %s" % (name, model_mod.VENV_HINT[backend]))
+        if backend == "kev":
+            _, model = kp.load(config["run"])
+            device_label = "%s/%s" % (model.backend, model.dtype)
+        else:
+            agent = kp._load_router().load(config["checkpoint"])
+            device_label = str(agent.device)
         times = []
         for case in safe_c[: args.n]:
             state = build_state(config, case["request"], case["repository"])
             started = time.perf_counter()
-            router.predict(state, question, model=config["checkpoint"])
+            if backend == "kev":
+                kp.predict_one(config["run"], state, question, config["checkpoint"])
+            else:
+                kp._load_router().predict(state, question, model=config["checkpoint"])
             times.append((time.perf_counter() - started) * 1000.0)
         times = times[3:]  # the first calls warm the device
         print("%s [%s on %s]: median %.1f ms, p90 %.1f ms over %d single requests" % (
-            name, config["checkpoint"], agent.device, statistics.median(times),
+            name, config["checkpoint"], device_label, statistics.median(times),
             sorted(times)[int(0.9 * len(times))], len(times)))
     return 0
 
