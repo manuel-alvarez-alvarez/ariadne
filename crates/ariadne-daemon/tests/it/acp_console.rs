@@ -1067,6 +1067,63 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     assert_eq!(replies[2]["result"]["outcome"]["optionId"], "yes");
 }
 
+/// `ai` answers each request through Laya (022). Until it does, it is
+/// `learn`: it asks the first time and remembers an allowing answer under the
+/// repository, so a matching request afterwards interrupts nobody.
+#[tokio::test]
+async fn ai_asks_once_and_remembers_the_approval_as_learn_does() {
+    let root = tempfile::tempdir().unwrap();
+    let agent_dir = tempfile::tempdir().unwrap();
+    let stub = stub_acp_agent(agent_dir.path(), permission_script());
+    let h = harness().home(home_with_stub(&root, &stub)).await;
+    let cast = acp_cast(&h).await;
+    h.set_permission_mode(&cast.repo, PermissionMode::Ai).await;
+    ready(&h, &cast.task.id).await;
+
+    let asked = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the first permission attention", || async {
+        h.attention(&asked).await == Some(AttentionReason::WaitingPermission)
+    })
+    .await;
+    let (status, _) = h.send(post_console_input(&asked.id, "yes")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the approved turn to finish", || async {
+        h.session_status(&asked).await == SessionStatus::Idle
+    })
+    .await;
+    assert!(
+        h.store
+            .has_learned_permission(&cast.repo.id, "Write", "write")
+            .await
+            .unwrap(),
+        "an allowing answer in `ai` is remembered under the repository"
+    );
+
+    let again = h
+        .task_on(&cast.goal, &cast.repo, "Ask again", 1, common::test_pin())
+        .await;
+    ready(&h, &again.id).await;
+    let remembered = h.launcher.spawn_author(&again.id).await.unwrap();
+    eventually(TIMEOUT, "the remembered permission turn", || async {
+        h.session_status(&remembered).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(
+        h.attention(&remembered).await,
+        None,
+        "the matching request was answered without asking again"
+    );
+    let replies: Vec<_> = stub
+        .messages()
+        .into_iter()
+        .filter(|message| {
+            message.get("id").and_then(serde_json::Value::as_str) == Some("permission-1")
+        })
+        .collect();
+    assert_eq!(replies.len(), 2, "each stub process got one reply");
+    assert_eq!(replies[1]["result"]["outcome"]["optionId"], "yes");
+}
+
 /// A permission request, and the daemon's reply to it, appear in the console
 /// stream — the same events `acp_runtime.rs` proves reach the store.
 #[tokio::test]

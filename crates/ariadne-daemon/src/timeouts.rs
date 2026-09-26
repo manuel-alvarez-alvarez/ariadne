@@ -26,6 +26,15 @@ pub struct Timeouts {
     pub session_load: Duration,
     /// How long a registry download may take, including its response body.
     pub registry_download: Duration,
+    /// How long the Laya release document may take to download, including its
+    /// response body (022). The install that follows it is unbounded — it
+    /// fetches a wheel, PyTorch and gigabytes of weights — so this covers the
+    /// one call the daemon makes itself.
+    pub laya_release_download: Duration,
+    /// How often the clock is read for Laya's daily refresh
+    /// (`crate::laya::schedule`). Nothing waits on it: it is the period of a
+    /// clock, and it bounds how late after its minute a refresh starts.
+    pub laya_schedule_poll: Duration,
     /// How often a running turn's transcript is read again for what the
     /// launch has spent, so a long turn's figure moves before it ends.
     pub transcript_poll: Duration,
@@ -67,6 +76,8 @@ impl Default for Timeouts {
             probe: Duration::from_secs(5),
             session_load: Duration::from_secs(60),
             registry_download: Duration::from_secs(30),
+            laya_release_download: Duration::from_secs(30),
+            laya_schedule_poll: Duration::from_secs(30),
             transcript_poll: Duration::from_secs(15),
             session_wake: Duration::from_millis(250),
             full_reconcile: Duration::from_secs(5),

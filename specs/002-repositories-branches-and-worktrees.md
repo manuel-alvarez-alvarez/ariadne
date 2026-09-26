@@ -1,12 +1,13 @@
 ---
 id: repositories-branches-and-worktrees
 status: current
-updated: 2026-09-21
+updated: 2026-09-26
 areas: [store, daemon]
 commits: [b6c6b9d2, 2bca45a6, 305ee064, 481a405d, a69b953f, 87fa62cf, a4d7da95]
 tests:
   - crates/ariadne-daemon/src/branch.rs
   - crates/ariadne-daemon/tests/it/repositories.rs
+  - crates/ariadne-daemon/tests/it/laya.rs
   - crates/ariadne-daemon/tests/it/goal_repositories.rs
   - crates/ariadne-daemon/tests/it/managers.rs
   - crates/ariadne-daemon/tests/it/task_branches.rs
@@ -75,12 +76,14 @@ agent is briefed with in its worktree (006).
     recreates that watch, so refs deleted by git pack-refs remain neither
     watched nor open. A repository wake still resolves each followed branch
     once, and only a moved branch emits an event.
-12. The permission mode — `auto`, `ask` or `learn` — says how every ACP
+12. The permission mode — `auto`, `ask`, `learn` or `ai` — says how every ACP
     session that works in the repository answers its permission requests
     (021). It defaults to `auto`, is set when the repository is registered
     and changed by editing it, from the CLI and the desktop app alike, and
     an edit that does not name it keeps it. It is set nowhere else: not per
-    task, not in the daemon's configuration.
+    task, not in the daemon's configuration. `ai` is refused while Laya is
+    off, on registration and on an edit alike, with 409 `laya_disabled`
+    (022): the mode asks Laya, and a Laya that is off answers nothing.
 
 ## Acceptance criteria
 
@@ -97,6 +100,9 @@ agent is briefed with in its worktree (006).
   and on an edit that names only the mode, and refuses a mode it does not
   know (`repositories.rs::a_repository_carries_its_permission_mode`,
   `store.rs::repository_crud_and_unique_path_branch`).
+- `ai` is refused while Laya is off and taken once it is on
+  (`laya.rs::a_repository_takes_the_ai_mode_only_once_laya_is_on`,
+  `store.rs::a_repository_takes_the_ai_permission_mode`).
 - A task branches from the repository its goal references
   (`goal_repositories.rs::a_task_branches_from_the_repository_its_goal_references`),
   and editing the base branch moves only what new tasks branch from

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::agents::AcpAgentDto;
+use crate::permissions::PythonDto;
 
 /// The daemon's own environment, as `ariadne doctor` renders it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -27,6 +28,10 @@ pub struct DaemonReportDto {
     /// be cut at all, and the forge CLIs `gh` and `glab`, which are what a
     /// published task is watched through.
     pub tools: Vec<BinaryDto>,
+    /// The Python interpreter Laya's install runs on (022). It is reported
+    /// apart from `tools` because it answers a question of its own: not
+    /// whether it is there, but whether it is new enough.
+    pub python: PythonDto,
     pub db: PathStateDto,
     pub worktree_root: PathStateDto,
 }

@@ -17,6 +17,7 @@ pub mod config;
 pub mod gitwt;
 pub mod http;
 pub mod launcher;
+pub mod laya;
 pub mod log;
 pub mod resource;
 pub mod scheduler;

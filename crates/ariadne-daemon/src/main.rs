@@ -45,6 +45,11 @@ unknown key stops the daemon rather than being ignored):
   prevent_sleep            hold off system sleep while a session is live (default: true)
   acp_registry_url         index URL fetched on refresh (default:
                            https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json)
+  python_bin               the Python 3.10-or-newer Laya installs into
+                           (default: python3 on this daemon's PATH)
+  laya_release_url         where the Laya release document is read from
+                           (default:
+                           https://api.github.com/repos/NandhaKishorM/laya/releases/latest)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
 
   ariadned --check-config reads that file and exits.\
@@ -140,6 +145,16 @@ async fn main() -> Result<()> {
         config.prevent_sleep,
         ariadne_daemon::timeouts::Timeouts::default(),
     );
+    let laya = ariadne_daemon::laya::Laya::new(
+        store.clone(),
+        events.clone(),
+        &config,
+        ariadne_daemon::timeouts::Timeouts::default(),
+    );
+    ariadne_daemon::laya::schedule::start(
+        laya.clone(),
+        ariadne_daemon::timeouts::Timeouts::default().laya_schedule_poll,
+    );
     let state = AppState {
         store,
         started_at: Instant::now(),
@@ -150,6 +165,7 @@ async fn main() -> Result<()> {
         logs,
         agent_registry,
         outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::from_env(),
+        laya,
     };
     let app = http::router(state);
 

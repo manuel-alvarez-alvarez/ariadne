@@ -112,6 +112,10 @@ pub(crate) struct HarnessBuilder {
     timeouts: Timeouts,
     path: std::ffi::OsString,
     index: String,
+    laya_installer: Option<Vec<String>>,
+    laya_endpoint: Option<String>,
+    python_bin: Option<String>,
+    laya_release_url: Option<String>,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -142,6 +146,10 @@ pub(crate) fn harness() -> HarnessBuilder {
         timeouts: Timeouts::default(),
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
+        laya_installer: None,
+        laya_endpoint: None,
+        python_bin: None,
+        laya_release_url: None,
     }
 }
 
@@ -214,6 +222,35 @@ impl HarnessBuilder {
         self
     }
 
+    /// Run `cmd` in place of the whole Laya install — the venv, the wheel
+    /// and the checkpoints (022). Its exit status decides `ready` or
+    /// `failed`, and its stderr is `last_error`.
+    pub(crate) fn laya_installer(mut self, cmd: Vec<String>) -> Self {
+        self.laya_installer = Some(cmd);
+        self
+    }
+
+    /// Answer `Laya::endpoint` with `url`, in place of a server the daemon
+    /// started.
+    pub(crate) fn laya_endpoint(mut self, url: impl Into<String>) -> Self {
+        self.laya_endpoint = Some(url.into());
+        self
+    }
+
+    /// Install into `path` rather than whatever `python3` the machine
+    /// running the tests has: a script that prints a version is a Python as
+    /// far as the check is concerned.
+    pub(crate) fn python_bin(mut self, path: impl Into<String>) -> Self {
+        self.python_bin = Some(path.into());
+        self
+    }
+
+    /// Read the Laya release document from `url`, rather than from GitHub.
+    pub(crate) fn laya_release_url(mut self, url: impl Into<String>) -> Self {
+        self.laya_release_url = Some(url.into());
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -241,7 +278,18 @@ impl HarnessBuilder {
                 home
             }
         };
-        let config = Config::load(Some(home)).unwrap();
+        let mut config = Config::load(Some(home)).unwrap();
+        // The Laya seams are the daemon's own settings rather than keys of
+        // `config.toml`, so the harness writes them onto the config the way
+        // the daemon would have read them.
+        config.laya_installer = self.laya_installer;
+        config.laya_endpoint = self.laya_endpoint;
+        if let Some(python_bin) = self.python_bin {
+            config.python_bin = Some(python_bin);
+        }
+        if let Some(url) = self.laya_release_url {
+            config.laya_release_url = url;
+        }
         let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
             &config.acp_agents,
             config.root.clone(),
@@ -258,6 +306,8 @@ impl HarnessBuilder {
         if discover {
             agent_registry.discover().await;
         }
+        let laya =
+            ariadne_daemon::laya::Laya::new(store.clone(), bus.clone(), &config, self.timeouts);
         let launcher = Arc::new(Launcher {
             cfg: Arc::new(config),
             store: store.clone(),
@@ -286,6 +336,7 @@ impl HarnessBuilder {
             outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::with_transcripts(
                 &transcript_homes(dir.path()),
             ),
+            laya,
         };
         // Lazy: most tests never write behind the store's back, and a
         // connection opened for every harness in every binary is a hundred
@@ -401,7 +452,7 @@ fn raise_open_file_limit() {
 /// for each test made every test in a parallel run wait for the check of
 /// every other test. One file for each text is checked once, and a symlink to
 /// it is not checked again.
-fn shared_script(script: &str) -> PathBuf {
+pub(crate) fn shared_script(script: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     use std::os::unix::fs::PermissionsExt;
 

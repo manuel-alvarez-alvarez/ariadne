@@ -104,7 +104,7 @@ CREATE TABLE repositories (
     -- How the ACP permission requests of every session in this checkout are
     -- answered; `learn` keeps its approvals in `learned_permissions`.
     permission_mode TEXT NOT NULL DEFAULT 'auto'
-                    CHECK (permission_mode IN ('auto', 'ask', 'learn')),
+                    CHECK (permission_mode IN ('auto', 'ask', 'learn', 'ai')),
     -- The same checkout can be registered once per base branch.
     UNIQUE (path, base_branch)
 );
@@ -167,6 +167,37 @@ CREATE TABLE tasks (
 );
 CREATE INDEX idx_tasks_goal ON tasks (goal_id);
 CREATE INDEX idx_tasks_status ON tasks (status);
+
+-- Laya, the local model the `ai` permission mode answers with (022). One row,
+-- because the settings are the daemon's and not a repository's: a repository
+-- chooses the `ai` mode, and this says whether there is a Laya to answer with.
+--
+-- The install state is here rather than read off the disk because an install
+-- takes minutes and two gigabytes: what a client needs is what happened to
+-- the last one, which outlives the task that ran it and the daemon that
+-- started it. The files themselves stay under `<home>/laya`, and a disabled
+-- Laya keeps them.
+CREATE TABLE laya_settings (
+    id                INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled           INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    checkpoints       TEXT NOT NULL DEFAULT 'english'
+                      CHECK (checkpoints IN ('english', 'all')),
+    -- How sure Laya has to be before its answer is taken, 0 to 1.
+    threshold         REAL NOT NULL DEFAULT 0.8,
+    -- When the daily refresh runs, `HH:MM` in 24-hour local time.
+    -- NULL = no refresh.
+    schedule          TEXT,
+    state             TEXT NOT NULL DEFAULT 'disabled'
+                      CHECK (state IN ('disabled', 'installing', 'ready', 'failed')),
+    installed_release TEXT,                     -- the release tag on disk
+    latest_release    TEXT,                     -- the tag the last download named
+    weights_present   INTEGER NOT NULL DEFAULT 0 CHECK (weights_present IN (0, 1)),
+    last_refresh_at   TEXT,                     -- when an install last ended well
+    last_error        TEXT,                     -- why the last install failed
+    updated_at        TEXT NOT NULL
+);
+INSERT INTO laya_settings (id, updated_at)
+VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 -- An ACP permission approval learned from one repository. A denial has no
 -- row, so it is always asked again.

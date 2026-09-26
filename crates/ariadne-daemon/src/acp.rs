@@ -1285,7 +1285,14 @@ impl RuntimeIncoming {
         let mut payload = tool_payload(session_id.clone(), &params["toolCall"]);
         payload["options"] = params.get("options").cloned().unwrap_or_default();
         let signature = permission_signature(&params["toolCall"]);
-        let learned = self.permission_mode == PermissionMode::Learn
+        // `ai` asks Laya, and until it does (022, Decisions) it is `learn`:
+        // the one mode that neither approves on its own nor asks twice for
+        // the same tool.
+        let remembers = matches!(
+            self.permission_mode,
+            PermissionMode::Learn | PermissionMode::Ai
+        );
+        let learned = remembers
             && self
                 .sink
                 .runtime
@@ -1297,8 +1304,8 @@ impl RuntimeIncoming {
         // The input path must see a waiting receiver as soon as the request
         // reaches the console stream. Register it before emitting the event,
         // rather than leaving a gap where input would become a new prompt.
-        let waiting = matches!(self.permission_mode, PermissionMode::Ask)
-            || (self.permission_mode == PermissionMode::Learn && !learned);
+        let waiting =
+            matches!(self.permission_mode, PermissionMode::Ask) || (remembers && !learned);
         let receiver = waiting.then(|| self.begin_permission());
         self.end_text().await;
         self.sink.emit("permission_request", payload).await;
@@ -1306,7 +1313,7 @@ impl RuntimeIncoming {
             Some(receiver) => self.wait_for_permission(params, receiver).await?,
             None => approved_option(params),
         };
-        if self.permission_mode == PermissionMode::Learn
+        if remembers
             && !self.repository_id.is_empty()
             && selected
                 .as_deref()

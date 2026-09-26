@@ -245,6 +245,11 @@ mod tests {
                 binary("gh", true, Some(false)),
                 binary("glab", false, None),
             ],
+            python: ariadne_api::permissions::PythonDto {
+                path: Some("/usr/bin/python3".into()),
+                version: Some("3.12.1".into()),
+                ok: true,
+            },
             db: there("/home/me/.ariadne/ariadne.db"),
             worktree_root: there("/home/me/.ariadne/worktrees"),
         };

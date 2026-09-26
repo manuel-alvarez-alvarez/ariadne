@@ -11,6 +11,7 @@ pub mod goals;
 pub mod logs;
 pub mod messages;
 pub mod models;
+pub mod permissions;
 pub mod repositories;
 pub mod sessions;
 pub mod skills;

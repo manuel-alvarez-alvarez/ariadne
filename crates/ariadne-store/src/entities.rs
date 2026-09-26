@@ -182,6 +182,30 @@ pub struct AcpRegistryIndex {
     pub fetched_at: String,
 }
 
+/// The one Laya settings row, and the state of the install behind it (022).
+///
+/// The spellings of `checkpoints` and `state` are the wire's own
+/// (`ariadne_api::permissions`); the store keeps the text and the CHECK
+/// constraints hold it to the sets.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct LayaSettings {
+    pub enabled: bool,
+    /// `english` or `all`.
+    pub checkpoints: String,
+    /// How sure Laya has to be before its answer is taken, 0 to 1.
+    pub threshold: f64,
+    /// `HH:MM` in 24-hour local time, or `None` for no daily refresh.
+    pub schedule: Option<String>,
+    /// `disabled`, `installing`, `ready` or `failed`.
+    pub state: String,
+    pub installed_release: Option<String>,
+    pub latest_release: Option<String>,
+    pub weights_present: bool,
+    pub last_refresh_at: Option<String>,
+    pub last_error: Option<String>,
+    pub updated_at: String,
+}
+
 /// A git repository registered once, globally, and named by id from there on.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Repository {

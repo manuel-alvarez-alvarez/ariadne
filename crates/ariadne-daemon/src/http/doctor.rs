@@ -51,6 +51,8 @@ pub(super) async fn report(State(state): State<AppState>) -> Json<DaemonReportDt
     )
     .await;
 
+    let python = crate::laya::python::probe_python(cfg.python_bin.as_deref(), path).await;
+
     Json(DaemonReportDto {
         version: env!("CARGO_PKG_VERSION").into(),
         path: std::env::var("PATH").ok(),
@@ -58,6 +60,7 @@ pub(super) async fn report(State(state): State<AppState>) -> Json<DaemonReportDt
         socket_path: cfg.socket_path.display().to_string(),
         acp_agents: state.agent_registry.agents().await,
         tools,
+        python,
         db: path_state(&cfg.db_path),
         worktree_root: path_state(&cfg.worktree_root),
     })

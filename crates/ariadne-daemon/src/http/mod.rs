@@ -13,6 +13,7 @@ pub(crate) mod events;
 mod goals;
 mod landing;
 mod logs;
+mod permissions;
 mod pins;
 mod repositories;
 mod sessions;
@@ -44,6 +45,7 @@ use catalog::{acp_agents, agents, models};
 
 use crate::bus::EventBus;
 use crate::launcher::Launcher;
+use crate::laya::Laya;
 use crate::log::LogBuffer;
 use crate::scheduler::SchedEvent;
 
@@ -68,6 +70,8 @@ pub struct AppState {
     /// The snapshot of every agent's stored sessions that the outside half
     /// of `/v1/sessions` pages.
     pub outside_sessions: OutsideSessions,
+    /// Laya's settings, its Python check and its install (022).
+    pub laya: Laya,
 }
 
 impl AppState {
@@ -118,6 +122,7 @@ impl AppState {
         skills::reset_document,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
+        permissions::get, permissions::update, permissions::refresh,
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::complete, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
@@ -148,6 +153,7 @@ impl AppState {
         (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
+        (name = "permissions", description = "Laya, the local model the `ai` permission mode answers with"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions, and the console each one is driven through"),
@@ -190,6 +196,12 @@ pub fn router(state: AppState) -> Router {
                 .put(repositories::update)
                 .delete(repositories::delete),
         )
+        // permissions
+        .route(
+            "/v1/permissions/laya",
+            get(permissions::get).put(permissions::update),
+        )
+        .route("/v1/permissions/laya/refresh", post(permissions::refresh))
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))
         .route("/v1/goals/{id}", get(goals::get).delete(goals::delete))
