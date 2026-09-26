@@ -232,7 +232,7 @@ impl HarnessBuilder {
         self
     }
 
-    /// Run `cmd` as the model server instead of the installed `laya-serve`.
+    /// Run `cmd` as the model server instead of the installed `kev.serve`.
     pub(crate) fn ai_permissions_serve_command(mut self, cmd: Vec<String>) -> Self {
         self.ai_permissions_serve_command = Some(cmd);
         self

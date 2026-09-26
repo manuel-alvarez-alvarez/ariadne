@@ -3621,7 +3621,7 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
 
     let defaults = store.ai_permission_settings().await.unwrap();
     assert!(!defaults.enabled);
-    assert_eq!(defaults.threshold, 0.7);
+    assert_eq!(defaults.threshold, 0.56);
     assert_eq!(defaults.schedule, None);
     assert_eq!(defaults.state, "disabled");
     assert_eq!(defaults.installed_release, None);

@@ -11,15 +11,22 @@ use crate::common::{Harness, TIMEOUT, eventually, harness, post, put_json, share
 
 const SERVER: &str = r#"#!/usr/bin/env python3
 import http.server, os, sys
+args = sys.argv[2:]
+run = args[args.index('--run') + 1]
+host = args[args.index('--host') + 1]
+port = int(args[args.index('--port') + 1])
 with open(sys.argv[1], 'w') as f:
-    f.write(str(os.getpid()) + '\n' + os.environ['LAYA_MODELS'] + '\n' + os.environ['HF_HOME'])
+    f.write(str(os.getpid()) + '\n' + run + '\n' + os.environ['HF_HOME'] + '\n' + os.environ['HF_HUB_OFFLINE'])
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200 if self.path == '/health' else 404)
+        self.send_response(200 if self.path == '/v1/models' else 404)
         self.end_headers()
     def log_message(self, *args): pass
-http.server.HTTPServer((os.environ['LAYA_HOST'], int(os.environ['LAYA_PORT'])), Handler).serve_forever()
+http.server.HTTPServer((host, port), Handler).serve_forever()
 "#;
+
+/// `bench/ai-permissions/winner.json`'s `run`, `decide::RUN`'s value.
+const RUN: &str = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101";
 
 fn python() -> String {
     shared_script("#!/bin/sh\necho 'Python 3.12.1'\n")
@@ -82,8 +89,9 @@ async fn a_ready_model_starts_the_server_with_its_built_in_weights() {
     let status: AiPermissionsStatusDto = h.get("/v1/permissions/ai").await;
     assert!(status.endpoint.is_some());
     let saw = std::fs::read_to_string(record.path()).unwrap();
-    assert!(saw.contains("typed-decisions"));
+    assert!(saw.contains(RUN));
     assert!(saw.contains("/ai-permissions/hf"));
+    assert!(saw.ends_with('1'), "HF_HUB_OFFLINE=1: {saw}");
     let _: AiPermissionsStatusDto = h
         .json(
             put_json("/v1/permissions/ai", json!({"enabled":false})),

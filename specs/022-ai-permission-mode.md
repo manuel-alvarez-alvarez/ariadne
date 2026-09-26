@@ -146,18 +146,20 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Server
 
-18. While the model is enabled and its install is ready, the daemon runs the
-    package's server executable from `<home>/ai-permissions/venv/bin` as its
-    child, in a process group of its own. It binds an available loopback
-    port, preloads the `typed-decisions` checkpoint from
-    `<home>/ai-permissions/hf`,
-    and never listens beyond the local machine. The server runs under a
-    `/bin/sh` guard whose stdin is a pipe only the daemon writes to. When
-    that pipe closes, however the daemon ended (`kill -9` included), the
-    guard kills the whole process group, so no server outlives its daemon.
-    When the server exits on its own, the guard exits with its status.
+18. While the model is enabled and its install is ready, the daemon runs
+    `<home>/ai-permissions/venv/bin/python -m kev.serve` as its child, in a
+    process group of its own, with `--run` the pinned Hugging Face Hub run
+    `decide::RUN` names (`bench/ai-permissions/winner.json`'s `run`), `--host`
+    and `--port` an available loopback port. `HF_HOME` is
+    `<home>/ai-permissions/hf` and `HF_HUB_OFFLINE=1`, so nothing downloads at
+    startup: the install leaves everything the run needs on disk first. The
+    server never listens beyond the local machine. It runs under a `/bin/sh`
+    guard whose stdin is a pipe only the daemon writes to. When that pipe
+    closes, however the daemon ended (`kill -9` included), the guard kills the
+    whole process group, so no server outlives its daemon. When the server
+    exits on its own, the guard exits with its status.
 19. The daemon waits up to `Timeouts::ai_permissions_serve_start` for
-    `GET /health` to answer with a success. It then publishes the loopback
+    `GET /v1/models` to answer with a success. It then publishes the loopback
     endpoint in `ai_permissions_updated`. On disable, refresh, shutdown, or an
     unsuccessful health wait it clears that endpoint and kills the whole
     process group. A refresh restarts the server once: the daemon compares
@@ -170,17 +172,17 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 ## Decision configuration
 
 21. Each decision asks one `noul` question: “Does this coding-agent tool call
-    need a person's review?” Its `false` criterion is “reading files,
-    searching, listing, building, running tests, editing files inside the
-    working tree, git commands that do not delete branches or force-push”. Its
-    `true` criterion is “deleting outside the working tree, force pushes,
-    package installs, network writes, credentials or secrets, changes to
-    system configuration, anything unclear”. `false` means allow.
+    need a person's review?” Its `false` criterion is “git status, diff, log,
+    show, add or commit; cargo, npm, make, tsc, pytest, eslint or prettier
+    builds, tests and lints; ls, find, cat or grep; reading or editing files
+    under the repository path; fetching documentation”. Its `true` criterion
+    is “anything not listed as safe”. `false` means allow.
 22. The status and update request do not carry the checkpoint or prompt texts.
-23. The installer receives `LAYA_CHECKPOINTS=typed-decisions`, and the server
-    receives `LAYA_MODELS=typed-decisions`.
-24. The default threshold is 0.70. Existing settings rows keep their stored
-    threshold.
+23. The server passes `--run`, `decide::RUN`'s value, to `kev.serve`; the
+    installer downloads what that run needs onto disk before the model is
+    ready.
+24. The default threshold is 0.56, `winner.json`'s. Existing settings rows
+    keep their stored threshold.
 
 ## Decisions
 
@@ -191,17 +193,24 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     started daemon are still the model's. The daemon then posts to
     `{endpoint}/v1/systemone` and waits at most
     `Timeouts::ai_permissions_decision`, five seconds by default.
-26. The state is a newline-separated string. It emits these nonempty fields
-    in this order: `name`, `tool`, `kind`, `command`, `reason`, `path`, `cwd`,
-    and `options`. `path` joins `rawInput.file_path`, `rawInput.path`,
-    `rawInput.url`, then every `locations[].path` with `, `. `options` joins
-    option names with `, `. No field has a character cut.
-27. The request carries `model = typed-decisions`. The one question is named
-    `decision`, has type `noul`, and carries the built-in instruction and
-    criteria.
+26. The state is a JSON object, not a string. It carries `tool`
+    (`toolCall.title`), `kind`, `input` (the compact JSON of `rawInput`, cut
+    at 2,000 characters) and `options` (option names joined by `, `), each
+    left out where empty, then always these ten signals computed from the
+    tool call and the repository alone, never the outcome: whether it
+    operates inside the repository, whether it writes files, whether it
+    writes outside the repository, whether it uses the network, the hosts it
+    names, whether it reads a sensitive path, whether it is destructive,
+    whether it escalates privilege, whether it changes a git remote, and
+    whether it could exfiltrate data.
+27. The request carries `model = kev-latest`, a label Kev accepts and echoes
+    without using: the checkpoint actually served is fixed by `decide::RUN` at
+    launch (rule 18). The one question is named `decision`, has type `noul`,
+    and carries the built-in instruction and criteria.
 28. The answer is `answers.decision.noul`, the probability that the request
-    needs review. The allow score is `1 - noul`. The model allows only when
-    `false` is the argmax, the allow score meets the configured threshold,
+    needs review; Kev's answer carries nothing else the daemon reads. The
+    allow score is `1 - noul`. The model allows only when `false` is the
+    argmax (`noul < 0.5`), the allow score meets the configured threshold,
     and the request has an allowing option.
 29. Every other answer follows `learn` (021, rule 9): a matching learned
     approval is selected, otherwise the console is asked, and its allowing
@@ -266,7 +275,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Acceptance criteria
 
-- A fresh daemon is off, at threshold 0.7, with no schedule, and reports
+- A fresh daemon is off, at threshold 0.56, with no schedule, and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
 - A version is read out of what an interpreter prints, and the cut is at 3.10
@@ -321,8 +330,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - The configured endpoint wins over the one a server reports, and nothing is
   live while the model is off
   (`ai_permissions.rs::the_endpoint_is_the_configured_one_and_live_needs_the_model_on`).
-- A ready enabled model starts its local server with its built-in
-  `typed-decisions` checkpoint and reports the endpoint
+- A ready enabled model starts its local server with its built-in run and
+  reports the endpoint
   (`ai_permissions_server.rs::a_ready_model_starts_the_server_with_its_built_in_weights`),
   restarts it after a refresh and an unexpected exit
   (`::a_refresh_and_an_unexpected_exit_restart_the_server`), starts it again
@@ -353,7 +362,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`ai_permissions::decide::tests::an_invalid_guardrail_stops_startup_and_names_the_rule`).
 - A confident allow selects the allowing option, records `decided_by: "ai"`
   and its confidence, raises no attention, and sends the benchmarked state and
-  `noul` question with `model = "typed-decisions"` to the model
+  `noul` question with `model = "kev-latest"` to the model
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
 - Every reply keeps the model's side: the label, score and threshold that
   fell short, the guardrail that asked, or why the model gave no answer
@@ -404,14 +413,15 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Sources
 
-The AI permission model is the upstream Python package `laya`. The daemon
-keeps its interface as it is: the pip requirement `laya[serve] @ <wheel url>`,
-the checkpoint download `from laya import Router; Router().preload([…])`, the
-`laya-serve` executable, the `LAYA_*` environment of the installer and the
-server (`LAYA_HOME`, `LAYA_CHECKPOINTS`, `LAYA_WHEEL_URL`, `LAYA_RELEASE`,
-`LAYA_HOST`, `LAYA_PORT`, `LAYA_PRELOAD`, `LAYA_MODELS`), and the default
-release URL
-`https://api.github.com/repos/NandhaKishorM/laya/releases/latest`.
+The AI permission model is the upstream package
+[`kev`](https://github.com/jaredpalmer/kev) at a pinned commit, installed
+from its `serve` extra (not the unrelated PyPI package of the same name). The
+daemon keeps to its interface: `<venv>/bin/python -m kev.serve --run <run>
+--host <host> --port <port>`, `HF_HOME` and `HF_HUB_OFFLINE=1` so nothing
+downloads once the model is serving, and `GET /v1/models` for health. `<run>`
+is `decide::RUN`, the Hugging Face Hub id `bench/ai-permissions/winner.json`
+pins (`jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`), which
+the installer downloads onto disk before the server is ready.
 
 `crates/ariadne-core/src/lib.rs`,
 `crates/ariadne-api/src/permissions.rs`,

@@ -182,7 +182,7 @@ CREATE TABLE ai_permission_settings (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     enabled           INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
     -- How sure the model has to be before its answer is taken, 0 to 1.
-    threshold         REAL NOT NULL DEFAULT 0.7,
+    threshold         REAL NOT NULL DEFAULT 0.56,
     -- When the daily refresh runs, `HH:MM` in 24-hour local time.
     -- NULL = no refresh.
     schedule          TEXT,

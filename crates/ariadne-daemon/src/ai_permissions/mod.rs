@@ -54,7 +54,7 @@ pub struct AiPermissions {
     release_url: String,
     /// The command that stands in for the whole install, in the suite.
     installer: Option<Vec<String>>,
-    /// The command that stands in for `laya-serve` in integration tests.
+    /// The command that stands in for `kev.serve` in integration tests.
     serve_command: Option<Vec<String>>,
     /// The `ai_permissions_endpoint` config key, which wins over [`AiPermissions::set_endpoint`].
     configured_endpoint: Option<String>,
@@ -171,9 +171,13 @@ impl AiPermissions {
     }
 
     pub(crate) fn serve_command(&self) -> Vec<String> {
-        self.serve_command
-            .clone()
-            .unwrap_or_else(|| vec![self.home.join("venv/bin/laya-serve").display().to_string()])
+        self.serve_command.clone().unwrap_or_else(|| {
+            vec![
+                self.home.join("venv/bin/python").display().to_string(),
+                "-m".to_string(),
+                "kev.serve".to_string(),
+            ]
+        })
     }
 
     /// Reap the server and its process group before daemon shutdown finishes.
@@ -225,8 +229,9 @@ impl AiPermissions {
 }
 
 /// The threshold a daemon that cannot read its settings reports: the same one
-/// the schema defaults to, so a failure does not invent a number.
-const DEFAULT_THRESHOLD: f64 = 0.7;
+/// the schema defaults to, so a failure does not invent a number. It is the
+/// benchmark winner's (`bench/ai-permissions/winner.json`'s `threshold`).
+const DEFAULT_THRESHOLD: f64 = 0.56;
 
 /// The state a stored spelling names. One nothing here knows reads as
 /// `failed`: a state that cannot be read is not one to answer requests on.

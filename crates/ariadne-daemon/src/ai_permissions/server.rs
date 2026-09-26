@@ -1,4 +1,4 @@
-//! The local `laya-serve` child and its restart loop.
+//! The local `kev.serve` child and its restart loop.
 
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::AiPermissions;
 use super::decide;
 
-/// The shell `laya-serve` runs under. It holds the read end of a pipe whose
+/// The shell `kev.serve` runs under. It holds the read end of a pipe whose
 /// write end only the daemon has. The kernel closes that end however the
 /// daemon ends, `kill -9` included, and the shell then kills the server's
 /// whole process group, so no server outlives the daemon that started it.
@@ -134,17 +134,23 @@ async fn launch(ai_permissions: &AiPermissions) -> anyhow::Result<(Child, String
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     drop(listener);
-    let command = ai_permissions.serve_command();
+    let mut command = ai_permissions.serve_command();
+    command.extend([
+        "--run".to_string(),
+        decide::RUN.to_string(),
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        port.to_string(),
+    ]);
     let (program, args) = command.split_first().ok_or_else(|| {
         anyhow::anyhow!("the configured AI permission model server is an empty command")
     })?;
     let mut child = guarded(program, args);
     child
-        .env("LAYA_HOST", "127.0.0.1")
-        .env("LAYA_PORT", port.to_string())
-        .env("LAYA_PRELOAD", "1")
-        .env("LAYA_MODELS", decide::CHECKPOINT)
-        .env("HF_HOME", ai_permissions.home.join("hf"));
+        .env("HF_HOME", ai_permissions.home.join("hf"))
+        .env("HF_HUB_OFFLINE", "1")
+        .env_remove("KEV_API_KEY");
     Ok((child.spawn()?, format!("http://127.0.0.1:{port}")))
 }
 
@@ -173,7 +179,7 @@ async fn health(child: &mut Child, endpoint: &str, timeout: Duration) -> bool {
             return false;
         }
         if client
-            .get(format!("{endpoint}/health"))
+            .get(format!("{endpoint}/v1/models"))
             .send()
             .await
             .is_ok_and(|r| r.status().is_success())

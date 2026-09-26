@@ -72,12 +72,14 @@ The AI permission model is the model behind the `ai` mode. It runs on your own m
 about a permission request leaves it. It is a Python package, and Ariadne
 installs it for you.
 
-For each request, the model sees a short text record. Its nonempty lines are,
-in order: the tool name, title, kind, command, description, paths, repository
-path, and option names. Paths come from `file_path`, `path`, `url`, and the
-tool call's locations. The model receives the local `typed-decisions`
-checkpoint and one question: “Does this coding-agent tool call need a person's
-review?”
+For each request, the model sees a compact record: the tool call's title,
+kind, the compact JSON of its raw input (cut at 2,000 characters), and the
+option names, each left out where empty, plus ten signals Ariadne derives
+from the call and the repository alone — whether it stays inside the
+repository, whether it writes files, reads a network host, touches a
+sensitive path such as `~/.ssh`, is destructive, escalates privilege, changes
+a git remote, or could exfiltrate data. The model answers one question:
+“Does this coding-agent tool call need a person's review?”
 
 The answer is a probability that review is needed. Ariadne allows the request
 only when “no” is the model's most likely answer and its probability meets the
@@ -152,7 +154,7 @@ ariadne permissions ai set --no-schedule        # and stop doing that
 ```
 
 The threshold is how sure the model has to be before its answer is taken; it
-defaults to `0.7`, and anything outside 0 to 1 is refused. Set another value
+defaults to `0.56`, and anything outside 0 to 1 is refused. Set another value
 with `ariadne permissions ai set --threshold <value>`. Existing installations
 keep their stored threshold. The schedule is
 `HH:MM` in 24-hour local time, and the daily refresh downloads the latest
@@ -173,6 +175,14 @@ cannot understand how a written file will run later. Long shell commands go
 to the console when they exceed the model's useful input window, and score
 changes from another device or numeric precision can matter near the
 threshold.
+
+A follow-up comparison, recorded in
+[`REPORT-laya-vs-kev.md`](../bench/ai-permissions/REPORT-laya-vs-kev.md), re-scored the same
+extended sets against two sizes of a second model, Kev, and picked Kev-4B: it
+covers more safe cases (136 of 301) and more real requests (54 of 301) with a
+higher AUROC (0.9845), at ten times the single-request latency (about 230 ms
+against 30 ms) and roughly four times the resident memory (8 to 16 GB against
+2.7 GB) while the server is enabled. That trade is what ships.
 
 Once the install is ready, the daemon runs the model's local server on a loopback
 port and keeps its selected weights in memory for permission decisions. It

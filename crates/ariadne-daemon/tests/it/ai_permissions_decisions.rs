@@ -39,18 +39,13 @@ struct ModelServer {
 }
 
 impl ModelServer {
-    /// An answer shaped as `laya-serve` returns the winner's `noul` question.
+    /// An answer shaped exactly as `kev.serve` returns it: a `noul` answer
+    /// carries no `answer_confidence` or any other field beside its type and
+    /// probability.
     async fn answer(needs_review_probability: f64) -> Self {
-        Self::answer_with_confidence(needs_review_probability, 0.95).await
-    }
-
-    async fn answer_with_confidence(needs_review_probability: f64, answer_confidence: f64) -> Self {
         Self::start(Answer::Value(response(json!({
             "type": "noul",
-            "noul": needs_review_probability,
-            "confidence": 0.05,
-            "answer_confidence": answer_confidence,
-            "action": {"act_probability": 1.0}
+            "noul": needs_review_probability
         }))))
         .await
     }
@@ -92,10 +87,10 @@ impl Drop for ModelServer {
 
 fn response(decision: Value) -> Value {
     json!({
-        "model": "rl-agent",
+        "model": "kev-latest",
         "answers": {"decision": decision},
         "usage": {"input_tokens": 139, "output_tokens": 0},
-        "routing": {"model": "typed-decisions"}
+        "latency_ms": 200.0
     })
 }
 
@@ -322,13 +317,18 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
                "guardrail": null, "ai_error": null})
     );
     let requests = server.requests.lock().unwrap();
-    let state = requests[0]["state"].as_str().unwrap();
-    assert!(state.starts_with("name: Bash\ntool: Bash\nkind: execute\ncommand: cargo test"));
-    assert!(state.contains(&format!(
-        "\ncwd: {}\noptions: Reject, Allow",
-        session.worktree_path.as_deref().unwrap()
-    )));
-    assert_eq!(requests[0]["model"], "typed-decisions");
+    assert_eq!(
+        requests[0]["state"],
+        json!({
+            "tool": "Bash", "kind": "execute", "input": "{\"command\":\"cargo test -p app\"}",
+            "options": "Reject, Allow", "operates_inside_repo": true, "writes_files": false,
+            "writes_outside_repo": false, "uses_network": false, "network_hosts": [],
+            "reads_sensitive_paths": false, "destructive_operation": false,
+            "uses_privilege_escalation": false, "modifies_git_remote": false,
+            "potentially_exfiltrates_data": false
+        })
+    );
+    assert_eq!(requests[0]["model"], "kev-latest");
     assert_eq!(requests[0]["questions"]["decision"]["type"], "noul");
     assert_eq!(
         requests[0]["questions"]["decision"]["instructions"],
@@ -336,15 +336,15 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
     );
     assert_eq!(
         requests[0]["questions"]["decision"]["criteria"]["false"],
-        "reading files, searching, listing, building, running tests, editing files inside the working tree, git commands that do not delete branches or force-push"
+        "git status, diff, log, show, add or commit; cargo, npm, make, tsc, pytest, eslint or prettier builds, tests and lints; ls, find, cat or grep; reading or editing files under the repository path; fetching documentation"
     );
     assert_eq!(
         requests[0]["questions"]["decision"]["criteria"]["true"],
-        "deleting outside the working tree, force pushes, package installs, network writes, credentials or secrets, changes to system configuration, anything unclear"
+        "anything not listed as safe"
     );
 }
 
-/// A `laya-serve` that records its pid, loads for as long as its second
+/// A `kev.serve` that records its pid, loads for as long as its second
 /// argument says, and then allows every request with the calibrated
 /// confidence 0.95.
 const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
@@ -352,12 +352,15 @@ import http.server, json, os, sys, time
 with open(sys.argv[1], 'w') as f:
     f.write(str(os.getpid()) + '\n')
 time.sleep(float(sys.argv[2]))
-ANSWER = json.dumps({"answers": {"decision": {"type": "noul", "noul": 0.05,
-    "confidence": 0.05,
-    "answer_confidence": 0.95}}, "usage": {}, "routing": {}}).encode()
+args = sys.argv[3:]
+host = args[args.index('--host') + 1]
+port = int(args[args.index('--port') + 1])
+ANSWER = json.dumps({"model": "kev-latest",
+    "answers": {"decision": {"type": "noul", "noul": 0.05}},
+    "usage": {}, "latency_ms": 12.3}).encode()
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200 if self.path == '/health' else 404)
+        self.send_response(200 if self.path == '/v1/models' else 404)
         self.end_headers()
     def do_POST(self):
         self.rfile.read(int(self.headers.get('content-length', 0)))
@@ -366,7 +369,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(ANSWER)
     def log_message(self, *args): pass
-http.server.HTTPServer((os.environ['LAYA_HOST'], int(os.environ['LAYA_PORT'])), Handler).serve_forever()
+http.server.HTTPServer((host, port), Handler).serve_forever()
 "#;
 
 #[tokio::test]
@@ -411,7 +414,7 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
 
 #[tokio::test]
 async fn a_noul_answer_is_gated_on_its_allow_probability() {
-    let server = ModelServer::answer_with_confidence(0.05, 0.51).await;
+    let server = ModelServer::answer(0.05).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, Timeouts::default()).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
