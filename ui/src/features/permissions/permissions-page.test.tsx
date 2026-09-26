@@ -6,10 +6,8 @@
  * One card, one settings row: what is worth pinning is that every fact of
  * `GET /v1/permissions/ai` reaches the screen, that each control sends only
  * the field it changed the moment it changed, that the switch is what the
- * Python check gates, that each prompt saves on blur as its own field, that
- * Restore defaults sends all three prompts as null and is disabled once the
- * effective texts already match the built-in ones, and that a refusal is
- * toasted with the daemon's own words rather than swallowed.
+ * Python check gates, and that a refusal is toasted with the daemon's own
+ * words rather than swallowed.
  */
 
 import { fireEvent, screen, waitFor } from "@testing-library/react"
@@ -72,6 +70,22 @@ beforeEach(() => {
   stubDaemon()
 })
 
+it("renders the switch, the threshold, the schedule, Refresh and the facts, and nothing about checkpoints or prompts", async () => {
+  renderScreen(<PermissionsPage />)
+
+  expect(
+    await screen.findByRole("switch", { name: "Enable the AI permission model" }),
+  ).toBeDefined()
+  expect(screen.getByRole("spinbutton", { name: "Threshold" })).toBeDefined()
+  expect(screen.getByLabelText("Daily refresh")).toBeDefined()
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeDefined()
+  expect(screen.getByText("State")).toBeDefined()
+
+  expect(screen.queryByText("Checkpoints")).toBeNull()
+  expect(screen.queryByText("Prompts")).toBeNull()
+  expect(screen.queryByRole("button", { name: "Restore defaults" })).toBeNull()
+})
+
 it("shows every fact the daemon answered with", async () => {
   current = anAiPermissionsStatus({
     state: "ready",
@@ -132,16 +146,6 @@ describe("the enabled switch", () => {
   })
 })
 
-it("sends the checkpoints picked, and nothing else", async () => {
-  const user = userEvent.setup()
-  renderScreen(<PermissionsPage />)
-
-  await user.click(await screen.findByRole("combobox", { name: "Checkpoints" }))
-  await user.click(await screen.findByRole("option", { name: /^All three checkpoints/ }))
-
-  await waitFor(() => expect(lastWrite()?.body).toEqual({ checkpoints: "all" }))
-})
-
 it("sends the threshold typed, once the field is left", async () => {
   const user = userEvent.setup()
   renderScreen(<PermissionsPage />)
@@ -172,96 +176,6 @@ describe("the daily refresh", () => {
     fireEvent.change(await screen.findByLabelText("Daily refresh"), { target: { value: "" } })
 
     await waitFor(() => expect(lastWrite()?.body).toEqual({ schedule: null }))
-  })
-})
-
-describe("Prompts", () => {
-  it("sends exactly the question, once the field is left", async () => {
-    const originalQuestion = current.prompts.question
-    const user = userEvent.setup()
-    renderScreen(<PermissionsPage />)
-
-    const question = await screen.findByLabelText("Question")
-    await user.click(question)
-    await user.type(question, " really?")
-    await user.tab()
-
-    await waitFor(() =>
-      expect(lastWrite()).toEqual({
-        method: "PUT",
-        path: "/v1/permissions/ai",
-        body: { question: `${originalQuestion} really?` },
-      }),
-    )
-  })
-
-  it("sends exactly the allow-when text, once the field is left", async () => {
-    const originalAllow = current.prompts.allow_criteria
-    const user = userEvent.setup()
-    renderScreen(<PermissionsPage />)
-
-    const allow = await screen.findByLabelText("Allow when")
-    await user.click(allow)
-    await user.type(allow, " too")
-    await user.tab()
-
-    await waitFor(() =>
-      expect(lastWrite()?.body).toEqual({ allow_criteria: `${originalAllow} too` }),
-    )
-  })
-
-  it("sends exactly the ask-a-person-when text, once the field is left", async () => {
-    const originalReview = current.prompts.review_criteria
-    const user = userEvent.setup()
-    renderScreen(<PermissionsPage />)
-
-    const review = await screen.findByLabelText("Ask a person when")
-    await user.click(review)
-    await user.type(review, " too")
-    await user.tab()
-
-    await waitFor(() =>
-      expect(lastWrite()?.body).toEqual({ review_criteria: `${originalReview} too` }),
-    )
-  })
-
-  it("sends the three prompts as null, on Restore defaults", async () => {
-    current = anAiPermissionsStatus({
-      prompts: { question: "Changed?", allow_criteria: "Changed", review_criteria: "Changed" },
-    })
-    const user = userEvent.setup()
-    renderScreen(<PermissionsPage />)
-
-    await user.click(await screen.findByRole("button", { name: "Restore defaults" }))
-
-    await waitFor(() =>
-      expect(lastWrite()?.body).toEqual({
-        question: null,
-        allow_criteria: null,
-        review_criteria: null,
-      }),
-    )
-  })
-
-  it("is disabled while the prompts already match the built-in ones", async () => {
-    renderScreen(<PermissionsPage />)
-
-    const button = (await screen.findByRole("button", {
-      name: "Restore defaults",
-    })) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
-  })
-
-  it("is enabled once a prompt no longer matches the built-in one", async () => {
-    current = anAiPermissionsStatus({
-      prompts: { question: "Changed?", allow_criteria: "Changed", review_criteria: "Changed" },
-    })
-    renderScreen(<PermissionsPage />)
-
-    const button = (await screen.findByRole("button", {
-      name: "Restore defaults",
-    })) as HTMLButtonElement
-    expect(button.disabled).toBe(false)
   })
 })
 

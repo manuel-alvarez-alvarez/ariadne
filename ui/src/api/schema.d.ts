@@ -1194,35 +1194,12 @@ export interface components {
             usage: components["schemas"]["TokenUsageDto"];
         };
         /**
-         * @description Which checkpoints the install downloads.
-         *
-         *     English alone is 843 MB; all three — English, multilingual and
-         *     typed-decisions — are 2.4 GB together.
-         * @enum {string}
-         */
-        AiPermissionsCheckpoints: "english" | "all";
-        /**
-         * @description The prompt texts of the one choice question each decision asks the model.
-         *     The answer names, `allow` and `review`, are fixed.
-         */
-        AiPermissionsPrompts: {
-            /** @description What the `allow` answer covers. */
-            allow_criteria: string;
-            /** @description The question the model answers. */
-            question: string;
-            /** @description What the `review` answer covers. */
-            review_criteria: string;
-        };
-        /**
          * @description Where the install has got to.
          * @enum {string}
          */
         AiPermissionsState: "disabled" | "installing" | "ready" | "failed";
         /** @description The AI permission settings and the state of the install behind them. */
         AiPermissionsStatusDto: {
-            checkpoints: components["schemas"]["AiPermissionsCheckpoints"];
-            /** @description The built-in prompt texts, which a `null` prompt restores. */
-            default_prompts: components["schemas"]["AiPermissionsPrompts"];
             /** @description Whether the model answers permission requests at all. */
             enabled: boolean;
             /** @description Where the model server answers, once one is running (022, Server). */
@@ -1238,8 +1215,6 @@ export interface components {
             last_refresh_at?: string | null;
             /** @description The release tag the last download reported. */
             latest_release?: string | null;
-            /** @description The prompt texts each decision sends the model now. */
-            prompts: components["schemas"]["AiPermissionsPrompts"];
             python: components["schemas"]["PythonDto"];
             /**
              * @description When the daily refresh runs, `HH:MM` in 24-hour local time. `null`
@@ -2231,24 +2206,8 @@ export interface components {
         };
         /** @description Partial update of the AI permission settings; an absent field stays unchanged. */
         UpdateAiPermissionsRequest: {
-            /**
-             * @description What the `allow` answer covers, kept, restored and limited as
-             *     `question` is.
-             */
-            allow_criteria?: string | null;
-            checkpoints?: null | components["schemas"]["AiPermissionsCheckpoints"];
             /** @description Turning it on starts an install; turning it off keeps the files. */
             enabled?: boolean | null;
-            /**
-             * @description The question the model answers. Absent keeps it; `null` or a blank
-             *     text restores the built-in one. At most 4000 characters.
-             */
-            question?: string | null;
-            /**
-             * @description What the `review` answer covers, kept, restored and limited as
-             *     `question` is.
-             */
-            review_criteria?: string | null;
             /**
              * @description `HH:MM` in 24-hour local time. Absent keeps the schedule; `null`
              *     turns it off.
@@ -3097,7 +3056,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description a threshold outside 0..=1, a schedule that is not HH:MM, or a prompt over 4000 characters */
+            /** @description a threshold outside 0..=1 or a schedule that is not HH:MM */
             422: {
                 headers: {
                     [name: string]: unknown;

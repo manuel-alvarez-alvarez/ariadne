@@ -160,13 +160,12 @@ permission mode among four.
 In the desktop app, the **Permissions** screen holds the same settings, in one
 card: a switch for `enabled` — disabled, with the Python version it found (or
 that it found none), while there is no Python 3.10 or newer to install into —
-a select for the checkpoints, a number field for the threshold, and a time
-field for the daily refresh whose clear button is what turns it off. A
-Refresh button reruns the install, disabled while the model is off or already
-installing. Below them, a fact list shows the state, the installed and latest
-release, whether the checkpoints are on disk, the endpoint, and when the
-install last ended well; the last error, once there is one, shows in the same
-style a failed task does. Every control sends its change as it is made, and a
-refusal shows in a toast. Setting a repository to `ai` before that is refused
-on the field itself, pointing back at this screen rather than at the CLI
-command above.
+a number field for the threshold, and a time field for the daily refresh
+whose clear button is what turns it off. A Refresh button reruns the install,
+disabled while the model is off or already installing. Below them, a fact
+list shows the state, the installed and latest release, whether the
+checkpoints are on disk, the endpoint, and when the install last ended well;
+the last error, once there is one, shows in the same style a failed task
+does. Every control sends its change as it is made, and a refusal shows in a
+toast. Setting a repository to `ai` before that is refused on the field
+itself, pointing back at this screen rather than at the CLI command above.

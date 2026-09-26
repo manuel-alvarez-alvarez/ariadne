@@ -244,17 +244,17 @@ Out: the daemon endpoints themselves (012).
     `GET /v1/permissions/ai` answers with (022): a switch for `enabled`,
     labelled "Enable the AI permission model", disabled with the Python
     version found (or that none was) where the daemon has none new enough to
-    install into; a select of the two checkpoint choices; a number field for
-    the threshold, 0 to 1; a time field for the daily refresh, whose native
-    clear is what turns it off, sending `schedule: null`; a Refresh button,
-    disabled while the model is off or already installing; and a fact list of
-    the state, the installed and latest release, whether the weights are
-    present, the endpoint, the last refresh's age, and the last error in the
-    error style. Every control sends its own change the moment it is made —
-    there is no Save button — and a refusal is toasted with the daemon's own
-    message, the same as the agents screen's flag editor and rank picker. The
-    `ai_permissions_updated` event (012, 022) patches the same query key any
-    of those writes does, since the row has no list beside it
+    install into; a number field for the threshold, 0 to 1; a time field for
+    the daily refresh, whose native clear is what turns it off, sending
+    `schedule: null`; a Refresh button, disabled while the model is off or
+    already installing; and a fact list of the state, the installed and
+    latest release, whether the weights are present, the endpoint, the last
+    refresh's age, and the last error in the error style. Every control sends
+    its own change the moment it is made — there is no Save button — and a
+    refusal is toasted with the daemon's own message, the same as the agents
+    screen's flag editor and rank picker. The `ai_permissions_updated` event
+    (012, 022) patches the same query key any of those writes does, since the
+    row has no list beside it
     (`ui/src/events/dispatch.test.ts::replaces the cached status whole, so a
     card that read installing reads ready`). The repository dialog's
     `PERMISSION_MODES` gains `ai`, and an `ai_disabled` refusal on it lands on
@@ -263,21 +263,6 @@ Out: the daemon endpoints themselves (012).
     (`ui/src/features/repositories/repository-form-dialog.test.tsx::puts an
     ai_disabled refusal on the permission mode field, pointing at the
     Permissions screen`).
-33. Below the daily refresh field, a "Prompts" section holds three text areas
-    over `prompts.question`, `prompts.allow_criteria` and
-    `prompts.review_criteria` — "Question", "Allow when" and "Ask a person
-    when" — each saving its own field on blur, like the threshold
-    (`ui/src/features/permissions/permissions-page.test.tsx::Prompts sends
-    exactly the question, once the field is left`, `::sends exactly the
-    allow-when text, once the field is left`, `::sends exactly the
-    ask-a-person-when text, once the field is left`). A "Restore defaults"
-    button sends all three fields as `null`, which the daemon reads as
-    "use the built-in text", and is disabled while `prompts` equals
-    `default_prompts`
-    (`ui/src/features/permissions/permissions-page.test.tsx::Prompts sends the
-    three prompts as null, on Restore defaults`, `::is disabled while the
-    prompts already match the built-in ones`, `::is enabled once a prompt no
-    longer matches the built-in one`).
 
 - 70 test files cover the features, the API layer and the event stream; each
   screen's behaviour is asserted in its own `*.test.tsx` beside it.
@@ -511,6 +496,12 @@ Out: the daemon endpoints themselves (012).
   model, its own branch and its own pick status each on its own line, and a
   clear gap between one author's block and the next
   (`ui/src/features/tasks/task-panel.test.tsx::shows every author's own branch, marking only the one the reviewers picked`).
+- The Permissions screen's card renders the enabled switch, the threshold,
+  the daily refresh, Refresh and the fact list, and nothing about checkpoints
+  or prompts
+  (`ui/src/features/permissions/permissions-page.test.tsx::renders the
+  switch, the threshold, the schedule, Refresh and the facts, and nothing
+  about checkpoints or prompts`).
 - The Permissions screen's card shows every fact of the settings row, and the
   error style holds the last one once there is one
   (`ui/src/features/permissions/permissions-page.test.tsx::shows every fact
@@ -524,12 +515,11 @@ Out: the daemon endpoints themselves (012).
   too old`,
   `::the enabled switch > is disabled and says not found, where no
   interpreter was found at all`).
-- The checkpoints select, the threshold field and the daily refresh field each
-  send only the field that changed, and the refresh field's native clear is
-  what turns the schedule off
+- The threshold field and the daily refresh field each send only the field
+  that changed, and the refresh field's native clear is what turns the
+  schedule off
   (`ui/src/features/permissions/permissions-page.test.tsx::sends the
-  checkpoints picked, and nothing else`,
-  `::sends the threshold typed, once the field is left`,
+  threshold typed, once the field is left`,
   `::the daily refresh > sends the time picked`,
   `::the daily refresh > sends null once it is cleared back to off`).
 - Refresh posts once, and is disabled while the model is off or already
