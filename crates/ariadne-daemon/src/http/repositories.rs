@@ -12,7 +12,7 @@ use ariadne_store::{NewRepository, RepositoryUpdate};
 use super::AppState;
 use super::convert::repository_dto;
 use super::error::{ApiError, ApiResult, Json};
-use super::permissions::ai_needs_laya;
+use super::permissions::ai_needs_the_model;
 use crate::gitwt::GitManager;
 
 /// Create a repository.
@@ -23,14 +23,14 @@ use crate::gitwt::GitManager;
         (status = 400, description = "not an absolute path, not a git work tree, \
                                       or an unknown branch"),
         (status = 409, description = "this path and base branch are already registered, \
-                                      or `ai` was asked for while Laya is off")
+                                      or `ai` was asked for while the AI permission model is off")
     ))]
 pub(super) async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateRepositoryRequest>,
 ) -> ApiResult<(StatusCode, Json<RepositoryDto>)> {
     if req.permission_mode == Some(PermissionMode::Ai) {
-        ai_needs_laya(&state).await?;
+        ai_needs_the_model(&state).await?;
     }
     let path = repo_path(&req.path)?;
     let base_branch = resolve_base_branch(&path, req.base_branch.as_deref()).await?;
@@ -75,7 +75,7 @@ pub(super) async fn get(
                                       or an unknown branch"),
         (status = 404),
         (status = 409, description = "this path and base branch are already registered, \
-                                      or `ai` was asked for while Laya is off")
+                                      or `ai` was asked for while the AI permission model is off")
     ))]
 pub(super) async fn update(
     State(state): State<AppState>,
@@ -84,7 +84,7 @@ pub(super) async fn update(
 ) -> ApiResult<Json<RepositoryDto>> {
     let current = state.store.get_repository(&id).await?;
     if req.permission_mode == Some(PermissionMode::Ai) {
-        ai_needs_laya(&state).await?;
+        ai_needs_the_model(&state).await?;
     }
     // Only re-validated when the checkout or the branch actually moves: a
     // description edit has no business failing because the repo sits on a

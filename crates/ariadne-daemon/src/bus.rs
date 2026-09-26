@@ -131,14 +131,14 @@ impl EventBus {
         let _ = self.tx.send(event);
     }
 
-    /// Publish the Laya settings as they now stand (022).
+    /// Publish the AI permission settings as they now stand (022).
     ///
-    /// The one event the pump does not fatten: Laya's status is a store row,
+    /// The one event the pump does not fatten: the model's status is a store row,
     /// the Python interpreter the daemon just probed and where its server
     /// answers, so only the daemon can build it — and a change is published
     /// from the install as readily as from a write.
-    pub fn laya_updated(&self, status: ariadne_api::permissions::LayaStatusDto) {
-        self.publish(unscoped(DomainEvent::LayaUpdated(status)));
+    pub fn ai_permissions_updated(&self, status: ariadne_api::permissions::AiPermissionsStatusDto) {
+        self.publish(unscoped(DomainEvent::AiPermissionsUpdated(status)));
     }
 
     /// Answers once the pump has published every change it had been handed

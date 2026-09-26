@@ -1,10 +1,10 @@
-//! The local Laya server and its daily refresh clock.
+//! The local model server and its daily refresh clock.
 
 use axum::body::Body;
 use axum::http::StatusCode;
 use serde_json::json;
 
-use ariadne_api::permissions::{LayaState, LayaStatusDto};
+use ariadne_api::permissions::{AiPermissionsState, AiPermissionsStatusDto};
 use ariadne_daemon::timeouts::Timeouts;
 
 use crate::common::{Harness, TIMEOUT, eventually, harness, post, put_json, shared_script};
@@ -32,7 +32,7 @@ fn installer() -> Vec<String> {
 }
 
 async fn release() -> (String, tokio::task::JoinHandle<()>) {
-    let app = axum::Router::new().route("/release", axum::routing::get(|| async { axum::Json(json!({"tag_name":"v1", "assets":[{"browser_download_url":"https://example.test/laya.whl"}]})) }));
+    let app = axum::Router::new().route("/release", axum::routing::get(|| async { axum::Json(json!({"tag_name":"v1", "assets":[{"browser_download_url":"https://example.test/model.whl"}]})) }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/release", listener.local_addr().unwrap());
     (
@@ -41,63 +41,66 @@ async fn release() -> (String, tokio::task::JoinHandle<()>) {
     )
 }
 
-async fn ready(h: &Harness) -> LayaStatusDto {
-    eventually(TIMEOUT, "Laya to be ready", || async {
-        h.get::<LayaStatusDto>("/v1/permissions/laya").await.state == LayaState::Ready
+async fn ready(h: &Harness) -> AiPermissionsStatusDto {
+    eventually(TIMEOUT, "the model to be ready", || async {
+        h.get::<AiPermissionsStatusDto>("/v1/permissions/ai")
+            .await
+            .state
+            == AiPermissionsState::Ready
     })
     .await;
-    h.get("/v1/permissions/laya").await
+    h.get("/v1/permissions/ai").await
 }
 
 fn enable(checkpoints: &str) -> axum::http::Request<Body> {
     put_json(
-        "/v1/permissions/laya",
+        "/v1/permissions/ai",
         json!({"enabled":true,"checkpoints":checkpoints}),
     )
 }
 
 #[tokio::test]
-async fn a_ready_laya_starts_the_server_with_its_selected_weights() {
+async fn a_ready_model_starts_the_server_with_its_selected_weights() {
     let (url, task) = release().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let server = shared_script(SERVER);
     let h = harness()
         .python_bin(python())
-        .laya_release_url(url)
-        .laya_installer(installer())
-        .laya_serve_command(vec![
+        .ai_permissions_release_url(url)
+        .ai_permissions_installer(installer())
+        .ai_permissions_serve_command(vec![
             server.display().to_string(),
             record.path().display().to_string(),
         ])
         .await;
-    let _: LayaStatusDto = h.json(enable("all"), StatusCode::OK).await;
+    let _: AiPermissionsStatusDto = h.json(enable("all"), StatusCode::OK).await;
     ready(&h).await;
-    eventually(TIMEOUT, "the Laya endpoint", || async {
-        h.get::<LayaStatusDto>("/v1/permissions/laya")
+    eventually(TIMEOUT, "the model endpoint", || async {
+        h.get::<AiPermissionsStatusDto>("/v1/permissions/ai")
             .await
             .endpoint
             .is_some()
     })
     .await;
-    let status: LayaStatusDto = h.get("/v1/permissions/laya").await;
+    let status: AiPermissionsStatusDto = h.get("/v1/permissions/ai").await;
     assert!(status.endpoint.is_some());
     let saw = std::fs::read_to_string(record.path()).unwrap();
     assert!(saw.contains("english,multilingual,typed-decisions"));
-    assert!(saw.contains("/laya/hf"));
-    let _: LayaStatusDto = h
+    assert!(saw.contains("/ai-permissions/hf"));
+    let _: AiPermissionsStatusDto = h
         .json(
-            put_json("/v1/permissions/laya", json!({"enabled":false})),
+            put_json("/v1/permissions/ai", json!({"enabled":false})),
             StatusCode::OK,
         )
         .await;
     eventually(TIMEOUT, "the server endpoint to clear", || async {
-        h.get::<LayaStatusDto>("/v1/permissions/laya")
+        h.get::<AiPermissionsStatusDto>("/v1/permissions/ai")
             .await
             .endpoint
             .is_none()
     })
     .await;
-    h.state.laya.shutdown().await;
+    h.state.ai_permissions.shutdown().await;
     task.abort();
 }
 
@@ -106,27 +109,24 @@ async fn the_schedule_refreshes_once_per_local_day() {
     let (url, task) = release().await;
     let h = harness()
         .python_bin(python())
-        .laya_release_url(url)
-        .laya_installer(installer())
+        .ai_permissions_release_url(url)
+        .ai_permissions_installer(installer())
         .timeouts(Timeouts {
-            laya_schedule_poll: std::time::Duration::from_millis(50),
+            ai_permissions_schedule_poll: std::time::Duration::from_millis(50),
             ..Timeouts::default()
         })
         .await;
     let now = chrono::Local::now().format("%H:%M").to_string();
-    let _: LayaStatusDto = h
+    let _: AiPermissionsStatusDto = h
         .json(
-            put_json(
-                "/v1/permissions/laya",
-                json!({"enabled":true,"schedule":now}),
-            ),
+            put_json("/v1/permissions/ai", json!({"enabled":true,"schedule":now})),
             StatusCode::OK,
         )
         .await;
     ready(&h).await;
     eventually(TIMEOUT, "a scheduled refresh marker", || async {
         h.store
-            .laya_settings()
+            .ai_permission_settings()
             .await
             .unwrap()
             .last_scheduled_refresh
@@ -135,20 +135,20 @@ async fn the_schedule_refreshes_once_per_local_day() {
     .await;
     let marker = h
         .store
-        .laya_settings()
+        .ai_permission_settings()
         .await
         .unwrap()
         .last_scheduled_refresh;
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     assert_eq!(
         h.store
-            .laya_settings()
+            .ai_permission_settings()
             .await
             .unwrap()
             .last_scheduled_refresh,
         marker
     );
-    h.state.laya.shutdown().await;
+    h.state.ai_permissions.shutdown().await;
     task.abort();
 }
 
@@ -159,14 +159,14 @@ async fn a_refresh_and_an_unexpected_exit_restart_the_server() {
     let server = shared_script(SERVER);
     let h = harness()
         .python_bin(python())
-        .laya_release_url(url)
-        .laya_installer(installer())
-        .laya_serve_command(vec![
+        .ai_permissions_release_url(url)
+        .ai_permissions_installer(installer())
+        .ai_permissions_serve_command(vec![
             server.display().to_string(),
             record.path().display().to_string(),
         ])
         .await;
-    let _: LayaStatusDto = h.json(enable("english"), StatusCode::OK).await;
+    let _: AiPermissionsStatusDto = h.json(enable("english"), StatusCode::OK).await;
     ready(&h).await;
     eventually(TIMEOUT, "the first server", || async {
         std::fs::read_to_string(record.path())
@@ -180,8 +180,8 @@ async fn a_refresh_and_an_unexpected_exit_restart_the_server() {
         .next()
         .unwrap()
         .to_string();
-    let _: LayaStatusDto = h
-        .json(post("/v1/permissions/laya/refresh"), StatusCode::ACCEPTED)
+    let _: AiPermissionsStatusDto = h
+        .json(post("/v1/permissions/ai/refresh"), StatusCode::ACCEPTED)
         .await;
     eventually(TIMEOUT, "the refreshed server", || async {
         std::fs::read_to_string(record.path())
@@ -208,7 +208,7 @@ async fn a_refresh_and_an_unexpected_exit_restart_the_server() {
             .is_some_and(|pid| pid != second)
     })
     .await;
-    h.state.laya.shutdown().await;
+    h.state.ai_permissions.shutdown().await;
     task.abort();
 }
 
@@ -217,47 +217,47 @@ async fn a_server_that_never_answers_health_is_not_live() {
     let (url, task) = release().await;
     let h = harness()
         .python_bin(python())
-        .laya_release_url(url)
-        .laya_installer(installer())
-        .laya_serve_command(vec!["/bin/sleep".into(), "10".into()])
+        .ai_permissions_release_url(url)
+        .ai_permissions_installer(installer())
+        .ai_permissions_serve_command(vec!["/bin/sleep".into(), "10".into()])
         .timeouts(Timeouts {
-            laya_serve_start: std::time::Duration::from_millis(100),
-            laya_serve_restart: std::time::Duration::from_secs(10),
+            ai_permissions_serve_start: std::time::Duration::from_millis(100),
+            ai_permissions_serve_restart: std::time::Duration::from_secs(10),
             ..Timeouts::default()
         })
         .await;
-    let _: LayaStatusDto = h.json(enable("english"), StatusCode::OK).await;
+    let _: AiPermissionsStatusDto = h.json(enable("english"), StatusCode::OK).await;
     ready(&h).await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let status: LayaStatusDto = h.get("/v1/permissions/laya").await;
+    let status: AiPermissionsStatusDto = h.get("/v1/permissions/ai").await;
     assert_eq!(status.endpoint, None);
-    h.state.laya.shutdown().await;
+    h.state.ai_permissions.shutdown().await;
     task.abort();
 }
 
 #[tokio::test]
-async fn a_ready_enabled_laya_starts_after_a_daemon_restart() {
+async fn a_ready_enabled_model_starts_after_a_daemon_restart() {
     let (url, task) = release().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let server = shared_script(SERVER);
     let first = harness()
         .python_bin(python())
-        .laya_release_url(url)
-        .laya_installer(installer())
-        .laya_serve_command(vec![
+        .ai_permissions_release_url(url)
+        .ai_permissions_installer(installer())
+        .ai_permissions_serve_command(vec![
             server.display().to_string(),
             record.path().display().to_string(),
         ])
         .await;
-    let _: LayaStatusDto = first.json(enable("english"), StatusCode::OK).await;
+    let _: AiPermissionsStatusDto = first.json(enable("english"), StatusCode::OK).await;
     ready(&first).await;
     eventually(TIMEOUT, "the first server", || async {
         std::fs::read_to_string(record.path()).is_ok()
     })
     .await;
-    first.state.laya.shutdown().await;
+    first.state.ai_permissions.shutdown().await;
     std::fs::write(record.path(), "").unwrap();
-    let second = ariadne_daemon::laya::Laya::new(
+    let second = ariadne_daemon::ai_permissions::AiPermissions::new(
         first.store.clone(),
         first.bus.clone(),
         &first.launcher.cfg,
@@ -269,7 +269,7 @@ async fn a_ready_enabled_laya_starts_after_a_daemon_restart() {
             .is_some_and(|record| !record.is_empty())
     })
     .await;
-    assert_eq!(second.status().await.state, LayaState::Ready);
+    assert_eq!(second.status().await.state, AiPermissionsState::Ready);
     second.shutdown().await;
     task.abort();
 }

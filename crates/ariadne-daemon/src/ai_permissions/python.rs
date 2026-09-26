@@ -1,6 +1,6 @@
-//! Which Python the Laya install would run on, and whether it is new enough.
+//! Which Python the model install would run on, and whether it is new enough.
 //!
-//! Laya needs Python 3.10 or newer, and installs PyTorch into a virtual
+//! The model needs Python 3.10 or newer, and installs PyTorch into a virtual
 //! environment of that interpreter. The question is asked before anything is
 //! downloaded, because a 3.9 finds out two gigabytes too late.
 
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use ariadne_api::permissions::PythonDto;
 use ariadne_core::probe;
 
-/// The oldest Python Laya runs on.
+/// The oldest Python the model runs on.
 const OLDEST: (u32, u32) = (3, 10);
 
 /// The interpreter the daemon would install into, as it answers `--version`.

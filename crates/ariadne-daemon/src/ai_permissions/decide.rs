@@ -1,16 +1,27 @@
-//! One permission decision made by the local Laya server (022, Decisions).
+//! One permission decision made by the local model server (022, Decisions).
 
 use std::path::Path;
 use std::time::Duration;
 
+use ariadne_api::permissions::AiPermissionsPrompts;
 use serde_json::{Value, json};
 
-use super::LayaLive;
+use super::AiPermissionsLive;
 
-pub(crate) const INSTRUCTIONS: &str =
-    "Can this coding-agent tool call run without a person's review?";
+/// The built-in prompt texts. A settings row that holds none of its own sends
+/// these (022, Decisions).
+pub(crate) const QUESTION: &str = "Can this coding-agent tool call run without a person's review?";
 pub(crate) const ALLOW_CRITERIA: &str = "reading files, searching, listing, building, running tests, editing files inside the working tree, git commands that do not delete branches or force-push";
 pub(crate) const REVIEW_CRITERIA: &str = "deleting outside the working tree, force pushes, package installs, network writes, credentials or secrets, changes to system configuration, anything unclear";
+
+/// The built-in prompt texts, as the status reports them.
+pub(crate) fn default_prompts() -> AiPermissionsPrompts {
+    AiPermissionsPrompts {
+        question: QUESTION.to_string(),
+        allow_criteria: ALLOW_CRITERIA.to_string(),
+        review_criteria: REVIEW_CRITERIA.to_string(),
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum Decision {
@@ -24,7 +35,7 @@ pub(crate) enum Decision {
 }
 
 pub(crate) async fn decide(
-    live: &LayaLive,
+    live: &AiPermissionsLive,
     tool_call: &Value,
     options: &Value,
     repository: &Path,
@@ -49,8 +60,11 @@ pub(crate) async fn decide(
         "questions": {
             "decision": {
                 "type": "choice",
-                "instructions": INSTRUCTIONS,
-                "criteria": {"allow": ALLOW_CRITERIA, "review": REVIEW_CRITERIA},
+                "instructions": live.prompts.question,
+                "criteria": {
+                    "allow": live.prompts.allow_criteria,
+                    "review": live.prompts.review_criteria,
+                },
             }
         }
     });
@@ -72,11 +86,11 @@ pub(crate) async fn decide(
     let answer = match tokio::time::timeout(timeout, request).await {
         Ok(Ok(answer)) => answer,
         Ok(Err(error)) => {
-            tracing::warn!(error = %error, "Laya permission decision failed");
+            tracing::warn!(error = %error, "AI permission model decision failed");
             return not_confident();
         }
         Err(error) => {
-            tracing::warn!(error = %error, "Laya permission decision timed out");
+            tracing::warn!(error = %error, "AI permission model decision timed out");
             return not_confident();
         }
     };
@@ -84,7 +98,7 @@ pub(crate) async fn decide(
     let choice = decision
         .and_then(|decision| decision.get("choice"))
         .and_then(Value::as_str);
-    // `answer_confidence` is Laya's calibrated confidence; its `confidence` is an
+    // `answer_confidence` is the model's calibrated confidence; its `confidence` is an
     // uncalibrated entropy score. The ONNX agent reports only the probabilities, and the
     // chosen label's probability is the same calibrated number.
     let confidence = decision.and_then(|decision| {
@@ -94,7 +108,7 @@ pub(crate) async fn decide(
             .and_then(Value::as_f64)
     });
     let (Some(label), Some(confidence)) = (choice, confidence) else {
-        tracing::warn!("Laya permission decision was malformed");
+        tracing::warn!("AI permission model decision was malformed");
         return not_confident();
     };
     if label == "allow" && confidence >= live.threshold {

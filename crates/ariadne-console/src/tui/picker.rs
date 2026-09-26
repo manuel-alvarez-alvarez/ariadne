@@ -502,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn a_laya_answer_names_laya_and_its_confidence() {
+    fn an_ai_answer_names_the_model_and_its_confidence() {
         let mut console = Console::new(header());
         let mut terminal = terminal();
         console.apply(&asked_with(
@@ -514,7 +514,7 @@ mod tests {
         console.apply(&event(
             "permission.replied",
             "answered",
-            json!({"option_id": "option-0", "decided_by": "laya",
+            json!({"option_id": "option-0", "decided_by": "ai",
                    "label": "allow", "confidence": 0.95}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
@@ -522,7 +522,7 @@ mod tests {
         console.commit(&mut terminal).unwrap();
         let shown = screen(&terminal);
 
-        assert!(shown.contains("↳ allowed by Laya (0.95)"), "{shown}");
+        assert!(shown.contains("↳ allowed by AI (0.95)"), "{shown}");
     }
 
     #[test]

@@ -41,10 +41,10 @@ use ariadne_store::Store;
 
 use crate::acp_calls::PromptTurn;
 use crate::acp_transport::pipes;
+use crate::ai_permissions::AiPermissions;
+use crate::ai_permissions::decide::{Decision, decide};
 use crate::http::classify::summarize;
 use crate::http::events::ingest_event;
-use crate::laya::Laya;
-use crate::laya::decide::{Decision, decide};
 use crate::scheduler::SchedEvent;
 use crate::timeouts::Timeouts;
 use crate::transcript::{LaunchTranscript, TranscriptHomes};
@@ -151,7 +151,7 @@ struct Inner {
     /// session, so a chatty session never lags another session's console,
     /// kept for as long as an agent runs for it or somebody listens.
     consoles: Mutex<HashMap<String, broadcast::Sender<AgentEventDto>>>,
-    laya: Option<Laya>,
+    ai_permissions: Option<AiPermissions>,
 }
 
 /// Resolves once a driver has killed and reaped its child. Shared, so that
@@ -361,16 +361,16 @@ impl AcpRuntime {
                 ending: Mutex::new(HashMap::new()),
                 scheduler: OnceLock::new(),
                 consoles: Mutex::new(HashMap::new()),
-                laya: None,
+                ai_permissions: None,
             }),
         }
     }
 
-    /// Give this runtime the daemon's Laya service before it is shared.
-    pub fn with_laya(mut self, laya: Laya) -> Self {
+    /// Give this runtime the daemon's AI permission model before it is shared.
+    pub fn with_ai_permissions(mut self, ai_permissions: AiPermissions) -> Self {
         Arc::get_mut(&mut self.inner)
             .expect("a new ACP runtime has one owner")
-            .laya = Some(laya);
+            .ai_permissions = Some(ai_permissions);
         self
     }
 
@@ -1303,26 +1303,28 @@ impl RuntimeIncoming {
             self.permission_mode,
             PermissionMode::Learn | PermissionMode::Ai
         );
-        let laya_decision = if self.permission_mode == PermissionMode::Ai {
-            match self.sink.runtime.inner.laya.as_ref() {
-                Some(laya) => match laya.live_once_started().await {
+        let ai_permissions_decision = if self.permission_mode == PermissionMode::Ai {
+            match self.sink.runtime.inner.ai_permissions.as_ref() {
+                Some(ai_permissions) => match ai_permissions.live_once_started().await {
                     Some(live) => Some(
                         decide(
                             &live,
                             &params["toolCall"],
                             &params["options"],
                             &self.repository,
-                            self.sink.runtime.inner.timeouts.laya_decision,
+                            self.sink.runtime.inner.timeouts.ai_permissions_decision,
                         )
                         .await,
                     ),
                     None => {
-                        tracing::warn!("Laya is unavailable for a permission decision");
+                        tracing::warn!(
+                            "AI permission model is unavailable for a permission decision"
+                        );
                         None
                     }
                 },
                 None => {
-                    tracing::warn!("Laya is unavailable for a permission decision");
+                    tracing::warn!("AI permission model is unavailable for a permission decision");
                     None
                 }
             }
@@ -1338,12 +1340,12 @@ impl RuntimeIncoming {
                 .has_learned_permission(&self.repository_id, &signature.tool_name, &signature.kind)
                 .await
                 .unwrap_or(false);
-        let laya_allow = matches!(laya_decision, Some(Decision::Allow { .. }))
+        let ai_permissions_allow = matches!(ai_permissions_decision, Some(Decision::Allow { .. }))
             && approved_option(params)
                 .as_deref()
                 .is_some_and(|option| allowing_option(params, option));
         let waiting = matches!(self.permission_mode, PermissionMode::Ask)
-            || (remembers && !learned && !laya_allow);
+            || (remembers && !learned && !ai_permissions_allow);
         let receiver = waiting.then(|| self.begin_permission());
         self.end_text().await;
         self.sink.emit("permission_request", payload).await;
@@ -1354,13 +1356,13 @@ impl RuntimeIncoming {
                 None,
                 None,
             ),
-            None if laya_allow => {
-                let Some(Decision::Allow { confidence }) = laya_decision else {
-                    unreachable!("laya_allow requires an allowing Laya decision")
+            None if ai_permissions_allow => {
+                let Some(Decision::Allow { confidence }) = ai_permissions_decision else {
+                    unreachable!("ai_permissions_allow requires an allowing decision of the model")
                 };
                 (
                     approved_option(params),
-                    "laya",
+                    "ai",
                     Some("allow"),
                     Some(confidence),
                 )

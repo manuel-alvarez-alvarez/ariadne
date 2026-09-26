@@ -51,7 +51,7 @@ pub(super) async fn report(State(state): State<AppState>) -> Json<DaemonReportDt
     )
     .await;
 
-    let python = crate::laya::python::probe_python(cfg.python_bin.as_deref(), path).await;
+    let python = crate::ai_permissions::python::probe_python(cfg.python_bin.as_deref(), path).await;
 
     Json(DaemonReportDto {
         version: env!("CARGO_PKG_VERSION").into(),

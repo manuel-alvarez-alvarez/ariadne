@@ -8,12 +8,12 @@
 mod acp_catalogs;
 mod acp_registry;
 mod agents;
+mod ai_permissions;
 mod change;
 pub mod defaults;
 mod entities;
 mod events;
 mod goals;
-mod laya;
 mod messages;
 mod models;
 mod permissions;
@@ -26,11 +26,11 @@ mod task_agents;
 mod tasks;
 mod usage;
 
+pub use ai_permissions::AiPermissionSettingsUpdate;
 pub use change::Change;
 pub use entities::*;
 pub use events::{EventFilter, EventOrder, NewAgentEvent};
 pub use goals::NewGoal;
-pub use laya::LayaUpdate;
 pub use messages::{MessageFilter, NewMessage};
 pub use picks::picked_winner;
 pub use repositories::{NewRepository, RepositoryUpdate};

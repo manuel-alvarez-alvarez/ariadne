@@ -7,12 +7,12 @@
 
 use ariadne_api::agents::{AcpAgentDto, AcpAgentStatus};
 use ariadne_api::doctor::DaemonReportDto;
-use ariadne_api::permissions::{LayaState, LayaStatusDto, PythonDto};
+use ariadne_api::permissions::{AiPermissionsState, AiPermissionsStatusDto, PythonDto};
 
 use super::Check;
 use super::checks::{THERE, forge_check, required_tool};
 
-/// What to do about a Python the daemon cannot install Laya into, whether it
+/// What to do about a Python the daemon cannot install the model into, whether it
 /// is too old or was not found at all — the one hint both `python_check` and
 /// `ClientError::hint`'s `python_unavailable` case give, in the same words.
 const PYTHON_HINT: &str = "install Python 3.10 or newer, or set python_bin in config.toml";
@@ -93,12 +93,12 @@ fn acp_capabilities(agent: &AcpAgentDto) -> String {
 
 /// The daemon's own environment, or the absence of one.
 ///
-/// `laya` is `None` on the same daemon-unreachable path as `daemon`, so its
+/// `ai_permissions` is `None` on the same daemon-unreachable path as `daemon`, so its
 /// check is added only where there is one to add — the fallback the caller
 /// takes for `daemon` covers it either way.
 pub(super) fn daemon_environment(
     daemon: Option<&DaemonReportDto>,
-    laya: Option<&LayaStatusDto>,
+    ai_permissions: Option<&AiPermissionsStatusDto>,
 ) -> Vec<Check> {
     let Some(daemon) = daemon else {
         return vec![
@@ -151,43 +151,43 @@ pub(super) fn daemon_environment(
         ),
     });
     checks.push(python_check(&daemon.python));
-    if let Some(laya) = laya {
-        checks.push(laya_check(laya));
+    if let Some(ai_permissions) = ai_permissions {
+        checks.push(ai_permissions_check(ai_permissions));
     }
     checks
 }
 
-/// The Python interpreter Laya's install runs on (022): reported apart from
+/// The Python interpreter the model's install runs on (022): reported apart from
 /// [`required_tool`]'s pass/fail, because the question is not whether it is
 /// there but whether it is new enough — and it never fails the report, since
-/// Laya is optional.
+/// The model is optional.
 fn python_check(python: &PythonDto) -> Check {
     match (python.ok, &python.path, &python.version) {
         (true, _, Some(version)) => Check::ok("python", format!("Python {version}")),
         (false, Some(path), Some(version)) => Check::warn(
             "python",
-            format!("python {version} found, Laya needs 3.10 or newer"),
+            format!("python {version} found, the AI permission model needs 3.10 or newer"),
         )
         .hint(format!("{path} is too old — {PYTHON_HINT}")),
         _ => Check::warn("python", "not found").hint(PYTHON_HINT),
     }
 }
 
-/// Where the Laya install stands — never a failure, since `ai` is one
+/// Where the model install stands — never a failure, since `ai` is one
 /// permission mode among four and nothing else depends on it.
-fn laya_check(status: &LayaStatusDto) -> Check {
+fn ai_permissions_check(status: &AiPermissionsStatusDto) -> Check {
     match status.state {
-        LayaState::Disabled => Check::ok("laya", "disabled"),
-        LayaState::Installing => Check::ok("laya", "installing"),
-        LayaState::Ready => Check::ok(
-            "laya",
+        AiPermissionsState::Disabled => Check::ok("ai-permissions", "disabled"),
+        AiPermissionsState::Installing => Check::ok("ai-permissions", "installing"),
+        AiPermissionsState::Ready => Check::ok(
+            "ai-permissions",
             format!(
                 "ready {}",
                 status.installed_release.as_deref().unwrap_or("-")
             ),
         ),
-        LayaState::Failed => Check::warn(
-            "laya",
+        AiPermissionsState::Failed => Check::warn(
+            "ai-permissions",
             format!(
                 "failed: {}",
                 status.last_error.as_deref().unwrap_or("unknown reason")
@@ -309,8 +309,8 @@ mod tests {
             db: there("/home/me/.ariadne/ariadne.db"),
             worktree_root: there("/home/me/.ariadne/worktrees"),
         };
-        let laya = laya_status(LayaState::Ready);
-        let checks = daemon_environment(Some(&daemon), Some(&laya));
+        let ai_permissions = ai_permissions_status(AiPermissionsState::Ready);
+        let checks = daemon_environment(Some(&daemon), Some(&ai_permissions));
         // Without git the daemon spawns nothing at all: that is a failure. A
         // forge CLI is never one, however it is missing.
         assert_eq!(by_name(&checks, "git").status, Status::Fail);
@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(glab.status, Status::Warn);
         assert!(glab.detail.contains("not found on the daemon's PATH"));
         assert_eq!(by_name(&checks, "python").status, Status::Ok);
-        assert_eq!(by_name(&checks, "laya").status, Status::Ok);
+        assert_eq!(by_name(&checks, "ai-permissions").status, Status::Ok);
 
         let checks = daemon_environment(None, None);
         assert_eq!(checks.len(), 1);
@@ -328,10 +328,10 @@ mod tests {
         assert!(checks[0].hint.is_some());
     }
 
-    fn laya_status(state: LayaState) -> LayaStatusDto {
-        LayaStatusDto {
+    fn ai_permissions_status(state: AiPermissionsState) -> AiPermissionsStatusDto {
+        AiPermissionsStatusDto {
             enabled: true,
-            checkpoints: ariadne_api::permissions::LayaCheckpoints::English,
+            checkpoints: ariadne_api::permissions::AiPermissionsCheckpoints::English,
             threshold: 0.8,
             schedule: None,
             python: PythonDto {
@@ -346,10 +346,20 @@ mod tests {
             endpoint: None,
             last_refresh_at: None,
             last_error: None,
+            prompts: ariadne_api::permissions::AiPermissionsPrompts {
+                question: "q".into(),
+                allow_criteria: "a".into(),
+                review_criteria: "r".into(),
+            },
+            default_prompts: ariadne_api::permissions::AiPermissionsPrompts {
+                question: "q".into(),
+                allow_criteria: "a".into(),
+                review_criteria: "r".into(),
+            },
         }
     }
 
-    /// Never fails: a Python the daemon cannot install Laya into is a thing
+    /// Never fails: a Python the daemon cannot install the model into is a thing
     /// to look at, not a broken install, since `ai` is one permission mode
     /// among four.
     #[test]
@@ -384,26 +394,26 @@ mod tests {
         assert!(check.hint.as_deref().unwrap().contains("Python 3.10"));
     }
 
-    /// The four states Laya's install reports, none of them a failure.
+    /// The four states the model's install reports, none of them a failure.
     #[test]
-    fn laya_reports_its_four_states_and_never_fails() {
+    fn ai_permissions_reports_its_four_states_and_never_fails() {
         assert_eq!(
-            laya_check(&laya_status(LayaState::Disabled)).detail,
+            ai_permissions_check(&ai_permissions_status(AiPermissionsState::Disabled)).detail,
             "disabled"
         );
         assert_eq!(
-            laya_check(&laya_status(LayaState::Installing)).detail,
+            ai_permissions_check(&ai_permissions_status(AiPermissionsState::Installing)).detail,
             "installing"
         );
-        let ready = laya_check(&laya_status(LayaState::Ready));
+        let ready = ai_permissions_check(&ai_permissions_status(AiPermissionsState::Ready));
         assert_eq!(ready.status, Status::Ok);
         assert!(ready.detail.contains("v0.1.4"), "{}", ready.detail);
 
-        let failed = LayaStatusDto {
+        let failed = AiPermissionsStatusDto {
             last_error: Some("pip install failed".into()),
-            ..laya_status(LayaState::Failed)
+            ..ai_permissions_status(AiPermissionsState::Failed)
         };
-        let check = laya_check(&failed);
+        let check = ai_permissions_check(&failed);
         assert_eq!(check.status, Status::Warn);
         assert!(
             check.detail.contains("pip install failed"),

@@ -43,9 +43,9 @@ use crate::acp_discovery::AgentRegistry;
 use crate::acp_sessions::OutsideSessions;
 use catalog::{acp_agents, agents, models};
 
+use crate::ai_permissions::AiPermissions;
 use crate::bus::EventBus;
 use crate::launcher::Launcher;
-use crate::laya::Laya;
 use crate::log::LogBuffer;
 use crate::scheduler::SchedEvent;
 
@@ -70,8 +70,8 @@ pub struct AppState {
     /// The snapshot of every agent's stored sessions that the outside half
     /// of `/v1/sessions` pages.
     pub outside_sessions: OutsideSessions,
-    /// Laya's settings, its Python check and its install (022).
-    pub laya: Laya,
+    /// the model's settings, its Python check and its install (022).
+    pub ai_permissions: AiPermissions,
 }
 
 impl AppState {
@@ -153,7 +153,7 @@ impl AppState {
         (name = "acp-agents", description = "The ACP agent registry: what's on PATH or configured, and what discovery found"),
         (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
-        (name = "permissions", description = "Laya, the local model the `ai` permission mode answers with"),
+        (name = "permissions", description = "The AI permission model: the local model the `ai` permission mode answers with"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, and what their agents say"),
         (name = "sessions", description = "Agent sessions, and the console each one is driven through"),
@@ -198,10 +198,10 @@ pub fn router(state: AppState) -> Router {
         )
         // permissions
         .route(
-            "/v1/permissions/laya",
+            "/v1/permissions/ai",
             get(permissions::get).put(permissions::update),
         )
-        .route("/v1/permissions/laya/refresh", post(permissions::refresh))
+        .route("/v1/permissions/ai/refresh", post(permissions::refresh))
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))
         .route("/v1/goals/{id}", get(goals::get).delete(goals::delete))

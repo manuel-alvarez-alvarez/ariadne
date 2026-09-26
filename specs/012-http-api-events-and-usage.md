@@ -10,7 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/it/unknown_fields.rs
   - crates/ariadne-daemon/tests/it/logs.rs
   - crates/ariadne-daemon/tests/it/doctor.rs
-  - crates/ariadne-daemon/tests/it/laya.rs
+  - crates/ariadne-daemon/tests/it/ai_permissions.rs
   - crates/ariadne-daemon/tests/it/agents.rs
   - crates/ariadne-daemon/tests/it/models.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
@@ -189,7 +189,7 @@ and the ACP runtime that reports the agent events (021).
 19. `doctor` reports the environment the daemon actually runs in: its own
     paths, every registry agent with what discovery made of it, the tools a
     session and a published task need (`git`, `gh`, `glab`), the Python
-    interpreter Laya installs into (022), and a worktree root it cannot
+    interpreter the AI permission model installs into (022), and a worktree root it cannot
     write.
 20. `GET /v1/acp-agents` serves the cached ACP registry. `POST
     /v1/acp-agents/refresh` downloads the configured registry index, searches
@@ -220,13 +220,13 @@ and the ACP runtime that reports the agent events (021).
     reporter sent. The row is written and read back by one statement, which
     is all the lock that orders the ids covers: every live console chunk of
     every session waits behind that lock.
-25. Three endpoints serve Laya, the model the `ai` permission mode answers
-    with (022): `GET /v1/permissions/laya` answers its settings and the state
-    of its install as a `LayaStatusDto`, `PUT /v1/permissions/laya` changes
-    them, and `POST /v1/permissions/laya/refresh` runs the install again and
-    answers 202. Every change of that status is the domain event
-    `laya_updated`, carrying the whole DTO. It is the one event the pump does
-    not fatten from a store row: the status is a row, an interpreter the
+25. Three endpoints serve the AI permission model, the model the `ai`
+    permission mode answers with (022): `GET /v1/permissions/ai` answers its
+    settings, its prompts and the state of its install as an
+    `AiPermissionsStatusDto`, `PUT /v1/permissions/ai` changes them, and
+    `POST /v1/permissions/ai/refresh` runs the install again and answers 202.
+    Every change of that status is the domain event `ai_permissions_updated`,
+    carrying the whole DTO. It is the one event the pump does not fatten from a store row: the status is a row, an interpreter the
     daemon has just probed and where its server answers, so only the daemon
     can build it, and an install publishes one as readily as a write does.
     The event belongs to no goal or task, so a filtered stream carries none.
@@ -249,12 +249,14 @@ and the ACP runtime that reports the agent events (021).
 - A body with a field its DTO does not declare is refused, and the refusal
   names the field
   (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).
-- The three Laya paths, their schemas and the `laya_updated` kind are in the
-  OpenAPI document, the doctor's report carries the interpreter
-  (`laya.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`,
-  `::the_doctor_reports_the_interpreter_laya_needs`), and a change of the
-  status reaches the stream
-  (`::turning_laya_on_starts_the_install_and_reports_it_ready`).
+- The three AI permission paths, their schemas and the
+  `ai_permissions_updated` kind are in the OpenAPI document, the doctor's
+  report carries the interpreter
+  (`ai_permissions.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`,
+  `::the_doctor_reports_the_interpreter_the_model_needs`), and a change of
+  the status reaches the stream
+  (`::turning_the_model_on_starts_the_install_and_reports_it_ready`,
+  `::a_prompt_change_publishes_ai_permissions_updated`).
 - The session listing's query and its page DTO are in the OpenAPI document,
   and the outside listing it replaced is not
   (`session_list.rs::the_query_and_the_page_are_in_the_openapi_document`).

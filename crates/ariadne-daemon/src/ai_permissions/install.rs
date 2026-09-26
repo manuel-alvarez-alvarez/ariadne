@@ -1,14 +1,14 @@
-//! Installing Laya: the release document, the virtual environment, the wheel
+//! Installing the model: the release document, the virtual environment, the wheel
 //! and the weights.
 //!
 //! One install runs at a time, as a background tokio task, because it takes
 //! minutes and downloads gigabytes — PyTorch, and 843 MB of English weights
 //! or 2.4 GB of all three checkpoints. Nothing waits on it: the write that
 //! started it answers `installing`, and every state it reaches afterwards is
-//! published as `laya_updated`.
+//! published as `ai_permissions_updated`.
 //!
 //! An install that fails leaves the one before it on disk. A half-finished
-//! download is the reason: the files of a Laya that worked yesterday are
+//! download is the reason: the files of a model that worked yesterday are
 //! better than none, and `state = failed` with `last_error` says what to fix.
 
 use std::path::{Path, PathBuf};
@@ -17,11 +17,11 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use ariadne_api::permissions::{LayaCheckpoints, LayaStatusDto};
-use ariadne_store::LayaUpdate;
+use ariadne_api::permissions::{AiPermissionsCheckpoints, AiPermissionsStatusDto};
+use ariadne_store::AiPermissionSettingsUpdate;
 use tokio::process::Command;
 
-use super::{Laya, checkpoints_of};
+use super::{AiPermissions, checkpoints_of};
 
 /// What the release document names: the tag the install records, and the
 /// wheel it takes.
@@ -36,7 +36,7 @@ struct Release {
 const ENGLISH: [&str; 1] = ["english"];
 const ALL: [&str; 3] = ["english", "multilingual", "typed-decisions"];
 
-impl Laya {
+impl AiPermissions {
     /// Start an install in the background, and answer the status it leaves
     /// behind — `installing`, written before this returns, so the caller
     /// hands the client a status the install cannot have moved past yet.
@@ -44,11 +44,11 @@ impl Laya {
     /// `None` where an install is already running: one at a time, whatever
     /// asks.
     ///
-    /// Laya can be turned off while it runs. Every state the install writes
+    /// The model can be turned off while it runs. Every state the install writes
     /// lands only on a row that is still enabled, so the install ends as
     /// whatever it ends as — its release and its error are still written —
-    /// and Laya stays off.
-    pub(crate) async fn install(&self) -> Option<LayaStatusDto> {
+    /// and the model stays off.
+    pub(crate) async fn install(&self) -> Option<AiPermissionsStatusDto> {
         if self
             .installing
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -57,34 +57,31 @@ impl Laya {
             return None;
         }
         let status = self
-            .write(LayaUpdate {
+            .write(AiPermissionSettingsUpdate {
                 state: Some("installing".into()),
                 state_while_enabled: true,
                 last_error: Some(None),
                 ..Default::default()
             })
             .await;
-        // A refresh must replace an already-serving release even when the
-        // stub installer completes before the supervisor's next poll.
-        self.restart_server();
-        let laya = self.clone();
+        let ai_permissions = self.clone();
         tokio::spawn(async move {
-            let outcome = run(&laya).await;
-            record(&laya, outcome).await;
-            laya.installing.store(false, Ordering::Release);
+            let outcome = run(&ai_permissions).await;
+            record(&ai_permissions, outcome).await;
+            ai_permissions.installing.store(false, Ordering::Release);
         });
         Some(status)
     }
 
-    /// Say again that the install running now is the one Laya waits for:
-    /// what turning Laya on answers while an earlier install still runs. That
+    /// Say again that the install running now is the one the model waits for:
+    /// what turning the model on answers while an earlier install still runs. That
     /// install's end writes `ready` or `failed` over this.
     ///
     /// Guarded like the install's own writes. A turn-off can land after the
-    /// write that turned Laya on and before this one; it keeps its
-    /// `disabled`, and nothing leaves a Laya that is off at `installing`.
-    pub async fn rejoin_install(&self) -> LayaStatusDto {
-        self.write(LayaUpdate {
+    /// write that turned the model on and before this one; it keeps its
+    /// `disabled`, and nothing leaves a model that is off at `installing`.
+    pub async fn rejoin_install(&self) -> AiPermissionsStatusDto {
+        self.write(AiPermissionSettingsUpdate {
             state: Some("installing".into()),
             state_while_enabled: true,
             ..Default::default()
@@ -95,9 +92,9 @@ impl Laya {
     /// Write `update` and publish the status it leaves behind. A write that
     /// fails is logged and the status is still published: a client left with
     /// no event at all would wait for one that never comes.
-    pub(crate) async fn write(&self, update: LayaUpdate) -> LayaStatusDto {
-        if let Err(error) = self.store.update_laya_settings(update).await {
-            tracing::warn!(error = %error, "writing the Laya settings failed");
+    pub(crate) async fn write(&self, update: AiPermissionSettingsUpdate) -> AiPermissionsStatusDto {
+        if let Err(error) = self.store.update_ai_permission_settings(update).await {
+            tracing::warn!(error = %error, "writing the AI permission settings failed");
         }
         let status = self.announce().await;
         self.notify_server();
@@ -107,20 +104,24 @@ impl Laya {
 
 /// The whole install, start to finish. Every failure is an error carrying the
 /// sentence `last_error` ends up with.
-async fn run(laya: &Laya) -> Result<Release> {
-    let release = release(&laya.release_url, laya.timeouts.laya_release_download).await?;
-    let row = laya
+async fn run(ai_permissions: &AiPermissions) -> Result<Release> {
+    let release = release(
+        &ai_permissions.release_url,
+        ai_permissions.timeouts.ai_permissions_release_download,
+    )
+    .await?;
+    let row = ai_permissions
         .store
-        .laya_settings()
+        .ai_permission_settings()
         .await
-        .context("reading the Laya settings")?;
+        .context("reading the AI permission settings")?;
     let checkpoints = checkpoints_of(&row.checkpoints);
-    match &laya.installer {
-        Some(command) => stub(laya, command, &release, checkpoints).await?,
+    match &ai_permissions.installer {
+        Some(command) => stub(ai_permissions, command, &release, checkpoints).await?,
         None => {
-            let venv = venv(laya).await?;
+            let venv = venv(ai_permissions).await?;
             wheel(&venv, &release).await?;
-            weights(laya, &venv, checkpoints).await?;
+            weights(ai_permissions, &venv, checkpoints).await?;
         }
     }
     Ok(release)
@@ -128,9 +129,9 @@ async fn run(laya: &Laya) -> Result<Release> {
 
 /// What the install ended as: `ready` with the release it put on disk, or
 /// `failed` with why — and, either way, an event saying so.
-async fn record(laya: &Laya, outcome: Result<Release>) {
+async fn record(ai_permissions: &AiPermissions, outcome: Result<Release>) {
     let update = match outcome {
-        Ok(release) => LayaUpdate {
+        Ok(release) => AiPermissionSettingsUpdate {
             state: Some("ready".into()),
             state_while_enabled: true,
             installed_release: Some(Some(release.tag.clone())),
@@ -144,8 +145,8 @@ async fn record(laya: &Laya, outcome: Result<Release>) {
         },
         Err(error) => {
             let reason = format!("{error:#}");
-            tracing::warn!(error = %reason, "installing Laya failed");
-            LayaUpdate {
+            tracing::warn!(error = %reason, "installing the AI permission model failed");
+            AiPermissionSettingsUpdate {
                 state: Some("failed".into()),
                 state_while_enabled: true,
                 last_error: Some(Some(reason)),
@@ -153,7 +154,7 @@ async fn record(laya: &Laya, outcome: Result<Release>) {
             }
         }
     };
-    laya.write(update).await;
+    ai_permissions.write(update).await;
 }
 
 /// The release document, read for the tag and the one `.whl` asset on it.
@@ -166,19 +167,25 @@ async fn release(url: &str, timeout: Duration) -> Result<Release> {
         .get(url)
         .send()
         .await
-        .with_context(|| format!("downloading the Laya release document from {url}"))?
+        .with_context(|| {
+            format!("downloading the AI permission model release document from {url}")
+        })?
         .error_for_status()
-        .with_context(|| format!("downloading the Laya release document from {url}"))?
+        .with_context(|| {
+            format!("downloading the AI permission model release document from {url}")
+        })?
         .bytes()
         .await
-        .with_context(|| format!("downloading the Laya release document from {url}"))?;
-    let document: serde_json::Value =
-        serde_json::from_slice(&body).context("reading the Laya release document")?;
+        .with_context(|| {
+            format!("downloading the AI permission model release document from {url}")
+        })?;
+    let document: serde_json::Value = serde_json::from_slice(&body)
+        .context("reading the AI permission model release document")?;
 
     let tag = document["tag_name"]
         .as_str()
         .filter(|tag| !tag.is_empty())
-        .ok_or_else(|| anyhow!("the Laya release document names no tag_name"))?;
+        .ok_or_else(|| anyhow!("the AI permission model release document names no tag_name"))?;
     let assets = document["assets"]
         .as_array()
         .map(Vec::as_slice)
@@ -187,7 +194,7 @@ async fn release(url: &str, timeout: Duration) -> Result<Release> {
         .iter()
         .filter_map(|asset| asset["browser_download_url"].as_str())
         .find(|url| url.ends_with(".whl"))
-        .ok_or_else(|| anyhow!("the Laya release {tag} carries no .whl asset"))?;
+        .ok_or_else(|| anyhow!("the AI permission model release {tag} carries no .whl asset"))?;
     Ok(Release {
         tag: tag.to_string(),
         wheel_url: wheel_url.to_string(),
@@ -198,17 +205,17 @@ async fn release(url: &str, timeout: Duration) -> Result<Release> {
 /// suite. Its exit status decides the install, and its stderr says why one
 /// that failed did.
 async fn stub(
-    laya: &Laya,
+    ai_permissions: &AiPermissions,
     command: &[String],
     release: &Release,
-    checkpoints: LayaCheckpoints,
+    checkpoints: AiPermissionsCheckpoints,
 ) -> Result<()> {
-    let (program, args) = command
-        .split_first()
-        .ok_or_else(|| anyhow!("the configured Laya installer is an empty command"))?;
+    let (program, args) = command.split_first().ok_or_else(|| {
+        anyhow!("the configured AI permission model installer is an empty command")
+    })?;
     let output = Command::new(program)
         .args(args)
-        .env("LAYA_HOME", &laya.home)
+        .env("LAYA_HOME", &ai_permissions.home)
         .env("LAYA_CHECKPOINTS", checkpoints.as_str())
         .env("LAYA_WHEEL_URL", &release.wheel_url)
         .env("LAYA_RELEASE", &release.tag)
@@ -216,41 +223,49 @@ async fn stub(
         .kill_on_drop(true)
         .output()
         .await
-        .with_context(|| format!("running the Laya installer `{}`", command.join(" ")))?;
+        .with_context(|| {
+            format!(
+                "running the AI permission model installer `{}`",
+                command.join(" ")
+            )
+        })?;
     if output.status.success() {
         return Ok(());
     }
     let said = String::from_utf8_lossy(&output.stderr).trim().to_string();
     match said.is_empty() {
-        true => bail!("the Laya installer {}", ended(&output.status)),
+        true => bail!(
+            "the AI permission model installer {}",
+            ended(&output.status)
+        ),
         false => bail!("{said}"),
     }
 }
 
 /// The virtual environment the wheel goes into, created where there is none.
 /// Its interpreter is what everything after this runs.
-async fn venv(laya: &Laya) -> Result<PathBuf> {
-    let venv = laya.home.join("venv");
+async fn venv(ai_permissions: &AiPermissions) -> Result<PathBuf> {
+    let venv = ai_permissions.home.join("venv");
     let interpreter = venv.join("bin").join("python");
     if interpreter.is_file() {
         return Ok(venv);
     }
     let python = super::python::probe_python(
-        laya.python_bin.as_deref(),
+        ai_permissions.python_bin.as_deref(),
         std::env::var_os("PATH").as_deref(),
     )
     .await;
     let (Some(path), true) = (python.path.as_deref(), python.ok) else {
         bail!(
-            "Laya needs Python 3.10 or newer; this daemon found {}",
+            "the AI permission model needs Python 3.10 or newer; this daemon found {}",
             python.version.as_deref().unwrap_or("none"),
         );
     };
-    std::fs::create_dir_all(&laya.home)
-        .with_context(|| format!("creating {}", laya.home.display()))?;
+    std::fs::create_dir_all(&ai_permissions.home)
+        .with_context(|| format!("creating {}", ai_permissions.home.display()))?;
     run_to_completion(
         Command::new(path).args(["-m", "venv"]).arg(&venv),
-        "creating the Laya virtual environment",
+        "creating the AI permission model virtual environment",
     )
     .await?;
     Ok(venv)
@@ -267,17 +282,21 @@ async fn wheel(venv: &Path, release: &Release) -> Result<()> {
             "--upgrade",
             &format!("laya[serve] @ {}", release.wheel_url),
         ]),
-        "installing the Laya wheel",
+        "installing the AI permission model wheel",
     )
     .await
 }
 
-/// The checkpoints, downloaded by Laya's own router into a Hugging Face cache
-/// under the Laya home, so nothing lands in the user's.
-async fn weights(laya: &Laya, venv: &Path, checkpoints: LayaCheckpoints) -> Result<()> {
+/// The checkpoints, downloaded by the model's own router into a Hugging Face cache
+/// under the model home, so nothing lands in the user's.
+async fn weights(
+    ai_permissions: &AiPermissions,
+    venv: &Path,
+    checkpoints: AiPermissionsCheckpoints,
+) -> Result<()> {
     let names: &[&str] = match checkpoints {
-        LayaCheckpoints::English => &ENGLISH,
-        LayaCheckpoints::All => &ALL,
+        AiPermissionsCheckpoints::English => &ENGLISH,
+        AiPermissionsCheckpoints::All => &ALL,
     };
     let quoted = names
         .iter()
@@ -290,8 +309,8 @@ async fn weights(laya: &Laya, venv: &Path, checkpoints: LayaCheckpoints) -> Resu
             .arg(format!(
                 "from laya import Router; Router().preload([{quoted}])"
             ))
-            .env("HF_HOME", laya.home.join("hf")),
-        "downloading the Laya checkpoints",
+            .env("HF_HOME", ai_permissions.home.join("hf")),
+        "downloading the AI permission model checkpoints",
     )
     .await
 }
@@ -350,8 +369,8 @@ mod tests {
         let good = served(serde_json::json!({
             "tag_name": "v0.1.4",
             "assets": [
-                {"browser_download_url": "https://example.test/laya-0.1.4.tar.gz"},
-                {"browser_download_url": "https://example.test/laya-0.1.4-py3-none-any.whl"},
+                {"browser_download_url": "https://example.test/model-0.1.4.tar.gz"},
+                {"browser_download_url": "https://example.test/model-0.1.4-py3-none-any.whl"},
             ],
         }))
         .await
@@ -360,7 +379,7 @@ mod tests {
             good,
             Release {
                 tag: "v0.1.4".into(),
-                wheel_url: "https://example.test/laya-0.1.4-py3-none-any.whl".into(),
+                wheel_url: "https://example.test/model-0.1.4-py3-none-any.whl".into(),
             }
         );
 
@@ -368,7 +387,7 @@ mod tests {
         // from, and it says so naming the tag it read.
         let wheelless = served(serde_json::json!({
             "tag_name": "v0.1.4",
-            "assets": [{"browser_download_url": "https://example.test/laya-0.1.4.tar.gz"}],
+            "assets": [{"browser_download_url": "https://example.test/model-0.1.4.tar.gz"}],
         }))
         .await
         .unwrap_err();

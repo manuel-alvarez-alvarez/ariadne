@@ -14,7 +14,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::events::AgentEventSummaryDto;
 use crate::goals::GoalDto;
 use crate::messages::MessageDto;
-use crate::permissions::LayaStatusDto;
+use crate::permissions::AiPermissionsStatusDto;
 use crate::repositories::RepositoryDto;
 use crate::sessions::SessionDto;
 use crate::skills::SkillDto;
@@ -107,8 +107,8 @@ pub enum DomainEvent {
     RepositoryCreated(RepositoryDto),
     RepositoryUpdated(RepositoryDto),
     RepositoryDeleted(DeletedDto),
-    /// The Laya settings or the state of its install moved (022).
-    LayaUpdated(LayaStatusDto),
+    /// The AI permission settings or the state of its install moved (022).
+    AiPermissionsUpdated(AiPermissionsStatusDto),
 }
 
 impl DomainEvent {
@@ -131,7 +131,7 @@ impl DomainEvent {
             Self::RepositoryCreated(_) => "repository_created",
             Self::RepositoryUpdated(_) => "repository_updated",
             Self::RepositoryDeleted(_) => "repository_deleted",
-            Self::LayaUpdated(_) => "laya_updated",
+            Self::AiPermissionsUpdated(_) => "ai_permissions_updated",
         }
     }
 
@@ -154,7 +154,7 @@ impl DomainEvent {
             Self::SkillDeleted(d) => json(d),
             Self::RepositoryCreated(r) | Self::RepositoryUpdated(r) => json(r),
             Self::RepositoryDeleted(d) => json(d),
-            Self::LayaUpdated(l) => json(l),
+            Self::AiPermissionsUpdated(l) => json(l),
         }
     }
 }

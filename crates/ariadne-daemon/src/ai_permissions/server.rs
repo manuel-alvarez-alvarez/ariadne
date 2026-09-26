@@ -7,7 +7,7 @@ use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::process::{Child, Command as ProcessCommand};
 use tokio::sync::{mpsc, oneshot};
 
-use super::Laya;
+use super::AiPermissions;
 
 /// The shell `laya-serve` runs under. It holds the read end of a pipe whose
 /// write end only the daemon has. The kernel closes that end however the
@@ -27,35 +27,30 @@ exit "$status"
 
 pub(crate) enum Command {
     Reconcile,
-    Restart,
     Stop(oneshot::Sender<()>),
 }
 
-pub(crate) fn start(laya: Laya, rx: mpsc::UnboundedReceiver<Command>) {
-    tokio::spawn(run(laya, rx));
+pub(crate) fn start(ai_permissions: AiPermissions, rx: mpsc::UnboundedReceiver<Command>) {
+    tokio::spawn(run(ai_permissions, rx));
 }
 
-async fn run(laya: Laya, mut rx: mpsc::UnboundedReceiver<Command>) {
+async fn run(ai_permissions: AiPermissions, mut rx: mpsc::UnboundedReceiver<Command>) {
     let mut child = None;
+    // The `last_refresh_at` of the install the running child serves. A
+    // refresh that ended since then is a new install to serve.
+    let mut serving = None;
     let mut retry_at = Instant::now();
-    let mut backoff = laya.timeouts.laya_serve_restart;
+    let mut backoff = ai_permissions.timeouts.ai_permissions_serve_restart;
     let mut tick = tokio::time::interval(Duration::from_millis(50));
     loop {
         tokio::select! {
             _ = tick.tick() => {},
             command = rx.recv() => match command {
                 Some(Command::Reconcile) => {},
-                Some(Command::Restart) => {
-                    if let Some(mut child) = child.take() {
-                        stop(&mut child).await;
-                        laya.set_endpoint(None);
-                        laya.announce().await;
-                    }
-                }
                 Some(Command::Stop(done)) => {
                     if let Some(mut child) = child.take() { stop(&mut child).await; }
-                    laya.set_endpoint(None);
-                    laya.announce().await;
+                    ai_permissions.set_endpoint(None);
+                    ai_permissions.announce().await;
                     let _ = done.send(());
                     return;
                 }
@@ -63,74 +58,88 @@ async fn run(laya: Laya, mut rx: mpsc::UnboundedReceiver<Command>) {
             }
         }
 
-        let Ok(settings) = laya.store.laya_settings().await else {
+        let Ok(settings) = ai_permissions.store.ai_permission_settings().await else {
             continue;
         };
         let wanted = settings.enabled && settings.state == "ready";
         if !wanted {
             if let Some(mut running) = child.take() {
                 stop(&mut running).await;
-                laya.set_endpoint(None);
-                laya.announce().await;
+                ai_permissions.set_endpoint(None);
+                ai_permissions.announce().await;
             }
             continue;
         }
         if let Some(running) = &mut child {
             if !matches!(running.try_wait(), Ok(None)) {
-                tracing::warn!("Laya server exited; restarting it");
+                tracing::warn!("AI permission model server exited; restarting it");
                 child = None;
-                laya.set_endpoint(None);
-                laya.announce().await;
+                ai_permissions.set_endpoint(None);
+                ai_permissions.announce().await;
                 retry_at = Instant::now() + backoff;
                 backoff = (backoff * 2).min(Duration::from_secs(60));
+            } else if settings.last_refresh_at != serving {
+                // Read from the row, not queued as a command: a queued
+                // restart could land after the new server started, and stop
+                // it too.
+                let mut running = child.take().expect("running child");
+                stop(&mut running).await;
+                ai_permissions.set_endpoint(None);
+                ai_permissions.announce().await;
             }
             continue;
         }
         if Instant::now() < retry_at {
             continue;
         }
-        laya.set_starting(true);
-        match launch(&laya, &settings.checkpoints).await {
+        ai_permissions.set_starting(true);
+        serving = settings.last_refresh_at.clone();
+        match launch(&ai_permissions, &settings.checkpoints).await {
             Ok((running, endpoint)) => {
                 child = Some(running);
                 if health(
                     child.as_mut().expect("started child"),
                     &endpoint,
-                    laya.timeouts.laya_serve_start,
+                    ai_permissions.timeouts.ai_permissions_serve_start,
                 )
                 .await
                 {
-                    laya.set_endpoint(Some(endpoint));
-                    laya.announce().await;
-                    backoff = laya.timeouts.laya_serve_restart;
+                    ai_permissions.set_endpoint(Some(endpoint));
+                    ai_permissions.announce().await;
+                    backoff = ai_permissions.timeouts.ai_permissions_serve_restart;
                 } else {
-                    tracing::warn!("Laya server did not become healthy before its startup timeout");
+                    tracing::warn!(
+                        "AI permission model server did not become healthy before its startup timeout"
+                    );
                     let mut running = child.take().expect("started child");
                     stop(&mut running).await;
-                    laya.set_endpoint(None);
-                    laya.announce().await;
+                    ai_permissions.set_endpoint(None);
+                    ai_permissions.announce().await;
                     retry_at = Instant::now() + backoff;
                     backoff = (backoff * 2).min(Duration::from_secs(60));
                 }
             }
             Err(error) => {
-                tracing::warn!(error = %error, "starting Laya server failed");
+                tracing::warn!(error = %error, "starting the AI permission model server failed");
                 retry_at = Instant::now() + backoff;
                 backoff = (backoff * 2).min(Duration::from_secs(60));
             }
         }
-        laya.set_starting(false);
+        ai_permissions.set_starting(false);
     }
 }
 
-async fn launch(laya: &Laya, checkpoints: &str) -> anyhow::Result<(Child, String)> {
+async fn launch(
+    ai_permissions: &AiPermissions,
+    checkpoints: &str,
+) -> anyhow::Result<(Child, String)> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     drop(listener);
-    let command = laya.serve_command();
-    let (program, args) = command
-        .split_first()
-        .ok_or_else(|| anyhow::anyhow!("the configured Laya server is an empty command"))?;
+    let command = ai_permissions.serve_command();
+    let (program, args) = command.split_first().ok_or_else(|| {
+        anyhow::anyhow!("the configured AI permission model server is an empty command")
+    })?;
     let models = match checkpoints {
         "all" => "english,multilingual,typed-decisions",
         _ => "english",
@@ -141,7 +150,7 @@ async fn launch(laya: &Laya, checkpoints: &str) -> anyhow::Result<(Child, String
         .env("LAYA_PORT", port.to_string())
         .env("LAYA_PRELOAD", "1")
         .env("LAYA_MODELS", models)
-        .env("HF_HOME", laya.home.join("hf"));
+        .env("HF_HOME", ai_permissions.home.join("hf"));
     Ok((child.spawn()?, format!("http://127.0.0.1:{port}")))
 }
 
@@ -152,7 +161,7 @@ async fn launch(laya: &Laya, checkpoints: &str) -> anyhow::Result<(Child, String
 fn guarded(program: &str, args: &[String]) -> ProcessCommand {
     let mut child = ProcessCommand::new("/bin/sh");
     child
-        .args(["-c", GUARD, "laya-serve-guard", program])
+        .args(["-c", GUARD, "ai-permissions-serve-guard", program])
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

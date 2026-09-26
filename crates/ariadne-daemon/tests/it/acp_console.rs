@@ -1084,7 +1084,7 @@ async fn learn_remembers_an_approval_per_repository_across_a_daemon_restart() {
     assert_eq!(permission_decider(&h, &session.id).await, "learned");
 }
 
-/// `ai` answers each request through Laya (022). Until it does, it is
+/// `ai` answers each request through the model (022). Until it does, it is
 /// `learn`: it asks the first time and remembers an allowing answer under the
 /// repository, so a matching request afterwards interrupts nobody.
 #[tokio::test]

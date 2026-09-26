@@ -45,9 +45,10 @@ unknown key stops the daemon rather than being ignored):
   prevent_sleep            hold off system sleep while a session is live (default: true)
   acp_registry_url         index URL fetched on refresh (default:
                            https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json)
-  python_bin               the Python 3.10-or-newer Laya installs into
-                           (default: python3 on this daemon's PATH)
-  laya_release_url         where the Laya release document is read from
+  python_bin               the Python 3.10-or-newer the AI permission model
+                           installs into (default: python3 on this daemon's PATH)
+  ai_permissions_release_url
+                           where the model's release document is read from
                            (default:
                            https://api.github.com/repos/NandhaKishorM/laya/releases/latest)
   [[acp_agents]]           add an ACP command with a stable `id` and `command` array
@@ -121,7 +122,7 @@ async fn main() -> Result<()> {
 
     let config = std::sync::Arc::new(config);
     agent_registry.discover().await;
-    let laya = ariadne_daemon::laya::Laya::new(
+    let ai_permissions = ariadne_daemon::ai_permissions::AiPermissions::new(
         store.clone(),
         events.clone(),
         &config,
@@ -131,7 +132,8 @@ async fn main() -> Result<()> {
         cfg: config.clone(),
         store: store.clone(),
         git: ariadne_daemon::gitwt::GitManager,
-        acp: ariadne_daemon::acp::AcpRuntime::new(store.clone()).with_laya(laya.clone()),
+        acp: ariadne_daemon::acp::AcpRuntime::new(store.clone())
+            .with_ai_permissions(ai_permissions.clone()),
         registry: agent_registry.clone(),
         branches: ariadne_daemon::branch::BranchWatchers::new(events.clone()),
     });
@@ -151,9 +153,9 @@ async fn main() -> Result<()> {
         config.prevent_sleep,
         ariadne_daemon::timeouts::Timeouts::default(),
     );
-    ariadne_daemon::laya::schedule::start(
-        laya.clone(),
-        ariadne_daemon::timeouts::Timeouts::default().laya_schedule_poll,
+    ariadne_daemon::ai_permissions::schedule::start(
+        ai_permissions.clone(),
+        ariadne_daemon::timeouts::Timeouts::default().ai_permissions_schedule_poll,
     );
     let state = AppState {
         store,
@@ -165,9 +167,9 @@ async fn main() -> Result<()> {
         logs,
         agent_registry,
         outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::from_env(),
-        laya,
+        ai_permissions,
     };
-    let laya_shutdown = state.laya.clone();
+    let ai_permissions_shutdown = state.ai_permissions.clone();
     let app = http::router(state);
 
     let shutdown = shutdown_signal();
@@ -190,7 +192,7 @@ async fn main() -> Result<()> {
     };
 
     // Best-effort cleanup of runtime files.
-    laya_shutdown.shutdown().await;
+    ai_permissions_shutdown.shutdown().await;
     let _ = std::fs::remove_file(&config.socket_path);
     let _ = std::fs::remove_file(&config.pid_file);
     info!("ariadned stopped");

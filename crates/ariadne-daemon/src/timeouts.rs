@@ -26,19 +26,19 @@ pub struct Timeouts {
     pub session_load: Duration,
     /// How long a registry download may take, including its response body.
     pub registry_download: Duration,
-    /// How long the Laya release document may take to download, including its
+    /// How long the AI permission model release document may take to download, including its
     /// response body (022). The install that follows it is unbounded — it
     /// fetches a wheel, PyTorch and gigabytes of weights — so this covers the
     /// one call the daemon makes itself.
-    pub laya_release_download: Duration,
-    /// How long Laya's HTTP server may take to load its weights and answer.
-    pub laya_serve_start: Duration,
+    pub ai_permissions_release_download: Duration,
+    /// How long the model's HTTP server may take to load its weights and answer.
+    pub ai_permissions_serve_start: Duration,
     /// How long the server supervisor waits before its first restart.
-    pub laya_serve_restart: Duration,
-    /// How often the daily Laya refresh clock checks local time.
-    pub laya_schedule_poll: Duration,
-    /// How long one permission decision may take at Laya's local HTTP seam.
-    pub laya_decision: Duration,
+    pub ai_permissions_serve_restart: Duration,
+    /// How often the daily model refresh clock checks local time.
+    pub ai_permissions_schedule_poll: Duration,
+    /// How long one permission decision may take at the model's local HTTP seam.
+    pub ai_permissions_decision: Duration,
     /// How often a running turn's transcript is read again for what the
     /// launch has spent, so a long turn's figure moves before it ends.
     pub transcript_poll: Duration,
@@ -80,11 +80,11 @@ impl Default for Timeouts {
             probe: Duration::from_secs(5),
             session_load: Duration::from_secs(60),
             registry_download: Duration::from_secs(30),
-            laya_release_download: Duration::from_secs(30),
-            laya_serve_start: Duration::from_secs(120),
-            laya_serve_restart: Duration::from_secs(1),
-            laya_schedule_poll: Duration::from_secs(30),
-            laya_decision: Duration::from_secs(5),
+            ai_permissions_release_download: Duration::from_secs(30),
+            ai_permissions_serve_start: Duration::from_secs(120),
+            ai_permissions_serve_restart: Duration::from_secs(1),
+            ai_permissions_schedule_poll: Duration::from_secs(30),
+            ai_permissions_decision: Duration::from_secs(5),
             transcript_poll: Duration::from_secs(15),
             session_wake: Duration::from_millis(250),
             full_reconcile: Duration::from_secs(5),

@@ -393,10 +393,10 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
-        DomainEvent::LayaUpdated(l) => Line {
+        DomainEvent::AiPermissionsUpdated(l) => Line {
             at: now(),
             kind,
-            subject: "laya".to_string(),
+            subject: "ai-permissions".to_string(),
             detail: l.last_error.clone().unwrap_or_default(),
             session: None,
             status: Some(l.state.as_str().to_string()),

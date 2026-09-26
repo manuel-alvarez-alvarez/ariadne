@@ -91,7 +91,7 @@ pub enum PermissionMode {
     Ask,
     /// Ask once for each repository, tool name and kind; remember approvals.
     Learn,
-    /// Let Laya, the local decision model, answer each request (022).
+    /// Let the AI permission model answer each request (022).
     Ai,
 }
 

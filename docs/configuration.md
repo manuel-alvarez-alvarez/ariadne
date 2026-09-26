@@ -21,12 +21,13 @@ prevent_sleep = true               # hold a system sleep inhibition while any ag
 acp_registry_url = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
                                    # download the index only on an explicit refresh
 python_bin = "/opt/python3.12/bin/python3"
-                                   # the Python that Laya installs into; it has to be
-                                   # 3.10 or newer (default: python3 on the daemon's
-                                   # PATH). See Permission modes.
-laya_release_url = "https://api.github.com/repos/NandhaKishorM/laya/releases/latest"
-                                   # where the Laya release is read from: its tag, and
-                                   # the wheel an install takes
+                                   # the Python that the AI permission model
+                                   # installs into; it has to be 3.10 or newer
+                                   # (default: python3 on the daemon's PATH).
+                                   # See Permission modes.
+ai_permissions_release_url = "https://api.github.com/repos/NandhaKishorM/laya/releases/latest"
+                                   # where the model's release is read from: its tag,
+                                   # and the wheel an install takes
 
 [[acp_agents]]                     # an agent of your own, or one the registry
 id = "my-agent"                    # names under another command
@@ -57,14 +58,15 @@ Startup downloads nothing. It uses the kept index only when its fetch time
 is after the snapshot date at midnight UTC. Otherwise, it uses the shipped
 snapshot. Changing the URL does not discard the last good copy.
 
-`python_bin` and `laya_release_url` are Laya's, the model the `ai` permission
-mode answers with. `python_bin` is the interpreter Laya's virtual environment
-is built from — set it where the `python3` on the daemon's own `PATH` is older
-than 3.10, or where you want Laya on a different one. Nothing is installed
-into that interpreter: the package and PyTorch go into
-`~/.ariadne/laya/venv`. `laya_release_url` is the release document the install
-reads its tag and its wheel from; the download has a 30-second timeout.
-Neither key turns Laya on — [Permission modes](permissions.md) does that.
+`python_bin` and `ai_permissions_release_url` belong to the AI permission
+model, the model the `ai` permission mode answers with. `python_bin` is the
+interpreter the model's virtual environment is built from — set it where the
+`python3` on the daemon's own `PATH` is older than 3.10, or where you want the
+model on a different one. Nothing is installed into that interpreter: the
+package and PyTorch go into `~/.ariadne/ai-permissions/venv`.
+`ai_permissions_release_url` is the release document the install reads its
+tag and its wheel from; the download has a 30-second timeout. Neither key
+turns the model on — [Permission modes](permissions.md) does that.
 
 `ariadned --check-config` reads that file and exits: a key the daemon would
 refuse is named where it stands, without starting anything or touching the

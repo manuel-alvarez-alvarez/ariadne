@@ -1,4 +1,4 @@
-//! Permission decisions made through Laya in `ai` mode (022, Decisions).
+//! Permission decisions made through the model in `ai` mode (022, Decisions).
 
 use std::sync::{Arc, Mutex};
 
@@ -32,13 +32,13 @@ struct ServerState {
     requests: Arc<Mutex<Vec<Value>>>,
 }
 
-struct LayaServer {
+struct ModelServer {
     endpoint: String,
     requests: Arc<Mutex<Vec<Value>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
-impl LayaServer {
+impl ModelServer {
     /// An answer shaped as `laya-serve` returns it. Its `confidence` is the
     /// uncalibrated entropy score, set far from the calibrated one so a
     /// decision gated on the wrong field fails.
@@ -82,7 +82,7 @@ impl LayaServer {
     }
 }
 
-impl Drop for LayaServer {
+impl Drop for ModelServer {
     fn drop(&mut self) {
         self.task.abort();
     }
@@ -101,7 +101,7 @@ fn choice(label: &str, confidence: f64) -> Value {
 
 fn response(decision: Value) -> Value {
     json!({
-        "model": "laya-rl-agent",
+        "model": "rl-agent",
         "answers": {"decision": decision},
         "usage": {"input_tokens": 139, "output_tokens": 0},
         "routing": {"model": "english"}
@@ -111,7 +111,7 @@ fn response(decision: Value) -> Value {
 async fn release() -> axum::Json<Value> {
     axum::Json(json!({
         "tag_name": "v0.1.0",
-        "assets": [{"browser_download_url": "https://example.test/laya.whl"}]
+        "assets": [{"browser_download_url": "https://example.test/model.whl"}]
     }))
 }
 
@@ -152,23 +152,23 @@ fn python() -> String {
         .to_string()
 }
 
-async fn laya_harness(
-    server: &LayaServer,
+async fn ai_permissions_harness(
+    server: &ModelServer,
     threshold: f64,
     timeouts: Timeouts,
 ) -> (Harness, Cast, tempfile::TempDir) {
-    laya_harness_with(server, threshold, timeouts, permission_script()).await
+    ai_permissions_harness_with(server, threshold, timeouts, permission_script()).await
 }
 
-async fn laya_harness_with(
-    server: &LayaServer,
+async fn ai_permissions_harness_with(
+    server: &ModelServer,
     threshold: f64,
     timeouts: Timeouts,
     scripted: Value,
 ) -> (Harness, Cast, tempfile::TempDir) {
     let endpoint = server.endpoint.clone();
-    laya_harness_on(
-        |builder| builder.laya_endpoint(endpoint),
+    ai_permissions_harness_on(
+        |builder| builder.ai_permissions_endpoint(endpoint),
         server,
         threshold,
         timeouts,
@@ -177,28 +177,28 @@ async fn laya_harness_with(
     .await
 }
 
-/// A harness whose Laya is reached however `laya` says: a pinned endpoint, or
+/// A harness whose model is reached however `ai_permissions` says: a pinned endpoint, or
 /// a server the daemon starts.
-async fn laya_harness_on(
-    laya: impl FnOnce(HarnessBuilder) -> HarnessBuilder,
-    server: &LayaServer,
+async fn ai_permissions_harness_on(
+    ai_permissions: impl FnOnce(HarnessBuilder) -> HarnessBuilder,
+    server: &ModelServer,
     threshold: f64,
     timeouts: Timeouts,
     scripted: Value,
 ) -> (Harness, Cast, tempfile::TempDir) {
     let agent_dir = tempfile::tempdir().unwrap();
     let stub = stub_acp_agent(agent_dir.path(), scripted);
-    let h = laya(harness())
+    let h = ai_permissions(harness())
         .home(registry_home(&stub))
-        .laya_release_url(format!("{}/release.json", server.endpoint))
-        .laya_installer(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()])
+        .ai_permissions_release_url(format!("{}/release.json", server.endpoint))
+        .ai_permissions_installer(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()])
         .python_bin(python())
         .timeouts(timeouts)
         .await;
     let _: Value = h
         .json(
             put_json(
-                "/v1/permissions/laya",
+                "/v1/permissions/ai",
                 json!({"enabled": true, "threshold": threshold}),
             ),
             StatusCode::OK,
@@ -253,12 +253,12 @@ async fn wait_for_question(h: &Harness, session: &ariadne_store::AgentSession) {
 }
 
 #[tokio::test]
-async fn a_confident_allow_runs_at_once_and_reports_laya() {
-    let server = LayaServer::answer("allow", 0.95).await;
-    let (h, cast, _agent_dir) = laya_harness(&server, 0.8, Timeouts::default()).await;
+async fn a_confident_allow_runs_at_once_and_reports_ai() {
+    let server = ModelServer::answer("allow", 0.95).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the Laya-approved turn to finish", || async {
+    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
@@ -266,7 +266,7 @@ async fn a_confident_allow_runs_at_once_and_reports_laya() {
     assert_eq!(h.attention(&session).await, None);
     assert_eq!(
         reply(&h, &session.id).await,
-        json!({"session_id": "stub-session", "option_id": "yes", "decided_by": "laya",
+        json!({"session_id": "stub-session", "option_id": "yes", "decided_by": "ai",
                "label": "allow", "confidence": 0.95})
     );
     let requests = server.requests.lock().unwrap();
@@ -293,6 +293,72 @@ async fn a_confident_allow_runs_at_once_and_reports_laya() {
     assert_eq!(
         requests[0]["questions"]["decision"]["criteria"]["review"],
         "deleting outside the working tree, force pushes, package installs, network writes, credentials or secrets, changes to system configuration, anything unclear"
+    );
+}
+
+/// The question a `PUT` sets is the `instructions` the daemon sends the model
+/// on the next decision: the decision reads the settings each time, not once.
+#[tokio::test]
+async fn a_changed_question_reaches_the_model_on_the_next_decision() {
+    let server = ModelServer::answer("allow", 0.95).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
+    let _: Value = h
+        .json(
+            put_json(
+                "/v1/permissions/ai",
+                json!({"question": "May this run unattended?"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let requests = server.requests.lock().unwrap();
+    let decision = &requests[0]["questions"]["decision"];
+    assert_eq!(decision["instructions"], "May this run unattended?");
+    assert_eq!(
+        decision["criteria"]["allow"],
+        "reading files, searching, listing, building, running tests, editing files inside the working tree, git commands that do not delete branches or force-push",
+        "an unset criterion is still the built-in one"
+    );
+}
+
+/// The criteria a `PUT` sets are the `criteria` of the choice, under the
+/// fixed answer names `allow` and `review`.
+#[tokio::test]
+async fn changed_criteria_reach_the_model_under_the_fixed_answer_names() {
+    let server = ModelServer::answer("allow", 0.95).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
+    let _: Value = h
+        .json(
+            put_json(
+                "/v1/permissions/ai",
+                json!({"allow_criteria": "tests and builds", "review_criteria": "everything else"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    let requests = server.requests.lock().unwrap();
+    let decision = &requests[0]["questions"]["decision"];
+    assert_eq!(
+        decision["criteria"],
+        json!({"allow": "tests and builds", "review": "everything else"})
+    );
+    assert_eq!(
+        decision["instructions"], "Can this coding-agent tool call run without a person's review?",
+        "an unset question is still the built-in one"
     );
 }
 
@@ -323,15 +389,15 @@ http.server.HTTPServer((os.environ['LAYA_HOST'], int(os.environ['LAYA_PORT'])), 
 
 #[tokio::test]
 async fn a_request_made_while_the_server_loads_waits_for_it() {
-    let release = LayaServer::hanging().await;
+    let release = ModelServer::hanging().await;
     let record = tempfile::NamedTempFile::new().unwrap();
     let command = vec![
         shared_script(SLOW_SERVER).display().to_string(),
         record.path().display().to_string(),
         "3".to_string(),
     ];
-    let (h, cast, _agent_dir) = laya_harness_on(
-        |builder| builder.laya_serve_command(command),
+    let (h, cast, _agent_dir) = ai_permissions_harness_on(
+        |builder| builder.ai_permissions_serve_command(command),
         &release,
         0.8,
         Timeouts::default(),
@@ -343,45 +409,45 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
     })
     .await;
     assert_eq!(
-        h.state.laya.live().await,
+        h.state.ai_permissions.live().await,
         None,
         "the server is still loading"
     );
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the Laya-approved turn to finish", || async {
+    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
 
     assert_eq!(h.attention(&session).await, None);
     let reply = reply(&h, &session.id).await;
-    assert_eq!(reply["decided_by"], "laya");
+    assert_eq!(reply["decided_by"], "ai");
     assert_eq!(reply["confidence"], 0.95);
-    h.state.laya.shutdown().await;
+    h.state.ai_permissions.shutdown().await;
 }
 
 #[tokio::test]
 async fn an_answer_without_its_calibrated_confidence_is_gated_on_its_probability() {
-    let server = LayaServer::onnx_answer("allow", 0.95).await;
-    let (h, cast, _agent_dir) = laya_harness(&server, 0.8, Timeouts::default()).await;
+    let server = ModelServer::onnx_answer("allow", 0.95).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    eventually(TIMEOUT, "the Laya-approved turn to finish", || async {
+    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
 
     assert_eq!(h.attention(&session).await, None);
     let reply = reply(&h, &session.id).await;
-    assert_eq!(reply["decided_by"], "laya");
+    assert_eq!(reply["decided_by"], "ai");
     assert_eq!(reply["confidence"], 0.95);
 }
 
 #[tokio::test]
 async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() {
-    let server = LayaServer::answer("allow", 0.6).await;
-    let (h, cast, _agent_dir) = laya_harness(&server, 0.8, Timeouts::default()).await;
+    let server = ModelServer::answer("allow", 0.6).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
 
     let asked = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &asked).await;
@@ -418,14 +484,14 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
     assert_eq!(
         server.requests.lock().unwrap().len(),
         2,
-        "Laya decides first each time"
+        "the model decides first each time"
     );
 }
 
 #[tokio::test]
 async fn a_review_answer_waits_for_the_console() {
-    let server = LayaServer::answer("review", 0.99).await;
-    let (h, cast, _agent_dir) = laya_harness(&server, 0.8, Timeouts::default()).await;
+    let server = ModelServer::answer("review", 0.99).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
@@ -437,12 +503,12 @@ async fn a_review_answer_waits_for_the_console() {
 
 #[tokio::test]
 async fn an_allow_without_an_allowing_option_waits_for_the_console() {
-    let server = LayaServer::answer("allow", 0.99).await;
+    let server = ModelServer::answer("allow", 0.99).await;
     let mut scripted = permission_script();
     scripted["prompts"][0]["permission"]["options"] =
         json!([{"optionId": "no", "name": "Reject", "kind": "reject_once"}]);
     let (h, cast, _agent_dir) =
-        laya_harness_with(&server, 0.8, Timeouts::default(), scripted).await;
+        ai_permissions_harness_with(&server, 0.8, Timeouts::default(), scripted).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
@@ -454,8 +520,8 @@ async fn an_allow_without_an_allowing_option_waits_for_the_console() {
 
 #[tokio::test]
 async fn a_malformed_answer_warns_and_waits_for_the_console() {
-    let server = LayaServer::start(Answer::Value(json!({"answers": {}}))).await;
-    let (h, cast, _agent_dir) = laya_harness(&server, 0.8, Timeouts::default()).await;
+    let server = ModelServer::start(Answer::Value(json!({"answers": {}}))).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
     let _guard =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
 
@@ -466,7 +532,7 @@ async fn a_malformed_answer_warns_and_waits_for_the_console() {
         snapshot.lines.iter().any(|line| line.level == "WARN"
             && line
                 .message
-                .contains("Laya permission decision was malformed")),
+                .contains("AI permission model decision was malformed")),
         "{snapshot:?}"
     );
     assert_eq!(
@@ -476,9 +542,9 @@ async fn a_malformed_answer_warns_and_waits_for_the_console() {
 }
 
 #[tokio::test]
-async fn a_stopped_laya_warns_and_waits_for_the_console() {
-    let server = LayaServer::answer("allow", 0.95).await;
-    let (h, cast, _agent_dir) = laya_harness(&server, 0.8, Timeouts::default()).await;
+async fn a_stopped_model_warns_and_waits_for_the_console() {
+    let server = ModelServer::answer("allow", 0.95).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
     server.stop();
     let _guard =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
@@ -487,11 +553,8 @@ async fn a_stopped_laya_warns_and_waits_for_the_console() {
     wait_for_question(&h, &session).await;
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
-        snapshot
-            .lines
-            .iter()
-            .any(|line| line.level == "WARN"
-                && line.message.contains("Laya permission decision failed")),
+        snapshot.lines.iter().any(|line| line.level == "WARN"
+            && line.message.contains("AI permission model decision failed")),
         "{snapshot:?}"
     );
     assert_eq!(
@@ -501,13 +564,13 @@ async fn a_stopped_laya_warns_and_waits_for_the_console() {
 }
 
 #[tokio::test]
-async fn a_laya_timeout_waits_for_the_console() {
-    let server = LayaServer::hanging().await;
+async fn a_model_timeout_waits_for_the_console() {
+    let server = ModelServer::hanging().await;
     let timeouts = Timeouts {
-        laya_decision: RUNS_OUT,
+        ai_permissions_decision: RUNS_OUT,
         ..Timeouts::default()
     };
-    let (h, cast, _agent_dir) = laya_harness(&server, 0.8, timeouts).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, timeouts).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
@@ -518,12 +581,12 @@ async fn a_laya_timeout_waits_for_the_console() {
 }
 
 #[tokio::test]
-async fn a_disabled_laya_waits_for_the_console() {
-    let server = LayaServer::answer("allow", 0.95).await;
-    let (h, cast, _agent_dir) = laya_harness(&server, 0.8, Timeouts::default()).await;
+async fn a_disabled_model_waits_for_the_console() {
+    let server = ModelServer::answer("allow", 0.95).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.8, Timeouts::default()).await;
     let _: Value = h
         .json(
-            put_json("/v1/permissions/laya", json!({"enabled": false})),
+            put_json("/v1/permissions/ai", json!({"enabled": false})),
             StatusCode::OK,
         )
         .await;

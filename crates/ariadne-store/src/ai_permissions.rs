@@ -1,7 +1,7 @@
-//! The one Laya settings row (022): what the user chose, and what the last
+//! The one AI permission settings row (022): what the user chose, and what the last
 //! install made of it.
 
-use crate::{LayaSettings, Result, Store, not_found, now};
+use crate::{AiPermissionSettings, Result, Store, not_found, now};
 
 /// Every column a write may move; an absent field stays as it was.
 ///
@@ -9,7 +9,7 @@ use crate::{LayaSettings, Result, Store, not_found, now};
 /// chose, and the installer, which moves what it found. They never write the
 /// same column, so neither has to read the other's first.
 #[derive(Debug, Clone, Default)]
-pub struct LayaUpdate {
+pub struct AiPermissionSettingsUpdate {
     pub enabled: Option<bool>,
     /// `english` or `all`.
     pub checkpoints: Option<String>,
@@ -20,7 +20,7 @@ pub struct LayaUpdate {
     /// `disabled`, `installing`, `ready` or `failed`.
     pub state: Option<String>,
     /// Move `state` only where the row is still enabled; a row turned off
-    /// keeps its `disabled`. The install writes its states this way: Laya can
+    /// keeps its `disabled`. The install writes its states this way: the model can
     /// be turned off while an install runs, and the check and the write are
     /// one statement, so no turn-off lands between them.
     pub state_while_enabled: bool,
@@ -29,26 +29,34 @@ pub struct LayaUpdate {
     pub weights_present: Option<bool>,
     pub last_refresh_at: Option<Option<String>>,
     pub last_error: Option<Option<String>>,
+    /// `Some(None)` restores the built-in question; `None` keeps it.
+    pub question: Option<Option<String>>,
+    pub allow_criteria: Option<Option<String>>,
+    pub review_criteria: Option<Option<String>>,
 }
 
 const COLUMNS: &str = "enabled, checkpoints, threshold, schedule, last_scheduled_refresh, state, \
                        installed_release, latest_release, weights_present, \
-                       last_refresh_at, last_error, updated_at";
+                       last_refresh_at, last_error, question, allow_criteria, \
+                       review_criteria, updated_at";
 
 impl Store {
-    /// The Laya settings as they stand. The row is seeded by the migration,
+    /// The AI permission settings as they stand. The row is seeded by the migration,
     /// so every database has one.
-    pub async fn laya_settings(&self) -> Result<LayaSettings> {
+    pub async fn ai_permission_settings(&self) -> Result<AiPermissionSettings> {
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT {COLUMNS} FROM laya_settings WHERE id = 1"
+            "SELECT {COLUMNS} FROM ai_permission_settings WHERE id = 1"
         )))
         .fetch_optional(self.r())
         .await?
-        .ok_or_else(|| not_found("laya settings", "1"))
+        .ok_or_else(|| not_found("ai permission settings", "1"))
     }
 
     /// Move whatever `update` names, and answer the row as it now stands.
-    pub async fn update_laya_settings(&self, update: LayaUpdate) -> Result<LayaSettings> {
+    pub async fn update_ai_permission_settings(
+        &self,
+        update: AiPermissionSettingsUpdate,
+    ) -> Result<AiPermissionSettings> {
         let mut sets: Vec<&str> = Vec::new();
         if update.enabled.is_some() {
             sets.push("enabled = ?");
@@ -86,10 +94,19 @@ impl Store {
         if update.last_error.is_some() {
             sets.push("last_error = ?");
         }
+        if update.question.is_some() {
+            sets.push("question = ?");
+        }
+        if update.allow_criteria.is_some() {
+            sets.push("allow_criteria = ?");
+        }
+        if update.review_criteria.is_some() {
+            sets.push("review_criteria = ?");
+        }
         sets.push("updated_at = ?");
 
         let mut query = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "UPDATE laya_settings SET {} WHERE id = 1",
+            "UPDATE ai_permission_settings SET {} WHERE id = 1",
             sets.join(", ")
         )));
         if let Some(enabled) = update.enabled {
@@ -125,8 +142,17 @@ impl Store {
         if let Some(error) = update.last_error {
             query = query.bind(error);
         }
+        if let Some(question) = update.question {
+            query = query.bind(question);
+        }
+        if let Some(criteria) = update.allow_criteria {
+            query = query.bind(criteria);
+        }
+        if let Some(criteria) = update.review_criteria {
+            query = query.bind(criteria);
+        }
         query.bind(now()).execute(self.w()).await?;
 
-        self.laya_settings().await
+        self.ai_permission_settings().await
     }
 }

@@ -112,11 +112,11 @@ pub(crate) struct HarnessBuilder {
     timeouts: Timeouts,
     path: std::ffi::OsString,
     index: String,
-    laya_installer: Option<Vec<String>>,
-    laya_serve_command: Option<Vec<String>>,
-    laya_endpoint: Option<String>,
+    ai_permissions_installer: Option<Vec<String>>,
+    ai_permissions_serve_command: Option<Vec<String>>,
+    ai_permissions_endpoint: Option<String>,
     python_bin: Option<String>,
-    laya_release_url: Option<String>,
+    ai_permissions_release_url: Option<String>,
 }
 
 /// The pin the fixtures staff an agent on: a model of the registry agent the
@@ -147,11 +147,11 @@ pub(crate) fn harness() -> HarnessBuilder {
         timeouts: Timeouts::default(),
         path: std::ffi::OsString::new(),
         index: ariadne_daemon::acp_discovery::SHIPPED_INDEX.to_string(),
-        laya_installer: None,
-        laya_serve_command: None,
-        laya_endpoint: None,
+        ai_permissions_installer: None,
+        ai_permissions_serve_command: None,
+        ai_permissions_endpoint: None,
         python_bin: None,
-        laya_release_url: None,
+        ai_permissions_release_url: None,
     }
 }
 
@@ -224,24 +224,24 @@ impl HarnessBuilder {
         self
     }
 
-    /// Run `cmd` in place of the whole Laya install — the venv, the wheel
+    /// Run `cmd` in place of the whole model install — the venv, the wheel
     /// and the checkpoints (022). Its exit status decides `ready` or
     /// `failed`, and its stderr is `last_error`.
-    pub(crate) fn laya_installer(mut self, cmd: Vec<String>) -> Self {
-        self.laya_installer = Some(cmd);
+    pub(crate) fn ai_permissions_installer(mut self, cmd: Vec<String>) -> Self {
+        self.ai_permissions_installer = Some(cmd);
         self
     }
 
-    /// Run `cmd` as the Laya server instead of the installed `laya-serve`.
-    pub(crate) fn laya_serve_command(mut self, cmd: Vec<String>) -> Self {
-        self.laya_serve_command = Some(cmd);
+    /// Run `cmd` as the model server instead of the installed `laya-serve`.
+    pub(crate) fn ai_permissions_serve_command(mut self, cmd: Vec<String>) -> Self {
+        self.ai_permissions_serve_command = Some(cmd);
         self
     }
 
-    /// Answer `Laya::endpoint` with `url`, in place of a server the daemon
+    /// Answer `AiPermissions::endpoint` with `url`, in place of a server the daemon
     /// started.
-    pub(crate) fn laya_endpoint(mut self, url: impl Into<String>) -> Self {
-        self.laya_endpoint = Some(url.into());
+    pub(crate) fn ai_permissions_endpoint(mut self, url: impl Into<String>) -> Self {
+        self.ai_permissions_endpoint = Some(url.into());
         self
     }
 
@@ -253,9 +253,9 @@ impl HarnessBuilder {
         self
     }
 
-    /// Read the Laya release document from `url`, rather than from GitHub.
-    pub(crate) fn laya_release_url(mut self, url: impl Into<String>) -> Self {
-        self.laya_release_url = Some(url.into());
+    /// Read the AI permission model release document from `url`, rather than from GitHub.
+    pub(crate) fn ai_permissions_release_url(mut self, url: impl Into<String>) -> Self {
+        self.ai_permissions_release_url = Some(url.into());
         self
     }
 
@@ -287,17 +287,17 @@ impl HarnessBuilder {
             }
         };
         let mut config = Config::load(Some(home)).unwrap();
-        // The Laya seams are the daemon's own settings rather than keys of
+        // The model seams are the daemon's own settings rather than keys of
         // `config.toml`, so the harness writes them onto the config the way
         // the daemon would have read them.
-        config.laya_installer = self.laya_installer;
-        config.laya_serve_command = self.laya_serve_command;
-        config.laya_endpoint = self.laya_endpoint;
+        config.ai_permissions_installer = self.ai_permissions_installer;
+        config.ai_permissions_serve_command = self.ai_permissions_serve_command;
+        config.ai_permissions_endpoint = self.ai_permissions_endpoint;
         if let Some(python_bin) = self.python_bin {
             config.python_bin = Some(python_bin);
         }
-        if let Some(url) = self.laya_release_url {
-            config.laya_release_url = url;
+        if let Some(url) = self.ai_permissions_release_url {
+            config.ai_permissions_release_url = url;
         }
         let agent_registry = ariadne_daemon::acp_discovery::AgentRegistry::test_registry(
             &config.acp_agents,
@@ -315,9 +315,16 @@ impl HarnessBuilder {
         if discover {
             agent_registry.discover().await;
         }
-        let laya =
-            ariadne_daemon::laya::Laya::new(store.clone(), bus.clone(), &config, self.timeouts);
-        ariadne_daemon::laya::schedule::start(laya.clone(), self.timeouts.laya_schedule_poll);
+        let ai_permissions = ariadne_daemon::ai_permissions::AiPermissions::new(
+            store.clone(),
+            bus.clone(),
+            &config,
+            self.timeouts,
+        );
+        ariadne_daemon::ai_permissions::schedule::start(
+            ai_permissions.clone(),
+            self.timeouts.ai_permissions_schedule_poll,
+        );
         let launcher = Arc::new(Launcher {
             cfg: Arc::new(config),
             store: store.clone(),
@@ -327,7 +334,7 @@ impl HarnessBuilder {
                 self.timeouts,
                 transcript_homes(dir.path()),
             )
-            .with_laya(laya.clone()),
+            .with_ai_permissions(ai_permissions.clone()),
             registry: agent_registry.clone(),
             branches: BranchWatchers::new(bus.clone()),
         });
@@ -347,7 +354,7 @@ impl HarnessBuilder {
             outside_sessions: ariadne_daemon::acp_sessions::OutsideSessions::with_transcripts(
                 &transcript_homes(dir.path()),
             ),
-            laya,
+            ai_permissions,
         };
         // Lazy: most tests never write behind the store's back, and a
         // connection opened for every harness in every binary is a hundred

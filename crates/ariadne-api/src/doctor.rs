@@ -28,7 +28,7 @@ pub struct DaemonReportDto {
     /// be cut at all, and the forge CLIs `gh` and `glab`, which are what a
     /// published task is watched through.
     pub tools: Vec<BinaryDto>,
-    /// The Python interpreter Laya's install runs on (022). It is reported
+    /// The Python interpreter the model's install runs on (022). It is reported
     /// apart from `tools` because it answers a question of its own: not
     /// whether it is there, but whether it is new enough.
     pub python: PythonDto,

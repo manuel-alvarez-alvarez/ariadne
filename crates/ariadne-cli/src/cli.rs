@@ -73,7 +73,7 @@ Examples:
 
 const PERMISSIONS_EXAMPLES: &str = "\
 Examples:
-  ariadne permissions enable --wait         # turn Laya on and wait for the install
+  ariadne permissions enable --wait         # turn the AI permission model on and wait for the install
   ariadne permissions show                  # settings, install state, python
   ariadne permissions set --checkpoints all
   ariadne permissions set --threshold 0.6
@@ -336,9 +336,9 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: RepoCommand,
     },
-    /// Manage Laya, the model behind the `ai` permission mode (022)
+    /// Manage the AI permission model behind the `ai` permission mode (022)
     ///
-    /// Laya answers an ACP agent's permission requests on its own, for every
+    /// The model answers an ACP agent's permission requests on its own, for every
     /// repository set to `ai`. It is a Python package Ariadne installs for
     /// you, so `permissions enable` starts a background install rather than
     /// answering at once — `permissions show` says where it has got to, and

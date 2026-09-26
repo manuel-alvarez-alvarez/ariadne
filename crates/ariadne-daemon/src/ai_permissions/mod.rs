@@ -1,4 +1,4 @@
-//! Laya, the local model the `ai` permission mode answers with (022).
+//! The AI permission model, the local model the `ai` permission mode answers with (022).
 //!
 //! What this holds is the settings, the Python check and the install. Running
 //! the server is 022's `Server` section, and deciding a permission request is
@@ -7,7 +7,7 @@
 //!
 //! The settings are one row of the store, and the install is one background
 //! task at a time. Everything a client reads comes back as one
-//! [`LayaStatusDto`], and every change to it is published as `laya_updated`.
+//! [`AiPermissionsStatusDto`], and every change to it is published as `ai_permissions_updated`.
 
 pub(crate) mod decide;
 pub mod install;
@@ -20,40 +20,44 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use tokio::sync::{mpsc, watch};
 
-use ariadne_api::permissions::{LayaCheckpoints, LayaState, LayaStatusDto};
-use ariadne_store::Store;
+use ariadne_api::permissions::{
+    AiPermissionsCheckpoints, AiPermissionsPrompts, AiPermissionsState, AiPermissionsStatusDto,
+};
+use ariadne_store::{AiPermissionSettings, Store};
 
 use crate::bus::EventBus;
 use crate::config::Config;
 use crate::timeouts::Timeouts;
 
-/// What the `ai` permission mode needs to answer a request: a Laya that is
+/// What the `ai` permission mode needs to answer a request: a model that is
 /// on, and somewhere to ask it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct LayaLive {
-    /// Where the Laya server answers.
+pub struct AiPermissionsLive {
+    /// Where the model server answers.
     pub endpoint: String,
-    /// How sure Laya has to be before its answer is taken, 0 to 1.
+    /// How sure the model has to be before its answer is taken, 0 to 1.
     pub threshold: f64,
+    /// The prompt texts the decision sends, as the settings stand now.
+    pub prompts: AiPermissionsPrompts,
 }
 
-/// The daemon's Laya: its settings, its install, and where its server is.
+/// The daemon's model: its settings, its install, and where its server is.
 #[derive(Clone)]
-pub struct Laya {
+pub struct AiPermissions {
     store: Store,
     events: EventBus,
-    /// `<home>/laya`: the virtual environment, and the Hugging Face cache
-    /// under it. A disabled Laya keeps everything here.
+    /// `<home>/ai-permissions`: the virtual environment, and the Hugging Face cache
+    /// under it. A disabled model keeps everything here.
     home: PathBuf,
     /// The `python_bin` config key, or `None` for `python3` on PATH.
     python_bin: Option<String>,
-    /// Where the release document is read from (`laya_release_url`).
+    /// Where the release document is read from (`ai_permissions_release_url`).
     release_url: String,
     /// The command that stands in for the whole install, in the suite.
     installer: Option<Vec<String>>,
     /// The command that stands in for `laya-serve` in integration tests.
     serve_command: Option<Vec<String>>,
-    /// The `laya_endpoint` config key, which wins over [`Laya::set_endpoint`].
+    /// The `ai_permissions_endpoint` config key, which wins over [`AiPermissions::set_endpoint`].
     configured_endpoint: Option<String>,
     /// Where the server the daemon started answers, once one has.
     endpoint: Arc<RwLock<Option<String>>>,
@@ -67,57 +71,60 @@ pub struct Laya {
     server_tx: mpsc::UnboundedSender<server::Command>,
 }
 
-impl Laya {
-    /// The Laya of a daemon configured by `cfg`, writing to `store` and
+impl AiPermissions {
+    /// The AI permission model of a daemon configured by `cfg`, writing to `store` and
     /// publishing on `events`.
     pub fn new(store: Store, events: EventBus, cfg: &Config, timeouts: Timeouts) -> Self {
         let (server_tx, server_rx) = mpsc::unbounded_channel();
-        let laya = Self {
+        let ai_permissions = Self {
             store,
             events,
-            home: cfg.root.join("laya"),
+            home: cfg.root.join("ai-permissions"),
             python_bin: cfg.python_bin.clone(),
-            release_url: cfg.laya_release_url.clone(),
-            installer: cfg.laya_installer.clone(),
-            serve_command: cfg.laya_serve_command.clone(),
-            configured_endpoint: cfg.laya_endpoint.clone(),
+            release_url: cfg.ai_permissions_release_url.clone(),
+            installer: cfg.ai_permissions_installer.clone(),
+            serve_command: cfg.ai_permissions_serve_command.clone(),
+            configured_endpoint: cfg.ai_permissions_endpoint.clone(),
             endpoint: Arc::default(),
             starting: Arc::new(watch::Sender::new(false)),
             installing: Arc::default(),
             timeouts,
             server_tx,
         };
-        server::start(laya.clone(), server_rx);
-        laya
+        server::start(ai_permissions.clone(), server_rx);
+        ai_permissions
     }
 
     /// The settings and the state of the install behind them, with the
     /// interpreter probed afresh: what a client reads is what a start would
     /// find now, not what it found when the daemon came up.
-    pub async fn status(&self) -> LayaStatusDto {
+    pub async fn status(&self) -> AiPermissionsStatusDto {
         let path = std::env::var_os("PATH");
         let python = python::probe_python(self.python_bin.as_deref(), path.as_deref()).await;
-        let row = match self.store.laya_settings().await {
+        let row = match self.store.ai_permission_settings().await {
             Ok(row) => row,
             Err(error) => {
-                tracing::warn!(error = %error, "reading the Laya settings failed");
-                return LayaStatusDto {
+                tracing::warn!(error = %error, "reading the AI permission settings failed");
+                return AiPermissionsStatusDto {
                     enabled: false,
-                    checkpoints: LayaCheckpoints::English,
+                    checkpoints: AiPermissionsCheckpoints::English,
                     threshold: DEFAULT_THRESHOLD,
                     schedule: None,
                     python,
-                    state: LayaState::Failed,
+                    state: AiPermissionsState::Failed,
                     installed_release: None,
                     latest_release: None,
                     weights_present: false,
                     endpoint: self.endpoint(),
                     last_refresh_at: None,
                     last_error: Some(error.to_string()),
+                    prompts: decide::default_prompts(),
+                    default_prompts: decide::default_prompts(),
                 };
             }
         };
-        LayaStatusDto {
+        let prompts = prompts_of(&row);
+        AiPermissionsStatusDto {
             enabled: row.enabled,
             checkpoints: checkpoints_of(&row.checkpoints),
             threshold: row.threshold,
@@ -130,12 +137,14 @@ impl Laya {
             endpoint: self.endpoint(),
             last_refresh_at: row.last_refresh_at,
             last_error: row.last_error,
+            prompts,
+            default_prompts: decide::default_prompts(),
         }
     }
 
-    /// Where the Laya server answers: the configured endpoint where there is
+    /// Where the model server answers: the configured endpoint where there is
     /// one, else whatever the server last reported through
-    /// [`Laya::set_endpoint`], else nothing.
+    /// [`AiPermissions::set_endpoint`], else nothing.
     pub fn endpoint(&self) -> Option<String> {
         self.configured_endpoint.clone().or_else(|| {
             self.endpoint
@@ -165,10 +174,6 @@ impl Laya {
         let _ = self.server_tx.send(server::Command::Reconcile);
     }
 
-    pub(crate) fn restart_server(&self) {
-        let _ = self.server_tx.send(server::Command::Restart);
-    }
-
     pub(crate) fn serve_command(&self) -> Vec<String> {
         self.serve_command
             .clone()
@@ -183,21 +188,22 @@ impl Laya {
         }
     }
 
-    /// What the `ai` permission mode needs, or `None` where Laya cannot
+    /// What the `ai` permission mode needs, or `None` where the model cannot
     /// answer: it is off, or nothing is serving it.
-    pub async fn live(&self) -> Option<LayaLive> {
+    pub async fn live(&self) -> Option<AiPermissionsLive> {
         let endpoint = self.endpoint()?;
-        let row = self.store.laya_settings().await.ok()?;
-        row.enabled.then_some(LayaLive {
+        let row = self.store.ai_permission_settings().await.ok()?;
+        row.enabled.then(|| AiPermissionsLive {
             endpoint,
             threshold: row.threshold,
+            prompts: prompts_of(&row),
         })
     }
 
-    /// [`Laya::live`], after waiting out a server that is still loading its
+    /// [`AiPermissions::live`], after waiting out a server that is still loading its
     /// weights, so a request made just after the daemon starts is still
-    /// Laya's to decide. A Laya with no server starting answers at once.
-    pub async fn live_once_started(&self) -> Option<LayaLive> {
+    /// the model's to decide. A model with no server starting answers at once.
+    pub async fn live_once_started(&self) -> Option<AiPermissionsLive> {
         let mut starting = self.starting.subscribe();
         loop {
             let was_starting = *starting.borrow_and_update();
@@ -211,9 +217,9 @@ impl Laya {
     }
 
     /// Publish the status as it now stands, whatever moved it.
-    pub(crate) async fn announce(&self) -> LayaStatusDto {
+    pub(crate) async fn announce(&self) -> AiPermissionsStatusDto {
         let status = self.status().await;
-        self.events.laya_updated(status.clone());
+        self.events.ai_permissions_updated(status.clone());
         status
     }
 }
@@ -222,22 +228,34 @@ impl Laya {
 /// the schema defaults to, so a failure does not invent a number.
 const DEFAULT_THRESHOLD: f64 = 0.8;
 
+/// The prompt texts a row holds, with the built-in text where it holds none.
+fn prompts_of(row: &AiPermissionSettings) -> AiPermissionsPrompts {
+    let text = |stored: &Option<String>, default: &str| {
+        stored.clone().unwrap_or_else(|| default.to_string())
+    };
+    AiPermissionsPrompts {
+        question: text(&row.question, decide::QUESTION),
+        allow_criteria: text(&row.allow_criteria, decide::ALLOW_CRITERIA),
+        review_criteria: text(&row.review_criteria, decide::REVIEW_CRITERIA),
+    }
+}
+
 /// The checkpoints a stored spelling names. A row written by a future build
 /// that spells it some other way reads as the smaller download.
-fn checkpoints_of(stored: &str) -> LayaCheckpoints {
+fn checkpoints_of(stored: &str) -> AiPermissionsCheckpoints {
     match stored {
-        "all" => LayaCheckpoints::All,
-        _ => LayaCheckpoints::English,
+        "all" => AiPermissionsCheckpoints::All,
+        _ => AiPermissionsCheckpoints::English,
     }
 }
 
 /// The state a stored spelling names. One nothing here knows reads as
 /// `failed`: a state that cannot be read is not one to answer requests on.
-fn state_of(stored: &str) -> LayaState {
+fn state_of(stored: &str) -> AiPermissionsState {
     match stored {
-        "installing" => LayaState::Installing,
-        "ready" => LayaState::Ready,
-        "disabled" => LayaState::Disabled,
-        _ => LayaState::Failed,
+        "installing" => AiPermissionsState::Installing,
+        "ready" => AiPermissionsState::Ready,
+        "disabled" => AiPermissionsState::Disabled,
+        _ => AiPermissionsState::Failed,
     }
 }

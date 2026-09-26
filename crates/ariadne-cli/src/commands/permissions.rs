@@ -1,17 +1,18 @@
-//! `ariadne permissions ...` — the `ai` permission mode's model, Laya (022).
+//! `ariadne permissions ...` — the AI permission model behind the `ai` permission mode (022).
 
 use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::permissions::{
-    LayaCheckpoints, LayaState, LayaStatusDto, PythonDto, UpdateLayaRequest,
+    AiPermissionsCheckpoints, AiPermissionsState, AiPermissionsStatusDto, PythonDto,
+    UpdateAiPermissionsRequest,
 };
 use ariadne_client::Client;
 
 use crate::output::{Format, Kv, age, dash, print, print_kv, style, view, yes_no};
 
 /// Which checkpoints `--checkpoints` names, in the spelling clap takes: the
-/// wire spelling `ariadne_api::permissions::LayaCheckpoints` already carries
+/// wire spelling `ariadne_api::permissions::AiPermissionsCheckpoints` already carries
 /// is not a `clap::ValueEnum`, so this is the CLI's own name for the same
 /// two values.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -21,25 +22,25 @@ pub(crate) enum Checkpoints {
 }
 
 impl Checkpoints {
-    fn as_api(self) -> LayaCheckpoints {
+    fn as_api(self) -> AiPermissionsCheckpoints {
         match self {
-            Checkpoints::English => LayaCheckpoints::English,
-            Checkpoints::All => LayaCheckpoints::All,
+            Checkpoints::English => AiPermissionsCheckpoints::English,
+            Checkpoints::All => AiPermissionsCheckpoints::All,
         }
     }
 }
 
 #[derive(Subcommand)]
 pub(crate) enum PermissionsCommand {
-    /// Show the Laya settings and where the install has got to
+    /// Show the AI permission settings and where the install has got to
     Show,
-    /// Turn Laya on and start the install
+    /// Turn the model on and start the install
     Enable {
         /// Wait until the install leaves "installing"
         #[arg(long)]
         wait: bool,
     },
-    /// Turn Laya off; the install stays on disk
+    /// Turn the model off; the install stays on disk
     Disable,
     /// Run the install again, on the settings as they stand
     Refresh {
@@ -48,7 +49,7 @@ pub(crate) enum PermissionsCommand {
         wait: bool,
     },
     /// Change the checkpoints, the threshold or the daily refresh
-    #[command(group = clap::ArgGroup::new("laya-set")
+    #[command(group = clap::ArgGroup::new("ai-set")
         .args(["checkpoints", "threshold", "schedule", "no_schedule"])
         .required(true)
         .multiple(true))]
@@ -56,7 +57,7 @@ pub(crate) enum PermissionsCommand {
         /// Which checkpoints to install: english (843 MB) or all (2.4 GB)
         #[arg(long, value_enum)]
         checkpoints: Option<Checkpoints>,
-        /// How sure Laya has to be before its answer is taken, 0 to 1
+        /// How sure the model has to be before its answer is taken, 0 to 1
         #[arg(long, value_parser = parse_threshold)]
         threshold: Option<f64>,
         /// When the daily refresh runs, HH:MM in 24-hour local time
@@ -77,7 +78,7 @@ pub(crate) async fn run(client: &Client, cmd: PermissionsCommand, format: Format
                 format,
                 wait,
                 client
-                    .update_laya(&UpdateLayaRequest {
+                    .update_ai_permissions(&UpdateAiPermissionsRequest {
                         enabled: Some(true),
                         ..Default::default()
                     })
@@ -87,7 +88,7 @@ pub(crate) async fn run(client: &Client, cmd: PermissionsCommand, format: Format
         }
         PermissionsCommand::Disable => {
             let status = client
-                .update_laya(&UpdateLayaRequest {
+                .update_ai_permissions(&UpdateAiPermissionsRequest {
                     enabled: Some(false),
                     ..Default::default()
                 })
@@ -95,7 +96,7 @@ pub(crate) async fn run(client: &Client, cmd: PermissionsCommand, format: Format
             print_result(format, &status)
         }
         PermissionsCommand::Refresh { wait } => {
-            settle(client, format, wait, client.refresh_laya().await?).await
+            settle(client, format, wait, client.refresh_ai_permissions().await?).await
         }
         PermissionsCommand::Set {
             checkpoints,
@@ -104,11 +105,12 @@ pub(crate) async fn run(client: &Client, cmd: PermissionsCommand, format: Format
             no_schedule,
         } => {
             let status = client
-                .update_laya(&UpdateLayaRequest {
+                .update_ai_permissions(&UpdateAiPermissionsRequest {
                     enabled: None,
                     checkpoints: checkpoints.map(Checkpoints::as_api),
                     threshold,
                     schedule: schedule_field(schedule, no_schedule),
+                    ..Default::default()
                 })
                 .await?;
             print_result(format, &status)
@@ -128,19 +130,24 @@ fn schedule_field(schedule: Option<String>, no_schedule: bool) -> Option<Option<
 }
 
 async fn show(client: &Client, format: Format) -> Result<()> {
-    let status = client.laya_status().await?;
+    let status = client.ai_permissions_status().await?;
     print(format, &status, || print_kv(&fields(&status)))
 }
 
 /// `--wait` on `enable` and `refresh`: neither answers with anything but
 /// `installing` once it has actually started an install, so there is nothing
 /// to wait for when the settings did not change.
-async fn settle(client: &Client, format: Format, wait: bool, status: LayaStatusDto) -> Result<()> {
+async fn settle(
+    client: &Client,
+    format: Format,
+    wait: bool,
+    status: AiPermissionsStatusDto,
+) -> Result<()> {
     if !wait {
         return print_result(format, &status);
     }
     let status = wait_for_settled(client, status).await?;
-    if status.state == LayaState::Failed {
+    if status.state == AiPermissionsState::Failed {
         anyhow::bail!(
             status
                 .last_error
@@ -151,7 +158,7 @@ async fn settle(client: &Client, format: Format, wait: bool, status: LayaStatusD
     print_result(format, &status)
 }
 
-/// Block until `state` leaves `installing`, by following `laya_updated` on
+/// Block until `state` leaves `installing`, by following `ai_permissions_updated` on
 /// the daemon's domain event stream — the same stream `ariadne events`
 /// already follows, which is what "the CLI has a helper for it" means here.
 ///
@@ -163,38 +170,41 @@ async fn settle(client: &Client, format: Format, wait: bool, status: LayaStatusD
 /// missed can only be older than the status this reads. The same read again
 /// once the connection ends without a settled event covers a dropped
 /// connection the same way.
-async fn wait_for_settled(client: &Client, initial: LayaStatusDto) -> Result<LayaStatusDto> {
-    if initial.state != LayaState::Installing {
+async fn wait_for_settled(
+    client: &Client,
+    initial: AiPermissionsStatusDto,
+) -> Result<AiPermissionsStatusDto> {
+    if initial.state != AiPermissionsState::Installing {
         return Ok(initial);
     }
     let mut stream = client.stream("/v1/events/stream").await?;
-    let status = client.laya_status().await?;
-    if status.state != LayaState::Installing {
+    let status = client.ai_permissions_status().await?;
+    if status.state != AiPermissionsState::Installing {
         return Ok(status);
     }
     while let Some(frame) = stream.next().await {
         let frame = frame?;
-        if frame.event == "laya_updated" {
-            let status: LayaStatusDto = serde_json::from_str(&frame.data)?;
-            if status.state != LayaState::Installing {
+        if frame.event == "ai_permissions_updated" {
+            let status: AiPermissionsStatusDto = serde_json::from_str(&frame.data)?;
+            if status.state != AiPermissionsState::Installing {
                 return Ok(status);
             }
         }
     }
-    let status = client.laya_status().await?;
-    if status.state == LayaState::Installing {
+    let status = client.ai_permissions_status().await?;
+    if status.state == AiPermissionsState::Installing {
         anyhow::bail!("the connection ended before the install finished");
     }
     Ok(status)
 }
 
-fn print_result(format: Format, status: &LayaStatusDto) -> Result<()> {
+fn print_result(format: Format, status: &AiPermissionsStatusDto) -> Result<()> {
     print(format, status, || println!("{}", one_line(status)))
 }
 
-/// The one line a mutation ends on: `laya is now <state>`, coloured and
+/// The one line a mutation ends on: `the AI permission model is now <state>`, coloured and
 /// glyphed exactly as `ariadne events` paints the same word in a stream.
-fn one_line(status: &LayaStatusDto) -> String {
+fn one_line(status: &AiPermissionsStatusDto) -> String {
     let color = view().color;
     let word = status.state.as_str();
     let (sty, glyph) = style::status(word);
@@ -202,12 +212,15 @@ fn one_line(status: &LayaStatusDto) -> String {
         (true, Some(glyph)) => format!("{glyph} {word}"),
         _ => word.to_string(),
     };
-    format!("laya is now {}", style::paint(color, sty, &painted))
+    format!(
+        "the AI permission model is now {}",
+        style::paint(color, sty, &painted)
+    )
 }
 
 /// `show`'s key/value block: every field of the status, in the order the
 /// ticket lists them.
-fn fields(status: &LayaStatusDto) -> Vec<(&'static str, Kv)> {
+fn fields(status: &AiPermissionsStatusDto) -> Vec<(&'static str, Kv)> {
     vec![
         ("enabled", yes_no(status.enabled, "no").into()),
         ("state", Kv::status(status.state.as_str())),
@@ -306,12 +319,13 @@ mod tests {
     use serde_json::json;
 
     use ariadne_api::error::ErrorBody;
+    use ariadne_api::permissions::AiPermissionsPrompts;
     use ariadne_client::ClientError;
 
-    fn status(state: LayaState) -> LayaStatusDto {
-        LayaStatusDto {
+    fn status(state: AiPermissionsState) -> AiPermissionsStatusDto {
+        AiPermissionsStatusDto {
             enabled: true,
-            checkpoints: LayaCheckpoints::English,
+            checkpoints: AiPermissionsCheckpoints::English,
             threshold: 0.8,
             schedule: None,
             python: PythonDto {
@@ -326,6 +340,16 @@ mod tests {
             endpoint: Some("http://127.0.0.1:8900".into()),
             last_refresh_at: Some("2026-09-20T10:00:00Z".into()),
             last_error: None,
+            prompts: AiPermissionsPrompts {
+                question: "q".into(),
+                allow_criteria: "a".into(),
+                review_criteria: "r".into(),
+            },
+            default_prompts: AiPermissionsPrompts {
+                question: "q".into(),
+                allow_criteria: "a".into(),
+                review_criteria: "r".into(),
+            },
         }
     }
 
@@ -352,7 +376,7 @@ mod tests {
     #[test]
     fn show_renders_every_field() {
         let text = crate::output::kv_block(
-            &fields(&status(LayaState::Ready)),
+            &fields(&status(AiPermissionsState::Ready)),
             &crate::output::View::plain(),
         );
         for expected in [
@@ -372,14 +396,14 @@ mod tests {
             );
         }
 
-        let missing_python = LayaStatusDto {
+        let missing_python = AiPermissionsStatusDto {
             python: PythonDto {
                 path: None,
                 version: None,
                 ok: false,
             },
             last_refresh_at: None,
-            ..status(LayaState::Disabled)
+            ..status(AiPermissionsState::Disabled)
         };
         let text = crate::output::kv_block(&fields(&missing_python), &crate::output::View::plain());
         assert!(text.contains("not found"), "{text}");
@@ -394,18 +418,18 @@ mod tests {
         Arc<Mutex<Vec<serde_json::Value>>>,
     ) {
         let seen = Arc::new(Mutex::new(Vec::new()));
-        // The raw body, not `UpdateLayaRequest` round-tripped back through
+        // The raw body, not `UpdateAiPermissionsRequest` round-tripped back through
         // its own `Serialize`: that would fill in the very fields — absent
         // on the wire — this test exists to catch.
         async fn put_handler(
             State(seen): State<Arc<Mutex<Vec<serde_json::Value>>>>,
             Json(req): Json<serde_json::Value>,
-        ) -> Json<LayaStatusDto> {
+        ) -> Json<AiPermissionsStatusDto> {
             seen.lock().unwrap().push(req);
-            Json(status(LayaState::Ready))
+            Json(status(AiPermissionsState::Ready))
         }
         let app = Router::new()
-            .route("/v1/permissions/laya", put(put_handler))
+            .route("/v1/permissions/ai", put(put_handler))
             .with_state(seen.clone());
         let (client, server) = serve(app).await;
         (client, server, seen)
@@ -480,20 +504,20 @@ mod tests {
         assert_eq!(seen.lock().unwrap()[0], json!({"threshold": 0.6}));
     }
 
-    /// The daemon's message survives whole, and `laya_disabled` picks up the
+    /// The daemon's message survives whole, and `ai_disabled` picks up the
     /// hint that names the command which fixes it.
     #[tokio::test]
-    async fn refresh_keeps_the_daemons_message_and_adds_the_hint_on_laya_disabled() {
+    async fn refresh_keeps_the_daemons_message_and_adds_the_hint_on_ai_disabled() {
         async fn refused() -> (StatusCode, Json<ErrorBody>) {
             (
                 StatusCode::CONFLICT,
                 Json(ErrorBody::new(
-                    "laya_disabled",
-                    "Laya is off; turn it on before refreshing it",
+                    "ai_disabled",
+                    "the AI permission model is off; turn it on before refreshing it",
                 )),
             )
         }
-        let app = Router::new().route("/v1/permissions/laya/refresh", post(refused));
+        let app = Router::new().route("/v1/permissions/ai/refresh", post(refused));
         let (client, server) = serve(app).await;
 
         let err = run(
@@ -508,33 +532,33 @@ mod tests {
         let client_error = err.downcast_ref::<ClientError>().unwrap();
         assert_eq!(
             client_error.human(),
-            "Laya is off; turn it on before refreshing it"
+            "the AI permission model is off; turn it on before refreshing it"
         );
         assert_eq!(
             crate::error::human_line(&err),
-            "Laya is off; turn it on before refreshing it (run ariadne permissions enable)"
+            "the AI permission model is off; turn it on before refreshing it (run ariadne permissions enable)"
         );
     }
 
-    /// `enable --wait` blocks on the event stream until `laya_updated`
+    /// `enable --wait` blocks on the event stream until `ai_permissions_updated`
     /// leaves `installing`, and returns the settled status.
     #[tokio::test]
     async fn enable_wait_returns_once_the_stream_answers_ready() {
-        async fn put_installing() -> Json<LayaStatusDto> {
-            Json(status(LayaState::Installing))
+        async fn put_installing() -> Json<AiPermissionsStatusDto> {
+            Json(status(AiPermissionsState::Installing))
         }
-        async fn get_installing() -> Json<LayaStatusDto> {
-            Json(status(LayaState::Installing))
+        async fn get_installing() -> Json<AiPermissionsStatusDto> {
+            Json(status(AiPermissionsState::Installing))
         }
         async fn events() -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
             let ready = Event::default()
-                .event("laya_updated")
-                .data(serde_json::to_string(&status(LayaState::Ready)).unwrap());
+                .event("ai_permissions_updated")
+                .data(serde_json::to_string(&status(AiPermissionsState::Ready)).unwrap());
             Sse::new(stream::once(async move { Ok(ready) }))
         }
         let app = Router::new()
             .route(
-                "/v1/permissions/laya",
+                "/v1/permissions/ai",
                 put(put_installing).get(get_installing),
             )
             .route("/v1/events/stream", get(events));
@@ -554,25 +578,25 @@ mod tests {
     /// stream reports `failed`.
     #[tokio::test]
     async fn enable_wait_fails_with_the_last_error_on_a_failed_install() {
-        async fn put_installing() -> Json<LayaStatusDto> {
-            Json(status(LayaState::Installing))
+        async fn put_installing() -> Json<AiPermissionsStatusDto> {
+            Json(status(AiPermissionsState::Installing))
         }
-        async fn get_installing() -> Json<LayaStatusDto> {
-            Json(status(LayaState::Installing))
+        async fn get_installing() -> Json<AiPermissionsStatusDto> {
+            Json(status(AiPermissionsState::Installing))
         }
         async fn events() -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
-            let failed = LayaStatusDto {
+            let failed = AiPermissionsStatusDto {
                 last_error: Some("pip install failed: no matching distribution".into()),
-                ..status(LayaState::Failed)
+                ..status(AiPermissionsState::Failed)
             };
             let frame = Event::default()
-                .event("laya_updated")
+                .event("ai_permissions_updated")
                 .data(serde_json::to_string(&failed).unwrap());
             Sse::new(stream::once(async move { Ok(frame) }))
         }
         let app = Router::new()
             .route(
-                "/v1/permissions/laya",
+                "/v1/permissions/ai",
                 put(put_installing).get(get_installing),
             )
             .route("/v1/events/stream", get(events));
@@ -600,17 +624,17 @@ mod tests {
     /// stream never sends a single frame, and `--wait` still returns.
     #[tokio::test]
     async fn enable_wait_refetches_status_for_an_install_that_already_settled() {
-        async fn put_installing() -> Json<LayaStatusDto> {
-            Json(status(LayaState::Installing))
+        async fn put_installing() -> Json<AiPermissionsStatusDto> {
+            Json(status(AiPermissionsState::Installing))
         }
-        async fn get_ready() -> Json<LayaStatusDto> {
-            Json(status(LayaState::Ready))
+        async fn get_ready() -> Json<AiPermissionsStatusDto> {
+            Json(status(AiPermissionsState::Ready))
         }
         async fn events() -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
             Sse::new(stream::pending())
         }
         let app = Router::new()
-            .route("/v1/permissions/laya", put(put_installing).get(get_ready))
+            .route("/v1/permissions/ai", put(put_installing).get(get_ready))
             .route("/v1/events/stream", get(events));
         let (client, server) = serve(app).await;
 

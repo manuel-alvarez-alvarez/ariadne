@@ -3611,15 +3611,15 @@ async fn a_checkpoint_folds_the_write_ahead_log_back_in() {
     );
 }
 
-/// The Laya settings are one row, seeded with the defaults a fresh daemon
+/// The AI permission settings are one row, seeded with the defaults a fresh daemon
 /// answers with. A write moves the columns it names and leaves the rest, and
 /// the row survives a reopen: an install that ran for minutes must not be
 /// forgotten because the daemon restarted.
 #[tokio::test]
-async fn the_laya_settings_are_one_row_that_takes_partial_writes() {
+async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     let (store, dir) = test_store().await;
 
-    let defaults = store.laya_settings().await.unwrap();
+    let defaults = store.ai_permission_settings().await.unwrap();
     assert!(!defaults.enabled);
     assert_eq!(defaults.checkpoints, "english");
     assert_eq!(defaults.threshold, 0.8);
@@ -3630,14 +3630,20 @@ async fn the_laya_settings_are_one_row_that_takes_partial_writes() {
     assert!(!defaults.weights_present);
     assert_eq!(defaults.last_refresh_at, None);
     assert_eq!(defaults.last_error, None);
+    assert_eq!(defaults.question, None);
+    assert_eq!(defaults.allow_criteria, None);
+    assert_eq!(defaults.review_criteria, None);
 
     // What the user chose.
     let chosen = store
-        .update_laya_settings(LayaUpdate {
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
             enabled: Some(true),
             checkpoints: Some("all".into()),
             threshold: Some(0.6),
             schedule: Some(Some("03:30".into())),
+            question: Some(Some("Is this safe?".into())),
+            allow_criteria: Some(Some("reading".into())),
+            review_criteria: Some(Some("writing".into())),
             ..Default::default()
         })
         .await
@@ -3647,10 +3653,13 @@ async fn the_laya_settings_are_one_row_that_takes_partial_writes() {
     assert_eq!(chosen.threshold, 0.6);
     assert_eq!(chosen.schedule.as_deref(), Some("03:30"));
     assert_eq!(chosen.state, "disabled", "a choice is not an install");
+    assert_eq!(chosen.question.as_deref(), Some("Is this safe?"));
+    assert_eq!(chosen.allow_criteria.as_deref(), Some("reading"));
+    assert_eq!(chosen.review_criteria.as_deref(), Some("writing"));
 
     // What the installer found, written without touching what the user chose.
     let installed = store
-        .update_laya_settings(LayaUpdate {
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
             state: Some("ready".into()),
             installed_release: Some(Some("v0.1.4".into())),
             latest_release: Some(Some("v0.1.4".into())),
@@ -3669,20 +3678,23 @@ async fn the_laya_settings_are_one_row_that_takes_partial_writes() {
 
     // A `Some(None)` clears a column; an absent field keeps it.
     let cleared = store
-        .update_laya_settings(LayaUpdate {
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
             schedule: Some(None),
+            question: Some(None),
             ..Default::default()
         })
         .await
         .unwrap();
     assert_eq!(cleared.schedule, None);
+    assert_eq!(cleared.question, None);
+    assert_eq!(cleared.allow_criteria.as_deref(), Some("reading"));
     assert_eq!(cleared.installed_release.as_deref(), Some("v0.1.4"));
 
     // A state written only while enabled lands on an enabled row, and leaves
-    // a row turned off at `disabled`: what an install that ends after Laya
+    // a row turned off at `disabled`: what an install that ends after the model
     // was turned off writes.
     let moved = store
-        .update_laya_settings(LayaUpdate {
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
             state: Some("installing".into()),
             state_while_enabled: true,
             ..Default::default()
@@ -3691,7 +3703,7 @@ async fn the_laya_settings_are_one_row_that_takes_partial_writes() {
         .unwrap();
     assert_eq!(moved.state, "installing");
     store
-        .update_laya_settings(LayaUpdate {
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
             enabled: Some(false),
             state: Some("disabled".into()),
             ..Default::default()
@@ -3699,7 +3711,7 @@ async fn the_laya_settings_are_one_row_that_takes_partial_writes() {
         .await
         .unwrap();
     let kept_off = store
-        .update_laya_settings(LayaUpdate {
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
             state: Some("ready".into()),
             state_while_enabled: true,
             installed_release: Some(Some("v0.1.5".into())),
@@ -3714,7 +3726,7 @@ async fn the_laya_settings_are_one_row_that_takes_partial_writes() {
         "and the rest of the write still lands"
     );
     store
-        .update_laya_settings(LayaUpdate {
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
             enabled: Some(true),
             state: Some("ready".into()),
             installed_release: Some(Some("v0.1.4".into())),
@@ -3725,7 +3737,7 @@ async fn the_laya_settings_are_one_row_that_takes_partial_writes() {
 
     store.close().await;
     let reopened = Store::open(dir.path().join("test.db")).await.unwrap();
-    let kept = reopened.laya_settings().await.unwrap();
+    let kept = reopened.ai_permission_settings().await.unwrap();
     assert!(kept.enabled);
     assert_eq!(kept.state, "ready");
     assert_eq!(kept.threshold, 0.6);

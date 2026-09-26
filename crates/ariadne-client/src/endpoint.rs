@@ -65,12 +65,12 @@ pub struct FileConfig {
     pub prevent_sleep: Option<bool>,
     /// ACP registry index URL, fetched only on an explicit refresh.
     pub acp_registry_url: Option<String>,
-    /// The Python 3.10-or-newer interpreter Laya's install runs on
+    /// The Python 3.10-or-newer interpreter the model's install runs on
     /// (default: `python3` on the daemon's PATH).
     pub python_bin: Option<String>,
-    /// Where the Laya release document is read from, listing the wheel an
+    /// Where the AI permission model release document is read from, listing the wheel an
     /// install takes and the tag it carries.
-    pub laya_release_url: Option<String>,
+    pub ai_permissions_release_url: Option<String>,
     /// Additional ACP agents appended to the built-in registry.
     #[serde(default)]
     pub acp_agents: Vec<AcpAgentConfig>,

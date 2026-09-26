@@ -1,32 +1,32 @@
-//! The once-per-local-day Laya refresh clock.
+//! The once-per-local-day model refresh clock.
 
 use std::time::Duration;
 
 use chrono::{DateTime, Local, NaiveTime, TimeZone};
 
-use super::Laya;
-use ariadne_store::LayaUpdate;
+use super::AiPermissions;
+use ariadne_store::AiPermissionSettingsUpdate;
 
-pub fn start(laya: Laya, every: Duration) {
+pub fn start(ai_permissions: AiPermissions, every: Duration) {
     tokio::spawn(async move {
         let mut since = Local::now();
         let start_of_day = Local
             .from_local_datetime(&since.date_naive().and_hms_opt(0, 0, 0).expect("midnight"))
             .earliest()
             .expect("local midnight");
-        laya.run_schedule(start_of_day, since).await;
+        ai_permissions.run_schedule(start_of_day, since).await;
         loop {
             tokio::time::sleep(every).await;
             let now = Local::now();
-            laya.run_schedule(since, now).await;
+            ai_permissions.run_schedule(since, now).await;
             since = now;
         }
     });
 }
 
-impl Laya {
+impl AiPermissions {
     pub async fn run_schedule(&self, since: DateTime<Local>, now: DateTime<Local>) -> bool {
-        let Ok(settings) = self.store.laya_settings().await else {
+        let Ok(settings) = self.store.ai_permission_settings().await else {
             return false;
         };
         let Some(schedule) = settings.schedule.filter(|_| settings.enabled) else {
@@ -46,7 +46,7 @@ impl Laya {
         }
         let _ = self
             .store
-            .update_laya_settings(LayaUpdate {
+            .update_ai_permission_settings(AiPermissionSettingsUpdate {
                 last_scheduled_refresh: Some(Some(today)),
                 ..Default::default()
             })
