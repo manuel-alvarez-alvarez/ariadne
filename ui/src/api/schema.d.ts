@@ -1197,6 +1197,18 @@ export interface components {
         AiPermissionsState: "disabled" | "installing" | "ready" | "failed";
         /** @description The AI permission settings and the state of the install behind them. */
         AiPermissionsStatusDto: {
+            /**
+             * Format: double
+             * @description Danger at or below this value is allowed, 0 to 1.
+             * @example 0.2
+             */
+            allow_threshold: number;
+            /**
+             * Format: double
+             * @description Danger at or above this value is denied, 0 to 1.
+             * @example 0.8
+             */
+            deny_threshold: number;
             /** @description Whether the model answers permission requests at all. */
             enabled: boolean;
             /** @description Where the model server answers, once one is running (022, Server). */
@@ -1220,12 +1232,6 @@ export interface components {
              */
             schedule?: string | null;
             state: components["schemas"]["AiPermissionsState"];
-            /**
-             * Format: double
-             * @description How sure the model has to be before its answer is taken, 0 to 1.
-             * @example 0.8
-             */
-            threshold: number;
             /** @description Whether the checkpoints of the last good install are on disk. */
             weights_present: boolean;
         };
@@ -2203,6 +2209,16 @@ export interface components {
         };
         /** @description Partial update of the AI permission settings; an absent field stays unchanged. */
         UpdateAiPermissionsRequest: {
+            /**
+             * Format: double
+             * @description Danger at or below this value is allowed. Values outside 0 to 1 are refused.
+             */
+            allow_threshold?: number | null;
+            /**
+             * Format: double
+             * @description Danger at or above this value is denied. Values outside 0 to 1 are refused.
+             */
+            deny_threshold?: number | null;
             /** @description Turning it on starts an install; turning it off keeps the files. */
             enabled?: boolean | null;
             /**
@@ -2211,11 +2227,6 @@ export interface components {
              * @example 03:30
              */
             schedule?: string | null;
-            /**
-             * Format: double
-             * @description 0 to 1. Anything else is refused.
-             */
-            threshold?: number | null;
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateRepositoryRequest: {
@@ -3053,7 +3064,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description a threshold outside 0..=1 or a schedule that is not HH:MM */
+            /** @description invalid thresholds or a schedule that is not HH:MM */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -70,13 +70,20 @@ beforeEach(() => {
   stubDaemon()
 })
 
-it("renders the switch, the threshold, the schedule, Refresh and the facts, and nothing about checkpoints or prompts", async () => {
+it("renders the switch, the two thresholds, the schedule, Refresh and the facts, and nothing about checkpoints or prompts", async () => {
   renderScreen(<PermissionsPage />)
 
   expect(
     await screen.findByRole("switch", { name: "Enable the AI permission model" }),
   ).toBeDefined()
-  expect(screen.getByRole("spinbutton", { name: "Threshold" })).toBeDefined()
+  const allowThreshold = screen.getByRole("spinbutton", {
+    name: "Allow threshold",
+  }) as HTMLInputElement
+  const denyThreshold = screen.getByRole("spinbutton", {
+    name: "Deny threshold",
+  }) as HTMLInputElement
+  expect(allowThreshold.value).toBe("0.2")
+  expect(denyThreshold.value).toBe("0.8")
   expect(screen.getByLabelText("Daily refresh")).toBeDefined()
   expect(screen.getByRole("button", { name: "Refresh" })).toBeDefined()
   expect(screen.getByText("State")).toBeDefined()
@@ -147,16 +154,52 @@ describe("the enabled switch", () => {
   })
 })
 
-it("sends the threshold typed, once the field is left", async () => {
+it("sends the allow threshold typed, once the field is left", async () => {
   const user = userEvent.setup()
   renderScreen(<PermissionsPage />)
 
-  const threshold = await screen.findByRole("spinbutton", { name: "Threshold" })
-  await user.clear(threshold)
-  await user.type(threshold, "0.6")
+  const allowThreshold = await screen.findByRole("spinbutton", { name: "Allow threshold" })
+  await user.clear(allowThreshold)
+  await user.type(allowThreshold, "0.3")
   await user.tab()
 
-  await waitFor(() => expect(lastWrite()?.body).toEqual({ threshold: 0.6 }))
+  await waitFor(() => expect(lastWrite()?.body).toEqual({ allow_threshold: 0.3 }))
+})
+
+it("sends the deny threshold typed, once the field is left", async () => {
+  const user = userEvent.setup()
+  renderScreen(<PermissionsPage />)
+
+  const denyThreshold = await screen.findByRole("spinbutton", { name: "Deny threshold" })
+  await user.clear(denyThreshold)
+  await user.type(denyThreshold, "0.9")
+  await user.tab()
+
+  await waitFor(() => expect(lastWrite()?.body).toEqual({ deny_threshold: 0.9 }))
+})
+
+it("toasts the daemon's own message on a refused threshold", async () => {
+  stubDaemon({
+    status: 422,
+    code: "invalid_request",
+    message: "the allow threshold must stay under the deny threshold",
+  })
+  const user = userEvent.setup()
+  renderScreen(
+    <>
+      <Toaster />
+      <PermissionsPage />
+    </>,
+  )
+
+  const allowThreshold = await screen.findByRole("spinbutton", { name: "Allow threshold" })
+  await user.clear(allowThreshold)
+  await user.type(allowThreshold, "0.95")
+  await user.tab()
+
+  expect(
+    await screen.findByText(/the allow threshold must stay under the deny threshold/),
+  ).toBeDefined()
 })
 
 describe("the daily refresh", () => {

@@ -1017,7 +1017,7 @@
             "description": "no Python 3.12 or 3.13 to install into"
           },
           "422": {
-            "description": "a threshold outside 0..=1 or a schedule that is not HH:MM"
+            "description": "invalid thresholds or a schedule that is not HH:MM"
           }
         }
       }
@@ -2859,12 +2859,25 @@
         "description": "The AI permission settings and the state of the install behind them.",
         "required": [
           "enabled",
-          "threshold",
+          "allow_threshold",
+          "deny_threshold",
           "python",
           "state",
           "weights_present"
         ],
         "properties": {
+          "allow_threshold": {
+            "type": "number",
+            "format": "double",
+            "description": "Danger at or below this value is allowed, 0 to 1.",
+            "example": 0.2
+          },
+          "deny_threshold": {
+            "type": "number",
+            "format": "double",
+            "description": "Danger at or above this value is denied, 0 to 1.",
+            "example": 0.8
+          },
           "enabled": {
             "type": "boolean",
             "description": "Whether the model answers permission requests at all."
@@ -2918,12 +2931,6 @@
           },
           "state": {
             "$ref": "#/components/schemas/AiPermissionsState"
-          },
-          "threshold": {
-            "type": "number",
-            "format": "double",
-            "description": "How sure the model has to be before its answer is taken, 0 to 1.",
-            "example": 0.8
           },
           "weights_present": {
             "type": "boolean",
@@ -4965,6 +4972,22 @@
         "type": "object",
         "description": "Partial update of the AI permission settings; an absent field stays unchanged.",
         "properties": {
+          "allow_threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Danger at or below this value is allowed. Values outside 0 to 1 are refused."
+          },
+          "deny_threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Danger at or above this value is denied. Values outside 0 to 1 are refused."
+          },
           "enabled": {
             "type": [
               "boolean",
@@ -4979,14 +5002,6 @@
             ],
             "description": "`HH:MM` in 24-hour local time. Absent keeps the schedule; `null`\nturns it off.",
             "example": "03:30"
-          },
-          "threshold": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "0 to 1. Anything else is refused."
           }
         },
         "additionalProperties": false

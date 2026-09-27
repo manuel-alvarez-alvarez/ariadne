@@ -278,7 +278,8 @@ export function anAiPermissionsStatus(
 ): AiPermissionsStatusDto {
   return {
     enabled: false,
-    threshold: 0.8,
+    allow_threshold: 0.2,
+    deny_threshold: 0.8,
     schedule: null,
     python: { path: "/usr/bin/python3", version: "3.12.1", ok: true },
     state: "disabled",
