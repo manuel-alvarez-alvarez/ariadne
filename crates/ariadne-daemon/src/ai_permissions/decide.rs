@@ -23,12 +23,8 @@ static EMPTY_INPUT: LazyLock<Value> = LazyLock::new(|| json!({}));
 
 /// What the model made of one request. `confidence` is the allow score,
 /// `1 - noul`, and `threshold` the one it was held to.
-///
-/// `pub` only for `examples/ai_permission_eval.rs`, which links this crate as
-/// a library; nothing else outside the crate should read it.
-#[doc(hidden)]
 #[derive(Debug, PartialEq)]
-pub enum Decision {
+pub(crate) enum Decision {
     /// The request runs without asking anyone.
     Allow { confidence: f64, threshold: f64 },
     /// The model answered, but not an allow that clears the threshold:
@@ -43,9 +39,7 @@ pub enum Decision {
     Unanswered { reason: &'static str },
 }
 
-/// `pub` only for `examples/ai_permission_eval.rs`; see [`Decision`].
-#[doc(hidden)]
-pub async fn decide(
+pub(crate) async fn decide(
     live: &AiPermissionsLive,
     tool_call: &Value,
     options: &Value,
@@ -179,52 +173,31 @@ fn raw_input(tool_call: &Value) -> &Value {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::fs;
     use std::path::Path;
 
     use super::*;
 
+    /// Each line of `fixtures/requests.jsonl` is one tool call and its options, with the
+    /// model, state and questions the daemon must send for it: one call per kind of
+    /// request, safe and risky alike.
     #[test]
-    fn every_benchmark_case_builds_the_winning_request() {
-        let bench = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/ai-permissions");
-        let mut case_paths = fs::read_dir(bench.join("cases"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "jsonl")
-            })
-            .collect::<Vec<_>>();
-        case_paths.sort();
-        let cases = case_paths
-            .iter()
-            .flat_map(|path| lines(path))
-            .map(|line| serde_json::from_str::<Value>(&line).unwrap())
-            .map(|case| (case["id"].as_str().unwrap().to_string(), case))
-            .collect::<BTreeMap<_, _>>();
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ai_permissions/fixtures");
-        let fixture = lines(&fixtures.join("winner-states.jsonl"))
-            .map(|line| serde_json::from_str::<Value>(&line).unwrap())
-            .map(|expected| (expected["id"].as_str().unwrap().to_string(), expected))
-            .collect::<BTreeMap<_, _>>();
-        assert_eq!(cases.len(), fixture.len());
-
-        for (id, case) in &cases {
-            let expected = &fixture[id];
-            let body = request_body(&case["request"]["toolCall"], &case["request"]["options"]);
+    fn every_fixture_request_builds_its_recorded_model_state_and_questions() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/ai_permissions/fixtures/requests.jsonl");
+        let fixture = std::fs::read_to_string(path).unwrap();
+        let mut checked = 0;
+        for line in fixture.lines().filter(|line| !line.trim().is_empty()) {
+            let expected: Value = serde_json::from_str(line).unwrap();
+            let id = expected["id"].as_str().unwrap();
+            let body = request_body(
+                &expected["request"]["toolCall"],
+                &expected["request"]["options"],
+            );
             assert_eq!(body["model"], expected["model"], "{id}: model");
             assert_eq!(body["questions"], expected["questions"], "{id}: questions");
             assert_eq!(body["state"], expected["state"], "{id}: state");
+            checked += 1;
         }
-    }
-
-    fn lines(path: &Path) -> impl Iterator<Item = String> {
-        fs::read_to_string(path)
-            .unwrap()
-            .lines()
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-            .into_iter()
+        assert!(checked > 100, "the fixture holds {checked} requests");
     }
 }

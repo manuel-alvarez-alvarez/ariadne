@@ -29,7 +29,7 @@ class ReportTests(unittest.TestCase):
             EvaluationResult("d", 0.7, "allow", 5.25),
         ]
         with tempfile.TemporaryDirectory() as directory:
-            run.write_scores(Path(directory), "kev=configs/kev.json", cases, results)
+            run.write_scores(Path(directory), "kev_v1", cases, results)
             [path] = run.score_files([directory])
             read_cases, read_results = run.read_scores(path)
 
@@ -39,15 +39,23 @@ class ReportTests(unittest.TestCase):
     def test_report_prints_one_row_per_score_file(self) -> None:
         cases = [{"id": "a", "set": "safe", "expected": "allow"}]
         with tempfile.TemporaryDirectory() as directory:
-            run.write_scores(Path(directory), "laya", cases, [EvaluationResult("a", 0.9, "allow", 1.0)])
-            run.write_scores(Path(directory), "kev", cases, [EvaluationResult("a", 0.1, "escalate", 2.0)])
+            run.write_scores(Path(directory), "laya_v1", cases, [EvaluationResult("a", 0.9, "allow", 1.0)])
+            run.write_scores(Path(directory), "kev_v1", cases, [EvaluationResult("a", 0.1, "escalate", 2.0)])
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 code = run.main(["report", directory])
 
         self.assertEqual(code, 0)
         rows = output.getvalue().splitlines()[2:]
-        self.assertEqual([row.split()[0] for row in rows], ["kev", "laya"])
+        self.assertEqual([row.split()[0] for row in rows], ["kev_v1", "laya_v1"])
+
+    def test_heldout_replaces_the_development_cases_or_follows_named_ones(self) -> None:
+        self.assertEqual(run.run_case_files(None), run.DEFAULT_CASES)
+        self.assertEqual(run.run_case_files(None, heldout=True), run.HELDOUT_CASES)
+        named = str(run.HERE / "cases")
+        files = run.run_case_files([named], heldout=True)
+        self.assertEqual(files[-2:], run.HELDOUT_CASES)
+        self.assertFalse(any(f.name.endswith("-heldout.jsonl") for f in files[:-2]), files)
 
     def test_report_fails_on_an_empty_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stderr(io.StringIO()) as error:

@@ -1,22 +1,35 @@
-"""The common interface for AI permission benchmark evaluators."""
+"""The evaluator contract: every way of scoring the cases is an `Evaluator` subclass.
+
+An evaluator's life is `setup` once, `evaluate` once per case, then `teardown`. A backend
+(`evaluators/kev`, `evaluators/laya`) implements `setup` and `teardown` once, loading and
+releasing its model; each mode under it implements only `evaluate`, and registers itself
+under a unique `key` (`ai_bench.registry.register`) so the runner can list and run it.
+"""
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
-
-from . import decision as decision_mod
-from . import model as model_mod
+from typing import Any, ClassVar, Literal
 
 Label = Literal["allow", "escalate"]
 
 
 class EvaluatorError(RuntimeError):
-    """An evaluator could not return the contracted result for every case."""
+    """An evaluator could not produce the contracted result."""
+
+
+@dataclass(frozen=True)
+class Evaluation:
+    """What one `evaluate` call decided: the allow score (None when the model gave no usable
+    answer) and the label, `allow` only when the score clears the mode's own threshold."""
+
+    allow_score: float | None
+    label: Label
 
 
 @dataclass(frozen=True)
 class EvaluationResult:
-    """One evaluator decision for one benchmark case."""
+    """One evaluation as the runner records it: the case it was for and how long it took."""
 
     id: str
     allow_score: float | None
@@ -24,60 +37,25 @@ class EvaluationResult:
     latency_ms: float
 
 
-class Evaluator(Protocol):
-    def evaluate(
-        self, config: dict[str, Any] | None, cases: list[dict[str, Any]]
-    ) -> list[EvaluationResult]: ...
+class Evaluator(ABC):
+    """One way of deciding every case.
 
+    `key` names a concrete evaluator uniquely, `backend` names the backend whose environment
+    it runs in (the venv `run.sh` picks), and `description` is what `run.py list` prints.
+    """
 
-def _model_results(
-    predictor: model_mod.Predictor | model_mod.KevPredictor,
-    config: dict[str, Any] | None,
-    cases: list[dict[str, Any]],
-) -> list[EvaluationResult]:
-    configured = dict(config or {})
-    if not configured:
-        raise EvaluatorError("this evaluator needs a configuration")
-    raw_results = predictor.evaluate(configured, cases)
-    if len(raw_results) != len(cases):
-        raise EvaluatorError("evaluator returned %d results for %d cases" % (len(raw_results), len(cases)))
-    results = []
-    for case, raw in zip(cases, raw_results):
-        decision = decision_mod.decide(configured, raw["answer"])
-        results.append(
-            EvaluationResult(
-                id=case["id"],
-                allow_score=decision.allow_score,
-                label="allow" if decision.outcome == "allow" else "escalate",
-                latency_ms=float(raw["latency_ms"]),
-            )
-        )
-    return results
+    key: ClassVar[str] = ""
+    backend: ClassVar[str] = ""
+    description: ClassVar[str] = ""
 
+    @abstractmethod
+    def setup(self) -> None:
+        """Initialize the backend: load the model once, before any case."""
 
-class LayaEvaluator:
-    """Run Laya in process using the selected representation and question."""
+    @abstractmethod
+    def evaluate(self, case: dict[str, Any]) -> Evaluation:
+        """Decide one case."""
 
-    def __init__(self) -> None:
-        self.predictor = model_mod.Predictor()
-
-    def evaluate(self, config: dict[str, Any] | None, cases: list[dict[str, Any]]) -> list[EvaluationResult]:
-        return _model_results(self.predictor, config, cases)
-
-
-class KevEvaluator:
-    """Run Kev in process using the selected representation and question."""
-
-    def __init__(self) -> None:
-        self.predictor = model_mod.KevPredictor()
-
-    def evaluate(self, config: dict[str, Any] | None, cases: list[dict[str, Any]]) -> list[EvaluationResult]:
-        return _model_results(self.predictor, config, cases)
-
-
-def make_evaluator(name: str) -> Evaluator:
-    if name == "laya":
-        return LayaEvaluator()
-    if name == "kev":
-        return KevEvaluator()
-    raise EvaluatorError("unknown evaluator %r (choose laya or kev)" % name)
+    @abstractmethod
+    def teardown(self) -> None:
+        """Stop the backend and release what `setup` loaded."""

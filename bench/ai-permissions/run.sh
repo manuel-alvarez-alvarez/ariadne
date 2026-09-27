@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Run every AI permission evaluator over the same cases and print one table.
 #
-# `laya` and `kev` load their models in process and cannot share an
-# interpreter (Laya needs Python 3.14, Kev 3.12/3.13 and another torch), so
-# each gets a virtual environment of its own. This script creates the ones
-# that are missing, runs `run.py run` once per evaluator in the right one,
+# Evaluators are registered by key (`run.py list`), and each belongs to a
+# backend, `laya` or `kev`. The two load their models in process and cannot
+# share an interpreter (Laya needs Python 3.14, Kev 3.12/3.13 and another
+# torch), so each backend gets a virtual environment of its own. This script
+# creates the ones that are missing, runs `run.py run` once per evaluator in
+# its backend's one,
 # collects the per-case CSVs in a directory for this run, and prints one table
 # over all of them with `run.py report`.
 #
@@ -27,12 +29,13 @@ Run the AI permission evaluators, each in its own virtual environment, and
 print one table over their results.
 
 Options:
-  -e, --evaluator NAME[=CONFIG]  evaluator to run (laya or kev), with an
-                                 optional config; repeat for each one.
-                                 Default: laya and kev
+  -e, --evaluator KEY            evaluator to run, by its key from
+                                 `run.py list`; repeat for each one.
+                                 Default: every registered evaluator
   -c, --cases PATH               case file or directory; repeat for each one.
                                  Default: run.py's development cases
-      --heldout                  run the held-out cases instead
+      --heldout                  run the held-out cases: instead of the
+                                 development ones, or after --cases
       --real                     also score approved requests from ariadne.db
       --sweep                    print each evaluator's threshold sweep
   -o, --out DIR                  where the CSVs, logs and report go.
@@ -56,6 +59,7 @@ say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 evaluators=()
 cases=()
+heldout=0
 real=0
 sweep=0
 out=""
@@ -65,7 +69,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -e|--evaluator) [ $# -ge 2 ] || die "$1 needs a value"; evaluators+=("$2"); shift 2 ;;
         -c|--cases) [ $# -ge 2 ] || die "$1 needs a value"; cases+=("$2"); shift 2 ;;
-        --heldout) cases+=("$HERE/cases/safe-heldout.jsonl" "$HERE/cases/adversarial-heldout.jsonl"); shift ;;
+        --heldout) heldout=1; shift ;;
         --real) real=1; shift ;;
         --sweep) sweep=1; shift ;;
         -o|--out) [ $# -ge 2 ] || die "$1 needs a value"; out="$2"; shift 2 ;;
@@ -75,12 +79,7 @@ while [ $# -gt 0 ]; do
         *) usage >&2; die "unknown option $1" ;;
     esac
 done
-[ ${#evaluators[@]} -gt 0 ] || evaluators=(laya kev)
-
 export HF_HOME="${HF_HOME:-$AI_HOME/hf}"
-
-# The backend is the evaluator name before any `=config`.
-backend_of() { echo "${1%%=*}"; }
 
 first_python() {
     local candidate
@@ -142,20 +141,39 @@ ensure_venv() {
     echo "$venv/bin/python"
 }
 
-# The interpreter each evaluator runs under.
-python_for() {
-    case "$(backend_of "$1")" in
-        laya|kev) ensure_venv "$(backend_of "$1")" ;;
-        *) die "unknown evaluator $(backend_of "$1") (choose laya or kev)" ;;
-    esac
+# Every registered evaluator as `key<TAB>backend` lines. Listing imports no
+# model, so any Python 3 can do it.
+registered="$("$(first_python python3)" "$HERE/run.py" list --tsv)" || die "could not list the evaluators"
+[ ${#evaluators[@]} -gt 0 ] || evaluators=($(printf '%s\n' "$registered" | cut -f1))
+
+# The backend an evaluator key belongs to.
+backend_of() {
+    local backend
+    backend="$(printf '%s\n' "$registered" | awk -F '\t' -v key="$1" '$1 == key { print $2 }')"
+    [ -n "$backend" ] || die "no evaluator $1; \`run.py list\` shows the registered ones"
+    echo "$backend"
 }
 
+# Prepare each backend's venv once, however many of its evaluators run (so
+# --rebuild rebuilds it once), and give every evaluator its backend's
+# interpreter. `prepared` holds `backend<TAB>python` lines (bash 3.2 has no
+# associative arrays).
 say "Preparing environments"
+prepared=""
 pythons=()
 for evaluator in "${evaluators[@]}"; do
-    python="$(python_for "$evaluator")"
+    backend="$(backend_of "$evaluator")" || exit 1
+    python="$(printf '%s\n' "$prepared" | awk -F '\t' -v b="$backend" '$1 == b { print $2 }')"
+    if [ -z "$python" ]; then
+        case "$backend" in
+            laya|kev) python="$(ensure_venv "$backend")" ;;
+            *) die "no environment for backend $backend of $evaluator" ;;
+        esac
+        prepared="$prepared$backend	$python
+"
+    fi
     pythons+=("$python")
-    echo "$(backend_of "$evaluator"): $python"
+    echo "$evaluator ($backend): $python"
 done
 [ "$setup_only" -eq 0 ] || exit 0
 
@@ -169,13 +187,14 @@ mkdir -p "$out/logs"
 
 run_args=(run --out "$out")
 [ ${#cases[@]} -eq 0 ] || run_args+=(--cases "${cases[@]}")
+[ "$heldout" -eq 0 ] || run_args+=(--heldout)
 [ "$real" -eq 0 ] || run_args+=(--real)
 
 failed=()
 for i in "${!evaluators[@]}"; do
     evaluator="${evaluators[$i]}"
     say "Running $evaluator"
-    log="$out/logs/$(backend_of "$evaluator").log"
+    log="$out/logs/$evaluator.log"
     if ! "${pythons[$i]}" "$HERE/run.py" "${run_args[@]}" --evaluator "$evaluator" 2>&1 | tee "$log"; then
         failed+=("$evaluator")
         echo "$evaluator failed; its output is in $log" >&2

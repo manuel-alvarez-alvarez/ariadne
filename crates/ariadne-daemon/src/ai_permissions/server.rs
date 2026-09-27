@@ -138,10 +138,10 @@ async fn launch(ai_permissions: &AiPermissions) -> anyhow::Result<(Child, String
 /// Start `kev.serve` under [`GUARD`], on an ephemeral loopback port, exactly
 /// as the daemon starts it: `decide::RUN`, the model's Hugging Face cache
 /// under `home`, offline.
-///
-/// `pub` only for `examples/ai_permission_eval.rs`; see [`super::decide`].
-#[doc(hidden)]
-pub async fn spawn(home: &Path, serve_command: Vec<String>) -> anyhow::Result<(Child, String)> {
+pub(crate) async fn spawn(
+    home: &Path,
+    serve_command: Vec<String>,
+) -> anyhow::Result<(Child, String)> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     drop(listener);
@@ -182,9 +182,7 @@ fn guarded(program: &str, args: &[String]) -> ProcessCommand {
     child
 }
 
-/// `pub` only for `examples/ai_permission_eval.rs`; see [`spawn`].
-#[doc(hidden)]
-pub async fn health(child: &mut Child, endpoint: &str, timeout: Duration) -> bool {
+pub(crate) async fn health(child: &mut Child, endpoint: &str, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     let client = reqwest::Client::new();
     while Instant::now() < deadline {
@@ -204,9 +202,7 @@ pub async fn health(child: &mut Child, endpoint: &str, timeout: Duration) -> boo
     false
 }
 
-/// `pub` only for `examples/ai_permission_eval.rs`; see [`spawn`].
-#[doc(hidden)]
-pub async fn stop(child: &mut Child) {
+pub(crate) async fn stop(child: &mut Child) {
     if let Some(group) = child.id().and_then(|pid| Pid::from_raw(pid.cast_signed())) {
         let _ = kill_process_group(group, Signal::KILL);
     }

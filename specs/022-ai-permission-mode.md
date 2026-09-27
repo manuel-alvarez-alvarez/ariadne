@@ -16,7 +16,7 @@ tests:
   - crates/ariadne-daemon/src/ai_permissions/install.rs
   - crates/ariadne-daemon/src/ai_permissions/server.rs
   - crates/ariadne-daemon/src/ai_permissions/decide.rs
-  - crates/ariadne-daemon/examples/ai_permission_eval.rs
+  - crates/ariadne-daemon/src/ai_permissions/fixtures/requests.jsonl
   - crates/ariadne-daemon/src/http/permissions.rs
   - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-store/tests/store.rs
@@ -239,29 +239,33 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Benchmark
 
-32. `bench/ai-permissions/` holds case JSON Lines, evaluator code, `run.py`,
-    `run.sh`, the `laya` and `kev` configurations, its README, and tests.
-    Evaluators take an optional configuration and ordered cases, then return
-    ordered results with an id, optional allow score, `allow` or `escalate`
-    label, and latency. The `laya` and `kev` evaluators use that interface,
-    each loading its model in process.
-33. `run.py validate` keeps the case validation contract. `run.py run` accepts
-    one or more `--evaluator name[=config]` values, uses a bundled config when
-    one exists, defaults to development cases without held-out cases, and can
-    add read-only real cases, threshold sweeps, and per-case CSV output. Its
-    table reports safe coverage, elevated and adversarial approvals, AUROC,
-    positive-class precision, recall, F1, accuracy, median latency, and real
-    coverage when requested. It writes no result Markdown. `run.py report`
-    prints one table from the per-case CSV files earlier runs wrote, and
-    `run.sh` runs each evaluator in its own virtual environment, which it
-    creates when missing, then reports over all of them.
-34. Any change to the checkpoint, representation, question or threshold
-    reruns the benchmark and regenerates
-    `crates/ariadne-daemon/src/ai_permissions/fixtures/winner-states.jsonl`.
-    `cargo run -p ariadne-daemon --example ai_permission_eval` runs the
-    daemon's own request and threshold code over case JSON Lines
-    from stdin, against a running Kev server or one it starts from the
-    daemon's own install, for checking the daemon's path against the cases.
+32. `bench/ai-permissions/` holds case JSON Lines, `run.py`, `run.sh`, the
+    shared `ai_bench` library, the `evaluators` package, its README, and
+    tests. It shares no file with `crates/` in either direction: the daemon
+    reads nothing under `bench/`, and the benchmark reads nothing under
+    `crates/`. It reads the daemon's install only at run time, for its model
+    environments and weights (`~/.ariadne/ai-permissions`) and, with
+    `--real`, approved requests from `~/.ariadne/ariadne.db`, read-only.
+33. Every evaluator subclasses `ai_bench.evaluator.Evaluator`, whose three
+    methods are `setup` (start the backend), `evaluate` (decide one case: an
+    optional allow score and an `allow` or `escalate` label) and `teardown`
+    (stop the backend). `evaluators/kev` and `evaluators/laya` each hold a
+    backend base class that implements `setup` and `teardown`, loading and
+    releasing its model in process, and any number of modes under it that
+    implement `evaluate`. A mode registers under a unique, versioned key
+    (`kev_v1`, `laya_v1`); a key registered twice is refused.
+34. `run.py list` prints every registered evaluator with its backend and
+    description, and `run.py run --evaluator <key>` runs one: `setup` once,
+    `evaluate` per case, timed, and `teardown` however the run ends.
+    `run.py validate` keeps the case validation contract. `run` defaults to
+    development cases, adds the held-out ones with `--heldout`, and can add
+    read-only real cases and threshold sweeps. It writes one per-case CSV
+    per evaluator and prints a table of safe coverage, elevated and
+    adversarial approvals, AUROC, positive-class precision, recall, F1,
+    accuracy, median latency, and real coverage when requested. `run.py
+    report` prints that table again from CSVs. `run.sh` runs each evaluator
+    in its backend's virtual environment, which it creates when missing,
+    then reports over all of them.
 35. Benchmark scores remain measurements from a local model, device, and
     changing read-only real-request sample. The model reads one request, cut
     at 2,000 characters of input, without seeing what runs later; elevated
@@ -347,9 +351,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - `python_bin` is read from `config.toml`, and `ai_permissions_release_url` is refused,
   and the test seams are not keys of it
   (`config.rs::tests::the_ai_permissions_keys_a_user_may_set_are_read_and_the_test_seams_are_not`).
-- Every benchmark case builds the same model, questions and state as the
-  committed fixture
-  (`ai_permissions::decide::tests::every_benchmark_case_builds_the_winning_request`).
+- Every fixture request builds its recorded model, questions and state, one
+  request per kind of call
+  (`ai_permissions::decide::tests::every_fixture_request_builds_its_recorded_model_state_and_questions`).
 - A confident allow selects the allowing option, records `decided_by: "ai"`
   and its confidence, raises no attention, and sends the benchmarked state and
   `noul` question with `model = "kev-latest"` to the model
@@ -399,17 +403,16 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   `::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
 - A reply of the model renders its decider and confidence
   (`ariadne-console::tui::picker::tests::an_ai_answer_names_the_model_and_its_confidence`).
-- `examples/ai_permission_eval.rs` reads case JSON Lines and answers one line
-  per case, in the contracted shape, for an allow and an escalate either side
-  of the threshold
-  (`ai_permission_eval.rs::tests::the_output_line_serializes_to_the_contracted_shape`,
-  `::an_allow_and_an_escalate_land_at_the_threshold`).
 - The benchmark validates every committed case file and uses development files
   by default (`bench/ai-permissions/run.py validate bench/ai-permissions/cases/`).
 - The benchmark metrics calculate allow-positive precision, recall, F1,
   accuracy, AUROC, and coverage (`bench/ai-permissions/tests/test_metrics.py`).
 - The report prints one row per per-case score file
   (`bench/ai-permissions/tests/test_report.py`).
+- Every registered evaluator is a concrete mode of the `kev` or `laya` base,
+  a duplicate key is refused, and a run sets up once, evaluates every case in
+  order and tears down even when a case fails
+  (`bench/ai-permissions/tests/test_evaluators.py`).
 
 ## Sources
 

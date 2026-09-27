@@ -1,19 +1,17 @@
-"""Build the `state` and `questions` values a configuration sends to the model.
+"""Build the `state` and `questions` values an evaluator sends to its model.
 
-A representation is a pure function of the case's request and repository. `json` with
-`fields = title, kind, input, options` reproduces the production state built by
-`crates/ariadne-daemon/src/ai_permissions/decide.rs` exactly.
+Each builder is a pure function of a case's request and repository. `fields` picks which
+parts of the call the state carries (`JSON_KEYS` / `STRUCTURED_KEYS` name them), in order;
+an empty value is left out.
 """
 from __future__ import annotations
 
 import json as jsonlib
 from typing import Any
 
-
 INPUT_CUT = 2_000
 
-# field name (as it appears in a config's `fields` list) -> key used in the `json`
-# representation. These match the literal keys `decide.rs` sends today.
+# field name (as a builder's `fields` names it) -> key used in the `json` representation.
 JSON_KEYS = {
     "name": "name",
     "title": "tool",
@@ -84,8 +82,8 @@ def _field_value(field: str, request: dict[str, Any], repository: str, input_cut
     raise ValueError("unknown field %r" % field)
 
 
-def build_raw(request: dict[str, Any], repository: str, fields: list[str], input_cut: int = INPUT_CUT) -> str:
-    """The compact JSON of `rawInput` alone. `fields`, `repository` and `input_cut` are ignored."""
+def build_raw(request: dict[str, Any]) -> str:
+    """The compact JSON of `rawInput` alone."""
     raw_input = request.get("toolCall", {}).get("rawInput", {}) or {}
     return jsonlib.dumps(raw_input, ensure_ascii=False, separators=(",", ":"))
 
@@ -113,35 +111,15 @@ def build_json(request: dict[str, Any], repository: str, fields: list[str], inpu
     return obj
 
 
-REPRESENTATIONS = {
-    "raw": build_raw,
-    "structured": build_structured,
-    "json": build_json,
-}
+def noul_question(instructions: str, criteria: dict[str, str] | None = None) -> dict[str, Any]:
+    """The single `decision` question as a `noul`: the probability that its statement holds.
+    `criteria`, when given, is keyed `true` and `false`."""
+    question: dict[str, Any] = {"type": "noul", "instructions": instructions}
+    if criteria is not None:
+        question["criteria"] = criteria
+    return {"decision": question}
 
 
-def build_state(config: dict[str, Any], request: dict[str, Any], repository: str):
-    """The `state` value a configuration sends, exactly as it would be sent."""
-    representation = config["representation"]
-    fields = config.get("fields") or []
-    input_cut = int(config.get("input_cut") or INPUT_CUT)
-    builder = REPRESENTATIONS.get(representation)
-    if builder is None:
-        raise ValueError("unknown representation %r" % representation)
-    return builder(request, repository, fields, input_cut)
-
-
-def build_question(question_cfg: dict[str, Any]) -> dict[str, Any]:
-    """The single `decision` question laya's `Router.predict` expects."""
-    qtype = question_cfg["type"]
-    q: dict[str, Any] = {"type": qtype, "instructions": question_cfg["instructions"]}
-    if qtype == "choice":
-        q["criteria"] = question_cfg["criteria"]
-    elif qtype == "noul":
-        if "criteria" in question_cfg:
-            q["criteria"] = question_cfg["criteria"]
-        if "display_labels" in question_cfg:
-            q["labels"] = question_cfg["display_labels"]
-    else:
-        raise ValueError("unsupported question type %r" % qtype)
-    return {"decision": q}
+def choice_question(instructions: str, criteria: dict[str, str]) -> dict[str, Any]:
+    """The single `decision` question as a `choice` between `criteria`'s keys."""
+    return {"decision": {"type": "choice", "instructions": instructions, "criteria": criteria}}

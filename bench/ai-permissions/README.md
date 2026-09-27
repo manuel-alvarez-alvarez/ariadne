@@ -3,6 +3,68 @@
 This benchmark runs permission cases through one or more evaluators and prints
 their scores. It is a local measurement tool; it does not run in CI.
 
+It is self-contained: nothing here reads a file under `crates/`, and the daemon
+reads nothing here. The one link is at run time, through the daemon's install:
+the model environments and weights under `~/.ariadne/ai-permissions`, and, with
+`--real`, approved requests from `~/.ariadne/ariadne.db`, opened read-only.
+
+## Layout
+
+```text
+run.py              the runner: validate, list, run, report
+run.sh              runs evaluators, each in its backend's virtual environment
+cases/              the cases, as JSON Lines
+ai_bench/           shared code: cases, metrics, state and question builders,
+                    decisions, the Evaluator base class and the registry
+evaluators/kev/     the Kev backend (__init__.py) and its modes (kev_v1.py, ...)
+evaluators/laya/    the Laya backend (__init__.py) and its modes (laya_v1.py, ...)
+tests/              unit tests: python3 -m unittest discover -s tests
+```
+
+## Evaluators
+
+Every evaluator subclasses `ai_bench.evaluator.Evaluator` and has three methods:
+
+- `setup()` starts the backend: loads the model, once, before any case.
+- `evaluate(case)` decides one case, returning an `Evaluation`: an allow score
+  (or none, when the model gave no usable answer) and a label, `allow` or
+  `escalate`.
+- `teardown()` stops the backend and releases what `setup` loaded. The runner
+  calls it however the run ends.
+
+Each backend has one base class that implements `setup` and `teardown`:
+`KevEvaluator` in `evaluators/kev/__init__.py` loads a Kev run in process, and
+`LayaEvaluator` in `evaluators/laya/__init__.py` loads Laya's router with the
+mode's checkpoints. Neither starts a server or binds a port. A mode subclasses
+its backend's base, sets a unique `key` and a `description`, implements
+`evaluate`, and registers with `@register` (`ai_bench.registry`):
+
+```python
+@register
+class KevV1(KevEvaluator):
+    key = "kev_v1"
+    description = "..."
+
+    def evaluate(self, case):
+        state = representations.build_json(case["request"], case["repository"], FIELDS)
+        answer = self.answer(state, representations.noul_question(QUESTION, CRITERIA))
+        return decision.noul(answer, THRESHOLD, "false_is_allow")
+```
+
+Everything that distinguishes a mode (the state it builds, its question, its
+threshold, a different Kev `run` or Laya checkpoint) lives in its own module.
+Keys are versioned: a changed mode is a new module with the next key
+(`kev_v2`), so earlier results stay comparable. A key registered twice is
+refused.
+
+| Key | Backend | What it asks |
+| --- | --- | --- |
+| `kev_v1` | kev | Kev-4B with the daemon's request: the call's title, kind, input and options as JSON, nothing derived; the review `noul` (false allows) at threshold 0.59 |
+| `laya_v1` | laya | Laya `typed-decisions` with the structured state of every field; the review `noul` (false allows) at threshold 0.70 |
+
+`run.py list` prints the registered evaluators; `run.py list --tsv` prints
+`key<TAB>backend`, which `run.sh` uses.
+
 ## Setup
 
 `run.sh` builds what it needs on first use; `--setup` only builds it:
@@ -11,8 +73,8 @@ their scores. It is a local measurement tool; it does not run in CI.
 bench/ai-permissions/run.sh --setup
 ```
 
-Laya and Kev each run in a virtual environment of their own under
-`~/.ariadne/ai-permissions` and share its Hugging Face cache (`HF_HOME`,
+Each backend runs in a virtual environment of its own under
+`~/.ariadne/ai-permissions`, and both share its Hugging Face cache (`HF_HOME`,
 `~/.ariadne/ai-permissions/hf`):
 
 - `laya-venv`: Python 3.14 and the wheel of Laya's latest GitHub release
@@ -22,10 +84,10 @@ Laya and Kev each run in a virtual environment of their own under
 
 Neither is on PyPI; the `laya` there is another project. A venv that already
 has its package is used as it is, and one that does not is built with the
-latest version. `--rebuild` rebuilds both, which is how to update them. The
-latest Kev can be newer than the commit the daemon pins in
-`crates/ariadne-daemon/src/ai_permissions/install.rs`. `LAYA_PYTHON` and
-`KEV_PYTHON` pick the interpreter each is built with.
+latest version. `--rebuild` rebuilds them, which is how to update them; each is
+rebuilt once however many of its evaluators run. The latest Kev can be newer
+than the commit the daemon pins. `LAYA_PYTHON` and `KEV_PYTHON` pick the
+interpreter each is built with.
 
 ## Case format
 
@@ -34,71 +96,59 @@ Each `cases/*.jsonl` line is one JSON object with `id`, `set`, `expected`,
 and non-empty `options` list. `expected` is `allow` or `escalate`; elevated and
 adversarial cases always expect `escalate`.
 
+The cases come in two groups. The development cases (`safe.jsonl`,
+`elevated.jsonl`, `adversarial-dev.jsonl`) are the ones an evaluator is tuned
+against, and a run uses them by default. The held-out cases
+(`safe-heldout.jsonl`, `adversarial-heldout.jsonl`) are written apart and kept
+out of tuning, so a score on them shows how a mode does on requests it was
+never adjusted to: a mode that only scores well on the development cases has
+been fitted to them. Run them with `--heldout` when judging a mode, not while
+changing it.
+
 Validate the complete dataset:
 
 ```sh
 python3 bench/ai-permissions/run.py validate bench/ai-permissions/cases/
 ```
 
-## Evaluators
-
-Every evaluator accepts an optional JSON config and a list of cases, then
-returns one result per input case in the same order:
-
-```text
-id, allow_score|null, label (allow|escalate), latency_ms
-```
-
-The evaluators are `laya` and `kev`, and both run their models in process.
-Their configurations hold the representation, fields, question and
-threshold. Nothing decides a case before the model: every case is scored.
-
-The bundled `laya` and `kev` configurations are selected automatically when
-their evaluators are named. Pass another configuration with
-`--evaluator name=path/to/config.json`.
-
 ## Run
 
-Run every evaluator over the development cases and print one table:
+Run every registered evaluator over the development cases and print one table:
 
 ```sh
 bench/ai-permissions/run.sh
 ```
 
-Each evaluator runs `run.py run` in its own interpreter, in turn. The per-case
-CSVs, each evaluator's log and the combined `report.txt` go to
-`bench/ai-permissions/out/runs/<UTC time>/`, and `out/latest` links to the most
-recent run. An evaluator that fails does not stop the others; the script
+Each evaluator runs `run.py run` in its backend's interpreter, in turn. The
+per-case CSVs (one per key), each evaluator's log and the combined `report.txt`
+go to `bench/ai-permissions/out/runs/<UTC time>/`, and `out/latest` links to the
+most recent run. An evaluator that fails does not stop the others; the script
 reports it and exits non-zero after printing the table of the rest.
 
 ```sh
-run.sh -e kev                     # one evaluator only
-run.sh -e laya=my-laya.json       # another configuration
-run.sh --heldout                  # the held-out cases
+run.sh -e kev_v1                  # one evaluator, by key
+run.sh -e kev_v1 -e laya_v1       # several
+run.sh --heldout                  # the held-out cases instead
 run.sh -c cases/safe.jsonl --real --sweep
 ```
 
 `run.py report <dir or CSVs> [--sweep]` prints the table again from CSVs an
 earlier run wrote.
 
-To run one evaluator by hand, use its venv's interpreter:
+To run one evaluator by hand, use its backend's interpreter:
 
 ```sh
 HF_HOME=~/.ariadne/ai-permissions/hf \
 ~/.ariadne/ai-permissions/kev-venv/bin/python3 bench/ai-permissions/run.py run \
-  --evaluator kev
+  --evaluator kev_v1
 ```
 
 The default cases are `safe.jsonl`, `elevated.jsonl`, and
-`adversarial-dev.jsonl`. Held-out files run only when named directly:
-
-```sh
-HF_HOME=~/.ariadne/ai-permissions/hf \
-~/.ariadne/ai-permissions/kev-venv/bin/python3 bench/ai-permissions/run.py run \
-  --evaluator kev --cases bench/ai-permissions/cases/safe-heldout.jsonl
-```
-
-`--real` also reads approved requests from `~/.ariadne/ariadne.db` in read-only
-mode and adds real coverage to the table. `--sweep` prints each evaluator at
-thresholds from 0.00 through 1.00. Per-case CSV files go to
-`bench/ai-permissions/out/` by default; set another directory with `--out`.
+`adversarial-dev.jsonl`. `--heldout` runs `safe-heldout.jsonl` and
+`adversarial-heldout.jsonl` instead, or after the files `--cases` names; a
+directory given to `--cases` never adds its held-out files. `--real` also reads
+approved requests from `~/.ariadne/ariadne.db` in read-only mode and adds real
+coverage to the table. `--sweep` prints each evaluator at thresholds from 0.00
+through 1.00. A hand run writes its CSVs to `out/runs/<UTC time>/` and prints
+where; `--out` picks another directory. `run.sh` takes the same `--heldout`,
+`--real`, `--sweep` and `--out` options and passes them on.

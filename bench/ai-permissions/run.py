@@ -1,55 +1,53 @@
 #!/usr/bin/env python3
-"""Run AI permission benchmark evaluators against JSON Lines cases."""
+"""Run AI permission benchmark evaluators against JSON Lines cases.
+
+Evaluators live under `evaluators/`, one package per backend, and register under a unique
+key; `list` prints them and `run --evaluator <key>` runs one: `setup`, `evaluate` per case,
+then `teardown`.
+"""
 from __future__ import annotations
 
 import argparse
 import csv
-import json
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ai_bench import cases as cases_mod
 from ai_bench import db as db_mod
-from ai_bench import metrics
-from ai_bench.evaluator import EvaluationResult, EvaluatorError, make_evaluator
+from ai_bench import metrics, registry
+from ai_bench.evaluator import EvaluationResult, Evaluator, EvaluatorError
 
 HERE = Path(__file__).resolve().parent
-CONFIGS = HERE / "configs"
 DEFAULT_CASES = [HERE / "cases" / name for name in ("safe.jsonl", "elevated.jsonl", "adversarial-dev.jsonl")]
-DEFAULT_OUT = HERE / "out"
+HELDOUT_CASES = [HERE / "cases" / name for name in ("safe-heldout.jsonl", "adversarial-heldout.jsonl")]
+RUNS = HERE / "out" / "runs"
 
 
-def load_config(path: Path | None) -> dict[str, Any] | None:
-    if path is None:
-        return None
+def evaluate_all(evaluator: Evaluator, cases: list[dict[str, Any]]) -> list[EvaluationResult]:
+    """`setup`, one `evaluate` per case, timed, then `teardown` however the run ends."""
+    evaluator.setup()
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise EvaluatorError("could not read config %s: %s" % (path, exc)) from exc
-    except json.JSONDecodeError as exc:
-        raise EvaluatorError("invalid config %s: %s" % (path, exc)) from exc
-    if not isinstance(value, dict):
-        raise EvaluatorError("config %s must be a JSON object" % path)
-    return value
+        results = []
+        for case in cases:
+            started = time.perf_counter()
+            evaluation = evaluator.evaluate(case)
+            latency_ms = (time.perf_counter() - started) * 1000.0
+            if evaluation.label not in ("allow", "escalate"):
+                raise EvaluatorError("%s: invalid label %r for %s" % (evaluator.key, evaluation.label, case["id"]))
+            results.append(EvaluationResult(case["id"], evaluation.allow_score, evaluation.label, latency_ms))
+        return results
+    finally:
+        evaluator.teardown()
 
 
-def evaluator_spec(value: str) -> tuple[str, Path | None, str]:
-    name, separator, configured_path = value.partition("=")
-    if not name:
-        raise EvaluatorError("evaluator name cannot be empty")
-    if separator:
-        path = Path(configured_path)
-        return name, path, "%s=%s" % (name, path)
-    default = CONFIGS / (name + ".json")
-    if default.exists():
-        return name, default, "%s=configs/%s.json" % (name, name)
-    return name, None, name
-
-
-def run_case_files(targets: list[str] | None) -> list[Path]:
+def run_case_files(targets: list[str] | None, heldout: bool = False) -> list[Path]:
+    """The development cases, or the held-out ones with `heldout`; named `targets` instead,
+    plus the held-out ones with `heldout`. A directory never contributes its held-out files."""
     if targets is None:
-        return DEFAULT_CASES
+        return HELDOUT_CASES if heldout else DEFAULT_CASES
     files = []
     for target in targets:
         path = Path(target)
@@ -57,7 +55,7 @@ def run_case_files(targets: list[str] | None) -> list[Path]:
             files.extend(file for file in sorted(path.glob("*.jsonl")) if not file.name.endswith("-heldout.jsonl"))
         else:
             files.append(path)
-    return files
+    return files + (HELDOUT_CASES if heldout else [])
 
 
 def format_value(value: float | int | None) -> str:
@@ -178,24 +176,35 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_list(args: argparse.Namespace) -> int:
+    registered = registry.load_all()
+    if args.tsv:
+        for key, cls in registered.items():
+            print("%s\t%s" % (key, cls.backend))
+        return 0
+    width = max((len(key) for key in registered), default=3)
+    for key, cls in registered.items():
+        print("%s  %-4s  %s" % (key.ljust(width), cls.backend, cls.description))
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    cases = cases_mod.load_cases(run_case_files(args.cases))
+    evaluators = [registry.get(key) for key in args.evaluator]
+    cases = cases_mod.load_cases(run_case_files(args.cases, args.heldout))
     if args.real:
         cases.extend(db_mod.load_real_cases())
+    out = Path(args.out) if args.out else RUNS / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     summaries = []
     runs = []
-    for value in args.evaluator:
-        name, config_path, display_name = evaluator_spec(value)
-        evaluator = make_evaluator(name)
-        results = evaluator.evaluate(load_config(config_path), cases)
-        if len(results) != len(cases):
-            raise EvaluatorError("%s returned %d results for %d cases" % (name, len(results), len(cases)))
-        summaries.append((display_name, metrics.summary(cases, results)))
-        runs.append((display_name, cases, results))
-        write_scores(Path(args.out), display_name, cases, results)
+    for cls in evaluators:
+        results = evaluate_all(cls(), cases)
+        summaries.append((cls.key, metrics.summary(cases, results)))
+        runs.append((cls.key, cases, results))
+        write_scores(out, cls.key, cases, results)
     print_table(summaries, args.real)
     if args.sweep:
         print_sweeps(runs)
+    print("\nper-case scores: %s" % out)
     return 0
 
 
@@ -220,12 +229,16 @@ def build_parser() -> argparse.ArgumentParser:
     validate = subcommands.add_parser("validate", help="validate JSON Lines case files")
     validate.add_argument("targets", nargs="+", help="case files or directories")
     validate.set_defaults(func=cmd_validate)
+    listing = subcommands.add_parser("list", help="list the registered evaluators: key, backend, description")
+    listing.add_argument("--tsv", action="store_true", help="print key and backend only, tab separated")
+    listing.set_defaults(func=cmd_list)
     run = subcommands.add_parser("run", help="run one or more evaluators")
-    run.add_argument("--evaluator", action="append", required=True, help="name or name=config.json; repeat for each evaluator")
-    run.add_argument("--cases", nargs="+", help="case files or directories; held-out files must be named directly")
+    run.add_argument("--evaluator", action="append", required=True, help="an evaluator key from `list`; repeat for each evaluator")
+    run.add_argument("--cases", nargs="+", help="case files or directories (default: the development cases); a directory never adds its held-out files")
+    run.add_argument("--heldout", action="store_true", help="run the held-out cases: instead of the development ones, or after --cases")
     run.add_argument("--real", action="store_true", help="also load approved cases from ~/.ariadne/ariadne.db read-only")
     run.add_argument("--sweep", action="store_true", help="print the 0.00 to 1.00 score threshold sweep")
-    run.add_argument("--out", default=str(DEFAULT_OUT), help="directory for per-case CSV output (default: %(default)s)")
+    run.add_argument("--out", help="directory for the per-case CSVs (default: out/runs/<UTC time>)")
     run.set_defaults(func=cmd_run)
     report = subcommands.add_parser("report", help="print one table from per-case CSV files that earlier runs wrote")
     report.add_argument("targets", nargs="+", help="CSV files or directories of them")

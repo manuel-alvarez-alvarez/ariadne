@@ -9,18 +9,11 @@
 //! task at a time. Everything a client reads comes back as one
 //! [`AiPermissionsStatusDto`], and every change to it is published as `ai_permissions_updated`.
 
-/// `pub` only for `examples/ai_permission_eval.rs`, which runs the daemon's
-/// real decision path against a case file; nothing else outside the crate
-/// should read it.
-#[doc(hidden)]
-pub mod decide;
+pub(crate) mod decide;
 pub mod install;
 pub mod python;
 pub mod schedule;
-/// `pub` only for `examples/ai_permission_eval.rs`, which starts the model's
-/// server the same way the daemon does; see [`decide`].
-#[doc(hidden)]
-pub mod server;
+mod server;
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -224,10 +217,7 @@ impl AiPermissions {
 /// The threshold a daemon that cannot read its settings reports: the same one
 /// the schema defaults to, so a failure does not invent a number. It is the
 /// current benchmark winner's threshold.
-///
-/// `pub` only for `examples/ai_permission_eval.rs`'s default; see [`decide`].
-#[doc(hidden)]
-pub const DEFAULT_THRESHOLD: f64 = 0.59;
+pub(crate) const DEFAULT_THRESHOLD: f64 = 0.59;
 
 /// The state a stored spelling names. One nothing here knows reads as
 /// `failed`: a state that cannot be read is not one to answer requests on.
