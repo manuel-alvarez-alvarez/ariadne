@@ -391,11 +391,16 @@ what each setting does.
 ```sh
 ariadne permissions ai show                    # settings, install state, and python
 ariadne permissions ai enable --wait            # turn it on and wait for the install
-ariadne permissions ai set --threshold 0.6      # how sure the model has to be, 0 to 1
+ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
 ariadne permissions ai set --schedule 03:30     # daily reinstall, or --no-schedule
 ariadne permissions ai refresh --wait           # install again, on the settings as they stand
 ariadne permissions ai disable                  # keeps the files
 ```
+
+The allow threshold defaults to `0.41`, and the deny threshold defaults to
+`1.0`. Each must be from 0 to 1, and the allow threshold must be lower than
+the deny threshold. The daemon refuses an invalid pair without changing either
+setting.
 
 `enable` and `refresh` answer at once with `installing`; `--wait` blocks
 until the install leaves that state and exits 1 with the reason on a

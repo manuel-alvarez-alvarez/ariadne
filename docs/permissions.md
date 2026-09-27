@@ -80,30 +80,36 @@ does: every request, reading `~/.ssh` included, is the model's to judge. The
 model answers one question:
 “Does this coding-agent tool call need a person's review?”
 
-The answer is a probability that review is needed. Ariadne allows the request
-only when “no” is the model's most likely answer and its probability meets the
-configured threshold. Any other answer, an unavailable model, or a failed
+The answer is a danger score: the probability that review is needed. Ariadne
+allows a request at or below the allow threshold, denies one at or above the
+deny threshold, and asks between them. A denial selects only a one-time reject
+option. When the agent offers no one-time reject, the console asks instead;
+the model never selects a permanent rejection.
+
+An ask, an allow without an allowing option, an unavailable model, or a failed
 request falls back to `learn`: an existing approval is used, or the console
-asks you. The model's own allows are never remembered; only allowing console
-answers are. The answered console line names the model and its confidence when
-it decided.
+asks you. The model's own decisions are never remembered; only allowing
+console answers are. The answered console line names the model and danger
+score when it decided.
 
 When a request comes to you, the console says why under the call, while it
-asks — for example `AI said escalate (0.41, threshold 0.70)` or
+asks — for example `AI said ask (danger 0.41, allow 0.20, deny 0.80)` or
 `AI timed out`. `ariadne session logs` prints the same line
 under the question. Afterwards, `ariadne events --kind permission.replied`
 and the desktop app's activity tab say who answered and why the model did
 not:
 
 ```text
-allowed by AI (0.83, threshold 0.70)
-allow-once in the console — AI said escalate (0.41, threshold 0.70)
-allow-once in the console — AI said allow (0.62, threshold 0.80)
+allowed by AI (danger 0.06)
+denied by AI (danger 0.93)
+allow-once in the console — AI said ask (danger 0.41, allow 0.20, deny 0.80)
+allow-once in the console — AI said allow (danger 0.04, allow 0.05, deny 0.80)
 allow-once in the console — AI unavailable
 ```
 
-`AI said allow` below the threshold means the model leaned towards allowing
-but was not sure enough; lowering the threshold lets such requests through.
+`AI said allow` means no allowing option was available. `AI said deny` means
+no one-time reject option was available. `AI said ask` means the danger fell
+between the two thresholds.
 `AI unavailable`, `failed`, `timed out` and `malformed` mean the model gave
 no answer at all. The daemon log has one `AI permission decision` line per
 request with the same fields.
@@ -141,15 +147,17 @@ leaves the one before it on disk, so a working model stays working.
 Two more settings:
 
 ```sh
-ariadne permissions ai set --threshold 0.6      # how sure the model has to be, 0 to 1
+ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
 ariadne permissions ai set --schedule 03:30     # install again daily, local time
 ariadne permissions ai set --no-schedule        # and stop doing that
 ```
 
-The threshold is how sure the model has to be before its answer is taken; it
-defaults to `0.59`, and anything outside 0 to 1 is refused. Set another value
-with `ariadne permissions ai set --threshold <value>`. Existing installations
-keep their stored threshold. The schedule is
+The allow threshold defaults to `0.41`, and the deny threshold defaults to
+`1.0`. Both take values from 0 to 1, and the allow threshold must stay below
+the deny threshold. Lower the allow threshold to ask about more requests.
+Lower the deny threshold to reject more dangerous requests without asking.
+Set either or both with `ariadne permissions ai set --allow-threshold <value>
+--deny-threshold <value>`. The schedule is
 `HH:MM` in 24-hour local time, and the daily refresh reinstalls the same pinned
 package, adapter and base to repair them. It runs once per local date: if the daemon
 was down at the scheduled time, it catches up on its next start that day. A
@@ -218,7 +226,7 @@ permission mode among four.
 In the desktop app, the **Permissions** screen holds the same settings, in one
 card: a switch for `enabled` — disabled, with the Python version it found (or
 that it found none), while there is no Python 3.12 or 3.13 to install into —
-a number field for the threshold, and a time field for the daily refresh
+number fields for the allow and deny thresholds, and a time field for the daily refresh
 whose clear button is what turns it off. A Refresh button reruns the install,
 disabled while the model is off or already installing. Below them, a fact
 list shows the state, the installed and latest release, whether the

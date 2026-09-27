@@ -188,8 +188,10 @@ pub struct AcpRegistryIndex {
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct AiPermissionSettings {
     pub enabled: bool,
-    /// How sure the model has to be before its answer is taken, 0 to 1.
-    pub threshold: f64,
+    /// Danger at or below this value is allowed, 0 to 1.
+    pub allow_threshold: f64,
+    /// Danger at or above this value is denied, 0 to 1.
+    pub deny_threshold: f64,
     /// `HH:MM` in 24-hour local time, or `None` for no daily refresh.
     pub schedule: Option<String>,
     /// Local date of the last refresh the daily schedule started.

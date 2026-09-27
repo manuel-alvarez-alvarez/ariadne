@@ -34,8 +34,10 @@ use crate::timeouts::Timeouts;
 pub struct AiPermissionsLive {
     /// Where the model server answers.
     pub endpoint: String,
-    /// How sure the model has to be before its answer is taken, 0 to 1.
-    pub threshold: f64,
+    /// Danger at or below this value is allowed, 0 to 1.
+    pub allow_threshold: f64,
+    /// Danger at or above this value is denied, 0 to 1.
+    pub deny_threshold: f64,
 }
 
 /// The daemon's model: its settings, its install, and where its server is.
@@ -101,7 +103,8 @@ impl AiPermissions {
                 tracing::warn!(error = %error, "reading the AI permission settings failed");
                 return AiPermissionsStatusDto {
                     enabled: false,
-                    threshold: DEFAULT_THRESHOLD,
+                    allow_threshold: DEFAULT_ALLOW_THRESHOLD,
+                    deny_threshold: DEFAULT_DENY_THRESHOLD,
                     schedule: None,
                     python,
                     state: AiPermissionsState::Failed,
@@ -116,7 +119,8 @@ impl AiPermissions {
         };
         AiPermissionsStatusDto {
             enabled: row.enabled,
-            threshold: row.threshold,
+            allow_threshold: row.allow_threshold,
+            deny_threshold: row.deny_threshold,
             schedule: row.schedule,
             python,
             state: state_of(&row.state),
@@ -186,7 +190,8 @@ impl AiPermissions {
         let row = self.store.ai_permission_settings().await.ok()?;
         row.enabled.then_some(AiPermissionsLive {
             endpoint,
-            threshold: row.threshold,
+            allow_threshold: row.allow_threshold,
+            deny_threshold: row.deny_threshold,
         })
     }
 
@@ -214,10 +219,9 @@ impl AiPermissions {
     }
 }
 
-/// The threshold a daemon that cannot read its settings reports: the same one
-/// the schema defaults to, so a failure does not invent a number. It is the
-/// current benchmark winner's threshold.
-pub(crate) const DEFAULT_THRESHOLD: f64 = 0.59;
+/// The thresholds a daemon that cannot read its settings reports.
+pub(crate) const DEFAULT_ALLOW_THRESHOLD: f64 = 0.41;
+pub(crate) const DEFAULT_DENY_THRESHOLD: f64 = 1.0;
 
 /// The state a stored spelling names. One nothing here knows reads as
 /// `failed`: a state that cannot be read is not one to answer requests on.

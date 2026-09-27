@@ -271,7 +271,7 @@ pub enum TranscriptItem {
         options: Vec<PermissionOption>,
         answer: Option<String>,
         /// Why the AI permission model left the question to a person, where
-        /// it had a part: `AI said escalate (0.41, threshold 0.70)`.
+        /// it had a part: `AI said ask (danger 0.41, allow 0.20, deny 0.80)`.
         ai_note: Option<String>,
     },
     SystemNote {
@@ -591,9 +591,12 @@ pub fn permission_answer(payload: &Value, options: &[PermissionOption]) -> Strin
         return "cancelled".into();
     };
     if payload.get("decided_by").and_then(Value::as_str) == Some("ai")
-        && let Some(confidence) = payload.get("confidence").and_then(Value::as_f64)
+        && let Some(danger) = payload.get("danger").and_then(Value::as_f64)
     {
-        return format!("allowed by AI ({confidence:.2})");
+        return match payload.get("label").and_then(Value::as_str) {
+            Some("deny") => format!("denied by AI (danger {danger:.2})"),
+            _ => format!("allowed by AI (danger {danger:.2})"),
+        };
     }
     options
         .iter()

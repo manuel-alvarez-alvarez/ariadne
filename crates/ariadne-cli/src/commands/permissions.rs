@@ -35,15 +35,18 @@ pub(crate) enum AiPermissionsCommand {
         #[arg(long)]
         wait: bool,
     },
-    /// Change the threshold or daily refresh
+    /// Change the decision thresholds or daily refresh
     #[command(group = clap::ArgGroup::new("ai-set")
-        .args(["threshold", "schedule", "no_schedule"])
+        .args(["allow_threshold", "deny_threshold", "schedule", "no_schedule"])
         .required(true)
         .multiple(true))]
     Set {
-        /// How sure the model has to be before its answer is taken, 0 to 1
+        /// Allow danger at or below this value, 0 to 1
         #[arg(long, value_parser = parse_threshold)]
-        threshold: Option<f64>,
+        allow_threshold: Option<f64>,
+        /// Deny danger at or above this value, 0 to 1
+        #[arg(long, value_parser = parse_threshold)]
+        deny_threshold: Option<f64>,
         /// When the daily refresh runs, HH:MM in 24-hour local time
         #[arg(long, value_parser = parse_schedule, conflicts_with = "no_schedule")]
         schedule: Option<String>,
@@ -89,14 +92,16 @@ async fn run_ai(client: &Client, cmd: AiPermissionsCommand, format: Format) -> R
             settle(client, format, wait, client.refresh_ai_permissions().await?).await
         }
         AiPermissionsCommand::Set {
-            threshold,
+            allow_threshold,
+            deny_threshold,
             schedule,
             no_schedule,
         } => {
             let status = client
                 .update_ai_permissions(&UpdateAiPermissionsRequest {
                     enabled: None,
-                    threshold,
+                    allow_threshold,
+                    deny_threshold,
                     schedule: schedule_field(schedule, no_schedule),
                 })
                 .await?;
@@ -212,7 +217,8 @@ fn fields(status: &AiPermissionsStatusDto) -> Vec<(&'static str, Kv)> {
         ("enabled", yes_no(status.enabled, "no").into()),
         ("state", Kv::status(status.state.as_str())),
         ("python", python_field(&status.python).into()),
-        ("threshold", status.threshold.to_string().into()),
+        ("allow threshold", status.allow_threshold.to_string().into()),
+        ("deny threshold", status.deny_threshold.to_string().into()),
         (
             "schedule",
             status
@@ -253,7 +259,7 @@ fn last_refresh(at: Option<&str>) -> Kv {
     }
 }
 
-/// `--threshold`, refused locally before anything is sent: the daemon would
+/// A threshold flag, refused locally before anything is sent: the daemon would
 /// refuse the same value with a 422, but a round trip is not needed to know
 /// 0 to 1 from a typo.
 fn parse_threshold(s: &str) -> Result<f64, String> {
@@ -307,7 +313,8 @@ mod tests {
     fn status(state: AiPermissionsState) -> AiPermissionsStatusDto {
         AiPermissionsStatusDto {
             enabled: true,
-            threshold: 0.8,
+            allow_threshold: 0.2,
+            deny_threshold: 0.8,
             schedule: None,
             python: PythonDto {
                 path: Some("/usr/bin/python3".into()),
@@ -388,7 +395,7 @@ mod tests {
         };
         assert_eq!(
             crate::output::kv_block(&fields(&status), &crate::output::View::plain()),
-            "enabled            yes\nstate              ● ready\npython             3.12.1 at /usr/bin/python3\nthreshold          0.8\nschedule           off\ninstalled release  v0.1.4\nlatest release     v0.1.4\nweights            yes\nendpoint           http://127.0.0.1:8900\nlast refresh       never\nlast error         -"
+            "enabled            yes\nstate              ● ready\npython             3.12.1 at /usr/bin/python3\nallow threshold    0.2\ndeny threshold     0.8\nschedule           off\ninstalled release  v0.1.4\nlatest release     v0.1.4\nweights            yes\nendpoint           http://127.0.0.1:8900\nlast refresh       never\nlast error         -"
         );
     }
 
@@ -425,7 +432,7 @@ mod tests {
     }
 
     /// `enable` sends `{"enabled": true}` and nothing else.
-    /// or `threshold` key at all, `null` or otherwise.
+    /// or threshold key at all, `null` or otherwise.
     #[tokio::test]
     async fn enable_sends_enabled_true_and_nothing_else() {
         let (client, server, seen) = capturing_put().await;
@@ -450,7 +457,8 @@ mod tests {
         run(
             &client,
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
-                threshold: None,
+                allow_threshold: None,
+                deny_threshold: None,
                 schedule: None,
                 no_schedule: true,
             }),
@@ -463,15 +471,16 @@ mod tests {
         assert_eq!(seen.lock().unwrap()[0], json!({"schedule": null}));
     }
 
-    /// `set --threshold 0.6` sends `threshold` alone.
+    /// Both threshold flags send both fields and nothing else.
     #[tokio::test]
-    async fn set_threshold_sends_only_threshold() {
+    async fn set_thresholds_sends_both_fields_and_nothing_else() {
         let (client, server, seen) = capturing_put().await;
 
         run(
             &client,
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
-                threshold: Some(0.6),
+                allow_threshold: Some(0.2),
+                deny_threshold: Some(0.8),
                 schedule: None,
                 no_schedule: false,
             }),
@@ -481,7 +490,46 @@ mod tests {
         .unwrap();
         server.abort();
 
-        assert_eq!(seen.lock().unwrap()[0], json!({"threshold": 0.6}));
+        assert_eq!(
+            seen.lock().unwrap()[0],
+            json!({"allow_threshold": 0.2, "deny_threshold": 0.8})
+        );
+    }
+
+    /// The relationship between both settings depends on the stored value
+    /// when either flag is absent, so the daemon validates it.
+    #[tokio::test]
+    async fn set_prints_the_daemons_threshold_pair_error() {
+        async fn refused() -> (StatusCode, Json<ErrorBody>) {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorBody::new(
+                    "invalid_request",
+                    "allow threshold must be less than deny threshold, not 0.8 and 0.8",
+                )),
+            )
+        }
+        let app = Router::new().route("/v1/permissions/ai", put(refused));
+        let (client, server) = serve(app).await;
+
+        let err = run(
+            &client,
+            PermissionsCommand::Ai(AiPermissionsCommand::Set {
+                allow_threshold: Some(0.8),
+                deny_threshold: Some(0.8),
+                schedule: None,
+                no_schedule: false,
+            }),
+            Format::Table,
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+
+        assert_eq!(
+            err.downcast_ref::<ClientError>().unwrap().human(),
+            "allow threshold must be less than deny threshold, not 0.8 and 0.8"
+        );
     }
 
     /// The daemon's message survives whole, and `ai_disabled` picks up the

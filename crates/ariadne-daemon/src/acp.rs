@@ -1341,45 +1341,85 @@ impl RuntimeIncoming {
                 .has_learned_permission(&self.repository_id, &signature.tool_name, &signature.kind)
                 .await
                 .unwrap_or(false);
-        let ai_permissions_allow = matches!(ai_permissions_decision, Some(Decision::Allow { .. }))
-            && approved_option(params)
-                .as_deref()
-                .is_some_and(|option| allowing_option(params, option));
+        let ai_permissions_selection = match &ai_permissions_decision {
+            Some(Decision::Allow { .. }) => {
+                approved_option(params).filter(|option| allowing_option(params, option))
+            }
+            Some(Decision::Deny { .. }) => rejecting_option(params),
+            _ => None,
+        };
+        let deny_without_option = matches!(&ai_permissions_decision, Some(Decision::Deny { .. }))
+            && ai_permissions_selection.is_none();
         let waiting = matches!(self.permission_mode, PermissionMode::Ask)
-            || (remembers && !learned && !ai_permissions_allow);
+            || deny_without_option
+            || (remembers && !learned && ai_permissions_selection.is_none());
         // What the model made of the request, whoever answers it: the
         // question shows it while it waits, and the reply keeps it, so a
         // reader asking why the console was asked finds the score it fell
         // short with.
-        let (label, confidence, threshold, ai_error) = match &ai_permissions_decision {
-            Some(Decision::Allow {
-                confidence,
-                threshold,
-            }) => (Some("allow"), Some(*confidence), Some(*threshold), None),
-            Some(Decision::NotConfident {
-                label,
-                confidence,
-                threshold,
-            }) => (Some(*label), Some(*confidence), Some(*threshold), None),
-            Some(Decision::Unanswered { reason }) => (None, None, None, Some(*reason)),
-            None => (None, None, None, None),
+        let (label, danger, allow_threshold, deny_threshold, ai_error) =
+            match &ai_permissions_decision {
+                Some(Decision::Allow {
+                    danger,
+                    allow_threshold,
+                    deny_threshold,
+                }) => (
+                    Some("allow"),
+                    Some(*danger),
+                    Some(*allow_threshold),
+                    Some(*deny_threshold),
+                    None,
+                ),
+                Some(Decision::Ask {
+                    danger,
+                    allow_threshold,
+                    deny_threshold,
+                }) => (
+                    Some("ask"),
+                    Some(*danger),
+                    Some(*allow_threshold),
+                    Some(*deny_threshold),
+                    None,
+                ),
+                Some(Decision::Deny {
+                    danger,
+                    allow_threshold,
+                    deny_threshold,
+                }) => (
+                    Some("deny"),
+                    Some(*danger),
+                    Some(*allow_threshold),
+                    Some(*deny_threshold),
+                    None,
+                ),
+                Some(Decision::Unanswered { reason }) => (None, None, None, None, Some(*reason)),
+                None => (None, None, None, None, None),
+            };
+        let request_decided_by = if waiting {
+            None
+        } else if ai_permissions_selection.is_some() {
+            Some("ai")
+        } else if learned {
+            Some("learned")
+        } else {
+            Some("auto")
         };
         for (key, value) in [
+            ("decided_by", json!(request_decided_by)),
             ("label", json!(label)),
-            ("confidence", json!(confidence)),
-            ("threshold", json!(threshold)),
+            ("danger", json!(danger)),
+            ("allow_threshold", json!(allow_threshold)),
+            ("deny_threshold", json!(deny_threshold)),
             ("ai_error", json!(ai_error)),
         ] {
-            if !value.is_null() {
-                payload[key] = value;
-            }
+            payload[key] = value;
         }
         let receiver = waiting.then(|| self.begin_permission());
         self.end_text().await;
         self.sink.emit("permission_request", payload).await;
         let (selected, decided_by) = match receiver {
             Some(receiver) => (self.wait_for_permission(params, receiver).await?, "console"),
-            None if ai_permissions_allow => (approved_option(params), "ai"),
+            None if ai_permissions_selection.is_some() => (ai_permissions_selection, "ai"),
             None if learned => (approved_option(params), "learned"),
             None => (approved_option(params), "auto"),
         };
@@ -1388,8 +1428,9 @@ impl RuntimeIncoming {
                 tool = %signature.tool_name,
                 decided_by,
                 label,
-                confidence,
-                threshold,
+                danger,
+                allow_threshold,
+                deny_threshold,
                 ai_error,
                 "AI permission decision"
             );
@@ -1417,8 +1458,9 @@ impl RuntimeIncoming {
             .emit(
                 "permission.replied",
                 json!({"session_id": session_id, "option_id": selected,
-                       "decided_by": decided_by, "label": label, "confidence": confidence,
-                       "threshold": threshold, "ai_error": ai_error}),
+                       "decided_by": decided_by, "label": label, "danger": danger,
+                       "allow_threshold": allow_threshold, "deny_threshold": deny_threshold,
+                       "ai_error": ai_error}),
             )
             .await;
         Ok(json!({"outcome": outcome}))
@@ -2006,6 +2048,19 @@ fn approved_option(params: &Value) -> Option<String> {
         })
         .and_then(option_id)
         .or_else(|| options.first().and_then(option_id))
+}
+
+/// The first one-time rejection. A permanent rejection is never selected by
+/// the model because it changes future requests too.
+fn rejecting_option(params: &Value) -> Option<String> {
+    params
+        .get("options")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|option| option.get("kind").and_then(Value::as_str) == Some("reject_once"))?
+        .get("optionId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// A remembered permission is deliberately narrow: the ACP tool's human

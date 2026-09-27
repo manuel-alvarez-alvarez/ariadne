@@ -54,9 +54,12 @@ pub struct PythonDto {
 pub struct AiPermissionsStatusDto {
     /// Whether the model answers permission requests at all.
     pub enabled: bool,
-    /// How sure the model has to be before its answer is taken, 0 to 1.
+    /// Danger at or below this value is allowed, 0 to 1.
+    #[schema(example = 0.2)]
+    pub allow_threshold: f64,
+    /// Danger at or above this value is denied, 0 to 1.
     #[schema(example = 0.8)]
-    pub threshold: f64,
+    pub deny_threshold: f64,
     /// When the daily refresh runs, `HH:MM` in 24-hour local time. `null`
     /// turns the refresh off.
     #[schema(example = "03:30")]
@@ -84,8 +87,10 @@ pub struct AiPermissionsStatusDto {
 pub struct UpdateAiPermissionsRequest {
     /// Turning it on starts an install; turning it off keeps the files.
     pub enabled: Option<bool>,
-    /// 0 to 1. Anything else is refused.
-    pub threshold: Option<f64>,
+    /// Danger at or below this value is allowed. Values outside 0 to 1 are refused.
+    pub allow_threshold: Option<f64>,
+    /// Danger at or above this value is denied. Values outside 0 to 1 are refused.
+    pub deny_threshold: Option<f64>,
     /// `HH:MM` in 24-hour local time. Absent keeps the schedule; `null`
     /// turns it off.
     #[serde(
@@ -111,23 +116,24 @@ where
 
 /// Why the AI permission model did not decide a `permission.replied`, in the
 /// words `ariadne events`, the desktop app and the console all use:
-/// `AI said escalate (0.41, threshold 0.70)`, `AI timed out`. `None` where
+/// `AI said ask (danger 0.41, allow 0.20, deny 0.80)`, `AI timed out`. `None` where
 /// the model had no part in the reply: a mode other than `ai`, or a reply
 /// the model made itself.
 pub fn ai_permission_note(reply: &serde_json::Value) -> Option<String> {
     let text = |key: &str| reply.get(key).and_then(serde_json::Value::as_str);
-    if let (Some(label), Some(confidence)) = (
+    if let (Some(label), Some(danger), Some(allow), Some(deny)) = (
         text("label"),
-        reply.get("confidence").and_then(serde_json::Value::as_f64),
+        reply.get("danger").and_then(serde_json::Value::as_f64),
+        reply
+            .get("allow_threshold")
+            .and_then(serde_json::Value::as_f64),
+        reply
+            .get("deny_threshold")
+            .and_then(serde_json::Value::as_f64),
     ) {
-        return Some(
-            match reply.get("threshold").and_then(serde_json::Value::as_f64) {
-                Some(threshold) => {
-                    format!("AI said {label} ({confidence:.2}, threshold {threshold:.2})")
-                }
-                None => format!("AI said {label} ({confidence:.2})"),
-            },
-        );
+        return Some(format!(
+            "AI said {label} (danger {danger:.2}, allow {allow:.2}, deny {deny:.2})"
+        ));
     }
     text("ai_error").map(|error| format!("AI {error}"))
 }
@@ -140,11 +146,16 @@ mod tests {
 
     #[test]
     fn a_reply_names_why_the_model_did_not_decide_it() {
-        assert_eq!(
-            ai_permission_note(&json!({"label": "escalate", "confidence": 0.4129,
-                                        "threshold": 0.7})),
-            Some("AI said escalate (0.41, threshold 0.70)".into())
-        );
+        for label in ["allow", "ask", "deny"] {
+            assert_eq!(
+                ai_permission_note(&json!({"label": label, "danger": 0.4129,
+                                            "allow_threshold": 0.2,
+                                            "deny_threshold": 0.8})),
+                Some(format!(
+                    "AI said {label} (danger 0.41, allow 0.20, deny 0.80)"
+                ))
+            );
+        }
         assert_eq!(
             ai_permission_note(&json!({"ai_error": "timed out"})),
             Some("AI timed out".into())

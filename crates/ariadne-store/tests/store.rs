@@ -3621,7 +3621,8 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
 
     let defaults = store.ai_permission_settings().await.unwrap();
     assert!(!defaults.enabled);
-    assert_eq!(defaults.threshold, 0.59);
+    assert_eq!(defaults.allow_threshold, 0.41);
+    assert_eq!(defaults.deny_threshold, 1.0);
     assert_eq!(defaults.schedule, None);
     assert_eq!(defaults.state, "disabled");
     assert_eq!(defaults.installed_release, None);
@@ -3631,17 +3632,27 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     assert_eq!(defaults.last_error, None);
 
     // What the user chose.
-    let chosen = store
+    let partly_chosen = store
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
             enabled: Some(true),
-            threshold: Some(0.6),
+            allow_threshold: Some(0.2),
             schedule: Some(Some("03:30".into())),
             ..Default::default()
         })
         .await
         .unwrap();
+    assert_eq!(partly_chosen.allow_threshold, 0.2);
+    assert_eq!(partly_chosen.deny_threshold, 1.0);
+    let chosen = store
+        .update_ai_permission_settings(AiPermissionSettingsUpdate {
+            deny_threshold: Some(0.8),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     assert!(chosen.enabled);
-    assert_eq!(chosen.threshold, 0.6);
+    assert_eq!(chosen.allow_threshold, 0.2);
+    assert_eq!(chosen.deny_threshold, 0.8);
     assert_eq!(chosen.schedule.as_deref(), Some("03:30"));
     assert_eq!(chosen.state, "disabled", "a choice is not an install");
 
@@ -3661,7 +3672,8 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     assert_eq!(installed.state, "ready");
     assert_eq!(installed.installed_release.as_deref(), Some("v0.1.4"));
     assert!(installed.weights_present);
-    assert_eq!(installed.threshold, 0.6, "the user's choice stayed");
+    assert_eq!(installed.allow_threshold, 0.2, "the user's choice stayed");
+    assert_eq!(installed.deny_threshold, 0.8, "the user's choice stayed");
 
     // A `Some(None)` clears a column; an absent field keeps it.
     let cleared = store
@@ -3724,7 +3736,8 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
     let kept = reopened.ai_permission_settings().await.unwrap();
     assert!(kept.enabled);
     assert_eq!(kept.state, "ready");
-    assert_eq!(kept.threshold, 0.6);
+    assert_eq!(kept.allow_threshold, 0.2);
+    assert_eq!(kept.deny_threshold, 0.8);
     assert_eq!(kept.installed_release.as_deref(), Some("v0.1.4"));
 }
 

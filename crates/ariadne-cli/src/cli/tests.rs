@@ -1440,7 +1440,8 @@ fn every_permissions_verb_parses() {
     let Command::Permissions {
         command:
             PermissionsCommand::Ai(AiPermissionsCommand::Set {
-                threshold,
+                allow_threshold,
+                deny_threshold,
                 schedule,
                 no_schedule,
             }),
@@ -1449,8 +1450,10 @@ fn every_permissions_verb_parses() {
         "permissions",
         "ai",
         "set",
-        "--threshold",
-        "0.6",
+        "--allow-threshold",
+        "0.2",
+        "--deny-threshold",
+        "0.8",
         "--schedule",
         "03:30",
     ])
@@ -1458,7 +1461,8 @@ fn every_permissions_verb_parses() {
     else {
         panic!("permissions set");
     };
-    assert_eq!(threshold, Some(0.6));
+    assert_eq!(allow_threshold, Some(0.2));
+    assert_eq!(deny_threshold, Some(0.8));
     assert_eq!(schedule.as_deref(), Some("03:30"));
     assert!(!no_schedule);
 
@@ -1507,15 +1511,17 @@ fn permissions_set_schedule_and_no_schedule_are_a_usage_error() {
     );
 }
 
-/// A threshold outside 0 to 1 and a schedule that is not `HH:MM` are refused
+/// Thresholds outside 0 to 1 and a schedule that is not `HH:MM` are refused
 /// before anything is sent, in the same words the daemon would refuse them
 /// in — a round trip is not needed to know 0 to 1 from a typo.
 #[test]
 fn permissions_set_refuses_a_bad_threshold_or_schedule_locally() {
-    let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", "--threshold", "1.5"]) else {
-        panic!("1.5 is out of range");
-    };
-    assert!(err.to_string().contains("between 0 and 1"), "{err}");
+    for flag in ["--allow-threshold", "--deny-threshold"] {
+        let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", flag, "1.5"]) else {
+            panic!("1.5 is out of range");
+        };
+        assert!(err.to_string().contains("between 0 and 1"), "{err}");
+    }
 
     let Err(err) = try_parse(&["ariadne", "permissions", "ai", "set", "--schedule", "25:00"])
     else {

@@ -106,7 +106,7 @@ async fn settles_on(h: &Harness, state: AiPermissionsState) -> AiPermissionsStat
 // -- the tests ---------------------------------------------------------------
 
 /// A daemon nobody has configured answers with the defaults, and with the
-/// interpreter it probed: off, the threshold the schema
+/// interpreter it probed: off, the thresholds the schema
 /// carries, and no daily refresh.
 #[tokio::test]
 async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
@@ -115,7 +115,8 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
 
     let status = status(&h).await;
     assert!(!status.enabled);
-    assert_eq!(status.threshold, 0.59);
+    assert_eq!(status.allow_threshold, 0.41);
+    assert_eq!(status.deny_threshold, 1.0);
     assert_eq!(status.schedule, None);
     assert_eq!(status.state, AiPermissionsState::Disabled);
     assert_eq!(status.installed_release, None);
@@ -247,7 +248,7 @@ async fn an_install_that_fails_keeps_the_model_on_and_says_why() {
 }
 
 /// The settings a user chooses are kept, refused where they are not a
-/// threshold or a time, and read back by the daemon that comes up next: an
+/// threshold pair or a time, and read back by the daemon that comes up next: an
 /// install that ran for minutes must not be forgotten by a restart.
 #[tokio::test]
 async fn the_settings_are_validated_and_survive_a_daemon_restart() {
@@ -258,21 +259,29 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
 
     let chosen: AiPermissionsStatusDto = h
         .json(
-            update(json!({"threshold": 0.6, "schedule": "03:30"})),
+            update(json!({"allow_threshold": 0.2, "deny_threshold": 0.8,
+                          "schedule": "03:30"})),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(chosen.threshold, 0.6);
+    assert_eq!(chosen.allow_threshold, 0.2);
+    assert_eq!(chosen.deny_threshold, 0.8);
     assert_eq!(chosen.schedule.as_deref(), Some("03:30"));
 
-    for bad in [json!({"threshold": 1.5}), json!({"schedule": "25:00"})] {
+    for bad in [
+        json!({"allow_threshold": 1.5}),
+        json!({"deny_threshold": 1.5}),
+        json!({"allow_threshold": 0.8}),
+        json!({"schedule": "25:00"}),
+    ] {
         let refused: ErrorBody = h
             .json(update(bad.clone()), StatusCode::UNPROCESSABLE_ENTITY)
             .await;
         assert_eq!(refused.error.code, "invalid_request", "{bad}");
     }
     let unchanged = status(&h).await;
-    assert_eq!(unchanged.threshold, 0.6, "a refusal wrote nothing");
+    assert_eq!(unchanged.allow_threshold, 0.2, "a refusal wrote nothing");
+    assert_eq!(unchanged.deny_threshold, 0.8, "a refusal wrote nothing");
     assert_eq!(unchanged.schedule.as_deref(), Some("03:30"));
 
     // The daemon that comes up next reads the same settings.
@@ -284,12 +293,13 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
         Timeouts::default(),
     );
     let kept = ai_permissions.status().await;
-    assert_eq!(kept.threshold, 0.6);
+    assert_eq!(kept.allow_threshold, 0.2);
+    assert_eq!(kept.deny_threshold, 0.8);
     assert_eq!(kept.schedule.as_deref(), Some("03:30"));
 
     // An absent schedule keeps it; a null turns it off.
     let untouched: AiPermissionsStatusDto = h
-        .json(update(json!({"threshold": 0.7})), StatusCode::OK)
+        .json(update(json!({"allow_threshold": 0.3})), StatusCode::OK)
         .await;
     assert_eq!(untouched.schedule.as_deref(), Some("03:30"));
     let off: AiPermissionsStatusDto = h
@@ -673,7 +683,8 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
 
     let _: AiPermissionsStatusDto = h
         .json(
-            update(json!({"enabled": true, "threshold": 0.6})),
+            update(json!({"enabled": true, "allow_threshold": 0.2,
+                          "deny_threshold": 0.8})),
             StatusCode::OK,
         )
         .await;
@@ -684,7 +695,8 @@ async fn the_endpoint_is_the_configured_one_and_live_needs_the_model_on() {
         .await
         .expect("the model is on and served");
     assert_eq!(live.endpoint, "http://127.0.0.1:9001");
-    assert_eq!(live.threshold, 0.6);
+    assert_eq!(live.allow_threshold, 0.2);
+    assert_eq!(live.deny_threshold, 0.8);
     assert_eq!(
         status(&h).await.endpoint.as_deref(),
         Some("http://127.0.0.1:9001"),
@@ -737,6 +749,16 @@ async fn the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document() {
         schedule.to_string().contains("null"),
         "the schedule is not nullable: {schedule}"
     );
+    for field in ["allow_threshold", "deny_threshold"] {
+        assert!(
+            schemas["AiPermissionsStatusDto"]["properties"][field].is_object(),
+            "{field} is absent from the status schema"
+        );
+        assert!(
+            schemas["UpdateAiPermissionsRequest"]["properties"][field].is_object(),
+            "{field} is absent from the update schema"
+        );
+    }
 
     // The doctor's report carries the interpreter the AI permission model installs into.
     assert!(schemas["DaemonReportDto"]["properties"]["python"].is_object());

@@ -135,15 +135,17 @@ pub(crate) fn summarize(kind: &str, payload: &serde_json::Value) -> String {
 
 /// An answered permission request: the option chosen and who chose it, and,
 /// where the AI permission model had a part, why it did not decide —
-/// `allow-once in the console — AI said escalate (0.41, threshold 0.70)`,
-/// `allowed by AI (0.83, threshold 0.70)`.
+/// `allow-once in the console — AI said ask (danger 0.41, allow 0.20, deny 0.80)`,
+/// `allowed by AI (danger 0.06)`.
 fn permission_reply_summary(payload: &serde_json::Value) -> String {
-    let number = |key: &str| payload.get(key).and_then(serde_json::Value::as_f64);
     let decided_by = non_empty_str(payload.get("decided_by"));
     if decided_by == Some("ai")
-        && let (Some(confidence), Some(threshold)) = (number("confidence"), number("threshold"))
+        && let Some(danger) = payload.get("danger").and_then(serde_json::Value::as_f64)
     {
-        return format!("allowed by AI ({confidence:.2}, threshold {threshold:.2})");
+        return match non_empty_str(payload.get("label")) {
+            Some("deny") => format!("denied by AI (danger {danger:.2})"),
+            _ => format!("allowed by AI (danger {danger:.2})"),
+        };
     }
     let option = non_empty_str(payload.get("option_id")).unwrap_or("cancelled");
     let answer = match decided_by {
@@ -506,8 +508,9 @@ mod tests {
     fn an_answered_permission_says_who_answered_and_why_the_model_did_not() {
         let reply = |fields: serde_json::Value| {
             let mut payload = json!({"session_id": "stub-session", "option_id": "allow-once",
-                                     "decided_by": "console", "label": null, "confidence": null,
-                                     "threshold": null, "ai_error": null});
+                                     "decided_by": "console", "label": null, "danger": null,
+                                     "allow_threshold": null, "deny_threshold": null,
+                                     "ai_error": null});
             payload
                 .as_object_mut()
                 .unwrap()
@@ -516,18 +519,31 @@ mod tests {
         };
         assert_eq!(
             reply(
-                json!({"decided_by": "ai", "label": "allow", "confidence": 0.8312,
-                         "threshold": 0.7})
+                json!({"decided_by": "ai", "label": "deny", "danger": 0.9312,
+                         "allow_threshold": 0.2, "deny_threshold": 0.8})
             ),
-            "allowed by AI (0.83, threshold 0.70)"
+            "denied by AI (danger 0.93)"
         );
         assert_eq!(
-            reply(json!({"label": "escalate", "confidence": 0.41, "threshold": 0.7})),
-            "allow-once in the console — AI said escalate (0.41, threshold 0.70)"
+            reply(
+                json!({"decided_by": "ai", "label": "allow", "danger": 0.0612,
+                         "allow_threshold": 0.2, "deny_threshold": 0.8})
+            ),
+            "allowed by AI (danger 0.06)"
         );
         assert_eq!(
-            reply(json!({"label": "allow", "confidence": 0.62, "threshold": 0.8})),
-            "allow-once in the console — AI said allow (0.62, threshold 0.80)"
+            reply(
+                json!({"label": "ask", "danger": 0.41, "allow_threshold": 0.2,
+                          "deny_threshold": 0.8})
+            ),
+            "allow-once in the console — AI said ask (danger 0.41, allow 0.20, deny 0.80)"
+        );
+        assert_eq!(
+            reply(
+                json!({"label": "allow", "danger": 0.19, "allow_threshold": 0.2,
+                          "deny_threshold": 0.8})
+            ),
+            "allow-once in the console — AI said allow (danger 0.19, allow 0.20, deny 0.80)"
         );
         assert_eq!(
             reply(json!({"ai_error": "unavailable"})),

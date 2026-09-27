@@ -636,9 +636,10 @@ mod tests {
                     "tool_name": "Bash",
                     "tool_input": {"command": "cat ~/.aws/credentials"},
                     "options": [{"optionId": "yes", "name": "Allow"}],
-                    "label": "escalate",
-                    "confidence": 0.12,
-                    "threshold": 0.59
+                    "label": "ask",
+                    "danger": 0.41,
+                    "allow_threshold": 0.2,
+                    "deny_threshold": 0.8
                 }),
             ),
             event("answer", "permission.replied", json!({"option_id": "yes"})),
@@ -652,7 +653,7 @@ mod tests {
             .expect("the question is printed");
         assert_eq!(
             output.lines().nth(question + 1),
-            Some("  AI said escalate (0.12, threshold 0.59)"),
+            Some("  AI said ask (danger 0.41, allow 0.20, deny 0.80)"),
             "{output}"
         );
         assert!(output.contains("answer: Allow\n"), "{output}");

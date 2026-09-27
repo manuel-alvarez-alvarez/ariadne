@@ -515,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn an_ai_answer_names_the_model_and_its_confidence() {
+    fn ai_answers_name_the_model_and_the_danger() {
         let mut console = Console::new(header());
         let mut terminal = terminal();
         console.apply(&asked_with(
@@ -528,14 +528,14 @@ mod tests {
             "permission.replied",
             "answered",
             json!({"option_id": "option-0", "decided_by": "ai",
-                   "label": "allow", "confidence": 0.95}),
+                   "label": "deny", "danger": 0.93}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
 
         console.commit(&mut terminal).unwrap();
         let shown = screen(&terminal);
 
-        assert!(shown.contains("↳ allowed by AI (0.95)"), "{shown}");
+        assert!(shown.contains("↳ denied by AI (danger 0.93)"), "{shown}");
     }
 
     #[test]
@@ -547,15 +547,16 @@ mod tests {
             json!({"toolCallId": "edit", "kind": "edit",
                    "rawInput": {"file_path": "src/main.rs"}}),
         );
-        asked.payload["label"] = json!("escalate");
-        asked.payload["confidence"] = json!(0.41);
-        asked.payload["threshold"] = json!(0.7);
+        asked.payload["label"] = json!("ask");
+        asked.payload["danger"] = json!(0.41);
+        asked.payload["allow_threshold"] = json!(0.2);
+        asked.payload["deny_threshold"] = json!(0.8);
         console.apply(&asked);
 
         let waiting = pane(&console, 60, 12);
         let question = row_of(&waiting, "Allow this edit?").expect("the question is drawn");
         assert_eq!(
-            row_of(&waiting, "AI said escalate (0.41, threshold 0.70)"),
+            row_of(&waiting, "AI said ask (danger 0.41, allow 0.20, deny 0.80)"),
             Some(question + 2),
             "the model's reason is under the head, before the options: {waiting}"
         );
@@ -565,7 +566,8 @@ mod tests {
             "permission.replied",
             "answered",
             json!({"option_id": "option-0", "decided_by": "console",
-                   "label": "escalate", "confidence": 0.41, "threshold": 0.7,
+                   "label": "ask", "danger": 0.41, "allow_threshold": 0.2,
+                   "deny_threshold": 0.8,
                    "ai_error": null}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));

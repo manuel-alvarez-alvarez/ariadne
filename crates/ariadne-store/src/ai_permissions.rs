@@ -11,7 +11,8 @@ use crate::{AiPermissionSettings, Result, Store, not_found, now};
 #[derive(Debug, Clone, Default)]
 pub struct AiPermissionSettingsUpdate {
     pub enabled: Option<bool>,
-    pub threshold: Option<f64>,
+    pub allow_threshold: Option<f64>,
+    pub deny_threshold: Option<f64>,
     /// `Some(None)` clears the daily refresh; `None` keeps it.
     pub schedule: Option<Option<String>>,
     pub last_scheduled_refresh: Option<Option<String>>,
@@ -29,7 +30,7 @@ pub struct AiPermissionSettingsUpdate {
     pub last_error: Option<Option<String>>,
 }
 
-const COLUMNS: &str = "enabled, threshold, schedule, last_scheduled_refresh, state, \
+const COLUMNS: &str = "enabled, allow_threshold, deny_threshold, schedule, last_scheduled_refresh, state, \
                        installed_release, latest_release, weights_present, \
                        last_refresh_at, last_error, updated_at";
 
@@ -54,8 +55,11 @@ impl Store {
         if update.enabled.is_some() {
             sets.push("enabled = ?");
         }
-        if update.threshold.is_some() {
-            sets.push("threshold = ?");
+        if update.allow_threshold.is_some() {
+            sets.push("allow_threshold = ?");
+        }
+        if update.deny_threshold.is_some() {
+            sets.push("deny_threshold = ?");
         }
         if update.schedule.is_some() {
             sets.push("schedule = ?");
@@ -93,7 +97,10 @@ impl Store {
         if let Some(enabled) = update.enabled {
             query = query.bind(enabled);
         }
-        if let Some(threshold) = update.threshold {
+        if let Some(threshold) = update.allow_threshold {
+            query = query.bind(threshold);
+        }
+        if let Some(threshold) = update.deny_threshold {
             query = query.bind(threshold);
         }
         if let Some(schedule) = update.schedule {

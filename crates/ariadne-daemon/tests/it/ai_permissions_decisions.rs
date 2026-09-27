@@ -140,15 +140,15 @@ fn python() -> String {
 
 async fn ai_permissions_harness(
     server: &ModelServer,
-    threshold: f64,
+    allow_threshold: f64,
     timeouts: Timeouts,
 ) -> (Harness, Cast, tempfile::TempDir) {
-    ai_permissions_harness_with(server, threshold, timeouts, permission_script()).await
+    ai_permissions_harness_with(server, allow_threshold, timeouts, permission_script()).await
 }
 
 async fn ai_permissions_harness_with(
     server: &ModelServer,
-    threshold: f64,
+    allow_threshold: f64,
     timeouts: Timeouts,
     scripted: Value,
 ) -> (Harness, Cast, tempfile::TempDir) {
@@ -156,7 +156,7 @@ async fn ai_permissions_harness_with(
     ai_permissions_harness_on(
         |builder| builder.ai_permissions_endpoint(endpoint),
         server,
-        threshold,
+        allow_threshold,
         timeouts,
         scripted,
     )
@@ -168,7 +168,7 @@ async fn ai_permissions_harness_with(
 async fn ai_permissions_harness_on(
     ai_permissions: impl FnOnce(HarnessBuilder) -> HarnessBuilder,
     _server: &ModelServer,
-    threshold: f64,
+    allow_threshold: f64,
     timeouts: Timeouts,
     scripted: Value,
 ) -> (Harness, Cast, tempfile::TempDir) {
@@ -184,7 +184,8 @@ async fn ai_permissions_harness_on(
         .json(
             put_json(
                 "/v1/permissions/ai",
-                json!({"enabled": true, "threshold": threshold}),
+                json!({"enabled": true, "allow_threshold": allow_threshold,
+                       "deny_threshold": 0.8}),
             ),
             StatusCode::OK,
         )
@@ -251,13 +252,13 @@ async fn answered(h: &Harness, session_id: &str, text: &str) -> Value {
     reply(h, session_id).await
 }
 
-/// The model's side of a reply: its label, its allow score to four places,
-/// the threshold and why it gave no answer.
+/// The model's side of a reply: its label, danger, both thresholds and error.
 fn model_part(reply: &Value) -> Value {
     json!({
         "label": reply["label"],
-        "confidence": reply["confidence"].as_f64().map(|c| (c * 1e4).round() / 1e4),
-        "threshold": reply["threshold"],
+        "danger": reply["danger"].as_f64().map(|c| (c * 1e4).round() / 1e4),
+        "allow_threshold": reply["allow_threshold"],
+        "deny_threshold": reply["deny_threshold"],
         "ai_error": reply["ai_error"],
     })
 }
@@ -286,7 +287,7 @@ async fn wait_for_question(h: &Harness, session: &ariadne_store::AgentSession) {
 #[tokio::test]
 async fn a_confident_allow_runs_at_once_and_reports_ai() {
     let server = ModelServer::answer(0.05).await;
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, Timeouts::default()).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.05, Timeouts::default()).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     eventually(TIMEOUT, "the AI-approved turn to finish", || async {
@@ -298,7 +299,8 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
     assert_eq!(
         reply(&h, &session.id).await,
         json!({"session_id": "stub-session", "option_id": "yes", "decided_by": "ai",
-               "label": "allow", "confidence": 0.95, "threshold": 0.7,
+               "label": "allow", "danger": 0.05, "allow_threshold": 0.05,
+               "deny_threshold": 0.8,
                "ai_error": null})
     );
     let requests = server.requests.lock().unwrap();
@@ -328,7 +330,7 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
 
 /// A `kev.serve` that records its pid, loads for as long as its second
 /// argument says, and then allows every request with the calibrated
-/// confidence 0.95.
+/// danger 0.05.
 const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
 import http.server, json, os, sys, time
 with open(sys.argv[1], 'w') as f:
@@ -366,7 +368,7 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
     let (h, cast, _agent_dir) = ai_permissions_harness_on(
         |builder| builder.ai_permissions_serve_command(command),
         &release,
-        0.7,
+        0.2,
         Timeouts::default(),
         permission_script(),
     )
@@ -390,14 +392,14 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
     assert_eq!(h.attention(&session).await, None);
     let reply = reply(&h, &session.id).await;
     assert_eq!(reply["decided_by"], "ai");
-    assert_eq!(reply["confidence"], 0.95);
+    assert_eq!(reply["danger"], 0.05);
     h.state.ai_permissions.shutdown().await;
 }
 
 #[tokio::test]
-async fn a_noul_answer_is_gated_on_its_allow_probability() {
+async fn a_noul_answer_is_used_as_the_danger() {
     let server = ModelServer::answer(0.05).await;
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, Timeouts::default()).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     eventually(TIMEOUT, "the AI-approved turn to finish", || async {
@@ -408,13 +410,13 @@ async fn a_noul_answer_is_gated_on_its_allow_probability() {
     assert_eq!(h.attention(&session).await, None);
     let reply = reply(&h, &session.id).await;
     assert_eq!(reply["decided_by"], "ai");
-    assert_eq!(reply["confidence"], 0.95);
+    assert_eq!(reply["danger"], 0.05);
 }
 
 #[tokio::test]
 async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() {
     let server = ModelServer::answer(0.4).await;
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, Timeouts::default()).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
 
     let asked = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &asked).await;
@@ -430,7 +432,8 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
     assert_eq!(asked_reply["decided_by"], "console");
     assert_eq!(
         model_part(&asked_reply),
-        json!({"label": "allow", "confidence": 0.6, "threshold": 0.7,
+        json!({"label": "ask", "danger": 0.4, "allow_threshold": 0.2,
+               "deny_threshold": 0.8,
                "ai_error": null}),
         "the reply keeps the score that fell short"
     );
@@ -466,7 +469,7 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
 async fn every_call_is_the_models_to_decide_with_nothing_decided_by_rule() {
     let server = ModelServer::answer(0.05).await;
     let (h, cast, _agent_dir) =
-        ai_permissions_harness_with(&server, 0.7, Timeouts::default(), ssh_key_script()).await;
+        ai_permissions_harness_with(&server, 0.2, Timeouts::default(), ssh_key_script()).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     eventually(TIMEOUT, "the AI-approved turn to finish", || async {
@@ -493,36 +496,67 @@ async fn every_call_is_the_models_to_decide_with_nothing_decided_by_rule() {
 }
 
 #[tokio::test]
-async fn an_answer_that_needs_review_waits_for_the_console() {
+async fn a_confident_deny_selects_the_rejecting_option_and_reports_ai() {
     let server = ModelServer::answer(0.99).await;
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, Timeouts::default()).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
     let _guard =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    wait_for_question(&h, &session).await;
-    assert_eq!(
-        model_part(&permission_request(&h, &session.id).await),
-        json!({"label": "escalate", "confidence": 0.01, "threshold": 0.7,
-               "ai_error": null}),
-        "the question carries the model's answer while it waits"
-    );
-    let reply = answered(&h, &session.id, "no").await;
-    assert_eq!(reply["decided_by"], "console");
+    eventually(TIMEOUT, "the AI-denied turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    assert_eq!(h.attention(&session).await, None);
+    let reply = reply(&h, &session.id).await;
+    assert_eq!(reply["decided_by"], "ai");
+    assert_eq!(reply["option_id"], "no");
     assert_eq!(
         model_part(&reply),
-        json!({"label": "escalate", "confidence": 0.01, "threshold": 0.7,
+        json!({"label": "deny", "danger": 0.99, "allow_threshold": 0.2,
+               "deny_threshold": 0.8,
                "ai_error": null})
+    );
+    assert!(
+        !h.store
+            .has_learned_permission(&cast.repo.id, "Bash", "execute")
+            .await
+            .unwrap(),
+        "the denial was not learned"
     );
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
         snapshot.lines.iter().any(|line| line.level == "INFO"
             && line.message.contains("AI permission decision")
-            && line
-                .message
-                .contains("tool=Bash decided_by=console label=escalate")
-            && line.message.contains("threshold=0.7")),
+            && line.message.contains("tool=Bash decided_by=ai label=deny")
+            && line.message.contains("danger=0.99")
+            && line.message.contains("allow_threshold=0.2")
+            && line.message.contains("deny_threshold=0.8")),
         "{snapshot:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_deny_without_a_rejecting_option_waits_for_the_console() {
+    let server = ModelServer::answer(0.99).await;
+    let mut scripted = permission_script();
+    scripted["prompts"][0]["permission"]["options"] = json!([
+        {"optionId": "never", "name": "Reject always", "kind": "reject_always"},
+        {"optionId": "yes", "name": "Allow", "kind": "allow_once"}
+    ]);
+    let (h, cast, _agent_dir) =
+        ai_permissions_harness_with(&server, 0.2, Timeouts::default(), scripted).await;
+
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    wait_for_question(&h, &session).await;
+    assert_eq!(
+        model_part(&permission_request(&h, &session.id).await),
+        json!({"label": "deny", "danger": 0.99, "allow_threshold": 0.2,
+               "deny_threshold": 0.8, "ai_error": null})
+    );
+    assert_eq!(
+        answered(&h, &session.id, "yes").await["decided_by"],
+        "console"
     );
 }
 
@@ -533,13 +567,14 @@ async fn an_allow_without_an_allowing_option_waits_for_the_console() {
     scripted["prompts"][0]["permission"]["options"] =
         json!([{"optionId": "no", "name": "Reject", "kind": "reject_once"}]);
     let (h, cast, _agent_dir) =
-        ai_permissions_harness_with(&server, 0.7, Timeouts::default(), scripted).await;
+        ai_permissions_harness_with(&server, 0.2, Timeouts::default(), scripted).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
-        json!({"label": "allow", "confidence": 0.99, "threshold": 0.7,
+        json!({"label": "allow", "danger": 0.01, "allow_threshold": 0.2,
+               "deny_threshold": 0.8,
                "ai_error": null})
     );
 }
@@ -547,7 +582,7 @@ async fn an_allow_without_an_allowing_option_waits_for_the_console() {
 #[tokio::test]
 async fn a_malformed_answer_warns_and_waits_for_the_console() {
     let server = ModelServer::start(Answer::Value(json!({"answers": {}}))).await;
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, Timeouts::default()).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
     let _guard =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
 
@@ -563,7 +598,8 @@ async fn a_malformed_answer_warns_and_waits_for_the_console() {
     );
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
-        json!({"label": null, "confidence": null, "threshold": null,
+        json!({"label": null, "danger": null, "allow_threshold": null,
+               "deny_threshold": null,
                "ai_error": "malformed"})
     );
 }
@@ -571,7 +607,7 @@ async fn a_malformed_answer_warns_and_waits_for_the_console() {
 #[tokio::test]
 async fn a_stopped_model_warns_and_waits_for_the_console() {
     let server = ModelServer::answer(0.05).await;
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, Timeouts::default()).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
     server.stop();
     let _guard =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
@@ -590,7 +626,8 @@ async fn a_stopped_model_warns_and_waits_for_the_console() {
     );
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
-        json!({"label": null, "confidence": null, "threshold": null,
+        json!({"label": null, "danger": null, "allow_threshold": null,
+               "deny_threshold": null,
                "ai_error": "failed"})
     );
 }
@@ -602,13 +639,14 @@ async fn a_model_timeout_waits_for_the_console() {
         ai_permissions_decision: RUNS_OUT,
         ..Timeouts::default()
     };
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, timeouts).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, timeouts).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     wait_for_question(&h, &session).await;
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
-        json!({"label": null, "confidence": null, "threshold": null,
+        json!({"label": null, "danger": null, "allow_threshold": null,
+               "deny_threshold": null,
                "ai_error": "timed out"})
     );
 }
@@ -616,7 +654,7 @@ async fn a_model_timeout_waits_for_the_console() {
 #[tokio::test]
 async fn a_disabled_model_waits_for_the_console() {
     let server = ModelServer::answer(0.05).await;
-    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.7, Timeouts::default()).await;
+    let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
     let _: Value = h
         .json(
             put_json("/v1/permissions/ai", json!({"enabled": false})),
@@ -629,7 +667,8 @@ async fn a_disabled_model_waits_for_the_console() {
     assert!(server.requests.lock().unwrap().is_empty());
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
-        json!({"label": null, "confidence": null, "threshold": null,
+        json!({"label": null, "danger": null, "allow_threshold": null,
+               "deny_threshold": null,
                "ai_error": "unavailable"})
     );
 }

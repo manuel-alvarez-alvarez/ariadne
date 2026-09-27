@@ -181,8 +181,10 @@ CREATE INDEX idx_tasks_status ON tasks (status);
 CREATE TABLE ai_permission_settings (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     enabled           INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
-    -- How sure the model has to be before its answer is taken, 0 to 1.
-    threshold         REAL NOT NULL DEFAULT 0.59,
+    -- Danger at or below this value is allowed, 0 to 1.
+    allow_threshold   REAL NOT NULL DEFAULT 0.41,
+    -- Danger at or above this value is denied, 0 to 1.
+    deny_threshold    REAL NOT NULL DEFAULT 1.0,
     -- When the daily refresh runs, `HH:MM` in 24-hour local time.
     -- NULL = no refresh.
     schedule          TEXT,

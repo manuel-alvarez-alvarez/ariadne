@@ -601,14 +601,17 @@ impl SseStream {
 /// [`Client::update_ai_permissions`]'s body: only the fields `req` names, so an absent
 /// one reaches the daemon absent rather than as an explicit `null` — which
 /// `UpdateAiPermissionsRequest`'s own `Serialize` cannot do for `enabled`,
-/// `threshold`, only for `schedule`.
+/// either threshold, only for `schedule`.
 fn ai_permissions_update_body(req: &UpdateAiPermissionsRequest) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     if let Some(enabled) = req.enabled {
         body.insert("enabled".into(), enabled.into());
     }
-    if let Some(threshold) = req.threshold {
-        body.insert("threshold".into(), threshold.into());
+    if let Some(threshold) = req.allow_threshold {
+        body.insert("allow_threshold".into(), threshold.into());
+    }
+    if let Some(threshold) = req.deny_threshold {
+        body.insert("deny_threshold".into(), threshold.into());
     }
     if let Some(schedule) = &req.schedule {
         body.insert("schedule".into(), schedule.clone().into());
@@ -801,7 +804,7 @@ mod tests {
     }
 
     /// Only the fields a caller actually set reach the wire: `enabled` alone
-    /// stays `{"enabled": true}`, never `{"enabled": true, "threshold": null}`.
+    /// stays `{"enabled": true}`, without null threshold fields.
     #[test]
     fn an_ai_permissions_update_sends_only_the_fields_that_were_set() {
         assert_eq!(
@@ -813,10 +816,11 @@ mod tests {
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {
-                threshold: Some(0.6),
+                allow_threshold: Some(0.2),
+                deny_threshold: Some(0.8),
                 ..Default::default()
             }),
-            serde_json::json!({"threshold": 0.6})
+            serde_json::json!({"allow_threshold": 0.2, "deny_threshold": 0.8})
         );
         assert_eq!(
             ai_permissions_update_body(&UpdateAiPermissionsRequest {

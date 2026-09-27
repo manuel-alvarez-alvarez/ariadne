@@ -51,10 +51,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 2. The model is the daemon's, not a repository's: one settings row
    (`ai_permission_settings`), one install, one server. A repository chooses
    `ai`; this says whether there is a model to answer with.
-3. The settings are `enabled`, `threshold`, and `schedule`. The
+3. The settings are `enabled`, `allow_threshold`, `deny_threshold`, and `schedule`. The
    Kev run and the decision prompts are built in.
-   `threshold` is how sure
-   the model has to be before its answer is taken, 0 to 1. `schedule` is
+   `allow_threshold` is the highest danger that is allowed, 0 to 1.
+   `deny_threshold` is the lowest danger that is denied, 0 to 1. `schedule` is
    `HH:MM` in 24-hour local time, or nothing.
 4. The state of the install is `disabled`, `installing`, `ready` or `failed`,
    and beside it are the pin on disk, the pin the last install used,
@@ -94,9 +94,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     `AiPermissionsStatusDto`.
 11. `PUT /v1/permissions/ai` takes an `UpdateAiPermissionsRequest`; an absent
     field stays as it is. A `schedule` of `null` turns the daily refresh off,
-    and an absent one keeps it. A `threshold` outside 0..=1 or a `schedule`
-    that is not `HH:MM` is refused with 422 and the code `invalid_request`,
-    and writes nothing. Turning the model
+    and an absent one keeps it. Either threshold outside 0..=1, an allow
+    threshold that is not below the deny threshold after the update, or a
+    `schedule` that is not `HH:MM` is refused with 422 and the code
+    `invalid_request`, and writes nothing. Turning the model
     on starts an install and answers at once with `state = installing`.
     Turning it off writes `state = disabled` and keeps every file, so turning
     it back on repairs the pinned package and weights.
@@ -179,14 +180,14 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     show, add or commit; cargo, npm, make, tsc, pytest, eslint or prettier
     builds, tests and lints; ls, find, cat or grep; reading or editing files
     under the repository path; fetching documentation”. Its `true` criterion
-    is “anything not listed as safe”. `false` means allow.
+    is “anything not listed as safe”. `answers.decision.noul` is the danger,
+    the probability that the request needs review.
 22. The status and update request do not carry the checkpoint or prompt texts.
 23. The server passes `--run`, `decide::RUN`'s value, to `kev.serve`; the
     installer downloads what that run needs onto disk before the model is
     ready. The installer receives `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN`,
     and `AI_PERMISSIONS_KEV_COMMIT`.
-24. The default threshold is 0.59. Existing settings rows
-    keep their stored threshold.
+24. The default allow threshold is 0.41 and the default deny threshold is 1.0.
 
 ## Decisions
 
@@ -207,34 +208,36 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     without using: the checkpoint actually served is fixed by `decide::RUN` at
     launch (rule 18). The one question is named `decision`, has type `noul`,
     and carries the built-in instruction and criteria.
-28. The answer is `answers.decision.noul`, the probability that the request
-    needs review; Kev's answer carries nothing else the daemon reads. The
-    allow score is `1 - noul`. The model allows only when `false` is the
-    argmax (`noul < 0.5`), the allow score meets the configured threshold,
-    and the request has an allowing option.
-29. Every other answer follows `learn` (021, rule 9): a matching learned
-    approval is selected, otherwise the console is asked, and its allowing
-    answer is remembered. The model is unavailable, and a warning is logged,
-    when `live()` is absent, its call fails or times out, or its answer is
-    malformed.
-30. An allow of the model is never learned. Only an allowing console answer
-    writes the learned table.
+28. Kev's answer carries nothing else the daemon reads. Danger at or below
+    `allow_threshold` is `allow`; danger at or above `deny_threshold` is
+    `deny`; danger between them is `ask`. An allow selects the allowing
+    option. A deny selects an option whose kind is `reject_once`, never
+    `reject_always`.
+29. An ask, an allow without an allowing option, and an unanswered decision
+    follow `learn` (021, rule 9): a matching learned approval is selected,
+    otherwise the console is asked, and its allowing answer is remembered.
+    A deny without a `reject_once` option asks the console. The model is
+    unavailable, and a warning is logged, when `live()` is absent, its call
+    fails or times out, or its answer is malformed.
+30. An allow or deny of the model is never learned. Only an allowing console
+    answer writes the learned table.
 31. `permission.replied` carries `decided_by`: `ai`, `learned`, `console`,
-    or `auto`, and always the keys `label`, `confidence`, `threshold` and
-    `ai_error`. Whenever the model answered, whoever decided,
-    `label` is `allow` or `escalate`, `confidence` its allow score, and
-    `threshold` the one that score was held to. `ai_error` is `unavailable`, `failed`,
-    `timed out` or `malformed` where the model was asked and gave no answer.
-    Each is null otherwise, and all four are null outside `ai`. The
-    `permission_request` carries the same fields, those that are not null,
-    since the model has answered before the console is asked. In `ai`, each
+    or `auto`, and always the keys `label`, `danger`, `allow_threshold`,
+    `deny_threshold` and `ai_error`. Whenever the model answered, whoever
+    decided, `label` is `allow`, `ask` or `deny`, `danger` is its danger
+    score, and both thresholds are the settings that score was held to.
+    `ai_error` is `unavailable`, `failed`, `timed out` or `malformed` where
+    the model was asked and gave no answer. Each is null otherwise, and all
+    five are null outside `ai`. The `permission_request` carries the same
+    fields. The model has answered before the console is asked. In `ai`, each
     reply also logs one `AI permission decision` line at INFO with the tool,
     `decided_by` and those fields. While a question waits, the console
     shows under its call why the model left it to a person —
-    `AI said escalate (0.41, threshold 0.70)`, `AI timed out`
+    `AI said ask (danger 0.41, allow 0.20, deny 0.80)`, `AI timed out`
     (`ariadne_api::permissions::ai_permission_note`) — and
     `ariadne session logs` prints it under the question. The answered line
-    is the option chosen, or `allowed by AI (0.94)` for a reply of the
+    is the option chosen, `allowed by AI (danger 0.06)`, or
+    `denied by AI (danger 0.93)` for a reply of the
     model. The reply's event summary (012, rule 13) names the reason too.
 
 ## Benchmark
@@ -273,7 +276,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Acceptance criteria
 
-- A fresh daemon is off, at threshold 0.59, with no schedule, and reports
+- A fresh daemon is off, at allow threshold 0.41 and deny threshold 1.0,
+  with no schedule, and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
 - A version is read out of what an interpreter prints, and only 3.12 and 3.13 pass
@@ -292,9 +296,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - An install that fails leaves the model on and carries the installer's own
   words
   (`ai_permissions.rs::an_install_that_fails_keeps_the_model_on_and_says_why`).
-- `threshold` and `schedule` are kept and read back by the
-  next daemon; 1.5 and `25:00` are refused with 422; `null` turns the
-  schedule off and an absent one keeps it
+- Both thresholds and `schedule` are kept and read back by the next daemon;
+  1.5, an allow threshold at or above the deny threshold, and `25:00` are
+  refused with 422 and write nothing; `null` turns the schedule off and an
+  absent one keeps it
   (`ai_permissions.rs::the_settings_are_validated_and_survive_a_daemon_restart`),
   and a schedule is two digits, a colon and two digits
   (`http/permissions.rs::tests::a_schedule_is_two_digits_a_colon_and_two_digits`).
@@ -339,13 +344,13 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   exits with the server's status when the server exits on its own
   (`ai_permissions/server.rs::tests::the_server_dies_when_the_daemon_end_of_its_pipe_closes`,
   `::the_guard_exits_with_the_server_status`).
-- The three paths, the schemas, the nullable schedule, the
+- The three paths, both threshold fields in both schemas, the nullable schedule, the
   doctor's `python` and the event kind are in the OpenAPI document
   (`ai_permissions.rs::the_endpoints_the_schemas_and_the_event_are_in_the_openapi_document`),
   and the doctor reports the interpreter apart from the tools
   (`::the_doctor_reports_the_interpreter_the_model_needs`).
 - The old route answers 404 (`ai_permissions.rs::the_old_route_answers_404`).
-- The settings are one row taking partial writes and
+- The settings are one row taking partial writes of both thresholds and
   they survive a store reopen
   (`store.rs::the_ai_permission_settings_are_one_row_that_takes_partial_writes`).
 - `python_bin` is read from `config.toml`, and `ai_permissions_release_url` is refused,
@@ -354,33 +359,38 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - Every fixture request builds its recorded model, questions and state, one
   request per kind of call
   (`ai_permissions::decide::tests::every_fixture_request_builds_its_recorded_model_state_and_questions`).
-- A confident allow selects the allowing option, records `decided_by: "ai"`
-  and its confidence, raises no attention, and sends the benchmarked state and
+- Danger at or below the allow threshold selects the allowing option, records
+  `decided_by: "ai"` and `label: "allow"`, raises no attention, and sends the benchmarked state and
   `noul` question with `model = "kev-latest"` to the model
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
-- Every reply keeps the model's side: the label, score and threshold that
+- Every reply keeps the model's side: the label, danger and both thresholds that
   fell short, or why the model gave no answer
   (`ai_permissions_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`,
-  `::an_answer_that_needs_review_waits_for_the_console`,
+  `::a_confident_deny_selects_the_rejecting_option_and_reports_ai`,
   `::a_malformed_answer_warns_and_waits_for_the_console`,
   `::a_stopped_model_warns_and_waits_for_the_console`,
   `::a_model_timeout_waits_for_the_console`,
   `::a_disabled_model_waits_for_the_console`), and each reply is logged
-  (`::an_answer_that_needs_review_waits_for_the_console`).
+  (`::a_confident_deny_selects_the_rejecting_option_and_reports_ai`).
 - The request carries the model's answer while the question waits
-  (`ai_permissions_decisions.rs::an_answer_that_needs_review_waits_for_the_console`,
+  (`ai_permissions_decisions.rs::a_deny_without_a_rejecting_option_waits_for_the_console`,
   `::a_stopped_model_warns_and_waits_for_the_console`), and the console and
   `session logs` show it with the question, not with the answer
   (`tui/picker.rs::tests::a_waiting_question_says_why_the_model_left_it_and_its_answer_does_not`,
   `transcript.rs::tests::a_question_says_why_the_ai_permission_model_left_it_to_the_console`,
   `ariadne_api::permissions::tests::a_reply_names_why_the_model_did_not_decide_it`).
-- A `noul` answer is gated on the probability of its false, allowing side
-  (`ai_permissions_decisions.rs::a_noul_answer_is_gated_on_its_allow_probability`).
+- A `noul` answer is used directly as the danger score
+  (`ai_permissions_decisions.rs::a_noul_answer_is_used_as_the_danger`).
 - An uncertain allow asks the console, remembers its approval, and still asks
   the model before selecting that learned approval next time
   (`ai_permissions_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`).
-- An answer whose argmax needs review asks the console
-  (`ai_permissions_decisions.rs::an_answer_that_needs_review_waits_for_the_console`).
+- Danger at or above the deny threshold selects `reject_once`, answers the
+  agent, records `decided_by: "ai"` and `label: "deny"`, raises no attention,
+  and learns nothing
+  (`ai_permissions_decisions.rs::a_confident_deny_selects_the_rejecting_option_and_reports_ai`).
+- A deny without a `reject_once` option asks the console and keeps
+  `label: "deny"` on the request
+  (`ai_permissions_decisions.rs::a_deny_without_a_rejecting_option_waits_for_the_console`).
 - Every call is the model's to decide, a read of an SSH key included: no rule
   decides one before it, and the state carries nothing derived from the call
   (`ai_permissions_decisions.rs::every_call_is_the_models_to_decide_with_nothing_decided_by_rule`,
@@ -401,8 +411,17 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`acp_runtime.rs::auto_approves_a_permission_request_with_the_allowing_option`,
   `acp_console.rs::ask_raises_attention_and_a_console_answer_unblocks_the_turn`,
   `::learn_remembers_an_approval_per_repository_across_a_daemon_restart`).
-- A reply of the model renders its decider and confidence
-  (`ariadne-console::tui::picker::tests::an_ai_answer_names_the_model_and_its_confidence`).
+- A reply of the model renders its decider and danger, including
+  `denied by AI (danger 0.93)`, and a waiting question renders both thresholds
+  (`ariadne-console::tui::picker::tests::ai_answers_name_the_model_and_the_danger`,
+  `::a_waiting_question_says_why_the_model_left_it_and_its_answer_does_not`).
+- The shared note renders `allow`, `ask` and `deny`, and the event summary
+  renders `denied by AI`
+  (`ariadne_api::permissions::tests::a_reply_names_why_the_model_did_not_decide_it`,
+  `http/classify.rs::tests::an_answered_permission_says_who_answered_and_why_the_model_did_not`).
+- The CLI sends both threshold fields and nothing else, and `show` prints both
+  rows (`commands/permissions.rs::tests::set_thresholds_sends_both_fields_and_nothing_else`,
+  `::show_omits_the_built_in_configuration`).
 - The benchmark validates every committed case file and uses development files
   by default (`bench/ai-permissions/run.py validate bench/ai-permissions/cases/`).
 - The benchmark metrics calculate allow-positive precision, recall, F1,

@@ -33,18 +33,23 @@ pub(super) async fn get(State(state): State<AppState>) -> ApiResult<Json<AiPermi
     responses(
         (status = 200, body = AiPermissionsStatusDto),
         (status = 409, description = "no Python 3.12 or 3.13 to install into"),
-        (status = 422, description = "a threshold outside 0..=1 or a schedule that is not HH:MM")
+        (status = 422, description = "invalid thresholds or a schedule that is not HH:MM")
     ))]
 pub(super) async fn update(
     State(state): State<AppState>,
     Json(req): Json<UpdateAiPermissionsRequest>,
 ) -> ApiResult<Json<AiPermissionsStatusDto>> {
-    if let Some(threshold) = req.threshold
-        && !(0.0..=1.0).contains(&threshold)
-    {
-        return Err(invalid(format!(
-            "threshold must be between 0 and 1, not {threshold}"
-        )));
+    for (name, threshold) in [
+        ("allow threshold", req.allow_threshold),
+        ("deny threshold", req.deny_threshold),
+    ] {
+        if let Some(threshold) = threshold
+            && !(0.0..=1.0).contains(&threshold)
+        {
+            return Err(invalid(format!(
+                "{name} must be between 0 and 1, not {threshold}"
+            )));
+        }
     }
     if let Some(Some(schedule)) = &req.schedule
         && !is_clock_time(schedule)
@@ -55,6 +60,13 @@ pub(super) async fn update(
     }
 
     let before = state.ai_permissions.status().await;
+    let allow_threshold = req.allow_threshold.unwrap_or(before.allow_threshold);
+    let deny_threshold = req.deny_threshold.unwrap_or(before.deny_threshold);
+    if allow_threshold >= deny_threshold {
+        return Err(invalid(format!(
+            "allow threshold must be less than deny threshold, not {allow_threshold} and {deny_threshold}"
+        )));
+    }
     let turning_on = req.enabled == Some(true) && !before.enabled;
     if turning_on && !before.python.ok {
         return Err(ApiError::new(
@@ -66,7 +78,8 @@ pub(super) async fn update(
 
     let update = AiPermissionSettingsUpdate {
         enabled: req.enabled,
-        threshold: req.threshold,
+        allow_threshold: req.allow_threshold,
+        deny_threshold: req.deny_threshold,
         schedule: req.schedule,
         // Turning the model off leaves the files where they are and says so;
         // turning it on is the install's own state to write.

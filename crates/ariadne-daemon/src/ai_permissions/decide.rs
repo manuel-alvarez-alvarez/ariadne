@@ -21,18 +21,27 @@ const REVIEW_CRITERIA: &str = "anything not listed as safe";
 const INPUT_CUT: usize = 2_000;
 static EMPTY_INPUT: LazyLock<Value> = LazyLock::new(|| json!({}));
 
-/// What the model made of one request. `confidence` is the allow score,
-/// `1 - noul`, and `threshold` the one it was held to.
+/// What the model made of one request. `danger` is the probability that the
+/// request needs review.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Decision {
     /// The request runs without asking anyone.
-    Allow { confidence: f64, threshold: f64 },
-    /// The model answered, but not an allow that clears the threshold:
-    /// `label` is `allow` or `escalate`.
-    NotConfident {
-        label: &'static str,
-        confidence: f64,
-        threshold: f64,
+    Allow {
+        danger: f64,
+        allow_threshold: f64,
+        deny_threshold: f64,
+    },
+    /// The request is rejected without asking anyone.
+    Deny {
+        danger: f64,
+        allow_threshold: f64,
+        deny_threshold: f64,
+    },
+    /// The request needs a person or a learned approval.
+    Ask {
+        danger: f64,
+        allow_threshold: f64,
+        deny_threshold: f64,
     },
     /// The model gave no answer: its call `failed`, `timed out`, or came
     /// back `malformed`.
@@ -83,22 +92,26 @@ pub(crate) async fn decide(
             reason: "malformed",
         };
     };
-    let confidence = 1.0 - probability_needs_review;
-    let threshold = live.threshold;
-    if probability_needs_review < 0.5 && confidence >= threshold {
+    let danger = probability_needs_review;
+    let allow_threshold = live.allow_threshold;
+    let deny_threshold = live.deny_threshold;
+    if danger <= allow_threshold {
         Decision::Allow {
-            confidence,
-            threshold,
+            danger,
+            allow_threshold,
+            deny_threshold,
+        }
+    } else if danger >= deny_threshold {
+        Decision::Deny {
+            danger,
+            allow_threshold,
+            deny_threshold,
         }
     } else {
-        Decision::NotConfident {
-            label: if probability_needs_review < 0.5 {
-                "allow"
-            } else {
-                "escalate"
-            },
-            confidence,
-            threshold,
+        Decision::Ask {
+            danger,
+            allow_threshold,
+            deny_threshold,
         }
     }
 }

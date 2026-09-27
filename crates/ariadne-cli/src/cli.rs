@@ -75,7 +75,7 @@ const PERMISSIONS_EXAMPLES: &str = "\
 Examples:
   ariadne permissions ai enable --wait         # turn the AI permission model on and wait for the install
   ariadne permissions ai show                  # settings, install state, python
-  ariadne permissions ai set --threshold 0.6
+  ariadne permissions ai set --allow-threshold 0.2 --deny-threshold 0.8
   ariadne permissions ai set --schedule 03:30  # or: --no-schedule
   ariadne permissions ai refresh
   ariadne permissions ai disable

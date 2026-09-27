@@ -541,7 +541,8 @@ mod tests {
     fn ai_permissions() -> AiPermissionsStatusDto {
         AiPermissionsStatusDto {
             enabled: true,
-            threshold: 0.8,
+            allow_threshold: 0.2,
+            deny_threshold: 0.8,
             schedule: None,
             python: PythonDto {
                 path: None,
