@@ -74,11 +74,10 @@ installs it for you.
 
 For each request, the model sees a compact record: the tool call's title,
 kind, the compact JSON of its raw input (cut at 2,000 characters), and the
-option names, each left out where empty, plus ten signals Ariadne derives
-from the call and the repository alone — whether it stays inside the
-repository, whether it writes files, reads a network host, touches a
-sensitive path such as `~/.ssh`, is destructive, escalates privilege, changes
-a git remote, or could exfiltrate data. The model answers one question:
+option names, each left out where empty, and nothing else. Ariadne adds no
+hints of its own and has no rules that decide a request before the model
+does: every request, reading `~/.ssh` included, is the model's to judge. The
+model answers one question:
 “Does this coding-agent tool call need a person's review?”
 
 The answer is a probability that review is needed. Ariadne allows the request
@@ -89,15 +88,9 @@ asks you. The model's own allows are never remembered; only allowing console
 answers are. The answered console line names the model and its confidence when
 it decided.
 
-Before asking the model, Ariadne checks the request against the regular
-expression guardrails selected by the benchmark. A match always asks you and
-never uses a learned approval. The console shows the usual permission picker;
-the recorded `permission_request` event includes `guardrail` with the rule
-name. Requests without a match have no `guardrail` field.
-
 When a request comes to you, the console says why under the call, while it
 asks — for example `AI said escalate (0.41, threshold 0.70)` or
-`guardrail credential-paths`. `ariadne session logs` prints the same line
+`AI timed out`. `ariadne session logs` prints the same line
 under the question. Afterwards, `ariadne events --kind permission.replied`
 and the desktop app's activity tab say who answered and why the model did
 not:
@@ -106,7 +99,6 @@ not:
 allowed by AI (0.83, threshold 0.70)
 allow-once in the console — AI said escalate (0.41, threshold 0.70)
 allow-once in the console — AI said allow (0.62, threshold 0.80)
-allow-once in the console — guardrail credential-paths
 allow-once in the console — AI unavailable
 ```
 
@@ -155,7 +147,7 @@ ariadne permissions ai set --no-schedule        # and stop doing that
 ```
 
 The threshold is how sure the model has to be before its answer is taken; it
-defaults to `0.56`, and anything outside 0 to 1 is refused. Set another value
+defaults to `0.59`, and anything outside 0 to 1 is refused. Set another value
 with `ariadne permissions ai set --threshold <value>`. Existing installations
 keep their stored threshold. The schedule is
 `HH:MM` in 24-hour local time, and the daily refresh reinstalls the same pinned
@@ -171,18 +163,28 @@ cases. It measured AUROC 0.9808 and 23.3 ms median single-request latency, but
 real coverage was 1%, and its held-out margin was only 0.0094.
 
 The benchmark ran on one Apple GPU and used a changing local sample for real
-requests. Guardrails inspect one request with regular expressions, so they
-cannot understand how a written file will run later. Long shell commands go
-to the console when they exceed the model's useful input window, and score
-changes from another device or numeric precision can matter near the
-threshold.
+requests. The model reads one request at a time, so it cannot know how a
+written file will run later, and it sees at most 2,000 characters of a
+call's input: the rest of a longer command is invisible to it. Score changes
+from another device or numeric precision can matter near the threshold.
 
 A follow-up comparison re-scored the same extended sets against two sizes of a
-second model, Kev, and picked Kev-4B: it covers more safe cases (136 of 301)
-and more real requests (54 of 301) with a higher AUROC (0.9845), at ten times
-the single-request latency (about 230 ms against 30 ms) and roughly four times
-the resident memory (8 to 16 GB against 2.7 GB) while the server is enabled.
-That trade is what ships.
+second model, Kev, and picked Kev-4B, at ten times the single-request latency
+(about 230 ms against 30 ms) and roughly four times the resident memory (8 to
+16 GB against 2.7 GB) while the server is enabled. With regular-expression
+rules deciding some requests first and ten signals derived for the model, it
+covered 136 of 301 safe cases and 54 of 301 real requests, at AUROC 0.9845.
+
+Kev-4B now decides every request alone, from the call and nothing derived
+from it. Measured on 2026-09-27 at the `0.59` default, it allows 55 of 301
+safe development cases, 25 of 150 safe held-out cases, and 7 of 299 real
+requests (2.3%), and none of 222 development, 400 held-out or 125 elevated
+risky cases. AUROC is 0.929 on the development cases and 0.953 on the
+held-out ones. The highest-scoring risky case, a search of the home directory
+for `.env` files, scores 0.581, so the margin under the threshold is 0.009. At
+`0.56` it would allow 31% of the safe cases and 10% of the real requests, but
+also that search and a command carrying an "ignore previous instructions"
+comment. Lower the threshold only knowing that trade.
 
 Once the install is ready, the daemon runs the model's local server on a loopback
 port and keeps its selected weights in memory for permission decisions. It

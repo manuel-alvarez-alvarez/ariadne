@@ -124,7 +124,8 @@ fn permission_script() -> Value {
     scripted
 }
 
-fn guardrail_script() -> Value {
+/// A call the daemon once sent to a person by rule, before asking the model.
+fn ssh_key_script() -> Value {
     let mut scripted = permission_script();
     scripted["prompts"][0]["permission"]["toolCall"]["rawInput"] =
         json!({"command": "cat ~/.ssh/id_rsa"});
@@ -251,13 +252,12 @@ async fn answered(h: &Harness, session_id: &str, text: &str) -> Value {
 }
 
 /// The model's side of a reply: its label, its allow score to four places,
-/// the threshold, the guardrail and why it gave no answer.
+/// the threshold and why it gave no answer.
 fn model_part(reply: &Value) -> Value {
     json!({
         "label": reply["label"],
         "confidence": reply["confidence"].as_f64().map(|c| (c * 1e4).round() / 1e4),
         "threshold": reply["threshold"],
-        "guardrail": reply["guardrail"],
         "ai_error": reply["ai_error"],
     })
 }
@@ -295,29 +295,20 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
     .await;
 
     assert_eq!(h.attention(&session).await, None);
-    assert!(
-        permission_request(&h, &session.id)
-            .await
-            .get("guardrail")
-            .is_none()
-    );
     assert_eq!(
         reply(&h, &session.id).await,
         json!({"session_id": "stub-session", "option_id": "yes", "decided_by": "ai",
                "label": "allow", "confidence": 0.95, "threshold": 0.7,
-               "guardrail": null, "ai_error": null})
+               "ai_error": null})
     );
     let requests = server.requests.lock().unwrap();
     assert_eq!(
         requests[0]["state"],
         json!({
             "tool": "Bash", "kind": "execute", "input": "{\"command\":\"cargo test -p app\"}",
-            "options": "Reject, Allow", "operates_inside_repo": true, "writes_files": false,
-            "writes_outside_repo": false, "uses_network": false, "network_hosts": [],
-            "reads_sensitive_paths": false, "destructive_operation": false,
-            "uses_privilege_escalation": false, "modifies_git_remote": false,
-            "potentially_exfiltrates_data": false
-        })
+            "options": "Reject, Allow"
+        }),
+        "the call and its options, and nothing derived from them"
     );
     assert_eq!(requests[0]["model"], "kev-latest");
     assert_eq!(requests[0]["questions"]["decision"]["type"], "noul");
@@ -440,7 +431,7 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
     assert_eq!(
         model_part(&asked_reply),
         json!({"label": "allow", "confidence": 0.6, "threshold": 0.7,
-               "guardrail": null, "ai_error": null}),
+               "ai_error": null}),
         "the reply keeps the score that fell short"
     );
 
@@ -472,53 +463,32 @@ async fn an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval() 
 }
 
 #[tokio::test]
-async fn a_guardrail_asks_the_console_without_calling_the_model_and_names_the_rule() {
+async fn every_call_is_the_models_to_decide_with_nothing_decided_by_rule() {
     let server = ModelServer::answer(0.05).await;
     let (h, cast, _agent_dir) =
-        ai_permissions_harness_with(&server, 0.7, Timeouts::default(), guardrail_script()).await;
-    let _guard =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(h.logs.layer()));
+        ai_permissions_harness_with(&server, 0.7, Timeouts::default(), ssh_key_script()).await;
 
     let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    wait_for_question(&h, &session).await;
+    eventually(TIMEOUT, "the AI-approved turn to finish", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
 
-    assert!(server.requests.lock().unwrap().is_empty());
-    let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
+    assert_eq!(h.attention(&session).await, None);
+    assert_eq!(reply(&h, &session.id).await["decided_by"], "ai");
+    let requests = server.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1, "the model was asked");
     assert!(
-        snapshot
-            .lines
-            .iter()
-            .any(|line| line.level == "WARN" && line.message.contains("credential-paths")),
-        "{snapshot:?}"
+        requests[0]["state"]["input"]
+            .as_str()
+            .unwrap()
+            .contains("cat ~/.ssh/id_rsa")
     );
-    assert_eq!(
-        permission_request(&h, &session.id).await["guardrail"],
-        "credential-paths"
-    );
-    assert_eq!(
-        model_part(&answered(&h, &session.id, "no").await),
-        json!({"label": null, "confidence": null, "threshold": null,
-               "guardrail": "credential-paths", "ai_error": null})
-    );
-}
-
-#[tokio::test]
-async fn a_learned_approval_does_not_answer_a_guardrail_request() {
-    let server = ModelServer::answer(0.05).await;
-    let (h, cast, _agent_dir) =
-        ai_permissions_harness_with(&server, 0.7, Timeouts::default(), guardrail_script()).await;
-    h.store
-        .learn_permission(&cast.repo.id, "Bash", "execute")
-        .await
-        .unwrap();
-
-    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
-    wait_for_question(&h, &session).await;
-
-    assert!(server.requests.lock().unwrap().is_empty());
-    assert_eq!(
-        h.send(answer(&session.id, "no")).await.0,
-        StatusCode::NO_CONTENT
+    assert!(
+        permission_request(&h, &session.id)
+            .await
+            .get("guardrail")
+            .is_none()
     );
 }
 
@@ -534,7 +504,7 @@ async fn an_answer_that_needs_review_waits_for_the_console() {
     assert_eq!(
         model_part(&permission_request(&h, &session.id).await),
         json!({"label": "escalate", "confidence": 0.01, "threshold": 0.7,
-               "guardrail": null, "ai_error": null}),
+               "ai_error": null}),
         "the question carries the model's answer while it waits"
     );
     let reply = answered(&h, &session.id, "no").await;
@@ -542,7 +512,7 @@ async fn an_answer_that_needs_review_waits_for_the_console() {
     assert_eq!(
         model_part(&reply),
         json!({"label": "escalate", "confidence": 0.01, "threshold": 0.7,
-               "guardrail": null, "ai_error": null})
+               "ai_error": null})
     );
     let snapshot: LogSnapshotResponse = h.get("/v1/logs").await;
     assert!(
@@ -570,7 +540,7 @@ async fn an_allow_without_an_allowing_option_waits_for_the_console() {
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
         json!({"label": "allow", "confidence": 0.99, "threshold": 0.7,
-               "guardrail": null, "ai_error": null})
+               "ai_error": null})
     );
 }
 
@@ -594,7 +564,7 @@ async fn a_malformed_answer_warns_and_waits_for_the_console() {
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
         json!({"label": null, "confidence": null, "threshold": null,
-               "guardrail": null, "ai_error": "malformed"})
+               "ai_error": "malformed"})
     );
 }
 
@@ -621,7 +591,7 @@ async fn a_stopped_model_warns_and_waits_for_the_console() {
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
         json!({"label": null, "confidence": null, "threshold": null,
-               "guardrail": null, "ai_error": "failed"})
+               "ai_error": "failed"})
     );
 }
 
@@ -639,7 +609,7 @@ async fn a_model_timeout_waits_for_the_console() {
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
         json!({"label": null, "confidence": null, "threshold": null,
-               "guardrail": null, "ai_error": "timed out"})
+               "ai_error": "timed out"})
     );
 }
 
@@ -660,6 +630,6 @@ async fn a_disabled_model_waits_for_the_console() {
     assert_eq!(
         model_part(&answered(&h, &session.id, "no").await),
         json!({"label": null, "confidence": null, "threshold": null,
-               "guardrail": null, "ai_error": "unavailable"})
+               "ai_error": "unavailable"})
     );
 }

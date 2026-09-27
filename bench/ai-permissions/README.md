@@ -5,30 +5,27 @@ their scores. It is a local measurement tool; it does not run in CI.
 
 ## Setup
 
-Laya and Kev need separate virtual environments, but share a Hugging Face
-cache. Set the cache before running either evaluator:
+`run.sh` builds what it needs on first use; `--setup` only builds it:
 
 ```sh
-export HF_HOME=~/.ariadne/ai-permissions/hf
+bench/ai-permissions/run.sh --setup
 ```
 
-Install Laya in its own environment:
+Laya and Kev each run in a virtual environment of their own under
+`~/.ariadne/ai-permissions` and share its Hugging Face cache (`HF_HOME`,
+`~/.ariadne/ai-permissions/hf`):
 
-```sh
-python3 -m venv ~/.ariadne/ai-permissions/laya-venv
-~/.ariadne/ai-permissions/laya-venv/bin/pip install "laya[serve] @ <Laya wheel URL>"
-```
+- `laya-venv`: Python 3.14 and the wheel of Laya's latest GitHub release
+  (`LAYA_WHEEL` installs another).
+- `kev-venv`: Python 3.13 (or 3.12) and `kev[serve]` from the default branch
+  of its repository.
 
-Install Kev in a separate environment:
-
-```sh
-python3.13 -m venv ~/.ariadne/ai-permissions/kev-venv
-~/.ariadne/ai-permissions/kev-venv/bin/pip install "git+https://github.com/jaredpalmer/kev.git"
-```
-
-Run the script through the environment for the in-process evaluator you use.
-The `ariadne` evaluator invokes Cargo and uses the daemon's installed Kev model
-unless its config gives an `endpoint`.
+Neither is on PyPI; the `laya` there is another project. A venv that already
+has its package is used as it is, and one that does not is built with the
+latest version. `--rebuild` rebuilds both, which is how to update them. The
+latest Kev can be newer than the commit the daemon pins in
+`crates/ariadne-daemon/src/ai_permissions/install.rs`. `LAYA_PYTHON` and
+`KEV_PYTHON` pick the interpreter each is built with.
 
 ## Case format
 
@@ -49,13 +46,12 @@ Every evaluator accepts an optional JSON config and a list of cases, then
 returns one result per input case in the same order:
 
 ```text
-id, allow_score|null, label (allow|escalate), guardrail|null, latency_ms
+id, allow_score|null, label (allow|escalate), latency_ms
 ```
 
-`laya` and `kev` run their models in process. Their configurations retain the
-representation, fields, question, threshold, and guardrails settings. Relative
-guardrails paths resolve from the repository root. `ariadne` calls
-`ai_permission_eval`; its config can set `endpoint` and `threshold`.
+The evaluators are `laya` and `kev`, and both run their models in process.
+Their configurations hold the representation, fields, question and
+threshold. Nothing decides a case before the model: every case is scored.
 
 The bundled `laya` and `kev` configurations are selected automatically when
 their evaluators are named. Pass another configuration with
@@ -63,20 +59,43 @@ their evaluators are named. Pass another configuration with
 
 ## Run
 
-Run Kev and the daemon implementation over the development cases:
+Run every evaluator over the development cases and print one table:
+
+```sh
+bench/ai-permissions/run.sh
+```
+
+Each evaluator runs `run.py run` in its own interpreter, in turn. The per-case
+CSVs, each evaluator's log and the combined `report.txt` go to
+`bench/ai-permissions/out/runs/<UTC time>/`, and `out/latest` links to the most
+recent run. An evaluator that fails does not stop the others; the script
+reports it and exits non-zero after printing the table of the rest.
+
+```sh
+run.sh -e kev                     # one evaluator only
+run.sh -e laya=my-laya.json       # another configuration
+run.sh --heldout                  # the held-out cases
+run.sh -c cases/safe.jsonl --real --sweep
+```
+
+`run.py report <dir or CSVs> [--sweep]` prints the table again from CSVs an
+earlier run wrote.
+
+To run one evaluator by hand, use its venv's interpreter:
 
 ```sh
 HF_HOME=~/.ariadne/ai-permissions/hf \
 ~/.ariadne/ai-permissions/kev-venv/bin/python3 bench/ai-permissions/run.py run \
-  --evaluator kev --evaluator ariadne
+  --evaluator kev
 ```
 
 The default cases are `safe.jsonl`, `elevated.jsonl`, and
 `adversarial-dev.jsonl`. Held-out files run only when named directly:
 
 ```sh
-python3 bench/ai-permissions/run.py run --evaluator ariadne \
-  --cases bench/ai-permissions/cases/safe-heldout.jsonl
+HF_HOME=~/.ariadne/ai-permissions/hf \
+~/.ariadne/ai-permissions/kev-venv/bin/python3 bench/ai-permissions/run.py run \
+  --evaluator kev --cases bench/ai-permissions/cases/safe-heldout.jsonl
 ```
 
 `--real` also reads approved requests from `~/.ariadne/ariadne.db` in read-only

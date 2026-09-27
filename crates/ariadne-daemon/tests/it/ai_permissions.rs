@@ -115,7 +115,7 @@ async fn the_settings_start_at_the_defaults_with_the_interpreter_probed() {
 
     let status = status(&h).await;
     assert!(!status.enabled);
-    assert_eq!(status.threshold, 0.56);
+    assert_eq!(status.threshold, 0.59);
     assert_eq!(status.schedule, None);
     assert_eq!(status.state, AiPermissionsState::Disabled);
     assert_eq!(status.installed_release, None);
@@ -282,8 +282,7 @@ async fn the_settings_are_validated_and_survive_a_daemon_restart() {
         EventBus::default(),
         &h.launcher.cfg,
         Timeouts::default(),
-    )
-    .unwrap();
+    );
     let kept = ai_permissions.status().await;
     assert_eq!(kept.threshold, 0.6);
     assert_eq!(kept.schedule.as_deref(), Some("03:30"));

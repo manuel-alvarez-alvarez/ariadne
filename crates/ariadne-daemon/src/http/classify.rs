@@ -507,7 +507,7 @@ mod tests {
         let reply = |fields: serde_json::Value| {
             let mut payload = json!({"session_id": "stub-session", "option_id": "allow-once",
                                      "decided_by": "console", "label": null, "confidence": null,
-                                     "threshold": null, "guardrail": null, "ai_error": null});
+                                     "threshold": null, "ai_error": null});
             payload
                 .as_object_mut()
                 .unwrap()
@@ -528,10 +528,6 @@ mod tests {
         assert_eq!(
             reply(json!({"label": "allow", "confidence": 0.62, "threshold": 0.8})),
             "allow-once in the console — AI said allow (0.62, threshold 0.80)"
-        );
-        assert_eq!(
-            reply(json!({"guardrail": "credential-paths"})),
-            "allow-once in the console — guardrail credential-paths"
         );
         assert_eq!(
             reply(json!({"ai_error": "unavailable"})),

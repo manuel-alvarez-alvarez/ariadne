@@ -27,9 +27,9 @@ class MetricsTests(unittest.TestCase):
 
     def test_coverage_counts_allowed_results(self) -> None:
         results = [
-            EvaluationResult("a", 0.9, "allow", None, 3.0),
-            EvaluationResult("b", 0.2, "escalate", None, 4.0),
-            EvaluationResult("c", None, "escalate", "credential-paths", 0.0),
+            EvaluationResult("a", 0.9, "allow", 3.0),
+            EvaluationResult("b", 0.2, "escalate", 4.0),
+            EvaluationResult("c", None, "escalate", 0.0),
         ]
 
         self.assertEqual(coverage(results), 1 / 3)

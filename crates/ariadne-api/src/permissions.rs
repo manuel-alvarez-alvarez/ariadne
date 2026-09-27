@@ -111,14 +111,11 @@ where
 
 /// Why the AI permission model did not decide a `permission.replied`, in the
 /// words `ariadne events`, the desktop app and the console all use:
-/// `guardrail credential-paths`, `AI said escalate (0.41, threshold 0.70)`,
-/// `AI timed out`. `None` where the model had no part in the reply: a mode
-/// other than `ai`, or a reply the model made itself.
+/// `AI said escalate (0.41, threshold 0.70)`, `AI timed out`. `None` where
+/// the model had no part in the reply: a mode other than `ai`, or a reply
+/// the model made itself.
 pub fn ai_permission_note(reply: &serde_json::Value) -> Option<String> {
     let text = |key: &str| reply.get(key).and_then(serde_json::Value::as_str);
-    if let Some(guardrail) = text("guardrail") {
-        return Some(format!("guardrail {guardrail}"));
-    }
     if let (Some(label), Some(confidence)) = (
         text("label"),
         reply.get("confidence").and_then(serde_json::Value::as_f64),
@@ -143,11 +140,6 @@ mod tests {
 
     #[test]
     fn a_reply_names_why_the_model_did_not_decide_it() {
-        assert_eq!(
-            ai_permission_note(&json!({"guardrail": "credential-paths",
-                                        "label": null, "ai_error": null})),
-            Some("guardrail credential-paths".into())
-        );
         assert_eq!(
             ai_permission_note(&json!({"label": "escalate", "confidence": 0.4129,
                                         "threshold": 0.7})),

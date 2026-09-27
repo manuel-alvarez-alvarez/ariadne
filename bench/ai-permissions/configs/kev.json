@@ -5,8 +5,7 @@
   "base": "Qwen/Qwen3.5-4B-Base",
   "base_revision": "1001bb4d826a52d1f399e183466143f4da7b741b",
   "checkpoint": "kev-latest",
-  "representation": "normalized",
-  "normalized_base": "json",
+  "representation": "json",
   "fields": [
     "title",
     "kind",
@@ -22,7 +21,6 @@
     },
     "polarity": "false_is_allow"
   },
-  "threshold": 0.56,
-  "guardrails": "crates/ariadne-daemon/src/ai_permissions/guardrails.json",
+  "threshold": 0.59,
   "variant": "safe-explicit"
 }

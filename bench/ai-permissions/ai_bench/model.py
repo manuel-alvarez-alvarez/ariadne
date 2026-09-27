@@ -2,7 +2,7 @@
 
 Two backends, each its own class below, both scoring `config["question"]` against the same
 `build_state`/`build_question` output and returning the same per-case result shape (state,
-questions, guardrail, answer, latency_ms). The evaluator interface normalizes
+questions, answer, latency_ms). The evaluator interface normalizes
 these backend details into the benchmark result shape:
 
 - `laya` (`Predictor`): calls `Router().predict_batch` directly, in the venv at
@@ -22,7 +22,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import guardrails as guardrails_mod
 from .representations import build_question, build_state
 
 BACKENDS = ("laya", "kev")
@@ -82,8 +81,7 @@ class Predictor:
         return self._load_router().predict_batch(requests, batch_size=batch_size)
 
     def evaluate(self, config: dict[str, Any], cases: list[dict[str, Any]], batch_size: int = 16) -> list[dict[str, Any]]:
-        """One result dict per case, in the same order: state, questions, guardrail, answer, latency_ms."""
-        rules = guardrails_mod.load_guardrails(config.get("guardrails"))
+        """One result dict per case, in the same order: state, questions, answer, latency_ms."""
         question = build_question(config["question"])
 
         results: list[dict[str, Any] | None] = [None] * len(cases)
@@ -94,14 +92,9 @@ class Predictor:
             request = case["request"]
             repository = case["repository"]
             state = build_state(config, request, repository)
-            guardrail = guardrails_mod.match(rules, request)
-            base = {"state": state, "questions": question, "guardrail": guardrail}
-            if guardrail is not None:
-                results[i] = {**base, "answer": None, "latency_ms": 0.0}
-            else:
-                to_predict.append(i)
-                requests.append({"state": state, "questions": question, "model": config["checkpoint"]})
-                results[i] = base
+            to_predict.append(i)
+            requests.append({"state": state, "questions": question, "model": config["checkpoint"]})
+            results[i] = {"state": state, "questions": question}
 
         if to_predict:
             started = time.perf_counter()
@@ -176,7 +169,6 @@ class KevPredictor:
     def evaluate(self, config: dict[str, Any], cases: list[dict[str, Any]], batch_size: int = 16) -> list[dict[str, Any]]:
         """One result dict per case. `batch_size` is accepted for interface parity with `Predictor`
         and ignored: Kev's MLX path scores one state at a time (`kev.mlx_model.probs_batch`)."""
-        rules = guardrails_mod.load_guardrails(config.get("guardrails"))
         question = build_question(config["question"])
         run = config["run"]
         checkpoint = config["checkpoint"]
@@ -185,11 +177,7 @@ class KevPredictor:
         for case in cases:
             request = case["request"]
             state = build_state(config, request, case["repository"])
-            guardrail = guardrails_mod.match(rules, request)
-            base = {"state": state, "questions": question, "guardrail": guardrail}
-            if guardrail is not None:
-                results.append({**base, "answer": None, "latency_ms": 0.0})
-                continue
+            base = {"state": state, "questions": question}
             started = time.perf_counter()
             answer = self.predict_one(run, state, question, checkpoint)
             latency_ms = (time.perf_counter() - started) * 1000.0

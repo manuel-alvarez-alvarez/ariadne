@@ -1,7 +1,7 @@
 """Build the `state` and `questions` values a configuration sends to the model.
 
 A representation is a pure function of the case's request and repository. `json` with
-`fields = title, kind, input, repository, options` reproduces the production state built by
+`fields = title, kind, input, options` reproduces the production state built by
 `crates/ariadne-daemon/src/ai_permissions/decide.rs` exactly.
 """
 from __future__ import annotations
@@ -9,7 +9,6 @@ from __future__ import annotations
 import json as jsonlib
 from typing import Any
 
-from .features import derive_features
 
 INPUT_CUT = 2_000
 
@@ -114,19 +113,6 @@ def build_json(request: dict[str, Any], repository: str, fields: list[str], inpu
     return obj
 
 
-def build_normalized(base: str, request: dict[str, Any], repository: str, fields: list[str], input_cut: int = INPUT_CUT):
-    derived = derive_features(request, repository)
-    if base == "json":
-        obj = build_json(request, repository, fields, input_cut)
-        obj.update(derived)
-        return obj
-    if base == "structured":
-        text = build_structured(request, repository, fields, input_cut)
-        extra = "\n".join("%s: %s" % (k, v) for k, v in derived.items())
-        return text + ("\n" + extra if text else extra)
-    raise ValueError("normalized must be based on 'structured' or 'json', got %r" % base)
-
-
 REPRESENTATIONS = {
     "raw": build_raw,
     "structured": build_structured,
@@ -139,9 +125,6 @@ def build_state(config: dict[str, Any], request: dict[str, Any], repository: str
     representation = config["representation"]
     fields = config.get("fields") or []
     input_cut = int(config.get("input_cut") or INPUT_CUT)
-    if representation == "normalized":
-        base = config.get("normalized_base", "json")
-        return build_normalized(base, request, repository, fields, input_cut)
     builder = REPRESENTATIONS.get(representation)
     if builder is None:
         raise ValueError("unknown representation %r" % representation)

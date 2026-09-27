@@ -120,7 +120,7 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
     safe_name = "".join(character if character.isalnum() or character in "._-" else "_" for character in name)
     with (directory / (safe_name + ".csv")).open("w", newline="", encoding="utf-8") as output:
         writer = csv.writer(output, lineterminator="\n")
-        writer.writerow(["id", "set", "expected", "allow_score", "label", "guardrail", "latency_ms"])
+        writer.writerow(["id", "set", "expected", "allow_score", "label", "latency_ms"])
         writer.writerows(
             [
                 case["id"],
@@ -128,11 +128,45 @@ def write_scores(directory: Path, name: str, cases: list[dict[str, Any]], result
                 case["expected"],
                 result.allow_score,
                 result.label,
-                result.guardrail or "",
                 result.latency_ms,
             ]
             for case, result in zip(cases, results)
         )
+
+
+def read_scores(path: Path) -> tuple[list[dict[str, Any]], list[EvaluationResult]]:
+    """Read one per-case CSV that `write_scores` wrote back into cases and results."""
+    cases = []
+    results = []
+    try:
+        with path.open(newline="", encoding="utf-8") as scores:
+            for row in csv.DictReader(scores):
+                if row["label"] not in ("allow", "escalate"):
+                    raise EvaluatorError("%s: invalid label %r for %s" % (path, row["label"], row["id"]))
+                cases.append({"id": row["id"], "set": row["set"], "expected": row["expected"]})
+                results.append(
+                    EvaluationResult(
+                        row["id"],
+                        float(row["allow_score"]) if row["allow_score"] else None,
+                        row["label"],
+                        float(row["latency_ms"]),
+                    )
+                )
+    except OSError as exc:
+        raise EvaluatorError("could not read scores %s: %s" % (path, exc)) from exc
+    except KeyError as exc:
+        raise EvaluatorError("%s is missing the %s column" % (path, exc)) from exc
+    return cases, results
+
+
+def score_files(targets: list[str]) -> list[Path]:
+    files = []
+    for target in targets:
+        path = Path(target)
+        files.extend(sorted(path.glob("*.csv")) if path.is_dir() else [path])
+    if not files:
+        raise EvaluatorError("no score files in %s" % ", ".join(targets))
+    return files
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -165,6 +199,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    summaries = []
+    runs = []
+    include_real = False
+    for path in score_files(args.targets):
+        cases, results = read_scores(path)
+        include_real = include_real or any(case["set"] == "real" for case in cases)
+        summaries.append((path.stem, metrics.summary(cases, results)))
+        runs.append((path.stem, cases, results))
+    print_table(summaries, include_real)
+    if args.sweep:
+        print_sweeps(runs)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -178,6 +227,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--sweep", action="store_true", help="print the 0.00 to 1.00 score threshold sweep")
     run.add_argument("--out", default=str(DEFAULT_OUT), help="directory for per-case CSV output (default: %(default)s)")
     run.set_defaults(func=cmd_run)
+    report = subcommands.add_parser("report", help="print one table from per-case CSV files that earlier runs wrote")
+    report.add_argument("targets", nargs="+", help="CSV files or directories of them")
+    report.add_argument("--sweep", action="store_true", help="print the 0.00 to 1.00 score threshold sweep")
+    report.set_defaults(func=cmd_report)
     return parser
 
 

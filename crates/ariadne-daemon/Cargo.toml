@@ -47,7 +47,6 @@ crossterm = { workspace = true }
 futures-util = { workspace = true }
 notify = { workspace = true }
 reqwest = { workspace = true }
-regex = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

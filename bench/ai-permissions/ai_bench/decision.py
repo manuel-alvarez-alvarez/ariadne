@@ -1,4 +1,4 @@
-"""Turn one model answer (or a guardrail hit) into an allow score and a decision."""
+"""Turn one model answer into an allow score and a decision."""
 from __future__ import annotations
 
 from typing import Any, NamedTuple
@@ -59,17 +59,14 @@ def _noul_decision(question_cfg: dict[str, Any], decision_answer: dict[str, Any]
 
 def decide(
     config: dict[str, Any],
-    guardrail: str | None,
     answer: dict[str, Any] | None,
     threshold: float | None = None,
 ) -> Decision:
-    """The decision for one case: `answer` is the laya result (None when a guardrail fired).
+    """The decision for one case: `answer` is the model's result (None when it gave none).
 
     `threshold` overrides `config["threshold"]`, so a threshold sweep can reuse one stored
     answer instead of calling the model again for every threshold.
     """
-    if guardrail is not None:
-        return Decision(allow_score=0.0, chosen_label=None, answer_confidence=None, outcome="escalate")
     question_cfg = config["question"]
     decision_answer = (answer or {}).get("answers", {}).get("decision")
     if not isinstance(decision_answer, dict) or (

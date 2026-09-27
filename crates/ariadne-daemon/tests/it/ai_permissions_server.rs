@@ -243,8 +243,7 @@ async fn a_ready_enabled_model_starts_after_a_daemon_restart() {
         first.bus.clone(),
         &first.launcher.cfg,
         first.timeouts,
-    )
-    .unwrap();
+    );
     eventually(TIMEOUT, "the restarted daemon server", || async {
         std::fs::read_to_string(record.path())
             .ok()

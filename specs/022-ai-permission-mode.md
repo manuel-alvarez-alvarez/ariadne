@@ -185,7 +185,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     installer downloads what that run needs onto disk before the model is
     ready. The installer receives `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN`,
     and `AI_PERMISSIONS_KEV_COMMIT`.
-24. The default threshold is 0.56. Existing settings rows
+24. The default threshold is 0.59. Existing settings rows
     keep their stored threshold.
 
 ## Decisions
@@ -200,13 +200,9 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 26. The state is a JSON object, not a string. It carries `tool`
     (`toolCall.title`), `kind`, `input` (the compact JSON of `rawInput`, cut
     at 2,000 characters) and `options` (option names joined by `, `), each
-    left out where empty, then always these ten signals computed from the
-    tool call and the repository alone, never the outcome: whether it
-    operates inside the repository, whether it writes files, whether it
-    writes outside the repository, whether it uses the network, the hosts it
-    names, whether it reads a sensitive path, whether it is destructive,
-    whether it escalates privilege, whether it changes a git remote, and
-    whether it could exfiltrate data.
+    left out where empty, and nothing else. Nothing is derived from the call
+    for the model, and no rule decides a call in its place: the model judges
+    every call from the call alone.
 27. The request carries `model = kev-latest`, a label Kev accepts and echoes
     without using: the checkpoint actually served is fixed by `decide::RUN` at
     launch (rule 18). The one question is named `decision`, has type `noul`,
@@ -224,71 +220,56 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 30. An allow of the model is never learned. Only an allowing console answer
     writes the learned table.
 31. `permission.replied` carries `decided_by`: `ai`, `learned`, `console`,
-    or `auto`, and always the keys `label`, `confidence`, `threshold`,
-    `guardrail` and `ai_error`. Whenever the model answered, whoever decided,
+    or `auto`, and always the keys `label`, `confidence`, `threshold` and
+    `ai_error`. Whenever the model answered, whoever decided,
     `label` is `allow` or `escalate`, `confidence` its allow score, and
-    `threshold` the one that score was held to. `guardrail` names the rule
-    that asked the console. `ai_error` is `unavailable`, `failed`,
+    `threshold` the one that score was held to. `ai_error` is `unavailable`, `failed`,
     `timed out` or `malformed` where the model was asked and gave no answer.
-    Each is null otherwise, and all five are null outside `ai`. The
+    Each is null otherwise, and all four are null outside `ai`. The
     `permission_request` carries the same fields, those that are not null,
     since the model has answered before the console is asked. In `ai`, each
     reply also logs one `AI permission decision` line at INFO with the tool,
     `decided_by` and those fields. While a question waits, the console
     shows under its call why the model left it to a person —
-    `AI said escalate (0.41, threshold 0.70)`,
-    `guardrail credential-paths`, `AI timed out`
+    `AI said escalate (0.41, threshold 0.70)`, `AI timed out`
     (`ariadne_api::permissions::ai_permission_note`) — and
     `ariadne session logs` prints it under the question. The answered line
     is the option chosen, or `allowed by AI (0.94)` for a reply of the
     model. The reply's event summary (012, rule 13) names the reason too.
 
-## Guardrails
-
-32. The daemon embeds
-    `crates/ariadne-daemon/src/ai_permissions/guardrails.json` and compiles
-    its regular expressions once during startup. An invalid expression stops
-    startup and names its rule.
-33. In `ai`, the daemon checks the rules in file order before it calls the
-    model or reads a learned approval. A matching rule logs a warning, asks
-    the console, and writes its name as `guardrail` on the
-    `permission_request` payload. A request with no match has no `guardrail`
-    field.
-34. A rule can select `command`, `title`, `input`, or `path`. Its optional
-    `names` and `kinds` lists restrict which tool calls it checks. `input` is
-    the JSON text of `rawInput`; `path` uses the path sources and order from
-    rule 26.
-
 ## Benchmark
 
-35. `bench/ai-permissions/` holds case JSON Lines, evaluator code, `run.py`,
-    the `laya` and `kev` configurations, its README, and tests. Evaluators take
-    an optional configuration and ordered cases, then return ordered results
-    with an id, optional allow score, `allow` or `escalate` label, optional
-    guardrail, and latency. The `laya`, `kev`, and daemon-backed `ariadne`
-    evaluators use that interface.
-36. `run.py validate` keeps the case validation contract. `run.py run` accepts
+32. `bench/ai-permissions/` holds case JSON Lines, evaluator code, `run.py`,
+    `run.sh`, the `laya` and `kev` configurations, its README, and tests.
+    Evaluators take an optional configuration and ordered cases, then return
+    ordered results with an id, optional allow score, `allow` or `escalate`
+    label, and latency. The `laya` and `kev` evaluators use that interface,
+    each loading its model in process.
+33. `run.py validate` keeps the case validation contract. `run.py run` accepts
     one or more `--evaluator name[=config]` values, uses a bundled config when
     one exists, defaults to development cases without held-out cases, and can
     add read-only real cases, threshold sweeps, and per-case CSV output. Its
     table reports safe coverage, elevated and adversarial approvals, AUROC,
     positive-class precision, recall, F1, accuracy, median latency, and real
-    coverage when requested. It writes no result Markdown.
-37. Any change to the checkpoint, representation, question, threshold, or
-    guardrails reruns the benchmark and regenerates
+    coverage when requested. It writes no result Markdown. `run.py report`
+    prints one table from the per-case CSV files earlier runs wrote, and
+    `run.sh` runs each evaluator in its own virtual environment, which it
+    creates when missing, then reports over all of them.
+34. Any change to the checkpoint, representation, question or threshold
+    reruns the benchmark and regenerates
     `crates/ariadne-daemon/src/ai_permissions/fixtures/winner-states.jsonl`.
     `cargo run -p ariadne-daemon --example ai_permission_eval` runs the
-    daemon's own guardrail, request and threshold code over case JSON Lines
+    daemon's own request and threshold code over case JSON Lines
     from stdin, against a running Kev server or one it starts from the
-    daemon's own install; it is the benchmark's `ariadne` evaluator.
-38. Benchmark scores remain measurements from a local model, device, and
-    changing read-only real-request sample. Regex guardrails inspect one request
-    without understanding later execution, and elevated labels, long commands,
-    and device precision remain limits.
+    daemon's own install, for checking the daemon's path against the cases.
+35. Benchmark scores remain measurements from a local model, device, and
+    changing read-only real-request sample. The model reads one request, cut
+    at 2,000 characters of input, without seeing what runs later; elevated
+    labels, long commands, and device precision remain limits.
 
 ## Acceptance criteria
 
-- A fresh daemon is off, at threshold 0.56, with no schedule, and reports
+- A fresh daemon is off, at threshold 0.59, with no schedule, and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
 - A version is read out of what an interpreter prints, and only 3.12 and 3.13 pass
@@ -366,20 +347,17 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - `python_bin` is read from `config.toml`, and `ai_permissions_release_url` is refused,
   and the test seams are not keys of it
   (`config.rs::tests::the_ai_permissions_keys_a_user_may_set_are_read_and_the_test_seams_are_not`).
-- Every benchmark case builds the same model, questions, state, and guardrail
-  as the committed fixture
-  (`ai_permissions::decide::tests::every_benchmark_case_builds_the_winning_request_and_guardrail`).
-- An invalid guardrail stops startup and names its rule
-  (`ai_permissions::decide::tests::an_invalid_guardrail_stops_startup_and_names_the_rule`).
+- Every benchmark case builds the same model, questions and state as the
+  committed fixture
+  (`ai_permissions::decide::tests::every_benchmark_case_builds_the_winning_request`).
 - A confident allow selects the allowing option, records `decided_by: "ai"`
   and its confidence, raises no attention, and sends the benchmarked state and
   `noul` question with `model = "kev-latest"` to the model
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
 - Every reply keeps the model's side: the label, score and threshold that
-  fell short, the guardrail that asked, or why the model gave no answer
+  fell short, or why the model gave no answer
   (`ai_permissions_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`,
   `::an_answer_that_needs_review_waits_for_the_console`,
-  `::a_guardrail_asks_the_console_without_calling_the_model_and_names_the_rule`,
   `::a_malformed_answer_warns_and_waits_for_the_console`,
   `::a_stopped_model_warns_and_waits_for_the_console`,
   `::a_model_timeout_waits_for_the_console`,
@@ -399,10 +377,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`ai_permissions_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`).
 - An answer whose argmax needs review asks the console
   (`ai_permissions_decisions.rs::an_answer_that_needs_review_waits_for_the_console`).
-- A guardrail asks the console, does not call the model, and names its rule on
-  the request. A learned approval does not answer it
-  (`ai_permissions_decisions.rs::a_guardrail_asks_the_console_without_calling_the_model_and_names_the_rule`,
-  `::a_learned_approval_does_not_answer_a_guardrail_request`).
+- Every call is the model's to decide, a read of an SSH key included: no rule
+  decides one before it, and the state carries nothing derived from the call
+  (`ai_permissions_decisions.rs::every_call_is_the_models_to_decide_with_nothing_decided_by_rule`,
+  `::a_confident_allow_runs_at_once_and_reports_ai`).
 - A confident allow without an allowing option asks the console
   (`ai_permissions_decisions.rs::an_allow_without_an_allowing_option_waits_for_the_console`).
 - A request made while the server loads waits for it, and the model decides
@@ -422,17 +400,16 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - A reply of the model renders its decider and confidence
   (`ariadne-console::tui::picker::tests::an_ai_answer_names_the_model_and_its_confidence`).
 - `examples/ai_permission_eval.rs` reads case JSON Lines and answers one line
-  per case, in the contracted shape, for a guardrail hit and for an allow and
-  an escalate either side of the threshold
+  per case, in the contracted shape, for an allow and an escalate either side
+  of the threshold
   (`ai_permission_eval.rs::tests::the_output_line_serializes_to_the_contracted_shape`,
-  `::a_guardrail_hit_escalates_without_calling_the_model`,
   `::an_allow_and_an_escalate_land_at_the_threshold`).
 - The benchmark validates every committed case file and uses development files
   by default (`bench/ai-permissions/run.py validate bench/ai-permissions/cases/`).
 - The benchmark metrics calculate allow-positive precision, recall, F1,
   accuracy, AUROC, and coverage (`bench/ai-permissions/tests/test_metrics.py`).
-- The daemon-backed evaluator parses one ordered result per input case from its
-  command (`bench/ai-permissions/tests/test_ariadne_evaluator.py`).
+- The report prints one row per per-case score file
+  (`bench/ai-permissions/tests/test_report.py`).
 
 ## Sources
 

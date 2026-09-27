@@ -61,7 +61,7 @@ def classification_metrics(expected: list[str], labels: list[str]) -> dict[str, 
 
 def at_threshold(result: EvaluationResult, threshold: float) -> EvaluationResult:
     label = "allow" if result.allow_score is not None and result.allow_score >= threshold else "escalate"
-    return EvaluationResult(result.id, result.allow_score, label, result.guardrail, result.latency_ms)
+    return EvaluationResult(result.id, result.allow_score, label, result.latency_ms)
 
 
 def summary(cases: list[dict[str, Any]], results: list[EvaluationResult]) -> dict[str, float | int | None]:

@@ -636,7 +636,9 @@ mod tests {
                     "tool_name": "Bash",
                     "tool_input": {"command": "cat ~/.aws/credentials"},
                     "options": [{"optionId": "yes", "name": "Allow"}],
-                    "guardrail": "credential-paths"
+                    "label": "escalate",
+                    "confidence": 0.12,
+                    "threshold": 0.59
                 }),
             ),
             event("answer", "permission.replied", json!({"option_id": "yes"})),
@@ -650,7 +652,7 @@ mod tests {
             .expect("the question is printed");
         assert_eq!(
             output.lines().nth(question + 1),
-            Some("  guardrail credential-paths"),
+            Some("  AI said escalate (0.12, threshold 0.59)"),
             "{output}"
         );
         assert!(output.contains("answer: Allow\n"), "{output}");

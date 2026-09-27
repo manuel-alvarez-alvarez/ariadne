@@ -21,7 +21,6 @@
     "polarity": "false_is_allow"
   },
   "threshold": 0.7,
-  "guardrails": "crates/ariadne-daemon/src/ai_permissions/guardrails.json",
   "variant": "baseline-criteria",
   "backend": "laya"
 }

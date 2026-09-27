@@ -809,7 +809,6 @@ impl AcpRuntime {
             sink: sink.clone(),
             turn: turn.clone(),
             repository_id: launch.repository_id.clone(),
-            repository: launch.cwd.clone(),
             permission_mode: launch.permission_mode,
             pending_permission: permission.clone(),
             reports: io.reports.clone(),
@@ -1159,7 +1158,6 @@ struct RuntimeIncoming {
     sink: EventSink,
     turn: Arc<tokio::sync::Mutex<Turn>>,
     repository_id: String,
-    repository: PathBuf,
     permission_mode: PermissionMode,
     pending_permission: Arc<Mutex<Option<oneshot::Sender<String>>>>,
     reports: Followers,
@@ -1303,21 +1301,7 @@ impl RuntimeIncoming {
             self.permission_mode,
             PermissionMode::Learn | PermissionMode::Ai
         );
-        let guardrail = (self.permission_mode == PermissionMode::Ai)
-            .then(|| self.sink.runtime.inner.ai_permissions.as_ref())
-            .flatten()
-            .and_then(|ai_permissions| ai_permissions.guardrail(&params["toolCall"]))
-            .map(str::to_string);
-        if let Some(guardrail) = &guardrail {
-            tracing::warn!(
-                guardrail,
-                "AI permission guardrail `{guardrail}` requires console review"
-            );
-            payload["guardrail"] = json!(guardrail);
-        }
-        let ai_permissions_decision = if self.permission_mode == PermissionMode::Ai
-            && guardrail.is_none()
-        {
+        let ai_permissions_decision = if self.permission_mode == PermissionMode::Ai {
             match self.sink.runtime.inner.ai_permissions.as_ref() {
                 Some(ai_permissions) => match ai_permissions.live_once_started().await {
                     Some(live) => Some(
@@ -1325,7 +1309,6 @@ impl RuntimeIncoming {
                             &live,
                             &params["toolCall"],
                             &params["options"],
-                            &self.repository,
                             self.sink.runtime.inner.timeouts.ai_permissions_decision,
                         )
                         .await,
@@ -1349,8 +1332,7 @@ impl RuntimeIncoming {
         } else {
             None
         };
-        let learned = guardrail.is_none()
-            && remembers
+        let learned = remembers
             && self
                 .sink
                 .runtime
@@ -1363,8 +1345,7 @@ impl RuntimeIncoming {
             && approved_option(params)
                 .as_deref()
                 .is_some_and(|option| allowing_option(params, option));
-        let waiting = guardrail.is_some()
-            || matches!(self.permission_mode, PermissionMode::Ask)
+        let waiting = matches!(self.permission_mode, PermissionMode::Ask)
             || (remembers && !learned && !ai_permissions_allow);
         // What the model made of the request, whoever answers it: the
         // question shows it while it waits, and the reply keeps it, so a
@@ -1409,7 +1390,6 @@ impl RuntimeIncoming {
                 label,
                 confidence,
                 threshold,
-                guardrail,
                 ai_error,
                 "AI permission decision"
             );
@@ -1438,7 +1418,7 @@ impl RuntimeIncoming {
                 "permission.replied",
                 json!({"session_id": session_id, "option_id": selected,
                        "decided_by": decided_by, "label": label, "confidence": confidence,
-                       "threshold": threshold, "guardrail": guardrail, "ai_error": ai_error}),
+                       "threshold": threshold, "ai_error": ai_error}),
             )
             .await;
         Ok(json!({"outcome": outcome}))

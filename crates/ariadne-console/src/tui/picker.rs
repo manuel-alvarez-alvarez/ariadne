@@ -566,7 +566,7 @@ mod tests {
             "answered",
             json!({"option_id": "option-0", "decided_by": "console",
                    "label": "escalate", "confidence": 0.41, "threshold": 0.7,
-                   "guardrail": null, "ai_error": null}),
+                   "ai_error": null}),
         ));
         console.apply(&event("agent_message", "done", json!({"text": "done"})));
         console.commit(&mut terminal).unwrap();

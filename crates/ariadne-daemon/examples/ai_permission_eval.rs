@@ -1,11 +1,10 @@
-//! Runs the daemon's real AI permission decision path — guardrails, then the
-//! request to Kev, then the threshold — against case JSON Lines from stdin
-//! (022, rule 37). `bench/ai-permissions`'s `ariadne` evaluator is the only
+//! Runs the daemon's real AI permission decision path — the request to Kev,
+//! then the threshold — against case JSON Lines from stdin
+//! (022, rule 34). `bench/ai-permissions`'s `ariadne` evaluator is the only
 //! caller; nothing here is part of the daemon's API.
 #![doc(hidden)]
 
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -13,7 +12,7 @@ use clap::Parser;
 use serde::Serialize;
 use serde_json::Value;
 
-use ariadne_daemon::ai_permissions::decide::{self, Decision, Guardrails};
+use ariadne_daemon::ai_permissions::decide::{self, Decision};
 use ariadne_daemon::ai_permissions::{AiPermissionsLive, DEFAULT_THRESHOLD, server};
 use ariadne_daemon::timeouts::Timeouts;
 
@@ -34,7 +33,6 @@ struct OutputLine {
     id: String,
     allow_score: Option<f64>,
     label: &'static str,
-    guardrail: Option<String>,
     latency_ms: f64,
 }
 
@@ -52,7 +50,6 @@ async fn main() -> Result<()> {
         endpoint: server.endpoint().to_string(),
         threshold,
     };
-    let guardrails = Guardrails::load().context("loading the AI permission guardrails")?;
 
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
@@ -61,7 +58,7 @@ async fn main() -> Result<()> {
         if line.trim().is_empty() {
             continue;
         }
-        let output = evaluate(&guardrails, &live, timeouts.ai_permissions_decision, &line).await?;
+        let output = evaluate(&live, timeouts.ai_permissions_decision, &line).await?;
         writeln!(stdout, "{}", serde_json::to_string(&output)?)?;
         stdout.flush()?;
     }
@@ -70,30 +67,25 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// One case line to one output line: the guardrail first, then the model,
-/// exactly as `decide::decide` decides it — except a `label` of `allow` here
+/// One case line to one output line, exactly as `decide::decide` decides
+/// it — except a `label` of `allow` here
 /// means only [`Decision::Allow`], since every other outcome is what the
 /// daemon would hand to a person.
 async fn evaluate(
-    guardrails: &Guardrails,
     live: &AiPermissionsLive,
     timeout: Duration,
     case_line: &str,
 ) -> Result<OutputLine> {
     let case: Value = serde_json::from_str(case_line).context("parsing a case line")?;
     let id = case["id"].as_str().unwrap_or_default().to_string();
-    let repository = PathBuf::from(case["repository"].as_str().unwrap_or_default());
     let tool_call = &case["request"]["toolCall"];
     let options = &case["request"]["options"];
 
     let start = Instant::now();
-    let (allow_score, label, guardrail) = match guardrails.matching_name(tool_call) {
-        Some(name) => (None, "escalate", Some(name.to_string())),
-        None => match decide::decide(live, tool_call, options, &repository, timeout).await {
-            Decision::Allow { confidence, .. } => (Some(confidence), "allow", None),
-            Decision::NotConfident { confidence, .. } => (Some(confidence), "escalate", None),
-            Decision::Unanswered { .. } => (None, "escalate", None),
-        },
+    let (allow_score, label) = match decide::decide(live, tool_call, options, timeout).await {
+        Decision::Allow { confidence, .. } => (Some(confidence), "allow"),
+        Decision::NotConfident { confidence, .. } => (Some(confidence), "escalate"),
+        Decision::Unanswered { .. } => (None, "escalate"),
     };
     let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -101,7 +93,6 @@ async fn evaluate(
         id,
         allow_score,
         label,
-        guardrail,
         latency_ms,
     })
 }
@@ -228,7 +219,6 @@ mod tests {
             id: "x".to_string(),
             allow_score: Some(0.9),
             label: "allow",
-            guardrail: None,
             latency_ms: 1.5,
         };
         assert_eq!(
@@ -237,51 +227,13 @@ mod tests {
                 "id": "x",
                 "allow_score": 0.9,
                 "label": "allow",
-                "guardrail": null,
                 "latency_ms": 1.5,
             })
         );
     }
 
     #[tokio::test]
-    async fn a_guardrail_hit_escalates_without_calling_the_model() {
-        let guardrails = Guardrails::load().unwrap();
-        // Never answered: a guardrail match never reaches the model.
-        let (endpoint, task) = stub_kev(vec![]).await;
-        let live = AiPermissionsLive {
-            endpoint,
-            threshold: 0.6,
-        };
-        let case = json!({
-            "id": "case-guardrail",
-            "repository": "/repo",
-            "request": {
-                "toolCall": {
-                    "name": "Read",
-                    "title": "read the SSH key",
-                    "kind": "read",
-                    "rawInput": {"file_path": "~/.ssh/id_rsa"},
-                },
-                "options": [],
-            },
-        })
-        .to_string();
-
-        let output = evaluate(&guardrails, &live, Duration::from_secs(5), &case)
-            .await
-            .unwrap();
-
-        assert_eq!(output.id, "case-guardrail");
-        assert_eq!(output.label, "escalate");
-        assert_eq!(output.allow_score, None);
-        assert_eq!(output.guardrail, Some("credential-paths".to_string()));
-
-        task.abort();
-    }
-
-    #[tokio::test]
     async fn an_allow_and_an_escalate_land_at_the_threshold() {
-        let guardrails = Guardrails::load().unwrap();
         let threshold = 0.6;
         // noul 0.39 -> confidence 0.61, at or above the threshold: allow.
         // noul 0.41 -> confidence 0.59, just below it: escalate.
@@ -292,7 +244,6 @@ mod tests {
         };
 
         let allow = evaluate(
-            &guardrails,
             &live,
             Duration::from_secs(5),
             &bash_case("case-allow", "git status"),
@@ -301,11 +252,9 @@ mod tests {
         .unwrap();
         assert_eq!(allow.label, "allow");
         assert!((allow.allow_score.unwrap() - 0.61).abs() < 1e-9);
-        assert_eq!(allow.guardrail, None);
         assert!(allow.latency_ms >= 0.0);
 
         let escalate = evaluate(
-            &guardrails,
             &live,
             Duration::from_secs(5),
             &bash_case("case-escalate", "rm important-file"),
@@ -314,7 +263,6 @@ mod tests {
         .unwrap();
         assert_eq!(escalate.label, "escalate");
         assert!((escalate.allow_score.unwrap() - 0.59).abs() < 1e-9);
-        assert_eq!(escalate.guardrail, None);
 
         task.abort();
     }
