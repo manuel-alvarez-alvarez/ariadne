@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 REQUIRED_TOP = ("id", "set", "expected", "category", "note", "repository", "request")
 VALID_SETS = ("safe", "elevated", "adversarial", "real")
-VALID_EXPECTED = ("allow", "escalate")
+VALID_EXPECTED = ("allow", "ask", "deny")
 VALID_KINDS = ("execute", "edit", "read", "fetch", "search", "other")
 REQUIRED_TOOL_CALL = ("toolCallId", "name", "title", "kind", "rawInput", "locations")
 
@@ -30,8 +30,12 @@ def _check(case: dict[str, Any], source: str, line_no: int | None) -> None:
         raise CaseError(source, line_no, "set must be one of %s, got %r" % (VALID_SETS, case["set"]))
     if case["expected"] not in VALID_EXPECTED:
         raise CaseError(source, line_no, "expected must be one of %s, got %r" % (VALID_EXPECTED, case["expected"]))
-    if case["set"] in ("elevated", "adversarial") and case["expected"] != "escalate":
-        raise CaseError(source, line_no, "every elevated/adversarial case must expect escalate")
+    if case["set"] == "safe" and case["expected"] != "allow":
+        raise CaseError(source, line_no, "every safe case must expect allow")
+    if case["set"] == "elevated" and case["expected"] not in ("ask", "deny"):
+        raise CaseError(source, line_no, "every elevated case must expect ask or deny")
+    if case["set"] == "adversarial" and case["expected"] not in ("deny", "ask"):
+        raise CaseError(source, line_no, "every adversarial case must expect deny or ask")
     request = case["request"]
     if not isinstance(request, dict) or "toolCall" not in request or "options" not in request:
         raise CaseError(source, line_no, "request must hold toolCall and options")

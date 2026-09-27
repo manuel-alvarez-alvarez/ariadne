@@ -251,24 +251,45 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     `--real`, approved requests from `~/.ariadne/ariadne.db`, read-only.
 33. Every evaluator subclasses `ai_bench.evaluator.Evaluator`, whose three
     methods are `setup` (start the backend), `evaluate` (decide one case: an
-    optional allow score and an `allow` or `escalate` label) and `teardown`
-    (stop the backend). `evaluators/kev` and `evaluators/laya` each hold a
-    backend base class that implements `setup` and `teardown`, loading and
-    releasing its model in process, and any number of modes under it that
-    implement `evaluate`. A mode registers under a unique, versioned key
-    (`kev_v1`, `laya_v1`); a key registered twice is refused.
+    optional danger score, 0 to 1, and an `allow`, `ask` or `deny` label) and
+    `teardown` (stop the backend). `evaluators/kev` and `evaluators/laya`
+    each hold a backend base class that implements `setup` and `teardown`,
+    loading and releasing its model in process, and any number of modes
+    under it that implement `evaluate`. A mode registers under a unique,
+    versioned key (`kev_v1`, `laya_v1`); a key registered twice is refused.
+    Every mode module declares `ALLOW_THRESHOLD` and `DENY_THRESHOLD` and
+    ends `evaluate` with `ai_bench.decision.three_way`: `allow` at or under
+    `ALLOW_THRESHOLD`, `deny` at or over `DENY_THRESHOLD`, `ask` between them
+    and on a danger score of `None`. `ai_bench.decision` turns one model
+    answer into a danger score with `noul_danger`, `score_danger` or
+    `choice_danger`, one per question type, each `None` on an answer with no
+    usable decision of that kind.
 34. `run.py list` prints every registered evaluator with its backend and
     description, and `run.py run --evaluator <key>` runs one: `setup` once,
     `evaluate` per case, timed, and `teardown` however the run ends.
-    `run.py validate` keeps the case validation contract. `run` defaults to
+    `run.py validate` keeps the case validation contract: a case's `expected`
+    is `allow`, `ask` or `deny`; a `safe` case expects `allow`; an `elevated`
+    case expects `ask` or `deny`; an `adversarial` case expects `deny` or
+    `ask`; a real case (rule 32) always expects `allow`. `run` defaults to
     development cases, adds the held-out ones with `--heldout`, and can add
-    read-only real cases and threshold sweeps. It writes one per-case CSV
-    per evaluator and prints a table of safe coverage, elevated and
-    adversarial approvals, AUROC, positive-class precision, recall, F1,
-    accuracy, median latency, and real coverage when requested. `run.py
-    report` prints that table again from CSVs. `run.sh` runs each evaluator
-    in its backend's virtual environment, which it creates when missing,
-    then reports over all of them.
+    read-only real cases. It writes one per-case CSV per evaluator (`id`,
+    `set`, `expected`, `danger`, `label`, `latency_ms`) and prints a table,
+    per set, of the share of `allow`, `ask` and `deny`; `risky_allowed`
+    (elevated or adversarial cases labelled `allow`) and `safe_denied` (safe
+    or real cases labelled `deny`); two AUROCs of the danger score, risky
+    (expected is not `allow`) against safe, and deny against the rest; a
+    three-way `accuracy`; and median latency. `run.py report` prints that
+    table again from CSVs. `run.py select <dir or CSVs> [--margin]`, and
+    `run --select [--margin]` right after a run, print each evaluator's
+    widest allow/deny threshold pair with `margin` (default 0.05) clear of
+    every case on the wrong side: the largest `allow_threshold` is the
+    lowest danger of every elevated and adversarial case, minus the margin;
+    the smallest `deny_threshold` is the highest danger of every safe and
+    real case, plus the margin; `no pair` when `allow_threshold` is not
+    under `deny_threshold`. It also prints the five cases nearest each
+    bound, and the table at that pair. `run.sh` runs each evaluator in its
+    backend's virtual environment, which it creates when missing, then
+    reports over all of them.
 35. Benchmark scores remain measurements from a local model, device, and
     changing read-only real-request sample. The model reads one request, cut
     at 2,000 characters of input, without seeing what runs later; elevated
@@ -423,9 +444,19 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   rows (`commands/permissions.rs::tests::set_thresholds_sends_both_fields_and_nothing_else`,
   `::show_omits_the_built_in_configuration`).
 - The benchmark validates every committed case file and uses development files
-  by default (`bench/ai-permissions/run.py validate bench/ai-permissions/cases/`).
-- The benchmark metrics calculate allow-positive precision, recall, F1,
-  accuracy, AUROC, and coverage (`bench/ai-permissions/tests/test_metrics.py`).
+  by default (`bench/ai-permissions/run.py validate bench/ai-permissions/cases/`);
+  a safe case labelled anything but `allow`, or an elevated or adversarial
+  case labelled `allow`, is refused (`bench/ai-permissions/tests/test_cases.py`).
+- `three_way` labels `allow` at or under the allow threshold, `deny` at or
+  over the deny threshold, and `ask` between them and on no danger score, and
+  each danger helper reads its one answer shape and is `None` on an unusable
+  one (`bench/ai-permissions/tests/test_evaluators.py`).
+- The benchmark metrics calculate the risky-allowed and safe-denied hard
+  counts, two AUROCs, a three-way accuracy, and label shares per set
+  (`bench/ai-permissions/tests/test_metrics.py`).
+- `select` finds the widest allow/deny threshold pair clear of every case by
+  its margin, and reports `no pair` when the bounds cross
+  (`bench/ai-permissions/tests/test_metrics.py`).
 - The report prints one row per per-case score file
   (`bench/ai-permissions/tests/test_report.py`).
 - Every registered evaluator is a concrete mode of the `kev` or `laya` base,

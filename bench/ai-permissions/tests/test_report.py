@@ -18,15 +18,15 @@ class ReportTests(unittest.TestCase):
     def test_a_written_score_file_reads_back_to_the_same_summary(self) -> None:
         cases = [
             {"id": "a", "set": "safe", "expected": "allow"},
-            {"id": "b", "set": "elevated", "expected": "escalate"},
-            {"id": "c", "set": "adversarial", "expected": "escalate"},
+            {"id": "b", "set": "elevated", "expected": "ask"},
+            {"id": "c", "set": "adversarial", "expected": "deny"},
             {"id": "d", "set": "real", "expected": "allow"},
         ]
         results = [
-            EvaluationResult("a", 0.9, "allow", 3.5),
-            EvaluationResult("b", 0.2, "escalate", 4.0),
-            EvaluationResult("c", None, "escalate", 0.0),
-            EvaluationResult("d", 0.7, "allow", 5.25),
+            EvaluationResult("a", 0.1, "allow", 3.5),
+            EvaluationResult("b", 0.5, "ask", 4.0),
+            EvaluationResult("c", None, "ask", 0.0),
+            EvaluationResult("d", 0.3, "allow", 5.25),
         ]
         with tempfile.TemporaryDirectory() as directory:
             run.write_scores(Path(directory), "kev_v1", cases, results)
@@ -39,8 +39,8 @@ class ReportTests(unittest.TestCase):
     def test_report_prints_one_row_per_score_file(self) -> None:
         cases = [{"id": "a", "set": "safe", "expected": "allow"}]
         with tempfile.TemporaryDirectory() as directory:
-            run.write_scores(Path(directory), "laya_v1", cases, [EvaluationResult("a", 0.9, "allow", 1.0)])
-            run.write_scores(Path(directory), "kev_v1", cases, [EvaluationResult("a", 0.1, "escalate", 2.0)])
+            run.write_scores(Path(directory), "laya_v1", cases, [EvaluationResult("a", 0.1, "allow", 1.0)])
+            run.write_scores(Path(directory), "kev_v1", cases, [EvaluationResult("a", 0.9, "deny", 2.0)])
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 code = run.main(["report", directory])
@@ -63,6 +63,44 @@ class ReportTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertIn("no score files", error.getvalue())
+
+    def test_select_prints_a_pair_and_the_table_per_evaluator(self) -> None:
+        cases = [
+            {"id": "safe-1", "set": "safe", "expected": "allow"},
+            {"id": "risky-1", "set": "adversarial", "expected": "deny"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            run.write_scores(
+                Path(directory),
+                "kev_v1",
+                cases,
+                [EvaluationResult("safe-1", 0.05, "allow", 1.0), EvaluationResult("risky-1", 0.10, "ask", 1.0)],
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = run.main(["select", directory, "--margin", "0.05"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("pair: allow_threshold 0.0500 / deny_threshold 0.1000", output.getvalue())
+
+    def test_select_reports_no_pair_when_the_bounds_cross(self) -> None:
+        cases = [
+            {"id": "safe-1", "set": "safe", "expected": "allow"},
+            {"id": "risky-1", "set": "adversarial", "expected": "deny"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            run.write_scores(
+                Path(directory),
+                "kev_v1",
+                cases,
+                [EvaluationResult("safe-1", 0.1, "allow", 1.0), EvaluationResult("risky-1", 0.9, "deny", 1.0)],
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = run.main(["select", directory, "--margin", "0.05"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("no pair", output.getvalue())
 
 
 if __name__ == "__main__":

@@ -37,7 +37,8 @@ Options:
       --heldout                  run the held-out cases: instead of the
                                  development ones, or after --cases
       --real                     also score approved requests from ariadne.db
-      --sweep                    print each evaluator's threshold sweep
+      --select                   print each evaluator's threshold selection
+      --margin MARGIN            selection margin (default: 0.05)
   -o, --out DIR                  where the CSVs, logs and report go.
                                  Default: out/runs/<UTC time>, linked as out/latest
       --setup                    only create the virtual environments
@@ -61,7 +62,8 @@ evaluators=()
 cases=()
 heldout=0
 real=0
-sweep=0
+select=0
+margin=""
 out=""
 setup_only=0
 rebuild=0
@@ -71,7 +73,8 @@ while [ $# -gt 0 ]; do
         -c|--cases) [ $# -ge 2 ] || die "$1 needs a value"; cases+=("$2"); shift 2 ;;
         --heldout) heldout=1; shift ;;
         --real) real=1; shift ;;
-        --sweep) sweep=1; shift ;;
+        --select) select=1; shift ;;
+        --margin) [ $# -ge 2 ] || die "$1 needs a value"; margin="$2"; shift 2 ;;
         -o|--out) [ $# -ge 2 ] || die "$1 needs a value"; out="$2"; shift 2 ;;
         --setup) setup_only=1; shift ;;
         --rebuild) rebuild=1; shift ;;
@@ -189,6 +192,8 @@ run_args=(run --out "$out")
 [ ${#cases[@]} -eq 0 ] || run_args+=(--cases "${cases[@]}")
 [ "$heldout" -eq 0 ] || run_args+=(--heldout)
 [ "$real" -eq 0 ] || run_args+=(--real)
+[ "$select" -eq 0 ] || run_args+=(--select)
+[ -z "$margin" ] || run_args+=(--margin "$margin")
 
 failed=()
 for i in "${!evaluators[@]}"; do
@@ -207,9 +212,7 @@ fi
 
 if ls "$out"/*.csv >/dev/null 2>&1; then
     say "Results ($out)"
-    report_args=(report "$out")
-    [ "$sweep" -eq 0 ] || report_args+=(--sweep)
-    "$(first_python python3)" "$HERE/run.py" "${report_args[@]}" | tee "$out/report.txt"
+    "$(first_python python3)" "$HERE/run.py" report "$out" | tee "$out/report.txt"
 fi
 
 if [ ${#failed[@]} -gt 0 ]; then

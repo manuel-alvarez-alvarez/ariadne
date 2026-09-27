@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
-Label = Literal["allow", "escalate"]
+Label = Literal["allow", "ask", "deny"]
 
 
 class EvaluatorError(RuntimeError):
@@ -20,10 +20,10 @@ class EvaluatorError(RuntimeError):
 
 @dataclass(frozen=True)
 class Evaluation:
-    """What one `evaluate` call decided: the allow score (None when the model gave no usable
-    answer) and the label, `allow` only when the score clears the mode's own threshold."""
+    """What one `evaluate` call decided: the danger score, 0 to 1 (None when the model gave no
+    usable answer, which gives `ask`), and the label, `allow`, `ask` or `deny`."""
 
-    allow_score: float | None
+    danger: float | None
     label: Label
 
 
@@ -32,7 +32,7 @@ class EvaluationResult:
     """One evaluation as the runner records it: the case it was for and how long it took."""
 
     id: str
-    allow_score: float | None
+    danger: float | None
     label: Label
     latency_ms: float
 
