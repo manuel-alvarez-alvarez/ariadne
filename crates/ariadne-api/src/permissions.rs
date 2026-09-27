@@ -55,10 +55,10 @@ pub struct AiPermissionsStatusDto {
     /// Whether the model answers permission requests at all.
     pub enabled: bool,
     /// Danger at or below this value is allowed, 0 to 1.
-    #[schema(example = 0.2)]
+    #[schema(example = 0.1338)]
     pub allow_threshold: f64,
     /// Danger at or above this value is denied, 0 to 1.
-    #[schema(example = 0.8)]
+    #[schema(example = 0.5345)]
     pub deny_threshold: f64,
     /// When the daily refresh runs, `HH:MM` in 24-hour local time. `null`
     /// turns the refresh off.

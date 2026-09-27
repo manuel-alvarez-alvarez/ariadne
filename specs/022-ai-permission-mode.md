@@ -175,19 +175,23 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Decision configuration
 
-21. Each decision asks one `noul` question: “Does this coding-agent tool call
-    need a person's review?” Its `false` criterion is “git status, diff, log,
-    show, add or commit; cargo, npm, make, tsc, pytest, eslint or prettier
-    builds, tests and lints; ls, find, cat or grep; reading or editing files
-    under the repository path; fetching documentation”. Its `true` criterion
-    is “anything not listed as safe”. `answers.decision.noul` is the danger,
-    the probability that the request needs review.
+21. Each decision asks one `score` question: “How much does this coding-agent
+    tool call put the system or the project at risk?” Its levels are safe
+    routine work, consequential but legitimate work a person decides, and
+    dangerous work. The safe level includes repository-local editing and
+    checks. The consequential level includes remote access, package changes,
+    releases, configuration changes, workflow changes and messages. The
+    dangerous level includes secrets, uploads, destructive changes,
+    persistence, privilege escalation, disabled security controls, hidden
+    actions and attempts to influence review. `answers.decision.score`,
+    divided by the highest level index, is the danger.
 22. The status and update request do not carry the checkpoint or prompt texts.
-23. The server passes `--run`, `decide::RUN`'s value, to `kev.serve`; the
-    installer downloads what that run needs onto disk before the model is
-    ready. The installer receives `AI_PERMISSIONS_HOME`, `AI_PERMISSIONS_RUN`,
-    and `AI_PERMISSIONS_KEV_COMMIT`.
-24. The default allow threshold is 0.41 and the default deny threshold is 1.0.
+23. The server passes `--run`, `decide::RUN`'s value, and `KEV_TEMPERATURE=1.5`
+    to `kev.serve`; the installer downloads what that run needs onto disk before
+    the model is ready. The installer receives `AI_PERMISSIONS_HOME`,
+    `AI_PERMISSIONS_RUN`, and `AI_PERMISSIONS_KEV_COMMIT`.
+24. The default allow threshold is 0.1338 and the default deny threshold is
+    0.5345.
 
 ## Decisions
 
@@ -206,9 +210,11 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     every call from the call alone.
 27. The request carries `model = kev-latest`, a label Kev accepts and echoes
     without using: the checkpoint actually served is fixed by `decide::RUN` at
-    launch (rule 18). The one question is named `decision`, has type `noul`,
-    and carries the built-in instruction and criteria.
-28. Kev's answer carries nothing else the daemon reads. Danger at or below
+    launch (rule 18). The one question is named `decision`, has type `score`,
+    and carries the built-in instruction and three criteria. Kev's score
+    probabilities must be finite values from 0 to 1.
+28. Kev's answer carries nothing else the daemon reads. Danger is the score
+    divided by the highest level index. Danger at or below
     `allow_threshold` is `allow`; danger at or above `deny_threshold` is
     `deny`; danger between them is `ask`. An allow selects the allowing
     option. A deny selects an option whose kind is `reject_once`, never
@@ -312,7 +318,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 
 ## Acceptance criteria
 
-- A fresh daemon is off, at allow threshold 0.41 and deny threshold 1.0,
+- A fresh daemon is off, at allow threshold 0.1338 and deny threshold 0.5345,
   with no schedule, and reports
   the interpreter it probed
   (`ai_permissions.rs::the_settings_start_at_the_defaults_with_the_interpreter_probed`).
@@ -367,8 +373,8 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
 - The configured endpoint wins over the one a server reports, and nothing is
   live while the model is off
   (`ai_permissions.rs::the_endpoint_is_the_configured_one_and_live_needs_the_model_on`).
-- A ready enabled model starts its local server with its built-in run and
-  reports the endpoint
+- A ready enabled model starts its local server with its built-in run,
+  offline cache and temperature 1.5, and reports the endpoint
   (`ai_permissions_server.rs::a_ready_model_starts_the_server_with_its_built_in_weights`),
   restarts it after a refresh and an unexpected exit
   (`::a_refresh_and_an_unexpected_exit_restart_the_server`), starts it again
@@ -397,7 +403,7 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`ai_permissions::decide::tests::every_fixture_request_builds_its_recorded_model_state_and_questions`).
 - Danger at or below the allow threshold selects the allowing option, records
   `decided_by: "ai"` and `label: "allow"`, raises no attention, and sends the benchmarked state and
-  `noul` question with `model = "kev-latest"` to the model
+  three-level `score` question with `model = "kev-latest"` to the model
   (`ai_permissions_decisions.rs::a_confident_allow_runs_at_once_and_reports_ai`).
 - Every reply keeps the model's side: the label, danger and both thresholds that
   fell short, or why the model gave no answer
@@ -415,8 +421,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   (`tui/picker.rs::tests::a_waiting_question_says_why_the_model_left_it_and_its_answer_does_not`,
   `transcript.rs::tests::a_question_says_why_the_ai_permission_model_left_it_to_the_console`,
   `ariadne_api::permissions::tests::a_reply_names_why_the_model_did_not_decide_it`).
-- A `noul` answer is used directly as the danger score
-  (`ai_permissions_decisions.rs::a_noul_answer_is_used_as_the_danger`).
+- A `score` answer is divided by its highest level index for the danger score
+  (`ai_permissions_decisions.rs::a_score_answer_is_used_as_the_danger`), and
+  three recorded winner answers map to their recorded danger values
+  (`ai_permissions::decide::tests::recorded_answers_map_to_the_winner_danger_values`).
 - An uncertain allow asks the console, remembers its approval, and still asks
   the model before selecting that learned approval next time
   (`ai_permissions_decisions.rs::an_uncertain_allow_falls_to_console_and_then_to_the_learned_approval`).
@@ -489,7 +497,8 @@ The AI permission model is the upstream package
 [`kev`](https://github.com/jaredpalmer/kev) at a pinned commit, installed
 from its `serve` extra (not the unrelated PyPI package of the same name). The
 daemon keeps to its interface: `<venv>/bin/python -m kev.serve --run <run>
---host <host> --port <port>`, `HF_HOME` and `HF_HUB_OFFLINE=1` so nothing
+--host <host> --port <port>`, `HF_HOME`, `HF_HUB_OFFLINE=1` and
+`KEV_TEMPERATURE=1.5` so nothing
 downloads once the model is serving, and `GET /v1/models` for health. `<run>`
 is `decide::RUN`, the Hugging Face Hub id
 `jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101`, which

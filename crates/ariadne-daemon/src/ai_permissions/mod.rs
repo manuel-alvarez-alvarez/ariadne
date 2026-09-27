@@ -220,8 +220,8 @@ impl AiPermissions {
 }
 
 /// The thresholds a daemon that cannot read its settings reports.
-pub(crate) const DEFAULT_ALLOW_THRESHOLD: f64 = 0.41;
-pub(crate) const DEFAULT_DENY_THRESHOLD: f64 = 1.0;
+pub(crate) const DEFAULT_ALLOW_THRESHOLD: f64 = 0.1338;
+pub(crate) const DEFAULT_DENY_THRESHOLD: f64 = 0.5345;
 
 /// The state a stored spelling names. One nothing here knows reads as
 /// `failed`: a state that cannot be read is not one to answer requests on.

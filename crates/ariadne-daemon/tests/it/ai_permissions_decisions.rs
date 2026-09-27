@@ -39,13 +39,18 @@ struct ModelServer {
 }
 
 impl ModelServer {
-    /// An answer shaped exactly as `kev.serve` returns it: a `noul` answer
-    /// carries no `answer_confidence` or any other field beside its type and
-    /// probability.
-    async fn answer(needs_review_probability: f64) -> Self {
+    /// An answer shaped as the winning `score` question returns it.
+    async fn answer(danger: f64) -> Self {
+        let score = danger * 2.0;
+        let probabilities = if score <= 1.0 {
+            json!({"0": 1.0 - score, "1": score, "2": 0.0})
+        } else {
+            json!({"0": 0.0, "1": 2.0 - score, "2": score - 1.0})
+        };
         Self::start(Answer::Value(response(json!({
-            "type": "noul",
-            "noul": needs_review_probability
+            "type": "score",
+            "score": score,
+            "probabilities": probabilities,
         }))))
         .await
     }
@@ -313,18 +318,17 @@ async fn a_confident_allow_runs_at_once_and_reports_ai() {
         "the call and its options, and nothing derived from them"
     );
     assert_eq!(requests[0]["model"], "kev-latest");
-    assert_eq!(requests[0]["questions"]["decision"]["type"], "noul");
+    assert_eq!(requests[0]["questions"]["decision"]["type"], "score");
     assert_eq!(
         requests[0]["questions"]["decision"]["instructions"],
-        "Does this coding-agent tool call need a person's review?"
+        "How much does this coding-agent tool call put the system or the project at risk?"
     );
     assert_eq!(
-        requests[0]["questions"]["decision"]["criteria"]["false"],
-        "git status, diff, log, show, add or commit; cargo, npm, make, tsc, pytest, eslint or prettier builds, tests and lints; ls, find, cat or grep; reading or editing files under the repository path; fetching documentation"
-    );
-    assert_eq!(
-        requests[0]["questions"]["decision"]["criteria"]["true"],
-        "anything not listed as safe"
+        requests[0]["questions"]["decision"]["criteria"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
     );
 }
 
@@ -340,7 +344,8 @@ args = sys.argv[3:]
 host = args[args.index('--host') + 1]
 port = int(args[args.index('--port') + 1])
 ANSWER = json.dumps({"model": "kev-latest",
-    "answers": {"decision": {"type": "noul", "noul": 0.05}},
+    "answers": {"decision": {"type": "score", "score": 0.1,
+                                  "probabilities": {"0": 0.9, "1": 0.1, "2": 0.0}}},
     "usage": {}, "latency_ms": 12.3}).encode()
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -397,7 +402,7 @@ async fn a_request_made_while_the_server_loads_waits_for_it() {
 }
 
 #[tokio::test]
-async fn a_noul_answer_is_used_as_the_danger() {
+async fn a_score_answer_is_used_as_the_danger() {
     let server = ModelServer::answer(0.05).await;
     let (h, cast, _agent_dir) = ai_permissions_harness(&server, 0.2, Timeouts::default()).await;
 

@@ -397,8 +397,8 @@ ariadne permissions ai refresh --wait           # install again, on the settings
 ariadne permissions ai disable                  # keeps the files
 ```
 
-The allow threshold defaults to `0.41`, and the deny threshold defaults to
-`1.0`. Each must be from 0 to 1, and the allow threshold must be lower than
+The allow threshold defaults to `0.1338`, and the deny threshold defaults to
+`0.5345`. Each must be from 0 to 1, and the allow threshold must be lower than
 the deny threshold. The daemon refuses an invalid pair without changing either
 setting.
 

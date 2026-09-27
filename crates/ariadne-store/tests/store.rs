@@ -3621,8 +3621,8 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
 
     let defaults = store.ai_permission_settings().await.unwrap();
     assert!(!defaults.enabled);
-    assert_eq!(defaults.allow_threshold, 0.41);
-    assert_eq!(defaults.deny_threshold, 1.0);
+    assert_eq!(defaults.allow_threshold, 0.1338);
+    assert_eq!(defaults.deny_threshold, 0.5345);
     assert_eq!(defaults.schedule, None);
     assert_eq!(defaults.state, "disabled");
     assert_eq!(defaults.installed_release, None);
@@ -3642,7 +3642,7 @@ async fn the_ai_permission_settings_are_one_row_that_takes_partial_writes() {
         .await
         .unwrap();
     assert_eq!(partly_chosen.allow_threshold, 0.2);
-    assert_eq!(partly_chosen.deny_threshold, 1.0);
+    assert_eq!(partly_chosen.deny_threshold, 0.5345);
     let chosen = store
         .update_ai_permission_settings(AiPermissionSettingsUpdate {
             deny_threshold: Some(0.8),

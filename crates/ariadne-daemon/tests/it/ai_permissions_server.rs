@@ -16,7 +16,7 @@ run = args[args.index('--run') + 1]
 host = args[args.index('--host') + 1]
 port = int(args[args.index('--port') + 1])
 with open(sys.argv[1], 'w') as f:
-    f.write(str(os.getpid()) + '\n' + run + '\n' + os.environ['HF_HOME'] + '\n' + os.environ['HF_HUB_OFFLINE'])
+    f.write(str(os.getpid()) + '\n' + run + '\n' + os.environ['HF_HOME'] + '\n' + os.environ['HF_HUB_OFFLINE'] + '\n' + os.environ['KEV_TEMPERATURE'])
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200 if self.path == '/v1/models' else 404)
@@ -79,7 +79,8 @@ async fn a_ready_model_starts_the_server_with_its_built_in_weights() {
     let saw = std::fs::read_to_string(record.path()).unwrap();
     assert!(saw.contains(RUN));
     assert!(saw.contains("/ai-permissions/hf"));
-    assert!(saw.ends_with('1'), "HF_HUB_OFFLINE=1: {saw}");
+    assert!(saw.contains("\n1\n"), "HF_HUB_OFFLINE=1: {saw}");
+    assert!(saw.ends_with("1.5"), "KEV_TEMPERATURE=1.5: {saw}");
     let _: AiPermissionsStatusDto = h
         .json(
             put_json("/v1/permissions/ai", json!({"enabled":false})),

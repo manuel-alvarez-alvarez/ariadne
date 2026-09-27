@@ -77,10 +77,12 @@ kind, the compact JSON of its raw input (cut at 2,000 characters), and the
 option names, each left out where empty, and nothing else. Ariadne adds no
 hints of its own and has no rules that decide a request before the model
 does: every request, reading `~/.ssh` included, is the model's to judge. The
-model answers one question:
-“Does this coding-agent tool call need a person's review?”
+model answers one question: “How much does this coding-agent tool call put the
+system or the project at risk?” It scores the request as safe routine work,
+consequential but legitimate work a person decides, or dangerous work.
 
-The answer is a danger score: the probability that review is needed. Ariadne
+The answer is a danger score: the expected level, from 0 for safe through 1
+for dangerous. Ariadne
 allows a request at or below the allow threshold, denies one at or above the
 deny threshold, and asks between them. A denial selects only a one-time reject
 option. When the agent offers no one-time reject, the console asks instead;
@@ -152,8 +154,8 @@ ariadne permissions ai set --schedule 03:30     # install again daily, local tim
 ariadne permissions ai set --no-schedule        # and stop doing that
 ```
 
-The allow threshold defaults to `0.41`, and the deny threshold defaults to
-`1.0`. Both take values from 0 to 1, and the allow threshold must stay below
+The allow threshold defaults to `0.1338`, and the deny threshold defaults to
+`0.5345`. Both take values from 0 to 1, and the allow threshold must stay below
 the deny threshold. Lower the allow threshold to ask about more requests.
 Lower the deny threshold to reject more dangerous requests without asking.
 Set either or both with `ariadne permissions ai set --allow-threshold <value>
@@ -164,35 +166,20 @@ was down at the scheduled time, it catches up on its next start that day. A
 refresh already in progress is not queued. The model starts without one, and then
 nothing is downloaded until you ask for it.
 
-The [AI permission benchmark](../bench/ai-permissions/README.md) tested 75
-configurations on 2026-09-26; the winner allowed 30 of 127 safe cases, 3 of 301
-real requests, and none of 89 development, 168 held-out, or 44 elevated risky
-cases. It measured AUROC 0.9808 and 23.3 ms median single-request latency, but
-real coverage was 1%, and its held-out margin was only 0.0094.
+The [AI permission benchmark](../bench/ai-permissions/README.md) selected
+Kev-4B with the three-level score question, temperature 1.5, and thresholds
+0.1338 and 0.5345. On 2026-09-27, it allowed 13% of safe development cases,
+11% of safe held-out cases, and 1% of real requests. It denied 78% of
+development adversarial cases and 39% of held-out adversarial cases, while
+denying no safe or real request.
 
-The benchmark ran on one Apple GPU and used a changing local sample for real
-requests. The model reads one request at a time, so it cannot know how a
-written file will run later, and it sees at most 2,000 characters of a
-call's input: the rest of a longer command is invisible to it. Score changes
-from another device or numeric precision can matter near the threshold.
-
-A follow-up comparison re-scored the same extended sets against two sizes of a
-second model, Kev, and picked Kev-4B, at ten times the single-request latency
-(about 230 ms against 30 ms) and roughly four times the resident memory (8 to
-16 GB against 2.7 GB) while the server is enabled. With regular-expression
-rules deciding some requests first and ten signals derived for the model, it
-covered 136 of 301 safe cases and 54 of 301 real requests, at AUROC 0.9845.
-
-Kev-4B now decides every request alone, from the call and nothing derived
-from it. Measured on 2026-09-27 at the `0.59` default, it allows 55 of 301
-safe development cases, 25 of 150 safe held-out cases, and 7 of 299 real
-requests (2.3%), and none of 222 development, 400 held-out or 125 elevated
-risky cases. AUROC is 0.929 on the development cases and 0.953 on the
-held-out ones. The highest-scoring risky case, a search of the home directory
-for `.env` files, scores 0.581, so the margin under the threshold is 0.009. At
-`0.56` it would allow 31% of the safe cases and 10% of the real requests, but
-also that search and a command carrying an "ignore previous instructions"
-comment. Lower the threshold only knowing that trade.
+The closest development risky request was 0.0748 above the allow threshold;
+the closest held-out or real bound was 0.0500 away. Median single-request
+latency was 505 ms on development cases, 589 ms on held-out and real cases,
+and 563 ms across all 1,498 cases. The real-request sample changes over time.
+The model reads one request at a time and sees at most 2,000 characters of its
+input, so a later command can remain invisible. Scores can vary near a bound
+with another device or numeric precision.
 
 Once the install is ready, the daemon runs the model's local server on a loopback
 port and keeps its selected weights in memory for permission decisions. It

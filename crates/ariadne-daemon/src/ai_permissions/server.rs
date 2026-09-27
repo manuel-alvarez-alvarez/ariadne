@@ -161,6 +161,7 @@ pub(crate) async fn spawn(
     child
         .env("HF_HOME", home.join("hf"))
         .env("HF_HUB_OFFLINE", "1")
+        .env("KEV_TEMPERATURE", decide::TEMPERATURE.to_string())
         .env_remove("KEV_API_KEY");
     Ok((child.spawn()?, format!("http://127.0.0.1:{port}")))
 }
