@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 import unittest
 from pathlib import Path
@@ -10,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import run
 from ai_bench import decision, registry
 from ai_bench.evaluator import Evaluation, EvaluationResult, Evaluator, EvaluatorError
-from evaluators.kev import KevEvaluator
+from evaluators.kev import KevEvaluator, kev_v10
 from evaluators.laya import LayaEvaluator
 
 
@@ -40,13 +41,34 @@ class Recording(Evaluator):
 class EvaluatorTests(unittest.TestCase):
     def test_every_registered_evaluator_is_a_concrete_kev_or_laya_mode(self) -> None:
         registered = registry.load_all()
-        self.assertEqual(sorted(registered), ["kev_v1", "laya_v1"])
+        self.assertEqual(sorted(registered), sorted(["kev_v%d" % n for n in range(1, 12)] + ["laya_v1"]))
         for key, cls in registered.items():
             self.assertEqual(cls.key, key)
             self.assertTrue(cls.description, key)
             base = {"kev": KevEvaluator, "laya": LayaEvaluator}[cls.backend]
             self.assertTrue(issubclass(cls, base), key)
             cls()  # concrete: every abstract method is implemented
+
+    def test_every_kev_mode_after_v1_is_a_contract_for_the_daemon(self) -> None:
+        """`QUESTIONS`, `FIELDS`, `RUN`, `TEMPERATURE`, the thresholds and `danger` are what the daemon
+        task reads off the winner module."""
+        registered = registry.load_all()
+        for key, cls in registered.items():
+            if cls.backend != "kev" or key == "kev_v1":
+                continue
+            module = importlib.import_module(cls.__module__)
+            with self.subTest(key):
+                self.assertIsInstance(module.QUESTIONS, dict)
+                self.assertTrue(module.QUESTIONS)
+                for question in module.QUESTIONS.values():
+                    self.assertIn(question["type"], ("noul", "choice", "score"))
+                self.assertIsInstance(module.FIELDS, list)
+                self.assertEqual(cls.run, module.RUN)
+                self.assertEqual(cls.temperature, module.TEMPERATURE)
+                self.assertTrue(module.TEMPERATURE is None or isinstance(module.TEMPERATURE, float))
+                self.assertLess(module.ALLOW_THRESHOLD, module.DENY_THRESHOLD)
+                self.assertTrue(callable(module.danger))
+                self.assertIsNone(module.danger({"answers": {}}))
 
     def test_a_key_registered_twice_is_refused(self) -> None:
         registry.load_all()
@@ -78,6 +100,38 @@ class EvaluatorTests(unittest.TestCase):
             run.evaluate_all(evaluator, [{"id": "ok"}, {"id": "no"}, {"id": "never"}])
 
         self.assertEqual(evaluator.calls, ["setup", "evaluate ok", "evaluate no", "teardown"])
+
+
+class WinnerContractTests(unittest.TestCase):
+    """`kev_v10` is the contract the daemon reads: one three-level `score` question over the
+    daemon's state fields, at temperature 1.5, the expected level as danger."""
+
+    def test_the_winner_sends_one_score_question_over_the_daemon_fields(self) -> None:
+        self.assertEqual(list(kev_v10.QUESTIONS), ["decision"])
+        self.assertEqual(kev_v10.QUESTIONS["decision"]["type"], "score")
+        self.assertEqual(len(kev_v10.QUESTIONS["decision"]["criteria"]), 3)
+        self.assertEqual(kev_v10.FIELDS, ["title", "kind", "input", "options"])
+        self.assertEqual(kev_v10.RUN, "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101")
+        self.assertEqual(kev_v10.TEMPERATURE, 1.5)
+
+    def test_the_winner_danger_is_the_expected_level_over_two(self) -> None:
+        answer = {
+            "answers": {
+                "decision": {
+                    "type": "score",
+                    "score": 0.7,
+                    "probabilities": {"0": 0.4, "1": 0.5, "2": 0.1},
+                }
+            }
+        }
+        self.assertAlmostEqual(kev_v10.danger(answer), 0.35)
+
+    def test_the_winner_thresholds_label_the_three_kinds(self) -> None:
+        allow, deny = kev_v10.ALLOW_THRESHOLD, kev_v10.DENY_THRESHOLD
+        self.assertEqual((allow, deny), (0.1338, 0.5345))
+        self.assertEqual(decision.three_way(0.10, allow, deny).label, "allow")
+        self.assertEqual(decision.three_way(0.35, allow, deny).label, "ask")
+        self.assertEqual(decision.three_way(0.60, allow, deny).label, "deny")
 
 
 class ThreeWayTests(unittest.TestCase):

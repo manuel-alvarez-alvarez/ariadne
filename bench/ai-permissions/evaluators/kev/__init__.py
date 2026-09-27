@@ -22,6 +22,9 @@ class KevEvaluator(Evaluator):
     run: ClassVar[str] = "jaredpalmer/kev-4b@139fdd94f1b6a6ad80cc15e08fcb99cac885a101"
     #: The `model` label a request carries. Kev echoes it; the run loaded decides the weights.
     model: ClassVar[str] = "kev-latest"
+    #: The temperature the logits are divided by before the softmax; `None` keeps the one the
+    #: checkpoint carries (or `KEV_TEMPERATURE`), the same knob `kev.serve` reads.
+    temperature: ClassVar[float | None] = None
 
     def __init__(self) -> None:
         self._tokenizer: Any = None
@@ -45,6 +48,8 @@ class KevEvaluator(Evaluator):
         if options.backend is None:
             # `auto` resolves to the bf16 MLX path for a hybrid (Qwen3.5) run on Apple Silicon.
             options = replace(options, backend="auto")
+        if self.temperature is not None:
+            options = replace(options, temperature=self.temperature)
         self._tokenizer, self._model = Checkpoint(self.run).load(device, options)
 
     def answer(self, state: Any, questions: dict[str, Any]) -> dict[str, Any]:

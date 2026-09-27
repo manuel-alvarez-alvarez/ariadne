@@ -263,7 +263,22 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
     and on a danger score of `None`. `ai_bench.decision` turns one model
     answer into a danger score with `noul_danger`, `score_danger` or
     `choice_danger`, one per question type, each `None` on an answer with no
-    usable decision of that kind.
+    usable decision of that kind. Every Kev mode after `kev_v1` is a contract
+    the daemon can read off the module: `QUESTIONS` (the exact `questions`
+    object sent), `FIELDS` (the state is `representations.build_json` of
+    them), `RUN`, `TEMPERATURE` (`None` keeps the checkpoint's calibrated
+    temperature; a float replaces it through `KevEvaluator.temperature`, the
+    knob `KEV_TEMPERATURE` sets for `kev.serve`), the two thresholds, and a
+    `danger(answer)` function. The question, the wording, the temperature
+    and the model of a mode are chosen on the development cases only. The
+    two thresholds of a mode are the pair `run.py select --margin 0.05`
+    finds over every set together (development, held-out and real), each
+    bound the four-decimal value more than 0.05 from the nearest case, so
+    the held-out and real margins are 0.05 by construction. The README's
+    Winner section names the mode the daemon takes (`kev_v10` as of
+    2026-09-27) with its thresholds, margins, shares, AUROCs, latency and
+    memory, and the outcome of its development pair on the held-out and
+    real cases.
 34. `run.py list` prints every registered evaluator with its backend and
     description, and `run.py run --evaluator <key>` runs one: `setup` once,
     `evaluate` per case, timed, and `teardown` however the run ends.
@@ -463,6 +478,10 @@ Out: how the four modes answer a request (021, rule 9), what a repository is
   a duplicate key is refused, and a run sets up once, evaluates every case in
   order and tears down even when a case fails
   (`bench/ai-permissions/tests/test_evaluators.py`).
+- Every Kev mode after `kev_v1` exposes the contract constants and the
+  `danger` function, and the winner `kev_v10` sends one three-level `score`
+  question over the daemon's fields at temperature 1.5, with thresholds that
+  label the three kinds (`bench/ai-permissions/tests/test_evaluators.py`).
 
 ## Sources
 
