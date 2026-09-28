@@ -69,6 +69,7 @@ name = "ariadne-ui"
 version = "0.9.0"
 dependencies = [
  "log",
+ "objc2-foundation",
  "tauri",
  "tauri-build",
  "tauri-plugin-log",

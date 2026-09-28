@@ -162,8 +162,12 @@ jobs:
           annotate_only: true
 
   tauri:
-    name: Tauri shell
-    runs-on: ubuntu-latest
+    name: Tauri shell (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v5
 
@@ -173,7 +177,7 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          key: tauri-ubuntu-latest
+          key: tauri-${{ matrix.os }}
           workspaces: ui/src-tauri
           cache-on-failure: true
 
@@ -181,6 +185,7 @@ jobs:
       # scripts ask pkg-config for these headers, so even a `cargo check`
       # that produces no bundle needs them.
       - name: Install Tauri's Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \

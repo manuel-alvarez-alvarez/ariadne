@@ -18,11 +18,30 @@ fn disable_dmabuf_renderer() {
     }
 }
 
+/// WKWebView changes straight quotes and double hyphens into typography marks.
+/// That corrupts code and structured data typed into app text fields. WebKit
+/// reads these values before it creates a webview, so set them first.
+///
+/// WebKitGTK has no equivalent setting. Its build excludes automatic text
+/// replacement, so quote and dash substitution does not exist on Linux.
+#[cfg(target_os = "macos")]
+fn disable_smart_substitution() {
+    use objc2_foundation::{ns_string, NSUserDefaults};
+
+    let defaults = NSUserDefaults::standardUserDefaults();
+    defaults.setBool_forKey(false, ns_string!("WebAutomaticQuoteSubstitutionEnabled"));
+    defaults.setBool_forKey(false, ns_string!("WebAutomaticDashSubstitutionEnabled"));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
     disable_dmabuf_renderer();
 
+    #[cfg(target_os = "macos")]
+    disable_smart_substitution();
+
+    // Windows uses WebView2, and CI does not build this shell on Windows.
     tauri::Builder::default()
         .setup(|app| {
             if cfg!(debug_assertions) {

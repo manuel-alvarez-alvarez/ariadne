@@ -22,3 +22,8 @@ tauri-build = { version = "2.6.3", features = [] }
 log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
+
+# wry already links WKWebView through objc2 on macOS; this adds the
+# NSUserDefaults binding that disables its text substitution.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSUserDefaults", "NSString"] }

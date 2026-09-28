@@ -53,6 +53,10 @@ Out: the daemon endpoints themselves (012).
    webview starts, unless the user already set it. WebKitGTK's DMA-BUF
    renderer aborts with `EGL_BAD_PARAMETER` on some systems; this stops that
    abort. macOS is unaffected.
+   On macOS, the shell disables WKWebView's automatic quote and dash
+   substitution before the webview starts, so code and structured data stay
+   unchanged. WebKitGTK does not compile automatic text replacement, so Linux
+   has no equivalent setting.
 9. On Linux the shell also tells GTK its own application id (`enableGTKAppId`,
    so the identifier `dev.ariadne.ui` becomes the window's), which is how a
    desktop shell matches the window on screen to the entry the installer
