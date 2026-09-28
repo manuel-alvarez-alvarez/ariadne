@@ -182,6 +182,14 @@ struct Prompt {
     source: PromptSource,
 }
 
+/// The commands the agent most recently offered for this session.
+struct AvailableCommands {
+    /// The agent session the update named.
+    session_id: Value,
+    /// Each command exactly as the agent sent it.
+    commands: Vec<Value>,
+}
+
 /// One run of text: the chunks of one kind, and of one message where the
 /// agent names its messages, in a row.
 struct Run {
@@ -220,23 +228,46 @@ struct Turn {
     /// stored where it stands (021).
     text: Option<Run>,
     tools: HashMap<String, Value>,
+    available_commands: Option<AvailableCommands>,
 }
 
 impl Turn {
-    /// The running turn's text so far as the chunk event a console snapshot
-    /// appends: the run still being written, which comes after everything
-    /// stored. None for a turn that is not writing text, and none between
-    /// turns.
+    /// The live state a console snapshot appends after its stored events.
     fn so_far(&self, session_id: &str, task_id: &Option<String>) -> Vec<AgentEventDto> {
-        let Some(run) = self.text.as_ref().filter(|_| self.running) else {
-            return Vec::new();
+        let mut events = Vec::new();
+        if let Some(run) = self.text.as_ref().filter(|_| self.running) {
+            events.push(live_event(
+                session_id,
+                task_id.clone(),
+                &format!("{}_chunk", run.kind),
+                json!({"session_id": self.agent_session, "text": run.text}),
+            ));
+        }
+        if let Some(commands) = &self.available_commands {
+            events.push(live_event(
+                session_id,
+                task_id.clone(),
+                "available_commands_update",
+                json!({"session_id": commands.session_id, "available_commands": commands.commands}),
+            ));
+        }
+        events
+    }
+
+    /// Whether this prompt starts with one of the agent's offered commands.
+    fn is_command(&self, text: &str) -> bool {
+        let Some(word) = text
+            .strip_prefix('/')
+            .and_then(|text| text.split_whitespace().next())
+        else {
+            return false;
         };
-        vec![live_event(
-            session_id,
-            task_id.clone(),
-            &format!("{}_chunk", run.kind),
-            json!({"session_id": self.agent_session, "text": run.text}),
-        )]
+        self.available_commands.as_ref().is_some_and(|commands| {
+            commands
+                .commands
+                .iter()
+                .any(|command| command.get("name").and_then(Value::as_str) == Some(word))
+        })
     }
 
     /// End the run of text being written, and hand it back as the event to
@@ -904,6 +935,7 @@ impl AcpRuntime {
             )
             .await;
         }
+        turn.lock().await.available_commands = None;
         sink.emit(
             "session_end",
             json!({"session_id": sink.agent_session_id(&launch.config)}),
@@ -1165,12 +1197,14 @@ struct RuntimeIncoming {
 
 impl RuntimeIncoming {
     async fn handle_update(&mut self, params: &Value) -> Result<()> {
-        if self.turn.lock().await.replay == Some(false) {
-            return Ok(());
-        }
         let session_id = params.get("sessionId").cloned().unwrap_or(Value::Null);
         let update = params.get("update").cloned().unwrap_or_default();
         let update_kind = update.get("sessionUpdate").and_then(Value::as_str);
+        if self.turn.lock().await.replay == Some(false)
+            && update_kind != Some("available_commands_update")
+        {
+            return Ok(());
+        }
         match update_kind {
             // The text so far is appended and its chunk published under the
             // one lock, so a console opening mid-turn reads a text that ends
@@ -1268,6 +1302,24 @@ impl RuntimeIncoming {
                 {
                     self.sink.update_context_window(used, size).await;
                 }
+            }
+            Some("available_commands_update") => {
+                let commands = update
+                    .get("availableCommands")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut turn = self.turn.lock().await;
+                turn.available_commands = Some(AvailableCommands {
+                    session_id: session_id.clone(),
+                    commands: commands.clone(),
+                });
+                self.sink
+                    .emit_live(
+                        "available_commands_update",
+                        json!({"session_id": session_id, "available_commands": commands}),
+                    )
+                    .await;
             }
             _ => {}
         }
@@ -1828,7 +1880,11 @@ async fn prompt_once(
     system_prompt: &str,
     prompt: &Prompt,
 ) -> Result<()> {
-    let full = format!("{system_prompt}\n\n{}", prompt.text);
+    let command = rpc.turn.lock().await.is_command(&prompt.text);
+    let full = match command {
+        true => prompt.text.clone(),
+        false => format!("{system_prompt}\n\n{}", prompt.text),
+    };
     {
         let mut turn = rpc.turn.lock().await;
         turn.running = true;

@@ -9,9 +9,10 @@
 //! (`wait_for`) a test holds the turn open on after its updates went out,
 //! during which a `session/cancel` ends the turn as `cancelled`, with the
 //! turn's usage, unless `ignore_cancel` says otherwise, and during which
-//! `updates_when` sends more updates once a file exists — and the
-//! stored sessions a load or resume finds, which `session/list` answers
-//! whole, or `session_page_size` at a time behind a `nextCursor` — and never
+//! `updates_when` sends more updates once a file exists, `new_updates` sends
+//! after `session/new`, and `between_turn_updates` sends once a test creates
+//! its marker file — and the stored sessions a load or resume finds, which
+//! `session/list` answers whole, or `session_page_size` at a time behind a `nextCursor` — and never
 //! answers a page from `session_list_stall_from` on, and how long the agent
 //! takes to come up at all (`start_delay`, in seconds). With `writer_child`
 //! it is codex-acp's shape: the conversation is written by a child process
@@ -453,6 +454,23 @@ def cancelled_meanwhile():
     return False
 
 
+def send_updates(session, updates):
+    for update in updates:
+        send({"jsonrpc": "2.0", "method": "session/update",
+              "params": {"sessionId": session, "update": update}})
+
+
+def send_between_turn_updates():
+    between = script.get("between_turn_updates")
+    if not between:
+        return
+    marker = between.get("wait_for")
+    while marker and not os.path.exists(marker):
+        time.sleep(0.01)
+    send_updates(script.get("session_id", "stub-session"), between.get("updates", []))
+    script.pop("between_turn_updates", None)
+
+
 def respond(request):
     global permissions
     method = request.get("method")
@@ -472,9 +490,7 @@ def respond(request):
         wanted = request.get("params", {}).get("sessionId")
         if wanted in script.get("stored_sessions", []):
             claim_writer(wanted, resumed=True)
-            for update in script.get("load_updates", []):
-                send({"jsonrpc": "2.0", "method": "session/update",
-                      "params": {"sessionId": wanted, "update": update}})
+            send_updates(wanted, script.get("load_updates", []))
             return {"configOptions": options}
         raise Failure(-32001, "unknown session %s" % wanted)
     if method == "session/close":
@@ -514,9 +530,7 @@ def respond(request):
                   "method": "session/request_permission",
                   "params": request_permission})
             read()  # the client's answer, logged like everything else
-        for update in turn.get("updates", []):
-            send({"jsonrpc": "2.0", "method": "session/update",
-                  "params": {"sessionId": sid, "update": update}})
+        send_updates(sid, turn.get("updates", []))
         stop_reason = turn.get("stop_reason", "end_turn")
         wait_for = turn.get("wait_for")
         if wait_for:
@@ -532,9 +546,7 @@ def respond(request):
             late = turn.get("updates_when")
             while not os.path.exists(wait_for):
                 if late and os.path.exists(late["file"]):
-                    for update in late.get("updates", []):
-                        send({"jsonrpc": "2.0", "method": "session/update",
-                              "params": {"sessionId": sid, "update": update}})
+                    send_updates(sid, late.get("updates", []))
                     late = None
                 if cancelled_meanwhile() and not turn.get("ignore_cancel"):
                     stop_reason = "cancelled"
@@ -560,6 +572,10 @@ while True:
         continue  # an agent that stops answering, for the client's timeout
     try:
         send({"jsonrpc": "2.0", "id": message["id"], "result": respond(message)})
+        if message["method"] == "session/new":
+            send_updates(script.get("session_id", "stub-session"), script.get("new_updates", []))
+        if message["method"] == "session/prompt":
+            send_between_turn_updates()
     except Failure as failure:
         send({"jsonrpc": "2.0", "id": message["id"],
               "error": {"code": failure.code, "message": failure.message}})

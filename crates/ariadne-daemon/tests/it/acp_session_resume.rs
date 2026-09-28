@@ -393,7 +393,13 @@ async fn a_loose_console_serves_history_takes_input_and_cancels() {
     let dir = tempfile::tempdir().unwrap();
     let mut setup = outside_script_at(dir.path().to_str().unwrap(), "continue");
     setup["load_updates"] = json!([
-        {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "outside history"}}
+        {"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "compact", "description": "Compact the conversation."}
+        ]},
+        {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "outside history"}},
+        {"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "review", "description": "Review the conversation."}
+        ]}
     ]);
     setup["prompts"] = json!([{
         "updates": [{"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "new answer"}}],
@@ -414,6 +420,16 @@ async fn a_loose_console_serves_history_takes_input_and_cancels() {
             .iter()
             .any(|event| event["payload"]["text"] == "outside history"),
         "{history:?}"
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| event["kind"] == "available_commands_update")
+            .map(|event| event["payload"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!({"session_id": "outside-1", "available_commands": [{
+            "name": "review", "description": "Review the conversation."
+        }]})],
     );
     let mut stream = h.stream(common::get(&format!("{console}/stream"))).await;
     let snapshot = common::expect_sse(&mut stream, "snapshot").await;
@@ -478,6 +494,16 @@ async fn a_loose_console_serves_history_takes_input_and_cancels() {
             .filter(|event| event["payload"]["text"] == "outside history")
             .count(),
         1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| event["kind"] == "available_commands_update")
+            .map(|event| event["payload"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!({"session_id": "outside-1", "available_commands": [{
+            "name": "review", "description": "Review the conversation."
+        }]})],
     );
 }
 

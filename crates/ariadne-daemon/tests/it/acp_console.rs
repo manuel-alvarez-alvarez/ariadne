@@ -939,6 +939,186 @@ async fn posted_input_reaches_the_agent_and_queues_behind_a_running_turn() {
     );
 }
 
+/// Available commands are live console state: a connected console receives
+/// each update, and every later snapshot carries only the latest list.
+#[tokio::test]
+async fn available_commands_reach_console_streams_and_snapshots_without_storage() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let finish = agent_dir.path().join("finish-first-turn");
+    let publish = agent_dir.path().join("publish-commands");
+    let mut scripted = script();
+    scripted["prompts"] = json!([
+        {"wait_for": finish.display().to_string(), "updates": []},
+        {"updates": [{"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "review", "description": "Review the change."}
+        ]}]},
+    ]);
+    scripted["between_turn_updates"] = json!({
+        "wait_for": publish.display().to_string(),
+        "updates": [{"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "compact", "description": "Compact the conversation.",
+             "input": {"hint": "What to keep"}}
+        ]}],
+    });
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
+    eventually(TIMEOUT, "the first turn to pause", || async {
+        finish.with_extension("reached").exists()
+    })
+    .await;
+
+    let mut stream = h
+        .stream(get(&format!("/v1/sessions/{}/console/stream", session.id)))
+        .await;
+    expect_sse(&mut stream, "snapshot").await;
+    std::fs::write(&finish, "go").unwrap();
+    eventually(TIMEOUT, "the session to become idle", || async {
+        h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+
+    std::fs::write(&publish, "go").unwrap();
+    let commands = loop {
+        let event = expect_sse(&mut stream, "event").await;
+        if event["kind"] == "available_commands_update" {
+            break event;
+        }
+    };
+    assert_eq!(
+        commands["payload"],
+        json!({"session_id": "stub-session", "available_commands": [{
+            "name": "compact", "description": "Compact the conversation.",
+            "input": {"hint": "What to keep"}
+        }]}),
+    );
+
+    let snapshot: Vec<serde_json::Value> =
+        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+    assert_eq!(
+        snapshot
+            .iter()
+            .filter(|event| event["kind"] == "available_commands_update")
+            .map(|event| event["payload"].clone())
+            .collect::<Vec<_>>(),
+        vec![commands["payload"].clone()],
+    );
+
+    let (status, _) = h
+        .send(post_console_input(&session.id, "continue normally"))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the second command list to arrive", || async {
+        stub.calls_of("session/prompt").len() == 2
+            && h.session_status(&session).await == SessionStatus::Idle
+    })
+    .await;
+    let snapshot: Vec<serde_json::Value> =
+        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+    assert_eq!(
+        snapshot
+            .iter()
+            .filter(|event| event["kind"] == "available_commands_update")
+            .map(|event| event["payload"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            json!({"session_id": "stub-session", "available_commands": [{
+                "name": "review", "description": "Review the change."
+            }]})
+        ],
+    );
+
+    let listed: Vec<serde_json::Value> = h.get(&format!("/v1/events?session={}", session.id)).await;
+    assert!(
+        listed
+            .iter()
+            .all(|event| event["kind"] != "available_commands_update"),
+        "the commands must not be stored: {listed:?}"
+    );
+
+    h.launcher.kill_session(&session.id).await.unwrap();
+    eventually(TIMEOUT, "the agent to leave the runtime", || async {
+        !h.launcher.acp.is_running(&session.id)
+    })
+    .await;
+    let ended: Vec<serde_json::Value> =
+        h.get(&format!("/v1/sessions/{}/console", session.id)).await;
+    assert!(
+        ended
+            .iter()
+            .all(|event| event["kind"] != "available_commands_update"),
+        "an ended agent has no commands: {ended:?}"
+    );
+}
+
+/// A listed slash command reaches the agent unchanged. Every other slash
+/// prompt remains a normal prompt with the system instruction before it.
+#[tokio::test]
+async fn only_available_slash_commands_skip_the_system_prompt() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    scripted["prompts"] = json!([
+        {"updates": [{"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "compact", "description": "Compact the conversation."}
+        ]}]},
+        {"updates": []},
+        {"updates": []},
+        {"updates": []},
+        {"updates": [{"sessionUpdate": "available_commands_update", "availableCommands": []}]},
+        {"updates": []},
+    ]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+    let session = spawned_idle(&h, &cast).await;
+
+    for (index, text) in [
+        "/compact",
+        "/compact now",
+        "/foo",
+        "/Users/x/notes.md has an error",
+        "/compact",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (status, _) = h.send(post_console_input(&session.id, text)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        eventually(TIMEOUT, "the posted prompt to finish", || async {
+            stub.calls_of("session/prompt").len() == index + 2
+                && h.session_status(&session).await == SessionStatus::Idle
+        })
+        .await;
+    }
+
+    let prompts = stub.calls_of("session/prompt");
+    for (request, text) in prompts
+        .iter()
+        .skip(1)
+        .take(2)
+        .zip(["/compact", "/compact now"])
+    {
+        assert_eq!(
+            request,
+            &json!({"sessionId": "stub-session", "prompt": [{"type": "text", "text": text}]}),
+        );
+    }
+    for (request, text) in
+        prompts
+            .iter()
+            .skip(3)
+            .zip(["/foo", "/Users/x/notes.md has an error", "/compact"])
+    {
+        assert_eq!(request["sessionId"], "stub-session");
+        assert_eq!(request["prompt"][0]["type"], "text");
+        let sent = request["prompt"][0]["text"].as_str().unwrap();
+        assert!(sent.ends_with(&format!("\n\n{text}")), "{request}");
+        assert!(!sent.starts_with("\n\n"), "{request}");
+        assert_ne!(sent, text, "{request}");
+    }
+}
+
 /// Ask mode emits the request to the console, raises attention, leaves the
 /// turn blocked, and uses posted console text as the selected option id.
 #[tokio::test]

@@ -117,12 +117,16 @@ goal id to a seat (014).
     snapshot goes out as it is, and the first thing the stream says after it
     is a resync (rule 15). `GET /console` has no stream to say resync on: it
     opens again while the channel lags under the open, and when the channel
-    lags every time it refuses with 503 rather than answer short. Between
-    turns the snapshot is the stored events alone.
+    lags every time it refuses with 503 rather than answer short. The snapshot
+    also holds one live-only `available_commands_update` where the running
+    agent offered a list (021): `{session_id, available_commands}`, even
+    between turns. It holds no such event where the agent has no list or has
+    ended. Between turns the snapshot otherwise is the stored events alone.
 14. The console stream (`GET /v1/sessions/{id}/console/stream`) opens with
     that snapshot, then sends each later event as it is recorded, and each
     live-only event as the runtime streams it (021): message and thought
-    chunks, and tool call progress. The stored and the live events go out in
+    chunks, tool call progress, and `available_commands_update`. The stored
+    and the live events go out in
     the order the daemon gave them ids, which one monotonic generator gives
     both: whenever both channels hold events, they are sorted by id before
     they go out, so a stored whole never passes the live chunk that preceded
@@ -630,6 +634,11 @@ goal id to a seat (014).
   (`::a_session_with_a_deleted_worktree_revives_in_the_repository_checkout`).
 - The console stream gives the snapshot, then deltas
   (`acp_console.rs::the_console_stream_gives_the_snapshot_then_deltas`).
+- Available commands reach an open console live, replace the command event in
+  later snapshots, and never enter the stored event list
+  (`acp_console.rs::available_commands_reach_console_streams_and_snapshots_without_storage`).
+- A loose session keeps its latest command list through each `session/load`
+  replay (`acp_session_resume.rs::a_loose_console_serves_history_takes_input_and_cancels`).
 - A console opens on a page: a session of thousands of events gives its
   newest two hundred, in order
   (`http/console.rs::opening_a_console_on_a_long_session_reads_a_page_of_the_newest_events`),

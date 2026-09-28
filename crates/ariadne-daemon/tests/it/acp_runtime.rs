@@ -170,6 +170,31 @@ async fn an_acp_author_runs_on_daemon_stdio() {
     assert!(h.launcher.acp.is_running(&session.id));
 }
 
+/// An update that this runtime does not know remains harmless to the live
+/// session, so a newer ACP agent can add update kinds independently.
+#[tokio::test]
+async fn an_unknown_session_update_does_not_fail_the_session() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    let mut scripted = script();
+    scripted["prompts"][0]["updates"] = json!([
+        {"sessionUpdate": "future_agent_update", "value": "new"}
+    ]);
+    let stub = stub_acp_agent(agent_dir.path(), scripted);
+    let h = harness().home(registry_home(&stub)).await;
+    let cast = acp_cast(&h).await;
+
+    let session = spawned_idle(&h, &cast).await;
+
+    assert_eq!(h.session_status(&session).await, SessionStatus::Idle);
+    assert!(h.launcher.acp.is_running(&session.id));
+    assert!(
+        !event_kinds(&h, &session.id)
+            .await
+            .iter()
+            .any(|kind| kind == "session.error")
+    );
+}
+
 /// Killing the session kills the daemon-owned agent process and retires the
 /// row.
 #[tokio::test]

@@ -81,10 +81,13 @@ gone (009).
    (see Known gap).
    Loose sessions instead retain and record the loaded model (020).
 4. Every prompt the runtime sends is the system prompt, a blank line, and
-   the text of the prompt. The first prompt of a launch is the one its launch
-   file carries, if any. `user_prompt_submit` carries the whole as `prompt`,
-   the text alone as `text`, and a `source`: `console` for console input
-   (008), `daemon` for everything the daemon itself says.
+   the text of the prompt, except a command. Where text from any source starts
+   with `/` and its first word, without `/`, equals the `name` of a command the
+   agent last offered, the runtime sends the text alone. The first prompt of a
+   launch is the one its launch file carries, if any. `user_prompt_submit`
+   carries the whole as `prompt`, the text alone as `text`, and a `source`:
+   `console` for console input (008), `daemon` for everything the daemon
+   itself says.
 5. What the agent does becomes agent events on the ingestion path (012):
    `session_start` with the agent's own session id, `user_prompt_submit`,
    tool calls as `pre_tool_use` and `post_tool_use`, `plan` with the entries
@@ -104,6 +107,13 @@ gone (009).
    reports both.
    A `usage_update` keeps its latest `used` and `size` on the session while
    the turn runs. Its `cost`, when present, is ignored.
+   An `available_commands_update` keeps the agent's latest complete command
+   list while it runs, including between turns and through every `session/load`
+   replay. It goes live to the console alone as
+   `available_commands_update` with `{session_id, available_commands}`; each
+   command is the ACP JSON the agent sent. It is never stored. A later list,
+   including an empty one, replaces the earlier list. The list is dropped
+   when the agent ends.
 6. A turn's text is stored run by run, where the agent wrote it. A run is
    the chunks of one kind in a row, and of one message where the chunks
    carry an ACP `messageId`; it ends at a chunk of the other kind, a chunk
@@ -233,6 +243,11 @@ gone (009).
   `::a_review_answer_waits_for_the_console`).
 - Console input reaches the agent and queues behind a running turn
   (`acp_console.rs::posted_input_reaches_the_agent_and_queues_behind_a_running_turn`).
+- An offered command reaches the agent without the system prompt; every other
+  slash prompt keeps that prompt
+  (`acp_console.rs::only_available_slash_commands_skip_the_system_prompt`).
+- An unknown session update leaves the session running
+  (`acp_runtime.rs::an_unknown_session_update_does_not_fail_the_session`).
 - A scheduler nudge arrives at the agent as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
 - Message chunks reach the console stream before the turn ends
