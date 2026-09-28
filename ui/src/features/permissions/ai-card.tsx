@@ -28,6 +28,7 @@ import { When } from "@/components/when"
 import { describeError } from "@/lib/format"
 
 import { useRefreshAiPermissions, useUpdateAiPermissions } from "./queries"
+import { ThresholdRange } from "./threshold-range"
 
 /** What the Python check found, in the one line that says why the switch is off. */
 function pythonReason(python: PythonDto): string {
@@ -49,10 +50,6 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
   // A typed buffer for the free-form fields, so a keystroke is not fought by
   // the row the last one answered with — reset only when the daemon's own
   // value actually moves (a write's own answer, another window, the stream).
-  const [allowThresholdText, setAllowThresholdText] = useState(String(status.allow_threshold))
-  useEffect(() => setAllowThresholdText(String(status.allow_threshold)), [status.allow_threshold])
-  const [denyThresholdText, setDenyThresholdText] = useState(String(status.deny_threshold))
-  useEffect(() => setDenyThresholdText(String(status.deny_threshold)), [status.deny_threshold])
   const [schedule, setSchedule] = useState(status.schedule ?? "")
   useEffect(() => setSchedule(status.schedule ?? ""), [status.schedule])
 
@@ -89,49 +86,11 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
         <FieldDescription>{pythonReason(status.python)}</FieldDescription>
       ) : null}
 
-      <Field>
-        <FieldLabel htmlFor="ai-allow-threshold">Allow threshold</FieldLabel>
-        <Input
-          id="ai-allow-threshold"
-          type="number"
-          min={0}
-          max={1}
-          step={0.01}
-          value={allowThresholdText}
-          aria-label="Allow threshold"
-          onChange={(event) => setAllowThresholdText(event.target.value)}
-          onBlur={(event) => {
-            const value = event.target.valueAsNumber
-            if (!Number.isNaN(value)) {
-              send({ allow_threshold: value }, "Could not change the allow threshold")
-            }
-          }}
-        />
-      </Field>
-
-      <Field>
-        <FieldLabel htmlFor="ai-deny-threshold">Deny threshold</FieldLabel>
-        <Input
-          id="ai-deny-threshold"
-          type="number"
-          min={0}
-          max={1}
-          step={0.01}
-          value={denyThresholdText}
-          aria-label="Deny threshold"
-          onChange={(event) => setDenyThresholdText(event.target.value)}
-          onBlur={(event) => {
-            const value = event.target.valueAsNumber
-            if (!Number.isNaN(value)) {
-              send({ deny_threshold: value }, "Could not change the deny threshold")
-            }
-          }}
-        />
-        <FieldDescription>
-          At or under the allow threshold the model allows. At or over the deny threshold it denies.
-          Between them, it asks you.
-        </FieldDescription>
-      </Field>
+      <ThresholdRange
+        allowThreshold={status.allow_threshold}
+        denyThreshold={status.deny_threshold}
+        mutate={update.mutate}
+      />
 
       <Field>
         <FieldLabel htmlFor="ai-schedule">Daily refresh</FieldLabel>

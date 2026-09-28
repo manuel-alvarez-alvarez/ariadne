@@ -244,17 +244,24 @@ Out: the daemon endpoints themselves (012).
     `GET /v1/permissions/ai` answers with (022): a switch for `enabled`,
     labelled "Enable the AI permission model", disabled with the Python
     version found (or that none was) where the daemon has none new enough to
-    install into; a number field for the threshold, 0 to 1; a time field for
+    install into; the allow and deny thresholds as one range control, a
+    two-handle slider from 0 to 1 in steps of 0.01 whose track is cut into a
+    green Allow zone, an amber Ask zone and a red Deny zone the handles
+    cannot cross, with two number inputs below it — "Allow threshold" and
+    "Deny threshold", up to four decimals, step 0.0001 — that stay in step
+    with the handles while either is dragged or typed into; a time field for
     the daily refresh, whose native clear is what turns it off, sending
     `schedule: null`; a Refresh button, disabled while the model is off or
     already installing; and a fact list of the state, the installed and
     latest release, whether the weights are present, the endpoint, the last
     refresh's age, and the last error in the error style. Every control sends
-    its own change the moment it is made — there is no Save button — and a
-    refusal is toasted with the daemon's own message, the same as the agents
-    screen's flag editor and rank picker. The `ai_permissions_updated` event
-    (012, 022) patches the same query key any of those writes does, since the
-    row has no list beside it
+    its own change the moment it is made — there is no Save button, and a
+    handle sends once, on release, never on every drag step — and a refusal
+    is toasted with the daemon's own message and puts the control back to the
+    row the daemon still holds, the same as the agents screen's flag editor
+    and rank picker. The `ai_permissions_updated` event (012, 022) patches
+    the same query key any of those writes does, since the row has no list
+    beside it
     (`ui/src/events/dispatch.test.ts::replaces the cached status whole, so a
     card that read installing reads ready`). The repository dialog's
     `PERMISSION_MODES` gains `ai`, and an `ai_disabled` refusal on it lands on
@@ -496,12 +503,12 @@ Out: the daemon endpoints themselves (012).
   model, its own branch and its own pick status each on its own line, and a
   clear gap between one author's block and the next
   (`ui/src/features/tasks/task-panel.test.tsx::shows every author's own branch, marking only the one the reviewers picked`).
-- The Permissions screen's card renders the enabled switch, the threshold,
-  the daily refresh, Refresh and the fact list, and nothing about checkpoints
-  or prompts
+- The Permissions screen's card renders the enabled switch, the two
+  thresholds, the daily refresh, Refresh and the fact list, and nothing about
+  checkpoints or prompts
   (`ui/src/features/permissions/permissions-page.test.tsx::renders the
-  switch, the threshold, the schedule, Refresh and the facts, and nothing
-  about checkpoints or prompts`).
+  switch, the two thresholds, the schedule, Refresh and the facts, and
+  nothing about checkpoints or prompts`).
 - The Permissions screen's card shows every fact of the settings row, and the
   error style holds the last one once there is one
   (`ui/src/features/permissions/permissions-page.test.tsx::shows every fact
@@ -515,12 +522,37 @@ Out: the daemon endpoints themselves (012).
   too old`,
   `::the enabled switch > is disabled and says not found, where no
   interpreter was found at all`).
-- The threshold field and the daily refresh field each send only the field
-  that changed, and the refresh field's native clear is what turns the
-  schedule off
-  (`ui/src/features/permissions/permissions-page.test.tsx::sends the
+- The allow and deny thresholds render as one range control: a two-handle
+  slider over the three coloured zones labelled Allow, Ask and Deny, and the
+  two named number inputs beneath it, holding the row's own values
+  (`ui/src/features/permissions/threshold-range.test.tsx::shows the track's
+  three zones and the handles named for what they hold`,
+  `::shows the two number inputs, named and valued for the row they hold`).
+- A handle released at a new value, or a number field left or Entered, sends
+  only the field that changed, up to four decimals, and neither handle can
+  reach or pass the other
+  (`ui/src/features/permissions/threshold-range.test.tsx::a handle released
+  at a new value > sends one PUT with only the allow field`,
+  `::a handle released at a new value > sends one PUT with only the deny
+  field`,
+  `::a handle released at a new value > does not let the allow handle reach
+  or pass the deny handle`,
+  `::a handle released at a new value > does not let the deny handle reach
+  or pass the allow handle`,
+  `::an input left or Entered > sends one PUT with only the allow field, four
+  decimals kept`,
+  `::an input left or Entered > sends one PUT with only the deny field, on
+  Enter`,
+  `ui/src/features/permissions/permissions-page.test.tsx::sends the allow
   threshold typed, once the field is left`,
-  `::the daily refresh > sends the time picked`,
+  `::sends the deny threshold typed, once the field is left`).
+- The range control takes an optional danger marker on its track, drawn with
+  its own accessible label, for a later task to set
+  (`ui/src/features/permissions/threshold-range.test.tsx::draws no danger
+  marker where none is set, and one labelled with its value where it is`).
+- The daily refresh field's native clear is what turns the schedule off
+  (`ui/src/features/permissions/permissions-page.test.tsx::the daily refresh
+  > sends the time picked`,
   `::the daily refresh > sends null once it is cleared back to off`).
 - Refresh posts once, and is disabled while the model is off or already
   installing
@@ -528,9 +560,14 @@ Out: the daemon endpoints themselves (012).
   the refresh endpoint`,
   `::Refresh > is disabled while the model is off`,
   `::Refresh > is disabled while an install is already running`).
-- A refusal of any of the above is toasted with the daemon's own message
+- A refusal of any of the above is toasted with the daemon's own message, and
+  a threshold's refusal puts the value back to the row the daemon still holds
   (`ui/src/features/permissions/permissions-page.test.tsx::toasts the
-  daemon's own message on a refusal`).
+  daemon's own message on a refusal`,
+  `::toasts the daemon's own message on a refused threshold, and puts the
+  value back`,
+  `ui/src/features/permissions/threshold-range.test.tsx::toasts the daemon's
+  own message on a refusal, and puts the value back`).
 - `ai_permissions_updated` replaces the cached settings row whole, so a card
   that read `installing` reads `ready`
   (`ui/src/events/dispatch.test.ts::ai permissions events > replaces the

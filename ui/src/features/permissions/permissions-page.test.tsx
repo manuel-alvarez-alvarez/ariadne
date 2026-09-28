@@ -178,7 +178,7 @@ it("sends the deny threshold typed, once the field is left", async () => {
   await waitFor(() => expect(lastWrite()?.body).toEqual({ deny_threshold: 0.9 }))
 })
 
-it("toasts the daemon's own message on a refused threshold", async () => {
+it("toasts the daemon's own message on a refused threshold, and puts the value back", async () => {
   stubDaemon({
     status: 422,
     code: "invalid_request",
@@ -192,7 +192,9 @@ it("toasts the daemon's own message on a refused threshold", async () => {
     </>,
   )
 
-  const allowThreshold = await screen.findByRole("spinbutton", { name: "Allow threshold" })
+  const allowThreshold = (await screen.findByRole("spinbutton", {
+    name: "Allow threshold",
+  })) as HTMLInputElement
   await user.clear(allowThreshold)
   await user.type(allowThreshold, "0.95")
   await user.tab()
@@ -200,6 +202,7 @@ it("toasts the daemon's own message on a refused threshold", async () => {
   expect(
     await screen.findByText(/the allow threshold must stay under the deny threshold/),
   ).toBeDefined()
+  await waitFor(() => expect(allowThreshold.value).toBe("0.2"))
 })
 
 describe("the daily refresh", () => {
