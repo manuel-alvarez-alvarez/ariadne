@@ -100,12 +100,46 @@ it("opens prefilled with the npm test example", () => {
   expect((screen.getByLabelText("Options") as HTMLInputElement).value).toBe("Allow, Reject")
 })
 
+it("keeps the fields in a scroll region between the header and footer", () => {
+  renderPanel(ENABLED)
+
+  const form = screen.getByRole("button", { name: "Test" }).closest("form")
+  const fields = form?.querySelector('[data-slot="ai-test-fields"]')
+  const header = screen.getByText("Test a request").closest('[data-slot="dialog-header"]')
+  const footer = screen.getByRole("button", { name: "Test" }).closest('[data-slot="dialog-footer"]')
+
+  expect(form?.className).not.toMatch(/overflow(?:-[xy])?-/)
+  expect(fields?.className).toContain("overflow-y-auto")
+  expect(fields?.className).toContain("px-px")
+  expect(fields?.className).toContain("py-px")
+  expect(fields?.contains(screen.getByLabelText("Tool"))).toBe(true)
+  expect(fields?.contains(screen.getByLabelText("Kind"))).toBe(true)
+  expect(fields?.contains(screen.getByLabelText("Input"))).toBe(true)
+  expect(fields?.contains(screen.getByLabelText("Options"))).toBe(true)
+  expect(fields?.contains(header)).toBe(false)
+  expect(fields?.contains(footer)).toBe(false)
+})
+
+it("uses a wide dialog and lets Input resize vertically", () => {
+  renderPanel(ENABLED)
+
+  expect(
+    screen.getByText("Test a request").closest('[data-slot="dialog-content"]')?.className,
+  ).toContain("sm:max-w-2xl")
+  expect(screen.getByLabelText("Input").className).toContain("resize-y")
+})
+
 describe("the example picker", () => {
   it("fills every field with the example picked", async () => {
     const user = userEvent.setup()
     renderPanel(ENABLED)
 
-    await user.click(screen.getByRole("button", { name: "Examples" }))
+    const examples = screen.getByRole("button", { name: "Examples" })
+    expect(
+      screen.getByText("Test a request").closest('[data-slot="dialog-header"]')?.contains(examples),
+    ).toBe(true)
+
+    await user.click(examples)
     await user.click(await screen.findByRole("menuitem", { name: "Delete the home folder" }))
 
     expect((screen.getByLabelText("Tool") as HTMLInputElement).value).toBe("Bash")
@@ -244,7 +278,7 @@ it("sends a typed tool, kind and comma-separated options, edited by hand", async
   })
 })
 
-it("shows the label and the danger to four decimals", async () => {
+it("shows the label and danger in the polite footer result", async () => {
   testResponse = {
     label: "ask",
     danger: 0.543219,
@@ -257,12 +291,17 @@ it("shows the label and the danger to four decimals", async () => {
 
   await user.click(screen.getByRole("button", { name: "Test" }))
 
-  expect(await screen.findByText("Ask")).toBeDefined()
-  expect(screen.getByText("danger 0.5432")).toBeDefined()
-  expect(screen.getByText("danger 0.5432").parentElement?.getAttribute("aria-live")).toBe("polite")
+  const badge = await screen.findByText("Ask")
+  const danger = screen.getByText("danger 0.5432")
+  const footer = screen.getByRole("button", { name: "Test" }).closest('[data-slot="dialog-footer"]')
+
+  expect(footer?.contains(badge)).toBe(true)
+  expect(footer?.contains(danger)).toBe(true)
+  expect(danger.closest("[aria-live]")?.getAttribute("aria-live")).toBe("polite")
+  expect(danger.className).toContain("tabular-nums")
 })
 
-it("shows 'No answer: <ai_error>' for an ai_error answer, with no label", async () => {
+it("shows 'No answer: <ai_error>' in the footer, with no label", async () => {
   testResponse = {
     label: null,
     danger: null,
@@ -275,7 +314,14 @@ it("shows 'No answer: <ai_error>' for an ai_error answer, with no label", async 
 
   await user.click(screen.getByRole("button", { name: "Test" }))
 
-  expect(await screen.findByText("No answer: timed out")).toBeDefined()
+  const answer = await screen.findByText("No answer: timed out")
+  expect(
+    screen
+      .getByRole("button", { name: "Test" })
+      .closest('[data-slot="dialog-footer"]')
+      ?.contains(answer),
+  ).toBe(true)
+  expect(answer.className).toContain("break-words")
   expect(screen.queryByText("Allow")).toBeNull()
   expect(screen.queryByText("Ask")).toBeNull()
   expect(screen.queryByText("Deny")).toBeNull()
@@ -293,11 +339,16 @@ it("shows a field error on invalid JSON and disables Test", async () => {
   expect(screen.getByRole("button", { name: "Test" })).toHaveProperty("disabled", true)
 })
 
-it("disables Test and says why while the model is off", () => {
+it("shows the model-off hint in the footer and disables Test", () => {
   renderPanel(anAiPermissionsStatus({ enabled: false }))
 
   expect(screen.getByRole("button", { name: "Test" })).toHaveProperty("disabled", true)
-  expect(screen.getByText("Enable the AI permission model to test a request.")).toBeDefined()
+  expect(
+    screen
+      .getByRole("button", { name: "Test" })
+      .closest('[data-slot="dialog-footer"]')
+      ?.contains(screen.getByText("Enable the AI permission model to test a request.")),
+  ).toBe(true)
 })
 
 it("toasts the daemon's own message on a refusal", async () => {

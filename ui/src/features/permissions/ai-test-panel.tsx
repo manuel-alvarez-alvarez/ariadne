@@ -34,7 +34,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { describeError } from "@/lib/format"
@@ -205,9 +205,9 @@ export function AiTestPanel({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <form
-          className="flex max-h-[70svh] flex-col gap-3 overflow-y-auto"
+          className="flex flex-col gap-3"
           onSubmit={(event) => {
             event.preventDefault()
             runTest()
@@ -215,101 +215,110 @@ export function AiTestPanel({
           onKeyDown={!status.enabled || test.isPending ? undefined : submitOnChord}
         >
           <DialogHeader>
-            <DialogTitle>Test a request</DialogTitle>
+            <div className="flex flex-wrap items-center gap-2 pr-8">
+              <DialogTitle>Test a request</DialogTitle>
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
+                  Examples
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {EXAMPLES.map((example) => (
+                    <DropdownMenuItem key={example.name} onClick={() => pickExample(example)}>
+                      {example.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             <DialogDescription>
               Score one request against the model, without recording anything.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex justify-end">
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
-                Examples
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {EXAMPLES.map((example) => (
-                  <DropdownMenuItem key={example.name} onClick={() => pickExample(example)}>
-                    {example.name}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor="ai-test-tool">Tool</FieldLabel>
-              <Input
-                id="ai-test-tool"
-                className="font-mono"
-                value={tool}
-                onChange={(event) => setTool(event.target.value)}
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="ai-test-kind">Kind</FieldLabel>
-              <Input
-                id="ai-test-kind"
-                className="font-mono"
-                value={kind}
-                onChange={(event) => setKind(event.target.value)}
-              />
-            </Field>
-          </div>
-
-          <Field data-invalid={parsedInput.error ? true : undefined}>
-            <FieldLabel htmlFor="ai-test-input">Input</FieldLabel>
-            <Textarea
-              id="ai-test-input"
-              className="font-mono text-xs"
-              rows={6}
-              value={inputText}
-              aria-invalid={parsedInput.error ? true : undefined}
-              onChange={(event) => setInputText(event.target.value)}
-            />
-            {parsedInput.error ? (
-              <FieldError>{parsedInput.error}</FieldError>
-            ) : (
-              <FieldDescription>The raw JSON input the model sees.</FieldDescription>
-            )}
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor="ai-test-options">Options</FieldLabel>
-            <Input
-              id="ai-test-options"
-              value={optionsText}
-              onChange={(event) => setOptionsText(event.target.value)}
-            />
-            <FieldDescription>
-              The option names the model sees, separated by commas.
-            </FieldDescription>
-          </Field>
-
-          {!status.enabled ? (
-            <span className="text-sm text-muted-foreground">
-              Enable the AI permission model to test a request.
-            </span>
-          ) : null}
-
-          {result ? (
-            <div aria-live="polite" className="flex items-center gap-2 text-sm">
-              {result.ai_error ? (
-                <span className="text-muted-foreground">No answer: {result.ai_error}</span>
-              ) : (
-                <>
-                  {label ? <Badge className={LABEL_TONE[label]}>{LABEL_TEXT[label]}</Badge> : null}
-                  {result.danger !== null && result.danger !== undefined ? (
-                    <span className="text-muted-foreground">danger {result.danger.toFixed(4)}</span>
-                  ) : null}
-                </>
-              )}
+          <FieldGroup
+            data-slot="ai-test-fields"
+            className="max-h-[60svh] overflow-y-auto px-px py-px"
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="ai-test-tool">Tool</FieldLabel>
+                <Input
+                  id="ai-test-tool"
+                  className="font-mono"
+                  value={tool}
+                  onChange={(event) => setTool(event.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="ai-test-kind">Kind</FieldLabel>
+                <Input
+                  id="ai-test-kind"
+                  className="font-mono"
+                  value={kind}
+                  onChange={(event) => setKind(event.target.value)}
+                />
+              </Field>
             </div>
-          ) : null}
 
-          <DialogFooter>
+            <Field data-invalid={parsedInput.error ? true : undefined}>
+              <FieldLabel htmlFor="ai-test-input">Input</FieldLabel>
+              <Textarea
+                id="ai-test-input"
+                className="resize-y font-mono text-xs"
+                rows={6}
+                value={inputText}
+                aria-invalid={parsedInput.error ? true : undefined}
+                onChange={(event) => setInputText(event.target.value)}
+              />
+              {parsedInput.error ? (
+                <FieldError>{parsedInput.error}</FieldError>
+              ) : (
+                <FieldDescription>The raw JSON input the model sees.</FieldDescription>
+              )}
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="ai-test-options">Options</FieldLabel>
+              <Input
+                id="ai-test-options"
+                value={optionsText}
+                onChange={(event) => setOptionsText(event.target.value)}
+              />
+              <FieldDescription>
+                The option names the model sees, separated by commas.
+              </FieldDescription>
+            </Field>
+          </FieldGroup>
+
+          <DialogFooter className="flex-row items-center justify-between">
+            <div aria-live="polite" className="min-w-0 flex-1 text-sm">
+              {!status.enabled ? (
+                <span className="text-muted-foreground">
+                  Enable the AI permission model to test a request.
+                </span>
+              ) : null}
+              {result ? (
+                result.ai_error ? (
+                  <span className="break-words text-muted-foreground">
+                    No answer: {result.ai_error}
+                  </span>
+                ) : (
+                  <span className="flex flex-wrap items-center gap-2">
+                    {label ? (
+                      <Badge className={LABEL_TONE[label]}>{LABEL_TEXT[label]}</Badge>
+                    ) : null}
+                    {result.danger !== null && result.danger !== undefined ? (
+                      <span className="tabular-nums text-muted-foreground">
+                        danger {result.danger.toFixed(4)}
+                      </span>
+                    ) : null}
+                  </span>
+                )
+              ) : null}
+            </div>
             <Button
               type="submit"
+              className="shrink-0"
               disabled={!status.enabled || parsedInput.error !== null || test.isPending}
               pending={test.isPending}
             >
