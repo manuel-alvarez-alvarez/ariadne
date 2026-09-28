@@ -240,22 +240,28 @@ Out: the daemon endpoints themselves (012).
     row from the daemon's answer through the same `models` query key a switch
     write uses, and a refusal is toasted rather than swallowed, springing the
     picker back to what the daemon still says.
-32. The Permissions screen's AI tab holds one card, "AI", over the one
+32. The Permissions screen's AI tab holds one card, "AI", whose header carries
+    the title, a state badge — `disabled`, `installing`, `ready` or `failed` —
+    and the card's description at the left, and a joined button group at the
+    right holding "Test a request" and "Refresh", both `variant="outline"`,
+    wrapping below the title on a narrow window; below the header, the one
     settings row `GET /v1/permissions/ai` answers with (022): a switch for
     `enabled`, labelled "Enable the AI permission model", disabled with the
     Python version found (or that none was) where the daemon has none new
-    enough to install into; the allow and deny thresholds as one range
+    enough to install into, with its Python reason directly under it; a
+    Thresholds section holding the allow and deny thresholds as one range
     control, a two-handle slider from 0 to 1 in steps of 0.01 whose track is
     cut into a green Allow zone, an amber Ask zone and a red Deny zone the
     handles cannot cross, with two number inputs below it — "Allow threshold"
     and "Deny threshold", up to four decimals, step 0.0001 — that stay in
-    step with the handles while either is dragged or typed into; a time field
-    for the daily refresh, whose native clear is what turns it off, sending
-    `schedule: null` when it is blurred or Enter is pressed; a Refresh button,
-    disabled while the model is off or already installing; an alert at the top
-    of the card for the last error; and a fact list of the state, the installed
-    and latest release, whether the weights are present, the endpoint, and the
-    last refresh's age. Every control sends its own change the moment it is
+    step with the handles while either is dragged or typed into; a Daily
+    refresh section holding a time field about 8rem wide, whose native clear
+    is what turns it off, sending `schedule: null` when it is blurred or
+    Enter is pressed; the Refresh button, disabled while the model is off or
+    already installing; an alert at the top of the card for the last error;
+    and a Status section with a fact list of the installed and latest
+    release, whether the weights are present, the endpoint, and the last
+    refresh's age. Every control sends its own change the moment it is
     made — except the time field, which sends once after its edit — there is no
     Save button, and a handle sends once, on release, never on every drag step
     — and a refusal
@@ -266,7 +272,16 @@ Out: the daemon endpoints themselves (012).
     beside it
     (`ui/src/features/permissions/permissions-page.test.tsx::sends the typed
     time once when the field is left`, `::shows the last error as an alert at
-    the top of the card`, `ui/src/events/dispatch.test.ts::replaces the cached status whole, so a
+    the top of the card`, `::joins Test a request and Refresh in one button
+    group in the card header`, `::opens the test dialog from the header's
+    Test a request button`, `::shows the Thresholds, Daily refresh and Status
+    section headings`, `::the state badge > shows Disabled for the disabled
+    state`, `::the state badge > shows Installing for the installing state`,
+    `::the state badge > shows Ready for the ready state`, `::the state badge
+    > shows Failed for the failed state`,
+    `ui/src/features/permissions/ai-card.test.tsx::puts Test a request and
+    Refresh in one button group in the header`,
+    `ui/src/events/dispatch.test.ts::replaces the cached status whole, so a
     card that read installing reads ready`). The repository dialog's
     `PERMISSION_MODES` gains `ai`, and an `ai_disabled` refusal on it lands on
     the permission-mode field, naming the Permissions screen rather than the
@@ -313,7 +328,8 @@ Out: the daemon endpoints themselves (012).
     (`ui/src/features/permissions/permissions-page.test.tsx::opens the Learned
     tab when the URL says nothing`, `::puts the picked tab on the URL`,
     `ui/src/features/permissions/learned-tab.test.tsx`).
-34. The AI tab's card carries a "Test a request" button under the thresholds.
+34. The AI tab's card carries a "Test a request" button in its header button
+    group, beside Refresh.
     It opens a wide dialog for `POST /v1/permissions/ai/test`: Tool, Kind,
     Input (JSON, at least six rows) and Options (comma-separated) fields,
     prefilled with a `Bash`/`execute`/`{"command": "npm test"}`/`Allow, Reject`

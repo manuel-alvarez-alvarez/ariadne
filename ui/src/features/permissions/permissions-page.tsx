@@ -72,7 +72,7 @@ function AiTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      {status.isPending ? <Skeleton className="h-72 rounded-xl" /> : null}
+      {status.isPending ? <Skeleton className="h-80 rounded-xl" /> : null}
 
       {status.isError ? (
         <ErrorState

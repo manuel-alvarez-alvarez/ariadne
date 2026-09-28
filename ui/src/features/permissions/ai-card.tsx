@@ -15,6 +15,7 @@
  * it beyond reading an empty value as `null`.
  */
 
+import { FlaskConicalIcon, RefreshCwIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
@@ -25,8 +26,10 @@ import type {
   UpdateAiPermissionsRequest,
 } from "@/api"
 import { Fact, FactList } from "@/components/fact-list"
+import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -48,6 +51,22 @@ const STATE_LABELS: Record<AiPermissionsStatusDto["state"], string> = {
   installing: "Installing",
   ready: "Ready",
   failed: "Failed",
+}
+
+/** The status ramp step each install state takes, from the same tokens as the task board. */
+const STATE_TONE: Record<AiPermissionsStatusDto["state"], string> = {
+  disabled: "bg-muted text-muted-foreground",
+  installing: "bg-status-warn-soft text-status-warn-fg",
+  ready: "bg-status-done-soft text-status-done-fg",
+  failed: "bg-status-danger-soft text-status-danger-fg",
+}
+
+function SectionHeading({ children }: { children: string }) {
+  return (
+    <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      {children}
+    </h3>
+  )
 }
 
 export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
@@ -80,12 +99,50 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
           <AlertDescription>{status.last_error}</AlertDescription>
         </Alert>
       ) : null}
-      <div>
-        <h2 className="font-heading text-base font-semibold">AI</h2>
-        <p className="text-sm text-muted-foreground">
-          A model that runs on this machine and answers the ai permission mode's requests.
-        </p>
-      </div>
+
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="font-heading text-base font-semibold">AI</h2>
+            <StatusBadge label={STATE_LABELS[status.state]} tone={STATE_TONE[status.state]} />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            A model that runs on this machine and answers the ai permission mode's requests.
+          </p>
+        </div>
+
+        <ButtonGroup>
+          <Button variant="outline" onClick={() => setTestOpen(true)}>
+            <FlaskConicalIcon data-icon="inline-start" />
+            Test a request
+          </Button>
+          <Button
+            variant="outline"
+            disabled={
+              status.state === "disabled" || status.state === "installing" || refresh.isPending
+            }
+            pending={refresh.isPending}
+            onClick={() =>
+              refresh.mutate(undefined, {
+                onError: (error) =>
+                  toast.error("Could not refresh the model", {
+                    description: describeError(error),
+                  }),
+              })
+            }
+          >
+            <RefreshCwIcon data-icon="inline-start" />
+            Refresh
+          </Button>
+        </ButtonGroup>
+        <AiTestPanel
+          open={testOpen}
+          onOpenChange={setTestOpen}
+          status={status}
+          result={testResult}
+          onResult={setTestResult}
+        />
+      </header>
 
       <Field orientation="horizontal">
         <FieldLabel htmlFor="ai-enabled">Enable the AI permission model</FieldLabel>
@@ -105,78 +162,56 @@ export function AiCard({ status }: { status: AiPermissionsStatusDto }) {
         <FieldDescription>{pythonReason(status.python)}</FieldDescription>
       ) : null}
 
-      <ThresholdRange
-        allowThreshold={status.allow_threshold}
-        denyThreshold={status.deny_threshold}
-        danger={testResult && !testResult.ai_error ? (testResult.danger ?? undefined) : undefined}
-        mutate={update.mutate}
-      />
-
-      <div>
-        <Button variant="outline" onClick={() => setTestOpen(true)}>
-          Test a request
-        </Button>
-        <AiTestPanel
-          open={testOpen}
-          onOpenChange={setTestOpen}
-          status={status}
-          result={testResult}
-          onResult={setTestResult}
+      <div className="flex flex-col gap-2">
+        <SectionHeading>Thresholds</SectionHeading>
+        <ThresholdRange
+          allowThreshold={status.allow_threshold}
+          denyThreshold={status.deny_threshold}
+          danger={testResult && !testResult.ai_error ? (testResult.danger ?? undefined) : undefined}
+          mutate={update.mutate}
         />
       </div>
 
-      <Field>
-        <FieldLabel htmlFor="ai-schedule">Daily refresh</FieldLabel>
-        <Input
-          id="ai-schedule"
-          type="time"
-          value={schedule}
-          aria-label="Daily refresh"
-          onChange={(event) => setSchedule(event.target.value)}
-          onBlur={() => {
-            if (schedule === (status.schedule ?? "")) return
-            send(
-              { schedule: schedule === "" ? null : schedule },
-              "Could not change the daily refresh",
-            )
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur()
-          }}
-        />
-        <FieldDescription>
-          When the install runs again on its own, local time. Clear it to turn the refresh off.
-        </FieldDescription>
-      </Field>
-
-      <div>
-        <Button
-          variant="outline"
-          disabled={
-            status.state === "disabled" || status.state === "installing" || refresh.isPending
-          }
-          pending={refresh.isPending}
-          onClick={() =>
-            refresh.mutate(undefined, {
-              onError: (error) =>
-                toast.error("Could not refresh the model", { description: describeError(error) }),
-            })
-          }
-        >
-          Refresh
-        </Button>
+      <div className="flex flex-col gap-2">
+        <SectionHeading>Daily refresh</SectionHeading>
+        <Field>
+          <FieldLabel htmlFor="ai-schedule">Daily refresh</FieldLabel>
+          <Input
+            id="ai-schedule"
+            type="time"
+            className="w-32"
+            value={schedule}
+            aria-label="Daily refresh"
+            onChange={(event) => setSchedule(event.target.value)}
+            onBlur={() => {
+              if (schedule === (status.schedule ?? "")) return
+              send(
+                { schedule: schedule === "" ? null : schedule },
+                "Could not change the daily refresh",
+              )
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur()
+            }}
+          />
+          <FieldDescription>
+            When the install runs again on its own, local time. Clear it to turn the refresh off.
+          </FieldDescription>
+        </Field>
       </div>
 
-      <FactList columns={3} framed={false}>
-        <Fact label="State">{STATE_LABELS[status.state]}</Fact>
-        <Fact label="Installed release">{status.installed_release ?? "—"}</Fact>
-        <Fact label="Latest release">{status.latest_release ?? "—"}</Fact>
-        <Fact label="Weights present">{status.weights_present ? "Yes" : "No"}</Fact>
-        <Fact label="Endpoint">{status.endpoint ?? "—"}</Fact>
-        <Fact label="Last refresh">
-          <When at={status.last_refresh_at} format="age" />
-        </Fact>
-      </FactList>
+      <div className="flex flex-col gap-2">
+        <SectionHeading>Status</SectionHeading>
+        <FactList columns={3} framed={false}>
+          <Fact label="Installed release">{status.installed_release ?? "—"}</Fact>
+          <Fact label="Latest release">{status.latest_release ?? "—"}</Fact>
+          <Fact label="Weights present">{status.weights_present ? "Yes" : "No"}</Fact>
+          <Fact label="Endpoint">{status.endpoint ?? "—"}</Fact>
+          <Fact label="Last refresh">
+            <When at={status.last_refresh_at} format="age" />
+          </Fact>
+        </FactList>
+      </div>
     </div>
   )
 }

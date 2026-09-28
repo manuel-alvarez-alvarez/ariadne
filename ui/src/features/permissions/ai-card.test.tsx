@@ -4,7 +4,8 @@
  * `AiCard`'s own wiring between the test panel and the range control: the
  * marker a test's danger draws on the track, and how a threshold moved
  * afterwards relabels that same danger with no second call to
- * `/v1/permissions/ai/test`. Everything else about the card is covered by
+ * `/v1/permissions/ai/test` — plus the header's own button group, since that
+ * markup is `AiCard`'s. Everything else about the card is covered by
  * `permissions-page.test.tsx` (the AI tab), and each control has its own file
  * (`threshold-range.test.tsx`, `ai-test-panel.test.tsx`).
  */
@@ -100,6 +101,19 @@ it("relabels the same danger once a threshold moves, with no second call", async
   expect(requests.filter((one) => one.path === "/v1/permissions/ai/test").length).toBe(
     callsAfterTest,
   )
+})
+
+it("puts Test a request and Refresh in one button group in the header", () => {
+  const status = anAiPermissionsStatus({ enabled: true, state: "ready" })
+  renderCard(status)
+
+  const testButton = screen.getByRole("button", { name: "Test a request" })
+  const refreshButton = screen.getByRole("button", { name: "Refresh" })
+  const group = testButton.closest('[data-slot="button-group"]')
+
+  expect(group).not.toBeNull()
+  expect(group?.contains(refreshButton)).toBe(true)
+  expect(testButton.closest("header")?.contains(group)).toBe(true)
 })
 
 it("draws no marker for an ai_error answer", async () => {

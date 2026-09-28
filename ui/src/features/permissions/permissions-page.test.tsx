@@ -99,11 +99,70 @@ it("renders the switch, the two thresholds, the schedule, Refresh and the facts,
   expect(denyThreshold.value).toBe("0.8")
   expect(screen.getByLabelText("Daily refresh")).toBeDefined()
   expect(screen.getByRole("button", { name: "Refresh" })).toBeDefined()
-  expect(screen.getByText("State")).toBeDefined()
+  expect(screen.queryByText("State")).toBeNull()
 
   expect(screen.queryByText("Checkpoints")).toBeNull()
   expect(screen.queryByText("Prompts")).toBeNull()
   expect(screen.queryByRole("button", { name: "Restore defaults" })).toBeNull()
+})
+
+it("shows the Thresholds, Daily refresh and Status section headings", async () => {
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+  expect(await screen.findByRole("heading", { name: "Thresholds" })).toBeDefined()
+  expect(screen.getByRole("heading", { name: "Daily refresh" })).toBeDefined()
+  expect(screen.getByRole("heading", { name: "Status" })).toBeDefined()
+})
+
+it("joins Test a request and Refresh in one button group in the card header", async () => {
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+  const testButton = await screen.findByRole("button", { name: "Test a request" })
+  const refreshButton = screen.getByRole("button", { name: "Refresh" })
+  const group = testButton.closest('[data-slot="button-group"]')
+
+  expect(group).not.toBeNull()
+  expect(group?.contains(refreshButton)).toBe(true)
+  expect(testButton.closest("header")?.contains(group)).toBe(true)
+})
+
+it("opens the test dialog from the header's Test a request button", async () => {
+  const user = userEvent.setup()
+  renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+  await user.click(await screen.findByRole("button", { name: "Test a request" }))
+
+  expect(await screen.findByRole("dialog")).toBeDefined()
+})
+
+describe("the state badge", () => {
+  it("shows Disabled for the disabled state", async () => {
+    current = anAiPermissionsStatus({ state: "disabled" })
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+    expect(await screen.findByText("Disabled")).toBeDefined()
+  })
+
+  it("shows Installing for the installing state", async () => {
+    current = anAiPermissionsStatus({ state: "installing" })
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+    expect(await screen.findByText("Installing")).toBeDefined()
+  })
+
+  it("shows Ready for the ready state", async () => {
+    current = anAiPermissionsStatus({ state: "ready" })
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+    expect(await screen.findByText("Ready")).toBeDefined()
+  })
+
+  it("shows Failed for the failed state", async () => {
+    current = anAiPermissionsStatus({ state: "failed" })
+    renderScreen(<PermissionsPage />, { route: "/permissions?tab=ai" })
+
+    expect(await screen.findByText("Failed")).toBeDefined()
+  })
 })
 
 it("shows every fact the daemon answered with", async () => {
